@@ -40,6 +40,9 @@ targets:
       - path: Gen/dm
         type: folder
         buildPhase: resources
+      - path: Gen/assets/UIFonts      # 可选字体产物，空目录表示原版字体 | Optional generated font; an empty directory keeps the original
+        type: folder
+        buildPhase: resources
       - path: Gen/msl                # iOS 版 metallib + 反射 json（DM_MSL_DIR） | iOS metallib + reflection json (DM_MSL_DIR)
         type: folder
         buildPhase: resources

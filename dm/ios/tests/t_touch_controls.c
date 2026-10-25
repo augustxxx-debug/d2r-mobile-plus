@@ -320,6 +320,27 @@ static void pointer_item_tap(void) {
    不发任何键、不记鼠标点击（拖出去又拖回原处也不算点按）；物品区起手照旧是拖放；面板外起手不定型；没开鼠标点击模式不定型
    UI continuous gesture: in mouse click mode, when the touch does not start in the item area / outside the panel and the displacement passes the 10-point threshold → the type is fixed by the direction at that moment (vertical 1 = scroll, horizontal 2 = slider), and does not change once fixed;
       no key is sent and no mouse click is recorded (dragging out and back to the original spot does not count as a tap either); a touch starting in the item area is drag-and-drop as before; a touch starting outside the panel fixes no type; with mouse click mode off no type is fixed */
+/* 任务按钮慢点按只发送一次点击；拖动、取消和别的界面保持原规则。
+   Slow quest-button taps emit one click; drags, cancellation and other pages retain their rules. */
+static void quest_button_timing(void) {
+    const double hold[]={0.12,0.35,0.45,0.8,2.0};
+    for (unsigned k=0;k<sizeof hold/sizeof *hold;k++) {
+        dm_tc_state s; dm_tc_init(&s,667,375); dm_tc_set_navigation_mode(&s,1); s.mouse_click_mode=1;
+        dm_tc_begin_at(&s,0,120,90,10); dm_tc_pointer_item(&s,12);
+        dm_tc_tick(&s,10+hold[k]); CHECK(s.mouse_click_seq==0 && s.buttons==0);
+        dm_tc_end_at(&s,0,10+hold[k]); CHECK(s.mouse_click_seq==1 && s.buttons==0);
+        CHECK(!s.pointer_slow_button && s.pointer_item==0);
+        dm_tc_end_at(&s,0,11+hold[k]); CHECK(s.mouse_click_seq==1);
+    }
+    dm_tc_state s; dm_tc_init(&s,667,375); dm_tc_set_navigation_mode(&s,1); s.mouse_click_mode=1;
+    dm_tc_begin_at(&s,0,120,90,20); dm_tc_pointer_item(&s,12); dm_tc_cancel_finger(&s,0);
+    CHECK(!s.pointer_slow_button && s.mouse_click_seq==0);
+    dm_tc_begin_at(&s,0,120,90,21); dm_tc_end_at(&s,0,21.8); CHECK(s.mouse_click_seq==0);
+    dm_tc_begin_at(&s,0,120,90,22); dm_tc_pointer_item(&s,12);
+    dm_tc_move_at(&s,0,160,140,22.2); dm_tc_end_at(&s,0,23); CHECK(s.mouse_click_seq==0);
+    dm_tc_begin_at(&s,0,120,90,24); dm_tc_pointer_item(&s,1); dm_tc_tick(&s,24.8); dm_tc_end_at(&s,0,24.8);
+    CHECK(s.mouse_click_seq==0 && s.long_press_seq==1);
+}
 static void ui_drag_typing(void) {
     dm_tc_state s; dm_tc_init(&s,667,375); dm_tc_set_navigation_mode(&s,1); s.mouse_click_mode=1;
     dm_tc_begin_at(&s,0,300,200,1.0); dm_tc_move_at(&s,0,302,209,1.1); CHECK(s.finger[0].ui_drag==0);            /* 位移 9.2 点：没过阈值 | Displacement 9.2 points: threshold not passed */
@@ -643,6 +664,6 @@ int main(void) {
     RUN(joystick_axes); RUN(joystick_plus_skills); RUN(no_auto_handoff); RUN(background_no_key);
     RUN(circles_before_joystick); RUN(cancel_and_resize); RUN(deferred_skill_vs_belt); RUN(held_skill2_vs_belt); RUN(belt_single_double); RUN(no_ui_drag_outside_modal); RUN(invalid_slots_and_repeated_begin); RUN(all_slots_hold); RUN(enabled_targets); RUN(ui_scene_messages);
     RUN(pointer_tap); RUN(world_tap); RUN(pointer_outside_close); RUN(scene_dialog_only); RUN(pointer_item_tap); RUN(pointer_stack_tap); RUN(pointer_over_disabled_target); RUN(ui_drag_typing); RUN(pointer_drag_out); RUN(pointer_drag); RUN(pointer_long); RUN(pointer_long_then_drag); RUN(pointer_long_seq); RUN(pointer_shop_drag); RUN(pointer_control_hit); RUN(pointer_game_mode); RUN(pointer_pulse_queue); RUN(safe_insets); RUN(swap_key); RUN(skill_cluster_clearance);
-    RUN(belt_expand);
+    RUN(belt_expand); RUN(quest_button_timing);
     printf("PASS %d/%d cases; %d/%d checks\n",cases,cases,checks,checks); return 0;
 }

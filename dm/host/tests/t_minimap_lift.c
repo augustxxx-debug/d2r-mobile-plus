@@ -8,6 +8,9 @@ uint64_t dm_guest_frame(void) { return frame; }
 uint64_t now_ns(void) { return frame*16666667; }
 int dm_padmode_busy(void) { return busy; }
 int dm_uiscreen_ingame(void) { return ingame; }
+int dm_ui_native_frontend(void) { return 0; }
+int dm_ui_bottom_offset(int margin) { (void)margin; return 0; }
+int dm_screen_real(int *w,int *h) { *w=2360; *h=1954; return 1; }
 void dm_ui_rect(int *x,int *y,int *w,int *h) { *x=0; *y=uy; *w=2360; *h=1326; }
 void dm_uiscreen_set_ingame(int on) { ingame=on; }
 void dm_custom_on_uimsg(const char *cat,const char *act,const char *arg) { (void)cat; (void)act; (void)arg; }
@@ -18,6 +21,11 @@ static _Alignas(8) unsigned char root[160], maps[2][160], extra[160], hud[160], 
 static uint64_t children[97];
 static uint64_t ptr(void *p) { return (uint64_t)(uintptr_t)p; }
 static int32_t *y(void *p) { return (int32_t *)((unsigned char *)p+0x74); }
+static int placed, revealed_y;
+static void edge_layout(uint64_t w) {
+ placed++;
+ if (*(int32_t *)(w+0x70)!=99999) revealed_y=*(int32_t *)(w+0x74);
+}
 static void widget(void *v,const char *name,int y0) {
  unsigned char *p=v; memset(p,0,160); *(const char **)(p+8)=name;
  *(int32_t *)(p+0x74)=y0; *(int32_t *)(p+0x78)=1280; *(int32_t *)(p+0x7c)=720;
@@ -122,5 +130,34 @@ int main(void) {
  mv_offset(MV_LIFT,ptr(incoming),1,-511,0); CHECK(*y(incoming)==-499);
  mv_restore(ptr(root),MV_LIFT); CHECK(*y(incoming)==12 && g_nmv==0);
  for(int i=1;i<96;i++) CHECK(*y(old[i])==100+i);
+ // 构造时不可在旧纵坐标显示角落图标；反复切模式／几何时均使用基准位置。
+ // A constructor must not reveal a corner icon at its old Y. Repeated mode /
+ // geometry changes use canonical positions, including the zero-offset case.
+ uint64_t vt[3]={0,0,(uint64_t)(uintptr_t)edge_layout};
+ widget(incoming,"SaveIndicatorPanel",150); *(uint64_t *)incoming=ptr(vt);
+ *(int32_t *)(incoming+0x70)=99999; children[0]=ptr(incoming); *(uint64_t *)(root+0x60)=1;
+ ui_edge_place(MV_SAVE_BOTTOM,ptr(incoming),0,150,270,0);
+ CHECK(placed==2 && revealed_y==420); CHECK(*(int32_t *)(incoming+0x70)==0);
+ CHECK(*y(incoming)==420 && mv_count(MV_SAVE_BOTTOM)==1);
+ for (int i=0;i<20;i++) {
+  ui_edge_place(MV_SAVE_BOTTOM,ptr(incoming),0,150,0,0); CHECK(*y(incoming)==150 && mv_count(MV_SAVE_BOTTOM)==0);
+  ui_edge_place(MV_SAVE_BOTTOM,ptr(incoming),0,150,270,0); CHECK(*y(incoming)==420 && mv_count(MV_SAVE_BOTTOM)==1);
+ }
+ mv_restore(ptr(root),MV_SAVE_BOTTOM); CHECK(*y(incoming)==150 && g_nmv==0);
+ // 传统／宽屏的零偏移情况也要显示初始隐藏图标。
+ // Legacy/wide screens also reveal an initially hidden icon when delta is zero.
+ *(int32_t *)(incoming+0x70)=99999;
+ ui_edge_place(MV_SAVE_BOTTOM,ptr(incoming),0,150,0,0);
+ CHECK(*(int32_t *)(incoming+0x70)==0 && *y(incoming)==150 && g_nmv==0);
+ // 分类必须同时核对按钮名字和任务页面归属，不能误改设置页的关闭键。
+ // 分类同时检查按钮名及任务页祖先；设置页关闭不受影响。
+ // Classification checks both button name and quest-page ancestry; settings close stays unchanged.
+ widget(extra,"QuestLogPanelExpansion",0); widget(incoming,"Quest0",0);
+ *(uint64_t *)(incoming+0x30)=ptr(extra); CHECK(ui_quest_button(ptr(incoming)));
+ *(const char **)(incoming+8)="Quest27"; CHECK(ui_quest_button(ptr(incoming)));
+ *(const char **)(incoming+8)="Quest27bad"; CHECK(!ui_quest_button(ptr(incoming)));
+ *(const char **)(incoming+8)="TouchClose"; CHECK(ui_quest_button(ptr(incoming)));
+ *(const char **)(extra+8)="SettingsPanel"; CHECK(!ui_quest_button(ptr(incoming)));
+ CHECK(!ui_quest_button(0));
  free(base); printf("t_minimap_lift: %d checks, %d failures\n",checks,fails); return fails!=0;
 }

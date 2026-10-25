@@ -33,8 +33,10 @@ def python_command(script, *arguments):
 
 
 def stamp(R, overlay_only=False):
+    import font_override
     h = hashlib.sha256(open(os.path.join(R, 'data', 'build_manifest.psv'), 'rb').read())
     h.update(b'\0overlay-only\0' if overlay_only else b'\0full-assets\0')
+    h.update(font_override.source_fingerprint().encode())
     # 逐层就地剪掉 __pycache__ 并排序（不能写 sorted(os.walk(...))：那会先走完整棵树，剪枝失效，生成步骤第一次跑时新写的 .pyc 就会改掉指纹，
     # 下一次 ensure 把刚出的产物当成过期再出一遍）。
     # Prune __pycache__ and sort in place level by level (not sorted(os.walk(...)): that walks the whole tree first, so the pruning has no
@@ -50,6 +52,7 @@ def stamp(R, overlay_only=False):
 
 def ensure(R, overlay_only=False):
     """产物齐、指纹没变就直接返回；否则拿锁生成。返回 True = 这次重出了。 | If the build output is complete and the fingerprint unchanged, return directly; otherwise take the lock and generate. Returns True = regenerated this time."""
+    import font_override
     root = gen_paths.gen_dir(); st = os.path.join(root, '.stamp'); lock = os.path.join(root, '.gen_lock')
     v4 = os.path.join(root, 'NativeHUD', 'v4')
     outs = [os.path.join(v4, 'base.png'), os.path.join(v4, 'hud.json'), os.path.join(v4, 'hud_v4_ui', 'ui.json')]
@@ -68,7 +71,9 @@ def ensure(R, overlay_only=False):
         have = open(st).read()
         if have == full_want: return all(map(os.path.isfile, full_outs))
         return have == want and all(map(os.path.isfile, outs))
-    if fresh(): return False
+    if fresh():
+        font_override.prepare(R)
+        return False
     t0 = time.time()
     while True:
         try: os.mkdir(lock); break
@@ -82,6 +87,7 @@ def ensure(R, overlay_only=False):
             time.sleep(0.5)
     try:
         open(os.path.join(lock, 'pid'), 'w').write(str(os.getpid()))
+        font_override.prepare(R)
         if fresh(): return False   # 等锁期间别人已经生成好了 | Someone else already generated it while we waited for the lock
         if os.path.exists(st): os.remove(st)
         run_steps(R, overlay_only=overlay_only); open(st, 'w').write(want); return True

@@ -38,7 +38,9 @@ static NSData *romfs_file(NSString *suffix) {
 }
 static UIFont *d2font(CGFloat size) {   // 原版 BlizzardGlobal（中文、数字都是它） | The original game's BlizzardGlobal (used for both Chinese text and digits)
     static NSString *name; static int tried;
-    if (!tried) { tried = 1; NSData *d = romfs_file(@"/hd/ui/fonts/blizzardglobal-v5_81.ttf");
+    if (!tried) { tried = 1;
+        NSString *custom=[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"UIFonts/theme.ttf"];
+        NSData *d=[NSData dataWithContentsOfFile:custom] ?: romfs_file(@"/hd/ui/fonts/blizzardglobal-v5_81.ttf");
         CGDataProviderRef p = d ? CGDataProviderCreateWithCFData((__bridge CFDataRef)d) : NULL; CGFontRef f = p ? CGFontCreateWithDataProvider(p) : NULL;
         if (f && CTFontManagerRegisterGraphicsFont(f, NULL)) name = (__bridge_transfer NSString *)CGFontCopyPostScriptName(f);
         if (f) CGFontRelease(f); if (p) CGDataProviderRelease(p);

@@ -1,6 +1,10 @@
 // 比 16:9 窄的屏（iPad 4:3）上让游戏界面按 16:9 摆、3D 仍铺满整屏。缺省关：不打开时不写任何东西，下面几个换算都是恒等。实现与依据见 dm_uiscreen.c
 // On screens narrower than 16:9 (iPad 4:3), lay out the game UI at 16:9 while 3D still fills the whole screen. Off by default: when not turned on nothing is written, and the conversions below are all identity. Implementation and basis in dm_uiscreen.c
+// 启用全屏时前端场景使用原生比例，UI／输入保持居中 16:9；设零恢复原留边前端。
+// Frontend scenes render at native aspect when fullscreen is enabled, retaining a
+// centered 16:9 UI/input rectangle. Zero keeps the original letterboxed frontend.
 #pragma once
+#include <stdint.h>
 enum { DM_UISCREEN_OFF, DM_UISCREEN_TOP, DM_UISCREEN_CENTER, DM_UISCREEN_BOTTOM };
 void dm_uiscreen_enable(int mode);           // 前端在「窗口比 16:9 窄」时调：DM_UISCREEN_BOTTOM 等 = 打开，界面矩形（宽 = 画面宽、高 = 宽÷16×9）贴顶 / 居中 / 贴底；DM_UISCREEN_OFF = 关掉并把游戏的值写回。任意线程调，下一帧生效 | Called by the front end when "the window is narrower than 16:9": DM_UISCREEN_BOTTOM etc. = turn on, with the UI rectangle (width = frame width, height = width÷16×9) top-aligned / centered / bottom-aligned; DM_UISCREEN_OFF = turn off and write the game's values back. Callable from any thread, takes effect next frame
 void dm_uiscreen_pump(void);                 // 游戏主线程每帧调：发现游戏重写了「屏幕宽高」全局量（开机、切主机 / 掌机档）就记下真实值并改写成界面用的值——只此一处，不分时机 | Called every frame on the game main thread: on finding that the game rewrote the "screen width / height" globals (boot, switching docked / handheld mode), record the real values and rewrite them to the values the UI uses - this one place only, regardless of occasion
@@ -9,11 +13,18 @@ int dm_screen_real(int *w, int *h);          // 真实画面宽高（3D 出图�
 void dm_ui_rect(int *x, int *y, int *w, int *h);   // 界面那块矩形在真实画面里的位置（像素）；没打开时 = 整个画面。图形层挪界面绘制、前端摆游戏视图都读它，纵向位置只有这一个来源 | Position of the UI rectangle in the real frame (pixels); when off = the whole frame. The graphics layer shifting the UI draw and the front end placing the game view both read it; it is the only source for the vertical position
 float dm_ui_ny(float ny_real);               // 真实画面归一化纵坐标 → 界面矩形里的归一化纵坐标（横向不变） | Normalized y in the real frame → normalized y within the UI rectangle (horizontal unchanged)
 float dm_ui_ny_back(float ny_ui);            // 反向 | Reverse
+int dm_ui_class_x(int x);                    // 原生前端场景横坐标转职业条横坐标；仅用于职业场景，按钮／模态框除外 | Native frontend scene x → 16:9 class hit-strip x; only for class selection, outside buttons/modal panels
+uint64_t dm_ui_point_pack(float x, float y); // 有符号归一化 UI 坐标；全屏控件可超出 16:9 矩形 | Signed normalized UI point; full-screen controls may lie outside the 16:9 rectangle
+float dm_ui_point_x(uint64_t p);
+float dm_ui_point_y(uint64_t p);
+void dm_ui_bottom_inset(int units);          // 窗口底部安全内边距加留白，以 2160 高 UI 单位计 | Actual window bottom safe inset + padding, in 2160-high UI units
+int dm_ui_bottom_offset(int margin);         // 向真实底边移动前端控件并保留安全间距 | Move a frontend bottom control toward the real bottom, preserving its safe margin
+int dm_ui_native_frontend(void);
 int dm_ui_proj_dy(void);   // 游戏「世界点 → 屏幕」（main+0x1237c60 / 0x90d110）的结果被减掉的纵向像素数（界面矩形的 y；没在减 = 0）。宿主自己调这两个函数要真实画面坐标时加回来 | Number of vertical pixels subtracted from the result of the game's "world point → screen" (main+0x1237c60 / 0x90d110) (the UI rectangle's y; not subtracting = 0). Add it back when the host itself calls these two functions and needs real frame coordinates
-int dm_uiscreen_ingame(void);                // 1 = 局内（真全屏）；0 = 局外（前端各页与读取画面：16:9 居中留边）。唯一信号，任意线程读 | 1 = in a run (true fullscreen); 0 = out of a run (front end pages and loading screen: 16:9 centered with margins). The single signal, readable from any thread
+int dm_uiscreen_ingame(void);                // 1 = 局内 UI 贴底；0 = 局外 UI 居中（前端各页与读取画面）。唯一信号，任意线程读 | 1 = in-run UI bottom-aligned; 0 = frontend/loading UI centered. The single signal, readable from any thread
 void dm_uiscreen_set_ingame(int on);          // 只许界面每帧那一处（dm_cursor.c）调 | May only be called from the per-frame UI site (dm_cursor.c)
 void dm_uiscreen_set_panel(int on);           // 局内开着大面板（功能页 / 箱子 / 商人 / 魔盒…，= 触摸前端的面板模式）：界面矩形移到正中；关掉回落前端选的摆法。触摸前端在界面消息回调里调 | A large panel open in a run (function pages / stash / vendor / cube..., = the touch front end's panel mode): the UI rectangle moves to the center; when closed it drops back to the placement the front end chose. Called by the touch front end in the UI message callback
 int dm_uiscreen_panel(void);                 // 上面那个状态：局内开着大面板 = 1 | The state above: a large panel open in a run = 1
 #include <stdint.h>
-uint64_t dm_game_res(int docked);            // 游戏出图分辨率参数位此刻该给的值（{u32 宽, u32 高} 打包）：前端的原生值，真全屏打开且不在局里时改成屏宽的 16:9 | The value the game's render resolution parameter slot should give right now (packed {u32 width, u32 height}): the front end's native value, changed to 16:9 of the screen width when true fullscreen is on and not in a run
+uint64_t dm_game_res(int docked);            // 游戏出图分辨率（{u32 宽, u32 高}）：默认原生比例，DM_FRONTEND_FULL=0 恢复局外 16:9 | Render resolution (packed {u32 width, u32 height}): native aspect by default; DM_FRONTEND_FULL=0 restores the 16:9 frontend
 void dm_uiscreen_res_reread(void);            // 只许 hle_oe.c 在游戏取走「性能模式变化」通知时调 | May only be called by hle_oe.c when the game takes the "performance mode changed" notification

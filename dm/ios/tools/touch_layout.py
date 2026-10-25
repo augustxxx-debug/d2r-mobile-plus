@@ -147,12 +147,12 @@ INSERT = {
           # 职业选择页：底部键位提示原来的位置放一个「返回」（面板本身锚在屏幕中心，按钮图宽 470 → x -235）；消息同 PC 版 ToMainMenu 按钮
           # Class selection page: a 「返回」(Back) is placed where the bottom button prompts used to be (the panel itself is anchored at the screen center, button image width 470 → x -235); same message as the PC version's ToMainMenu button
           'controller/console/charactercreatepanelhd.json': (r'\{\s*"type"\s*:\s*"ButtonLegendWidget"\s*,\s*"name"\s*:\s*"CharacterCreateLegend"',
-          # 「继续」居中（进模式页，消息同手柄确认；选定要有明确入口）；「返回」在它左边，宿主只在有存档时显示（dm_cursor.c）
-          # 「创建」居中（宽 728 → x -364），「返回」在它左边隔 80 单位；y 1850 起高 255，在职业竖条区（y < 1750）之下。文案用「创建」
-          # 「继续」(Continue) is centered (enters the mode page, same message as controller confirm; a selection needs an explicit entry); 「返回」(Back) is to its left, shown by the host only when a save exists (dm_cursor.c)
-          # 「创建」(Create) is centered (width 728 → x -364), with 「返回」(Back) 80 units to its left; from y 1850 with height 255, below the class strip area (y < 1750). The wording used is 「创建」(Create)
-          _btn_big('TouchNext', -235, 1900, '@UICreate', 'ConsoleCharacterCreate:ToConsoleCharacterOptions')
-          + _btn_big('TouchBack', -785, 1900, '@UIBack', 'FrontEndNavigation:ToCharacterSelect')),
+          # 「返回 / 创建」整组居中，在职业竖条区（y < 1750）之下。宿主在无存档时隐藏返回，并将创建单独居中。
+          # Center the Back/Create pair below the class strips (y < 1750). With no saves the host hides Back and centers Create alone.
+          # 按钮宽 470、间隔 80；隐藏返回时宿主将创建单独居中。
+          # 470-wide buttons, 80-unit gap; the host centers Create alone when Back is hidden.
+          _btn_big('TouchNext', 40, 1900, '@UICreate', 'ConsoleCharacterCreate:ToConsoleCharacterOptions')
+          + _btn_big('TouchBack', -510, 1900, '@UIBack', 'FrontEndNavigation:ToCharacterSelect')),
           # 起名页：键盘收起后要有路可走——「创建」「返回」两个按钮（发 PanelManager:ClosePanel:TouchKey<键>，宿主换成原版的 ＋ / B）；「按 Ⓐ 输入名称」那行挪走，点输入框即重新弹键盘
           # Naming page: there must be a way forward after the keyboard is dismissed -- the two buttons 「创建」(Create) and 「返回」(Back) (send PanelManager:ClosePanel:TouchKey<key>, which the host converts to the original game's + / B); the line 「按 Ⓐ 输入名称」(Press Ⓐ to enter a name) is moved away, and tapping the input box brings the keyboard up again
           'controller/console/charactercreatenamepanelhd.json': (r'\{\s*"type"\s*:\s*"ButtonLegendWidget"\s*,\s*"name"\s*:\s*"CharacterNameLegend"',
@@ -286,6 +286,11 @@ def _pc_charselect(s):
     # 右侧存档列表：整块往里收 SAFE_X；「线上 / 离线」页签挪走（只有离线）；列表三行字用回原主机档字号（统一 40 的大字装不下三行）
     # Save list on the right: the whole block is pulled inward by SAFE_X; the 「线上 / 离线」(Online / Offline) tabs are moved away (offline only); the three text lines of the list go back to the original console profile font sizes (the uniform large size of 40 does not fit three lines)
     s = _sub1(s, '"rect": { "x": -801, "y": 0 },', '"rect": { "x": %d, "y": 0 },' % (-801 - SAFE_X))
+    # 无头衔角色使用运行时位置而非文字控件矩形；恢复字号后将两行文字在 184 高行内居中。
+    # Untitled characters use these runtime positions instead of the text widgets'
+    # rects. Center their two-line block in the 184-unit row after restoring fonts.
+    s = _sub1(s, '"noTitleCharacterNamePosition": { "x": 25, "y": 68 }', '"noTitleCharacterNamePosition": { "x": 25, "y": 36 }')
+    s = _sub1(s, '"noTitleCharacterLevelClassPosition": { "x": 25, "y": 120 }', '"noTitleCharacterLevelClassPosition": { "x": 25, "y": 88 }')
     s, n = offscreen(s, types=(), names=('Tabs', 'ConvertCharacter'))
     if n != 2: raise SystemExit('touch_layout：键鼠版选角列表的页签 / 转换按钮没找到')
     # 「转换角色」不留，底图上它的槽和两槽之间的十字花一起去掉、只留居中一个槽（底图构建时由 gen_fe_rightpanel.py 从原图改出，gen_romfs_overlay.py 换进去）；垃圾桶移到居中槽上（+116 单位）
@@ -305,7 +310,7 @@ def _pc_charselect(s):
         i = s.index('"type": "TextBoxWidget", "name": "%s"' % name); m = re.compile(r'"pointSize":\s*"(\$[A-Za-z]+)"').search(s, i)
         if not m or m.group(1) != var: raise SystemExit('touch_layout：选角列表 %s 的字号不是原样（原版布局变了？）' % name)
         s = s[:m.start()] + '"pointSize": %d' % size + s[m.end():]; n += 1
-    return s, n + 1
+    return s, n + 3
 def _pc_ribbon(s):
     # 启用过场时保留原版左侧栏，触屏玩家也能从这里进入「电影动画」。
     if os.environ.get('MOVIE_FFMPEG') == '1':

@@ -26,18 +26,18 @@ static int mode(void) { int m = atomic_load(&g_mode); if (m >= 0) return m;
     const char *e = getenv("DM_UI_169"), *p = getenv("DM_UI_YPOS"); m = !(e && strcmp(e, "0")) ? DM_UISCREEN_OFF : p && !strcmp(p, "center") ? DM_UISCREEN_CENTER : p && !strcmp(p, "bottom") ? DM_UISCREEN_BOTTOM : DM_UISCREEN_TOP;
     int exp = -1; atomic_compare_exchange_strong(&g_mode, &exp, m); return atomic_load(&g_mode); }
 void dm_uiscreen_enable(int m) { atomic_store(&g_mode, m < DM_UISCREEN_OFF || m > DM_UISCREEN_BOTTOM ? DM_UISCREEN_OFF : m); }
-// 局内 / 局外（前端各页是按 16:9 整页设计的——点击区、标题、3D 人物是一体——整页居中留边；真全屏只在局内开）。
+// 局内 / 局外：局外 UI 居中，局内 UI 贴底；3D 默认两者都铺满。DM_FRONTEND_FULL=0 恢复局外整页 16:9 留边。
 // 唯一信号：dm_uiscreen_ingame()。定义 = HUDPanel 在且读取画面（LoadScreenPanel）不在，即读取画面两头都归局外：进局时读取画面撤掉后的第一帧起才算局内，
 // 出局时读取画面一盖上来就算局外。由界面每帧那一处（dm_cursor.c，游戏主线程）锁存，宿主各处与图形层都只读这一个值。
-// 界面矩形：局外居中，局内按前端选的摆法（贴底）。前端各页游戏本身就按 16:9 出图（见 dm_game_res），界面矩形 = 整个画面；居中只在「读取中、已是整屏分辨率」那一段用到。
-// In a run / out of a run (the front end pages are designed as whole 16:9 pages - tap areas, titles and the 3D character are one piece - so the whole page is centered with margins; true fullscreen is on only in a run).
+// 界面矩形：局外居中，局内按前端选的摆法（贴底）。局外原生比例出图时只把 UI 挪到正中，不缩放 3D。
+// In a run / out of a run: frontend UI is centered, in-game UI is bottom-aligned; both scenes fill the window. DM_FRONTEND_FULL=0 restores the letterboxed frontend.
 // The single signal: dm_uiscreen_ingame(). Definition = HUDPanel present and the loading screen (LoadScreenPanel) absent, i.e. both ends of the loading screen count as out of a run: on entering, in-run starts from the first frame after the loading screen is removed,
 // and on leaving, out-of-run starts as soon as the loading screen covers the view. It is latched at the per-frame UI site (dm_cursor.c, game main thread), and everywhere in the host and the graphics layer reads only this one value.
-// UI rectangle: centered out of a run, placed as the front end chooses in a run (bottom-aligned). On the front end pages the game itself already renders at 16:9 (see dm_game_res), so UI rectangle = the whole frame; centering is only used in the "loading, already at full-screen resolution" stretch.
+// UI rectangle: centered out of a run, placed as the front end chooses in a run (bottom-aligned). Center only the UI on native-aspect frontend scenes; do not scale the 3D scene.
 static _Atomic int g_ingame;
 void (*g_dm_charsel_hook)(void);   // 退出一局回到前端那一刻（diag.c 界面消息 FrontEndNavigation:ToFrontEnd 里调） | The moment of quitting a run back to the front end (called in diag.c's UI message FrontEndNavigation:ToFrontEnd)
 void (*g_dm_ingame_hook)(int on);   // 进局 / 出局那一刻（读取画面也算一次出局）；iOS：cloud_ios.m 拿「进局」记一局开始 | The moment of entering / leaving a run (the loading screen also counts as leaving once); iOS: cloud_ios.m uses "entering a run" to mark the start of a run
-void dm_uiscreen_set_ingame(int on) { if (atomic_exchange(&g_ingame, on != 0) != (on != 0)) { LOG("界面画面：%s", on ? "进局（真全屏）" : "出局（留边）"); if (g_dm_ingame_hook) g_dm_ingame_hook(on != 0); } }
+void dm_uiscreen_set_ingame(int on) { if (atomic_exchange(&g_ingame, on != 0) != (on != 0)) { LOG("界面画面：%s", on ? "进局（界面贴底）" : "出局（界面居中）"); if (g_dm_ingame_hook) g_dm_ingame_hook(on != 0); } }
 int dm_uiscreen_ingame(void) { return atomic_load(&g_ingame); }
 // 局内开着大面板：整块界面移到正中、上下留同样宽的边，关掉回落贴底；不做过渡（直接跳）。
 // 判据就是触摸前端的「面板模式」（摇杆收起、单指当光标的那个状态，front_ios.m 在界面消息回调里同步算出），只开着 NPC 对话菜单不算（菜单跟着 NPC 摆，留在贴底）。
@@ -69,11 +69,11 @@ static void ui_project_obs(const uint64_t *regs) {
 }
 int dm_ui_proj_dy(void) { return atomic_load(&g_proj_on) && atomic_load(&g_ingame) ? yoff() : 0; }
 
-// 游戏的出图分辨率（主机 / 掌机档各一个参数位，见 thread.c 与 hle_oe.c）：真全屏打开时按「玩家单位在不在」给值——不在（前端各页）= 屏宽的 16:9，
-// 游戏整个按 16:9 出图，3D、界面、点击区天然一致（就是留边模式）；在 = 屏幕原生比例。状态一变推一次「性能模式变化」通知（31），游戏重读参数位、改出图尺寸。
+// 游戏的出图分辨率（主机 / 掌机档各一个参数位，见 thread.c 与 hle_oe.c）：默认始终用原生比例。
+// 只有 DM_FRONTEND_FULL=0 时按玩家单位决定：不在 = 16:9，在 = 原生比例。状态变化通知游戏重读参数位。
 // 玩家单位的建立 / 销毁都落在读取画面期间；读取画面期间界面矩形是居中的 16:9（dm_uiscreen_ingame 为 0），所以读取画面肉眼位置不变。
-// The game's render resolution (one parameter slot each for docked / handheld mode, see thread.c and hle_oe.c): with true fullscreen on, the value is given by "whether the player unit exists" - absent (front end pages) = 16:9 of the screen width,
-// the game renders entirely at 16:9, and 3D, UI and tap areas are naturally consistent (this is just letterbox mode); present = the screen's native aspect ratio. Whenever the state changes, push one "performance mode changed" notification (31), and the game rereads the parameter slot and changes the render size.
+// Render resolution (docked / handheld slots, thread.c and hle_oe.c): native aspect by default.
+// Only DM_FRONTEND_FULL=0 chooses 16:9 while no player unit exists. State changes notify the game to reread its resolution slots.
 // The player unit's creation / destruction both fall within the loading screen; during the loading screen the UI rectangle is a centered 16:9 (dm_uiscreen_ingame is 0), so the loading screen does not visibly move.
 uint64_t front_game_res(int docked); void dm_oe_res_changed(void);
 // 游戏处理 31 时拿「屏幕宽高」全局量和新分辨率比（main+0xe10e10），相同就不切。出局时这对量里还是我们写的 16:9 高，正好等于要切去的值，游戏会以为已经切好了。
@@ -83,22 +83,61 @@ uint64_t front_game_res(int docked); void dm_oe_res_changed(void);
 void dm_uiscreen_res_reread(void) { uint8_t *b = main_base(); int rw = atomic_load(&g_rw); if (!b || !rw) return; int32_t *g = (int32_t *)(b + 0x211da38);
     if (g[0] == rw && g[1] == atomic_load(&g_uh)) g[1] = atomic_load(&g_rh); atomic_store(&g_rw, 0); }
 // 游戏处理 31 时（main+0xe10df0–0xe10e0c）只接受「宽高都不超过窗口初始化时的尺寸 [main+0x211da30]」的新值：窗口贴图按启动时的参数位一次建好，之后只在里面改出图区域。
-// 所以启动时给屏幕原生值（最大的那个），窗口初始化完、界面每帧那一处第一次跑到时再切到前端的 16:9。
+// 所以启动时给屏幕原生值（最大的那个），仅旧留边模式在窗口初始化完后切到 16:9。
 // When handling 31 (main+0xe10df0–0xe10e0c) the game only accepts new values where "both width and height do not exceed the size at window initialization [main+0x211da30]": the window texture is created once from the startup parameter slot, and afterwards only the render region inside it changes.
-// So give the screen's native value (the largest one) at startup, and switch to the front end's 16:9 once window initialization is done and the per-frame UI site first runs.
+// Give native dimensions at startup; only legacy letterbox mode switches to 16:9 after window initialization.
 static _Atomic int g_world, g_res_live;
+// 原生比例前端：UI 保持居中 16:9 安全矩形，3D 场景铺满；合成与触控共用矩形。
+// Native-aspect frontend: keep its UI in a centered 16:9 safe
+// rectangle, but let the 3D menu/character scene fill the window. The existing
+// UI rect is shared by compositing and touch conversion, so neither is stretched.
+// DM_FRONTEND_FULL=0 retains the upstream letterboxed frontend.
+static int frontend_full(void) {
+    const char *e = getenv("DM_FRONTEND_FULL");
+    return !e || atoi(e) != 0;
+}
+int dm_ui_native_frontend(void) { return frontend_full() && mode() != DM_UISCREEN_OFF; }
+// 前端相机保持纵向视野；较高屏幕的职业场景横向展开，仅场景命中需逆变换。
+// The frontend camera keeps its vertical field of view. On a taller screen its
+// lineup spreads horizontally, while the class hit strips stay in 16:9 UI space.
+// Undo that horizontal spread only for scene hit tests, never for UI buttons.
+int dm_ui_class_x(int x) {
+    int rw = atomic_load(&g_rw), rh = atomic_load(&g_rh), uh = atomic_load(&g_uh);
+    if (!frontend_full() || mode() == DM_UISCREEN_OFF || rw <= 0 || uh <= 0 || rh <= uh) return x;
+    return rw / 2 + (int)(((int64_t)x - rw / 2) * uh / rh);
+}
+static int32_t point_fixed(float v) {
+    if (!(v >= -4 && v <= 4)) v = v < 0 ? -4 : v > 0 ? 4 : 0;
+    return (int32_t)(v * 65536.0f);
+}
+uint64_t dm_ui_point_pack(float x, float y) { return (uint64_t)(uint32_t)point_fixed(x) << 32 | (uint32_t)point_fixed(y); }
+float dm_ui_point_x(uint64_t p) { return (int32_t)(p >> 32) / 65536.0f; }
+float dm_ui_point_y(uint64_t p) { return (int32_t)p / 65536.0f; }
+static _Atomic int g_bottom_inset;
+void dm_ui_bottom_inset(int units) { atomic_store(&g_bottom_inset, units < 0 ? 0 : units > 2160 ? 2160 : units); }
+int dm_ui_bottom_offset(int margin) {
+    int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); dm_screen_real(&rw, &rh);
+    if (!frontend_full() || mode() == DM_UISCREEN_OFF || h <= 0) return 0;
+    int reserve = atomic_load(&g_bottom_inset) - margin;
+    return (int)((int64_t)(rh - y - h) * 2160 / h) - (reserve > 0 ? reserve : 0);
+}
 int dm_uiscreen_res_live(void) { return atomic_load(&g_res_live); }
 uint64_t dm_game_res(int docked) { uint64_t r = front_game_res(docked); uint32_t w = (uint32_t)r, h = (uint32_t)(r >> 32);   // 先问前端：iOS 前端在第一次被问时才决定开不开真全屏 | Ask the front end first: the iOS front end only decides whether to turn on true fullscreen the first time it is asked
-    if (atomic_load(&g_res_live) && mode() != DM_UISCREEN_OFF && !atomic_load(&g_world) && (uint64_t)w * 9 < (uint64_t)h * 16) h = (uint32_t)((uint64_t)w * 9 / 16) & ~1u;
+    if (atomic_load(&g_res_live) && mode() != DM_UISCREEN_OFF && !atomic_load(&g_world) && !frontend_full() && (uint64_t)w * 9 < (uint64_t)h * 16) h = (uint32_t)((uint64_t)w * 9 / 16) & ~1u;
     return (uint64_t)h << 32 | w; }
 
 void dm_uiscreen_pump(void) {
     uint8_t *b = main_base(); if (!b) return;
     { int world = ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c)) != 0;
       int first = !atomic_exchange(&g_res_live, 1);
-      if ((atomic_exchange(&g_world, world) != world || (first && !world)) && mode() != DM_UISCREEN_OFF) { LOG("界面画面：%s → 游戏分辨率切到 %u x %u", world ? "玩家单位建立" : first ? "窗口已建好、在前端" : "玩家单位销毁", (unsigned)dm_game_res(1), (unsigned)(dm_game_res(1) >> 32)); dm_oe_res_changed(); } }
+      int changed = atomic_exchange(&g_world, world) != world;
+      // 原生全屏加载前后分辨率相同；多余通知会临时重建底部锚点，导致标志跳动。
+      // Native fullscreen uses the same render size on both sides of a load.
+      // A redundant resolution notification briefly restores the real UI height
+      // and rebuilds bottom anchors there, making loading/save icons jump.
+      if (((changed && !frontend_full()) || (first && !world)) && mode() != DM_UISCREEN_OFF) { LOG("界面画面：%s → 游戏分辨率切到 %u x %u", world ? "玩家单位建立" : first ? "窗口已建好、在前端" : "玩家单位销毁", (unsigned)dm_game_res(1), (unsigned)(dm_game_res(1) >> 32)); dm_oe_res_changed(); } }
     static int reg; if (!reg) { reg = 1; if (gate_obs_present(OBS_UI_PROJECT)) { gate_obs_set(OBS_UI_PROJECT, ui_project_obs); atomic_store(&g_proj_on, 1); } } int32_t *g = (int32_t *)(b + 0x211da38); int m = mode(), rw = atomic_load(&g_rw);
-    if (!atomic_load(&g_world) && m != DM_UISCREEN_OFF) return;   // 不在局里：游戏自己按 16:9 出图，这对量不改写（出局那一下的写回见 dm_uiscreen_res_reread） | Not in a run: the game renders at 16:9 by itself, so this pair of values is not rewritten (for the write-back at the moment of leaving a run see dm_uiscreen_res_reread)
+    if (!atomic_load(&g_world) && m != DM_UISCREEN_OFF && !frontend_full()) return;   // 传统前端以 16:9 渲染；原生前端与输入及合成共用居中安全矩形 | Legacy frontend renders at 16:9. Native-aspect frontend shares the centered UI-safe rectangle with the input and composite paths.
     if (m == DM_UISCREEN_OFF) { if (rw) { if (g[0] == rw && g[1] == atomic_load(&g_uh)) g[1] = atomic_load(&g_rh); atomic_store(&g_rw, 0); LOG("界面画面：关掉，屏幕高写回 %d", g[1]); } return; }   // 没打开过就什么都不碰 | If it was never turned on, touch nothing
     int w = g[0], h = g[1]; if (w <= 0 || h <= 0) return;
     if (rw && w == rw && h == atomic_load(&g_uh)) return;   // 还是我们上次写的值 | Still the value we wrote last time

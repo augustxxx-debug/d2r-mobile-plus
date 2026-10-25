@@ -286,6 +286,7 @@ void dm_tc_pointer_release(dm_tc_state *s, int kind) { s->pointer_release_item =
 void dm_tc_pointer_release_at(dm_tc_state *s, float x, float y) { s->pointer_release_item = 5; s->release_x = x; s->release_y = y; }
 void dm_tc_set_holding(dm_tc_state *s, int holding) { s->holding = !!holding; }
 void dm_tc_pointer_item(dm_tc_state *s, int kind) {
+    s->pointer_slow_button = kind == 12;   /* 12 仍按普通按钮处理，只放宽松手时限 | Kind 12 remains an ordinary button, with only its release deadline relaxed */
     if (kind == 7) { s->pointer_shop = 1; kind = 1; }
     s->pointer_lock = kind == 10; if (kind == 10) kind = 1;
     s->pointer_stack = kind == 8; if (kind == 8) kind = 1;   /* 8 = 高级仓库的成叠格：照物品区，只有双击不同 | 8 = stacked cell of the advanced stash: follows the item area, only double tap differs */   /* 7 = 商人货架上的货：别的都照物品区，只有起拖不同 | 7 = goods on the vendor shelf: everything else follows the item area, only drag start differs */
@@ -407,7 +408,7 @@ void dm_tc_cancel_finger(dm_tc_state *s, int slot) {
     s->finger[slot] = (dm_tc_finger){.target=DM_TC_NONE};
     if (slot == s->joy_slot) { s->joy_slot = DM_TC_NONE; s->joy_origin_x = s->joy_origin_y = 0; }
     if (slot == s->aim_slot) s->aim_slot = DM_TC_NONE;
-    if (slot == s->pointer_slot) { s->pointer_item = 0; s->pointer_shop = 0; s->pointer_stack = 0; s->pointer_lock = 0; s->pointer_slot = DM_TC_NONE; s->pointer_valid = 0; }
+    if (slot == s->pointer_slot) { s->pointer_item = 0; s->pointer_slow_button = 0; s->pointer_shop = 0; s->pointer_stack = 0; s->pointer_lock = 0; s->pointer_slot = DM_TC_NONE; s->pointer_valid = 0; }
     update(s);
 }
 void dm_tc_cancel_portal(dm_tc_state *s) {
@@ -509,7 +510,7 @@ void dm_tc_begin_at(dm_tc_state *s, int slot, float x, float y, double now_s) {
     /* 禁用圆仍阻止落入左摇杆区，防止隐藏回城触点变成移动。 | A disabled circle still blocks falling through into the left stick area, preventing a hidden town-portal touch point from turning into movement. */
     if (s->navigation_mode && hit == DM_TC_NONE && s->pointer_slot == DM_TC_NONE) {
         s->pointer_slot = slot;
-        s->pointer_item = 0;
+        s->pointer_item = 0; s->pointer_slow_button = 0;
         /* 鼠标点击模式下，手柄光标只跟「落在物品区的手指」走（前端答出命中后调 dm_tc_pointer_item）：
            光标是靠推摇杆走的，在没有自由光标的页面（选项、暂停菜单、小站）推摇杆 = 改当前选项 / 挪焦点（点页签顺带改了「显示物品」）
            In mouse click mode the controller cursor follows only "a finger that landed in the item area" (the front end calls dm_tc_pointer_item once it has the hit answer):
@@ -594,7 +595,7 @@ void dm_tc_end_at(dm_tc_state *s, int slot, double now_s) {
             else if (s->pointer_release_item == 8) {   /* 松在单件任务槽上：按原版走法重做——先放回原格，再对它按住 Y（原版的「放进槽」）。只把物品拿在手上停在槽上方不算进槽：槽会显示它，但点确认不成交（本机 实测没有成交包） | Released on the single-item quest slot: redo it the original game's way -- first put it back in its original cell, then hold Y on it (the original game's "put into slot"). Merely holding the item and hovering over the slot does not count as entering the slot: the slot shows it, but tapping confirm does not complete the transaction (measured on the local machine: no transaction packet) */
                 pointer_pulse_start(s, done.aim_origin_x, done.aim_origin_y, 2); pointer_pulse_btn(s, done.aim_origin_x, done.aim_origin_y, 2, DM_BTN_Y, 1.3); }
             else pointer_pulse_start(s, done.aim_origin_x, done.aim_origin_y, 2);                                                          /* 面板里的空白处：放回原处 | Blank area inside the panel: put it back where it was */
-        } else if (!done.ui_drag && !done.pointer_long && elapsed < DM_TC_POINTER_TAP_S && distance <= DM_TC_POINTER_MOVE_PT * scale_for(&s->layout)) {   /* 拖出去又拖回原处不算点按 | Dragging out and back to the original spot does not count as a tap */
+        } else if (!done.ui_drag && !done.pointer_long && (elapsed < DM_TC_POINTER_TAP_S || s->pointer_slow_button) && distance <= DM_TC_POINTER_MOVE_PT * scale_for(&s->layout)) {   /* 任务按钮慢点也接收；拖出去又拖回原处仍不算点按 | Accept slow quest-button taps; dragging out and back still does not count as a tap */
             /* 单件任务槽面板开着时，手上那件就是「槽里那件」：点背包格仍是放回去，点别处按没拿着处理——确认 / 关闭按钮要能点，点面板外 = 关面板（不是把槽里那件丢到地上） | While the single-item quest slot panel is open, the held item is "the one in the slot": tapping an inventory cell still puts it back, tapping elsewhere is handled as if nothing were held -- the confirm / close buttons must be tappable, and tapping outside the panel = close the panel (not drop the slot's item on the ground) */
             if (s->pointer_lock) { s->pointer_x = done.aim_origin_x; s->pointer_y = done.aim_origin_y; }   /* 单件槽占用时点别的物品：只移光标出说明，单击 / 双击都不动它 | Tapping another item while the single-item slot is occupied: only move the cursor to show the tooltip; neither single nor double tap moves it */
             else if (s->holding && s->pointer_item != 0 && !(atomic_load(&g_imbue_open) && s->pointer_item != 1)) { if (s->pointer_item == 1) pointer_pulse_start(s, done.aim_origin_x, done.aim_origin_y, 2);
@@ -634,7 +635,7 @@ void dm_tc_end_at(dm_tc_state *s, int slot, double now_s) {
                 s->mouse_click_x = done.aim_origin_x; s->mouse_click_y = done.aim_origin_y; ++s->mouse_click_seq;
             } else pointer_pulse_start(s, done.aim_origin_x, done.aim_origin_y, 2);
         }
-        s->pointer_item = 0; s->pointer_release_item = 1; s->pointer_shop = 0; s->pointer_stack = 0; s->pointer_lock = 0;
+        s->pointer_item = 0; s->pointer_slow_button = 0; s->pointer_release_item = 1; s->pointer_shop = 0; s->pointer_stack = 0; s->pointer_lock = 0;
         s->pointer_slot = DM_TC_NONE;
         s->finger[slot] = (dm_tc_finger){.target=DM_TC_NONE};
         update(s);

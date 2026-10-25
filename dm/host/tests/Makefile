@@ -32,6 +32,7 @@ run: \
 	$(B)/t_movie \
 	$(B)/t_namegen \
 	$(B)/t_oe \
+	$(B)/t_uiscreen_frontend \
 	$(B)/t_padmap \
 	$(B)/t_rift_clock \
 	$(B)/t_rift_next \
@@ -75,6 +76,7 @@ run: \
 	$(B)/t_hid_receipt 2>/dev/null
 	$(B)/t_touch_mac
 	$(B)/t_oe 2>/dev/null
+	$(B)/t_uiscreen_frontend
 	$(B)/t_fs 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_fs_case 2>/dev/null
 	DM_ROMFS="$(DM_ROOT)/data/switch/3.3.94012/Update/RomFS" $(B)/t_romfs_validate
@@ -166,6 +168,9 @@ $(B)/t_hid_script: t_hid_script.c t_touch_tick_stub.c ../hle_hid.c ../dm_cursor.
 
 $(B)/t_oe: t_oe.c ../hle_oe.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_oe.c
+
+$(B)/t_uiscreen_frontend: t_uiscreen_frontend.c ../dm_uiscreen.c ../dm_uiscreen.h ../hle.h ../dm.h | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_uiscreen_frontend.c
 
 $(B)/t_hid_receipt: t_hid_receipt.c t_touch_tick_stub.c ../hle_hid.c ../dm_cursor.c ../dm_hud.c ../dm_hud.h ../touch_mac.c ../../ios/Sources/dm_touch_controls.c ../hle.h ../dm.h ../dm_input.h ../front.h | $(B) ../dm_prof.c
 	clang -O1 -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_hid_receipt.c t_touch_tick_stub.c ../dm_cursor.c ../dm_hud.c ../touch_mac.c ../../ios/Sources/dm_touch_controls.c -lm ../dm_prof.c

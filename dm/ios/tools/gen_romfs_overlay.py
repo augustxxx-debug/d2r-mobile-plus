@@ -19,6 +19,16 @@ REPL={'data/hd/global/ui/panel/hud_02/bugbtn.sprite':'base.sprite',            #
       'data/hd/global/ui/panel/hud_02/front_panel.sprite':'close.sprite',       # 借用路径：局内面板外框右上角的关闭按钮图（NativeHUD/touch/close.png，gen_close_btn.py） | Borrowed path: the close button image at the top-right corner of the in-game panel outer frame (NativeHUD/touch/close.png, gen_close_btn.py)
       'data/global/ui/layouts/controller/hudpanelhd.json':os.path.join(V4,'hud.json')}
 with tempfile.TemporaryDirectory() as t:
+    import font_override
+    selected_font = font_override.prepare(romfs)
+    if selected_font:
+        REPL[font_override.GAME_FONT] = selected_font
+    import edge_indicators, touch_layout
+    for edge_path, positions in edge_indicators.LAYOUTS.items():
+        path, text = touch_layout.read_layout(romfs, edge_path)
+        target = os.path.join(t, 'edge_' + os.path.basename(edge_path))
+        open(target, 'w', encoding='utf-8').write(edge_indicators.prepare(text, positions))
+        REPL[path.lower()] = target
     # 系统通知框（如改难度后的「游戏难度设为 N…」）：左边 = 七格行最左格（难度格）左外沿，右边 = 最右格（红十字）右外沿，停留 5 秒；高度不动，纵向比原版上移 100 单位（原位 y=-500 压住底栏上方「Lv · 经验」那行）
     # （原版宽 1200 单位居中屏幕、停 10 秒）。几何从 hud_v4_ui/ui.json 的七格算，不手写：布局 1 单位 = 屏高/2160（gen_hud_v4.py 实测），框锚点在屏幕水平中心。
     # 落点按真机量（界面按游戏内部分辨率画，落到 2868 宽屏幕上约 1.8 px 一格取整）：边框亮线两侧各有 1 px 暗边，宽度两边各放 1 px；
@@ -30,6 +40,10 @@ with tempfile.TemporaryDirectory() as t:
     ui=json.load(open(os.path.join(V4,'hud_v4_ui','ui.json'))); ref_w,ref_h=ui['ref']; k=2160/ref_h
     x0,x1=ui['slots'][0][0]-1,ui['slots'][-1][2]+1
     nw=round((x1-x0)*k); nx=round(((x0+x1)/2-ref_w/2)*k)-1
+    import gen_notification_frame
+    frame_file=os.path.join(t,'notification_frame.sprite')
+    gen_notification_frame.build(romfs,frame_file,(nw+1)//2,122)
+    REPL[gen_notification_frame.TARGET]=frame_file
     # 系统提示框：整份自己写、不继承原版那份——原版带一个铺满的 Confirm 按钮（继承来的子控件删不掉），提示在屏上时它接住功能键和点击：
     # 按功能键 / 点它压着的地方都只是把提示关掉（面板开不了、下面的格子点不到）。触屏上提示到点自己消失，不要这个按钮
     # 停靠高度 y −790（原版 −500；先前为让开经验条提到 −600，仍压着底栏上方那行「生命 / 法力」数值——数值位数多时字伸进框里，触屏版那行更高、直接叠在框中间）：
@@ -40,8 +54,10 @@ with tempfile.TemporaryDirectory() as t:
     # the lower edge of the box has to be above the upper edge of the number row; the touch layout needs about 173 more units, the gamepad layout about 77, so one value that clears both is taken. Only the docking position in the layout changes; slide-in and slide-out are still the game's own animation
     note={'type':'NotificationPanel','name':'NotificationPanel',
           'fields':{'priority':9002,'notificationSeconds':5.0,'transitionSeconds':0.8,'rect':{'x':nx,'y':-790,'width':nw,'height':244},'anchor':{'x':0.5,'y':1.0}},
-          'children':[{'type':'NineTileImageWidget','name':'NotificationBorder',
-                       'fields':{'rect':{'x':0,'y':0,'width':nw,'height':244},'anchor':{'x':-0.5,'y':0.0},'filename':'PANEL/TooltipBorder/TooltipBorder','backgroundColor':[0.0,0.0,0.0,0.70],'tileScale':1},
+          # 将游戏按钮端部／石材烘焙为单张图片，文字仍由原生绘制。
+          # Bake the game's button caps/stone into one image. Text stays native.
+          'children':[{'type':'ImageWidget','name':'NotificationBorder',
+                       'fields':{'rect':{'x':0,'y':0,'width':nw,'height':244},'anchor':{'x':-0.5,'y':0.0},'filename':'Ztouch_notification/frame'},
                        'children':[{'type':'TextBoxWidget','name':'Prompt','fields':{'fitToParent':True,'style':'$StyleNotification'}}]}]}
     json.dump(note,open(os.path.join(t,'notification.json'),'w'),indent=1)
     REPL['data/global/ui/layouts/controller/notificationpanelhd.json']=os.path.join(t,'notification.json')
@@ -92,6 +108,7 @@ with tempfile.TemporaryDirectory() as t:
     # and the Chronicle vault tab. So another copy is generated on top of the original layouts with the same set of feature modules and placed at the
     # original paths; touch changes are not included
     tpad=os.path.join(t,'pad'); os.makedirs(tpad); PR={}
+    PR['data/global/ui/layouts/controller/console/loadscreenpanelhd.json']=REPL['data/global/ui/layouts/controller/console/loadscreenpanelhd.json']
     lp,lt=touch_layout.read_layout(romfs,pouch_layout.INV); o=os.path.join(tpad,'pad_inv.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_inv_rw(lt)); PR[lp.lower()]=o
     for rel,gd in (('controller/pauselayoutgardenhd.json',1),('controller/pauselayouthd.json',0)):   # 手柄版暂停菜单：一键重开 / 切换难度 / 存放 / 分享诊断日志 | Controller pause menu: one-tap restart / change difficulty / Deposit / Share Diagnostics
         lp,lt=touch_layout.read_layout(romfs,rel); o=os.path.join(tpad,'pad_pause%d.json'%gd); open(o,'w',encoding='utf-8').write(touch_layout.pad_pause(lt,gd,share=not os.environ.get('DM_OVERLAY_MAC'))); PR[lp.lower()]=o
@@ -185,12 +202,18 @@ with tempfile.TemporaryDirectory() as t:
     # Meant to be shared by both modes all along (our own pages, one layout for controller / touch, placed by the host according to mode): the three Chronicle ones
     # Existing stock not yet split: the two font size profiles (read only once at boot)
     SHARED_TODO=('chroniclebaselistpanelhd.json','chroniclepanelhd.json','controller/_profileconsolehd.json','controller/_profilehandheldhd.json','dropdownlistcontentshd.json')
-    PADROOT=touch_layout.build_pad_root(romfs,tpad); PADROOT_KEYS={k[len(LAY):] for k in PADROOT}   # 三份选项页：原路径放手柄那份，触屏那份挪到触屏这边 | The three options pages: the controller copy goes at the original path, the touch copy moves to the touch side
+    PADROOT=touch_layout.build_pad_root(romfs,tpad)
+    # 两种模式分别显式复制，宿主保护初始位置；保持根布局隔离检查。
+    # Explicit copies for both modes: constructor placement is guarded by the
+    # host in either mode. Keep the root-layout isolation checks intact.
+    for name in ('mainmenuloadingpanelhd.json','saveindicatorpanelhd.json'):
+        PADROOT[LAY+name]=REPL[LAY+name]
+    PADROOT_KEYS={k[len(LAY):] for k in PADROOT}
     UNSHARE=('confirmationmodalhd.json','dismissablemodalhd.json','helpbuttonpanelhd.json','npcdialogpanelhd.json','youdiedmodalhd.json')   # 只该给触屏的：挪到触屏这边（见 emit） | Touch-only ones: moved to the touch side (see emit)
     PADLAY={k:v for k,v in PR.items() if touch_path(k)}   # 手柄版只取布局（数据表、图与触屏版同一份） | The controller version takes only layouts (data tables and images are the same copy as the touch version)
     # 手柄专用清单：手柄模式下不是原版字节的布局就这几份，一份不许多、一份不许少（改上面某一行时把相邻一行整行替掉过，商人页的刷新钮就从包里掉了）
     # Controller-only list: these are the only layouts that are not original bytes in controller mode, not one more and not one fewer (once, when a line above was edited, the adjacent line was replaced whole, and the vendor page's refresh button dropped out of the package)
-    PAD_PAGES=('controller/bankexpansionlayouthd.json','controller/console/charactercreatepanelhd.json','controller/console/characteroptionspanelhd.json','controller/console/mainmenubuttonribbonhd.json','controller/console/mainmenupanelhd.json','controller/console/settingspanelhd.json','controller/console/switch/playerinventoryexpansionlayouthd.json','controller/console/videooptionspanelhd.json',
+    PAD_PAGES=('controller/bankexpansionlayouthd.json','controller/console/charactercreatepanelhd.json','controller/console/characteroptionspanelhd.json','controller/console/loadscreenpanelhd.json','controller/console/mainmenubuttonribbonhd.json','controller/console/mainmenupanelhd.json','controller/console/settingspanelhd.json','controller/console/switch/playerinventoryexpansionlayouthd.json','controller/console/videooptionspanelhd.json',
                'controller/controlleroverlayhd.json','controller/hirelinginventorypanelhd.json','controller/hudmonsterhealthhd.json','controller/messagelogpanelhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json','controller/vendorpanellayouthd.json')
     if sorted(k[len(LAY):] for k in PADLAY)!=sorted(PAD_PAGES): raise SystemExit('gen_romfs_overlay：手柄专用布局与清单 PAD_PAGES 不一致：多 %s，少 %s' % (sorted(set(k[len(LAY):] for k in PADLAY)-set(PAD_PAGES)), sorted(set(PAD_PAGES)-set(k[len(LAY):] for k in PADLAY))))
     def emit(repl, dst, tag, prebuilt=None):   # repl → 覆盖层（新 .build.config + 一个新数据档）写到 dst/data | repl → overlay (a new .build.config + one new data archive) written to dst/data

@@ -905,7 +905,9 @@ static void window_px(CGSize s, CGFloat k) {
     if (dm_uiscreen_res_live()) dm_oe_res_changed();
 }
 @implementation DmLetterboxView
+- (void)safeAreaInsetsDidChange { [super safeAreaInsetsDidChange]; [self setNeedsLayout]; }
 - (void)layoutSubviews { [super layoutSubviews]; window_px(self.bounds.size, UIScreen.mainScreen.nativeScale); if (self.bounds.size.width > 0 && self.bounds.size.height > 0) self.game.frame = letterbox_rect(self.bounds);
+    if (self.game.bounds.size.height > 0) dm_ui_bottom_inset((int)lround((self.safeAreaInsets.bottom + 12) * 2160 / self.game.bounds.size.height));
     { static CGRect last; CGRect g = self.game.frame; if (g_full && !CGRectEqualToRect(g, last)) { last = g; int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); dm_screen_real(&rw, &rh); LOG("画面：游戏视图摆到 y %.0f 高 %.0f（窗口 %.0fx%.0f；真实画面 %dx%d，界面矩形 y %d 高 %d）", g.origin.y, g.size.height, self.bounds.size.width, self.bounds.size.height, rw, rh, y, h); } }
     if (g_full && g_layer.superlayer == self.layer) { [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = self.bounds;
         g_layer.drawableSize = CGSizeMake(self.bounds.size.width * g_layer.contentsScale, self.bounds.size.height * g_layer.contentsScale); [CATransaction commit]; } }

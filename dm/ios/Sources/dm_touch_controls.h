@@ -107,6 +107,7 @@ typedef struct {
     unsigned long_press_seq;   /* 物品区按住不动满长按时长的次数（前端看到变化调宿主 dm_ui_long_press：背包药水 → 腰带） | Number of times the item area was held still for the full long-press duration (on seeing a change the front end calls the host's dm_ui_long_press: inventory potion → belt) */
     unsigned tab_tap_seq;   /* 点按落在页签上的次数（前端看到变化调宿主 dm_ui_tab_go） | Number of taps that landed on a tab (on seeing a change the front end calls the host's dm_ui_tab_go) */
     int mouse_click_mode; unsigned mouse_click_seq; float mouse_click_x, mouse_click_y;
+    int pointer_slow_button;   /* 任务按钮允许按住后松手点击，不受普通短点按时限限制 | Quest buttons accept a stationary release without the ordinary short-tap deadline */
     /* 前端临时改写「面板内非物品区的点按」：非 0 = 不发鼠标点击，改成手柄光标走到触点、到位后按这个键（技能绑定流程里点技能 = 光标到它身上按 Y）。页签 / 面板外照旧 | Temporary front-end rewrite of "taps inside a panel outside the item area": non-zero = send no mouse click; instead the controller cursor walks to the touch point and presses this key on arrival (tapping a skill in the skill binding flow = cursor onto it and press Y). Tabs / outside the panel behave as before */
     uint64_t tap_button; float tap_x, tap_y; int tap_move; unsigned tap_move_seq;   /* tap_move：本次点按只把光标移到 tap_x / tap_y，不发点击（技能图标 / 属性「+」：先选中、再确认） | tap_move: this tap only moves the cursor to tap_x / tap_y and sends no click (skill icon / attribute "+": select first, then confirm) */
     double pulse_hold_s;

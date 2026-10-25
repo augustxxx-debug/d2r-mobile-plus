@@ -78,6 +78,9 @@ def frame(romfs, path, i=0):
 
 _fonts = {}
 def font(romfs, name):
+    if name.lower() == 'blizzardglobal-v5_81.ttf' and os.environ.get('DM_UI_FONT'):
+        import font_override
+        return font_override.prepare(romfs)
     if name not in _fonts:
         p = os.path.join(tempfile.mkdtemp(), os.path.basename(name)); open(p, 'wb').write(read(romfs, 'hd/ui/fonts/' + name)); _fonts[name] = p
     return _fonts[name]

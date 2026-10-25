@@ -482,6 +482,11 @@ uint64_t dm_guest_frame(void);
 // After release: Move + Down on the next frame, then Move + Up on the frame after (at least one frame of hover has already held before the press).
 static _Atomic int g_ut_phase;                      // 0 无 1 按着 2 待发按下 3 待发抬起 | 0 none, 1 held down, 2 press pending, 3 release pending
 static _Atomic uint64_t g_ut_xy;                    // 归一化坐标各 16 位 | Normalized coordinates, 16 bits each
+// 菜单控件可位于居中安全矩形下方；扩展坐标单独保存，不改动局内物品／技能坐标。
+// Menu controls may sit below the centered UI-safe rect. Keep that extension
+// separate: in-game pointer packing and all item/skill paths remain unchanged.
+static _Atomic uint64_t g_fe_touch_point;
+static _Atomic int g_fe_touch_extended;
 // 职业选择页（实玩后重做）。读码（人物控件 HDCharacterSelectorWidget，虚表 main+0x20c6fb8，消息处理 main+0xc2d840）：
 //   · 控件状态字 +0x13f4：0 待机 / 1 出列中 / 2 已出列 / 3 归队中；设置状态并起动画的函数 main+0xc2cf24(控件, 状态)。
 //   · 左键按下（main+0xc2dc94）：自己是 2 → 确认进模式页；自己不是 0 → 不收；自己是 0 但全局标志 main+0x2f143b0（有人在出列中）为真 → 不收。
@@ -517,8 +522,11 @@ int dm_fe_bliss(void) { return atomic_load(&g_fe_bliss); }
 static _Atomic int g_fe_del_open, g_del_q, g_del_hold;   // 模式页 / 确认框开着；模式页上点了牌子以外 → 返回 | Mode page / confirmation box open; on the mode page a tap landed outside the plaques -> back
 int dm_restart_busy(void);   // 一键重开进行中（定义在下面）：界面触点一律丢掉 | One-key restart in progress (defined below): all UI touch points are dropped
 void dm_ui_touch(int phase, float nx, float ny) { if (phase != 3 && dm_restart_busy()) return;   // phase：0 按下 1 移动 2 抬起 3 作废（按下后改成了滚动：这次不点）；nx / ny = 出图画面归一化坐标 [0,1] | phase: 0 down, 1 move, 2 up, 3 cancelled (turned into a scroll after the press: no click this time); nx / ny = coordinates normalized to the rendered picture [0,1]
-    if (phase == 3) { atomic_store(&g_ut_phase, 0); atomic_store(&g_del_q, 0); atomic_store(&g_del_hold, 0); return; }
+    if (phase == 3) { atomic_store(&g_fe_touch_extended, 0); atomic_store(&g_ut_phase, 0); atomic_store(&g_del_q, 0); atomic_store(&g_del_hold, 0); return; }
     if (phase != 1) DM_LAT("ui_touch %d", phase);
+    int extended = !dm_uiscreen_ingame() && (ny < 0 || ny > 1);
+    if (extended) atomic_store(&g_fe_touch_point, dm_ui_point_pack(nx, ny));
+    atomic_store(&g_fe_touch_extended, extended);
     nx = nx < 0 ? 0 : nx > 1 ? 1 : nx; ny = ny < 0 ? 0 : ny > 1 ? 1 : ny;
     atomic_store(&g_ut_xy, ((uint64_t)(uint32_t)(nx * 65535 + .5f) << 16) | (uint32_t)(ny * 65535 + .5f));
     // 「选择游戏模式」页只有标准 / 专家两块牌子（布局 y 899–1259 / 2160，覆盖层已挪走天梯行与键位提示）：点牌子那一行以外 = 返回职业选择
@@ -888,9 +896,11 @@ static int ui_snap(module_t *m, uint64_t root, int *x, int *y) {   // 0 周围�
     if (slider_arrow(m, root, x, y, w, h)) return 2;
     g_click_exact = 1; int on = SNAP_AT(*x, *y, lo, (int)n - 1); g_click_exact = 0; if (on) return 1;
     static const int dx[8] = { 0, 0, -1, 1, -1, 1, -1, 1 }, dy[8] = { -1, 1, 0, 0, -1, -1, 1, 1 };   // 先上下、再左右、再斜向：按钮多是横长条，上下偏的最多 | Up/down first, then left/right, then diagonals: buttons are mostly wide horizontal bars, so vertical misses are the most common
+    int min_y = 0, max_y = h;
+    if (!dm_uiscreen_ingame()) { int ux, uy, uw, uh, rw=0, rh=0; dm_ui_rect(&ux,&uy,&uw,&uh); dm_screen_real(&rw,&rh); if (rh>0 && uh==h) { min_y=-uy; max_y=rh-uy; } }
     float R = 90.0f * h / 2160.0f;
     for (int ring = 1; ring <= 9; ring++) for (int d = 0; d < 8; d++) { float r = R * ring / 9 * (d < 4 ? 1.0f : 0.7071f);   // 九圈（每圈约 0.4 毫米）：两个按钮之间的缝里落点归更近的那个 | Nine rings (about 0.4 mm each): a point in the gap between two buttons goes to the nearer one
-        int px = *x + (int)(dx[d] * r), py = *y + (int)(dy[d] * r); if (px < 0 || py < 0 || px >= w || py >= h) continue;
+        int px = *x + (int)(dx[d] * r), py = *y + (int)(dy[d] * r); if (px < 0 || py < min_y || px >= w || py >= max_y) continue;
         if (SNAP_AT(px, py, lo, (int)n - 1)) {   // 吸附到的点在控件边上：点击发到控件中心（沿这一点向四个方向探边）；中心若落在别的控件上（套着的子按钮）就留在取样点 | The snapped point is on the widget's edge: send the click to the widget center (probe edges in four directions from this point); if the center falls on another widget (a nested child button) stay at the sample point
             uint64_t cw = dm_wref_get(&g_click); int qx = px, qy = py; slot_center(cw, &qx, &qy, w, h, 0);
             if (SNAP_AT(qx, qy, lo, (int)n - 1) && dm_wref_get(&g_click) == cw) { px = qx; py = qy; } else { SNAP_AT(px, py, lo, (int)n - 1); }
@@ -1065,7 +1075,28 @@ static int pg_near(uint64_t root, int x, int y, int vh) {   // 这一点在哪�
             if (((int (*)(uint64_t, uint64_t))fn)(t, (uint64_t)(uint32_t)xx | ((uint64_t)(uint32_t)yy << 32)) & 1) return k ? 1 : -1; } }
     return 0;
 }
-static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size_t hn) {   // 1 物品区 / 2 页签 / 0 面板内其它控件 / 3 面板外 / 9 模态框外 | 1 item area / 2 tab / 0 other widget inside the panel / 3 outside the panel / 9 outside a modal
+// 任务图标、重播和关闭按钮：只有真正属于任务页的控件才放宽点按时限。
+// Relax the tap deadline only for quest icons, replay and close buttons owned by a quest page.
+static int ui_quest_button(uint64_t w) {
+    const char *nm=w?(const char *)*(uint64_t *)(w+8):NULL;
+    if (!nm) return 0;
+    int icon=!strncmp(nm,"Quest",5) && nm[5]>='0' && nm[5]<='9';
+    if (icon) for (const char *s=nm+5;*s;s++) if (*s<'0' || *s>'9') { icon=0; break; }
+    if (!icon && strcmp(nm,"Speech") && strcmp(nm,"TouchClose")) return 0;
+    for (int depth=0;w && depth<24;depth++,w=*(uint64_t *)(w+0x30)) {
+        nm=(const char *)*(uint64_t *)(w+8);
+        if (nm && (!strcmp(nm,"QuestLogPanelExpansion") || !strcmp(nm,"QuestLogPanelOriginal"))) return 1;
+    }
+    return 0;
+}
+static int ui_button_kind(uint64_t w) {
+#if defined(__APPLE__) && DM_PHONE
+    return ui_quest_button(w)?12:0;
+#else
+    (void)w; return 0;
+#endif
+}
+static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size_t hn) {   // 12 任务页慢点按按钮；其余分类保持原样 | 12 quest-page button with relaxed tap timing; other classifications are unchanged
     if (g_cls_out) { g_cls_out = 0; const char *on = "";
         if (modal_top(m, root, &on)) { snprintf(hit, hn, "模态框外 %s", on); g_modal_name = on; return 9; }
         g_inside_owner = ""; atomic_store(&g_bd_hit, 0); atomic_store(&g_close_down, 0); snprintf(hit, hn, "（界面矩形外）"); return 3; }
@@ -1148,7 +1179,7 @@ static int ui_classify0(module_t *m, uint64_t root, int x, int y, char *hit, siz
           if (tgt >= 0) { dm_wref_set(&g_tab_ref, 0); atomic_store(&g_tab_have, 0); atomic_store(&g_tab_delta, tgt - cur); atomic_store(&g_tab_top, 0); snprintf(hit, hn, "技能树分页 %+d", tgt - cur); return 2; } } }
     { int sx = x, sy = y, sn = ui_snap(m, root, &sx, &sy); if (sn == 6) { snprintf(hit, hn, "盖:%s 不点", g_inside_name); return 6; }
       if (sn == 1) { if (snap_guarded(root, g_click_name)) snap_guard_near(dm_wref_get(&g_click), g_click_name, x, y, sx, sy, *(int32_t *)(m->base + 0x211da38), *(int32_t *)(m->base + 0x211da3c));   // 只为留一行本体点数读数 | only to leave one line of readout of the widget body's size in points
-          snprintf(hit, hn, " 可点控件 %s", g_click_name); bd_note_skill(m, root, sx, sy); return 0; }
+          snprintf(hit, hn, " 可点控件 %s", g_click_name); bd_note_skill(m, root, sx, sy); return ui_button_kind(dm_wref_get(&g_click)); }
       // 个人仓库的翻页箭头（命中框只有 64 单位见方，手机上约 13 点）：点偏了被吸附到箭头上时，同样发翻页请求——翻个人仓库页是宿主做的（dm_pages.c），
       // 原先只有正点在命中框里才发；吸附过去的那一下只发了原版点击，原版在个人页不认，表现为「点了没反应」（的翻页偶发点不动）
       // The page-flip arrows of the personal stash (the hit box is only 64 units square, about 13 points on a phone): when an off-target tap is snapped onto an arrow, the page-flip request is sent as well -- flipping personal stash pages is done by the host (dm_pages.c),
@@ -1156,7 +1187,7 @@ static int ui_classify0(module_t *m, uint64_t root, int x, int y, char *hit, siz
       if (sn && (!strcmp(g_click_name, "TouchStashLeft") || !strcmp(g_click_name, "TouchStashRight")) && pg_personal(root)) {
           void dm_pages_request_flip(int); int dir = g_click_name[10] == 'R' ? 1 : -1; dm_pages_request_flip(dir); snprintf(hit, hn, "个人仓库%s一页（点偏，吸附）", dir > 0 ? "下" : "上"); return 6; }
       if (sn && snap_guarded(root, g_click_name) && !snap_guard_near(dm_wref_get(&g_click), g_click_name, x, y, sx, sy, *(int32_t *)(m->base + 0x211da38), *(int32_t *)(m->base + 0x211da3c))) { snprintf(hit, hn, "吸附到 %s：后果重的按钮只认本体（不足 44 点的外扩到 44 点见方），不点", g_click_name); return 6; }
-      if (sn) { snprintf(hit, hn, " 吸附 %s (%d,%d)", g_click_name, sx, sy); bd_note_skill(m, root, sx, sy); return 0; }   // 在可点控件上或它 3.5 毫米内（含面板边上的按钮外沿） | On a clickable widget or within 3.5 mm of it (including the outer rim of buttons at the panel edge)
+      if (sn) { snprintf(hit, hn, " 吸附 %s (%d,%d)", g_click_name, sx, sy); bd_note_skill(m, root, sx, sy); return ui_button_kind(dm_wref_get(&g_click)); }   // 在可点控件上或它 3.5 毫米内（含面板边上的按钮外沿） | On a clickable widget or within 3.5 mm of it (including the outer rim of buttons at the panel edge)
       // 再外一圈（到 PG_REACH 单位）：周围没有别的可点控件抢这一下（上面的吸附没找到）、又不在物品格上（更前面已判）时也算点箭头——
       // 箭头连同这一圈的有效范围 = 64 + 2 × 112 = 288 单位见方，375 点高的屏上正好 50 点，更高的屏更大
       // One more ring out (up to PG_REACH units): when no other clickable widget around competes for this tap (the snap above found nothing) and it is not on an item cell (already checked further up), it also counts as tapping the arrow --
@@ -1567,6 +1598,7 @@ static void ui_ptr_pump(module_t *m, uint64_t root, int width, int height) {
     uint64_t v = atomic_load(&g_up_xy); int x = (int)(((v >> 16) & 0xffff) / 65535.0 * width), y = (int)((v & 0xffff) / 65535.0 * height); if (x >= width) x = width - 1; if (y >= height) y = height - 1;
     int dm_vault_ui_blocks(int, int), vb = (dm_ui_panel_state() & DM_PS_VAULT) && dm_vault_ui_blocks(x, y);   // 编年史页上（我们的控件除外）：悬停与按键都不发，见 dm_vault_ui.c | On the chronicle page (except our own widgets): neither hover nor key presses are sent, see dm_vault_ui.c
     if (!vb) ui_send_mouse(m, root, hs[0], x, y);
+    if (unhover && !vb) { int refreshed = dm_ui_hover_now(x, y); LOG("界面页签：切页后刷新原版光标 (%d,%d) → %d", x, y, refreshed); }
     if (!pend) return;
     int k = g_up_q[r % 32].kind, a = g_up_q[r % 32].arg; atomic_store(&g_up_r, r + 1);
     if (k == DM_UP_END) atomic_store(&g_up_hold, 0); else if (k >= DM_UP_LDOWN && k <= DM_UP_KEYUP && !vb) { ui_send_mouse_arg(m, root, hs[k], x, y, a); LOG("界面指针：事件 %d 参数 %d @(%d,%d)", k, a, x, y); }
@@ -1790,14 +1822,24 @@ static int bd_top_tab(uint64_t root) {
 // what is moved is "original value + offset": the first move records the original value, and afterwards if the current value is found not to be what we last wrote (the game rebuilt / re-laid it out) the current value becomes the new original; offset 0 = write back the original value (only if the current value is still ours, so the game's own value is not overwritten) and forget the entry.
 // A bit whose condition is gone must have no entries left (mv_restore, which only writes widgets still attached to the UI tree). Self-check mv_audit: 12 frames after closing a panel / switching tabs / going to background / exiting to the front end, a bit whose condition no longer holds but still has entries reports a failure.
 // Static scan (tests/native_write_scan.py): in this file, writes to widget rects +0x70–+0x7c are only allowed inside mv_offset and ui_move_ours
-enum { MV_BIND, MV_LIFT, MV_WIDE, MV_SAFE, MV_CUBE, MV_TROVE, MV_N };
-static const char *const mv_name[MV_N] = { "技能绑定框挪屏外", "真全屏贴顶上提", "储藏箱加宽", "安全区内移", "魔盒并排右移", "珍宝匣页签" };
+enum { MV_BIND, MV_LIFT, MV_WIDE, MV_SAFE, MV_CUBE, MV_TROVE, MV_FE_BOTTOM, MV_LOAD_BOTTOM, MV_SAVE_BOTTOM, MV_N };
+static const char *const mv_name[MV_N] = { "技能绑定框挪屏外", "真全屏贴顶上提", "储藏箱加宽", "安全区内移", "魔盒并排右移", "珍宝匣页签", "菜单贴底", "加载标志贴底", "存档标志贴底" };
 typedef struct { dm_wref r; int own, f, relayout; int32_t orig, val; } mvent;   // r：挪过的控件。认条目按 r.w 比身份、写之前用 ui_has 核在不在树上（重载布局时面板会摘下再挂回同一个对象，不能按代号作废） | r: a moved widget. Entries are matched by identity on r.w, and ui_has checks that it is still in the tree before writing (when the layout reloads, a panel is detached and reattached as the same object, so it cannot be invalidated by generation)
 static mvent g_mv[96]; static int g_nmv, g_mv_want[MV_N];
 static int mv_allowed(int own, uint64_t w) {
     const char *nm = (const char *)*(uint64_t *)(w + 8), *pn = *(uint64_t *)(w + 0x30) ? (const char *)*(uint64_t *)(*(uint64_t *)(w + 0x30) + 8) : NULL; if (!nm) return 0;
     switch (own) {
     case MV_BIND: return !strcmp(nm, "ButtonBindingModal");
+    case MV_SAVE_BOTTOM: return !strcmp(nm,"SaveIndicatorPanel");
+    case MV_LOAD_BOTTOM: {
+        uint64_t parent=*(uint64_t *)(w+0x30), grand=parent?*(uint64_t *)(parent+0x30):0;
+        const char *gn=grand?(const char *)*(uint64_t *)(grand+8):NULL;
+        int loading_parent=pn && (!strcmp(pn,"LoadScreenPanel") || (!strcmp(pn,"LoadingScreen") && gn && !strcmp(gn,"MainMenuLoadingPanel")));
+        return loading_parent && (!strcmp(nm,"FullGlow") || !strcmp(nm,"Logo") || !strcmp(nm,"ResurrectedText") || !strcmp(nm,"BottomFlames")); }
+    case MV_FE_BOTTOM: return pn && ((!strcmp(pn,"MainMenuPanel") && (!strcmp(nm,"QuickPlayButton") || !strcmp(nm,"LegendBackground")))
+        || (!strcmp(pn,"CharacterCreatePanel") && (!strcmp(nm,"TouchNext") || !strcmp(nm,"TouchBack") || !strcmp(nm,"CharacterCreateLegend")))
+        || (!strcmp(pn,"CharacterOptionsPanel") && !strcmp(nm,"CharacterOptionsLegend"))
+        || (!strcmp(pn,"CharacterCreateNamePanel") && !strcmp(nm,"CharacterNameLegend")));
     case MV_LIFT: return *(float *)(w + 0x4c) == 0 && *(int32_t *)(w + 0x84) <= -100;   // 界面根下贴顶的 HUD 层 | Top-attached HUD layers under the UI root
     case MV_WIDE: { static const char *const k[] = { "WideBackground", "Text0", "Text1", "TabsEndcapLeft", "TabsEndcapRight", "ControllerCursorBounds", "BankExpansionLayout", "PlayerInventoryExpansionLayout" };
         for (unsigned i = 0; i < sizeof k / sizeof *k; i++) if (!strcmp(nm, k[i])) return 1; return 0; }
@@ -1816,7 +1858,14 @@ static void mv_prune(void) {   // 不在界面树上的条目直接忘掉（不�
 static int32_t g_mv_base; static int g_mv_base_on;   // 调用方知道这个控件的原位时（如小地图面板贴边 = -宽）在调用前给出：按它算，不拿控件此刻的值当原值（界面重建出来的新控件可能带着我们上一遍挪过的值） | When the caller knows this widget's original position (e.g. the minimap panel flush against the edge = -width), it supplies it before the call: compute from that instead of taking the widget's current value as the original (a new widget produced by a UI rebuild may carry the value we shifted on the previous pass)
 static void mv_offset(int own, uint64_t w, int f, int32_t delta, int relayout) {   // f：0 x、1 y、2 宽 | f: 0 x, 1 y, 2 width
     if (!w) return; int32_t *v = (int32_t *)(w + 0x70 + 4 * f); int i = 0; while (i < g_nmv && !(g_mv[i].r.w == w && g_mv[i].f == f)) i++;   // 按原指针认条目（只比身份）：w 是调用方此刻从界面树上取的活控件；同址的新控件由下面「现值≠上次写的值 → 现值当原值」接住 | Match entries by original pointer (identity comparison only): w is the live widget the caller just took from the UI tree; a new widget at the same address is caught by the "current value ≠ last written value → treat current value as the original" rule below
-    if (i == g_nmv) { if (!delta) return; if (!mv_allowed(own, w)) { static int lg; if (lg++ < 8) LOG("【红】位置守卫：%s 要挪的控件「%s」不在名单里，不写", mv_name[own], (const char *)*(uint64_t *)(w + 8)); return; }
+    if (i == g_nmv) { if (!delta) {
+            // 生成的角落布局初始在屏外；已知基准位置可在零偏移时初始化。
+            // Generated corner layouts start off-screen. A known base position
+            // can initialize them even when no fullscreen offset is needed.
+            if (g_mv_base_on && mv_allowed(own,w) && *v!=g_mv_base) { *v=g_mv_base;
+                if (relayout) ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w+0x10))(w); }
+            return;
+        } if (!mv_allowed(own, w)) { static int lg; if (lg++ < 8) LOG("【红】位置守卫：%s 要挪的控件「%s」不在名单里，不写", mv_name[own], (const char *)*(uint64_t *)(w + 8)); return; }
         mv_prune();   // 游戏重建界面（如切语言）后旧控件对象没了、新对象另起一条：先把不在界面树上的条目忘掉（不写，内存可能已释放），否则条目越积越多、96 条满了新控件写不进（英文版 ×8 红） | After the game rebuilds the UI (e.g. a language switch) the old widget objects are gone and the new objects start new entries: first forget entries not on the UI tree (no write, the memory may already be freed), otherwise entries keep piling up and once the 96 entries are full new widgets cannot be written (English version: ×8 red)
         if (g_nmv >= 96) { static int lg; if (lg++ < 8) LOG("【红】位置守卫：%s 条目满了（96 条都还挂在界面树上），「%s」不写", mv_name[own], (const char *)*(uint64_t *)(w + 8)); return; }
         if (!mv_count(own)) { static int lg[MV_N]; if (lg[own]++ < 40) LOG("位置守卫：%s 开始挪（%s）", mv_name[own], (const char *)*(uint64_t *)(w + 8)); }   // 每次「开挪」留一条证据（绑定框只挪 0.2 秒，自检碰不上） | Leave one line of evidence at every "start moving" (the binding box is only moved for 0.2 s, which the self-check never catches)
@@ -2102,6 +2151,54 @@ static void ui_note_dock_pump(uint64_t root) {
     else if (*t != pv) { int32_t was = *t; *t = pv; g_nd_mine = pv;
         if (note_dock_snap(w, was, pv)) { static int lg; if (lg++ < 60) LOG("提示框停靠：目标换成 %d 时框已停稳在 y %d，矩形 y 一并写成新目标", pv, was); } }
     if (panel != g_nd_on) { g_nd_on = panel; static int lg; if (lg++ < 40) LOG("提示框停靠：%s，目标 y %d（布局原值 %d，矩形高 %d）", panel ? "面板态" : "无面板", *t, g_nd_orig, h); }
+}
+static void ui_edge_place(int owner, uint64_t widget, int x, int y, int delta, int reflow) {
+    if (!widget) return;
+    g_mv_base_on=1; g_mv_base=y; mv_offset(owner,widget,1,delta,1);
+    if (reflow) ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)widget+0x10))(widget);
+    // 最终纵坐标及原生布局就绪后再显示，避免构造后的首帧使用旧位置。
+    // Reveal only after its final Y and native layout are ready. Constructor
+    // frames cannot show the old centered location before the first HID poll.
+    g_mv_base=x; mv_offset(owner,widget,0,0,1); g_mv_base_on=0;
+}
+static void ui_window_edges_pump(uint64_t root) {
+    int dm_padmode_busy(void); if (dm_padmode_busy()) return;
+    int native=dm_ui_native_frontend();
+    int x,y,w,h,rw=0,rh=0; dm_ui_rect(&x,&y,&w,&h); dm_screen_real(&rw,&rh);
+    if (h<=0 || rh<=0) return;
+    // 重读分辨率会临时恢复真实 UI 高度；期间保持已有偏移，避免标志回跳。
+    // Resolution rereads temporarily restore the real UI height. Keep the last
+    // offsets through that transaction instead of snapping a visible logo back.
+    if (native && (int64_t)w*9<(int64_t)rh*16 && h==rh) return;
+    int delta=native?dm_ui_bottom_offset(2160):0;
+    uint64_t lp=ui_panel(root,"LoadScreenPanel"), sp=ui_panel(root,"SaveIndicatorPanel"), mp=ui_panel(root,"MainMenuLoadingPanel");
+    uint64_t ml=mp?ui_find(mp,"LoadingScreen",0):0;
+    static int last_y=-1,last_h=-1,last_rh=-1; static uint32_t last_gen;
+    uint32_t gen=dm_ui_gen(); int reflow=y!=last_y || h!=last_h || rh!=last_rh || gen!=last_gen;
+    last_y=y; last_h=h; last_rh=rh; last_gen=gen;
+    g_mv_want[MV_LOAD_BOTTOM]=(lp || ml) && delta;
+    if (lp || ml) { static const char *const names[]={"FullGlow","Logo","ResurrectedText","BottomFlames"};
+        static const int bx[]={-400,-399,-370,-319}, by[]={-400,-392,-226,-208};
+        for (unsigned panel=0;panel<2;panel++) for (unsigned i=0;i<sizeof names/sizeof *names;i++) {
+            uint64_t p=panel?ml:lp, t=p?ui_find(p,names[i],0):0;
+            ui_edge_place(MV_LOAD_BOTTOM,t,bx[i],by[i]-(panel?20:0),delta,reflow);
+        }
+    } else mv_restore(root,MV_LOAD_BOTTOM);
+    // 隐藏标志也预先定位，避免显示后延迟纠正。
+    // Position hidden indicators too, so opening one needs no delayed correction.
+    g_mv_want[MV_SAVE_BOTTOM]=sp && delta;
+    uint64_t si=sp?ui_find(sp,"SaveIndicator",0):0;
+    if (si && *(int32_t *)(si+0x74)==-350) ui_edge_place(MV_SAVE_BOTTOM,sp,0,150,delta,reflow);
+    else mv_restore(root,MV_SAVE_BOTTOM);
+    int fe=native && !dm_uiscreen_ingame() && !(lp && *(uint8_t *)(lp+0x50)) ? dm_ui_bottom_offset(142) : 0;
+    g_mv_want[MV_FE_BOTTOM]=fe!=0;
+    if (fe) { static const struct { const char *panel,*widget; } items[]={
+        {"MainMenuPanel","QuickPlayButton"},{"MainMenuPanel","LegendBackground"},
+        {"CharacterCreatePanel","TouchNext"},{"CharacterCreatePanel","TouchBack"},{"CharacterCreatePanel","CharacterCreateLegend"},
+        {"CharacterOptionsPanel","CharacterOptionsLegend"},{"CharacterCreateNamePanel","CharacterNameLegend"}};
+        for (unsigned i=0;i<sizeof items/sizeof *items;i++) { uint64_t p=ui_panel(root,items[i].panel),t=p && *(uint8_t *)(p+0x50)?ui_find(p,items[i].widget,0):0;
+            if (t && *(int32_t *)(t+0x74)<50000) mv_offset(MV_FE_BOTTOM,t,1,fe,1); }
+    } else mv_restore(root,MV_FE_BOTTOM);
 }
 static void ui_lift_pump(uint64_t root, uint64_t fr) {
     // 普通轮询等控件树稳定，避免下一轮布局继承已上提的坐标；加载消息（fr=0）仍当场更新。两条路都避开模式切换事务
@@ -2404,7 +2501,7 @@ void dm_ui_watch(const char *spec) {
     const char *at = strchr(spec, '@'); snprintf(g_wn[0], sizeof g_wn[0], "%.*s", at ? (int)(at - spec) : 63, spec); snprintf(g_wn[1], sizeof g_wn[1], "%s", at ? at + 1 : "");
     atomic_store(&g_wn_on, 1);
 }
-int dm_ui_watch_pos(float *nx, float *ny) { uint64_t v = atomic_load(&g_wn_pos); if (!v) return 0; *nx = ((v >> 16) & 0xffff) / 65535.0f; *ny = (v & 0xffff) / 65535.0f; return 1; }
+int dm_ui_watch_pos(float *nx, float *ny) { uint64_t v = atomic_load(&g_wn_pos); if (!v) return 0; *nx = dm_ui_point_x(v); *ny = dm_ui_point_y(v); return 1; }
 static uint64_t vis_find(uint64_t w, const char *name, int dep) {   // 按名字找可见控件，后画的（上层）优先 | Find a visible widget by name; later-drawn (upper-layer) ones take priority
     if (!w || dep > 14 || !*(uint8_t *)(w + 0x50)) return 0;
     const char *nm = (const char *)*(uint64_t *)(w + 8); if (nm && !strcmp(nm, name)) return w;
@@ -2417,10 +2514,12 @@ static uint64_t vis_find(uint64_t w, const char *name, int dep) {   // 按名字
 static int ui_widget_center(uint64_t t, int w, int h, float *nx, float *ny) {
     int (*hit)(uint64_t, uint64_t) = (int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)t + 0x48);
     enum { GX = 128, GY = 72 }; static uint8_t on[GY][GX]; double sx = 0, sy = 0; int n = 0;
-    for (int j = 0; j < GY; j++) for (int i = 0; i < GX; i++) { int x = (int)((i + 0.5) * w / GX), y = (int)((j + 0.5) * h / GY); on[j][i] = hit(t, SNAP_XY(x, y)) & 1; if (on[j][i]) { sx += x; sy += y; n++; } }
+    int ux,uy,uw,uh,rw=0,rh=0; dm_ui_rect(&ux,&uy,&uw,&uh); dm_screen_real(&rw,&rh);
+    double top=rh>0?-uy:0, span=rh>0?rh:h;
+    for (int j = 0; j < GY; j++) for (int i = 0; i < GX; i++) { int x = (int)((i + 0.5) * w / GX), y = (int)(top+(j + 0.5) * span / GY); on[j][i] = hit(t, SNAP_XY(x, y)) & 1; if (on[j][i]) { sx += x; sy += y; n++; } }
     if (!n) return 0;
     sx /= n; sy /= n; double best = 1e18; int bx = 0, by = 0;
-    for (int j = 0; j < GY; j++) for (int i = 0; i < GX; i++) if (on[j][i]) { double x = (i + 0.5) * w / GX, y = (j + 0.5) * h / GY, d = (x - sx) * (x - sx) + (y - sy) * (y - sy); if (d < best) { best = d; bx = (int)x; by = (int)y; } }
+    for (int j = 0; j < GY; j++) for (int i = 0; i < GX; i++) if (on[j][i]) { double x = (i + 0.5) * w / GX, y = top+(j + 0.5) * span / GY, d = (x - sx) * (x - sx) + (y - sy) * (y - sy); if (d < best) { best = d; bx = (int)x; by = (int)y; } }
     *nx = (float)((bx + 0.5) / w); *ny = (float)((by + 0.5) / h); return 1;
 }
 static void ui_watch_pump(void) {   // 主线程，每帧；只在盯着的时候干活 | Main thread, every frame; only does work while watching something
@@ -2431,7 +2530,7 @@ static void ui_watch_pump(void) {   // 主线程，每帧；只在盯着的时�
     uint64_t p = g_wn[1][0] ? vis_find(root, g_wn[1], 0) : root, t = p ? vis_find(p, g_wn[0], 0) : 0;
     if (!t) { atomic_store(&g_wn_pos, 0); return; }
     float nx, ny; if (!ui_widget_center(t, w, h, &nx, &ny)) { atomic_store(&g_wn_pos, 0); return; }
-    uint64_t v = ((uint64_t)(uint32_t)(nx * 65535) << 16) | (uint32_t)(ny * 65535);
+    uint64_t v = dm_ui_point_pack(nx,ny);
     atomic_store(&g_wn_pos, v ? v : 1);
 }
 // 面板状态安全阀。前端的「有没有面板开着」来自 PanelManager 的开关消息；根修在前端（按开 / 没开记，见 front_ios.m
@@ -2783,7 +2882,14 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
               // Top function pages (quest log ... options): the pages are switched by the function page panel UISwitcher itself, and it does not take the tab bar's page-switch message. It takes L / R (the two branches 0x4052a8 / 0x4052d4 of message handler main+0x404fd8),
               // both of which compute "current page ± 1" and then call main+0x405898(panel, target page, direction); here the target page is given to it directly, in one step. Current page +0x1b8, page count +0x188
               int cur = *(int32_t *)(us + 0x1b8), n = *(int32_t *)(us + 0x188), to = g_tab_k; if (to < 0) to = 0; if (n > 0 && to >= n) to = n - 1;   // 页号 = 页签的第 K 个（隐藏的佣兵页也占一页），不能用可见页签数推：没佣兵时从选项往回点物品栏会多走一页 | page number = the Kth tab (the hidden mercenary page also takes up a page); it cannot be derived from the visible tab count: without a mercenary, tapping back from options to the inventory panel would go one page too far
-              ((void (*)(uint64_t, int, int))(sm->base + 0x405898))(us, to, d > 0); LOG("界面页签：功能页第 %d → 第 %d 页（直接切，现为 %d）", cur, to, *(int32_t *)(us + 0x1b8)); }
+              ((void (*)(uint64_t, int, int))(sm->base + 0x405898))(us, to, d > 0);
+              // UISwitcher 管页面，TabBar 管选中轮廓；通过原生接口同步，不直接写字段。
+              // UISwitcher owns the page; TabBar owns its selected outline. Keep
+              // both in sync through their native APIs, without writing fields.
+              tw = gw && ui_has(hroot, gw, 0) ? gw : 0;
+              if (tw && *(uint64_t *)tw == (uint64_t)sm->base + 0x20ba3a8 && *(uint8_t *)(tw + 0x50) && TAB_SEL(tw) != to)
+                  ((void (*)(uint64_t, int, int))(sm->base + 0xad9b80))(tw, to, 0);
+              LOG("界面页签：功能页第 %d → 第 %d 页（直接切，现为 %d，页签选中 %d）", cur, to, *(int32_t *)(us + 0x1b8), tw ? TAB_SEL(tw) : -1); }
           else if (tw && *(uint64_t *)tw == (uint64_t)sm->base + 0x20ba3a8 && *(uint8_t *)(tw + 0x50)) { int was = TAB_SEL(tw);
               ((void (*)(uint64_t, int, int))(sm->base + 0xad9b80))(tw, g_tab_k, 1); LOG("界面页签：「%s」第 %d → 第 %d 个（直接选中，现为 %d）", g_tab_name, was, g_tab_k, TAB_SEL(tw)); }
           else LOG("【红】界面页签：页签条「%s」已不在 / 不可见，这次不切", g_tab_name);
@@ -2800,7 +2906,7 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
                 else fix = 0; }
             if (th) { ui_auto_key(th); tnext = fr + 8; } } } }
     { module_t *pm = main_module(); uint64_t proot = 0; if (pm) { memcpy(&proot, pm->base + 0x2f05458, 8); int32_t pw = *(int32_t *)(pm->base + 0x211da38), phh = *(int32_t *)(pm->base + 0x211da3c);
-        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_trove_tabs_pump(pm, proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm); ui_map_geom_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); ui_widestash_pump(proot); mv_audit_pump(proot, fr); ui_pages_pump(pm, proot); } } }
+        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_window_edges_pump(proot); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_trove_tabs_pump(pm, proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm); ui_map_geom_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); ui_widestash_pump(proot); mv_audit_pump(proot, fr); ui_pages_pump(pm, proot); } } }
     if (atomic_load(&g_fe_name_open) && atomic_load(&g_ut_phase) == 2) {   // 起名页：点输入框（底板 / 文本框）= 重新弹系统键盘，不发鼠标点击 | naming page: tapping the input box (backplate / text box) = pop up the system keyboard again, no mouse click is sent
         module_t *nm = main_module(); uint64_t nroot = 0; if (nm) memcpy(&nroot, nm->base + 0x2f05458, 8); uint64_t pn = nroot ? ui_find(nroot, "CharacterCreateNamePanel", 0) : 0;
         if (pn && nm) { int32_t w = *(int32_t *)(nm->base + 0x211da38), h = *(int32_t *)(nm->base + 0x211da3c); uint64_t v = atomic_load(&g_ut_xy);
@@ -2823,6 +2929,11 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
     if (width <= 0 || height <= 0 || !root) return;
     uint64_t r = atomic_load(&g_ut_xy);
     int x = (int)(((r >> 16) & 0xffff) / 65535.0 * width), y = (int)((r & 0xffff) / 65535.0 * height); if (x >= width) x = width - 1; if (y >= height) y = height - 1;
+    int fe_extended = !dm_uiscreen_ingame() && atomic_load(&g_fe_touch_extended);
+    if (fe_extended) y = (int)(dm_ui_point_y(atomic_load(&g_fe_touch_point)) * height);
+    int class_scene = atomic_load(&g_cc_open) && !atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_name_open) && !atomic_load(&g_fe_confirm_open)
+        && y >= (int64_t)450 * height / 2160 && y < (int64_t)1750 * height / 2160;
+    if (class_scene) x = dm_ui_class_x(x);
     if (atomic_load(&g_fe_opt_open)) { uint64_t bw = ui_find(root, "TouchBliss", 0);
         if (bw) { int on = *(int32_t *)(bw + 0x6e8) == 4; if (atomic_exchange(&g_fe_bliss, on) != on) { LOG("前端路径：极乐世界 %s", on ? "勾上" : "取消"); dm_elysium_arm(on); }
             int32_t vw = *(int32_t *)(m->base + 0x211da38), vh = *(int32_t *)(m->base + 0x211da3c);
@@ -2836,10 +2947,13 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
     // (iOS app on the Mac: tapping 「选项」(Options) in the pause menu → the whole panel got closed. It was not exposed before because the controller cursor had gone there first)
     static uint64_t snapped;   // 这次点按已吸附过的位置（吸附后 g_ut_xy 改成可点控件上的点，再悬停、按下） | the position this tap has already been snapped at (after snapping, g_ut_xy is changed to a point on the clickable widget, then hover, then press)
     if (ph == 2 && r != snapped && (dm_ui_panel_state() & DM_PS_VAULT) && ({ int dm_vault_ui_blocks(int, int); dm_vault_ui_blocks(x, y); })) snapped = r;   // 编年史页自己收的点（格子、部位页签、空处）不吸附：原先点部位页签被吸到旁边的搜索框上 | taps the chronicle page handles itself (cells, slot tabs, empty space) are not snapped: previously a tap on a slot tab got snapped onto the search box next to it
-    if (ph == 2 && r != snapped) { int sx = x, sy = y, sn = ui_snap(m, root, &sx, &sy);
+    if (ph == 2 && r != snapped && !class_scene) { int sx = x, sy = y, sn = ui_snap(m, root, &sx, &sy);
         if (sn == 6) { atomic_store(&g_ut_phase, 0); static int l6; if (l6++ < 40) LOG("界面鼠标：(%d,%d) 压着被上层面板盖住的按钮，不点", x, y); return; }
         if (sn == 2) { static int lg; if (lg++ < 40) LOG("界面鼠标：(%d,%d) 就近吸附到 (%d,%d)", x, y, sx, sy);
-            r = ((uint64_t)(uint32_t)((sx + 0.5) / width * 65535) << 16) | (uint32_t)((sy + 0.5) / height * 65535); atomic_store(&g_ut_xy, r); x = sx; y = sy; }
+            int packed_y = sy;
+            if (!dm_uiscreen_ingame() && (sy < 0 || sy >= height)) { fe_extended = 1; atomic_store(&g_fe_touch_extended, 1); }
+            if (fe_extended) { atomic_store(&g_fe_touch_point, dm_ui_point_pack((sx + .5f) / width, (sy + .5f) / height)); if (packed_y < 0) packed_y = 0; if (packed_y >= height) packed_y = height - 1; }
+            r = ((uint64_t)(uint32_t)((sx + 0.5) / width * 65535) << 16) | (uint32_t)((packed_y + 0.5) / height * 65535); atomic_store(&g_ut_xy, r); x = sx; y = sy; }
         snapped = r; }
     static int hov; static uint64_t hov_xy; if (r != hov_xy) { hov_xy = r; hov = 0; }
     if (ph == 1) hov++;
@@ -2954,9 +3068,14 @@ void dm_ui_on_uimsg(const char *cat, const char *act, const char *arg) {
     if (!strcmp(cat, "PanelManager") && !strcmp(act, "ClosePanel") && arg && strncmp(arg, "Touch", 5)) mv_audit_arm("关面板");
     else if (!strcmp(act, "SelectTab") || !strcmp(act, "ActivateTab")) mv_audit_arm("切页签");
     else if (!strcmp(cat, "FrontEndNavigation") && !strcmp(act, "ToFrontEnd")) mv_audit_arm("退出到前端");
+    if (!strcmp(cat,"FrontEndNavigation") && !strcmp(act,"ToFrontEnd")) dm_uiscreen_set_ingame(0);
+    if (!strcmp(cat,"PanelManager") && arg && !strcmp(arg,"MainMenuLoadingPanel") && !strcmp(act,"OpenPanel")) {
+        module_t *pm=main_module(); uint64_t root=0; if (pm) memcpy(&root,pm->base+0x2f05458,8);
+        if (root) ui_window_edges_pump(root);
+    }
     if (!strcmp(cat, "PanelManager") && arg && !strcmp(arg, "LoadScreenPanel") && (!strcmp(act, "OpenPanel") || !strcmp(act, "UnloadPanel"))) { int up = act[0] == 'O'; atomic_store(&g_load_up, up);
         module_t *pm = main_module(); uint64_t root = 0; if (pm) memcpy(&root, pm->base + 0x2f05458, 8);
-        if (root) { dm_uiscreen_set_ingame(!up && ui_find(root, "HUDPanel", 0)); g_lift_next = 0; ui_lift_pump(root, 0); } }
+        if (root) { dm_uiscreen_set_ingame(!up && ui_find(root, "HUDPanel", 0)); g_lift_next = 0; ui_window_edges_pump(root); ui_lift_pump(root, 0); } }
     { int ex = (!strcmp(cat, "PausePanelMessage") && !strcmp(act, "ExitGame")) || (!strcmp(cat, "FrontEndNavigation") && !strcmp(act, "ToFrontEnd")),
           ld = !strcmp(cat, "PanelManager") && arg && !strcmp(arg, "LoadScreenPanel") && !strcmp(act, "OpenPanel");
       if (ex || ld) { module_t *pm = main_module(); uint64_t root = 0; if (pm) memcpy(&root, pm->base + 0x2f05458, 8); if (ex) g_nd_hold = 1;   // 提示框停靠：停靠条件结束，当场写回原值 | notice docking: the docking condition ended, write the original value back on the spot
@@ -3133,7 +3252,8 @@ void dm_ui_frontend_pump(void) {   // 取手柄处调；各动作之间隔开几
         module_t *m = main_module(); uint64_t root = 0; if (m) memcpy(&root, m->base + 0x2f05458, 8);
         uint64_t pn = root ? ui_find(root, "CharacterCreatePanel", 0) : 0, bk = pn ? ui_find(pn, "TouchBack", 0) : 0;
         if (bk) { const char *sv = getenv("DM_SAVE"); uint8_t want = !sv || has_character(sv, 0);
-            ui_show_ours(bk, want); }
+            ui_show_ours(bk, want);
+            ui_move_ours(bk,-510); ui_move_ours(ui_find(pn,"TouchNext",0),want?40:-235); }
     }
     { int nk = atomic_exchange(&g_fe_name_key, 0); if (nk) { fe_key(nk == 1 ? DM_BTN_PLUS : DM_BTN_B); next = fr + 8; LOG("前端路径：起名页点了「%s」→ %s", nk == 1 ? "创建" : "返回", nk == 1 ? "＋" : "B"); return; } }
     if (atomic_exchange(&g_fe_name_tap, 0)) { fe_key(DM_BTN_A); next = fr + 8; LOG("前端路径：起名页点了输入框 → 重新弹键盘（A）"); return; }

@@ -16,6 +16,7 @@
 #include "dm.h"
 #include "dm_i18n.h"
 #include "dm_cursor.h"
+#include "dm_uiscreen.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdatomic.h>
@@ -82,6 +83,8 @@ void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Ca
     if (atomic_exchange(&g_fg, 0)) {   // 选角列表面板在且显示着（可见位 +0x50）、构建号控件也在 = 人停在选角页 | Character select list panel present and shown (visible bit +0x50) and the build number widget also present = the user is sitting on the character select page
         uint8_t *fb = tb(); uint64_t fr = fb ? *(uint64_t *)(fb + 0x2f05458) : 0, fm = fr ? find(fr, "MainMenuPanel", 0) : 0, fl = fr ? find(fr, "CharacterSelectPanel", 0) : 0;
         if (fm && find(fm, "TouchBuild", 0) && fl && *(uint8_t *)(fl + 0x50)) { atomic_store(&g_appear, 1); atomic_store(&g_dirty, 30); LOG("更新：回到前台时停在选角页，重查一次新版本"); } }
+    int bottom=dm_ui_bottom_offset(24); static int last_bottom=-99999;
+    if (bottom!=last_bottom) { last_bottom=bottom; atomic_store(&g_dirty,30); }
     int left = atomic_load(&g_dirty); if (left <= 0) return;
     uint8_t *b = tb(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, mm = root ? find(root, "MainMenuPanel", 0) : 0, bw = mm ? find(mm, "TouchBuild", 0) : 0;
     if (!bw) return;   // 主菜单面板还没建（或跑的是没有这些控件的布局）：留着，建好那帧再写 | Main menu panel not built yet (or running a layout without these widgets): keep it, and write on the frame it is built
@@ -96,7 +99,7 @@ void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Ca
     // Controller mode (the original controller main menu): the bottom left holds the original button ribbon and legend, so these two lines go to the top right instead, right-aligned. The original controller main menu panel's rectangle is 0×0 (nothing to compute an anchor from),
     // so these widgets carry no anchor in the layout (touch_layout.pad_mainmenu), and their position is computed entirely here from the screen width (layout units: 2160 = screen height)
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
-    if (pad) place(bw, xr - 420 - bx, 60); else place(bw, bx, 2046);
+    if (pad) place(bw, xr - 420 - bx, 60); else place(bw, bx, 2046+bottom);
   // 触屏：左下角那行，离屏幕左边 79 单位，有安全区时贴安全线内 6 单位
   // Touch: the line at the bottom left, 79 units from the left edge of the screen, or 6 units inside the safe line when there is a safe area
     uint64_t nt = find(mm, "TouchUpdNote", 0), sm = find(mm, "TouchUpdSmall", 0), bg = find(mm, "TouchUpdBg", 0), ti = find(mm, "TouchUpdTitle", 0), de = find(mm, "TouchUpdDesc", 0), big = find(mm, "TouchUpdBig", 0);
@@ -113,7 +116,7 @@ void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Ca
     // The notice text starts 341 units to the right of the build number; the small 「更新」(Update) follows it 34 units behind: the text box has fitToText on, and the per-frame update (0xadc8e8) writes the measured width back to +0x78
     int nw = *(int32_t *)(nt + 0x78);
     if (pad) { place(nt, xr - 2000 - bx, 130); place(sm, 99999, 99999); place(big, 99999, 99999); }   // 手柄：提示字在构建号下面一行；两个「更新」按钮不摆出来（按 Y，见上） | Controller: the hint text goes on the line below the build number; the two 「更新」(Update) buttons are not shown (press Y, see above)
-    else { place(nt, bx + 341, 2046); place(sm, normal ? bx + 341 + nw + 34 : 99999, normal ? 2030 : 99999); }
+    else { place(nt, bx + 341, 2046+bottom); place(sm, normal ? bx + 341 + nw + 34 : 99999, normal ? 2030+bottom : 99999); }
     static dm_wref lw; static int ls = -1, lnw; int st = normal ? 1 : urg ? 2 : fail ? 2 + fail : 0;
     if (dm_wref_get(&lw) != bw || ls != st || (normal && lnw != nw)) { dm_wref_set(&lw, bw); ls = st; lnw = nw; LOG("更新：选角页写上构建 %d%s（提示字宽 %d）", g_own, normal ? "，普通更新提示" : urg ? "，建议立即更新提示" : fail == 1 ? "，查更新失败提示（无线数据许可）" : fail ? "，查更新失败提示（浏览器手动更新）" : "，无提示", normal ? nw : 0); }
 }
