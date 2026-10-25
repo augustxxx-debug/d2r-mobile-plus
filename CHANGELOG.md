@@ -10,7 +10,7 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 ### Added
 
-- Added on-device Graphics settings and notification screenshots to both READMEs, with image metadata removed.
+- Added on-device Graphics settings and notification screenshots to both READMEs, with image metadata removed. Graphics screenshots now show the five-tab revision and use distinct filenames.
 
 - Dedicated Graphics tab with an independent MetalFX enable switch, a four-position profile slider, and a separate left/right 30 / 60 FPS selector. Help uses smaller, muted secondary text. New labels and application guidance are localized in Chinese, English, Spanish, Latin American Spanish, Russian and Korean.
 

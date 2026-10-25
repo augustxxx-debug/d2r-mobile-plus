@@ -28,9 +28,9 @@ Settings retains five separate tabs: **Audio / Gameplay / Settings / Graphics / 
 
 Open **Options → Graphics** in game. Enable **MetalFX spatial upscaling** to reveal the four-position Auto / Eco / Balanced / Quality slider. Turning the switch off restores the original upscale pass and remembers the selected profile. Frame rate has a separate left/right 30 / 60 FPS selector. Press **Apply** to activate changes without restarting; switching may briefly pause rendering. **Discard** restores the active settings. **Defaults** preserves the native global reset, including game options, Graphics and Custom, while retaining language and voice; press Apply to save. Native Terror Zones and offline difficulty scaling also return to defaults; Discard cancels a pending reset.
 
-![English Graphics settings on device](docs/images/graphics-settings-en.jpg)
+![English Graphics settings on device](docs/images/graphics-settings-five-tabs-en.jpg)
 
-*On-device Graphics settings: separate frame-rate selection, MetalFX enable switch and four upscaling profiles. The Chinese documentation example uses an optional local font; default builds retain the game font, and no font file is included.*
+*Five-tab revision on device: Audio / Gameplay / Settings / Graphics / Custom remain separate; Graphics includes frame-rate selection, the MetalFX switch and four upscaling profiles. The Chinese documentation example uses an optional local font; default builds retain the game font, and no font file is included.*
 
 | Profile | Initial 3D width/height ratio | Behavior |
 |---|---|---|
