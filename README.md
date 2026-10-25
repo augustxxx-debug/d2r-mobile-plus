@@ -26,6 +26,10 @@ These are changes on top of upstream commit [`195ae11`](https://github.com/jhaiz
 
 Open **Options → Graphics** in game. Enable **MetalFX spatial upscaling** to reveal the four-position Auto / Eco / Balanced / Quality slider. Turning the switch off restores the original upscale pass and remembers the selected profile. Frame rate has a separate left/right 30 / 60 FPS selector. Press **Apply** to activate changes without restarting; switching may briefly pause rendering. **Discard** restores the active settings. **Defaults** resets Graphics and Custom together, retaining language and voice; press Apply to save.
 
+![English Graphics settings on device](docs/images/graphics-settings-en.jpg)
+
+*On-device Graphics settings: separate frame-rate selection, MetalFX enable switch and four upscaling profiles. The Chinese documentation example uses an optional local font; default builds retain the game font, and no font file is included.*
+
 | Profile | Initial 3D width/height ratio | Behavior |
 |---|---|---|
 | Auto | 70% or 80% | Chooses by output pixel count; uses 65% in Low Power Mode or elevated thermal conditions, then adapts to actual frame timing |
@@ -50,6 +54,14 @@ Each profile was run on the same device and test save, with a fixed seed and tim
 **These readings cannot rank profile power use and must not be interpreted as savings percentages or watts.** Each profile has only one approximately 0.95-second power snapshot; Power Profiler then reported a device disconnect instead of recording the requested 8 seconds. Thermal states also differed between runs (for example, Quality reached a higher thermal state later), and the readings do not track rendering load consistently. The table preserves the exploratory observations and the measurement limitation; it does not claim that any profile saves power. A reliable comparison requires sustained device power sampling and repeated runs at matched thermal states.
 
 See [build and verification notes](docs/PLUS.md) for other checks and limitations.
+
+## Notification example
+
+The frame is generated from the game’s button artwork, preserving its decorative ends. The wider text area accommodates longer English notifications.
+
+![On-device English notification with complete frame](docs/images/notification-frame-en.jpg)
+
+*Device UI demonstration. Game imagery belongs to its respective rights holders. No account/device information or save files are included; image metadata has been removed.*
 
 ## Branches
 

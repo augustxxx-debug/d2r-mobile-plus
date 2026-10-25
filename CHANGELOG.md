@@ -10,6 +10,8 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 ### Added
 
+- Added on-device Graphics settings and notification screenshots to both READMEs, with image metadata removed.
+
 - Dedicated Graphics tab with an independent MetalFX enable switch, a four-position profile slider, and a separate left/right 30 / 60 FPS selector. Help uses smaller, muted secondary text. New labels and application guidance are localized in Chinese, English, Spanish, Latin American Spanish, Russian and Korean.
 
 - Experimental MetalFX spatial upscaling with Auto, Eco, Balanced, Quality and Original profiles. Apply switches profiles live without restarting; render-target recreation may briefly pause rendering. Only 3D color is scaled, retaining the original mask and subsequent UI. Unsupported devices or initialization failure use the original pass.
