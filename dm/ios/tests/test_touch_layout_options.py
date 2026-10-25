@@ -40,7 +40,8 @@ for voice in (False, True):
         os.environ['MOVIE_FFMPEG'] = '1'; layout = importlib.reload(layout)
     host = host_variant(voice)
     keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
-    assert keys == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)
+    assert [key for key in keys if key not in ('eco_fps', 'q3d', 'upscale')] == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)
+    assert keys[-1] == 'upscale'
     assert ('voice' in keys) == voice
     defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
@@ -49,11 +50,36 @@ host = host_src
 assert 'TouchCustom_touch_swap_above_near' in host
 print('PASS touch layout options: generated radio pair, labels, defaults, host order (default and MOVIE_FFMPEG=1) and scrolling row extent')
 
-# 五档画质行使用同一滚动区，英文／中文标题均有字符串表条目。
-# All five profile choices share the scrolling area and have English/Chinese string-table entries.
-for name in ('TouchCustom_q3d','TouchCustom_q3d_eco','TouchCustom_q3d_balanced','TouchCustom_q3d_quality','TouchCustom_q3d_off'):
-    assert name in nodes and nodes[name]['type'] == 'ToggleButtonWidget'
-assert nodes['TouchCustom_q3d_Text']['fields']['rect']['height'] == 900
-for key in ('Auto','Eco','Balanced','Quality','Off'):
-    assert any(n.get('fields',{}).get('text') == '@dmCustomFx'+key for n in nodes.values())
-print('PASS five upscaling profiles: radio names, labels and scrolling extent')
+# Graphics controls live in the dedicated Graphics tab, not duplicated in Custom.
+assert not any(name.startswith('TouchCustom_q3d') for name in nodes)
+assert not any(name.startswith('TouchCustom_eco_fps') for name in nodes)
+print('PASS Custom page excludes moved graphics controls')
+
+# Graphics tab uses the game's native slider and toggle widgets in the repurposed offline-only slot.
+empty_rows = ''.join('{"type":"TableRowWidget","name":"Row %s"},' % name for name in (
+    'Shared', 'WideItemDropEnabled', 'Online', 'MaxPlayers', 'LevelDifferenceEnabled', 'MaxLevelDifference',
+    'AllowBnetFriendsJoin', 'PrivateGameSecurity', 'DesecratedZonesEnabled', 'OnlineSettingsEffectNote', 'Offline',
+    'OfflineDesecratedZonesEnabled', 'OfflineNewGameSettingsEffectNote', 'OfflineDifficultyScaling', 'OfflineSettingsEffectNote'))
+graphics_src = '{"type": "OnlineGameOptionsPanel", "name": "OnlineGameOptionsPanel", "children": [{"type": "ScrollViewWidget", "name": "ScrollView", "children": [{"type": "TableWidget", "name": "OptionsTable", "children": [' + empty_rows + ']}]}]}'
+graphics_out, _ = layout._graphics_page(graphics_src)
+graphics = json.loads(re.sub(r',\s*([}\]])', r'\1', graphics_out))
+g_nodes = {}
+def g_walk(node):
+    if isinstance(node, dict):
+        if 'name' in node: g_nodes[node['name']] = node
+        for value in node.values(): g_walk(value)
+    elif isinstance(node, list):
+        for value in node: g_walk(value)
+g_walk(graphics)
+assert g_nodes['TouchGraphicsProfile']['type'] == 'SettingsSliderWidget'
+assert g_nodes['TouchGraphicsFps']['type'] == 'SettingsSliderWidget'
+assert g_nodes['TouchGraphicsUpscale']['type'] == 'ToggleButtonWidget'
+assert g_nodes['TouchGraphicsApplyHint']['fields']['style/pointSize'] < 40
+assert isinstance(g_nodes['TouchGraphicsApplyHint']['fields']['style/fontColor'], str)
+assert g_nodes['TouchGraphicsApplyHint']['fields']['style/fontColor'].startswith('$FontColor')
+assert g_nodes['TouchGraphicsProfile']['fields']['onUpdateMessage'].endswith('SetD2RUpscaleProfile')
+assert '@dmGraphicsFrameRate60' in graphics_out and '@dmGraphicsUpscaling' in graphics_out
+assert 'Row Offline' not in g_nodes and 'Row Online' not in g_nodes
+assert not g_nodes['OptionsTable'].get('children')
+assert g_nodes['TouchGraphicsRows']['type'] == 'Widget'
+print('PASS Graphics page: native FPS/profile sliders, independent upscale toggle, localization hooks')

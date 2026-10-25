@@ -110,3 +110,5 @@ ios/Sources/main.m	图形芯片不支持 Metal 3	拦下原因只进日志（弹�
 host/loader.c	苹果	改写产物目标平台名，只进装载器的错误日志
 host/loader.c	安卓	同上
 host/loader.c	鸿蒙	同上
+ios/tools/gen_romfs_overlay.py	ASTC 版覆盖层的新数据档	构建期一致性错误，仅写终端，不写入游戏布局
+ios/tools/drop_light.py	掉落光变体：	构建期生成数量统计，仅写终端，不显示给玩家

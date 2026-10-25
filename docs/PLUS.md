@@ -35,11 +35,11 @@ The generator normalizes units per em, retains original vertical metrics and reg
 
 Coverage: the shared `BlizzardGlobal-V5_81.ttf` face, generated text that requests that face and the native rift HUD font loader. Other decorative font faces, classic bitmap text and text baked into game artwork are outside this change. Retaining vertical metrics does not guarantee identical glyph widths; line breaks, fallback appearance and clipping must be checked with the real target font in both languages and screen layouts.
 
-Synthetic tests cover Unicode fallback, units-per-em conversion, original registration/vertical metrics, unchanged input files, content fingerprints, disabled cleanup and invalid input paths. Tests also cover custom vertical-table compatibility and preservation of original private-use game symbols, for five tests total. Chinese settings were inspected on device; English and full panel coverage remain pending.
+Synthetic tests cover Unicode fallback, units-per-em conversion, original registration/vertical metrics, unchanged input files, content fingerprints, disabled cleanup and invalid input paths. Tests also cover custom vertical-table compatibility and preservation of original private-use game symbols, for six tests total. Chinese and English Graphics/Custom pages were inspected on device; full panel coverage remains pending.
 
 ## Verification
 
-Validation record: **2026-10-25**, upstream baseline `195ae11dc70f1ba7735c6063e1ed81102e1dbf52`.
+Validation record: **2026-10-26**, upstream baseline `195ae11dc70f1ba7735c6063e1ed81102e1dbf52`.
 
 | Check | Result / coverage |
 |---|---|
@@ -47,7 +47,9 @@ Validation record: **2026-10-25**, upstream baseline `195ae11dc70f1ba7735c6063e1
 | Host UI classification | 381 checks passed |
 | Front-end geometry | 44 checks passed |
 | Notification generator | Automated frame construction checks passed |
-| Font composition | 5 font-composition tests passed; target Chinese settings inspected locally |
+| Font composition | 6 font-composition tests passed; target Chinese and English settings inspected on device |
+| Graphics settings | 127 migration/persistence/Apply/Discard/global Defaults checks passed |
+| Physical device acceptance | User confirmed Xbox controls and inner/outer-display folding on Graphics |
 | Device build | Signed iOS build succeeded |
 | Quest reproduction | Baseline slow release missed; modified slow and quick releases stopped narration |
 | Indicator frame review | 44 captured frames reviewed in the preceding layout build |
@@ -70,8 +72,8 @@ The font test explicitly skips when its optional dependency is absent. Some broa
 
 ### Remaining checks
 
-- Physically fold/unfold while on the same panel, then repeat during menu/loading transitions.
-- Exercise controller focus, prompts and actions throughout front-end and in-game panels.
+- Landscape fold/unfold on Graphics is user-confirmed; extend coverage to other pages and menu/loading transitions.
+- Graphics controls are confirmed with a physical Xbox controller; extend focus, prompt and action coverage to other panels.
 - Reproduce all achievement/notification overlaps, including bottom HUD masking.
 - Check all localizations and panel layouts with the actual replacement font.
 
@@ -82,3 +84,5 @@ These require broader device/runtime coverage. A successful focused test does no
 Publish source and documentation only. Keep generated resources, fonts, saves, device captures, private diagnostics, signing configuration and keys outside the published tree. Inspect newly committed file contents and author/committer metadata before pushing. Review local diagnostics before attaching them to an issue.
 
 The `main` branch retains the upstream baseline; `codex/plus` contains the preview changes. To compare behavior, build either branch from your own workspace. Always back up saves first; do not uninstall an app that holds your only copy.
+
+Font build note: keep `DM_UI_FONT` in the untracked `dm/ios/local.env` to retain the choice across builds. Empty mapped placeholders fall back to visible game glyphs; language choices use smaller text without wrapping.

@@ -15,6 +15,7 @@ enum {
     DM_VT_INPUT = 0x20b8718,     // 输入框：正式文字串 +0x558 | input box: committed text string +0x558
     DM_VT_NUMINPUT = 0x20b91c0,  // 数字输入框 | numeric input box
     DM_VT_TOGGLE = 0x20bc110,    // 勾选框 / 子页签（ToggleButtonWidget）：勾上 +0xa88，四个帧号 +0x6e8.. ，此刻的帧 +0x610 | checkbox / sub-tab (ToggleButtonWidget): checked +0xa88, four frame ids at +0x6e8.., current frame +0x610
+    DM_VT_SLIDER = 0x20bad70,    // SettingsSliderWidget: increment +0x5b0, min/max/value +0x5bc/+0x5c0/+0x5c4
     DM_VT_TABBAR = 0x20ba3a8,    // 页签条（TabBarWidget） | tab bar (TabBarWidget)
     DM_VT_SLOT = 0x2089fa0,      // 物品格：部位号 +0x5d8、属主 +0x5c8 | item slot: body location +0x5d8, owner +0x5c8
     DM_VT_SLOT_B = 0x2089ab8,    // 物品格（另一种，dm_actions.c / dm_runeword.c 认的） | item slot (another kind, recognized by dm_actions.c / dm_runeword.c)

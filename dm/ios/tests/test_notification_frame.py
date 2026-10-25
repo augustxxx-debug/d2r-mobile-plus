@@ -5,18 +5,19 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
-from gen_notification_frame import stretch_button
+from gen_notification_frame import stretch_button, MIN_LAYOUT_WIDTH
 
 source=np.random.default_rng(7).integers(30,180,(59,235,4),dtype=np.uint8)
 source[:,:,3]=255
-result=np.array(stretch_button(Image.fromarray(source),584,122))
-assert result.shape==(122,584,4)
-for sx,dx in ((0,0),(209,558)):
-    assert np.array_equal(result[:12,dx:dx+26],source[:12,sx:sx+26])
-    assert np.array_equal(result[-12:,dx:dx+26],source[-12:,sx:sx+26])
-    assert np.array_equal(result[51:70,dx:dx+26],source[20:39,sx:sx+26])
-assert np.all(result[9:-9,26:-26,3]==255)
-assert result[10,26:-26,:3].mean()>result[-11,26:-26,:3].mean()+40
+for width in (584, MIN_LAYOUT_WIDTH//2):
+    result=np.array(stretch_button(Image.fromarray(source),width,122))
+    assert result.shape==(122,width,4)
+    for sx,dx in ((0,0),(209,width-26)):
+        assert np.array_equal(result[:12,dx:dx+26],source[:12,sx:sx+26])
+        assert np.array_equal(result[-12:,dx:dx+26],source[-12:,sx:sx+26])
+        assert np.array_equal(result[51:70,dx:dx+26],source[20:39,sx:sx+26])
+    assert np.all(result[9:-9,26:-26,3]==255)
+    assert result[10,26:-26,:3].mean()>result[-11,26:-26,:3].mean()+40
 try:
     stretch_button(Image.fromarray(source),60,122)
 except ValueError:

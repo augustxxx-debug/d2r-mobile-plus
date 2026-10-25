@@ -29,18 +29,15 @@ with tempfile.TemporaryDirectory() as t:
         target = os.path.join(t, 'edge_' + os.path.basename(edge_path))
         open(target, 'w', encoding='utf-8').write(edge_indicators.prepare(text, positions))
         REPL[path.lower()] = target
-    # 系统通知框（如改难度后的「游戏难度设为 N…」）：左边 = 七格行最左格（难度格）左外沿，右边 = 最右格（红十字）右外沿，停留 5 秒；高度不动，纵向比原版上移 100 单位（原位 y=-500 压住底栏上方「Lv · 经验」那行）
-    # （原版宽 1200 单位居中屏幕、停 10 秒）。几何从 hud_v4_ui/ui.json 的七格算，不手写：布局 1 单位 = 屏高/2160（gen_hud_v4.py 实测），框锚点在屏幕水平中心。
-    # 落点按真机量（界面按游戏内部分辨率画，落到 2868 宽屏幕上约 1.8 px 一格取整）：边框亮线两侧各有 1 px 暗边，宽度两边各放 1 px；
-    # 中心再左移 1 单位才落到左亮线 x=973、右外沿 x=1807（= 七格外沿 973 / 1807）。四档实测
-    # System notification box (e.g. 「游戏难度设为 N…」(Game difficulty set to N...) after changing difficulty): left edge = left outer edge of the leftmost slot of the seven-slot row (difficulty slot), right edge = right outer edge of the rightmost slot (red cross), stays 5 seconds; height unchanged, vertically moved up 100 units from the original game (the original position y=-500 covers the "Lv · experience" line above the bottom bar)
-    # (the original game's is 1200 units wide, centered on screen, staying 10 seconds). Geometry is computed from the seven slots in hud_v4_ui/ui.json, not hand-written: 1 layout unit = screen height/2160 (measured in gen_hud_v4.py), the box anchor is at the horizontal center of the screen.
-    # Placement is measured on a real device (the UI is drawn at the game's internal resolution, landing on the 2868-wide screen rounded at about 1.8 px per cell): the border's bright line has a 1 px dark edge on each side, so the width is extended 1 px on each side;
-    # the center is then moved 1 more unit left to land on left bright line x=973, right outer edge x=1807 (= seven-slot outer edges 973 / 1807). Measured on four profiles
+    # 通知保持 HUD 七格行的中心位置；长句使用更宽的独立文本区域。
+    # Keep the HUD-row center, but give localized notification sentences more width.
     ui=json.load(open(os.path.join(V4,'hud_v4_ui','ui.json'))); ref_w,ref_h=ui['ref']; k=2160/ref_h
     x0,x1=ui['slots'][0][0]-1,ui['slots'][-1][2]+1
     nw=round((x1-x0)*k); nx=round(((x0+x1)/2-ref_w/2)*k)-1
     import gen_notification_frame
+    # Notification sentences are wider than HUD labels, especially in English.
+    # Extend the center strips at build time; corners and medallions keep their pixels.
+    nw=max(nw,gen_notification_frame.MIN_LAYOUT_WIDTH)
     frame_file=os.path.join(t,'notification_frame.sprite')
     gen_notification_frame.build(romfs,frame_file,(nw+1)//2,122)
     REPL[gen_notification_frame.TARGET]=frame_file
@@ -58,7 +55,9 @@ with tempfile.TemporaryDirectory() as t:
           # Bake the game's button caps/stone into one image. Text stays native.
           'children':[{'type':'ImageWidget','name':'NotificationBorder',
                        'fields':{'rect':{'x':0,'y':0,'width':nw,'height':244},'anchor':{'x':-0.5,'y':0.0},'filename':'Ztouch_notification/frame'},
-                       'children':[{'type':'TextBoxWidget','name':'Prompt','fields':{'fitToParent':True,'style':'$StyleNotification'}}]}]}
+                       'children':[{'type':'TextBoxWidget','name':'Prompt','fields':{
+                           'rect':{'x':64,'y':12,'width':nw-128,'height':220},
+                           'style':'$StyleNotification'}}]}]}
     json.dump(note,open(os.path.join(t,'notification.json'),'w'),indent=1)
     REPL['data/global/ui/layouts/controller/notificationpanelhd.json']=os.path.join(t,'notification.json')
     # 全触摸方案：前端与通用弹窗上的手柄键位提示挪出屏幕（按钮本身可点之后，字形就是错误信息）；清单与做法见 touch_layout.py
@@ -117,7 +116,10 @@ with tempfile.TemporaryDirectory() as t:
     # Greater Rift panel (borrowing the shell of the "message log" panel, touch_layout._rift_panel): the same for the gamepad layout. Without it, tapping a rift door in gamepad mode opens the empty original message log panel and the rift cannot be entered; gamepad keys are in dm_rift_ui.c
     # The gamepad layout's system notice box: in the original (docked at y -500) its lower edge sits on the "life / mana" numbers above the bottom bar, and with many digits the text runs into the box. Only the docking position is raised by 90 units (lower edge above the number row); everything else as in the original
     lp,lt=touch_layout.read_layout(romfs,'controller/notificationpanelhd.json'); assert lt.count('"y": -500')==1, lp   # 原版手柄版提示框的停靠位置应是 y -500（原包变了就停在这里） | the original gamepad notice box should dock at y -500 (if the original package changes, stop here)
-    o=os.path.join(tpad,'pad_notification.json'); open(o,'w',encoding='utf-8').write(lt.replace('"y": -500','"y": -590')); PR[lp.lower()]=o
+    # Keep native controller dismissal while widening both parent and inherited border.
+    lt=lt.replace('"y": -500','"y": -590').replace('"width": 1200',f'"width": {nw}')
+    lt=lt.replace('"name": "NotificationBorder",', '"name": "NotificationBorder", "fields": { "rect": { "x": 0, "y": 0, "width": '+str(nw)+', "height": 244 } },')
+    o=os.path.join(tpad,'pad_notification.json'); open(o,'w',encoding='utf-8').write(lt); PR[lp.lower()]=o
     lp,lt=touch_layout.read_layout(romfs,'controller/messagelogpanelhd.json'); o=os.path.join(tpad,'pad_rift.json'); open(o,'w',encoding='utf-8').write(touch_layout._rift_panel(lt)[0]); PR[lp.lower()]=o
     PR.update(merc_slots.build_pad(romfs,tpad))   # 手柄版佣兵面板：同样加六个装备位 | Controller layout mercenary panel: likewise add six equipment slots
     # 手柄版职业选择页：八个职业的点击矩形同样改成按实际站位分的竖条（touch_layout.CLASS_STRIPS，原因见那里）。手柄用左右键选、原版没暴露；

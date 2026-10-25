@@ -6,9 +6,11 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Unreleased]
 
-Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). Preview validation recorded on **2026-10-25**.
+Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). Validation updated on **2026-10-26**.
 
 ### Added
+
+- Dedicated Graphics tab with an independent MetalFX enable switch, a four-position profile slider, and a separate left/right 30 / 60 FPS selector. Help uses smaller, muted secondary text. New labels and application guidance are localized in Chinese, English, Spanish, Latin American Spanish, Russian and Korean.
 
 - Experimental MetalFX spatial upscaling with Auto, Eco, Balanced, Quality and Original profiles. Apply switches profiles live without restarting; render-target recreation may briefly pause rendering. Only 3D color is scaled, retaining the original mask and subsequent UI. Unsupported devices or initialization failure use the original pass.
 
@@ -20,6 +22,12 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 ### Fixed
 
+- Font composition now falls back to original visible glyphs when the selected font maps a character to an empty placeholder. Language choices have additional space and smaller text to avoid wrapping with replacement fonts.
+
+- Preserved upstream global defaults across Graphics and Custom, including pending changes on the other enhanced tab; language and voice remain unchanged.
+
+- Widened localized system notifications in touch and controller layouts, with text insets that keep longer English sentences clear of the decorative ends.
+
 - Optional font composition now removes incompatible custom-only vertical tables and preserves original private-use game symbols, preventing merge failures and icon replacement.
 - Live upscale changes preserve an explicit dynamic-resolution floor override.
 
@@ -30,19 +38,18 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 ### Validation
 
-- Metal 3 and Metal 4 upscalers each passed 64 color/mask samples and invalid-extent rejection. Profile migration, persistence and Apply/Discard/Defaults semantics passed 86 checks; scaling policy and system notifications passed 61 checks.
-- One device process applied Original, Quality, Eco, Auto and Balanced in sequence without restarting. Five-profile radio/scroll bounds checks and five font-composition tests passed.
-
-- Reproduced the quest-log issue on the baseline: a **0.8-second** stationary release emitted no click, while a quick tap stopped narration. Retested on device: both quick and 0.8-second releases stopped narration.
-- Touch regression coverage includes releases at 0.12, 0.35, 0.45, 0.8 and 2 seconds, cancellation, dragging and duplicate releases. The iOS touch suite passed **49 cases / 4,487 checks**.
-- Host UI classification tests passed **381 checks**; front-end geometry tests passed **44 checks**.
-- Reviewed 44 captured loading-indicator frames in the preceding layout test build. Fire-logo animation bounds varied by one pixel within the sampled entry sequence; the sampled red indicator position remained stable.
-- A signed iOS device build completed successfully. Tests requiring three private native-binding fixtures were skipped because those fixtures are not distributed.
+- Dedicated Graphics settings passed device touch tests and a user-confirmed physical Xbox controller test, including left/right 30 / 60 FPS selection. The final configuration was 60 FPS with Quality.
+- The user confirmed landscape fold/unfold transitions on the Graphics page across inner and outer displays. Menu/loading transitions and all other pages still require broader coverage.
+- Profile migration, persistence and Apply/Discard/global Defaults semantics passed **127 checks**. The iOS touch suite passed **49 cases / 4,487 checks**; host UI classification passed **381 checks** and front-end geometry passed **44 checks**.
+- Metal 3 and Metal 4 upscalers each passed **64 color/mask samples** and invalid-extent rejection. Device traces also recorded live changes between original rendering and all four upscaling profiles without restarting.
+- Font composition passed **6 tests**, including empty mapped-glyph fallback; asset-cache contracts passed **14 tests**. Chinese and English Graphics/Custom pages were inspected on device, including notification width and language-choice labels.
+- Earlier device traces reproduced the quest-log issue on the baseline: a stationary **0.8-second** release emitted no click. Both quick and 0.8-second releases stopped narration after the fix. Prior loading-indicator review covered 44 captured frames; this does not establish every transition is stable.
+- Native-write, widget-cache, input-mode and localization gates passed; **475 localization entries** are synchronized. The signed iOS device build succeeded. Three tests requiring private native-binding fixtures were skipped because those fixtures are not distributed.
 
 ### Experimental / pending validation
 
-- Font composition has synthetic-font coverage; an actual **ARKai_T / AR ZhongkaiGBK Medium** font was inspected locally in Chinese settings; complete English/Chinese panel coverage remains pending. This changes the shared main font and generated text that uses it, not every decorative face or bitmap label.
-- Complete physical folding transitions, controller navigation and all panel/achievement combinations remain pending. The preview does not claim universal UI correctness.
+- Font composition has synthetic-font coverage; an actual **ARKai_T / AR ZhongkaiGBK Medium** font was inspected locally in Chinese and English settings; complete English/Chinese panel coverage remains pending. This changes the shared main font and generated text that uses it, not every decorative face or bitmap label.
+- Graphics-page physical controller and fold transitions are confirmed; other controller flows, folding during loading and all panel/achievement combinations remain pending. The preview does not claim universal UI correctness.
 - MetalFX spatial upscaling is implemented; frame interpolation is not. An initial matched-map scripted combat power probe is complete. Power Profiler returned only an approximately 0.95-second snapshot per profile, and thermal states were not fully matched; readings are exploratory raw observations only, with no profile ranking, savings percentage or wattage claim. See README.
 
 ### Distribution

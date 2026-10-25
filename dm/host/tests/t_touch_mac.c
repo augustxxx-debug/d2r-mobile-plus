@@ -1,3 +1,4 @@
+#include "t_uiscreen_fixture.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include "../dm.h"

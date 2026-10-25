@@ -44,11 +44,18 @@ def compose(original, requested, output):
     # 私用区通常放游戏图标，不能让另一款游戏的字形覆盖它们。
     # Private-use codepoints often carry game icons; another game's glyphs must not replace them.
     symbols = {c for c in base_chars & custom_chars if 0xe000 <= c <= 0xf8ff or 0xf0000 <= c <= 0xffffd or 0x100000 <= c <= 0x10fffd}
-    if symbols:
+    # Some fonts map accented letters to empty placeholders. Preserve real game glyphs
+    # for those codepoints; genuine whitespace remains untouched when both are empty.
+    base_map, custom_map = base.getBestCmap(), custom.getBestCmap()
+    placeholders = {c for c in base_chars & custom_chars
+                    if custom['glyf'][custom_map[c]].numberOfContours == 0
+                    and base['glyf'][base_map[c]].numberOfContours != 0}
+    protected = symbols | placeholders
+    if protected:
         keep = subset.Subsetter()
-        keep.populate(unicodes=custom_chars - symbols)
+        keep.populate(unicodes=custom_chars - protected)
         keep.subset(custom)
-        custom_chars -= symbols
+        custom_chars -= protected
 
     if custom['head'].unitsPerEm != base['head'].unitsPerEm:
         scale_upem(custom, base['head'].unitsPerEm)
@@ -101,7 +108,7 @@ def prepare(romfs):
         return None
     import romfs_art
     original = romfs_art.read(romfs, GAME_FONT)
-    digest = hashlib.sha256(b'font-override-v3\0' + original + path.read_bytes()).hexdigest()
+    digest = hashlib.sha256(b'font-override-v4\0' + original + path.read_bytes()).hexdigest()
     if output.is_file() and stamp.is_file() and stamp.read_text() == digest:
         return str(output)
     with tempfile.TemporaryDirectory(dir=directory) as work:

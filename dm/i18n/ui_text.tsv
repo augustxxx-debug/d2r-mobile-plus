@@ -98,6 +98,16 @@ dmCustomVoiceZhHint	对话与过场使用中文语音；下次启动生效	Chine
 dmCustomVoiceEn	English voice	English voice	Voz en inglés		Английская озвучка	영어 음성	自定义页「配音」单选第二项（voice=1）
 dmCustomVoiceEnHint	对话与过场使用英文语音；下次启动生效	English dialogue and cutscenes; applies after restart	Diálogos y escenas en inglés; se aplica al reiniciar		Английские диалоги и ролики; после перезапуска	대화와 시네마틱에 영어 음성; 재시작 후 적용	英文配音下面的说明小字
 dmTabGameSettings	游戏设定	Settings	Ajustes	Config.	Опции	설정	触屏设置页第三个子页签（原版英文 Game Settings 放不进页签；中文取原版串原文）
+dmTabGraphics	图形	Graphics	Gráficos	Gráficos	Графика	그래픽	图形设置页签
+dmGraphicsTitle	图形设置	Graphics	Gráficos	Gráficos	Графика	그래픽	图形页标题
+dmGraphicsFrameRate	帧率：30 FPS 省电（关闭为 60 FPS）	Frame rate: 30 FPS power saving (off: 60 FPS)	Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)	Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)	Частота: 30 FPS экономия (выкл.: 60 FPS)	프레임: 30 FPS 절전 (끔: 60 FPS)	帧率开关说明
+dmGraphicsUpscaling	MetalFX 空间超分	MetalFX spatial upscaling	Superresolución espacial MetalFX	Superresolución espacial MetalFX	Пространственный апскейлинг MetalFX	MetalFX 공간 업스케일링	MetalFX 独立开关
+dmGraphicsUpscaleProfile	MetalFX 档位：自动 → 省电 → 均衡 → 高画质	MetalFX profile: Auto → Eco → Balanced → Quality	Perfil MetalFX: Auto → Ahorro → Equilibrado → Calidad	Perfil MetalFX: Auto → Ahorro → Equilibrado → Calidad	Профиль MetalFX: авто → экономия → баланс → качество	MetalFX 프로필: 자동 → 절전 → 균형 → 고화질	四档滑块说明
+dmGraphicsProfileAuto	超分档位：自动	Profile: Auto	Perfil: Automático	Perfil: Automático	Режим: авто	모드: 자동	MetalFX slider current profile
+dmGraphicsProfileEco	超分档位：省电	Profile: Eco	Perfil: Ahorro	Perfil: Ahorro	Режим: экономия	모드: 절전	MetalFX slider current profile
+dmGraphicsProfileBalanced	超分档位：均衡	Profile: Balanced	Perfil: Equilibrado	Perfil: Equilibrado	Режим: баланс	모드: 균형	MetalFX slider current profile
+dmGraphicsProfileQuality	超分档位：高画质	Profile: Quality	Perfil: Calidad	Perfil: Calidad	Режим: качество	모드: 고화질	MetalFX slider current profile
+dmGraphicsApplyHint	MetalFX 空间超分仅处理 3D 画面，UI 保持清晰。\n点“应用”生效，无需重启；切换时可能短暂停顿。\n“默认”同时恢复图形与自定义，保留语言及配音。	MetalFX upscales 3D only; UI stays sharp.\nApply without restarting; switching may briefly pause.\nDefaults resets Graphics and Custom; language and voice stay unchanged.	MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura Gráficos y Personalizado; conserva idioma y voces.	MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura Gráficos y Personalizado; conserva idioma y voces.	MetalFX масштабирует только 3D; интерфейс остаётся чётким.\nПрименяется без перезапуска; возможна короткая пауза.\nСброс восстанавливает графику и свои настройки; язык и озвучка сохраняются.	MetalFX는 3D만 업스케일링하며 UI는 선명하게 유지됩니다.\n재시작 없이 적용되며 전환 시 잠시 멈출 수 있습니다.\n기본값은 그래픽과 사용자 설정을 초기화하며 언어와 음성은 유지합니다.	Graphics page help and apply semantics
 dmTabCustom	自定义	Custom	Extras		Своё	사용자	选项页第四个页签「自定义」（touch_layout.py 页签条）：原版 KeyBindingTypeCustom 的西语 Personalizar 放不进页签，换我们的短词；中英与原版同字
 dmChronRunewords	符文之语	Runewords	P. rúnicas		Руны	룬워드	编年史第三个页签（touch_layout.py _chronicle_killboard）：原版 Runewords 的西语 Palabras rúnicas 在 320 宽页签里被截断，换我们的短写；中英与原版同字
 dmVaultPart0	头盔	Helms	Yelmos		Шлемы	투구	编年史暗金页部位页签（wide_stash.py）
@@ -462,3 +472,5 @@ dmCustomFxQuality	MetalFX 超分：高画质	MetalFX upscaling: Quality	MetalFX 
 dmCustomFxQualityHint	较高 3D 分辨率；功耗取决于场景	Higher 3D resolution; power use depends on the scene	Higher 3D resolution; power use depends on the scene		Higher 3D resolution; power use depends on the scene	Higher 3D resolution; power use depends on the scene	Plus 3D upscaling profile
 dmCustomFxOff	MetalFX 超分：原版	MetalFX upscaling: Original	MetalFX upscaling: Original		MetalFX upscaling: Original	MetalFX upscaling: Original	Plus 3D upscaling profile
 dmCustomFxOffHint	可手动关闭 MetalFX；设备不支持时自动使用原版放大	Turn MetalFX off manually; unsupported devices use the original scaler	Turn MetalFX off manually; unsupported devices use the original scaler		Turn MetalFX off manually; unsupported devices use the original scaler	Turn MetalFX off manually; unsupported devices use the original scaler	Plus 3D upscaling profile
+dmGraphicsFrameRate30	帧率：30 FPS	Frame rate: 30 FPS	Fotogramas: 30 FPS	Fotogramas: 30 FPS	Частота кадров: 30 FPS	프레임 레이트: 30 FPS	Graphics FPS selector caption
+dmGraphicsFrameRate60	帧率：60 FPS	Frame rate: 60 FPS	Fotogramas: 60 FPS	Fotogramas: 60 FPS	Частота кадров: 60 FPS	프레임 레이트: 60 FPS	Graphics FPS selector caption

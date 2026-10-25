@@ -62,6 +62,23 @@ class FontComposition(unittest.TestCase):
                 self.assertEqual(merged['hmtx'][merged.getBestCmap()[65]][0], 1000)
             self.assertEqual(before, (base.read_bytes(), custom.read_bytes()))
 
+    def test_empty_mapped_letters_fall_back_without_changing_spaces(self):
+        with tempfile.TemporaryDirectory() as work:
+            base, custom, output = [Path(work)/x for x in ('base.ttf','custom.ttf','out.ttf')]
+            synthetic(base,[32,65,0xf1],1000,'GameBase')
+            synthetic(custom,[32,65,0xf1],1000,'Requested')
+            for path, chars in ((base,[32]),(custom,[32,0xf1])):
+                with TTFont(path) as font:
+                    for c in chars: font['glyf'][font.getBestCmap()[c]]=TTGlyphPen(None).glyph()
+                    font.save(path)
+            before=(base.read_bytes(),custom.read_bytes())
+            font_override.compose(before[0],custom,output)
+            with TTFont(output) as merged:
+                cmap=merged.getBestCmap()
+                self.assertGreater(merged['glyf'][cmap[0xf1]].numberOfContours,0)
+                self.assertEqual(merged['glyf'][cmap[32]].numberOfContours,0)
+            self.assertEqual(before,(base.read_bytes(),custom.read_bytes()))
+
     def test_game_private_use_symbols_keep_original_metrics(self):
         with tempfile.TemporaryDirectory() as work:
             base, custom, output = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'out.ttf')]

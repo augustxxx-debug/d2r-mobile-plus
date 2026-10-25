@@ -24,7 +24,7 @@ These are changes on top of upstream commit [`195ae11`](https://github.com/jhaiz
 
 ## MetalFX spatial upscaling (experimental)
 
-Open **Options → Custom → MetalFX upscaling** in game. Select a profile and press **Apply**; no exit or restart is required. Recreating render targets may briefly pause rendering. Discard leaves the active profile unchanged.
+Open **Options → Graphics** in game. Enable **MetalFX spatial upscaling** to reveal the four-position Auto / Eco / Balanced / Quality slider. Turning the switch off restores the original upscale pass and remembers the selected profile. Frame rate has a separate left/right 30 / 60 FPS selector. Press **Apply** to activate changes without restarting; switching may briefly pause rendering. **Discard** restores the active settings. **Defaults** resets Graphics and Custom together, retaining language and voice; press Apply to save.
 
 | Profile | Initial 3D width/height ratio | Behavior |
 |---|---|---|
@@ -32,7 +32,6 @@ Open **Options → Custom → MetalFX upscaling** in game. Select a profile and 
 | Eco | 60% | Targets lower 3D rendering load; measured energy savings are not guaranteed |
 | Balanced | 75% | Balances 3D clarity and rendering load |
 | Quality | 85% | Prioritizes a higher 3D ratio |
-| Original | Existing controller | Disables MetalFX and restores the original upscale pass |
 
 Ratios apply separately to width and height, not energy savings. Only 3D color is upscaled, retaining the original mask; subsequent UI composition retains its resolution. The frame-rate setting is independent. Auto, Eco and Balanced can reduce 3D resolution further during sustained frame drops. Unsupported devices or initialization failure retain the original upscale pass automatically.
 

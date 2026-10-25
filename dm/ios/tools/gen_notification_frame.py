@@ -5,6 +5,7 @@ from PIL import Image
 
 SOURCE = 'hd/global/ui/FrontEnd/HD/Final/FrontEnd_ButtonMed.sprite'
 TARGET = 'data/hd/global/ui/ztouch_notification/frame.sprite'
+MIN_LAYOUT_WIDTH = 1680  # Longer localized sentences need space beyond the seven-slot HUD row.
 
 
 def stretch_button(button, width, height):

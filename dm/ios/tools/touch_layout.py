@@ -1158,7 +1158,7 @@ def _settings_tabs(text):
     # 第三项「游戏设定」：原版英文串 Game Settings 在 266 宽的页签里折成两行、第二行被截成「Se…」（英文版审计）；触屏页签条换成我们表里的串（中文不变、英文 Settings）。手柄版页签条是原版，不动
     # Third item 「游戏设定」(Settings): the original English string Game Settings wraps to two lines in the 266-wide tab and the second line is truncated to "Se..." (English version audit); the touch tab bar uses the string from our table instead (Chinese unchanged, English Settings). The controller layout tab bar is the original and is left alone
     if new.count('"@GameSettingsTab"') != 1: raise SystemExit('touch_layout：页签条第三项不是原样「游戏设定」（原版布局变了？）')
-    new = new.replace('"@GameSettingsTab"', '"@dmTabGameSettings"')
+    new = new.replace('"@GameSettingsTab"', '"@dmTabGraphics"')
     # 第四项「自定义」同理：原版串 KeyBindingTypeCustom 的西语「Personalizar」在页签里被截成「Persona…」（西语截图），页签用我们表里的短词（页面大标题仍用原版串）
     # The fourth item "Custom" likewise: the original string KeyBindingTypeCustom in Spanish "Personalizar" is truncated to "Persona…" in the tab (Spanish screenshot), so the tab uses the short word from our table (the page heading still uses the original string)
     new = new.replace('"@Controls"', '"@dmTabCustom"').replace('SettingsPanelMessage:CheckChanges:KeyBindingMenu', 'SettingsPanelMessage:CheckChanges:VideoOptionsPanel')
@@ -1184,7 +1184,7 @@ def _drop_rows(*rows):
 # 视频页的表格整个换成我们的行：分节标题 + 每个开关一行原版勾选框（照「游戏」页「自动拾取金币」那一行的字段）。控件名 TouchCustom_<键>，
 # 宿主 dm_custom.c 读勾没勾、按应用 / 放弃 / 默认处理。勾选框的消息发一条无害的 ClosePanel（同「极乐世界」），游戏不认
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'eco_fps', 'q3d', 'loot_filter', 'auto_buff', 'touch_swap_above')
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above')
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines
@@ -1235,11 +1235,11 @@ _CUSTOM_LANG_HINT = ''.join('        { "type": "TextBoxWidget", "name": "TouchCu
 # 勾选框紧挨着自己的字（字在前时那一截落在字与自己的勾选框之间，勾选框看着像下一项的，真包截图）。
 # 标签控件 TouchCustom_lang_Text 仍在、不写字、横跨整行：宿主拿它定提示那句的横坐标、手柄选中框按它与最后一个勾选框取并框住整行
 _LANG_OPTS = (('Zh', 'zh', 'dmCustomLangZh', 38, 131), ('En', 'en', 'dmCustomLangEnOpt', 249, 196), ('Es', 'es', 'dmCustomLangEsOpt', 525, 213),
-              ('Ru', 'ru', 'dmCustomLangRuOpt', 818, 221), ('Ko', 'ko', 'dmCustomLangKoOpt', 1119, 166))   # （控件名后缀，勾选框后缀，文字键，勾选框 x，文字框宽）；字在勾选框右边 10，宽 = 实宽 + 30
-_LANG_ROW_W = 1385   # 到各行勾选框那一列的右沿（x 1315 + 70）
+              ('Ru', 'ru', 'dmCustomLangRuOpt', 818, 321), ('Ko', 'ko', 'dmCustomLangKoOpt', 1219, 166))   # （控件名后缀，勾选框后缀，文字键，勾选框 x，文字框宽）；字在勾选框右边 10，宽 = 实宽 + 30
+_LANG_ROW_W = 1485   # 语言行在 1730 宽内容区内为字体回退后的文字保留空间
 def _custom_lang_row():
     y, h = _CUSTOM_Y[0], 112; cy = y + (h - 70) // 2   # 标签、两个选项排在这一行的上 112，下面 68 留给提示那一句 | The label and the two options go in the top 112 of this row; the bottom 68 is left for the hint sentence
-    def text(name, x, w, key): return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": %d }, "text": "@%s", "style": "$StyleSettingsText", "style/fontFace": "BlizzardGlobal" } },\n' % (name, x, y, w, h, key))
+    def text(name, x, w, key): return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": %d }, "text": "@%s", "style": "$StyleSettingsText", "style/fontFace": "BlizzardGlobal", "style/pointSize": 28, "style/options": { "lineWrap": false } } },\n' % (name, x, y, w, h, key))
     def box(name, x): return ('        { "type": "ToggleButtonWidget", "name": "%s", "fields": {\n'
             '            "rect": { "x": %d, "y": %d, "width": 70, "height": 70 }, "sound": "cursor_menu_select_hd",\n'
             '            "focusIndicatorPadding": "$OptionsToggleFocusIndicatorPadding", "focusIndicatorFilename": "$OptionsToggleFocusIndicatorFilename", "focusIndicatorOffset": { "x": 0, "y": -4 },\n'
@@ -1300,7 +1300,10 @@ PRESENT['controller/console/videooptionspanelhd.json'] = _custom_page
 # 手柄版选项页：原版页签条不动，只把第一项「视频」换成「自定义」——它打开的视频页就是上面那份自定义页（两种模式同一份内容）
 # Controller options page: the original tab bar is untouched, only the first item "Video" is replaced by "Custom"; the video page it opens is the Custom
 # page above (same content in both modes)
-def pad_settings(s): return _sub1(s, '"@OptionsMenuVideo"', '"@KeyBindingTypeCustom"')   # 原版串：自定义 / Custom（跟游戏语言走） | original string: "Custom" in Chinese / English (follows the game language)
+def pad_settings(s):
+    s = _sub1(s, '"@OptionsMenuVideo"', '"@KeyBindingTypeCustom"')
+    if '"@GameSettingsTab"' not in s: raise SystemExit('touch_layout：手柄页签里没有图形页目标项')
+    return s.replace('"@GameSettingsTab"', '"@dmTabGraphics"')
 def pad_custom_page(s): return _custom_page(s)[0]
 # 挂进 PRESENT：build_ingame 对同一份文件（往选项页插「应用 / 默认 / 放弃」）会先套这里的变换再插按钮，不会出两份覆盖互相盖掉
 # Hooked into PRESENT: for the same file (inserting 「应用 / 默认 / 放弃」(Apply / Default / Discard) into the options page) build_ingame applies the transform here first and then inserts the buttons, so two overlays that overwrite each other are not produced
@@ -1346,7 +1349,68 @@ PRESENT['gameplayoptionspanelhd.json'] = _drop_rows('AutoPartyInvite', 'ItemHotk
                                                     # Color Blind 「校准」(Calibrate): tapping it opens the full-page 「色盲校准」(Color Blind Calibration), where outside the page / the top-right corner / 「关闭」(Close) / 「保存并关闭」(Save and Close) all do not respond to taps, so the only way out is a force quit.
                                                     # This row has only the two characters 「色盲」(Color Blind) plus this button, so the whole row is removed (colorblind mode and strength are both on that page, and the settings table has no other colorblind row)
                                                     'ColorBlindCalibration')
-PRESENT['onlinegameoptionspanelhd.json'] = _drop_rows('OfflineDifficultyScaling', 'OfflineSettingsEffectNote')
+def _graphics_page(text):
+    # The native panel registers only its known TableWidget rows. New rows appended to
+    # that table are not displayed. Keep its empty table and put our controls beside it,
+    # inside the same ScrollView, as the proven Custom page does.
+    start = text.find('"name": "OptionsTable"')
+    if start < 0: raise SystemExit('touch_layout：图形页没有 OptionsTable')
+    brace = text.rfind('{', 0, start); end = _block_end(text, brace) + 1
+    def label(name, key, x, y, w, h):
+        return {'type': 'TextBoxWidget', 'name': name, 'fields': {
+            'rect': {'x': x, 'y': y, 'width': w, 'height': h}, 'text': '@' + key,
+            'style': '$StyleSettingsText', 'style/options/newlineHandling': 'standard'}}
+    def toggle(name, y):
+        return {'type': 'ToggleButtonWidget', 'name': name, 'fields': {
+            'rect': {'x': 1315, 'y': y + 55, 'width': 70, 'height': 70},
+            'sound': 'cursor_menu_select_hd',
+            'focusIndicatorPadding': '$OptionsToggleFocusIndicatorPadding',
+            'focusIndicatorFilename': '$OptionsToggleFocusIndicatorFilename',
+            'focusIndicatorOffset': {'x': 0, 'y': -4},
+            'filename': 'Lobby\\CreateGame\\CreateGame_AdvancedCheckbox',
+            'untoggledFrame': 0, 'untoggledPressedFrame': 1, 'untoggledHoveredFrame': 3, 'untoggledDisabledFrame': 2,
+            'toggledFrame': 4, 'toggledPressedFrame': 5, 'toggledHoveredFrame': 6,
+            'onClickMessage': 'PanelManager:ClosePanel:' + name}}
+    title = label('TouchGraphicsTitle', 'dmGraphicsTitle', 0, 0, 1730, 180)
+    title['fields']['style'] = '$StyleSettingsTitle'
+    title['children'] = [{'type': 'ImageWidget', 'name': 'Divider', 'fields': {
+        'rect': '$OptionsDividerRect', 'filename': 'PauseMenu\\Divider'}}]
+    profile = {'type': 'Widget', 'name': 'TouchGraphicsProfileRow', 'fields': {
+        'rect': {'x': 0, 'y': 540, 'width': 1730, 'height': 180}}, 'children': [
+        label('TouchGraphicsProfileText', 'dmGraphicsProfileAuto', 0, 0, 1000, 180),
+        {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsProfile', 'fields': {
+            'rect': {'x': 1110, 'y': 55, 'width': 480, 'height': 72},
+            'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',
+            'focusIndicatorFilename': '$OptionsSliderFocusIndicatorFilename', 'isHorizontal': True, 'increment': 1,
+            'indicatorFilepath': 'PauseMenu\\HorizontalIndicator', 'background': '$SettingsSliderBackground',
+            'onUpdateMessage': 'OptionsPanelMessage:SetD2RUpscaleProfile',
+            'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
+            'valueText': '$SettingsSliderValueFields'}}]}
+    rows = {'type': 'Widget', 'name': 'TouchGraphicsRows', 'fields': {
+        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1120}}, 'children': [title,
+        label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 180, 1000, 180),
+        {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsFps', 'fields': {
+            'rect': {'x': 1110, 'y': 235, 'width': 480, 'height': 72},
+            'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',
+            'focusIndicatorFilename': '$OptionsSliderFocusIndicatorFilename', 'isHorizontal': True, 'increment': 1,
+            'indicatorFilepath': 'PauseMenu\\HorizontalIndicator', 'background': '$SettingsSliderBackground',
+            'onUpdateMessage': 'OptionsPanelMessage:SetD2RFrameRate',
+            'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
+            'valueText': '$SettingsSliderValueFields'}},
+        label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 360, 1000, 180), toggle('TouchGraphicsUpscale', 360),
+        profile, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 800, 1670, 300),
+        {'type': 'NineTileImageWidget', 'name': 'TouchGraphicsSel', 'fields': {
+            'rect': {'x': 99999, 'y': 0, 'width': 1700, 'height': 180}, 'backgroundColor': [0, 0, 0, 0],
+            'filename': 'Controller/PANEL/ControllerSelector/ControllerSelectorBorder', 'tileScale': 0.5}}]}
+    hint = rows['children'][-2]
+    hint['fields']['style/pointSize'] = 28
+    hint['fields']['style/fontColor'] = '$FontColorLightGray'
+    empty_table = {'type': 'TableWidget', 'name': 'OptionsTable', 'fields': {
+        'columns': ['$OptionsTableColumn1', '$OptionsTableColumn2'], 'rowHeight': '$OptionsTableRowHeight'}, 'children': []}
+    text = text[:brace] + json.dumps(empty_table, ensure_ascii=False) + ',\n' + json.dumps(rows, ensure_ascii=False) + text[end:]
+    text, n = offscreen(text, types=(), names=('SettingsEffectNote',))
+    return text, n + 1
+PRESENT['onlinegameoptionspanelhd.json'] = _graphics_page
 # 手柄模式的三份选项页（放在原路径，手柄模式加载；触屏那份由生成器挪到触屏这边）：原版删去两种模式都不支持的行——语言、联机、聊天、键鼠热键提示、离线人数档，
 # 和大字体模式（一应用就换成另一套布局档，再碰屏切回触屏会坏）。手柄模式比触屏多留的行见下
 # The three options pages for controller mode (placed at the original path and loaded by controller mode; the touch copy is moved to the touch side by the generator): the original with the rows that neither mode supports removed -- language, online, chat, keyboard-and-mouse hotkey hints, offline /players setting,
@@ -1359,7 +1423,7 @@ PAD_ROOT = {
     # Not restored: vibration (the host does not support vibration; it is an empty implementation in hle_hid.c), controller feedback and cursor speed (the value changed but no effect was measured: in panels the controller cursor snaps cell by cell), separate binding for weapon swap (not verified)
     'gameplayoptionspanelhd.json': _drop_rows('AutoPartyInvite', 'ItemHotkeyTooltipAppender', 'ChatFontSize', 'ChatBackground', 'ShowParty', 'ShowNames', 'ShowRoomName', 'LowVisionMode',
                                               'ControllerCursorSpeed', 'ControllerWeaponSwapSeparateBindings', 'ControllerRumbleEnabled'),
-    'onlinegameoptionspanelhd.json': _drop_rows('OfflineDifficultyScaling', 'OfflineSettingsEffectNote'),
+    'onlinegameoptionspanelhd.json': _graphics_page,
 }
 def build_pad_root(romfs, outdir):
     repl = {}

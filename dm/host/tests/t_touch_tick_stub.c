@@ -1,3 +1,4 @@
+#include "t_uiscreen_fixture.h"
 #include <stdint.h>
 
 uint32_t dm_cur_tick(void) { return 0; }

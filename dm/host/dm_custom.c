@@ -33,19 +33,26 @@ static const char *const k_keys[] = { "lang",
 #if VOICE_ROW
     "voice",
 #endif
-    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above" };   // 顺序 = 自定义页从上到下的行序（touch_layout.py _CUSTOM_ROWS）：手柄在这页按这个顺序上下选行 | Order = row order of the Custom page from top to bottom (touch_layout.py _CUSTOM_ROWS): the controller selects rows up/down on this page in this order
+    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "upscale" };   // upscale 开关与上次选择的 q3d 档位分开保存
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
 static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0 };   // 缺省值：省电模式（30 帧）缺省关、3D 画质缺省流畅优先（q3d=0），换组默认在传送门左侧，其余缺省开（voice 的缺省不用：读盘时按当前语言定、「默认」不管它）
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1 };   // 缺省：60 FPS、MetalFX 开、Auto 档
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
 #define K_MERC (2 + VOICE_ROW)
+#define K_FPS (11 + VOICE_ROW)
 #define K_Q3D (12 + VOICE_ROW)
 #define K_TOUCH_SWAP (15 + VOICE_ROW)
+#define K_UPSCALE (NK - 1)
+static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_UPSCALE; }
+static int custom_key_at(int row) {
+    for (int i = 0; i < NK; i++) if (!graphics_key(i) && row-- == 0) return i;
+    return 0;
+}
 void dm_3d_quality_mode_set(int mode);
 static const char *rev_box(int i) { return i == K_VOICE ? "TouchCustom_voice_zh" : i == K_TOUCH_SWAP ? "TouchCustom_touch_swap_above_near" : NULL; }   // 单选行「反面那一项」的勾选框 | Checkbox of the radio row's "inverse option"
 static _Atomic int g_val[NK];        // 已生效：1 开 / 0 关 | In effect: 1 on / 0 off
@@ -75,6 +82,7 @@ static int voice_running(void) { return lang_running() == 0 ? 0 : 1; }   // 没�
 // so a separate line merc_pot_v2 is recorded: it is written only when the player has changed this item on the page after the default was changed to on. On load, if merc_pot_v2 exists it is authoritative; absent = never touched under the new default → on
 // (merc_pot=1 in an old file is also on, the same result). The merc_pot line is still written with the current value, so packages of older versions read it without error
 static _Atomic int g_merc_explicit = -1;   // 文件里写着的 merc_pot_v2：-1 没写 / 0 / 1 | merc_pot_v2 as written in the file: -1 not written / 0 / 1
+
 static _Atomic int g_repaint;        // 默认 / 放弃之后：页上的勾选框按待定值 / 生效值重摆一遍 | After default / discard: lay out the checkboxes on the page again according to pending values / effective values
 
 const char *dm_save_commitdir(void);
@@ -101,6 +109,7 @@ static void load_once(void) {
         if (!strcmp(ln, "merc_pot_v2")) merc = eq[1] != '0'; }
     if (f) fclose(f);
     if (!qv2) v[K_Q3D] = v[K_Q3D] == 1 ? 3 : 0;
+    if (v[K_Q3D] == 4) { v[K_Q3D] = 0; v[K_UPSCALE] = 0; }
     { const char *tl = getenv("DM_TEST_LANG"); if (tl && *tl >= '0' && *tl < '0' + LANG_N) { lang = v[0] = *tl - '0'; g_lang_test = 1; LOG("自定义设置：测试开关 DM_TEST_LANG=%d（当作语言行选了 %s 并应用，不写回文件）", lang, k_lang_name[lang]); } }
 #if VOICE_ROW
     { const char *tv = getenv("DM_TEST_VOICE"); if (tv && *tv >= '0' && *tv <= '1') { voice = v[K_VOICE] = *tv - '0'; g_voice_test = 1; LOG("自定义设置：测试开关 DM_TEST_VOICE=%d（当作配音行选了 %s 并应用，不写回文件）", voice, voice ? "English" : "中文"); } }
@@ -116,14 +125,14 @@ static void load_once(void) {
     atomic_store(&g_voice_explicit, voice);
     v[K_MERC] = merc < 0 ? k_def[K_MERC] : merc; atomic_store(&g_merc_explicit, merc);
     for (int i = 0; i < NK; i++) { atomic_store(&g_val[i], v[i]); atomic_store(&g_pend[i], -1); }
-    dm_3d_quality_mode_set(v[K_Q3D] == 3); LOG("3D profile loaded: %d", v[K_Q3D]);
+    dm_3d_quality_mode_set(v[K_UPSCALE] && v[K_Q3D] == 3); LOG("3D profile loaded: %d", v[K_UPSCALE] ? v[K_Q3D] : 4);
     if (!atomic_exchange(&g_loaded, 1)) LOG("自定义设置：读盘 %s%s lang=%d%s%s auto_mana=%d merc_pot=%d drop_light=%d map_mark=%d item_notes=%d icloud=%d pot_pick=%d drop_haptic=%d gem_pick=%d store_btn=%d eco_fps=%d", p, f ? "" : "（没有文件，全按缺省）", v[0], lang < 0 ? "（没写，按当前语言）" : "", vlog, v[1 + VOICE_ROW], v[2 + VOICE_ROW], v[3 + VOICE_ROW], v[4 + VOICE_ROW], v[5 + VOICE_ROW], v[6 + VOICE_ROW], v[7 + VOICE_ROW], v[8 + VOICE_ROW], v[9 + VOICE_ROW], v[10 + VOICE_ROW], v[11 + VOICE_ROW]);
 }
 int dm_custom_get(const char *key) {
     load_once(); int i = key_index(key); if (i < 0) return 1;
     return atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : k_def[i];
 }
-int dm_3d_profile_get(void) { return dm_custom_get("q3d"); }
+int dm_3d_profile_get(void) { return dm_custom_get("upscale") ? dm_custom_get("q3d") : 4; }
 int dm_custom_lang_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_lang_explicit) : -1; }
 int dm_custom_voice_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_voice_explicit) : -1; }
 int dm_fps_setting(void) { return dm_custom_get("eco_fps") ? 30 : 60; }   // 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义） | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol)
@@ -141,10 +150,18 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     (void)arg; if (!cat || !act || strcmp(cat, "OptionsPanelMessage")) return;
     load_once();
     if (!strcmp(act, "AcceptChanges")) { int ch = 0;
+        // Migrate the former fifth radio option to the independent enable switch.
+        if (atomic_load(&g_pend[K_Q3D]) == 4) { atomic_store(&g_pend[K_Q3D], 0); atomic_store(&g_pend[K_UPSCALE], 0); }
         for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd == 3); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd == 3 ? "Quality" : "Adaptive", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
+        dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && atomic_load(&g_val[K_Q3D]) == 3);
+        atomic_fetch_add(&g_repaint, 1);
         if (ch) save(); }
-    else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_repaint, 1); }
-    else if (!strcmp(act, "ResetToDefaults")) { for (int i = 1 + VOICE_ROW; i < NK; i++) atomic_store(&g_pend[i], k_def[i]); atomic_store(&g_repaint, 1); }   // 从 1 起（有配音行时从 2 起）：语言与单独配音那一格不归「默认」管
+    else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); atomic_fetch_add(&g_repaint, 1); }
+    else if (!strcmp(act, "ResetToDefaults")) {
+        // Preserve upstream global defaults across the two enhanced tabs. Language/voice stay unchanged.
+        for (int i = 1 + VOICE_ROW; i < NK; i++) atomic_store(&g_pend[i], k_def[i]);
+        atomic_fetch_add(&g_repaint, 1); }
+
 }
 
 // ---- 选项页上的勾选框
@@ -169,14 +186,116 @@ static void set_toggle(uint64_t w, int on) {
     static const int32_t fr[2][4] = { { 0, 1, 3, 2 }, { 4, 5, 6, -1 } };
     *(uint8_t *)(w + 0xa88) = on != 0; memcpy((void *)(w + 0x6e8), fr[on != 0], sizeof fr[0]); *(int32_t *)(w + 0x610) = fr[on != 0][0];
 }
+static int pending_value(int i) { int p = atomic_load(&g_pend[i]); return p >= 0 ? p : atomic_load(&g_val[i]); }
+static int enhanced_settings_dirty(void) {
+    for (int i=0;i<NK;i++) if (pending_value(i)!=atomic_load(&g_val[i])) return 1;
+    return 0;
+}
+static void graphics_select_fps(int value) {
+    if (value < 0 || value > 1 || (!value) == pending_value(K_FPS)) return;
+    atomic_store(&g_pend[K_FPS], !value);
+    LOG("图形设置：帧率 → %d FPS（点应用生效）", value ? 60 : 30);
+}
+static void graphics_select_profile(int value) {
+    if (value < 0 || value > 3 || value == pending_value(K_Q3D)) return;
+    atomic_store(&g_pend[K_Q3D], value);
+    LOG("图形设置：MetalFX 档位 → %d（点应用生效）", value);
+}
+static void graphics_text(uint64_t w, const char *s) {
+    if (!w || !s || !DM_WIDGET_OK(main_base(), w, DM_VT_TEXT, "图形设置文字")) return;
+    size_t n = strlen(s); const char *old = *(const char **)(w + 0x88);
+    if (*(uint64_t *)(w + 0x90) == n && old && !memcmp(old, s, n)) return;
+    ((void *(*)(uint64_t, const char *, uint64_t))(main_base() + 0x136e5c))(w + 0x88, s, n);
+    ((void (*)(uint64_t))(main_base() + 0xadc434))(w);
+}
+static void ui_show_ours(uint64_t w, int on) {
+    const char *name = w ? *(const char **)(w + 8) : NULL;
+    if (!name || strncmp(name, "Touch", 5)) { if (w) LOG("【红】图形设置：拒绝修改原版控件可见性"); return; }
+    *(uint8_t *)(w + 0x50) = on != 0; *(uint8_t *)(w + 0x51) = on != 0;
+}
+void dm_graphics_ui_pump(unsigned long long root) {
+    if (!root || !main_base()) return;
+    static dm_wref seen[3]; static int paint;
+    uint64_t sp = dm_ui_top(root, "OnlineGameOptionsPanel");
+    if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); return; }
+    load_once(); int repaint = atomic_load(&g_repaint);
+    if (paint != repaint) { paint = repaint; memset(seen, 0, sizeof seen); }
+    uint64_t fps = find_w(sp, "TouchGraphicsFps", 0);
+    int fps_ok = fps && DM_WIDGET_OK(main_base(), fps, DM_VT_SLIDER, "图形设置帧率");
+    if (fps_ok) {
+        if (dm_wref_get(&seen[0]) != fps) {
+            *(int32_t *)(fps + 0x5b0) = 1; *(int32_t *)(fps + 0x5b8) = 1;
+            *(int32_t *)(fps + 0x5bc) = 0; *(int32_t *)(fps + 0x5c0) = 1;
+            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(fps, !pending_value(K_FPS), 0, 0);
+            dm_wref_set(&seen[0], fps);
+        } else graphics_select_fps(*(int32_t *)(fps + 0x5c4));
+    }
+    uint64_t upscale = find_w(sp, "TouchGraphicsUpscale", 0);
+    if (upscale) {
+        int want=pending_value(K_UPSCALE);
+        if (dm_wref_get(&seen[1])!=upscale) { dm_wref_set(&seen[1],upscale); set_toggle(upscale,want); }
+        else if (TOGGLED(upscale)!=want) atomic_store(&g_pend[K_UPSCALE],TOGGLED(upscale));
+    }
+    int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t);
+    static int selected; static dm_wref focus_panel;
+    if (dm_wref_get(&focus_panel) != sp) { dm_wref_set(&focus_panel, sp); selected = 0; }
+    int pad = dm_padmode_current(); uint64_t confirm = dm_ui_top(root, "ConfirmationModal");
+    if (confirm && *(uint8_t *)(confirm + 0x50)) pad = 0;
+    uint64_t ev = pad ? dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A | DM_BTN_LEFT | DM_BTN_RIGHT) : 0;
+    int rows = pending_value(K_UPSCALE) ? 3 : 2;
+    if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
+    if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
+    if (selected == 0 && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
+        int to = (!pending_value(K_FPS)) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
+        if (to>=0 && to<=1) { graphics_select_fps(to);
+            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(fps,to,0,0); }
+    }
+    if ((ev & DM_BTN_A) && selected == 1) {
+        int to=!pending_value(K_UPSCALE); atomic_store(&g_pend[K_UPSCALE],to);
+        if (upscale) set_toggle(upscale,to);
+    }
+    int enabled = pending_value(K_UPSCALE);
+    uint64_t row = find_w(sp, "TouchGraphicsProfileRow", 0);
+    if (row) ui_show_ours(row, enabled);
+    uint64_t slider = find_w(sp, "TouchGraphicsProfile", 0);
+    if (slider && DM_WIDGET_OK(main_base(), slider, DM_VT_SLIDER, "图形设置滑块")) {
+        // 3.3.94012: render main+aef3cc reads min/max/current here; main+ad7028
+        // clamps and moves the indicator. Native onUpdateMessage has no numeric payload.
+        if (dm_wref_get(&seen[2]) != slider) {
+            *(int32_t *)(slider + 0x5b0) = 1;
+            *(int32_t *)(slider + 0x5b8) = 3;
+            *(int32_t *)(slider + 0x5bc) = 0;
+            *(int32_t *)(slider + 0x5c0) = 3;
+            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, pending_value(K_Q3D), 0, 0);
+            dm_wref_set(&seen[2], slider);
+        } else if (enabled) graphics_select_profile(*(int32_t *)(slider + 0x5c4));
+        if (enabled && selected == 2 && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
+            int to = pending_value(K_Q3D) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
+            if (to >= 0 && to < 4) { graphics_select_profile(to);
+                ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, to, 0, 0); }
+        }
+    }
+    graphics_text(find_w(sp,"TouchGraphicsFpsText",0),dm_str(main_base(),pending_value(K_FPS)?"dmGraphicsFrameRate30":"dmGraphicsFrameRate60"));
+    uint64_t focus = find_w(sp, "TouchGraphicsSel", 0);
+    if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? -20 : 99999, y = pad ? 170 + 180 * selected : 0;
+        if (r[0] != x || r[1] != y) { r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)focus + 0x10))(focus); } }
+    static const char *const captions[] = { "dmGraphicsProfileAuto", "dmGraphicsProfileEco", "dmGraphicsProfileBalanced", "dmGraphicsProfileQuality" };
+    int profile = pending_value(K_Q3D); if (profile < 0 || profile > 3) profile = 0;
+    graphics_text(find_w(sp, "TouchGraphicsProfileText", 0), dm_str(main_base(), captions[profile]));
+    uint64_t vt = *(uint64_t *)sp; int valid = 0;
+    for (int k = 0; k < 96 && !valid; k++) valid = *(uint64_t *)(vt + 8 * k) == (uint64_t)main_base() + 0xae5f28;
+    if (valid) { int dirty = enhanced_settings_dirty();
+        if (*(uint8_t *)(sp + 0x1a0) != dirty) { *(uint8_t *)(sp + 0x1a0) = dirty; LOG("图形设置：有未应用改动 → %d", dirty); } }
+    else { static int warned; if (!warned++) LOG("【红】图形设置：原生选项页类型校验失败，不写改动标记"); }
+}
 void dm_custom_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
     static dm_wref seen[NK];   // 每行最近见到的勾选框（带界面代号：重建后取到 0 = 页刚出现） | Most recently seen checkbox of each row (with UI generation: 0 after a rebuild = page just appeared)
     uint64_t sp = dm_ui_top(root, "VideoOptionsPanel"); if (!sp || !*(uint8_t *)(sp + 0x50)) {   // 「自定义」页 = 借来的视频页（界面根的直接子，与设置页并列）。页不在屏上：没点「应用」的勾选作废（同原版不应用就离开），下次出现重摆 | The 「自定义」(Custom) page = the borrowed video page (a direct child of the UI root, alongside the settings page). Page not on screen: checkbox changes without tapping 「应用」(Apply) are discarded (same as leaving without applying in the original game), and it is laid out again the next time it appears
-        int was = 0; for (int i = 0; i < NK; i++) was |= seen[i].w != 0;
-        if (was) for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1);
+        uint64_t settings = dm_ui_top(root, "SettingsPanel");
+        if (!settings || !*(uint8_t *)(settings + 0x50)) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); }
         memset(seen, 0, sizeof seen); return; }
-    load_once(); if (atomic_exchange(&g_repaint, 0)) memset(seen, 0, sizeof seen);
+    load_once(); static int paint; int repaint = atomic_load(&g_repaint); if (paint != repaint) { paint = repaint; memset(seen, 0, sizeof seen); }
     if (atomic_load(&g_lang_explicit) < 0) atomic_store(&g_val[0], lang_running());   // 语言那一格没点过应用：生效值 = 此刻实际在跑的语言（读盘时游戏还没设语言，那时取到的不准） | Apply never tapped for the language cell: effective value = the language actually running right now (when read from disk the game has not set the language yet, so the value fetched then is not accurate)
 #if VOICE_ROW
     if (atomic_load(&g_voice_explicit) < 0) atomic_store(&g_val[K_VOICE], voice_running());
@@ -190,13 +309,14 @@ void dm_custom_ui_pump(unsigned long long root) {
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
       uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64];
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
-          if (ev & DM_BTN_DOWN) sel = sel + 1 < NK ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
-          snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[sel]); cw = find_w(sp, sel == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[sel]); tw = find_w(sp, nm, 0);   // 语言行：框住标签到最右那一格 | Language row: box from the label to the rightmost cell
-          if ((ev & DM_BTN_A) && cw && dm_wref_get(&seen[sel]) == cw) {
-              if (sel == K_Q3D) { int pd = atomic_load(&g_pend[sel]), shown = pd >= 0 ? pd : atomic_load(&g_val[sel]); int to = (shown + 1) % 5; atomic_store(&g_pend[sel], to); for (int k = 0; k < 5; k++) { uint64_t z = find_w(sp,k_q3d_box[k],0); if (z) set_toggle(z,k == to); } }
-              else if (sel == K_VOICE || sel == K_TOUCH_SWAP) { int p0 = atomic_load(&g_pend[sel]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[sel]); atomic_store(&g_pend[sel], !sh); set_toggle(cw, !sh); { uint64_t z = find_w(sp, rev_box(sel), 0); if (z) set_toggle(z, sh); }
-                  LOG("自定义设置：%s → %d（手柄 A 在两项间切换；点「应用」生效）",k_keys[sel],!sh); }
-              else if (sel == 0) { int p0 = atomic_load(&g_pend[0]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[0]), to = (sh + 1) % LANG_N; atomic_store(&g_pend[0], to);   // 语言行是单选的五项：A 依次轮换，四个框当场摆好
+          if (ev & DM_BTN_DOWN) sel = sel + 1 < NK - 3 ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
+          int ci = custom_key_at(sel);
+          snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[ci]); cw = find_w(sp, ci == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[ci]); tw = find_w(sp, nm, 0);   // 语言行：框住标签到最右那一格 | Language row: box from the label to the rightmost cell
+          if ((ev & DM_BTN_A) && cw && dm_wref_get(&seen[ci]) == cw) {
+              if (ci == K_Q3D) { int pd = atomic_load(&g_pend[ci]), shown = pd >= 0 ? pd : atomic_load(&g_val[ci]); int to = (shown + 1) % 5; atomic_store(&g_pend[ci], to); for (int k = 0; k < 5; k++) { uint64_t z = find_w(sp,k_q3d_box[k],0); if (z) set_toggle(z,k == to); } }
+              else if (ci == K_VOICE || ci == K_TOUCH_SWAP) { int p0 = atomic_load(&g_pend[ci]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[ci]); atomic_store(&g_pend[ci], !sh); set_toggle(cw, !sh); { uint64_t z = find_w(sp, rev_box(ci), 0); if (z) set_toggle(z, sh); }
+                  LOG("自定义设置：%s → %d（手柄 A 在两项间切换；点「应用」生效）",k_keys[ci],!sh); }
+              else if (ci == 0) { int p0 = atomic_load(&g_pend[0]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[0]), to = (sh + 1) % LANG_N; atomic_store(&g_pend[0], to);   // 语言行是单选的五项：A 依次轮换，四个框当场摆好
                   for (int k = 0; k < LANG_N; k++) { uint64_t z = find_w(sp, k_lang_box[k], 0); if (z) set_toggle(z, k == to); }
                   LOG("自定义设置：语言 → %s（手柄 A 在五项间轮换；点「应用」生效）", k_lang_name[to]); }
               else set_toggle(cw, !TOGGLED(cw)); } }
@@ -226,7 +346,7 @@ void dm_custom_ui_pump(unsigned long long root) {
           if (to != shown) atomic_store(&g_pend[K_Q3D], to);
           for (int k = 0; k < 5; k++) if (TOGGLED(boxes[k]) != (k == to)) set_toggle(boxes[k], k == to);
       } }
-    for (int i = 1; i < NK; i++) { if (i == K_Q3D) continue; char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
+    for (int i = 1; i < NK; i++) { if (graphics_key(i)) continue; char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
         uint64_t w = find_w(sp, nm, 0); if (!w || !*(uint8_t *)(w + 0x50)) continue;
         int pd0 = atomic_load(&g_pend[i]), want = pd0 >= 0 ? pd0 : atomic_load(&g_val[i]);
         uint64_t z = rev_box(i) ? find_w(sp, rev_box(i), 0) : 0;   // 两项单选行（3D 画质：上下的「流畅优先」「画质优先」；换组位置）：存的仍是一个键，反面那一项是它的反面 | Two-option radio rows (3D quality: "Smoothness first" / "Quality first" stacked; swap-group position): still stores one key, the other option is its negation
@@ -252,6 +372,6 @@ void dm_custom_ui_pump(unsigned long long root) {
     static uint64_t vt_ok_for; static int vt_ok; if (vt_ok_for != *(uint64_t *)sp) { vt_ok_for = *(uint64_t *)sp; vt_ok = 0;
         for (int k = 0; k < 96 && !vt_ok; k++) vt_ok = *(uint64_t *)(vt_ok_for + 8 * k) == (uint64_t)main_base() + 0xae5f28;
         if (!vt_ok) LOG("【红】自定义设置：借来的视频页虚表里没有 main+0xae5f28，不写「有改动」位（原版版本变了？）"); }
-    if (vt_ok) { int dirty = 0; for (int i = 0; i < NK; i++) { int pd = atomic_load(&g_pend[i]); dirty |= pd >= 0 && pd != atomic_load(&g_val[i]); }
+    if (vt_ok) { int dirty = enhanced_settings_dirty();
         if (*(uint8_t *)(sp + 0x1a0) != dirty) { *(uint8_t *)(sp + 0x1a0) = (uint8_t)dirty; LOG("自定义设置：有未应用的改动 → %d（「应用 / 放弃」%s）", dirty, dirty ? "点亮" : "变灰"); } }
 }
