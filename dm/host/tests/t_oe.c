@@ -6,6 +6,7 @@
 #define HLE_OE_SOURCE "../hle_oe.c"
 #endif
 #include HLE_OE_SOURCE
+#include "../../gfx/nvn/nvn_metalfx_policy.h"
 #include <signal.h>
 #include <sys/wait.h>
 uint64_t now_ns(void) { return 0; }
@@ -160,6 +161,16 @@ static void test_scale3d(void) {
     CHECK(a == 0 && b == 0, "动态比例：实玩第二段的慢帧序列（帧率 59+）不论散开还是挤在一起都不换级");
 }
 int main(void) {
+    CHECK(nvn_metalfx_scale(0,2000000,0,0)==.80f,"Auto: smaller screen starts at .80");
+    CHECK(nvn_metalfx_scale(0,5700000,0,0)==.70f,"Auto: larger screen starts at .70");
+    CHECK(nvn_metalfx_scale(0,2000000,2,0)==.65f,"Auto: serious heat lowers initial ratio");
+    CHECK(nvn_metalfx_scale(0,2000000,0,1)==.65f,"Auto: system low power lowers initial ratio");
+    CHECK(nvn_metalfx_scale(1,5700000,0,0)==.60f,"Eco initial ratio");
+    CHECK(nvn_metalfx_scale(2,5700000,0,0)==.75f,"Balanced initial ratio");
+    CHECK(nvn_metalfx_scale(3,5700000,0,0)==.85f,"Quality initial ratio");
+    CHECK(nvn_metalfx_scale(4,5700000,0,0)==0,"Original leaves existing ratio controller unchanged");
+    CHECK(nvn_metalfx_scale(99,5700000,0,0)==0,"Invalid profile does not produce a ratio");
+
     test_scale3d();
     unsetenv("DM_OE_SCRIPT"); reset();
     CHECK(empty(), "初始空队列：返回false且不改输出");

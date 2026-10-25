@@ -184,6 +184,10 @@ static float s3_cfg(void) {
         cfg = v; }
     return cfg;
 }
+// MetalFX 成功接入后才采用新档位；不支持或原版档维持已有控制器。
+// Adopt new profiles only after MetalFX is active; unsupported/original mode keeps the existing controller.
+__attribute__((weak)) float mtl_metalfx_scale_hint(void) { return 0; }
+static float s3_effective_cfg(void) { float hint = mtl_metalfx_scale_hint(); return hint >= .5f && hint <= 1 ? hint : s3_cfg(); }
 #define S3_FLOOR_DEF 0.60f   // 待真机扫档（热机稳态最后 30 秒掉帧 ≤ 1%）定 | To be set by a device level sweep (dropped frames ≤ 1% in the last 30 s of warm steady state)
 // 纯函数控制器（单测 t_oe.c 直接喂序列）：level 0 = 配置值，越大越低。判据只认实际上屏：
 //   掉帧 = 上屏间隔 > 1.5 × 目标周期（60 帧时 25 ms），或被系统丢弃（−1）；每 2 秒一个窗，记窗内帧数与掉帧数，留最近 30 窗（60 秒）。
@@ -276,13 +280,15 @@ static void s3g_feed(double iv_ms) {
         LOG("3D 比例控制（按 GPU 耗时）：帧 %.1f ms、GPU %.1f ms → %s到第 %d 档（3D 比例 %.2f）", fr, g, lv > old ? "降" : "升", lv, lv ? cfg * g_s3g_mult[lv - 1] : cfg); }
 }
 void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_perf_present 转来）：实际上屏间隔 ms，−1 = 被丢弃，0 = 无读数 | called by the present thread every frame (forwarded from diag.c dm_perf_present): actual present interval in ms, −1 = dropped, 0 = no reading
-    static scale3d_ctl c; static int on = -1; static long inj0 = -1, inj1 = -1;
+    static scale3d_ctl c; static float floor = S3_FLOOR_DEF; static int on = -1; static long inj0 = -1, inj1 = -1;
     if (on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK");
         if (j) { inj0 = atol(j); inj1 = strchr(j, '-') ? atol(strchr(j, '-') + 1) : inj0; }
-        const char *fe = getenv("DM_3D_SCALE_FLOOR"); float fl = fe ? strtof(fe, NULL) : S3_FLOOR_DEF;   // 下限：档位表里不低于它的最深一档 | Floor: the deepest level in the level table that is not below it
-        c.max_level = s3_max_level(s3_cfg(), fl);
+        const char *fe = getenv("DM_3D_SCALE_FLOOR"); floor = fe ? strtof(fe, NULL) : S3_FLOOR_DEF;   // 下限：档位表里不低于它的最深一档 | Floor: the deepest level in the level table that is not below it
+        c.max_level = s3_max_level(s3_cfg(), floor);
         LOG("3D 比例控制：%s，配置 %.2f，下限 %.2f（第 %d 档）", on ? "开" : "关", s3_cfg(), s3_level_scale(s3_cfg(), c.max_level), c.max_level); }
     if (!on) return;
+    float effective = s3_effective_cfg(); static float previous = -1;
+    if (effective != previous) { previous = effective; c.level = 0; c.max_level = s3_max_level(effective, floor); atomic_store(&g_scale3d_level,0); scale3d_ctl_hold(&c,now_ns(),3*S3_SEC); }
     if (s3g_on() && atomic_load(&g_3d_quality_mode) != 1) { s3g_feed(iv_ms); return; }
     if (atomic_load(&g_3d_quality_mode) == 1) { if (c.level) { c.level = 0; LOG("3D 比例控制：画质优先，回到配置值"); } atomic_store(&g_scale3d_level, 0); return; }
     uint64_t now = now_ns();
@@ -295,7 +301,7 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     if (inj0 >= 0) { long f = (long)dm_nvn_frame_count(); double per = c.period_ms > 0 ? c.period_ms : 1000.0 / 60; iv_ms = f >= inj0 && f <= inj1 ? 2 * per : per; }   // 注入：段内每帧当掉一帧（两个周期） | Injection: every frame within the segment counts as a dropped frame (two periods)
     int was = c.level, lv = scale3d_ctl_step(&c, iv_ms, now);
     if (lv != was) LOG("3D 比例控制：最近 10 秒掉帧 %.1f%%、60 秒 %.1f%% → %s到第 %d 档（3D 比例 %.2f）%s", c.last_r10 * 100, c.last_r60 * 100, lv > was ? "降" : "升", lv,
-                       s3_level_scale(s3_cfg(), lv), c.need_good ? "（刚升又掉：下次升档要 90 秒）" : "");
+                       s3_level_scale(effective, lv), c.need_good ? "（刚升又掉：下次升档要 90 秒）" : "");
     atomic_store(&g_scale3d_level, lv);
 }
 void dm_3d_scale_hot(int hot) { (void)hot; }   // 过热不再直接降档（改按实际掉帧）；保留符号给前端 | overheating no longer lowers the level directly (now by actual dropped frames); the symbol is kept for the front end
@@ -309,6 +315,7 @@ static void scale3d_tick(void) {
     }
     // 动态档：0 = 配置值，k = 表里第 k 个低于配置值的比例
     // Dynamic level: 0 = configured value, k = the k-th table scale below the configured value
+    want_cfg = s3_effective_cfg();
     int lv = atomic_load(&g_scale3d_level); float dyn = s3_level_scale(want_cfg, lv);
     if (s3g_on()) { float g = atomic_load(&g_s3g_scale); dyn = g > 0 && g < want_cfg ? g : want_cfg; }   // GPU 时间控制器（DM_3D_SCALE_GPU=1，鸿蒙缺省开）覆盖帧间隔档 | GPU-time controller (DM_3D_SCALE_GPU=1, on by default on HarmonyOS) overrides the frame-interval level
     float want = dm_nvn_ruler_truth() ? 1.0f : dyn;

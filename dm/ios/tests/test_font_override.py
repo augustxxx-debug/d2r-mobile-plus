@@ -62,6 +62,33 @@ class FontComposition(unittest.TestCase):
                 self.assertEqual(merged['hmtx'][merged.getBestCmap()[65]][0], 1000)
             self.assertEqual(before, (base.read_bytes(), custom.read_bytes()))
 
+    def test_game_private_use_symbols_keep_original_metrics(self):
+        with tempfile.TemporaryDirectory() as work:
+            base, custom, output = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'out.ttf')]
+            synthetic(base, [65, 0xe001], 1000, 'GameBase')
+            synthetic(custom, [65, 0xe001], 1000, 'Requested')
+            with TTFont(custom) as font:
+                glyph = font.getBestCmap()[0xe001]
+                font['hmtx'][glyph] = (432, 0)
+                font.save(custom)
+            font_override.compose(base.read_bytes(), custom, output)
+            with TTFont(output) as merged:
+                self.assertEqual(merged['hmtx'][merged.getBestCmap()[0xe001]][0], 1000)
+
+    def test_custom_vertical_tables_with_horizontal_game_font(self):
+        with tempfile.TemporaryDirectory() as work:
+            base, custom, output = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'out.ttf')]
+            synthetic(base, [65, 0x4e00], 1000, 'GameBase')
+            synthetic(custom, [65, 0x4e8c], 2048, 'Requested')
+            builder = FontBuilder(font=TTFont(custom))
+            builder.setupVerticalMetrics({name: (2048, 0) for name in builder.font.getGlyphOrder()})
+            builder.setupVerticalHeader(ascent=1536, descent=-512)
+            builder.save(custom)
+            font_override.compose(base.read_bytes(), custom, output)
+            with TTFont(output) as merged:
+                self.assertEqual(set(merged.getBestCmap()), {65, 0x4e00, 0x4e8c})
+                self.assertNotIn('vhea', merged)
+
     def test_fingerprint_and_disabled_cleanup(self):
         with tempfile.TemporaryDirectory() as work:
             font = Path(work) / 'input.ttf'

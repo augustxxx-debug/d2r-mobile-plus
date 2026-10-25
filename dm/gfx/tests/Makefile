@@ -5,7 +5,7 @@
 CFLAGS=-O1 -g -Wall -Wno-unused-function -I../nvn/include
 GFX=$(filter-out ../nvn/hle_nvn.c,$(sort $(wildcard ../nvn/*.c ../nvn/*.m ../nvn/*.S ../tex/*.c ../tex/*.m)))
 GFX_H=$(wildcard ../nvn/*.h ../nvn/*.inc ../nvn/include/*.h ../tex/*.h)
-FW=-framework Metal -framework Foundation -framework QuartzCore -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
+FW=-framework Metal -weak_framework MetalFX -framework Foundation -framework QuartzCore -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
 # 宿主 crash.c 一并链入：写保护单测走生产同一套缺页钩子
 # Host crash.c is linked in as well: the write-protect unit tests go through the same page-fault hook as production
 t_nvn: t_nvn.c ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
@@ -15,11 +15,11 @@ t_dirty_slots: t_dirty_slots.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_
 t_dirty_race: t_dirty_race.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_dirty.h
 	clang $(CFLAGS) -o $@ t_dirty_race.c ../../host/crash.c
 t_builtin: t_builtin.m ../nvn/nvn_builtin.h
-	clang -O1 -g -Wall -fobjc-arc -o $@ t_builtin.m -framework Metal -framework Foundation
+	clang -O1 -g -Wall -fobjc-arc -o $@ t_builtin.m -framework Metal -weak_framework MetalFX -framework Foundation
 t_deswz_gpu: t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../tex/nvn_deswizzle.h ../tex/nvn_deswizzle_gpu.h ../nvn/nvn_tex.c ../nvn/nvn_tex.h
-	clang $(CFLAGS) -fobjc-arc -o $@ t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../nvn/nvn_tex.c -framework Metal -framework Foundation
+	clang $(CFLAGS) -fobjc-arc -o $@ t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../nvn/nvn_tex.c -framework Metal -weak_framework MetalFX -framework Foundation
 t_refl: t_refl.m ../nvn/nvn_refl.m ../nvn/nvn_refl.h ../nvn/dmsh_chain.h
-	clang -O1 -g -Wall -fobjc-arc -o $@ t_refl.m ../nvn/nvn_refl.m -framework Metal -framework Foundation
+	clang -O1 -g -Wall -fobjc-arc -o $@ t_refl.m ../nvn/nvn_refl.m -framework Metal -weak_framework MetalFX -framework Foundation
 t_hmap: t_hmap.c ../nvn/nvn_hmap.h
 	clang -O1 -Wall -o $@ t_hmap.c
 t_cover: t_cover.c ../nvn/nvn_cover.h
@@ -134,3 +134,10 @@ run-m3:
 
 t_copy_pitch: t_copy_pitch.c ../nvn/nvn_copy_pitch.h
 	clang -O1 -Wall -Werror -o $@ t_copy_pitch.c
+
+# 独立超分检查：合成颜色与遮罩，新旧两种后端分别运行。
+# Standalone upscaling checks: synthetic colors/mask, run each backend separately.
+t_metalfx: t_metalfx.m ../nvn/nvn_metalfx.m ../nvn/nvn_metalfx.h
+	clang -O1 -fobjc-arc -mmacosx-version-min=26.0 -o $@ t_metalfx.m ../nvn/nvn_metalfx.m -framework Metal -framework MetalFX -framework Foundation
+t_metalfx_m3: t_metalfx.m ../nvn/nvn_metalfx.m ../nvn/nvn_metalfx.h
+	clang -O1 -fobjc-arc -DDM_NVN_M3=1 -mmacosx-version-min=15.0 -o $@ t_metalfx.m ../nvn/nvn_metalfx.m -framework Metal -framework MetalFX -framework Foundation

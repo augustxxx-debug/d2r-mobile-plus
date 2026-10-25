@@ -32,6 +32,7 @@ run: \
 	$(B)/t_movie \
 	$(B)/t_namegen \
 	$(B)/t_oe \
+	$(B)/t_render_profile \
 	$(B)/t_uiscreen_frontend \
 	$(B)/t_padmap \
 	$(B)/t_rift_clock \
@@ -76,6 +77,7 @@ run: \
 	$(B)/t_hid_receipt 2>/dev/null
 	$(B)/t_touch_mac
 	$(B)/t_oe 2>/dev/null
+	$(B)/t_render_profile
 	$(B)/t_uiscreen_frontend
 	$(B)/t_fs 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_fs_case 2>/dev/null
@@ -203,3 +205,6 @@ $(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
 
 $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_weak.c ../hle.c
+
+$(B)/t_render_profile: t_render_profile.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_render_profile.c

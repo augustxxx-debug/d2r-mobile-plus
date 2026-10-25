@@ -1,6 +1,8 @@
 // NVN 空设备的 Metal 执行层，见 nvn_mtl.h。
 // Metal execution layer of the NVN null device, see nvn_mtl.h.
 #import <Metal/Metal.h>
+#import <MetalFX/MetalFX.h>
+#import "nvn_metalfx.h"
 #import <QuartzCore/CAMetalLayer.h>
 #import <QuartzCore/CAMetalDisplayLink.h>
 #import <ImageIO/ImageIO.h>
@@ -4632,6 +4634,9 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
     memcpy(&S, &save, sizeof S); args_dirty_all(); R.sc = sc; R.has_sc = has_sc; g_pso_dirty = g_dss_dirty = 1; g_gh.busy = 0;
     for (int i = 0; i < g_gh.n; i++) free(g_gh.c[i].S_); g_gh.n = 0;
 }
+// 超分接入限定在原版最终 3D 放大通道，实现在独立文件。
+// Upscaling hooks only the original final 3D upscale pass; implementation is separate.
+#include "nvn_metalfx.inc"
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); return; }
     __unsafe_unretained NvProg *pr = prog_get(S.prog);
@@ -4639,6 +4644,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         static const char *neg; static int ng = -1; if (ng < 0) { neg = getenv("DM_NVN_RULER_NEG"); ng = neg && *neg; }
         if (ng && pr) for (int st = 0; st < 5; st++) { __unsafe_unretained NvShader *sh = pr->sh[st]; if (sh && sh->stage == 1 && !strncmp(sh->key, neg, strlen(neg))) { static int once; if (!once++) MLOG("DM_NVN_RULER_NEG：被测模式丢弃着色器 %s 的绘制", sh->key); return; } }
     }
+    if (metalfx_draw(pr, dw, di)) return;
     if (zskip_can_draw(pr)) {   // 零源跳过：输出恒为 0、写 0 盖 0，这次绘制不改变任何结果（见 zskip_can_draw） | Zero-source skip: the output is always 0, writing 0 over 0, so this draw changes no result (see zskip_can_draw)
         g_zskip_count++; { static int once; if (!once++) MLOG("零源跳过：首例 通道 %llu", g_stat_pass + 1); }
         PD("N %llu 零源跳过", g_stat_pass + 1); return; }

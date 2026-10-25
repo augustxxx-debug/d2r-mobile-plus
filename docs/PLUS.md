@@ -18,7 +18,7 @@ Plus allows a longer stationary release only on quest icons, the replay control 
 
 ## Optional font
 
-This feature is experimental and disabled unless `DM_UI_FONT` is set. Supply a static TrueType font that you are entitled to use. ARKai_T is not included, and its actual appearance has not yet been evaluated.
+This feature is experimental and disabled unless `DM_UI_FONT` is set. Supply a static TrueType font that you are entitled to use. ARKai_T is not included. A local AR ZhongkaiGBK Medium font was identified and its Chinese settings appearance inspected on device; this does not validate every string or layout. Font replacement happens at build time, with no in-game font selector.
 
 Install the optional build dependency into the same Python environment used for asset generation:
 
@@ -35,7 +35,7 @@ The generator normalizes units per em, retains original vertical metrics and reg
 
 Coverage: the shared `BlizzardGlobal-V5_81.ttf` face, generated text that requests that face and the native rift HUD font loader. Other decorative font faces, classic bitmap text and text baked into game artwork are outside this change. Retaining vertical metrics does not guarantee identical glyph widths; line breaks, fallback appearance and clipping must be checked with the real target font in both languages and screen layouts.
 
-Synthetic tests cover Unicode fallback, units-per-em conversion, original registration/vertical metrics, unchanged input files, content fingerprints, disabled cleanup and invalid input paths. They do not establish visual correctness for ARKai_T.
+Synthetic tests cover Unicode fallback, units-per-em conversion, original registration/vertical metrics, unchanged input files, content fingerprints, disabled cleanup and invalid input paths. Tests also cover custom vertical-table compatibility and preservation of original private-use game symbols, for five tests total. Chinese settings were inspected on device; English and full panel coverage remain pending.
 
 ## Verification
 
@@ -47,7 +47,7 @@ Validation record: **2026-10-25**, upstream baseline `195ae11dc70f1ba7735c6063e1
 | Host UI classification | 381 checks passed |
 | Front-end geometry | 44 checks passed |
 | Notification generator | Automated frame construction checks passed |
-| Font composition | 3 synthetic-font tests passed; target font pending |
+| Font composition | 5 font-composition tests passed; target Chinese settings inspected locally |
 | Device build | Signed iOS build succeeded |
 | Quest reproduction | Baseline slow release missed; modified slow and quick releases stopped narration |
 | Indicator frame review | 44 captured frames reviewed in the preceding layout build |
@@ -66,7 +66,7 @@ make -C dm/host/tests build/t_minimap_lift build/t_uiscreen_frontend
 ./dm/host/tests/build/t_uiscreen_frontend
 ```
 
-The font test explicitly skips when its optional dependency is absent. Some broader tests require game-derived tables or private runtime fixtures; see [contribution requirements](../CONTRIBUTING.md). No full rewrite-equivalence, entire graphics-suite or retail Switch ground-truth acceptance claim is made for this preview. The rewriter and graphics engine are not changed by the Plus patch.
+The font test explicitly skips when its optional dependency is absent. Some broader tests require game-derived tables or private runtime fixtures; see [contribution requirements](../CONTRIBUTING.md). No full rewrite-equivalence, entire graphics-suite or retail Switch ground-truth acceptance claim is made for this preview. The rewriter is unchanged; MetalFX modifies the final 3D upscale pass in the graphics layer.
 
 ### Remaining checks
 

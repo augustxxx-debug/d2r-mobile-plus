@@ -48,3 +48,12 @@ os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
 host = host_src
 assert 'TouchCustom_touch_swap_above_near' in host
 print('PASS touch layout options: generated radio pair, labels, defaults, host order (default and MOVIE_FFMPEG=1) and scrolling row extent')
+
+# 五档画质行使用同一滚动区，英文／中文标题均有字符串表条目。
+# All five profile choices share the scrolling area and have English/Chinese string-table entries.
+for name in ('TouchCustom_q3d','TouchCustom_q3d_eco','TouchCustom_q3d_balanced','TouchCustom_q3d_quality','TouchCustom_q3d_off'):
+    assert name in nodes and nodes[name]['type'] == 'ToggleButtonWidget'
+assert nodes['TouchCustom_q3d_Text']['fields']['rect']['height'] == 900
+for key in ('Auto','Eco','Balanced','Quality','Off'):
+    assert any(n.get('fields',{}).get('text') == '@dmCustomFx'+key for n in nodes.values())
+print('PASS five upscaling profiles: radio names, labels and scrolling extent')

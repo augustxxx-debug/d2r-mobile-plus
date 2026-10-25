@@ -18,9 +18,39 @@ This is a development preview. Improvements have been tested locally on an iOS d
 | Notifications | Builds a single frame from your own game artwork, retaining corner details and an opaque center | Implemented; generator tests and device checks |
 | Loading indicators | Anchors both the fire-logo animation and red save/loading symbol; prepares placement before revealing the widget | Implemented; captured frame sequences reviewed |
 | Quest log touch | Accepts stationary releases longer than the normal tap deadline on quest-specific controls | Implemented; automated tests and device reproduction |
-| Optional font | Build-time main-font override with missing-character fallback | Experimental; target ARKai_T font not yet visually validated |
+| Optional font | Build-time main-font override with missing-character fallback | Experimental; ARKai_T inspected locally on device, broader layout coverage pending |
 
-These are changes on top of upstream commit [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). The branch does not introduce multiplayer, MetalFX upscaling or frame generation. Upstream performance measurements and platform support claims are not new benchmarks for this fork.
+These are changes on top of upstream commit [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). The branch adds experimental MetalFX spatial upscaling; it does not introduce multiplayer or frame generation. Upstream performance measurements and platform support claims are not new benchmarks for this fork.
+
+## MetalFX spatial upscaling (experimental)
+
+Open **Options → Custom → MetalFX upscaling** in game. Select a profile and press **Apply**; no exit or restart is required. Recreating render targets may briefly pause rendering. Discard leaves the active profile unchanged.
+
+| Profile | Initial 3D width/height ratio | Behavior |
+|---|---|---|
+| Auto | 70% or 80% | Chooses by output pixel count; uses 65% in Low Power Mode or elevated thermal conditions, then adapts to actual frame timing |
+| Eco | 60% | Targets lower 3D rendering load; measured energy savings are not guaranteed |
+| Balanced | 75% | Balances 3D clarity and rendering load |
+| Quality | 85% | Prioritizes a higher 3D ratio |
+| Original | Existing controller | Disables MetalFX and restores the original upscale pass |
+
+Ratios apply separately to width and height, not energy savings. Only 3D color is upscaled, retaining the original mask; subsequent UI composition retains its resolution. The frame-rate setting is independent. Auto, Eco and Balanced can reduce 3D resolution further during sustained frame drops. Unsupported devices or initialization failure retain the original upscale pass automatically.
+
+### Exploratory device power probe
+
+Each profile was run on the same device and test save, with a fixed seed and time on Blood Moor using the same scripted encounter: six in-game enemies and identical skill inputs. The frame-rate target was 60, display brightness was 100%, and the device was unplugged with no active cooler. FPS and GPU timings below come from the game runtime logs; the power column is the whole-device battery drain rate estimated by Apple Power Profiler.
+
+| Profile | FPS at about 30 s | GPU average / p95 | Power probe |
+|---|---:|---:|---:|
+| Auto | 59.9 FPS | 11.74 / 15.68 ms | 37.2%/hr |
+| Eco | 59.8 FPS | 14.58 / 16.55 ms | 44.5%/hr |
+| Balanced | 60.0 FPS | 14.71 / 16.01 ms | 48.5%/hr |
+| Quality | 53.9 FPS | 18.56 / 19.74 ms | 31.2%/hr |
+| Original | 60.0 FPS | 12.03 / 15.83 ms | 32.6%/hr |
+
+**These readings cannot rank profile power use and must not be interpreted as savings percentages or watts.** Each profile has only one approximately 0.95-second power snapshot; Power Profiler then reported a device disconnect instead of recording the requested 8 seconds. Thermal states also differed between runs (for example, Quality reached a higher thermal state later), and the readings do not track rendering load consistently. The table preserves the exploratory observations and the measurement limitation; it does not claim that any profile saves power. A reliable comparison requires sustained device power sampling and repeated runs at matched thermal states.
+
+See [build and verification notes](docs/PLUS.md) for other checks and limitations.
 
 ## Branches
 

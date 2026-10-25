@@ -1208,10 +1208,10 @@ _CUSTOM_ROWS = tuple((k, '@' + _custom_key(k)) for k in _CUSTOM_KEYS)
 _CUSTOM_TITLE_H, _CUSTOM_LINE_H = 180, 180
 _CUSTOM_ALL = (('lang', '@dmCustomLang'),) + _CUSTOM_ROWS
 _CUSTOM_TEST_ROWS = int(os.environ.get('DM_CUSTOM_TEST_ROWS', '0'))   # 测试（造现场）：末尾多摆这么多行假行，验更多行时的滚动；产品不设 | test (test setup): append this many dummy rows at the end, to verify scrolling with more rows; not set in the product
-# 「3D 画质」（q3d）是单选的两项、每项下面一行说明小字，占两行高（_CUSTOM_Q3D_H）；其余各行一行高
-# "3D Quality" (q3d) is a radio with two options, each with a line of small description text below, taking two rows of height (_CUSTOM_Q3D_H); every other row is one row high
+# 超分五档、语音和换组位置两档；每项保留标题与说明的空间。
+# Upscaling has five choices; voice and swap position have two, each with room for a title and hint.
 _CUSTOM_Q3D_H = 2 * _CUSTOM_LINE_H
-_CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k in ('voice', 'q3d', 'touch_swap_above') else _CUSTOM_LINE_H) for k, _ in _CUSTOM_ALL] + [_CUSTOM_LINE_H] * _CUSTOM_TEST_ROWS
+_CUSTOM_ROW_H = [(5 * _CUSTOM_LINE_H if k == 'q3d' else _CUSTOM_Q3D_H if k in ('voice', 'touch_swap_above') else _CUSTOM_LINE_H) for k, _ in _CUSTOM_ALL] + [_CUSTOM_LINE_H] * _CUSTOM_TEST_ROWS
 _CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
 _CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
 def _custom_toggle_row(i, key, label):
@@ -1249,12 +1249,10 @@ def _custom_lang_row():
             '            "onClickMessage": "PanelManager:ClosePanel:%s" } },\n') % (name, x, cy, name)
     label = ('        { "type": "TextBoxWidget", "name": "TouchCustom_lang_Text", "fields": { "rect": { "x": 0, "y": %d, "width": %d, "height": %d }, "text": "", "style": "$StyleSettingsText" } },\n' % (y, _LANG_ROW_W, h))
     return label + ''.join(box('TouchCustom_lang_' + b, bx) + text('TouchCustomLang%s_Text' % n, bx + 80, w, k) for n, b, k, bx, w in _LANG_OPTS)   # 空字标签（见上）
-# 「3D 画质」（流畅优先（缺省，掉帧自动降 3D 比例）/ 画质优先（不自动降））：上下两项单选，每项标题下一行说明小字。
-# 存的是一个键 q3d（1 = 画质优先）：「画质优先」的勾选框叫 TouchCustom_q3d、「流畅优先」的叫 TouchCustom_q3d_smooth（它的反面），宿主 dm_custom.c 让两框互斥（同语言行）。
-# TouchCustom_q3d_Text 是空字、高度盖住两项的框：手柄选中框按「文字框与勾选框的上下沿取并」框住整行（dm_custom.c），所以用它把两项一起框进去
-# "3D Quality" (Smoothness first (default, automatically lowers the 3D scale on frame drops) / Quality first (no automatic lowering)): a stacked two-option radio, each option with a line of small description text below its title.
-# It stores a single key q3d (1 = quality first): the "Quality first" checkbox is TouchCustom_q3d and the "Smoothness first" one is TouchCustom_q3d_smooth (its inverse); the host's dm_custom.c makes the two boxes mutually exclusive (like the language row).
-# TouchCustom_q3d_Text is an empty-text box tall enough to cover both options: the controller selection frame wraps the whole row by "the union of the top/bottom edges of the text box and the checkbox" (dm_custom.c), so it is used to frame both options together
+# 超分用 q3d 存五档互斥选项；语音和换组位置沿用两档布局。
+# Upscaling stores five mutually exclusive q3d profiles; voice and swap position retain two choices.
+# 空标签框覆盖整行，供手柄焦点框使用；每项说明容纳两行小字。
+# An empty label spans the row for controller focus; each hint accommodates two lines of small text.
 def _custom_q3d_row(i, setting="q3d"):
     prefix = "TouchCustom_" + setting
     y = _CUSTOM_Y[i]; h = _CUSTOM_LINE_H
@@ -1267,9 +1265,9 @@ def _custom_q3d_row(i, setting="q3d"):
             '            "untoggledFrame": 0, "untoggledPressedFrame": 1, "untoggledHoveredFrame": 3, "untoggledDisabledFrame": 2,\n'
             '            "toggledFrame": 4, "toggledPressedFrame": 5, "toggledHoveredFrame": 6,\n'
             '            "onClickMessage": "PanelManager:ClosePanel:%s" } },\n') % (name, yy, name)
-    out = '        { "type": "TextBoxWidget", "name": "%s_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "" } },\n' % (prefix, y, _CUSTOM_Q3D_H)
+    out = '        { "type": "TextBoxWidget", "name": "%s_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "" } },\n' % (prefix, y, 5 * h if setting == 'q3d' else _CUSTOM_Q3D_H)
     choices = ((('dmCustomVoiceZh', prefix + '_zh'), ('dmCustomVoiceEn', prefix)) if setting == 'voice' else
-               (('dmCustomQ3dSmooth', prefix + '_smooth'), ('dmCustomQ3dQuality', prefix)) if setting == 'q3d' else
+               (('dmCustomFxAuto', prefix), ('dmCustomFxEco', prefix + '_eco'), ('dmCustomFxBalanced', prefix + '_balanced'), ('dmCustomFxQuality', prefix + '_quality'), ('dmCustomFxOff', prefix + '_off')) if setting == 'q3d' else
                (('dmCustomTouchSwapNear', prefix + '_near'), ('dmCustomTouchSwapFar', prefix)))
     for k, (key, nm) in enumerate(choices):
         yy = y + k * h
