@@ -239,8 +239,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t);
     static int selected; static dm_wref focus_panel;
     if (dm_wref_get(&focus_panel) != sp) { dm_wref_set(&focus_panel, sp); selected = 0; }
-    int pad = dm_padmode_current(); uint64_t confirm = dm_ui_top(root, "ConfirmationModal");
-    if (confirm && *(uint8_t *)(confirm + 0x50)) pad = 0;
+    int pad = dm_padmode_current() && !dm_ui_modal_active(root);
     uint64_t ev = pad ? dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A | DM_BTN_LEFT | DM_BTN_RIGHT) : 0;
     int rows = pending_value(K_UPSCALE) ? 3 : 2;
     if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
@@ -304,8 +303,7 @@ void dm_custom_ui_pump(unsigned long long root) {
     // Controller mode: the original options page's focus only recognizes its own rows in the table and cannot reach our checkboxes. D-pad up/down selects a row
     // (the original controller selection frame TouchCustomSel frames that row), A toggles the checkbox (handled below as "the player tapped it"), and all other
     // buttons go to the original as before
-    { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); static int sel; static dm_wref sel_sp; int pad = dm_padmode_current();
-      { uint64_t cm = find_w(root, "ConfirmationModal", 1); if (cm && *(uint8_t *)(cm + 0x50)) pad = 0; }   // 原版「设定已更改，应用 / 放弃」确认框开着：键全还给它（实测：不让的话 A 落在我们这一行上、点不到「应用」） | The original "Settings changed, Apply / Discard" confirmation box is open: hand all keys back to it (measured: otherwise A lands on our row and "Apply" cannot be reached)
+    { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); static int sel; static dm_wref sel_sp; int pad = dm_padmode_current() && !dm_ui_modal_active(root);
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
       uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64];
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);

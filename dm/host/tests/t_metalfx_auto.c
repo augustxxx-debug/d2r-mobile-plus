@@ -3,6 +3,14 @@
 #include "../../gfx/nvn/nvn_metalfx_policy.h"
 #define SEC 1000000000ull
 int main(void) {
+    assert(nvn_metalfx_hint(0,1,0,1,.80f)==.80f); // Recognized 1:1 bootstrap.
+    assert(nvn_metalfx_hint(3,1,0,1,0)==.85f);
+    assert(nvn_metalfx_hint(0,-1,0,1,.80f)==0);
+    assert(nvn_metalfx_hint(0,0,0,1,.80f)==0);
+    assert(nvn_metalfx_hint(0,1,0,0,.80f)==0);
+    assert(nvn_metalfx_hint(0,1,0,1,0)==0);
+    assert(nvn_metalfx_hint(4,1,0,1,.80f)==0);
+    for (int reason=1;reason<=3;reason++) assert(nvn_metalfx_hint(0,1,reason,1,.80f)==0);
     nvn_metalfx_auto_state s = {0};
     assert(nvn_metalfx_auto_step(&s,2000000,0,0,0)==.80f);
     assert(nvn_metalfx_auto_step(&s,2000000,2,0,SEC)==.65f);

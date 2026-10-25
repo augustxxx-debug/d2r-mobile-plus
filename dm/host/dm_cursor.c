@@ -1,5 +1,7 @@
 #include "dm_elysium.h"
 #include "dm_cursor.h"
+#include "dm_widget.h"
+#include "dm_notice_geometry.h"
 #include "dm_custom.h"
 #include "dm.h"
 #include "dm_uiscreen.h"
@@ -144,6 +146,9 @@ static uint64_t modal_any(uint64_t root, int with_bind, const char **name) {
         if (name) *name = nm; return p; }
     return 0;
 }
+// Shared settings input gate: native modal ownership applies to every modal,
+// including dismissable/error and quantity dialogs, not only ConfirmationModal.
+int dm_ui_modal_active(uint64_t root) { return root && modal_any(root,1,NULL)!=0; }
 static uint64_t ui_find(uint64_t w, const char *name, int dep);
 static uint64_t ui_panel(uint64_t root, const char *name);   // 只扫界面根的直接子控件（定义在后面） | Scans only the direct children of the UI root (defined later)
 static int free_cursor_page(module_t *m) {
@@ -1056,6 +1061,34 @@ static void ui_show_ours(uint64_t w, int on) {
     const char *nm = w ? (const char *)*(uint64_t *)(w + 8) : NULL; if (!w) return;
     if (!nm || strncmp(nm, "Touch", 5)) { static int lg; if (lg++ < 8) LOG("【红】界面：要改可见的控件「%s」不是我们的（Touch 开头），不写", nm ? nm : "?"); return; }
     if (*(uint8_t *)(w + 0x50) != (uint8_t)on || *(uint8_t *)(w + 0x51) != (uint8_t)on) { *(uint8_t *)(w + 0x50) = (uint8_t)on; *(uint8_t *)(w + 0x51) = (uint8_t)on; }
+}
+static void ui_notice_tile_rect(uint64_t w, const int wanted[4]) {
+    const char *name = w ? *(const char **)(w + 8) : NULL;
+    const char *prefix="TouchNoticeTile"; size_t n=strlen(prefix);
+    if (!name || strncmp(name,prefix,n) || name[n]<'0' || name[n]>'4' || name[n+1]<'0' || name[n+1]>'2' || name[n+2]) return;
+    if (wanted[0]<-4000 || wanted[0]>4000 || wanted[1]<-400 || wanted[1]>1000 || wanted[2]<1 || wanted[2]>4000 || wanted[3]<1 || wanted[3]>800) return;
+    module_t *m=main_module();
+    // Only our single-frame HD assets may change draw dimensions. Checking the
+    // widget name alone is insufficient: an inherited/foreign sprite must stay
+    // untouched. The filename must match the exact owned row/column asset.
+    if (!m || !dm_widget_is(m->base,w,DM_VT_IMAGE)) return;
+    char expected[48]; snprintf(expected,sizeof expected,"Ztouch_notification/tile%c%c",name[n],name[n+1]);
+    const char *file=*(const char **)(w+0x108); uint64_t length=*(uint64_t *)(w+0x110);
+    if (!file || length!=strlen(expected) || memcmp(file,expected,length) || *(int32_t *)(w+0x90)!=0) return;
+    uint64_t ref=*(uint64_t *)(w+0x88), sprite=ref?*(uint64_t *)ref:0;
+    if (!sprite) return;
+    uint32_t *atlas=(uint32_t *)(sprite+0xbc), *height=(uint32_t *)(sprite+0xc0), *frames=(uint32_t *)(sprite+0xcc), *width=(uint32_t *)(sprite+0xd0);
+    // Native HD drawing (main+895d40) takes geometry from width/height
+    // and U span from width/atlas. Updating both widths together keeps
+    // the complete texture (U span 1). These are CPU draw metadata;
+    // texture handles, storage, frame count and UV origins stay intact.
+    // Reject both sprite and widget writes until every ownership check passes.
+    if (*frames!=1 || *atlas!=*width || !*width || *width>4000 || !*height || *height>800) return;
+    *atlas=*width=(uint32_t)wanted[2]; *height=(uint32_t)wanted[3];
+    int32_t *rect=(int32_t *)(w+0x70);
+    // ImageWidget's layout callback reloads sprite dimensions (+0x78/+0x7c).
+    // Do not invoke it here: geometry and the owned sprite are already fitted.
+    if (memcmp(rect,wanted,4*sizeof *rect)) { rect[0]=wanted[0]; rect[1]=wanted[1]; rect[2]=wanted[2]; rect[3]=wanted[3]; }
 }
 static void ui_move_ours(uint64_t w, int x) {   // 我们自己的控件（Touch 开头）挪 x（矩形 +0x70，改完虚表 +0x10 重排）；原版控件只许走位置守卫 mv_offset | Move x of our own widgets (names starting with Touch) (rect +0x70, vtable +0x10 re-layout after changing); the original game's widgets may only go through the position guard mv_offset
     const char *nm = w ? (const char *)*(uint64_t *)(w + 8) : NULL; if (!w) return;
@@ -2099,7 +2132,6 @@ static uint64_t g_lift_next;
 // over the inventory cells when a panel opens, over the bottom-bar numbers when it closes (both directions were sent back). So both directions also write +0x74 to the new target in one go (the second registered exception,
 // written only by note_dock_snap). During slide-in / slide-out +0x74 is not equal to the old target, so nothing is written; even if equal on the first frame of slide-out, the interpolation after that uses the already changed +0x19c, so they move the same way.
 // Check on the next frame after writing: +0x74 still the new target = not written during animation; if it was changed, log red (g_nd_ychk)
-static _Atomic uint64_t g_tip_fr; static int32_t g_tip_box[4];   // 说明框：最近一次提交的出图帧号、估算矩形 x0 y0 x1 y1（界面坐标；tip_note 写、ui_note_dock_pump 读，都在游戏主线程） | Description box: present frame number of the last submission and estimated rectangle x0 y0 x1 y1 (UI coordinates; written by tip_note, read by ui_note_dock_pump, both on the game main thread)
 static dm_wref g_nd; static int32_t g_nd_orig, g_nd_mine; static int g_nd_on = -1, g_nd_hold;   // g_nd_hold：1 = 退出中（等出局），2 = 已出局（等进局） | g_nd_hold: 1 = leaving (waiting to be out of the game), 2 = out of the game (waiting to enter)
 static int g_nd_ychk; static int32_t g_nd_ywant; static unsigned g_nd_ywr, g_nd_ybad;   // 写过 +0x74 待下一帧核（核它还是 g_nd_ywant）；累计写入次数 / 动画期写入（被改）次数 | +0x74 was written, check it next frame (that it is still g_nd_ywant); total writes / writes during animation (overwritten)
 static int note_dock_snap(uint64_t w, int32_t from, int32_t to) {   // 框已停稳在 from：矩形 y 一次写成 to。返回 1 = 写了 | the box has settled at from: write the rectangle y as to in one go. Returns 1 = written
@@ -2114,6 +2146,54 @@ static void note_dock_restore(uint64_t root, const char *why) {   // 只许游�
         static int lg; if (lg++ < 60) LOG("提示框停靠：%s → 写回原值 y %d%s", why, g_nd_orig, still ? "（框已停稳，矩形 y 一并写回）" : ""); }
     g_nd_mine = *t; g_nd_on = 0;
 }
+// TextBoxWidget render (3.3.94012 main+adc5c4) measures UTF-8 using
+// c6d8f0(text, style[0xa4], maxPixelSize, float scale). Reuse the same
+// font/style and explicit floating-point argument used by native rendering;
+// fitToText with wrapping changes height, but keeps the maximum rectangle width.
+static int ui_notice_text_width(module_t *m,uint64_t prompt,int limit) {
+    int fallback=*(int32_t *)(prompt+0x78);
+    if (!dm_widget_is(m->base,prompt,DM_VT_TEXT) || limit<600 || limit>4000) return fallback;
+    uint64_t length=*(uint64_t *)(prompt+0x90); const char *text=*(const char **)(prompt+0x88);
+    if (!text || !length || length>4096 || *(int32_t *)(prompt+0xb0)!=14) return fallback;
+    float scale=((float (*)(uint64_t))(m->base+0x390b38))(prompt);
+    if (!(scale>0 && scale<=16)) return fallback;
+    _Alignas(8) unsigned char style[0xa4]; memcpy(style,(void *)(prompt+0xb4),0xa0);
+    memcpy(style+0xa0,(void *)(prompt+0xb0),4);
+    uint64_t hash=14695981039346656037ull;
+    for (uint64_t i=0;i<length;i++) { hash^=(unsigned char)text[i];hash*=1099511628211ull; }
+    for (unsigned i=0;i<sizeof style;i++) { hash^=style[i];hash*=1099511628211ull; }
+    static uint64_t last_hash,last_prompt; static float last_scale; static int last_limit,last_width;
+    if (last_prompt==prompt && last_hash==hash && last_scale==scale && last_limit==limit) return last_width;
+    uint64_t max=(uint32_t)((limit-128)*scale) | ((uint64_t)(uint32_t)(776*scale)<<32);
+    uint64_t size=((uint64_t (*)(const char *,const void *,const uint64_t *,float))(m->base+0xc6d8f0))(text,style,&max,scale);
+    float units=(uint32_t)size/scale;
+    int width=units>0 && units<9998 ? (int)ceilf(units)+2 : fallback;
+    if (getenv("DM_TEST_NOTICE_GEOM")) LOG("通知文字度量：%llu 字节，原生像素 %u x %u，比例 %.4f → 布局宽 %d（上限 %d）",(unsigned long long)length,(unsigned)size,(unsigned)(size>>32),scale,width,limit);
+    last_hash=hash;last_prompt=prompt;last_scale=scale;last_limit=limit;last_width=width;
+    return width;
+}
+static void ui_notice_prompt_center(uint64_t note,uint64_t prompt) {
+    module_t *m=main_module(); uint64_t border=prompt?*(uint64_t *)(prompt+0x30):0;
+    if (!m || !border || *(uint64_t *)(border+0x30)!=note || !ui_find(border,"TouchNoticeTile00",0) || !dm_widget_is(m->base,prompt,DM_VT_TEXT)) return;
+    const char *name=*(const char **)(border+8);
+    int height=*(int32_t *)(prompt+0x7c);
+    if (!name || strcmp(name,"NotificationBorder") || height<1 || height>776) return;
+    int32_t *rect=(int32_t *)(prompt+0x70); rect[1]=(244-height)/2;
+}
+// Native font measurement covers Latin, Cyrillic and CJK without per-language guesses.
+static int ui_notice_frame_fit(uint64_t note) {
+    uint64_t prompt=ui_find(note,"Prompt",0); module_t *m=main_module();
+    if (!prompt || !m || !ui_find(note,"TouchNoticeTile00",0)) return 244;
+    int limit=*(int32_t *)(note+0x78);
+    ui_notice_prompt_center(note,prompt);
+    int rects[15][4],height=dm_notice_geometry(ui_notice_text_width(m,prompt,limit),*(int32_t *)(prompt+0x7c),limit,rects);
+    if (!height) return 244;
+    for (int row=0;row<5;row++) for (int col=0;col<3;col++) {
+        char name[32]; snprintf(name,sizeof name,"TouchNoticeTile%d%d",row,col);
+        uint64_t tile=ui_find(note,name,0); if (tile) ui_notice_tile_rect(tile,rects[row*3+col]);
+    }
+    return height;
+}
 static void ui_note_dock_pump(uint64_t root) {
     static const char *const big[] = { "PlayerInventoryExpansionLayout", "SkillsTreePanel", "CharacterStatsPanel", "QuestLogPanelExpansion", "BankExpansionLayout", "HoradricCubeLayout",
         "WaypointsPanelExpansion", "VendorPanelLayout", "HirelingInventoryPanel", "ImbueItemsPanel", "ChroniclePanel", "MessageLogPanel", "PauseLayout", "PauseLayoutGarden",
@@ -2127,6 +2207,7 @@ static void ui_note_dock_pump(uint64_t root) {
     int ing = dm_uiscreen_ingame(); if (g_nd_hold == 1 && !ing) g_nd_hold = 2; else if (g_nd_hold == 2 && ing) g_nd_hold = 0;
     uint64_t w = ui_panel(root, "NotificationPanel");   // 顶层面板：只扫界面根的直接子（原先全树深搜，每帧约 73k 条指令） | Top-level panels: only the direct children of the UI root are scanned (previously a full-tree depth-first search, about 73k instructions per frame)
     if (!w) { dm_wref_set(&g_nd, 0); return; }
+    int frame_height=ui_notice_frame_fit(w);
     int32_t *t = (int32_t *)(w + 0x19c), h = *(int32_t *)(w + 0x7c);
     if (g_nd_ychk) { g_nd_ychk = 0; int32_t y = *(int32_t *)(w + 0x74); static int lg;
         if (w != dm_wref_get(&g_nd)) { if (lg++ < 60) LOG("提示框停靠：写回矩形 y 后提示框对象已换（出局 / 重建），不核"); }
@@ -2138,20 +2219,10 @@ static void ui_note_dock_pump(uint64_t root) {
         if (!nm || !*(uint8_t *)(c + 0x50)) continue;
         for (unsigned i = 0; i < sizeof big / sizeof *big && !panel; i++) panel = !strcmp(nm, big[i]) && has_visible_leaf(c, 1); }
     int32_t pv = h > 0 ? (int32_t)lroundf(py * h / 244.0f) : g_nd_orig;
-    // 说明框开着时提示框不压它（iOS / Mac 同一条）：面板态下这一帧或上一帧提交过说明、估算矩形与提示框相交，就把提示框挪到说明框正上 / 正下
-    // （离原位近、又不出屏的那侧），说明框没了回原位。提示框中心 y = 界面高 + 目标 × 界面高 / 2160、半高 = 矩形高 × 界面高 / 4320、半宽 = 矩形宽 × 界面高 / 4320（布局单位，界面高对应 2160）
-    // While the description box is open the notice box does not cover it (same for iOS / Mac): in panel state, if a description was submitted this frame or the previous one and the estimated rectangle intersects the notice box, move the notice box directly above / below the description box
-    // (the side closer to the original position that stays on screen); return to the original position when the description box is gone. Notice box center y = UI height + target × UI height / 2160, half height = rect height × UI height / 4320, half width = rect width × UI height / 4320 (layout units, UI height corresponds to 2160)
-    { module_t *mm = main_module(); int UW = mm ? *(int32_t *)(mm->base + 0x211da38) : 0, UH = mm ? *(int32_t *)(mm->base + 0x211da3c) : 0; uint64_t fr = dm_guest_frame(), tf = atomic_load(&g_tip_fr);
-      static int moved; int32_t rw = *(int32_t *)(w + 0x78);
-      if (panel && UH > 0 && h > 0 && rw > 0 && tf && fr - tf <= 2) {
-          int cy = UH + (int)lroundf((float)pv * UH / 2160.0f), hh = (int)lroundf((float)h * UH / 4320.0f), hw = (int)lroundf((float)rw * UH / 4320.0f), gap = UH / 90;
-          const int32_t *b = g_tip_box; int hit = UW / 2 - hw < b[2] && UW / 2 + hw > b[0] && cy - hh < b[3] + gap && cy + hh > b[1] - gap;
-          if (hit) { int up = b[1] - gap - hh, dn = b[3] + gap + hh, ok_up = up - hh >= 0, ok_dn = dn + hh <= UH;
-              int to = ok_up && ok_dn ? (abs(up - cy) <= abs(dn - cy) ? up : dn) : ok_up ? up : ok_dn ? dn : cy;
-              if (to != cy) { pv = (int32_t)lroundf((float)(to - UH) * 2160.0f / UH); if (!moved) { moved = 1; LOG("提示框停靠：说明框占 (%d,%d)–(%d,%d) 压到提示框（中心 y %d）→ 挪到说明框%s，中心 y %d", b[0], b[1], b[2], b[3], cy, to < cy ? "上方" : "下方", to); } } }
-          else moved = 0; }
-      else if (moved) { moved = 0; LOG("提示框停靠：说明框没了 → 回面板态位"); } }
+    if (frame_height>244) pv -= (frame_height-244)/2;
+    // Notifications dock by screen/panel geometry only. Following a gold/item
+    // tooltip made the notice jump as controller focus moved underneath it.
+    // Its opaque frame and priority resolve overlap without moving the notice.
     if (!(panel && pv > g_nd_orig)) { if (g_nd_on) note_dock_restore(root, ing ? "面板关了" : "不在局内"); }   // 只往下挪：布局本来就不低于面板态高度时不动 | only move it down: if the layout is already no higher than the panel-state height, leave it
     else if (*t != pv) { int32_t was = *t; *t = pv; g_nd_mine = pv;
         if (note_dock_snap(w, was, pv)) { static int lg; if (lg++ < 60) LOG("提示框停靠：目标换成 %d 时框已停稳在 y %d，矩形 y 一并写成新目标", pv, was); } }
@@ -2823,21 +2894,8 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 // Game main thread only (the gate callback runs there).
 // Test switch DM_TEST_TIPDOCK=1: ignore the mode (the Mac host is the gamepad version; use it to see the effect); =0: turn it off entirely
 static int ui_touch_mode(void);
-// 说明框占的地方（给提示框让位用，见 ui_note_dock_pump）：提交时只有目标矩形和文字，框的大小游戏在提交函数里面量（main+0xb0f998），入口拿不到，
-// 按文字估：行数 = 换行数 + 1，每行 0.038 × 屏高，上下边 0.03 × 屏高（Mac 16:10 截图标定：15 行长说明在 900 高界面里占 515）；
-// 横向以目标中线为中、半宽 0.25 × 屏高（比实测最宽的一行还宽，宁可多让）；纵向照原版：目标正下方放得下就在下、否则在上。界面坐标（与提交参数同一套）
-// Area taken by the description box (for making room for the notice box, see ui_note_dock_pump): at submission there is only the target rectangle and text; the game measures the box size inside the submit function (main+0xb0f998), unreachable from the entry,
-// so it is estimated from the text: lines = newlines + 1, 0.038 × screen height per line, top and bottom margins 0.03 × screen height (calibrated on a Mac 16:10 screenshot: a 15-line description takes 515 in a 900-high UI);
-// horizontally centered on the target center line with half width 0.25 × screen height (wider than the widest measured line; better to give more room); vertically as in the original game: below the target if it fits, otherwise above. UI coordinates (same system as the submit arguments)
-static void tip_note(const uint64_t *regs) {
-    module_t *m = main_module(); if (!m) return; int H = *(int32_t *)(m->base + 0x211da3c); const char *txt = (const char *)(uintptr_t)regs[1]; if (H <= 0 || !txt) return;
-    int n = 1; for (const char *c = txt; *c && n < 64; c++) n += *c == '\n';
-    int tx = (int32_t)regs[2], ty = (int32_t)(regs[2] >> 32), tw = (int32_t)regs[3], th = (int32_t)(regs[3] >> 32), bh = (int)lroundf((0.038f * n + 0.03f) * H), hw = H / 4, cx = tx + tw / 2;
-    int below = ty + th + bh <= H, y0 = below ? ty + th : ty - bh;
-    g_tip_box[0] = cx - hw; g_tip_box[1] = y0; g_tip_box[2] = cx + hw; g_tip_box[3] = y0 + bh; atomic_store(&g_tip_fr, dm_guest_frame());
-}
 static void tip_dock(const uint64_t *regs);
-void dm_ui_tooltip_obs(const uint64_t *regs) { tip_dock(regs); tip_note(regs); }   // 先按触屏规则改停靠目标，再按最终目标记占位 | First change the dock target by touch rules, then record the occupied area by the final target
+void dm_ui_tooltip_obs(const uint64_t *regs) { tip_dock(regs); }
 static void tip_dock(const uint64_t *regs) {
     static int force = -2; if (force == -2) { const char *e = getenv("DM_TEST_TIPDOCK"); force = e ? atoi(e) : -1; }
     if (force == 0 || (force < 0 && !ui_touch_mode())) return;

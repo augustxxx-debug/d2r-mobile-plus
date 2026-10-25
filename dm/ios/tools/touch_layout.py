@@ -1170,6 +1170,29 @@ def _settings_tabs(text):
         text = re.sub(r'("tabCount"\s*:)\s*\d+', r'\g<1> 5', text)
     else:
         text = text.replace('"textStrings":', '"tabCount": 5, "textStrings":', 1)
+    # Keep native tab artwork/hit rectangles. The stock wrapping style splits
+    # Gameplay's final letter onto a second line with the five-tab layout.
+    # A local text-style override leaves every other menu's font unchanged.
+    original_block = block = _widget_block(text, 'OptionsTabs')
+    style = re.search(r'"textStyle"\s*:\s*\{', block)
+    if not style:
+        # Console layouts inherit the base tab style. Supply its complete shape
+        # here: slash-path overrides are not honored by TabBarWidget.
+        fields = re.search(r'"fields"\s*:\s*\{', block)
+        if not fields: raise SystemExit('Settings OptionsTabs has no fields')
+        end = _block_end(block,fields.end()-1)
+        prefix = block[:end].rstrip()
+        if not prefix.endswith(('{',',')): prefix += ','
+        block = prefix + '\n"textStyle": {"pointSize":40,"options":{"lineWrap":false},"alignment":{"h":"center","v":"center"},"fontColor":"$FontColorWhite","spacing":{"leading":0.9,"kerning":0.95}}\n' + block[end:]
+        style = re.search(r'"textStyle"\s*:\s*\{', block)
+    start = style.end()-1
+    end = _block_end(block,start)
+    old_style = block[start:end+1]
+    new_style, points = re.subn(r'("pointSize"\s*:)\s*(?:"[^"\n]*"|[0-9.]+)', r'\g<1> 40', old_style)
+    new_style, wraps = re.subn(r'("lineWrap"\s*:)\s*(?:true|false)', r'\g<1> false', new_style)
+    if points != 1 or wraps != 1: raise SystemExit('Unexpected settings tab text style')
+    replacement = block[:start]+new_style+block[end+1:]
+    text = text.replace(original_block,replacement,1)
     return text, 2
 
 def _drop_rows(*rows):

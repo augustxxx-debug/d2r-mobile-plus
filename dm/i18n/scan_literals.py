@@ -43,7 +43,15 @@ def strip_py(s):
     lits = []; lines = s.splitlines(True); off = [0]
     for l in lines: off.append(off[-1] + len(l))
     prev = None
+    fstrings = []  # Python 3.12+ emits separate f-string tokens instead of STRING.
     for t in tokenize.generate_tokens(io.StringIO(s).readline):
+        if t.type == getattr(tokenize, 'FSTRING_START', -1):
+            fstrings.append(off[t.start[0] - 1] + t.start[1])
+        elif t.type == getattr(tokenize, 'FSTRING_END', -1):
+            start = fstrings.pop()
+            if not fstrings:
+                end = off[t.end[0] - 1] + t.end[1]
+                lits.append((start, s[start:end]))
         if t.type == tokenize.STRING:
             doc = prev in (None, tokenize.NEWLINE, tokenize.INDENT, tokenize.DEDENT, tokenize.NL) and t.string.lstrip('rbuRBUfF')[:3] in ('"""', "'''")
             if not doc: lits.append((off[t.start[0] - 1] + t.start[1], t.string))

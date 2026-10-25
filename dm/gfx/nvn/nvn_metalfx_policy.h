@@ -9,6 +9,14 @@ static inline float nvn_metalfx_scale(int mode, unsigned pixels, int heat, int l
     if (low_power || heat >= 2) return .65f;
     return pixels > 4000000 ? .70f : .80f;
 }
+// A recognized full-screen pass at 1:1 may seed the first lower-resolution
+// input, even before a scaler has encoded a frame. Unsupported/failed paths
+// must keep the original ratio instead of repeatedly attempting activation.
+static inline float nvn_metalfx_hint(int mode,int supported,int fallback,int recognized,float auto_scale) {
+    if (supported!=1 || fallback || !recognized || mode<0 || mode>=4) return 0;
+    if (mode) return nvn_metalfx_scale(mode,0,0,0);
+    return auto_scale>=.5f && auto_scale<=1 ? auto_scale : 0;
+}
 
 // Render-thread state. Reductions are prompt; recovery needs 60 seconds of
 // uninterrupted healthy observations. Long gaps (background/loading) do not

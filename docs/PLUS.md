@@ -70,6 +70,23 @@ make -C dm/host/tests build/t_minimap_lift build/t_uiscreen_frontend
 
 The font test explicitly skips when its optional dependency is absent. Some broader tests require game-derived tables or private runtime fixtures; see [contribution requirements](../CONTRIBUTING.md). No full rewrite-equivalence, entire graphics-suite or retail Switch ground-truth acceptance claim is made for this preview. The rewriter is unchanged; MetalFX modifies the final 3D upscale pass in the graphics layer.
 
+### Local audit after the device regression
+
+The following checks used the current local audit build on **2026-10-26**. They do not extend the earlier physical-device acceptance to this build. No phone installation or operation was performed during this audit.
+
+| Area | Evidence and limits |
+|---|---|
+| Front-end coordinates | 7,884 checks passed, including repeated size changes. These are geometry checks, not physical folding or UIKit event delivery. |
+| Notification frame | 7,772 content-size combinations passed. Owned single-frame sprite and widget writes share the same type, filename, frame and atlas guards; rejected inputs leave both objects unchanged. AddressSanitizer and UndefinedBehaviorSanitizer checks passed. |
+| Notification delivery | Production queue tests cover copied text, four producers, bounded/reentrant draining and owner-thread delivery. ThreadSanitizer checks passed. The native Mac game also displayed a no-items-to-deposit notice while genuinely paused, without closing the menu. |
+| Settings | The native Mac game exercised changed-value confirmation, Discard, Apply and global Defaults. Native offline difficulty reset from 8 to 1, while language and voice remained unchanged. English, Russian, Spanish and Korean screenshots were inspected at four display sizes; five tab destinations were preserved. |
+| Auto scaling | Production-entry tests preserve an existing frame-time downgrade across thermal-cap changes, exercise 10,000 rapid cap changes, and check explicit profiles and disabled-controller fallback. The concurrent-reader check passed ThreadSanitizer. A native 1:1 scene can now seed supported MetalFX activation without waiting for frame drops. |
+| MetalFX backend | Metal 3 and Metal 4 each passed three sequential frames with 64 color/mask samples per frame and invalid-extent rejection, with Metal API Validation enabled. This verifies the wrapper and sampled output, not phone power consumption. |
+| Diagnostics | Foundation tests cover bounded log-tail reads, identifier/known-character-name redaction and invalid UTF-8. Original logs remain unchanged. The iOS share sheet itself still needs device acceptance. |
+| Build | iOS Release and native Mac builds succeeded. Three private native-binding fixture tests and two game-derived skill-table hash checks were explicitly skipped in the local iOS test setup. |
+
+The full game could not run in the standard iOS Simulator because its graphics capability checks were not satisfied. Local game screenshots above came from the native Mac host using isolated test-save copies with cloud access disabled. They are not iOS Simulator screenshots and do not verify UIKit touch delivery, physical folding, iPhone thermal behavior or power savings. Broader panel/localization coverage remains subject to the checks below.
+
 ### Remaining checks
 
 - Landscape fold/unfold on Graphics is user-confirmed; extend coverage to other pages and menu/loading transitions.

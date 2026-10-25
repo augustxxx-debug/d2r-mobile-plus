@@ -10,14 +10,17 @@
 // and on receiving this no-op message the host calls the callback registered here (dm/host/diag.c). Two things are done here:
 //   ① Build one file: header (build number, device model, OS version, thermal / battery / memory / storage, key performance readings of this run and the previous run) + this run's boot.txt + the previous run's boot.previous.txt (left by main.m's rename before each launch);
 //   ② Present the system share sheet (UIActivityViewController), and the player chooses where to send it; on iPad / Mac the share sheet is a popover and must be given an anchor, otherwise it crashes as soon as it is presented.
-// Privacy: only these two logs (written by the game and the host themselves) and the machine readings listed above are included; no device name, no account / location / contacts information of any kind.
+// Privacy: export redacts home paths, application IDs, emails, container/device identifiers and save character names. Only these two logs (written by the game and the host themselves) and the machine readings listed above are included; no device name, no account / location / contacts information of any kind.
 // Test switch DM_TEST_SHARELOG_CLOSE=<seconds>: the share sheet is presented as usual and dismissed automatically after that many seconds; the exported file is also copied to Documents/sharelog_test.txt so regression can check its content.
 #import <UIKit/UIKit.h>
 #include <stdatomic.h>
 #include <sys/sysctl.h>
-#include <pwd.h>
-#include <unistd.h>
 #include "../../host/dm_i18n.h"
+#include "../../host/dm_custom.h"
+#import "dm_diagnostic_scrub.h"
+#import "dm_diagnostic_read.h"
+#include "../../gfx/nvn/nvn_mtl.h"
+float dm_3d_scale_cur(void);
 void plog(const char *fmt, ...);
 void dm_sharelog_init(void (*cb)(void));   // dm/host/diag.c
 
@@ -35,34 +38,46 @@ static NSString *last_line(NSData *d, const char *key) {
 static void perf_block(NSMutableString *h, NSString *title, NSData *d) {
     [h appendFormat:@"\n—— %@ ——\n", title];
     if (!d) { [h appendString:@"（没有这份日志）\n"]; return; }
-    static const char *keys[] = { "boot: 版本", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图" };
+    static const char *keys[] = { "boot: 版本", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：" };
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) { NSString *l = last_line(d, keys[i]); [h appendFormat:@"%@\n", l ?: [NSString stringWithFormat:@"（没有「%@」行）", @(keys[i])]]; }
 }
 // 日志里的路径会带系统用户主目录（Mac 上是 /Users/<用户名>，iPhone 上是 /var/mobile）：导出时一律换成 ~，不把用户名带出去
 // Paths in the log carry the system user's home directory (/Users/<username> on Mac, /var/mobile on iPhone): on export always replace it with ~ so the username does not leak out
-static NSData *scrub_home(NSData *d) {
-    struct passwd *pw = getpwuid(getuid()); const char *h = pw ? pw->pw_dir : NULL; size_t hn = h ? strlen(h) : 0;
-    if (!d || hn < 2) return d;
-    NSMutableData *o = [NSMutableData dataWithCapacity:d.length]; const uint8_t *b = d.bytes; size_t n = d.length, i = 0, from = 0;
-    while (i + hn <= n) { if (b[i] == (uint8_t)h[0] && !memcmp(b + i, h, hn)) { [o appendBytes:b + from length:i - from]; [o appendBytes:"~" length:1]; i += hn; from = i; } else i++; }
-    [o appendBytes:b + from length:n - from]; return o;
-}
 static NSDate *g_t0;   // 本次启动时刻（dm_sharelog_boot） | Time of this launch (dm_sharelog_boot)
 static NSURL *build_file(void) {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
-    NSData *(^rd)(NSString *) = ^NSData *(NSString *n) { return [NSData dataWithContentsOfFile:[doc stringByAppendingPathComponent:n] options:NSDataReadingMappedIfSafe error:nil]; };   // 映射着读：日志没有字节封顶，整读进内存再拼、再洗各拷一遍，峰值是日志的四倍 | read through a mapping: the log has no byte cap, and reading it whole into memory, then joining and scrubbing with one copy each, peaks at four times the log size
-    NSData *cur = rd(@"boot.txt"), *prev = rd(@"boot.previous.txt");
+    const NSUInteger log_limit = 2 * 1024 * 1024;
+    unsigned long long cur_omitted = 0, prev_omitted = 0;
+    NSData *cur = dm_diagnostic_read_tail([doc stringByAppendingPathComponent:@"boot.txt"],log_limit,&cur_omitted);
+    NSData *prev = dm_diagnostic_read_tail([doc stringByAppendingPathComponent:@"boot.previous.txt"],log_limit,&prev_omitted);
     NSDictionary *inf = NSBundle.mainBundle.infoDictionary; NSString *build = [inf[@"CFBundleVersion"] description] ?: @"未知";
     NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyy-MM-dd HH:mm:ss ZZZ";
     char hw[64] = "未知"; size_t hn = sizeof hw; sysctlbyname("hw.machine", hw, &hn, NULL, 0);
-    UIDevice *dev = UIDevice.currentDevice; dev.batteryMonitoringEnabled = YES;
-    NSArray<NSString *> *bst = @[ @"未知", @"放电", @"充电中", @"已充满" ]; int bs = (int)dev.batteryState;
+    __block float battery_level = -1; __block int bs = 0;
+    void (^battery_snapshot)(void) = ^{
+        UIDevice *dev = UIDevice.currentDevice; dev.batteryMonitoringEnabled = YES;
+        battery_level = dev.batteryLevel; bs = (int)dev.batteryState;
+    };
+    if (NSThread.isMainThread) battery_snapshot();
+    else dispatch_sync(dispatch_get_main_queue(),battery_snapshot);
+    NSArray<NSString *> *bst = @[ @"未知", @"放电", @"充电中", @"已充满" ];
     NSDictionary *fsa = [fm attributesOfFileSystemForPath:doc error:nil]; NSProcessInfo *pi = NSProcessInfo.processInfo;
     NSMutableString *h = [NSMutableString string];
     [h appendFormat:@"D2R Mobile Diagnostics\n导出时间 %@\n版本 %@ 构建 %@\n机型 %s 系统 %@\n", [df stringFromDate:NSDate.date], [inf[@"CFBundleShortVersionString"] description] ?: @"未知", build, hw, pi.operatingSystemVersionString];
-    [h appendFormat:@"温控档位 %ld 低电量模式 %@ 电量 %.0f%% %@\n", (long)pi.thermalState, pi.lowPowerModeEnabled ? @"开" : @"关", dev.batteryLevel < 0 ? -1.0 : dev.batteryLevel * 100, bs >= 0 && bs <= 3 ? bst[bs] : @"未知"];   // 中文一律走 %@：NSString 的 %s 不按 UTF-8 解 | Chinese always goes through %@: NSString's %s does not decode as UTF-8
+    [h appendFormat:@"温控档位 %ld 低电量模式 %@ 电量 %.0f%% %@\n", (long)pi.thermalState, pi.lowPowerModeEnabled ? @"开" : @"关", battery_level < 0 ? -1.0 : battery_level * 100, bs >= 0 && bs <= 3 ? bst[bs] : @"未知"];   // 中文一律走 %@：NSString 的 %s 不按 UTF-8 解 | Chinese always goes through %@: NSString's %s does not decode as UTF-8
     [h appendFormat:@"物理内存 %.1f GB 可用存储 %.1f GB 本次已运行 %.0f 分钟\n", pi.physicalMemory / 1073741824.0, [fsa[NSFileSystemFreeSize] doubleValue] / 1073741824.0, -g_t0.timeIntervalSinceNow / 60];
+    mtl_metalfx_status graphics = {0}; mtl_metalfx_snapshot(&graphics);
+    static const char *const profiles[] = { "Auto", "Eco", "Balanced", "Quality", "Original" };
+    static const char *const fallback[] = { "none-or-not-attempted", "unsupported-device", "initialization-failed", "encode-failed" };
+    int selected = dm_custom_get("q3d"), effective = graphics.profile;
+    [h appendFormat:@"\n—— Plus graphics (applied values; no pending UI changes) ——\nMetalFX enabled=%d selected=%s effective=%s lastEligiblePassActive=%d supported=%d (-1=not-probed) fallback=%s\n", dm_custom_get("upscale"), selected>=0 && selected<4 ? profiles[selected] : "unknown", effective>=0 && effective<5 ? profiles[effective] : "unknown", graphics.active, graphics.supported, graphics.fallback>=0 && graphics.fallback<4 ? fallback[graphics.fallback] : "unknown"];
+    [h appendFormat:@"FPS target=%d renderScale=%.3f lastUpscaleInput=%ux%u lastUpscaleOutput=%ux%u\n", dm_fps_setting(), dm_3d_scale_cur(), graphics.input_width, graphics.input_height, graphics.output_width, graphics.output_height];
+    [h appendString:@"Enhanced preferences (applied):"];
+    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above" };
+    for (unsigned i=0;i<sizeof custom/sizeof *custom;i++) [h appendFormat:@" %s=%d",custom[i],dm_custom_get(custom[i])];
+    [h appendString:@"\n"];
+    [h appendFormat:@"Log export: at most %lu bytes per log; omitted prefix bytes current=%llu previous=%llu. Original log files are unchanged.\n", (unsigned long)log_limit,cur_omitted,prev_omitted];
     perf_block(h, @"本局关键读数（各取最后一条）", cur);
     perf_block(h, @"上一局关键读数（各取最后一条）", prev);
     NSMutableData *out = [[h dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
@@ -74,7 +89,19 @@ static NSURL *build_file(void) {
     [fm removeItemAtPath:dir error:nil]; [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     df.dateFormat = @"yyyyMMdd_HHmmss";
     NSString *p = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@(dm_ui("dmShareLogFile")), build, [df stringFromDate:NSDate.date]]];
-    NSData *fin = scrub_home(out);
+    // Tail truncation can remove the path that originally identified a name.
+    // Read directory names only (never save contents), so recent standalone
+    // character-name messages are still redacted from the exported copy.
+    NSMutableArray<NSString *> *character_names = [NSMutableArray array];
+    for (NSString *root in @[@"save",@"save.work",@"save.test",@"save.test.work"]) {
+        NSString *directory = [doc stringByAppendingPathComponent:root];
+        for (NSString *name in [fm contentsOfDirectoryAtPath:directory error:nil]) {
+            NSString *save = [[directory stringByAppendingPathComponent:name]
+                stringByAppendingPathComponent:[name stringByAppendingPathExtension:@"d2s"]];
+            if ([fm fileExistsAtPath:save]) [character_names addObject:name];
+        }
+    }
+    NSData *fin = dm_diagnostic_scrub_names(out,NSHomeDirectory(),NSBundle.mainBundle.bundleIdentifier,character_names);
     if (![fin writeToFile:p atomically:YES]) { plog("诊断日志：【红】导出文件写不进 %s", p.UTF8String); return nil; }
     plog("诊断日志：已打包 %s（%lu 字节：本局 %lu、上一局 %s）", p.lastPathComponent.UTF8String, (unsigned long)fin.length, (unsigned long)cur.length,
          prev ? [NSString stringWithFormat:@"%lu", (unsigned long)prev.length].UTF8String : "没有");

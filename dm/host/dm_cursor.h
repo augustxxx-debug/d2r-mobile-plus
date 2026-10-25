@@ -126,3 +126,6 @@ void dm_ui_hand_idle(int idle);                  // 触摸前端每拍报：没�
 uint32_t dm_ui_hover_unid(void);               // 光标此刻指着的我方未鉴定物品 id（背包 / 箱子 / 方块 / 身上；没有 = 0）。宿主每帧发布，任意线程读 | id of our own unidentified item the cursor is pointing at right now (inventory / stash / cube / equipped; none = 0). Published by the host every frame, read from any thread
 void dm_ui_identify_hovered(void);              // 触摸层双击未鉴定物品：宿主下一帧对它调免费鉴定（dm_item_identify_free） | Touch layer double-tap on an unidentified item: on the next frame the host calls free identify on it (dm_item_identify_free)
 int dm_ui_map_geom(float *cell);   // 地图几何：返回 0 没开 / 1 微缩 / 2 全屏，*cell = 每格像素（真实画面像素，任意线程） | Map geometry: returns 0 not open / 1 minimap / 2 full screen, *cell = pixels per cell (real picture pixels, any thread)
+
+// Guest-main-thread query; visible native modals own controller input.
+int dm_ui_modal_active(uint64_t root);

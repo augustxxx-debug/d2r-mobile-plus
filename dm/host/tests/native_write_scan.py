@@ -37,10 +37,10 @@ def vis_scan(text, where):   # 直接写可见位的行；在带守卫的函数�
     return bad
 
 # 第三道（位置守卫）：dm_cursor.c 里写控件矩形（+0x70 x、+0x74 y、+0x78 宽、+0x7c 高）只许在 mv_offset（原版控件，名单 + 记原值 + 必写回）
-# 与 ui_move_ours（只许 Touch 开头）里。认两种写法：直接 *(int32_t *)(… + 0x7?) = …；或同一函数里先取 int32_t *名 = (int32_t *)(… + 0x7?)，再写 名[k] = / *名 =
+# 与 ui_move_ours（只许 Touch 开头）、ui_notice_tile_rect（只许十五块 TouchNoticeTileRC）、ui_notice_prompt_center（只许自有通知容器里的 Prompt）里。认两种写法：直接 *(int32_t *)(… + 0x7?) = …；或同一函数里先取 int32_t *名 = (int32_t *)(… + 0x7?)，再写 名[k] = / *名 =
 # Third check (position guard): in dm_cursor.c, writing a widget rectangle (+0x70 x, +0x74 y, +0x78 width, +0x7c height) is allowed only in mv_offset (original-game widgets, allow list + record original value + must write back)
-# and in ui_move_ours (only names starting with Touch). Two forms are recognized: a direct *(int32_t *)(... + 0x7?) = ...; or, within the same function, first taking int32_t *name = (int32_t *)(... + 0x7?) and then writing name[k] = / *name =
-RECT_OK = ('mv_offset', 'ui_move_ours')
+# and in ui_move_ours (only names starting with Touch) or ui_notice_tile_rect (only the fifteen TouchNoticeTileRC tiles), or ui_notice_prompt_center (only Prompt under our notice container). Two forms are recognized: a direct *(int32_t *)(... + 0x7?) = ...; or, within the same function, first taking int32_t *name = (int32_t *)(... + 0x7?) and then writing name[k] = / *name =
+RECT_OK = ('mv_offset', 'ui_move_ours', 'ui_notice_tile_rect', 'ui_notice_prompt_center')
 RECT_OFFS = ['0x7%x' % i for i in range(13)]   # 0x70–0x7c
 # 原版控件字段写入的登记例外（一项一行：文件、字段、只许在哪些函数里写、理由）。名单外的函数写这些字段一律报红
 # Registered exceptions for writes to original widget fields (one per line: file, field, which functions may write it, reason). Writes to these fields from functions not on the list are always red
@@ -94,7 +94,7 @@ def main():
     bad += rect_scan(open(os.path.join(host, 'dm_cursor.c'), encoding='utf-8').read(), 'dm_cursor.c')
     if bad:
         print('✗ 我们的功能碰了原版控件（编年史页 / 个人仓库页码只许写 TouchVault / TouchPgPage 底下的；可见位只许走带守卫的函数）：'); [print('   ' + b) for b in bad]; return 1
-    print('✓ 编年史页与个人仓库页码不碰原版储藏箱控件（扫 %d 个名字）；宿主 %d 个源文件没有绕过守卫直接写可见位；dm_cursor.c 写控件矩形只在 mv_offset / ui_move_ours 里' % (len(NATIVE), len(srcs))); return 0
+    print('✓ 编年史页与个人仓库页码不碰原版储藏箱控件（扫 %d 个名字）；宿主 %d 个源文件没有绕过守卫直接写可见位；dm_cursor.c 矩形写入限定在位置守卫和具名自有控件守卫里' % (len(NATIVE), len(srcs))); return 0
 
 if __name__ == '__main__':
     sys.exit(main())

@@ -141,3 +141,10 @@ t_metalfx: t_metalfx.m ../nvn/nvn_metalfx.m ../nvn/nvn_metalfx.h
 	clang -O1 -fobjc-arc -mmacosx-version-min=26.0 -o $@ t_metalfx.m ../nvn/nvn_metalfx.m -framework Metal -framework MetalFX -framework Foundation
 t_metalfx_m3: t_metalfx.m ../nvn/nvn_metalfx.m ../nvn/nvn_metalfx.h
 	clang -O1 -fobjc-arc -DDM_NVN_M3=1 -mmacosx-version-min=15.0 -o $@ t_metalfx.m ../nvn/nvn_metalfx.m -framework Metal -framework MetalFX -framework Foundation
+
+# Run with API validation: successful compilation does not prove synchronization.
+METALFX_CHECKS = $(if $(findstring -DDM_NVN_M3=1,$(CFLAGS)),t_metalfx_m3,t_metalfx t_metalfx_m3)
+.PHONY: check-metalfx
+check-metalfx: $(METALFX_CHECKS)
+	@for test in $(METALFX_CHECKS); do MTL_DEBUG_LAYER=1 ./$$test; status=$$?; if [ $$status -eq 77 ]; then echo "SKIP $$test: unsupported GPU/backend"; elif [ $$status -ne 0 ]; then exit $$status; fi; done
+run: check-metalfx

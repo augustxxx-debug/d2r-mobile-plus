@@ -2,7 +2,26 @@
 // Inspect the original ps_upsample_p 3D image and screen mask; read bindings/metrics only.
 #include "nvn_metalfx_policy.h"
 static _Atomic int g_metalfx_active;
+static _Atomic int g_metalfx_supported = -1, g_metalfx_fallback;
+static _Atomic uint64_t g_metalfx_input_size, g_metalfx_output_size;
 static _Atomic float g_metalfx_auto_scale;
+static _Atomic int g_metalfx_recognized;
+static nvn_metalfx_auto_state g_metalfx_auto_state;
+static uint64_t g_metalfx_health_ns;
+static int g_metalfx_health_mode=-1;
+static void metalfx_policy_mode(int mode) {
+    if (mode==g_metalfx_health_mode) return;
+    g_metalfx_auto_state=(nvn_metalfx_auto_state){0};g_metalfx_health_ns=0;g_metalfx_health_mode=mode;
+    atomic_store(&g_metalfx_auto_scale,0);atomic_store(&g_metalfx_recognized,0);atomic_store(&g_metalfx_active,0);
+}
+static void metalfx_policy_sample(int mode,unsigned pixels) {
+    if (mode!=0) return;
+    uint64_t now=clock_gettime_nsec_np(CLOCK_MONOTONIC);
+    if (g_metalfx_health_ns && now-g_metalfx_health_ns<1000000000ull) return;
+    g_metalfx_health_ns=now;
+    atomic_store(&g_metalfx_auto_scale,nvn_metalfx_auto_step(&g_metalfx_auto_state,pixels,
+        (int)NSProcessInfo.processInfo.thermalState,NSProcessInfo.processInfo.lowPowerModeEnabled,now));
+}
 __attribute__((weak)) int dm_3d_profile_get(void) { return 4; }
 static int metalfx_profile(void) {
     const char *e = getenv("DM_METALFX");
@@ -10,16 +29,26 @@ static int metalfx_profile(void) {
         if (!strcmp(e,"auto")) return 0; if (!strcmp(e,"eco")) return 1; if (!strcmp(e,"quality")) return 3; if (!strcmp(e,"balanced") || !strcmp(e,"1")) return 2; }
     return dm_3d_profile_get();
 }
+void mtl_metalfx_snapshot(mtl_metalfx_status *out) {
+    if (!out) return;
+    uint64_t in = atomic_load(&g_metalfx_input_size), target = atomic_load(&g_metalfx_output_size);
+    out->profile = metalfx_profile(); out->supported = atomic_load(&g_metalfx_supported);
+    out->active = atomic_load(&g_metalfx_active) && out->profile != 4;
+    out->fallback = atomic_load(&g_metalfx_fallback);
+    out->input_width = (uint32_t)(in >> 32); out->input_height = (uint32_t)in;
+    out->output_width = (uint32_t)(target >> 32); out->output_height = (uint32_t)target;
+}
 int mtl_metalfx_active(void) { return atomic_load(&g_metalfx_active) && metalfx_profile() != 4; }
+int mtl_metalfx_auto_selected(void) { return metalfx_profile() == 0; }
 float mtl_metalfx_scale_hint(void) {
-    if (!mtl_metalfx_active()) return 0;
-    int mode = metalfx_profile();
-    return mode == 0 ? atomic_load(&g_metalfx_auto_scale) : nvn_metalfx_scale(mode,0,0,0);
+    return nvn_metalfx_hint(metalfx_profile(),atomic_load(&g_metalfx_supported),
+        atomic_load(&g_metalfx_fallback),atomic_load(&g_metalfx_recognized),atomic_load(&g_metalfx_auto_scale));
 }
 static int metalfx_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di) {
     static int probe = -1;
     if (probe < 0) { const char *e = getenv("DM_METALFX"); probe = e && !strcmp(e, "probe"); }
     if (!pr || !pr->sh[1] || strncmp(pr->sh[1]->key, "52aac1f2306b8fc5", 16)) return 0;
+    int mode=metalfx_profile();metalfx_policy_mode(mode);
     static int count;
     if (probe && count++ < 3) {
         NvShader *f = pr->sh[1];
@@ -36,9 +65,9 @@ static int metalfx_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di) {
             }
         }
     }
-    if (probe || metalfx_profile() == 4 || !R.has_rt || R.rt.n != 1 || !R.rt.color[0] || g_enc || g_defer_replaying || g_defer.active) return 0;
-    static int supported = -1; if (supported < 0) { supported = [NvMetalFX supported:g_dev]; MLOG("MetalFX spatial support: %d", supported); }
-    if (!supported) return 0;
+    if (probe || mode == 4 || !R.has_rt || R.rt.n != 1 || !R.rt.color[0] || g_enc || g_defer_replaying || g_defer.active) return 0;
+    static int supported = -1; if (supported < 0) { supported = [NvMetalFX supported:g_dev]; atomic_store(&g_metalfx_supported,supported); MLOG("MetalFX spatial support: %d", supported); }
+    if (!supported) { atomic_store(&g_metalfx_active,0); atomic_store(&g_metalfx_fallback,1); return 0; }
     uint64_t serial; int level, slice; rt_sub(&R.rt, 0, &serial, &level, &slice);
     if (level || slice || !serial) return 0;
     id<MTLTexture> dst = tex_mtl(R.rt.color[0]), src = nil, mask = nil;
@@ -49,34 +78,31 @@ static int metalfx_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di) {
     }
     // 不认识的视图／非整屏绘制沿用原通道；在编码前完整检查，失败不丢原绘制。
     // Unknown views or partial draws retain the original pass; validate before encoding so failures never drop it.
-    if (!src || !mask || !dst || !uok || fabsf(uv[0]-1) > .0001f || fabsf(uv[1]-1) > .0001f || src.width >= dst.width || src.height >= dst.height || src == dst || mask == dst || src.textureType != MTLTextureType2D || mask.textureType != MTLTextureType2D || src.sampleCount != 1 || dst.sampleCount != 1) return 0;
+    if (!src || !mask || !dst || !uok || fabsf(uv[0]-1) > .0001f || fabsf(uv[1]-1) > .0001f || mask == dst || src.textureType != MTLTextureType2D || mask.textureType != MTLTextureType2D || dst.textureType != MTLTextureType2D || src.sampleCount != 1 || dst.sampleCount != 1) return 0;
     if (S.has_vp && (S.vp[0][0] != 0 || S.vp[0][1] != 0 || S.vp[0][2] != dst.width || S.vp[0][3] != dst.height)) return 0;
     if (R.has_sc && (R.sc.x > 0 || R.sc.y > 0 || R.sc.w < (int)dst.width || R.sc.h < (int)dst.height)) return 0;
+    int same=src.width==dst.width && src.height==dst.height;
+    if (!same && (src==dst || src.width>=dst.width || src.height>=dst.height)) return 0;
+    metalfx_policy_sample(mode,(unsigned)(dst.width*dst.height));
+    atomic_store(&g_metalfx_recognized,1);
+    // Seed activation from a recognized native 1:1 pass. Encoding at 1:1 is
+    // unnecessary; the next published ratio creates the first upscale input.
+    if (same) return 0;
+    atomic_store(&g_metalfx_input_size,((uint64_t)src.width << 32) | src.height);
+    atomic_store(&g_metalfx_output_size,((uint64_t)dst.width << 32) | dst.height);
     static NvMetalFX *effect; static int failed;
     if (failed) return 0;
     if (!effect || ![effect matchesInput:src output:dst]) {
         NvMetalFX *next = [[NvMetalFX alloc] initWithDevice:g_dev input:src output:dst];
-        if (!next) { failed = 1; atomic_store(&g_metalfx_active,0); MLOG("MetalFX initialization unavailable; keeping original upscale"); return 0; }
+        if (!next) { failed = 1; atomic_store(&g_metalfx_fallback,2); atomic_store(&g_metalfx_active,0); MLOG("MetalFX initialization unavailable; keeping original upscale"); return 0; }
         for (id<MTLResource> resource in effect.resources) defer_obj_release(resource);
         if (effect) defer_obj_unref(effect);
         effect = next; for (id<MTLResource> resource in effect.resources) res_add(resource);
         MLOG("MetalFX spatial ready: %lux%lu -> %lux%lu (3D only, original mask retained)",(unsigned long)src.width,(unsigned long)src.height,(unsigned long)dst.width,(unsigned long)dst.height);
     }
     rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; } ser_gate();
-    if (![effect encode:g_cb input:src contentWidth:src.width contentHeight:src.height mask:mask output:dst]) return 0;
+    if (![effect encode:g_cb input:src contentWidth:src.width contentHeight:src.height mask:mask output:dst]) { atomic_store(&g_metalfx_active,0); atomic_store(&g_metalfx_fallback,3); return 0; }
     R.clear_c[0] = 0; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;
-    atomic_store(&g_metalfx_active,1);
-    static nvn_metalfx_auto_state auto_state;
-    static uint64_t health_ns; static int health_mode = -1;
-    uint64_t health_now = clock_gettime_nsec_np(CLOCK_MONOTONIC);
-    int mode = metalfx_profile();
-    if (mode != health_mode) { auto_state = (nvn_metalfx_auto_state){0}; health_ns = 0; health_mode = mode; }
-    if (!health_ns || health_now - health_ns >= 1000000000ull) {
-        health_ns = health_now;
-        if (mode == 0) atomic_store(&g_metalfx_auto_scale,
-            nvn_metalfx_auto_step(&auto_state, (unsigned)(dst.width*dst.height),
-                (int)NSProcessInfo.processInfo.thermalState,
-                NSProcessInfo.processInfo.lowPowerModeEnabled, health_now));
-    }
+    atomic_store(&g_metalfx_fallback,0); atomic_store(&g_metalfx_active,1);
     return 1;
 }

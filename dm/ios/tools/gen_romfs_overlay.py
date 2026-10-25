@@ -49,15 +49,12 @@ with tempfile.TemporaryDirectory() as t:
     # pressing a function key / tapping where it covers only dismisses the notice (panels cannot be opened, the cells below cannot be tapped). On touch the notice disappears by itself on time, and this button is not wanted
     # Docking height y -790 (original -500; it was raised to -600 earlier to clear the experience bar, but still covered the "life / mana" numbers above the bottom bar - with many digits the text ran into the box, and the touch layout's row is higher and sat right in the middle of the box):
     # the lower edge of the box has to be above the upper edge of the number row; the touch layout needs about 173 more units, the gamepad layout about 77, so one value that clears both is taken. Only the docking position in the layout changes; slide-in and slide-out are still the game's own animation
-    note={'type':'NotificationPanel','name':'NotificationPanel',
-          'fields':{'priority':9002,'notificationSeconds':5.0,'transitionSeconds':0.8,'rect':{'x':nx,'y':-790,'width':nw,'height':244},'anchor':{'x':0.5,'y':1.0}},
-          # 将游戏按钮端部／石材烘焙为单张图片，文字仍由原生绘制。
-          # Bake the game's button caps/stone into one image. Text stays native.
-          'children':[{'type':'ImageWidget','name':'NotificationBorder',
-                       'fields':{'rect':{'x':0,'y':0,'width':nw,'height':244},'anchor':{'x':-0.5,'y':0.0},'filename':'Ztouch_notification/frame'},
-                       'children':[{'type':'TextBoxWidget','name':'Prompt','fields':{
-                           'rect':{'x':64,'y':12,'width':nw-128,'height':220},
-                           'style':'$StyleNotification'}}]}]}
+    import notification_layout
+    note=notification_layout.notification(nw,nx)
+    REPL.update(notification_layout.build_modal_art(romfs,t))
+    REPL.update(notification_layout.build_notice_slices(romfs,t,nw))
+    MODAL_LAYERS=notification_layout.build_modal_layers(romfs,t)
+    REPL.update(MODAL_LAYERS)
     json.dump(note,open(os.path.join(t,'notification.json'),'w'),indent=1)
     REPL['data/global/ui/layouts/controller/notificationpanelhd.json']=os.path.join(t,'notification.json')
     # 全触摸方案：前端与通用弹窗上的手柄键位提示挪出屏幕（按钮本身可点之后，字形就是错误信息）；清单与做法见 touch_layout.py
@@ -107,20 +104,19 @@ with tempfile.TemporaryDirectory() as t:
     # the 14-column stash (the data table already has 14 columns; with a 10-column layout the items in columns 11 to 14 are invisible) with its wide frame,
     # and the Chronicle vault tab. So another copy is generated on top of the original layouts with the same set of feature modules and placed at the
     # original paths; touch changes are not included
-    tpad=os.path.join(t,'pad'); os.makedirs(tpad); PR={}
+    tpad=os.path.join(t,'pad'); os.makedirs(tpad); PR=dict(MODAL_LAYERS)
     PR['data/global/ui/layouts/controller/console/loadscreenpanelhd.json']=REPL['data/global/ui/layouts/controller/console/loadscreenpanelhd.json']
     lp,lt=touch_layout.read_layout(romfs,pouch_layout.INV); o=os.path.join(tpad,'pad_inv.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_inv_rw(lt)); PR[lp.lower()]=o
     for rel,gd in (('controller/pauselayoutgardenhd.json',1),('controller/pauselayouthd.json',0)):   # 手柄版暂停菜单：一键重开 / 切换难度 / 存放 / 分享诊断日志 | Controller pause menu: one-tap restart / change difficulty / Deposit / Share Diagnostics
         lp,lt=touch_layout.read_layout(romfs,rel); o=os.path.join(tpad,'pad_pause%d.json'%gd); open(o,'w',encoding='utf-8').write(touch_layout.pad_pause(lt,gd,share=not os.environ.get('DM_OVERLAY_MAC'))); PR[lp.lower()]=o
     # 大秘境面板（借「消息记录」面板外壳，touch_layout._rift_panel）：手柄版同一份。少了它手柄模式点秘境门开出来的是空的原版消息记录面板、进不了秘境；手柄键在 dm_rift_ui.c
-    # 手柄版的系统提示框：原版那份（停靠 y −500）下沿压着底栏上方那行「生命 / 法力」数值，数值位数多时字伸进框里。只把停靠位置上提 90 单位（下沿高过数值行），其余原样
+    # 手柄与触摸共用通知外观和文字适配；手柄保留原生确认键关闭。
     # Greater Rift panel (borrowing the shell of the "message log" panel, touch_layout._rift_panel): the same for the gamepad layout. Without it, tapping a rift door in gamepad mode opens the empty original message log panel and the rift cannot be entered; gamepad keys are in dm_rift_ui.c
-    # The gamepad layout's system notice box: in the original (docked at y -500) its lower edge sits on the "life / mana" numbers above the bottom bar, and with many digits the text runs into the box. Only the docking position is raised by 90 units (lower edge above the number row); everything else as in the original
-    lp,lt=touch_layout.read_layout(romfs,'controller/notificationpanelhd.json'); assert lt.count('"y": -500')==1, lp   # 原版手柄版提示框的停靠位置应是 y -500（原包变了就停在这里） | the original gamepad notice box should dock at y -500 (if the original package changes, stop here)
-    # Keep native controller dismissal while widening both parent and inherited border.
-    lt=lt.replace('"y": -500','"y": -590').replace('"width": 1200',f'"width": {nw}')
-    lt=lt.replace('"name": "NotificationBorder",', '"name": "NotificationBorder", "fields": { "rect": { "x": 0, "y": 0, "width": '+str(nw)+', "height": 244 } },')
-    o=os.path.join(tpad,'pad_notification.json'); open(o,'w',encoding='utf-8').write(lt); PR[lp.lower()]=o
+    # Both input modes share notice art/geometry; controller retains native dismissal.
+    lp,_=touch_layout.read_layout(romfs,'controller/notificationpanelhd.json')
+    o=os.path.join(tpad,'pad_notification.json')
+    json.dump(notification_layout.notification(nw,nx,controller=True),open(o,'w'),indent=1)
+    PR[lp.lower()]=o
     lp,lt=touch_layout.read_layout(romfs,'controller/messagelogpanelhd.json'); o=os.path.join(tpad,'pad_rift.json'); open(o,'w',encoding='utf-8').write(touch_layout._rift_panel(lt)[0]); PR[lp.lower()]=o
     PR.update(merc_slots.build_pad(romfs,tpad))   # 手柄版佣兵面板：同样加六个装备位 | Controller layout mercenary panel: likewise add six equipment slots
     # 手柄版职业选择页：八个职业的点击矩形同样改成按实际站位分的竖条（touch_layout.CLASS_STRIPS，原因见那里）。手柄用左右键选、原版没暴露；
@@ -206,6 +202,7 @@ with tempfile.TemporaryDirectory() as t:
     # Existing stock not yet split: the two font size profiles (read only once at boot)
     SHARED_TODO=('chroniclebaselistpanelhd.json','chroniclepanelhd.json','controller/_profileconsolehd.json','controller/_profilehandheldhd.json','dropdownlistcontentshd.json')
     PADROOT=touch_layout.build_pad_root(romfs,tpad)
+    PADROOT.update({key:value for key,value in MODAL_LAYERS.items() if key[len(LAY):] in ('confirmationmodalhd.json','dismissablemodalhd.json','youdiedmodalhd.json')})
     # 两种模式分别显式复制，宿主保护初始位置；保持根布局隔离检查。
     # Explicit copies for both modes: constructor placement is guarded by the
     # host in either mode. Keep the root-layout isolation checks intact.
@@ -218,6 +215,7 @@ with tempfile.TemporaryDirectory() as t:
     # Controller-only list: these are the only layouts that are not original bytes in controller mode, not one more and not one fewer (once, when a line above was edited, the adjacent line was replaced whole, and the vendor page's refresh button dropped out of the package)
     PAD_PAGES=('controller/bankexpansionlayouthd.json','controller/console/charactercreatepanelhd.json','controller/console/characteroptionspanelhd.json','controller/console/loadscreenpanelhd.json','controller/console/mainmenubuttonribbonhd.json','controller/console/mainmenupanelhd.json','controller/console/settingspanelhd.json','controller/console/switch/playerinventoryexpansionlayouthd.json','controller/console/videooptionspanelhd.json',
                'controller/controlleroverlayhd.json','controller/hirelinginventorypanelhd.json','controller/hudmonsterhealthhd.json','controller/messagelogpanelhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json','controller/vendorpanellayouthd.json')
+    PAD_PAGES=PAD_PAGES+notification_layout.MODAL_CONTROLLER_PAGES
     if sorted(k[len(LAY):] for k in PADLAY)!=sorted(PAD_PAGES): raise SystemExit('gen_romfs_overlay：手柄专用布局与清单 PAD_PAGES 不一致：多 %s，少 %s' % (sorted(set(k[len(LAY):] for k in PADLAY)-set(PAD_PAGES)), sorted(set(PAD_PAGES)-set(k[len(LAY):] for k in PADLAY))))
     def emit(repl, dst, tag, prebuilt=None):   # repl → 覆盖层（新 .build.config + 一个新数据档）写到 dst/data | repl → overlay (a new .build.config + one new data archive) written to dst/data
         repl=to_touch(repl); repl.update(PADLAY)
@@ -225,7 +223,7 @@ with tempfile.TemporaryDirectory() as t:
         # 触屏目录里有页继承它的（basedOn 它的名字）：放 1touchbase_lay/ 并把那些页的 basedOn 改指过去；没有页继承的（游戏直接按名字加载）：放进触屏目录 xtouch_lay/，触屏模式先在那里找到
         # Root-directory layouts meant only for touch (not under the Controller/ prefix, previously one modified copy shared by both modes): the modified copy moves to the touch side and the original path is no longer replaced -- controller mode loads original bytes.
         # If pages in the touch directory inherit from it (basedOn its name): put it in 1touchbase_lay/ and repoint those pages' basedOn there; if no page inherits from it (the game loads it directly by name): put it in the touch directory xtouch_lay/, where touch mode finds it first
-        for name in UNSHARE+tuple(sorted(PADROOT_KEYS)):
+        for name in dict.fromkeys(UNSHARE+tuple(sorted(PADROOT_KEYS))):
             k=LAY+name; mod=repl.pop(k); pat=re.compile(r'("basedOn"\s*:\s*")(%s)(")' % re.escape(name), re.I); inh=[]
             for tk,tv in list(repl.items()):
                 if not any(tk.startswith(LAY+d) for _,d in TDIR): continue
@@ -243,8 +241,18 @@ with tempfile.TemporaryDirectory() as t:
         # SHARED_TODO 是还没按模式分开的存量（两种模式共用一份改过的），只许减不许加；新增共用布局在这里红
         # Controller mode = original: the layouts that controller mode can load (those outside the three touch directories) are either original bytes (not in the replacement table) or in the controller-only list PR.
         # SHARED_TODO is the existing stock not yet split by mode (both modes share one modified copy); it may only decrease, never increase; a newly added shared layout fails here
-        shared=sorted(k[len(LAY):] for k in repl if k.startswith(LAY) and k in MAN and k not in PADLAY and k[len(LAY):] not in PADROOT_KEYS and not any(k.startswith(LAY+d) for _,d in TDIR))
+        shared=sorted(k[len(LAY):] for k in repl if k.startswith(LAY) and k in MAN and k not in PADLAY and k not in MODAL_LAYERS and k[len(LAY):] not in PADROOT_KEYS and not any(k.startswith(LAY+d) for _,d in TDIR))
         if shared!=sorted(SHARED_TODO): raise SystemExit('gen_romfs_overlay：两种模式共用的改过的布局与存量清单不一致（多出的要按模式分开：改过的放触屏目录 / 另起新名，原路径留原版）：多 %s，少 %s' % (sorted(set(shared)-set(SHARED_TODO)), sorted(set(SHARED_TODO)-set(shared))))
+        # Touch transforms may replace a common modal after the initial layer pass.
+        # Apply only the stacking change to the final per-mode layout as well.
+        for key, source in list(repl.items()):
+            if key.startswith(LAY) and key.endswith('.json'):
+                with open(source,encoding='utf-8') as stream: text=stream.read()
+                layered=notification_layout.modal_priority(text)
+                if layered != text:
+                    output=os.path.join(t,tag+'modal_final_'+key[len(LAY):].replace('/','_'))
+                    with open(output,'w',encoding='utf-8') as stream: stream.write(layered)
+                    repl[key]=output
         with open(os.path.join(t,tag+'repl.tsv'),'w') as f:
             for k,v in repl.items(): f.write(f'{"" if k in MAN else "+"}{k}\t{os.path.join(t,v)}\n')   # 新增路径前加「+」（casc_overlay.py） | New paths are prefixed with "+" (casc_overlay.py)
         subprocess.run(gen_assets.python_command(os.path.join(HERE,'..','..','tools','casc_overlay.py'),romfs,os.path.join(t,tag+'ov'),os.path.join(t,tag+'repl.tsv'),'--thin')+(['--prebuilt',prebuilt] if prebuilt else []),check=True,stdout=subprocess.DEVNULL)

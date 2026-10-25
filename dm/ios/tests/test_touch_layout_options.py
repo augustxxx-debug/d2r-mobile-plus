@@ -85,7 +85,7 @@ assert g_nodes['TouchGraphicsRows']['type'] == 'Widget'
 print('PASS Graphics page: native FPS/profile sliders, independent upscale toggle, localization hooks')
 
 # Regression: adding Graphics must preserve all original destinations and native settings.
-settings_src = '{"name":"SettingsPanel","children":[{"type":"TabBarWidget","name":"OptionsTabs","fields":{"tabCount":5,"inactiveFrames":[0,2,4,6,8],"activeFrames":[1,3,5,7,9],"textStrings":["@OptionsMenuVideo","@Audio","@Gameplay","@GameSettingsTab","@Controls"],"tabMessages":["SettingsPanelMessage:CheckChanges:VideoOptionsPanel","SettingsPanelMessage:CheckChanges:SoundOptionsPanel","SettingsPanelMessage:CheckChanges:GameplayOptionsPanel","SettingsPanelMessage:CheckChanges:OnlineGameOptionsPanel","SettingsPanelMessage:CheckChanges:KeyBindingMenu"]}}]}'
+settings_src = '{"name":"SettingsPanel","children":[{"type":"TabBarWidget","name":"OptionsTabs","fields":{"textStyle":{"pointSize":"$MediumFontSize","options":{"lineWrap":true},"alignment":{"h":"center","v":"center"},"spacing":{"leading":0.9,"kerning":0.95}},"tabCount":5,"inactiveFrames":[0,2,4,6,8],"activeFrames":[1,3,5,7,9],"textStrings":["@OptionsMenuVideo","@Audio","@Gameplay","@GameSettingsTab","@Controls"],"tabMessages":["SettingsPanelMessage:CheckChanges:VideoOptionsPanel","SettingsPanelMessage:CheckChanges:SoundOptionsPanel","SettingsPanelMessage:CheckChanges:GameplayOptionsPanel","SettingsPanelMessage:CheckChanges:OnlineGameOptionsPanel","SettingsPanelMessage:CheckChanges:KeyBindingMenu"]}}]}'
 for transform in (lambda s: layout._settings_tabs(s)[0], layout.pad_settings):
     tab=json.loads(transform(settings_src))['children'][0]['fields']
     assert tab['tabCount']==len(tab['textStrings'])==len(tab['tabMessages'])==len(tab['inactiveFrames'])==len(tab['activeFrames'])==5
@@ -93,6 +93,12 @@ for transform in (lambda s: layout._settings_tabs(s)[0], layout.pad_settings):
     assert len(set(destinations))==5
     assert set(destinations)=={'SoundOptionsPanel','GameplayOptionsPanel','OnlineGameOptionsPanel','VideoOptionsPanel',layout.GRAPHICS_PANEL}
     assert '@dmTabGameSettings' in tab['textStrings'] and '@dmTabGraphics' in tab['textStrings']
+    assert tab['textStyle']['pointSize']==40 and tab['textStyle']['options']['lineWrap'] is False
+    assert tab['textStyle']['spacing']=={'leading':0.9,'kerning':0.95}
+    assert tab['textStyle']['alignment']=={'h':'center','v':'center'}
+    twice=transform(transform(settings_src))
+    assert transform(settings_src)==twice
+    assert 'textStyle/' not in twice
 
 native_row={'type':'TableRowWidget','name':'Row OfflineDesecratedZonesEnabled','children':[{'type':'ToggleButtonWidget','name':'OfflineDesecratedZonesEnabled','fields':{'onClickMessage':'OptionsPanelMessage:NativeTerrorZoneToggle','text':'@TerrorZonesEnabled','tooltipString':'@TerrorZonesEnabledTooltip','sentinel':{'default':True,'condition':'native'}}}]}
 future_row={'type':'TableRowWidget','name':'Row FutureNativeSetting','children':[{'name':'FutureControl','fields':{'onUpdateMessage':'NativeFuture:Update','maximum':123}}]}
@@ -111,3 +117,13 @@ for transform in (lambda s: layout._settings_tabs(s)[0],layout.pad_settings):
     assert fields['inactiveFrames']==[0,2,4,6,6]
     assert fields['activeFrames']==[1,3,5,7,7]
 print('PASS native four-frame artwork extends safely to five tabs')
+
+# Console override lacks a local textStyle and inherits the base style.
+no_style = re.sub(r'"textStyle":\{.*?"tabCount"', '"tabCount"', settings_src)
+for fixture in (settings_src,no_style):
+    out,_=layout._settings_tabs(fixture)
+    tab=json.loads(out)['children'][0]['fields']
+    assert tab['textStyle']['pointSize']==40
+    assert tab['textStyle']['options']['lineWrap'] is False
+    assert layout._settings_tabs(out)[0]==out
+print('PASS inherited console style receives a complete nested tab style')

@@ -85,6 +85,28 @@ int main(void) {
     dm_uiscreen_set_panel(1);
     dm_ui_rect(&x, &y, &w, &h);
     CHECK(y == 150 && h == 900);
+    // Replay inner/outer screens and common phone/tablet aspect ratios. Use
+    // production coordinate helpers for both HUD and centered-panel states.
+    const int screens[][2] = {{2853,2007},{2034,1398},{2532,1170},{2868,1320},
+        {2732,2048},{2360,1640},{1920,1080},{2048,2732}};
+    for (int repeat=0;repeat<20;repeat++) for (unsigned i=0;i<sizeof screens/sizeof *screens;i++) {
+        int rw=screens[i][0], rh=screens[i][1];
+        int uh=(int64_t)rw*9<(int64_t)rh*16 ? (rw*9/16)&~1 : rh;
+        render_w=rw;render_h=rh;
+        atomic_store(&g_rw,rw);atomic_store(&g_rh,rh);atomic_store(&g_uh,uh);
+        CHECK(output_h()==(unsigned)rh);
+        for (int in=0;in<2;in++) for (int panel=0;panel<2;panel++) {
+            dm_uiscreen_set_ingame(in);dm_uiscreen_set_panel(panel);
+            dm_ui_rect(&x,&y,&w,&h);
+            CHECK(x==0 && w==rw && h==uh && y>=0 && y+h<=rh);
+            CHECK(y==((in && !panel) ? rh-uh : (rh-uh)/2));
+            for (unsigned j=0;j<sizeof extended/sizeof *extended;j++)
+                CHECK(fabsf(dm_ui_ny(dm_ui_ny_back(extended[j]))-extended[j])<.00002f);
+            CHECK(dm_ui_class_x(rw/2)==rw/2);
+            int bottom=dm_ui_bottom_offset(142);
+            for (int stable=0;stable<3;stable++) CHECK(dm_ui_bottom_offset(142)==bottom);
+        }
+    }
     printf("frontend fullscreen: %d/%d checks passed\n", checks - failures, checks);
     return failures != 0;
 }

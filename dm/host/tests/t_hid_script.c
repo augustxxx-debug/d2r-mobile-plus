@@ -14,6 +14,7 @@ static uint64_t clock_ns = 1000000000ull;
 static uint64_t guest_frame;
 static uint64_t server_tick;
 static int server_available;
+extern int dm_test_game_paused;
 uint64_t now_ns(void) { return clock_ns; }
 uint64_t guest_ns(void) { return clock_ns; }
 uint64_t dm_guest_frame(void) { return guest_frame; }
@@ -29,6 +30,7 @@ void uimsg_subscribe(void (*f)(const char *, const char *, const char *)) { ui_c
 static int checks, fails;
 #define CHECK(c, s) do { checks++; int ok = !!(c); fails += !ok; printf("%s %s\n", ok ? "✓" : "✗", s); } while (0)
 static void setup(const char *script) {
+    dm_test_game_paused = 0;
     memset(g_steps, 0, sizeof g_steps); memset(g_keys, 0, sizeof g_keys);
     g_nsteps = g_nkeys = g_kcur = g_ktries = g_kbeg = g_kend = 0; g_kstate = KS_PRE; g_krel = 1;
     clock_ns = 1000000000ull; guest_frame = 0; server_tick = 0; server_available = 1; setenv("DM_KEYS", script, 1); keys_parse();
@@ -136,6 +138,12 @@ int main(int argc, char **argv) {
     server_available = 0; read_state();
     guest_frame += 59; CHECK(neutral(read_state()), "冻结后按帧计：59 帧未到 1 秒不按");
     guest_frame += 1; CHECK(read_state().buttons == DM_BTN_A, "冻结后按帧计：满 60 帧（1 秒）按下A，不因拍号停住死等");
+    setup("A@OpenPanel:PauseLayout%1>PausePanelMessage:ExitGame");
+    server_tick=401;guest_frame=1000;ui_cb("PanelManager","OpenPanel","PauseLayout");read_state();
+    dm_test_game_paused=1;read_state();
+    guest_frame+=59;CHECK(neutral(read_state()),"原版暂停且仍报告旧服务端拍：59 出图帧不提前按");
+    guest_frame++;CHECK(read_state().buttons==DM_BTN_A,"原版暂停：服务端拍不变，60 出图帧后仍可操作 UI");
+    dm_test_game_paused=0;
     // 读取画面还开着时到点的局内按键：不按、请求冻结拍；撤下后才按（画面闸门 NPC 页：拍 84 的 A 被读取画面吃掉）
     // An in-game key press that comes due while the loading screen is still up: do not press, request a tick freeze; press only after it is down (screenshot gate NPC page: the A at tick 84 was swallowed by the loading screen)
     setup("A@DM:Tick:84#>OpenPanel:NpcDialogPanel"); server_tick = 84; test_loadscreen_up = 1; hold_requests = 0;

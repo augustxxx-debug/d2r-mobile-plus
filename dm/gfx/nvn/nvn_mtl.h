@@ -26,6 +26,11 @@ typedef struct {
 } mtl_res_count;
 void mtl_res_counts(uint32_t tick, const char *why);   // 打一行资源计数（宿主按拍 / 事件调用，见 dm.h dm_res_report_register） | Print one line of resource counts (the host calls it per tick / event, see dm_res_report_register in dm.h)
 void mtl_res_snapshot(mtl_res_count *out);
+// Read-only, atomic diagnostics for the most recent eligible upscale attempt.
+typedef struct { int supported, active, profile, fallback; uint32_t input_width, input_height, output_width, output_height; } mtl_metalfx_status;
+void mtl_metalfx_snapshot(mtl_metalfx_status *out);
+int mtl_metalfx_auto_selected(void);
+
 
 // 一次提交：begin → 若干操作 → commit（返回本次提交完成时的栅栏值）
 // One submit: begin -> several operations -> commit (returns the fence value at which this submit completes)

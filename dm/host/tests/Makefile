@@ -10,6 +10,11 @@ MOVIE_TEST_FLAGS ?= -O1
 # 依赖一行一个、按字母序（同 ../Makefile 的 SRC：免得加一个测试就整行冲突）；下面各条命令的先后不变
 # Dependencies one per line in alphabetical order (same as SRC in ../Makefile: so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
 run: \
+	$(B)/t_metalfx_handoff \
+	$(B)/t_notice_dispatch \
+	$(B)/t_notice_widgets \
+	$(B)/t_modal_input_gate \
+	$(B)/t_settings_modal_input \
 	$(B)/t_metalfx_auto \
 	$(B)/main.orig.bin \
 	$(B)/subsdk0.orig.bin \
@@ -32,16 +37,17 @@ run: \
 	$(B)/t_modetx \
 	$(B)/t_movie \
 	$(B)/t_namegen \
+	$(B)/t_notice_geometry \
 	$(B)/t_oe \
 	$(B)/t_render_profile \
 	$(B)/t_uiscreen_frontend \
 	$(B)/t_padmap \
+	$(B)/t_pouch_notice \
 	$(B)/t_rift_clock \
 	$(B)/t_rift_next \
 	$(B)/t_rift_oldrun \
 	$(B)/t_rift_wave \
 	$(B)/t_interaction_diag \
-	$(B)/t_loader_weak \
 	$(B)/t_map_diag \
 	$(B)/t_warp_diag \
 	$(B)/t_romfs_validate \
@@ -58,6 +64,7 @@ run: \
 	python3 widget_cache_scan.py --selftest ..
 	python3 mode_scan.py ../..
 	python3 ../../ios/tools/dm_i18n.py --check
+	python3 test_literal_scan.py
 	python3 ../../i18n/scan_literals.py
 	$(B)/t_thread_leak
 	$(B)/t_loader_weak
@@ -67,7 +74,6 @@ run: \
 	$(B)/t_rift_next
 	$(B)/t_rift_oldrun
 	$(B)/t_interaction_diag
-	$(B)/t_loader_weak
 	$(B)/t_map_diag
 	$(B)/t_warp_diag
 	$(B)/t_rift_wave
@@ -79,7 +85,15 @@ run: \
 	$(B)/t_touch_mac
 	$(B)/t_oe 2>/dev/null
 	$(B)/t_metalfx_auto
+	$(B)/t_metalfx_handoff
+	$(B)/t_metalfx_handoff --disabled
 	$(B)/t_render_profile
+	$(B)/t_pouch_notice
+	$(B)/t_modal_input_gate
+	$(B)/t_settings_modal_input
+	$(B)/t_notice_geometry
+	$(B)/t_notice_dispatch
+	$(B)/t_notice_widgets
 	$(B)/t_uiscreen_frontend
 	$(B)/t_fs 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_fs_case 2>/dev/null
@@ -104,6 +118,7 @@ run: \
 	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
 	$(PY) movie_cut.py $(B)/main.orig.bin $(B)/subsdk0.orig.bin
 	$(PY) oe_notify.py $(B)/main.orig.bin
+	$(PY) notice_queue.py $(B)/main.orig.bin
 $(B)/t_i18n: t_i18n.c ../dm_i18n.c ../dm_i18n.h ../dm_i18n_tab.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_i18n.c ../dm_i18n.c
 $(B)/t_mac_overlay: t_mac_overlay.m ../app_mac_overlay.h | $(B)
@@ -205,11 +220,28 @@ $(B)/t_map_diag: t_map_diag.c ../dm_cursor.c ../dm_unit.h | $(B)
 $(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
 	clang -O1 -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_warp_diag.c
 
-$(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
-	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_weak.c ../hle.c
-
 $(B)/t_render_profile: t_render_profile.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_render_profile.c
 
+$(B)/t_pouch_notice: t_pouch_notice.c ../dm_pouch.c ../dm_widget.h ../hle.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_pouch_notice.c
+
+$(B)/t_notice_geometry: t_notice_geometry.c ../dm_notice_geometry.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_notice_geometry.c
+
 $(B)/t_metalfx_auto: t_metalfx_auto.c ../../gfx/nvn/nvn_metalfx_policy.h | $(B)
 	$(CC) -std=c11 -Wall -Wextra -Werror $< -o $@
+
+$(B)/t_modal_input_gate: t_modal_input_gate.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
+$(B)/t_settings_modal_input: t_settings_modal_input.c ../dm_custom.c ../dm_cursor.h ../dm_widget.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
+
+$(B)/t_notice_widgets: t_notice_widgets.c ../dm_cursor.c ../dm_cursor.h ../dm_widget.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
+
+$(B)/t_notice_dispatch: t_notice_dispatch.c ../dm_bossrush.c ../dm_bossrush.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_notice_dispatch.c
+
+$(B)/t_metalfx_handoff: t_metalfx_handoff.c t_metalfx_handoff_backend.c ../hle_oe.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_metalfx_handoff.c t_metalfx_handoff_backend.c

@@ -167,7 +167,11 @@ static int g_ncursor_tests, g_cursor_cur;
 
 typedef struct { uint64_t value; int server; } script_clock;
 static script_clock script_clock_now(void) {
-    uint64_t tick = dm_server_tick(); { extern _Atomic int g_dm_frozen; if (atomic_load(&g_dm_frozen)) tick = UINT64_MAX; }   // 世界冻结时（面板冻结，diag.c）拍号不走，脚本改按出图帧计时，否则延时和按住时长永远到不了 | while the world is frozen (panel freeze, diag.c) the tick number does not advance, the script times by presented frames instead, otherwise delays and hold durations would never be reached
+    // Both compatibility-layer freezes and the native pause menu stop server
+    // ticks. Test scripts must keep timing UI input by presented frames there.
+    uint64_t tick = dm_server_tick();
+    { extern _Atomic int g_dm_frozen; int dm_game_paused(void);
+      if (atomic_load(&g_dm_frozen) || dm_game_paused()) tick = UINT64_MAX; }
     return tick == UINT64_MAX ? (script_clock){dm_guest_frame(), 0} : (script_clock){tick, 1};
 }
 static uint64_t script_clock_elapsed(script_clock now, uint64_t start, int start_server) {
@@ -378,6 +382,7 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     { void dm_update_pump(void); DM_PROF(0, "update", dm_update_pump()); }       // 选角页的构建号与新版本提示（dm_update.c） | build number and new-version notice on the character select page (dm_update.c)
     { void dm_actions_pump(void); DM_PROF(0, "actions", dm_actions_pump()); }     // 商人买卖 / 加点入口与读数（dm_actions.c） | vendor buy/sell / stat point entry and readout (dm_actions.c)
     { void dm_world_pump(void); DM_PROF(0, "world", dm_world_pump()); }   // 点世界目标 = 交互（dm_world.c） | tapping a world target = interact (dm_world.c)
+    { void dm_game_notice_ui_pump(void); dm_game_notice_ui_pump(); }
     DM_PROF(0, "ui_mouse", dm_ui_mouse_pump());   // 界面鼠标消息（原生点击）在取手柄处发：主线程、每帧一条 | UI mouse messages (native clicks) are sent at the controller read: main thread, one per frame
     { void dm_aim_cone_pump(void); DM_PROF(0, "aim_cone", dm_aim_cone_pump()); dm_ipf_frame(0); }   // 手指方向选目标：右摇杆归零时恢复（hle_private_aim.c） | target selection by finger direction: restored when the right stick returns to zero (hle_private_aim.c)
     if (atomic_load(&g_stall_due) && atomic_exchange(&g_stall_due, 0)) usleep((useconds_t)g_stall_ms * 1000);   // DM_TEST_HID_STALL_MS

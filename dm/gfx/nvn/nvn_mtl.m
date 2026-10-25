@@ -2193,7 +2193,12 @@ static void shmap_load(void) {
     const char *m = getenv("DM_MSL_DIR");
     // 库目录 = <DM_MSL_DIR 或缺省缓存>/b-<翻译链版本>：版本取自本源码树的 dmsh_chain.h（tools/dmsh_chain.py），旧源码树编的宿主只认旧版本的库
     // Library directory = <DM_MSL_DIR or default cache>/b-<translation chain version>: the version comes from this source tree's dmsh_chain.h (tools/dmsh_chain.py); a host built from an old source tree only accepts libraries of the old version
-    g_msl_dir = [NSString stringWithFormat:@"%@/b-%s", m ? @(m) : [NSString stringWithFormat:@"%s%s/build/cache/metal_shader_cache", getenv("DM_ROOT") ?: getenv("HOME"), getenv("DM_ROOT") ? "" : "/dm-work"], DMSH_CHAIN];
+    // Preserve UTF-8 workspace paths; NSString's %s formatting can discard
+    // a non-ASCII root and silently search /build instead of the cache.
+    const char *root_env = getenv("DM_ROOT");
+    NSString *root = root_env ? @(root_env) : [NSHomeDirectory() stringByAppendingPathComponent:@"dm-work"];
+    NSString *cache = m ? @(m) : [root stringByAppendingPathComponent:@"build/cache/metal_shader_cache"];
+    g_msl_dir = [cache stringByAppendingPathComponent:[NSString stringWithFormat:@"b-%s",DMSH_CHAIN]];
     if (![NSFileManager.defaultManager fileExistsAtPath:g_msl_dir]) MLOG("【红】着色器库目录 %s 不存在：本源码树的翻译链版本 %s 还没出包（dm/gfx/tools/dmsh_build.py）", g_msl_dir.UTF8String, DMSH_CHAIN);
     NSString *cp = [[path stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"c1_full.tsv"];   // 与映射表同目录（Mac：dm/gfx/nvn；iOS：App 内 dm/，run.sh 一起拷） | Same directory as the mapping table (Mac: dm/gfx/nvn; iOS: dm/ inside the App, copied along by run.sh)
     NSString *ct = cp ? [NSString stringWithContentsOfFile:cp encoding:NSUTF8StringEncoding error:nil] : nil;

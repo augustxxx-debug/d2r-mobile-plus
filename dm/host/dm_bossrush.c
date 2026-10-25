@@ -41,6 +41,7 @@
 #include "dm_i18n.h"
 #include <stdarg.h>
 #include <stdatomic.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -85,19 +86,56 @@ static uint64_t find_unit(uint64_t G, int type, uint32_t id, int cls) {   // 服
 
 // 原版系统提示：聊天栏一行「[游戏] …」+ 系统提示框（首领连战、刷怪积分牌 dm_kills.c 共用）。只许服务端线程调（同首领连战）
 // Original-game system notification: one chat bar line 「[游戏] …」([Game] ...) + the system notification box (shared by the boss rush and the kill board dm_kills.c). May only be called from the server thread (same as the boss rush)
-void dm_game_notice(uint8_t *main_base, const char *text) {
-    B = main_base; static char line[200]; strlcpy(line, text, sizeof line);
+void dm_game_notice_chat(uint8_t *main_base, const char *text) {
+    B = main_base; static char line[1024]; strlcpy(line, text, sizeof line);
     static uint64_t txt[3], who[6], o1[8], o2[8], o3[8], o4[8];
     size_t n = strlen(line); txt[0] = (uint64_t)(uintptr_t)line; txt[1] = n; txt[2] = 0x8000000000000000ull | n;
     const uint8_t *g = B + 0x2d52c88; memset(who, 0, sizeof who); *(uint32_t *)who = *(const uint32_t *)g; who[1] = *(const uint64_t *)(g + 8); who[2] = *(const uint64_t *)(g + 16); who[3] = 0x8000000000000000ull | who[2];
     memset(o1, 0, sizeof o1); memset(o2, 0, sizeof o2); memset(o3, 0, sizeof o3); memset(o4, 0, sizeof o4);
     ((void (*)(uint64_t, void *, int, int, void *, void *, void *, void *, uint64_t, uint64_t))(B + 0xab2ab0))((uint64_t)(uintptr_t)(B + 0x2e3d7d0), txt, 4, 0, who, o1, o2, o3, (uint64_t)(uintptr_t)o4, 0);
-    // 系统提示框（切难度生效时那个框）：界面消息 {NotificationMessage, SystemNotification}（FNV-1a 64）交给 0x3d8b74(文字, 消息)——
-    // 升级 / 任务更新的提示框也走这一句（0xab5c40、0x306d54）；文字是 UTF-8 串，同 0x7f5630 取出的本地化串
-    // System notification box (the box shown when a difficulty switch takes effect): the UI message {NotificationMessage, SystemNotification} (FNV-1a 64) is handed to 0x3d8b74(text, message) --
-    // the level-up / quest-update notification boxes also go through this call (0xab5c40, 0x306d54); the text is a UTF-8 string, same as the localized string fetched by 0x7f5630
-    { static uint64_t msg[4]; msg[0] = 0xd106c9eabf113da5ull; msg[1] = 0x8fa6af1ab5b75b23ull; msg[2] = 0; msg[3] = 1;
-      ((void (*)(const char *, void *))(B + 0x3d8b74))(line, msg); }
+}
+// Producers include the server tick and client input. Never mutate the native
+// NotificationPanel queue from both threads. Copy requests, then deliver them
+// only at the guest's controller poll before UI layout/rendering.
+enum { NOTICE_UI_CAPACITY=64, NOTICE_UI_BYTES=1024 };
+typedef struct { uint8_t *base; char text[NOTICE_UI_BYTES]; } notice_ui_request;
+static notice_ui_request notice_ui_queue[NOTICE_UI_CAPACITY];
+static unsigned notice_ui_read,notice_ui_count;
+static pthread_mutex_t notice_ui_lock=PTHREAD_MUTEX_INITIALIZER;
+void dm_game_notice_ui(uint8_t *base, const char *text) {
+    if (!base || !text || !*text) return;
+    size_t length=strnlen(text,NOTICE_UI_BYTES);
+    if (length==NOTICE_UI_BYTES) { LOG("Notification UI request exceeds byte limit; chat remains available"); return; }
+    pthread_mutex_lock(&notice_ui_lock);
+    if (notice_ui_count==NOTICE_UI_CAPACITY) {
+        pthread_mutex_unlock(&notice_ui_lock);
+        LOG("Notification UI request queue full; chat remains available"); return;
+    }
+    notice_ui_request *request=&notice_ui_queue[(notice_ui_read+notice_ui_count)%NOTICE_UI_CAPACITY];
+    request->base=base;memcpy(request->text,text,length+1);notice_ui_count++;
+    pthread_mutex_unlock(&notice_ui_lock);
+}
+static void notice_ui_native(uint8_t *base,const char *text) {
+    uint64_t msg[4] = { 0xd106c9eabf113da5ull, 0x8fa6af1ab5b75b23ull, 0, 1 };
+    ((void (*)(const char *, void *))(base + 0x3d8b74))(text, msg);
+}
+static void notice_ui_drain(void (*deliver)(uint8_t *,const char *)) {
+    // Bound one poll even if a callback queues another request. Release the
+    // mutex before calling the game: message callbacks may enqueue recursively.
+    pthread_mutex_lock(&notice_ui_lock);unsigned count=notice_ui_count;pthread_mutex_unlock(&notice_ui_lock);
+    for (unsigned i=0;i<count;i++) {
+        notice_ui_request request;
+        pthread_mutex_lock(&notice_ui_lock);
+        if (!notice_ui_count) { pthread_mutex_unlock(&notice_ui_lock);break; }
+        request=notice_ui_queue[notice_ui_read];notice_ui_read=(notice_ui_read+1)%NOTICE_UI_CAPACITY;notice_ui_count--;
+        pthread_mutex_unlock(&notice_ui_lock);
+        deliver(request.base,request.text);
+    }
+}
+void dm_game_notice_ui_pump(void) { notice_ui_drain(notice_ui_native); }
+void dm_game_notice(uint8_t *base, const char *text) {
+    dm_game_notice_chat(base, text);
+    dm_game_notice_ui(base, text);
 }
 // 我们建的门的名牌（秘境门「大秘境」、首领连战门「Boss 连战」，不改原版字符串表里通用的「传送门」）。
 //   名牌：客户端取物件表记录（数据表根 +0x1548，每条 0x168）+0x42 的串键（342 / 298 都是 "portal"）→ 0x7f5630 取本地化串（0x442bc0 内 0x4447f8）。

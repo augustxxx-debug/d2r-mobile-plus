@@ -22,6 +22,9 @@ int main(void) { @autoreleasepool {
     id<MTLTexture> output = [device newTextureWithDescriptor:d];
     NvMetalFX *fx = [[NvMetalFX alloc] initWithDevice:device input:input output:output];
     if (!fx) { puts("FAIL MetalFX initialization"); return 1; }
+    for (int cycle=0;cycle<3;cycle++) {
+    memset(maskBytes,cycle == 1 ? 64 : 128,sizeof maskBytes);
+    [mask replaceRegion:MTLRegionMake2D(0,0,64,64) mipmapLevel:0 withBytes:maskBytes bytesPerRow:64];
 #if DM_NVN_M3
     id<MTLCommandQueue> queue = [device newCommandQueue]; id<MTLCommandBuffer> cb = [queue commandBuffer];
 #else
@@ -47,7 +50,8 @@ int main(void) { @autoreleasepool {
     unsigned char readback[128*128*4]; [output getBytes:readback bytesPerRow:128*4 fromRegion:MTLRegionMake2D(0,0,128,128) mipmapLevel:0];
     int checks = 0;
     for (int y = 4; y < 124; y+=17) for (int x = 4; x < 124; x+=17) { unsigned char *p = readback+(y*128+x)*4; checks++;
-        if (abs((int)p[0]-64)>3 || abs((int)p[1]-32)>3 || p[2]>2 || p[3]!=255) { printf("FAIL color/mask at %d,%d: %u %u %u %u\n",x,y,p[0],p[1],p[2],p[3]); return 1; } }
+        if (abs((int)p[0]-(cycle == 1 ? 32 : 64))>3 || abs((int)p[1]-(cycle == 1 ? 16 : 32))>3 || p[2]>2 || p[3]!=255) { printf("FAIL color/mask at %d,%d: %u %u %u %u\n",x,y,p[0],p[1],p[2],p[3]); return 1; } }
     printf("PASS MetalFX backend %d: %d color/mask samples; invalid extent rejected\n",DM_NVN_M3?3:4,checks);
+    }
     return 0;
 } }

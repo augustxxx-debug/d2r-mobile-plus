@@ -49,6 +49,7 @@ SOURCE_INPUTS = tuple(sorted((
     "dm/ios/tools/overlay_contract.py",
     "dm/android/tools/stage_touch_assets.py",
     "dm/ios/tools/gen_romfs_overlay.py", "dm/ios/tools/gen_assets.py",
+    "dm/ios/tools/notification_layout.py",
     "dm/ios/tools/gen_paths.py", "dm/ios/tools/gen_hud_v4.py",
     "dm/ios/tools/hud_v4_design.py", "dm/ios/tools/layout_patch.py",
     "dm/ios/tools/touchrectv1_patch.json", "dm/ios/tools/touch_layout.py",

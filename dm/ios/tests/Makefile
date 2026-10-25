@@ -52,6 +52,11 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_native_art_capture.py
 	python3 test_font_override.py
 	python3 test_notification_frame.py
+	python3 test_notification_layout.py
+	python3 test_notification_localization.py
+	@if [ "$$(uname -s)" = Darwin ]; then \
+	  clang -fobjc-arc -framework Foundation t_diagnostic_scrub.m -o /tmp/dm-test-diagnostic-scrub && /tmp/dm-test-diagnostic-scrub; \
+	else echo "Skip diagnostic export redaction test: requires Apple Foundation"; fi
 	python3 test_casc_add_paths.py
 	python3 test_touch_layout_options.py
 	python3 test_touch_layout_language.py

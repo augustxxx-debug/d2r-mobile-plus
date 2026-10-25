@@ -7,7 +7,7 @@
 //   放：开着储藏箱时，囊里的逐件建回背包（读位流建物品 0x5793a0 + 0x6564e0 → 原版找空位 0x55f620 → 读档放物品 0x6f1940 → 通知 0x642f70(…, 1, 2, 0, 0, 0, x | y << 16)，
 //       同编年史取出；背包满了就停，下一批再放），等这一件落盘证明后，服务端代发原版 0x63 进宝石页 / 符文页、叠堆；2 秒还在背包（页满 / 叠满）就收回囊里。
 //   存放按钮：背包里已鉴定的暗金 / 套装件 → 编年史仓库（dm_vault.c 存入，一件一件排队）；符文 / 宝石 → 储藏箱旁进高级仓库，别处进百宝囊。别的不动。
-//          做完出一条原版系统提示（聊天栏 + 提示框，dm_game_notice，服务端线程发）：「存放：编年史 N 件，储藏箱 M 件，百宝囊 K 件」，没东西可存也提示。
+//          做完立即显示原版界面提示；聊天栏记录在服务端恢复更新后补写：「存放：编年史 N 件，储藏箱 M 件，百宝囊 K 件」，没东西可存也提示。
 // 落盘（不变式：同一件只在一处——侧文件 <角色>/<角色>.swpouch 里，或原版角色档里；侧文件跟着角色目录走 iCloud，dm_cloudsync.c）：
 //   符文 / 宝石是简单物品，同种的字节一样，不能像编年史那样只认「在不在」；但位流前 8 字节带着位置（方式 / x / y / 页），背包同一格同一时刻只有一件，
 //   所以按整串位流（含背包格位）只在本角色档里找：
@@ -28,7 +28,7 @@
 //   Release: while the stash is open, the pouch items are built back into the inventory one by one (read bitstream and build item 0x5793a0 + 0x6564e0 -> original free-spot search 0x55f620 -> load-time item placement 0x6f1940 -> notify 0x642f70(..., 1, 2, 0, 0, 0, x | y << 16),
 //       same as chronicle retrieve; stop when the inventory is full and continue in the next batch); once this item is proven persisted, the server sends the original 0x63 on the player's behalf into the gem page / rune page, stacking; if still in the inventory after 2 seconds (page full / stack full), take it back into the pouch.
 //   Deposit button: identified unique / set items in the inventory -> chronicle vault (dm_vault.c store, queued one at a time); runes / gems -> advanced stash when next to the stash, pouch elsewhere. Nothing else is touched.
-//          When done, show one original game system notice (chat bar + notice box, dm_game_notice, sent from the server thread): 「存放：编年史 N 件，储藏箱 M 件，百宝囊 K 件」(Deposited: Chronicle N, Stash M, Pouch K); a notice is shown even when there is nothing to deposit.
+//          When done, show UI feedback immediately and write its chat copy after the server resumes: 「存放：编年史 N 件，储藏箱 M 件，百宝囊 K 件」(Deposited: Chronicle N, Stash M, Pouch K); a notice is shown even when there is nothing to deposit.
 // Persistence (invariant: the same item exists in only one place -- in the sidecar file <character>/<character>.swpouch, or in the original character save; the sidecar file goes to iCloud with the character directory, dm_cloudsync.c):
 //   runes / gems are simple items and same-kind bytes are identical, so "present or not" alone cannot be used as with the chronicle; but the first 8 bytes of the bitstream carry the position (placement / x / y / page), and one inventory cell holds only one item at a time,
 //   so search for the whole bitstream (including the inventory cell position) in this character's save only:
@@ -55,6 +55,8 @@ int dm_custom_get(const char *key);
 uint64_t dm_guest_frame(void);
 int dm_ui_panel_state(void);
 void dm_game_notice(uint8_t *main_base, const char *text);
+void dm_game_notice_ui(uint8_t *main_base, const char *text);
+void dm_game_notice_chat(uint8_t *main_base, const char *text);
 const char *dm_save_workdir(void); uint64_t dm_fs_commit_count(void); uint64_t dm_diag_srv_item(uint32_t id); void *dm_memfind(const uint8_t *h, size_t hn, const uint8_t *n, size_t nn);
 int dm_item_write(uint8_t *b, uint64_t it, uint8_t *buf); uint64_t dm_item_make(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out);
 int dm_request_save(void); void dm_vault_request_deposit(uint32_t item_id); int dm_vault_put_pending(void); int dm_vault_ready(void); int dm_vault_has(int kind, int idx); int dm_item_quest(uint8_t *b, uint64_t it);
@@ -332,6 +334,26 @@ typedef struct { uint32_t id, code; uint8_t to_vault, page; } sitem;   // page�
 static sitem g_st[128]; static int g_nst, g_ist = -1, g_sv, g_sg, g_sp, g_sleft, g_snear; static uint64_t g_sfr;
 static _Atomic int g_store_req, g_pouch_tap;
 static char g_notice[160]; static _Atomic int g_notice_req;
+// Store completes on the guest main thread even while the server is paused.
+// Submit UI for this main-thread poll; publish chat under a mutex for the server.
+static pthread_mutex_t g_store_notice_lock = PTHREAD_MUTEX_INITIALIZER;
+static char g_store_notice[512]; static int g_store_notice_pending;
+static void store_notice(const char *text) {
+    dm_game_notice_ui(B, text);
+    pthread_mutex_lock(&g_store_notice_lock);
+    strlcpy(g_store_notice, text, sizeof g_store_notice);
+    g_store_notice_pending = 1;
+    pthread_mutex_unlock(&g_store_notice_lock);
+}
+static void store_notice_chat(uint8_t *b) {
+    char text[512]; int pending;
+    pthread_mutex_lock(&g_store_notice_lock);
+    pending = g_store_notice_pending;
+    if (pending) { strlcpy(text, g_store_notice, sizeof text); g_store_notice_pending = 0; }
+    pthread_mutex_unlock(&g_store_notice_lock);
+    if (pending) dm_game_notice_chat(b, text);
+}
+
 // 这件还在不在原来那一页（客户端物品栏；方式 0 = 在容器里）
 // Whether this item is still on its original page (client inventory; mode 0 = in a container)
 static uint64_t page_item(uint64_t pl, uint32_t id, int page) {
@@ -370,15 +392,16 @@ static void store_step(uint64_t pl, uint64_t fr) {
         if (fr - g_sfr > (!s->to_vault && g_snear ? 240 : 120)) {   // 储藏箱旁：服务端等 2 秒没进仓库才收回囊里，这边多等一会儿，别抢在它前面判「留在背包」 | next to the stash: the server waits 2 seconds and only takes it back into the pouch if it has not entered the stash, so wait a little longer here and do not judge "stays in the inventory" ahead of it
             g_sleft++; LOG("【红】存放：物品 id %u 2 秒还在%s（%s不收）", s->id, s->page == 3 ? "魔盒" : "背包", s->to_vault ? "编年史" : g_snear ? "储藏箱" : "百宝囊"); g_ist++; g_sfr = 0; }
         return; }
+    char result[512];
     {   // 「存放：编年史 N 件，储藏箱 M 件，百宝囊 K 件」，为 0 的那类不写；一件没存也提示。「存放」「编年史」「储藏箱」是原版字符串（strGoldDeposit / Chronicle / 储藏箱标题） | 「存放：编年史 N 件，储藏箱 M 件，百宝囊 K 件」(Deposited: Chronicle N, Stash M, Pouch K); categories that are 0 are omitted; a notice is shown even if nothing was deposited. 「存放」(Deposit), 「编年史」(Chronicle) and 「储藏箱」(Stash) are original game strings (strGoldDeposit / Chronicle / the stash title)
-        int k = snprintf(g_notice, sizeof g_notice, "%s", dm_str(B, "dmStoreHead")), any = 0;
-        if (g_sv) { k += snprintf(g_notice + k, sizeof g_notice - k, dm_str(B, "dmStoreVault"), g_sv); any = 1; }
-        if (g_sg) { k += snprintf(g_notice + k, sizeof g_notice - k, dm_str(B, "dmStoreStash"), any ? dm_str(B, "dmStoreSep") : "", g_sg); any = 1; }
-        if (g_sp) { k += snprintf(g_notice + k, sizeof g_notice - k, dm_str(B, "dmStorePouch"), any ? dm_str(B, "dmStoreSep") : "", g_sp); any = 1; }
-        if (!any) k += snprintf(g_notice + k, sizeof g_notice - k, "%s", dm_str(B, "dmStoreNone"));
-        else if (g_sleft) snprintf(g_notice + k, sizeof g_notice - k, dm_str(B, "dmStoreLeft"), g_sleft); }
+        int k = snprintf(result, sizeof result, "%s", dm_str(B, "dmStoreHead")), any = 0;
+        if (g_sv) { k += snprintf(result + k, sizeof result - k, dm_str(B, "dmStoreVault"), g_sv); any = 1; }
+        if (g_sg) { k += snprintf(result + k, sizeof result - k, dm_str(B, "dmStoreStash"), any ? dm_str(B, "dmStoreSep") : "", g_sg); any = 1; }
+        if (g_sp) { k += snprintf(result + k, sizeof result - k, dm_str(B, "dmStorePouch"), any ? dm_str(B, "dmStoreSep") : "", g_sp); any = 1; }
+        if (!any) k += snprintf(result + k, sizeof result - k, "%s", dm_str(B, "dmStoreNone"));
+        else if (g_sleft) snprintf(result + k, sizeof result - k, dm_str(B, "dmStoreLeft"), g_sleft); }
     int sv = g_sv + g_sg ? dm_request_save() : 0;   // 存放完请游戏存一次盘（同编年史存取）；进囊的由服务端拍自己请 | After depositing, ask the game to save once (same as chronicle store / retrieve); for items going into the pouch the server tick requests it itself
-    atomic_store(&g_notice_req, 1); LOG("存放：完成——编年史 %d、储藏箱 %d、百宝囊 %d、留在背包 %d → 提示「%s」；请存盘 → %d", g_sv, g_sg, g_sp, g_sleft, g_notice, sv); g_ist = -1;
+    store_notice(result); LOG("存放：完成——编年史 %d、储藏箱 %d、百宝囊 %d、留在背包 %d → 提示「%s」；请存盘 → %d", g_sv, g_sg, g_sp, g_sleft, result, sv); g_ist = -1;
 }
 
 // ---- 界面（只写我们自己的控件）
@@ -452,7 +475,10 @@ void dm_pouch_step(uint8_t *b) {   // 游戏主线程每帧（dm_world.c） | ev
     if (dm_custom_get("gem_pick") && g_ist < 0) auto_pick(pl, fr);
 }
 void dm_pouch_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {   // 服务端拍（diag.c hud_tick；不在局内 player 为 0）：收 / 放 / 系统提示（系统提示只许服务端线程发） | Server tick (hud_tick in diag.c; player is 0 when not in a run): stow / release / system notices (system notices may only be sent from the server thread)
-    static uint64_t lp; if (!player) { lp = 0; pthread_mutex_lock(&g_umu); g_uload = 0; pthread_mutex_unlock(&g_umu); return; }
+    static uint64_t lp; if (!player) {
+        pthread_mutex_lock(&g_store_notice_lock); g_store_notice_pending = 0; pthread_mutex_unlock(&g_store_notice_lock);
+        lp = 0; pthread_mutex_lock(&g_umu); g_uload = 0; pthread_mutex_unlock(&g_umu); return; }
+    store_notice_chat(b);
     B = b; uint32_t tq = *(uint32_t *)(G + 0x170);
     if (player != lp) { lp = player; uint64_t pd = *(uint64_t *)(player + 0x10); pthread_mutex_lock(&g_umu); strlcpy(g_uchar, pd ? (const char *)pd : "", sizeof g_uchar); pouch_load(); g_uload = 1; pthread_mutex_unlock(&g_umu); }   // 进局（换了玩家单位）读一次 | Read once on entering a run (the player unit changed)
     int near = ((int (*)(uint64_t, uint64_t, int, int))(b + 0x650d10))(G, player, 0x10b, 0x32) & 1; atomic_store(&g_near_pub, near);   // 原版「移到仓库」用的同一个判断：50 以内有储藏箱物件 267 | The same check the original game's "move to stash" uses: a stash object 267 within 50
@@ -508,6 +534,6 @@ void dm_pouch_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {   // 服务端
     if (atomic_exchange(&g_notice_req, 0)) dm_game_notice(b, g_notice);
     {   // 测试开关 DM_TEST_NOTICE=<帧数>（复现「提示框在屏上时开面板」用，产品不设）：每隔这么多客体帧发一条原版系统提示 | test switch DM_TEST_NOTICE=<frames> (for reproducing "opening a panel while a notification is on screen"; not set in the product): sends one original system notification every this many guest frames
         static int per = -1; static uint64_t last; if (per < 0) { const char *e = getenv("DM_TEST_NOTICE"); per = e ? atoi(e) : 0; }
-        uint64_t dm_guest_frame(void); uint64_t f = dm_guest_frame(); if (per > 0 && f - last >= (uint64_t)per) { last = f; dm_game_notice(b, "TEST NOTICE 0123456789"); LOG("测试 DM_TEST_NOTICE：帧 %llu 发一条系统提示", (unsigned long long)f); } }
+        uint64_t dm_guest_frame(void); uint64_t f = dm_guest_frame(); if (per > 0 && f - last >= (uint64_t)per) { last = f; const char *key=getenv("DM_TEST_NOTICE_KEY"); dm_game_notice(b, key ? dm_str(b,key) : "TEST NOTICE 0123456789"); LOG("测试 DM_TEST_NOTICE：帧 %llu 发一条系统提示", (unsigned long long)f); } }
 }
 

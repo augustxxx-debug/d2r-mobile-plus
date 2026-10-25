@@ -45,6 +45,13 @@
     _arguments = [device newArgumentTableWithDescriptor:ad error:&error];
     if (!_arguments) return nil;
 #endif
+#if !DM_NVN_M3
+    // Metal 4's scaler needs a fence to establish its internal output barrier.
+    // Queue/render barriers alone do not initialize that scaler dependency.
+    id<MTLFence> fence = [device newFence];
+    if (!fence) return nil;
+    _scaler.fence = fence;
+#endif
     if (!_scaler || (input.usage & _scaler.colorTextureUsage) != _scaler.colorTextureUsage) return nil;
     MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:_inputFormat width:_outWidth height:_outHeight mipmapped:NO];
     td.storageMode = MTLStorageModePrivate; td.usage = _scaler.outputTextureUsage | MTLTextureUsageShaderRead;

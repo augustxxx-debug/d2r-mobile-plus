@@ -6,10 +6,6 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Unreleased]
 
-### Fixed
-
-- Added hysteresis to MetalFX Auto: system-state sampling is limited to once per second; reductions remain prompt, while increases require 60 continuous seconds of a stable target. Thermal/Low Power Mode changes and long sampling gaps reset recovery. Added deterministic regression coverage for oscillating signals, screen-size changes and manual profiles. Device performance validation remains pending.
-
 Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). Validation updated on **2026-10-26**.
 
 ### Added
@@ -27,6 +23,16 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 - English and Simplified Chinese project, build, verification and change documentation.
 
 ### Fixed
+
+- Route enhanced UI notifications through a bounded queue drained on the game main thread. Paused-menu deposit feedback no longer waits for the server to resume; controller gold/item tooltips no longer move the notice.
+- Fit the notification frame to native font measurements, preserving fixed corner and medallion art with single-frame slices. Sprite and widget writes both require matching ownership, frame and atlas checks. Common modal backgrounds share the game-art treatment while retaining native controls and actions.
+- Diagnostic exports now include applied Graphics/MetalFX state and bounded log tails, with export-only redaction of recognized identifiers and known character names. Original logs remain unchanged.
+
+- Settings tab labels now use a local, non-wrapping text style, including the controller layout's inherited style. This keeps English Gameplay on one line without changing tab artwork, hit rectangles or destinations.
+
+- MetalFX can now activate from a recognized native 1:1 pass, without waiting for frame drops to lower resolution first. Off/unsupported/failed paths retain the original scaler, and switching away from Auto resets its recovery sampling.
+
+- Preserved frame-time resolution reductions when Auto changes its thermal/power cap; raising the cap no longer resets the frame-time controller. The game thread consumes one absolute target to avoid transient cap/level mismatches. Added production-entry regression coverage, rapid cap-change checks, and a disabled-controller fallback check.
 
 - Fixed Graphics incorrectly replacing Game Settings and hiding the native offline Terror Zones control. Settings now has five distinct destinations in the same touch/controller order: Audio, Gameplay, Settings, Graphics, Custom. Native Audio, Gameplay and Settings layouts were compared against the pre-Graphics version: five are byte-identical, and controller Game Settings changes only table row height to prevent divider overlap. Added preservation, tab-artwork and new-layout path regression coverage.
 
