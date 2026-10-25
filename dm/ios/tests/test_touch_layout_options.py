@@ -55,7 +55,7 @@ assert not any(name.startswith('TouchCustom_q3d') for name in nodes)
 assert not any(name.startswith('TouchCustom_eco_fps') for name in nodes)
 print('PASS Custom page excludes moved graphics controls')
 
-# Graphics tab uses the game's native slider and toggle widgets in the repurposed offline-only slot.
+# Graphics tab uses the game's native slider and toggle widgets in a separate panel without replacing native settings.
 empty_rows = ''.join('{"type":"TableRowWidget","name":"Row %s"},' % name for name in (
     'Shared', 'WideItemDropEnabled', 'Online', 'MaxPlayers', 'LevelDifferenceEnabled', 'MaxLevelDifference',
     'AllowBnetFriendsJoin', 'PrivateGameSecurity', 'DesecratedZonesEnabled', 'OnlineSettingsEffectNote', 'Offline',
@@ -83,3 +83,31 @@ assert 'Row Offline' not in g_nodes and 'Row Online' not in g_nodes
 assert not g_nodes['OptionsTable'].get('children')
 assert g_nodes['TouchGraphicsRows']['type'] == 'Widget'
 print('PASS Graphics page: native FPS/profile sliders, independent upscale toggle, localization hooks')
+
+# Regression: adding Graphics must preserve all original destinations and native settings.
+settings_src = '{"name":"SettingsPanel","children":[{"type":"TabBarWidget","name":"OptionsTabs","fields":{"tabCount":5,"inactiveFrames":[0,2,4,6,8],"activeFrames":[1,3,5,7,9],"textStrings":["@OptionsMenuVideo","@Audio","@Gameplay","@GameSettingsTab","@Controls"],"tabMessages":["SettingsPanelMessage:CheckChanges:VideoOptionsPanel","SettingsPanelMessage:CheckChanges:SoundOptionsPanel","SettingsPanelMessage:CheckChanges:GameplayOptionsPanel","SettingsPanelMessage:CheckChanges:OnlineGameOptionsPanel","SettingsPanelMessage:CheckChanges:KeyBindingMenu"]}}]}'
+for transform in (lambda s: layout._settings_tabs(s)[0], layout.pad_settings):
+    tab=json.loads(transform(settings_src))['children'][0]['fields']
+    assert tab['tabCount']==len(tab['textStrings'])==len(tab['tabMessages'])==len(tab['inactiveFrames'])==len(tab['activeFrames'])==5
+    destinations=[m.rsplit(':',1)[1] for m in tab['tabMessages']]
+    assert len(set(destinations))==5
+    assert set(destinations)=={'SoundOptionsPanel','GameplayOptionsPanel','OnlineGameOptionsPanel','VideoOptionsPanel',layout.GRAPHICS_PANEL}
+    assert '@dmTabGameSettings' in tab['textStrings'] and '@dmTabGraphics' in tab['textStrings']
+
+native_row={'type':'TableRowWidget','name':'Row OfflineDesecratedZonesEnabled','children':[{'type':'ToggleButtonWidget','name':'OfflineDesecratedZonesEnabled','fields':{'onClickMessage':'OptionsPanelMessage:NativeTerrorZoneToggle','text':'@TerrorZonesEnabled','tooltipString':'@TerrorZonesEnabledTooltip','sentinel':{'default':True,'condition':'native'}}}]}
+future_row={'type':'TableRowWidget','name':'Row FutureNativeSetting','children':[{'name':'FutureControl','fields':{'onUpdateMessage':'NativeFuture:Update','maximum':123}}]}
+stock={'type':'OnlineGameOptionsPanel','name':'OnlineGameOptionsPanel','children':[{'type':'TableWidget','name':'OptionsTable','fields':{'rowHeight':'$OptionsTableRowHeight'},'children':[native_row,future_row,{'type':'TableRowWidget','name':'Row OfflineDifficultyScaling'},{'type':'TableRowWidget','name':'Row OfflineSettingsEffectNote'}]}]}
+for transform in (layout.PRESENT['onlinegameoptionspanelhd.json'],layout.PAD_ROOT['onlinegameoptionspanelhd.json']):
+    restored,_=transform(json.dumps(stock));restored=json.loads(re.sub(r',\s*([}\]])',r'\1',restored))
+    assert restored['children'][0]['fields']['rowHeight']==180
+    assert restored['children'][0]['children']==[native_row,future_row], 'Native controls, future controls and their original fields must survive'
+    assert 'TouchGraphics' not in json.dumps(restored), 'Graphics must not occupy the native settings page'
+print('PASS settings preservation: five unique destinations in both modes; native Terror Zone/future controls retain fields and callbacks')
+
+# Actual console assets can have only four frame IDs despite five declared tabs.
+four_frames=settings_src.replace('[0,2,4,6,8]','[0,2,4,6]').replace('[1,3,5,7,9]','[1,3,5,7]')
+for transform in (lambda s: layout._settings_tabs(s)[0],layout.pad_settings):
+    fields=json.loads(transform(four_frames))['children'][0]['fields']
+    assert fields['inactiveFrames']==[0,2,4,6,6]
+    assert fields['activeFrames']==[1,3,5,7,7]
+print('PASS native four-frame artwork extends safely to five tabs')

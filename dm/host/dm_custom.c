@@ -216,7 +216,7 @@ static void ui_show_ours(uint64_t w, int on) {
 void dm_graphics_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
     static dm_wref seen[3]; static int paint;
-    uint64_t sp = dm_ui_top(root, "OnlineGameOptionsPanel");
+    uint64_t sp = dm_ui_top(root, "3PlusGraphicsOptionsPanel");
     if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); return; }
     load_once(); int repaint = atomic_load(&g_repaint);
     if (paint != repaint) { paint = repaint; memset(seen, 0, sizeof seen); }

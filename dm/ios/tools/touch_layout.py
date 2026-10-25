@@ -1141,28 +1141,37 @@ def build_present(romfs, outdir):
         o = os.path.join(outdir, 'present_' + rel.replace('/', '_')); open(o, 'w', encoding='utf-8').write(new); repl[path.lower()] = o; total += n
     return repl, total
 
-# ---------- 选项页：视频页签整页去掉（iPhone 自己能调亮度），其余页签里与触摸产品无关的项藏掉 ----------
-# ---------- Options pages: the whole video tab page is removed (the iPhone can adjust brightness itself), and items in the other tabs unrelated to the touch product are hidden ----------
+# ---------- 选项页：保留原有设置目的页，另加独立图形页 ----------
+# ---------- Options: preserve native destinations and add a separate Graphics page ----------
+# Prefix 3 is unused among the native layout trie siblings; existing paths stay intact.
+GRAPHICS_PANEL = '3PlusGraphicsOptionsPanel'
+GRAPHICS_LAYOUT = '3plusgraphicsoptionspanelhd.json'
+_SETTINGS_LABELS = ('@Audio', '@Gameplay', '@dmTabGameSettings', '@dmTabGraphics', '@dmTabCustom')
+_SETTINGS_PANELS = ('SoundOptionsPanel', 'GameplayOptionsPanel', 'OnlineGameOptionsPanel', GRAPHICS_PANEL, 'VideoOptionsPanel')
+
 def _settings_tabs(text):
-    """页签条去掉第一个（视频）：个数与四个并列数组各去首项；第四项「控制」换成「自定义」。 | Remove the first item (video) from the tab strip: drop the first entry from the count and from each of the four parallel arrays; the fourth item 「控制」(Controls) is replaced with 「自定义」(Custom)."""
-    n = 0
-    def drop_first(m):
-        nonlocal n; items = [x for x in re.split(r',\s*', m.group(2).strip().rstrip(',')) if x.strip()]; n += 1
-        return m.group(1) + ' ' + ', '.join(items[1:]) + ' ' + m.group(3)
-    new = re.sub(r'("(?:inactiveFrames|activeFrames|textStrings)"\s*:\s*\[)([^\]]*)(\])', drop_first, text)
-    new = re.sub(r'("tabMessages"\s*:\s*\[)([^\]]*)(\])', lambda m: m.group(1) + '\n' + ',\n'.join(x for x in [y.strip() for y in m.group(2).split(',')] if x and 'VideoOptionsPanel' not in x) + ',\n' + m.group(3), new)
-    new, k = re.subn(r'"tabCount"\s*:\s*5', '"tabCount": 4', new)
-    # 第四项原是「控制」（KeyBindingMenu，本平台不出现）：改成「自定义」，打开借来的视频页（见 _custom_page）
-    # The fourth item was originally 「控制」(Controls) (KeyBindingMenu, which does not appear on this platform): changed to 「自定义」(Custom), opening the borrowed video page (see _custom_page)
-    if new.count('"@Controls"') != 1 or new.count('SettingsPanelMessage:CheckChanges:KeyBindingMenu') != 1: raise SystemExit('touch_layout：页签条第四项不是原样「控制」，自定义页签没换')
-    # 第三项「游戏设定」：原版英文串 Game Settings 在 266 宽的页签里折成两行、第二行被截成「Se…」（英文版审计）；触屏页签条换成我们表里的串（中文不变、英文 Settings）。手柄版页签条是原版，不动
-    # Third item 「游戏设定」(Settings): the original English string Game Settings wraps to two lines in the 266-wide tab and the second line is truncated to "Se..." (English version audit); the touch tab bar uses the string from our table instead (Chinese unchanged, English Settings). The controller layout tab bar is the original and is left alone
-    if new.count('"@GameSettingsTab"') != 1: raise SystemExit('touch_layout：页签条第三项不是原样「游戏设定」（原版布局变了？）')
-    new = new.replace('"@GameSettingsTab"', '"@dmTabGraphics"')
-    # 第四项「自定义」同理：原版串 KeyBindingTypeCustom 的西语「Personalizar」在页签里被截成「Persona…」（西语截图），页签用我们表里的短词（页面大标题仍用原版串）
-    # The fourth item "Custom" likewise: the original string KeyBindingTypeCustom in Spanish "Personalizar" is truncated to "Persona…" in the tab (Spanish screenshot), so the tab uses the short word from our table (the page heading still uses the original string)
-    new = new.replace('"@Controls"', '"@dmTabCustom"').replace('SettingsPanelMessage:CheckChanges:KeyBindingMenu', 'SettingsPanelMessage:CheckChanges:VideoOptionsPanel')
-    return new, n + k + 1
+    """Preserve the native settings destination and add a distinct Graphics panel."""
+    for key, values in (('textStrings', _SETTINGS_LABELS),
+                        ('tabMessages', tuple('SettingsPanelMessage:CheckChanges:' + p for p in _SETTINGS_PANELS))):
+        pattern = r'("' + key + r'"\s*:\s*)\[[^\]]*\]'
+        text, n = re.subn(pattern, lambda m: m[1] + json.dumps(values), text)
+        if n != 1: raise SystemExit('Expected one settings ' + key)
+    # Stock console builds may declare five tabs but only carry four frame IDs.
+    # Extend the native artwork with its last frame, preserving every old entry.
+    for key in ('inactiveFrames', 'activeFrames'):
+        pattern = r'("' + key + r'"\s*:\s*)\[([^\]]*)\]'
+        def extend_frames(m):
+            frames = [int(x) for x in re.findall(r'-?\d+', m[2])]
+            if not frames or len(frames) > 5: raise SystemExit('Unexpected settings artwork ' + key)
+            return m[1] + json.dumps(frames + [frames[-1]] * (5 - len(frames)))
+        text, n = re.subn(pattern, extend_frames, text)
+        if n != 1: raise SystemExit('Expected one settings ' + key)
+    if re.search(r'"tabCount"\s*:', text):
+        text = re.sub(r'("tabCount"\s*:)\s*\d+', r'\g<1> 5', text)
+    else:
+        text = text.replace('"textStrings":', '"tabCount": 5, "textStrings":', 1)
+    return text, 2
+
 def _drop_rows(*rows):
     """把选项表里的整行（TableRowWidget "Row <名>"）删掉：表格按剩下的行重排，不留空行。每个名字必须恰好删到一行。 | Delete whole rows (TableRowWidget "Row <name>") from the options table: the table re-lays out the remaining rows and leaves no empty row. Each name must delete exactly one row."""
     def fn(text):
@@ -1179,10 +1188,8 @@ def _drop_rows(*rows):
         text, k = re.subn(r'[ \t]*"tooltipString"\s*:\s*"[^"\n]*",?[ \t]*\r?\n', '', text)
         return text, n + k
     return fn
-# 「自定义」页：选项面板第四个页签。布局覆盖层只能替换已有路径，所以借原版「视频」页
-# （主机版 VideoOptionsPanelHD.json，触摸版已去掉视频页签）：页签条第四项（原「控制」= KeyBindingMenu，本平台不出现）改名「自定义」、打开 VideoOptionsPanel；
-# 视频页的表格整个换成我们的行：分节标题 + 每个开关一行原版勾选框（照「游戏」页「自动拾取金币」那一行的字段）。控件名 TouchCustom_<键>，
-# 宿主 dm_custom.c 读勾没勾、按应用 / 放弃 / 默认处理。勾选框的消息发一条无害的 ClosePanel（同「极乐世界」），游戏不认
+# Custom reuses the native Video destination; Graphics uses a new layout and
+# leaves the native Game Settings destination intact. The host owns only our controls.
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
 _CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above')
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
@@ -1297,13 +1304,8 @@ def _custom_page(text):
            '    ]\n}\n')
     return out, len(_CUSTOM_ALL) + 2
 PRESENT['controller/console/videooptionspanelhd.json'] = _custom_page
-# 手柄版选项页：原版页签条不动，只把第一项「视频」换成「自定义」——它打开的视频页就是上面那份自定义页（两种模式同一份内容）
-# Controller options page: the original tab bar is untouched, only the first item "Video" is replaced by "Custom"; the video page it opens is the Custom
-# page above (same content in both modes)
-def pad_settings(s):
-    s = _sub1(s, '"@OptionsMenuVideo"', '"@KeyBindingTypeCustom"')
-    if '"@GameSettingsTab"' not in s: raise SystemExit('touch_layout：手柄页签里没有图形页目标项')
-    return s.replace('"@GameSettingsTab"', '"@dmTabGraphics"')
+# Touch and controller expose the same five distinct destinations.
+def pad_settings(s): return _settings_tabs(s)[0]
 def pad_custom_page(s): return _custom_page(s)[0]
 # 挂进 PRESENT：build_ingame 对同一份文件（往选项页插「应用 / 默认 / 放弃」）会先套这里的变换再插按钮，不会出两份覆盖互相盖掉
 # Hooked into PRESENT: for the same file (inserting 「应用 / 默认 / 放弃」(Apply / Default / Discard) into the options page) build_ingame applies the transform here first and then inserts the buttons, so two overlays that overwrite each other are not produced
@@ -1410,7 +1412,16 @@ def _graphics_page(text):
     text = text[:brace] + json.dumps(empty_table, ensure_ascii=False) + ',\n' + json.dumps(rows, ensure_ascii=False) + text[end:]
     text, n = offscreen(text, types=(), names=('SettingsEffectNote',))
     return text, n + 1
-PRESENT['onlinegameoptionspanelhd.json'] = _graphics_page
+def build_graphics_panel(romfs, outdir):
+    """A separate root layout; never replace the native Game Settings layout."""
+    _, stock = read_layout(romfs, 'onlinegameoptionspanelhd.json')
+    text, _ = _graphics_page(stock)
+    text = _sub1(text, '"name": "OnlineGameOptionsPanel"', '"name": "' + GRAPHICS_PANEL + '"')
+    path = os.path.join(outdir, GRAPHICS_LAYOUT)
+    open(path, 'w', encoding='utf-8').write(text)
+    return {'data/global/ui/layouts/' + GRAPHICS_LAYOUT: path}
+
+PRESENT['onlinegameoptionspanelhd.json'] = _drop_rows('OfflineDifficultyScaling', 'OfflineSettingsEffectNote')
 # 手柄模式的三份选项页（放在原路径，手柄模式加载；触屏那份由生成器挪到触屏这边）：原版删去两种模式都不支持的行——语言、联机、聊天、键鼠热键提示、离线人数档，
 # 和大字体模式（一应用就换成另一套布局档，再碰屏切回触屏会坏）。手柄模式比触屏多留的行见下
 # The three options pages for controller mode (placed at the original path and loaded by controller mode; the touch copy is moved to the touch side by the generator): the original with the rows that neither mode supports removed -- language, online, chat, keyboard-and-mouse hotkey hints, offline /players setting,
@@ -1423,7 +1434,7 @@ PAD_ROOT = {
     # Not restored: vibration (the host does not support vibration; it is an empty implementation in hle_hid.c), controller feedback and cursor speed (the value changed but no effect was measured: in panels the controller cursor snaps cell by cell), separate binding for weapon swap (not verified)
     'gameplayoptionspanelhd.json': _drop_rows('AutoPartyInvite', 'ItemHotkeyTooltipAppender', 'ChatFontSize', 'ChatBackground', 'ShowParty', 'ShowNames', 'ShowRoomName', 'LowVisionMode',
                                               'ControllerCursorSpeed', 'ControllerWeaponSwapSeparateBindings', 'ControllerRumbleEnabled'),
-    'onlinegameoptionspanelhd.json': _graphics_page,
+    'onlinegameoptionspanelhd.json': _drop_rows('OfflineDifficultyScaling', 'OfflineSettingsEffectNote'),
 }
 def build_pad_root(romfs, outdir):
     repl = {}
@@ -1441,6 +1452,8 @@ def _row_height(fn):
         return text.replace(a, '"rowHeight": 180'), n + text.count(a)
     return g
 for _k in ('soundoptionspanelhd.json', 'gameplayoptionspanelhd.json', 'onlinegameoptionspanelhd.json'): PRESENT[_k] = _row_height(PRESENT[_k])
+# The native console section divider assumes 180 units; avoid overlapping its next row.
+PAD_ROOT['onlinegameoptionspanelhd.json'] = _row_height(PAD_ROOT['onlinegameoptionspanelhd.json'])
 
 def _widget_block(s, name):
     m = re.search(r'\{\s*"type"\s*:\s*"[A-Za-z]+"\s*,\s*"name"\s*:\s*"%s"' % re.escape(name), s)

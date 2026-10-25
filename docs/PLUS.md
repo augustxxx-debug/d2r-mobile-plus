@@ -48,8 +48,8 @@ Validation record: **2026-10-26**, upstream baseline `195ae11dc70f1ba7735c6063e1
 | Front-end geometry | 44 checks passed |
 | Notification generator | Automated frame construction checks passed |
 | Font composition | 6 font-composition tests passed; target Chinese and English settings inspected on device |
-| Graphics settings | 127 migration/persistence/Apply/Discard/global Defaults checks passed |
-| Physical device acceptance | User confirmed Xbox controls and inner/outer-display folding on Graphics |
+| Graphics settings | 195 migration/persistence/Apply/Discard/global Defaults checks passed |
+| Physical device acceptance | Previous four-tab revision: user confirmed Xbox/folding; see below for five-tab regression scope |
 | Device build | Signed iOS build succeeded |
 | Quest reproduction | Baseline slow release missed; modified slow and quick releases stopped narration |
 | Indicator frame review | 44 captured frames reviewed in the preceding layout build |
@@ -86,3 +86,13 @@ Publish source and documentation only. Keep generated resources, fonts, saves, d
 The `main` branch retains the upstream baseline; `codex/plus` contains the preview changes. To compare behavior, build either branch from your own workspace. Always back up saves first; do not uninstall an app that holds your only copy.
 
 Font build note: keep `DM_UI_FONT` in the untracked `dm/ios/local.env` to retain the choice across builds. Empty mapped placeholders fall back to visible game glyphs; language choices use smaller text without wrapping.
+
+### Settings preservation regression
+
+Settings has five distinct destinations: Audio, Gameplay, Settings, Graphics and Custom. Graphics is generated as a separate layout instead of replacing the native Game Settings layout. New resource paths require an unused leading byte. The generated resource trie is parsed again to verify every existing path and file offset remains intact.
+
+The six touch/controller Audio, Gameplay and Game Settings layouts were compared against the enhanced version before Graphics was added: five are byte-identical, and controller Game Settings changes only table row height to prevent divider overlap. Regression tests also preserve the native Terror Zones widget fields/messages and unknown future native controls, require five unique tab destinations, and extend four-entry native frame arrays safely to five.
+
+Defaults continues to send the native reset message. The enhancement layer resets Graphics and Custom together as pending values, retaining language and voice. Apply saves enhanced values; Discard cancels pending values. The game continues to handle its own options; character progress is outside the reset scope.
+
+This regression used a separate test save on the physical device: all five tabs opened; applying Graphics after disabling native Terror Zones preserved that setting; Defaults → Discard retained 30 FPS / Quality and disabled Terror Zones; Defaults → Apply restored 60 FPS / Auto, enabled Terror Zones and native offline scaling 1 while retaining language and voice. Injected controller input verified the five-tab cycle, frame-rate selection, upscaling switch and profile selection. This run does not substitute for pressing a physical controller, and the five-tab revision has not repeated physical folding acceptance.

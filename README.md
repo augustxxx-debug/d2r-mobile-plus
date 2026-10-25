@@ -4,7 +4,7 @@
 
 [简体中文](README.zh-CN.md) · [Changelog](CHANGELOG.md) · [Build & verification](docs/PLUS.md) · [Upstream documentation](https://github.com/jhaizhou-ops/d2r-mobile#readme)
 
-D2R Mobile provides the native compatibility layer, Metal renderer, touch controls and controller support for running your own Nintendo Switch edition of Diablo II: Resurrected. **Plus focuses on screen adaptation, interface alignment and reliable touch interaction.** The upstream project remains the foundation of this work.
+D2R Mobile provides the native compatibility layer, Metal renderer, touch controls and controller support for running your own Nintendo Switch edition of Diablo II: Resurrected. **Plus focuses on extensive display optimization for the iPhone Duo inner screen, addressing UI issues in front-end screens, character menus, tab focus, notification frames and loading indicators, with touch and controller refinements.** The upstream project remains the foundation of this work.
 
 This is a development preview. Improvements have been tested locally on an iOS device and in automated tests; comprehensive device, controller and folding-transition coverage is still in progress. “Full screen” describes scene coverage and adaptive layout, not a guarantee that every original game panel has been redesigned.
 
@@ -24,7 +24,9 @@ These are changes on top of upstream commit [`195ae11`](https://github.com/jhaiz
 
 ## MetalFX spatial upscaling (experimental)
 
-Open **Options → Graphics** in game. Enable **MetalFX spatial upscaling** to reveal the four-position Auto / Eco / Balanced / Quality slider. Turning the switch off restores the original upscale pass and remembers the selected profile. Frame rate has a separate left/right 30 / 60 FPS selector. Press **Apply** to activate changes without restarting; switching may briefly pause rendering. **Discard** restores the active settings. **Defaults** resets Graphics and Custom together, retaining language and voice; press Apply to save.
+Settings retains five separate tabs: **Audio / Gameplay / Settings / Graphics / Custom**. The original offline Terror Zones control remains in Settings; Graphics uses a separate destination.
+
+Open **Options → Graphics** in game. Enable **MetalFX spatial upscaling** to reveal the four-position Auto / Eco / Balanced / Quality slider. Turning the switch off restores the original upscale pass and remembers the selected profile. Frame rate has a separate left/right 30 / 60 FPS selector. Press **Apply** to activate changes without restarting; switching may briefly pause rendering. **Discard** restores the active settings. **Defaults** preserves the native global reset, including game options, Graphics and Custom, while retaining language and voice; press Apply to save. Native Terror Zones and offline difficulty scaling also return to defaults; Discard cancels a pending reset.
 
 ![English Graphics settings on device](docs/images/graphics-settings-en.jpg)
 

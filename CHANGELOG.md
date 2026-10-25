@@ -24,6 +24,8 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 ### Fixed
 
+- Fixed Graphics incorrectly replacing Game Settings and hiding the native offline Terror Zones control. Settings now has five distinct destinations in the same touch/controller order: Audio, Gameplay, Settings, Graphics, Custom. Native Audio, Gameplay and Settings layouts were compared against the pre-Graphics version: five are byte-identical, and controller Game Settings changes only table row height to prevent divider overlap. Added preservation, tab-artwork and new-layout path regression coverage.
+
 - Font composition now falls back to original visible glyphs when the selected font maps a character to an empty placeholder. Language choices have additional space and smaller text to avoid wrapping with replacement fonts.
 
 - Preserved upstream global defaults across Graphics and Custom, including pending changes on the other enhanced tab; language and voice remain unchanged.
@@ -42,7 +44,7 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 - Dedicated Graphics settings passed device touch tests and a user-confirmed physical Xbox controller test, including left/right 30 / 60 FPS selection. The final configuration was 60 FPS with Quality.
 - The user confirmed landscape fold/unfold transitions on the Graphics page across inner and outer displays. Menu/loading transitions and all other pages still require broader coverage.
-- Profile migration, persistence and Apply/Discard/global Defaults semantics passed **127 checks**. The iOS touch suite passed **49 cases / 4,487 checks**; host UI classification passed **381 checks** and front-end geometry passed **44 checks**.
+- Profile migration, persistence and Apply/Discard/global Defaults semantics passed **195 checks**. The iOS touch suite passed **49 cases / 4,487 checks**; host UI classification passed **381 checks** and front-end geometry passed **44 checks**.
 - Metal 3 and Metal 4 upscalers each passed **64 color/mask samples** and invalid-extent rejection. Device traces also recorded live changes between original rendering and all four upscaling profiles without restarting.
 - Font composition passed **6 tests**, including empty mapped-glyph fallback; asset-cache contracts passed **14 tests**. Chinese and English Graphics/Custom pages were inspected on device, including notification width and language-choice labels.
 - Earlier device traces reproduced the quest-log issue on the baseline: a stationary **0.8-second** release emitted no click. Both quick and 0.8-second releases stopped narration after the fix. Prior loading-indicator review covered 44 captured frames; this does not establish every transition is stable.

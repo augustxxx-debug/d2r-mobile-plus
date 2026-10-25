@@ -64,6 +64,7 @@ with tempfile.TemporaryDirectory() as t:
     # Full-touch scheme: controller button hints on the front end and generic popups are moved off screen (once the buttons themselves are tappable, the glyphs are misinformation); list and method in touch_layout.py
     sys.path.insert(0,HERE); import touch_layout
     tl,ntl=touch_layout.build(romfs,t); REPL.update(tl)
+    REPL.update(touch_layout.build_graphics_panel(romfs,t))
     REPL.update(touch_layout.build_pcfront(romfs,t))   # 选角页改用键鼠版界面（盖掉上面 build 对这几份的改动） | Character select page switched to the keyboard-and-mouse UI (overrides the changes the build above made to these files)
     tp,ntp=touch_layout.build_present(romfs,t); REPL.update(tp)   # 局内：页签条两端 L / R、人物页耐力行 | In-game: L / R at the two ends of the tab strip, stamina row on the character page
     ti,nti=touch_layout.build_ingame(romfs,t); REPL.update(ti)   # 局内：各面板右上角的关闭按钮（同一落点、各发各的消息）与手柄版删掉的功能按钮（修理 / 翻页 / 高级属性 / 选项页应用·默认·放弃）；要在 build_present 之后（同一文件以这份为准） | In-game: the close button at each panel's top-right corner (same position, each sending its own message) and the function buttons removed in the controller version (repair / page turn / advanced stats / options page apply·default·discard); must come after build_present (for the same file this copy wins)

@@ -67,6 +67,26 @@ int main(void) {
     CHECK(atomic_load(&g_val[0])==saved_lang); CHECK(!enhanced_settings_dirty());
     atomic_store(&g_pend[auto_mana],0); CHECK(enhanced_settings_dirty()); // Custom-only changes still enable Graphics Apply.
     dm_custom_on_uimsg("OptionsPanelMessage","CancelChanges",NULL); CHECK(!enhanced_settings_dirty());
+    // Every enhanced preference participates in global defaults, and Reset
+    // itself must neither change live values nor write the preferences file.
+    for (int i=1+VOICE_ROW;i<NK;i++) atomic_store(&g_val[i], k_def[i] ? 0 : 1);
+    save();
+    char before_reset[4096]={0}, after_reset[4096]={0};
+    FILE *reset_file=fopen(path,"r"); CHECK(reset_file);
+    fread(before_reset,1,sizeof before_reset-1,reset_file); fclose(reset_file);
+    dm_custom_on_uimsg("OptionsPanelMessage","ResetToDefaults",NULL);
+    for (int i=1+VOICE_ROW;i<NK;i++) {
+        CHECK(pending_value(i)==k_def[i]); CHECK(atomic_load(&g_val[i])!=k_def[i]);
+    }
+    reset_file=fopen(path,"r"); CHECK(reset_file);
+    fread(after_reset,1,sizeof after_reset-1,reset_file); fclose(reset_file);
+    CHECK(!strcmp(before_reset,after_reset));
+    dm_custom_on_uimsg("OptionsPanelMessage","CancelChanges",NULL);
+    for (int i=1+VOICE_ROW;i<NK;i++) CHECK(atomic_load(&g_val[i])!=k_def[i]);
+    dm_custom_on_uimsg("OptionsPanelMessage","ResetToDefaults",NULL);
+    dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL);
+    for (int i=1+VOICE_ROW;i<NK;i++) CHECK(atomic_load(&g_val[i])==k_def[i]);
+    CHECK(atomic_load(&g_val[0])==saved_lang);
     graphics_select_fps(0); CHECK(dm_fps_setting()==60); CHECK(pending_value(K_FPS)==1);
     dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==30);
     graphics_select_fps(1); dm_custom_on_uimsg("OptionsPanelMessage","CancelChanges",NULL); CHECK(dm_fps_setting()==30);

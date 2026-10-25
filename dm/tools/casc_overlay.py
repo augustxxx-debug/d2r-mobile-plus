@@ -12,7 +12,7 @@
 - EKey（16 字节，key-layout 8 8 40）= MD5(存储头)[:9] + 块号 + 档号 + 40 位偏移；存储头：BLTE 为其头部，裸 zlib / 原样为整段。
 - 按条目规格编码：z = 裸 zlib（级别 9 可逐字节复现原件）、n = 原样、b:… = BLTE（块校验 = MD5(编码块，含模式字节)）。
 - TVFS 容器文件表条目（flags 0x0a）：EKey(16) + 编码长(4) + 规格序号(1) + 内容长(4)。
-- 新增路径：替换表里逻辑路径前加「+」（如 +data/hd/items/weapon/zswg/axe__the_gnasher.json）。只支持「已有目录下新开一个子目录、里面放文件」：
+- 新增路径：替换表里逻辑路径前加「+」（如 +data/hd/items/weapon/zswg/axe__the_gnasher.json）。支持在已有目录下插入首字节未占用的新文件，或「新开一个子目录、里面放文件」：
   新子目录名的首字母不许与该目录现有子项相同（路径树是压缩前缀树，兄弟项首字母互异），按字节序插在兄弟间；新文件在容器文件表 / 文件表末尾各追加一条，
   祖先目录的尺寸与表头偏移随之更新。写完把整棵路径树重新解析一遍，核「原有路径与文件表位置一个不变 + 新路径都在」。
 - 路径树单项格式（对原版 13 万条路径核过）：[0 = 前置分隔符] [长度 + 名字片段] [0 = 后置分隔符] [FF + 值 4 字节]；
@@ -34,7 +34,9 @@ Format (computed and verified against the original game; what the game actually 
 - EKey (16 bytes, key-layout 8 8 40) = MD5(storage header)[:9] + chunk number + archive number + 40-bit offset; storage header: for BLTE its header, for raw zlib / as is the whole segment.
 - Encode by entry spec: z = raw zlib (level 9 reproduces the original byte for byte), n = as is, b:... = BLTE (block checksum = MD5(encoded block, including the mode byte)).
 - TVFS container file table entry (flags 0x0a): EKey(16) + encoded length(4) + spec index(1) + content length(4).
-- Adding paths: prefix the logical path in the replacement table with "+" (e.g. +data/hd/items/weapon/zswg/axe__the_gnasher.json). Only "open one new subdirectory under an existing directory and put files in it" is supported:
+- Direct file additions in an existing directory require an unused leading byte;
+  existing trie nodes and file offsets are preserved, then the entire tree is verified.
+- Adding paths: prefix the logical path in the replacement table with "+" (e.g. +data/hd/items/weapon/zswg/axe__the_gnasher.json). Supports a file with an unused leading byte in an existing directory, or "open one new subdirectory and put files in it":
   the first letter of the new subdirectory name must not equal that of any existing child of that directory (the path tree is a compressed prefix tree, sibling items have distinct first letters), and it is inserted among the siblings in byte order; each new file appends one record at the end of the container file table / file table,
   and the sizes of the ancestor directories and the header offsets are updated accordingly. After writing, the whole path tree is parsed again to verify "no existing path or file table position changed + all new paths present".
 - Format of a single path tree item (verified against the original game's 130 thousand paths): [0 = leading separator] [length + name fragment] [0 = trailing separator] [FF + 4-byte value];
@@ -269,6 +271,11 @@ def add_paths(tvfs, additions):
         if len(parts) != 3:
             die("新增路径须是「已有目录/新子目录/文件」: " + logical)
         parent, folder, name = parts[0] + b"/", parts[1], parts[2]
+        direct_parent = logical.encode().rsplit(b"/", 1)[0] + b"/"
+        if direct_parent.lower() in {key.lower() for key in nodes}:
+            # Add one file under an existing directory, only with an unused
+            # leading byte. Never rebuild or move any existing trie entry.
+            parent, folder, name = direct_parent, name, b""
         groups.setdefault((parent, folder), {})[name] = vfs_size + number * vfs_entry
         new_cft += ekey + struct.pack(">I", encoded) + bytes((espec,)) + struct.pack(">I", content)
         new_vfs += b"\x01" + struct.pack(">II", 0, content) + (cft_size + number * 25).to_bytes(cft_field, "big")
@@ -277,13 +284,22 @@ def add_paths(tvfs, additions):
     inserts = []
     max_depth = struct.unpack(">H", tvfs[36:38])[0]
     for (parent, folder), names in sorted(groups.items()):
+        # Retain the existing directory-addition encoding. Direct file insertion
+        # is stricter: its leading byte must also be unused by other additions.
+        if b"" in names and sum(p == parent and f[:1] == folder[:1] for p, f in groups) != 1:
+            die("New file shares a leading byte with another insertion")
         if parent.lower() not in {key.lower() for key in nodes}:
             die("新增路径：父目录在路径树里不是一个目录项: " + parent.decode())
         entry, (start, end), parents = next(nodes[key] for key in nodes if key.lower() == parent.lower())
         if any(key.lower().startswith(parent.lower() + folder.lower()) for key in list(before) + list(nodes)):
             die("新增路径：子目录已存在或与已有名字同前缀: " + (parent + folder).decode())
-        sub, depth = trie_bytes(names)
-        block = bytes((len(folder),)) + folder + b"\x00\xff" + struct.pack(">I", 0x80000000 | (len(sub) + 4)) + sub
+        if b"" in names:
+            if len(names) != 1: die("Mixed direct-file and directory insertion")
+            depth = 0
+            block = bytes((len(folder),)) + folder + b"\xff" + struct.pack(">I", names[b""])
+        else:
+            sub, depth = trie_bytes(names)
+            block = bytes((len(folder),)) + folder + b"\x00\xff" + struct.pack(">I", 0x80000000 | (len(sub) + 4)) + sub
         at, pos, cont = end, start, False
         while pos < end:   # 父目录的直接子项：首字母互异、按字节序；插在第一个首字母更大的前面（名字没完的续项不算新子项） | Direct children of the parent directory: first letters all differ, in byte order; insert before the first one with a larger first letter (a continuation item whose name is unfinished does not count as a new child)
             child = pos
