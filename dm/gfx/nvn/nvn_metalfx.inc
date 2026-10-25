@@ -2,8 +2,7 @@
 // Inspect the original ps_upsample_p 3D image and screen mask; read bindings/metrics only.
 #include "nvn_metalfx_policy.h"
 static _Atomic int g_metalfx_active;
-static _Atomic unsigned g_metalfx_pixels;
-static _Atomic int g_metalfx_heat, g_metalfx_low_power;
+static _Atomic float g_metalfx_auto_scale;
 __attribute__((weak)) int dm_3d_profile_get(void) { return 4; }
 static int metalfx_profile(void) {
     const char *e = getenv("DM_METALFX");
@@ -14,7 +13,8 @@ static int metalfx_profile(void) {
 int mtl_metalfx_active(void) { return atomic_load(&g_metalfx_active) && metalfx_profile() != 4; }
 float mtl_metalfx_scale_hint(void) {
     if (!mtl_metalfx_active()) return 0;
-    return nvn_metalfx_scale(metalfx_profile(),atomic_load(&g_metalfx_pixels),atomic_load(&g_metalfx_heat),atomic_load(&g_metalfx_low_power));
+    int mode = metalfx_profile();
+    return mode == 0 ? atomic_load(&g_metalfx_auto_scale) : nvn_metalfx_scale(mode,0,0,0);
 }
 static int metalfx_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di) {
     static int probe = -1;
@@ -65,7 +65,18 @@ static int metalfx_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di) {
     rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; } ser_gate();
     if (![effect encode:g_cb input:src contentWidth:src.width contentHeight:src.height mask:mask output:dst]) return 0;
     R.clear_c[0] = 0; args_dirty_all(); g_pso_dirty = g_dss_dirty = 1;
-    atomic_store(&g_metalfx_active,1); atomic_store(&g_metalfx_pixels,(unsigned)(dst.width*dst.height));
-    static unsigned health; if (!(health++ % 60)) { atomic_store(&g_metalfx_heat,(int)NSProcessInfo.processInfo.thermalState); atomic_store(&g_metalfx_low_power,NSProcessInfo.processInfo.lowPowerModeEnabled); }
+    atomic_store(&g_metalfx_active,1);
+    static nvn_metalfx_auto_state auto_state;
+    static uint64_t health_ns; static int health_mode = -1;
+    uint64_t health_now = clock_gettime_nsec_np(CLOCK_MONOTONIC);
+    int mode = metalfx_profile();
+    if (mode != health_mode) { auto_state = (nvn_metalfx_auto_state){0}; health_ns = 0; health_mode = mode; }
+    if (!health_ns || health_now - health_ns >= 1000000000ull) {
+        health_ns = health_now;
+        if (mode == 0) atomic_store(&g_metalfx_auto_scale,
+            nvn_metalfx_auto_step(&auto_state, (unsigned)(dst.width*dst.height),
+                (int)NSProcessInfo.processInfo.thermalState,
+                NSProcessInfo.processInfo.lowPowerModeEnabled, health_now));
+    }
     return 1;
 }

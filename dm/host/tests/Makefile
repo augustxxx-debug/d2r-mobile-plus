@@ -10,6 +10,7 @@ MOVIE_TEST_FLAGS ?= -O1
 # 依赖一行一个、按字母序（同 ../Makefile 的 SRC：免得加一个测试就整行冲突）；下面各条命令的先后不变
 # Dependencies one per line in alphabetical order (same as SRC in ../Makefile: so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
 run: \
+	$(B)/t_metalfx_auto \
 	$(B)/main.orig.bin \
 	$(B)/subsdk0.orig.bin \
 	$(B)/t_altstack \
@@ -77,6 +78,7 @@ run: \
 	$(B)/t_hid_receipt 2>/dev/null
 	$(B)/t_touch_mac
 	$(B)/t_oe 2>/dev/null
+	$(B)/t_metalfx_auto
 	$(B)/t_render_profile
 	$(B)/t_uiscreen_frontend
 	$(B)/t_fs 2>/dev/null
@@ -208,3 +210,6 @@ $(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
 
 $(B)/t_render_profile: t_render_profile.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_render_profile.c
+
+$(B)/t_metalfx_auto: t_metalfx_auto.c ../../gfx/nvn/nvn_metalfx_policy.h | $(B)
+	$(CC) -std=c11 -Wall -Wextra -Werror $< -o $@

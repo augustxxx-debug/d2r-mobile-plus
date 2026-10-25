@@ -34,10 +34,12 @@ Open **Options → Graphics** in game. Enable **MetalFX spatial upscaling** to r
 
 | Profile | Initial 3D width/height ratio | Behavior |
 |---|---|---|
-| Auto | 70% or 80% | Chooses by output pixel count; uses 65% in Low Power Mode or elevated thermal conditions, then adapts to actual frame timing |
+| Auto | 70% or 80% | Chooses by output pixel count; uses 65% in Low Power Mode or serious/critical thermal states, with 60 seconds of stable recovery before raising the ratio; also adapts to frame timing |
 | Eco | 60% | Targets lower 3D rendering load; measured energy savings are not guaranteed |
 | Balanced | 75% | Balances 3D clarity and rendering load |
 | Quality | 85% | Prioritizes a higher 3D ratio |
+
+Auto samples system state at most once per second. Reductions take effect at the next sample; increases require an unchanged healthy target for 60 continuous seconds. Renewed thermal pressure, Low Power Mode or a changed target restarts recovery. Gaps longer than 3 seconds (such as backgrounding or loading) do not count toward recovery. Manual profiles bypass this recovery delay. The frame-timing controller retains its 3-second post-change hold, approximately 30-second clean recovery, and approximately 90-second recovery after a failed upward step. Low Power Mode refers to the system switch, not battery percentage. Simulated state-sequence unit tests cover these timing rules; device stutter and power measurements for this change remain pending.
 
 Ratios apply separately to width and height, not energy savings. Only 3D color is upscaled, retaining the original mask; subsequent UI composition retains its resolution. The frame-rate setting is independent. Auto, Eco and Balanced can reduce 3D resolution further during sustained frame drops. Unsupported devices or initialization failure retain the original upscale pass automatically.
 

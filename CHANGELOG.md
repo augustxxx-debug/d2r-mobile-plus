@@ -6,6 +6,10 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Unreleased]
 
+### Fixed
+
+- Added hysteresis to MetalFX Auto: system-state sampling is limited to once per second; reductions remain prompt, while increases require 60 continuous seconds of a stable target. Thermal/Low Power Mode changes and long sampling gaps reset recovery. Added deterministic regression coverage for oscillating signals, screen-size changes and manual profiles. Device performance validation remains pending.
+
 Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). Validation updated on **2026-10-26**.
 
 ### Added
