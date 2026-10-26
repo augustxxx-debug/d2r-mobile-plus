@@ -90,6 +90,10 @@ def infer_step(rows):
 def battery_rate(part, step, min_hours=1 / 6):
     """一段的电量速率。不可比时 rate 为 None 并给原因 | Battery rate for one segment; rate is None with a reason when not comparable"""
     out = {'rate': None, 'err': None, 'reason': '', 'b0': None, 'b1': None}
+    if any(r.get('battery', -1) < 0 for r in part) and len(part) >= 2:   # 中间有读不到电量的样本：跨过它的速率不可信（复审） | a sample without a battery reading in between: a rate spanning it cannot be trusted (re-audit)
+        out['reason'] = '含读不到电量的样本'; good = [r for r in part if r.get('battery', -1) >= 0]
+        if good: out['b0'], out['b1'] = good[0]['battery'], good[-1]['battery']
+        return out
     rows = [r for r in part if r.get('battery', -1) >= 0]
     if len(rows) < 2:
         out['reason'] = '电量样本不足'; return out
@@ -104,6 +108,25 @@ def battery_rate(part, step, min_hours=1 / 6):
     if out['b0'] == out['b1']:
         out['reason'] = '段内电量读数没变，只能给上限'
     return out
+
+
+def heat_runs(rows):
+    """按渲染档列切出连续同档的段，不过滤短段 | Runs of equal render level from the level column, short runs kept"""
+    runs = []; start = None; prev = None
+    for r in rows:
+        if r['level'] != prev:
+            if prev is not None: runs.append((prev, start, r['sec']))
+            start, prev = r['sec'], r['level']
+    if prev is not None: runs.append((prev, start, rows[-1]['sec'] + 5))
+    return runs
+
+
+def match_drops(runs, drops):
+    """heat 段与日志段按档位序列一一对应；序列不一致（段数或档位不同）时全部返回 None，不按位置猜（复审 F04）
+    Pair heat runs with log segments by their level sequence; if the sequences differ (count or levels) every entry is None, never guessed by position (re-audit F04)"""
+    if [lv for lv, _, _ in runs] == [d['level'] for d in drops]:
+        return list(drops), ''
+    return [None] * len(runs), '日志里的切档序列 %s 与采样表 %s 对不上，掉帧 / 传送 / 刷怪无法归属到档位' % ([d['level'] for d in drops], [lv for lv, _, _ in runs])
 
 
 def ranking(named):
@@ -128,16 +151,13 @@ def main():
     rows = load_heat(d)
     # heat 的秒从进局计，时间表的秒从宿主初始化计：用日志里第一条时间表切档行对齐不可得，按 heat 第一行当 0 处理，误差 = 进局前的几秒
     # heat seconds count from entering the game while the schedule counts from host init; align on the first heat row, error = the few seconds before entering the game
-    segs = segments(params)
-    if rows and 'level' in rows[0]:   # 按表里的渲染档列切段（连续相同档位为一段） | split by the render-level column (runs of equal level)
-        segs = []; start = None; prev = None
-        for r in rows:
-            if r['level'] != prev:
-                if prev is not None: segs.append((prev, start, r['sec']))
-                start, prev = r['sec'], r['level']
-        if prev is not None: segs.append((prev, start, rows[-1]['sec'] + 5))
-        segs = [s for s in segs if s[2] - s[1] >= 60]
     drops = dropped_by_segment(d)
+    if rows and 'level' in rows[0]:   # 按表里的渲染档列切段，先与日志段对齐，再隐藏短于 60 秒的段 | split by the level column, align with the log first, then hide runs shorter than 60 s
+        runs = heat_runs(rows); matched, match_note = match_drops(runs, drops)
+    else:   # 旧表没有档位列：只能按时间表，日志段同样必须档位序列一致 | old table without a level column: use the schedule, still requiring the same level sequence
+        runs = segments(params); matched, match_note = match_drops(runs, drops)
+    keep = [i for i, (lv, a, b) in enumerate(runs) if b - a >= 60]
+    segs = [runs[i] for i in keep]; seg_drops = [matched[i] for i in keep]
     print(f"# 功耗基准报告 {params.get('run', '')}\n")
     print(f"每段 {int(params['seg_s']) // 60} 分钟，档位序列 {params['levels']}，MetalFX {params.get('metalfx', 'keep')}，关卡轮换 `{params.get('warp', '')}`，刷怪 `{params.get('spawn', '')}`。\n")
     has_batt = rows and 'battery' in rows[0]
@@ -150,7 +170,9 @@ def main():
     if has_batt:
         print(f"电量量化步长：**{step:g}%**（{step_src}）。速率误差 = 步长 ÷ 段时长。\n")
     named = []
-    print("| 档位 | 时长 | 电量 起→止 | 下降速率 %/h（±量化误差） | 温控档位分布 | 帧率均值 | GPU 均值 / p95 ms | CPU% 均值 | 掉帧 | 传送/刷怪 |")
+    if match_note:
+        print(f"**注意**：{match_note}。\n")
+    print("| 档位 | 时长 | 电量 起→止 | 下降速率 %/h（±量化误差） | 温控档位分布 | 帧率均值 | GPU 均值 / 各 5 秒窗口 p95 的均值 ms | CPU% 均值 | 掉帧 | 传送/刷怪 |")
     print("|---|---|---|---|---|---|---|---|---|---|")
     for i, (lv, a, b) in enumerate(segs):
         part = [r for r in rows if a + 15 <= r['sec'] < b and r['n'] > 0]   # 切档后 15 秒不算 | skip 15 s after the switch
@@ -174,15 +196,15 @@ def main():
             named.append((NAMES.get(lv, str(lv)), br['rate'], br['err']))
         else:
             batt, ratetxt = '—', '—'
-        dr = drops[i] if i < len(drops) else None
-        drtxt = f"{dr['dropped']}/{dr['frames']}（{100 * dr['dropped'] / max(dr['frames'], 1):.2f}%）" if dr else '—'
+        dr = seg_drops[i]
+        drtxt = f"{dr['dropped']}/{dr['frames']}（{100 * dr['dropped'] / max(dr['frames'], 1):.2f}%）" if dr else '无法归属'
         ev = f"{dr['warps']}/{dr['spawned']}" if dr else '—'
         print(f"| {NAMES.get(lv, lv)} | {dur_h * 60:.1f} min | {batt} | {ratetxt} | {thtxt} | {fps:.1f} | {gpu:.2f} / {gpu95:.2f} | {cpu:.0f} | {drtxt} | {ev} |")
     if has_batt:
         rk = ranking(named)
         print("\n**功耗排名**：" + (" < ".join(rk) + "（误差区间不重叠）" if rk else "不给。有段不可比，或各段误差区间重叠；要分出高低，需拔线、同亮度、更长的段，或改用整机功率计。"))
-    print("\n说明：电量按上面的步长量化，±误差 = 步长 ÷ 段时长；温控分布为各档位占比；GPU 毫秒受 GPU 调频影响，只作参考；掉帧按日志中各段的「上屏」行累计。")
-    print("Notes: battery is quantized to the step above, ±error = step ÷ segment length; thermal shows the share of each state; GPU ms is affected by GPU DVFS and is indicative only; dropped frames are summed from the present rows in each segment of the log.")
+    print("\n说明：电量按上面的步长量化，±误差 = 步长 ÷ 段时长；温控分布为各档位占比；GPU 第二个数是各 5 秒采样窗口 p95 的算术平均，不是整段的 p95，不能据此证明整段尾延迟；GPU 毫秒受 GPU 调频影响，只作参考；各档共用一条不断前进的关卡 / 刷怪 / 施法时间线，固定种子不等于每档初始世界相同，排名需要同场景、预热、重复与换序实验；掉帧按日志中各段的「上屏」行累计。")
+    print("Notes: battery is quantized to the step above, ±error = step ÷ segment length; thermal shows the share of each state; the second GPU number is the mean of per-5-s-window p95s, not the segment p95; GPU ms is affected by GPU DVFS and is indicative only; all levels share one advancing level / spawn / cast timeline, so a fixed seed does not give each level the same starting world, and a ranking needs matched scenes, warm-up, repeats and reordering; dropped frames are summed from the present rows in each segment of the log.")
 
 
 if __name__ == '__main__':

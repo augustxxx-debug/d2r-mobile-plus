@@ -94,5 +94,48 @@ class Report(unittest.TestCase):
         self.assertNotIn('电量按 1% 量化', out)
 
 
+class Segments(unittest.TestCase):
+    """复审 F04：掉帧等按档位序列对齐，不按下标；对不上标“无法归属” | re-audit F04: align by level sequence, never by index; unmatched → unassignable"""
+    def build(self, d, heat_levels, boot_levels):
+        Path(d, 'params.txt').write_text('run=t\nseg_s=610\nlevels=0,1,3\n', encoding='utf-8')
+        lines = ['h\t' * 13 + 'h']; t = 0
+        for lv, secs in heat_levels:
+            for _ in range(secs // 5):
+                lines.append('\t'.join(map(str, [t, 1, 100, 60, 10, 11, 300, 0.5, 120, 60, '未充电', 0, lv, 2]))); t += 5
+        Path(d, 'heat.tsv').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        boot = []
+        for k, lv in enumerate(boot_levels):
+            boot.append(f'[dm] 测试 DM_TEST_RENDER_RES：第 {k * 600} 秒 → 渲染分辨率档位 {lv}')
+            boot.append(f'[dm] [nvn] 上屏 至帧 1：1000 帧，掉帧 {10 * (k + 1)}（丢弃 0），间隔')
+        Path(d, 'boot.txt').write_text('\n'.join(boot) + '\n', encoding='utf-8')
+
+    def report(self, heat_levels, boot_levels):
+        with tempfile.TemporaryDirectory() as d:
+            self.build(d, heat_levels, boot_levels)
+            out = io.StringIO(); argv = sys.argv; sys.argv = ['bench_report.py', d]
+            try:
+                with redirect_stdout(out): br.main()
+            finally:
+                sys.argv = argv
+            return out.getvalue()
+
+    def row(self, out, name):
+        return next(l for l in out.splitlines() if l.startswith('| ' + name))
+
+    def test_short_leading_segment_does_not_shift(self):
+        out = self.report([(0, 20), (1, 610), (3, 610)], [0, 1, 3])
+        self.assertIn('20/1000', self.row(out, '省电')); self.assertIn('30/1000', self.row(out, '原生'))
+        self.assertNotIn('自动', '\n'.join(l for l in out.splitlines() if l.startswith('| ')))   # 20 秒的段不显示 | the 20 s run is hidden
+
+    def test_mismatched_log_is_unassignable(self):
+        out = self.report([(0, 20), (1, 610), (3, 610)], [1, 3])
+        self.assertIn('无法归属', self.row(out, '省电')); self.assertIn('对不上', out)
+
+    def test_unknown_battery_sample_blocks_rate(self):
+        part = rows([60] * 60 + [55] * 61, every=5); part[60]['battery'] = -1.0
+        r = br.battery_rate(part, 5.0)
+        self.assertIsNone(r['rate']); self.assertIn('读不到电量', r['reason'])
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=1)
