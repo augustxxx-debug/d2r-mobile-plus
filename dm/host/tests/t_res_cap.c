@@ -53,6 +53,11 @@ int main(void) {
     // GPU 代际解析与自动档预算 | GPU generation parsing and the Auto budget
     { int g, p, m;
       CHECK(dm_res_gpu_class("Apple A20 Pro GPU", &g, &p, &m) && g == 20 && p == 1 && m == 0); CHECK(dm_res_cap_budget_auto(g, p, m) == 4000000u);
+      // 超大屏：Duo 内屏 2852x2006 自动档取 280 万；17 Pro Max 2868x1320、Duo 外屏 2034x1398 不变；手动档不受屏幕影响 | Huge screen: Duo inner 2852x2006 Auto takes 2.8 MP; 17 Pro Max and the Duo outer screen unchanged; manual levels ignore the screen
+      CHECK(dm_res_cap_budget_screen(0, 20, 1, 0, 2852, 2006) == 2800000u); CHECK(dm_res_cap_budget_screen(0, 20, 1, 0, 3142, 2160) == 2800000u);
+      CHECK(dm_res_cap_budget_screen(0, 19, 1, 0, 2868, 1320) == 4000000u); CHECK(dm_res_cap_budget_screen(0, 20, 1, 0, 2034, 1398) == 4000000u);
+      CHECK(dm_res_cap_budget_screen(3, 20, 1, 0, 2852, 2006) == 0); CHECK(dm_res_cap_budget_screen(1, 20, 1, 0, 2852, 2006) == 2073600u); CHECK(dm_res_cap_budget_screen(0, 16, 0, 0, 2852, 2006) == 2073600u);
+      { uint64_t r = dm_res_cap_apply(2852, 2006, dm_res_cap_budget_screen(0, 20, 1, 0, 2852, 2006)); CHECK(W(r) >= 1990 && W(r) <= 1996); }
       CHECK(dm_res_gpu_class("Apple A19 Pro GPU", &g, &p, &m) && g == 19 && p == 1); CHECK(dm_res_cap_budget_auto(19, 1, 0) == 4000000u);
       CHECK(dm_res_gpu_class("Apple A19 GPU", &g, &p, &m) && g == 19 && p == 0); CHECK(dm_res_cap_budget_auto(19, 0, 0) == 3800000u);
       CHECK(dm_res_gpu_class("Apple A18 Pro GPU", &g, &p, &m) && g == 18 && p == 1); CHECK(dm_res_cap_budget_auto(18, 1, 0) == 3800000u);

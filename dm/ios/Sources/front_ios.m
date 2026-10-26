@@ -992,8 +992,9 @@ uint64_t front_game_res(int docked) {
         static int cls_gen, cls_pro, cls_m, cls_done;   // 自动档预算按 GPU 代际（dm_res_cap.h），设备名只读一次 | Auto budget by GPU generation (dm_res_cap.h); the device name is read once
         if (!cls_done) { cls_done = 1; id<MTLDevice> dev = MTLCreateSystemDefaultDevice(); const char *nm = dev.name.UTF8String; dm_res_gpu_class(nm, &cls_gen, &cls_pro, &cls_m);
             LOG("画面：显卡「%s」→ 代际 A%d%s M%d，自动档像素预算 %u", nm ?: "?", cls_gen, cls_pro ? " Pro" : "", cls_m, dm_res_cap_budget_auto(cls_gen, cls_pro, cls_m)); }
-        uint32_t budget = dm_res_cap_budget_class(lv, cls_gen, cls_pro, cls_m);
-        uint64_t now = atomic_load(&g_res_now), capped = dm_res_cap_apply((uint32_t)now, (uint32_t)(now >> 32), budget);
+        uint64_t now = atomic_load(&g_res_now);
+        uint32_t budget = dm_res_cap_budget_screen(lv, cls_gen, cls_pro, cls_m, (uint32_t)now, (uint32_t)(now >> 32));   // 超大屏自动档取均衡预算（dm_res_cap.h） | Very large screens: Auto takes the Balanced budget (dm_res_cap.h)
+        uint64_t capped = dm_res_cap_apply((uint32_t)now, (uint32_t)(now >> 32), budget);
         static _Atomic uint64_t logged; if (capped != now && atomic_exchange(&logged, capped) != capped)
             LOG("画面：渲染分辨率档位 %d → 出图 %ux%u（窗口 %ux%u，像素预算 %u）", lv, (unsigned)capped, (unsigned)(capped >> 32), (unsigned)now, (unsigned)(now >> 32), budget);
         return capped;

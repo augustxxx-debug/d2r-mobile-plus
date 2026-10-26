@@ -51,7 +51,7 @@ The 3D ratio above never touches the UI layer, the final composite, the upscale 
 
 | Level | Pixel budget | Effect |
 |---|---|---|
-| Auto (default) | By GPU generation: A16 and earlier 2.07 MP, A17 Pro / A18 2.8 MP, A18 Pro / A19 3.8 MP, A19 Pro / A20 and later 4.0 MP, M series 4.5 MP | 17 Pro Max (A19 Pro) and the Duo outer screen unchanged; the Duo inner screen shrinks to about 2384x1676; 15 Pro (A17 Pro) to about 0.96x edge; 14 Pro and earlier to about 0.83x |
+| Auto (default) | By GPU generation: A16 and earlier 2.07 MP, A17 Pro / A18 2.8 MP, A18 Pro / A19 3.8 MP, A19 Pro / A20 and later 4.0 MP, M series 4.5 MP | 17 Pro Max (A19 Pro) and the Duo outer screen unchanged; screens above 4.5 MP (the Duo inner screen) take the Balanced 2.8 MP budget instead and shrink to about 1994x1402, because at native size the GPU sat at ~15 ms per frame under full-screen spell effects while Eco ran at ~10 ms with identical fps; 15 Pro (A17 Pro) to about 0.96x edge; 14 Pro and earlier to about 0.83x |
 | Eco | 2.07 MP | 1080p-equivalent pixel count on every device |
 | Balanced | 2.8 MP | Between the two |
 | Native | no cap | Previous behavior: output size = window size |

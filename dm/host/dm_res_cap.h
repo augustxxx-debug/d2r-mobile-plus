@@ -39,6 +39,16 @@ static inline uint32_t dm_res_cap_budget_auto(int gen, int pro, int m) {
     return 2073600u;
 }
 static inline uint32_t dm_res_cap_budget_class(int level, int gen, int pro, int m) { return level == 0 ? dm_res_cap_budget_auto(gen, pro, m) : dm_res_cap_budget(level); }
+// 自动档再按屏幕像素量收紧：原生超过 450 万像素的屏（目前只有 iPhone Duo 内屏 2852x2006）取均衡预算 280 万。实测（2026-10-27，满屏法术特效）：原生 GPU 全程约 15 ms 饱和，
+// 省电档约 10 ms，两档帧率掉帧相同；400 万预算只少 30% 像素，仍在饱和边缘。普通 iPhone / iPad 不受影响
+// Auto is tightened further by screen pixel count: screens with more than 4.5 MP native (today only the iPhone Duo inner screen 2852x2006) take the Balanced budget 2.8 MP. Measured 2026-10-27 under full-screen spell effects:
+// Native GPU pinned at ~15 ms (saturated), Eco ~10 ms, identical fps and dropped frames; a 4.0 MP budget removes only 30% of the pixels and stays at the edge of saturation. Regular iPhones / iPads are unaffected
+#define DM_RES_HUGE_SCREEN_PIXELS 4500000u
+static inline uint32_t dm_res_cap_budget_screen(int level, int gen, int pro, int m, uint32_t w, uint32_t h) {
+    uint32_t b = dm_res_cap_budget_class(level, gen, pro, m);
+    if (level == 0 && (uint64_t)w * h > DM_RES_HUGE_SCREEN_PIXELS && b > 2800000u) b = 2800000u;
+    return b;
+}
 // 返回 {u32 高 << 32 | u32 宽}（与 front_game_res 同一打包）。预算 0 / 本来就在预算内 / 非法尺寸 → 原样返回。
 // Returns {u32 height << 32 | u32 width} (same packing as front_game_res). Budget 0 / already within budget / invalid size → returned unchanged.
 static inline uint64_t dm_res_cap_apply(uint32_t w, uint32_t h, uint32_t budget) {
