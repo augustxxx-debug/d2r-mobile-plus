@@ -41,22 +41,34 @@ class Fingerprint(unittest.TestCase):
 
 
 class Wiring(unittest.TestCase):
-    def test_xcodebuild_receives_identity(self):
-        self.assertIn('xcodebuild -project DmIOS.xcodeproj', RUN)
-        self.assertRegex(RUN, r'DM_BUILD_NUMBER=\$BN DM_SOURCE_COMMIT="\$SC" DM_SOURCE_DIRTY="\$SDIRTY" .* build >')   # xcodebuild 的续行 | continuation line of the xcodebuild command
+    def test_identity_in_xcconfig_before_gen_only_exit(self):
+        # 写进 Gen/dm.xcconfig 且在 DM_GEN_ONLY 提前退出之前：testflight / adhoc 归档也带身份 | written into Gen/dm.xcconfig before the DM_GEN_ONLY exit, so testflight / adhoc archives carry it
+        w = RUN.index("printf 'DM_SOURCE_COMMIT = %s\\nDM_SOURCE_DIRTY = %s\\nDM_BUILD_INPUTS = %s\\n'")
+        self.assertIn('>> Gen/dm.xcconfig', RUN[w:w + 200])
+        self.assertLess(w, RUN.index('[ "${DM_GEN_ONLY:-}" = 1 ] && {'))
+        self.assertNotIn('DM_SOURCE_COMMIT="$SC"', RUN)   # 只有一个来源 | single source of truth
+
+    def test_build_inputs_cover_external_inputs_without_paths(self):
+        line = next(l for l in RUN.splitlines() if l.strip().startswith('BINPUTS='))
+        for key in ('chain=', 'font=', 'weight=', 'diag=', 'movie=', 'free=', 'm3=', 'family='):
+            self.assertIn(key, line)
+        self.assertNotIn('DM_UI_FONT}', line.replace('${DM_UI_FONT_WEIGHT', ''))   # 字体只记内容指纹，不记路径 | the font is recorded by content fingerprint only, never its path
+        fp = next(l for l in RUN.splitlines() if l.strip().startswith('FONTFP='))
+        self.assertIn('shasum -a 256 "$DM_UI_FONT"', fp)
 
     def test_info_plist_and_defaults(self):
         yml = (IOS / 'project.yml').read_text(encoding='utf-8')
         self.assertIn('DMSourceCommit: $(DM_SOURCE_COMMIT)', yml)
         self.assertIn('DMSourceDirty: $(DM_SOURCE_DIRTY)', yml)
         self.assertIn('DM_SOURCE_COMMIT: "unknown"', yml)
+        self.assertIn('DMBuildInputs: $(DM_BUILD_INPUTS)', yml); self.assertIn('DM_BUILD_INPUTS: "unknown"', yml)
 
     def test_boot_log_prints_identity(self):
         main = (IOS / 'Sources' / 'main.m').read_text(encoding='utf-8')
         boot = main.index('plog("boot: 版本 %s 构建 %s')
-        ident = main.index('plog("boot: 源码 %s 工作区 %s"')
+        ident = main.index('plog("boot: 源码 %s 工作区 %s 构建输入 %s"')
         self.assertLess(boot, ident); self.assertLess(ident - boot, 800)   # 紧跟日志头 | right after the log header
-        self.assertIn('inf[@"DMSourceCommit"]', main[ident:ident + 300])
+        self.assertIn('inf[@"DMSourceCommit"]', main[ident:ident + 400]); self.assertIn('inf[@"DMBuildInputs"]', main[ident:ident + 400])
 
 
 if __name__ == '__main__':

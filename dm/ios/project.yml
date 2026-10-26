@@ -63,6 +63,7 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         DMSourceCommit: $(DM_SOURCE_COMMIT)                 # 源码提交（run.sh 传 git rev-parse HEAD）；启动日志首行打出来，核对安装包与源码身份 | Source commit (run.sh passes git rev-parse HEAD); printed in the first boot log line to tie the installed app to its source
         DMSourceDirty: $(DM_SOURCE_DIRTY)                   # 工作区差异：clean，或「改动文件数:差异 sha256 前 12 位:文件列表」 | Working-tree difference: clean, or "changed file count:first 12 hex of the diff sha256:file list"
+        DMBuildInputs: $(DM_BUILD_INPUTS)                   # 构建输入：着色器链、字体指纹与字重、测量 / 过场 / 免费账号 / 旧接口 / 设备族开关（run.sh 写进 Gen/dm.xcconfig） | Build inputs: shader chain, font fingerprint and weight, sampling / movie / free account / older API / device family (written into Gen/dm.xcconfig by run.sh)
         SWUpdateURL: $(DM_UPDATE_URL)                       # 新版本提示查的版本文件地址（Sources/dm_update.m）；出包脚本传，地址不进仓库。空 = 不查不提示 | URL of the version file checked for the new-version prompt (Sources/dm_update.m); passed by the packaging script, the URL is not committed to the repository. Empty = no check, no prompt
         UILaunchScreen: {}   # 声明启动屏，避免 iPhone 以旧尺寸兼容模式运行 | Declare a launch screen so iPhone uses its native screen size instead of legacy compatibility mode
         UIFileSharingEnabled: true
@@ -109,6 +110,7 @@ targets:
       DM_BUILD_NUMBER: "1"
       DM_SOURCE_COMMIT: "unknown"                   # run.sh build 传入；直接在 Xcode 里构建时为 unknown | Passed by run.sh build; "unknown" when built directly in Xcode
       DM_SOURCE_DIRTY: "unknown"
+      DM_BUILD_INPUTS: "unknown"
       DM_UPDATE_URL: ""                             # tools/adhoc.sh 在环境里有 DM_UPDATE_URL 时传入；本地构建缺省空 | Passed in by tools/adhoc.sh when DM_UPDATE_URL is in the environment; empty by default for local builds
       DEVELOPMENT_TEAM: ${DM_TEAM_ID}
       CODE_SIGN_STYLE: Automatic

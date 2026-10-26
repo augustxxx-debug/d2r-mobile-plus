@@ -53,6 +53,17 @@ if [ "$1" = build ]; then
   F=$(python3 tools/gen_embed.py $OUT Gen/embed.S $MODS) || { t "🔴 gen_embed 失败"; exit 1; }
   echo "OTHER_LDFLAGS = \$(inherited) \$(DM_FRAMEWORKS) $F $MOVIE_LDFLAGS" >> Gen/dm.xcconfig
   for m in $MODS; do cp $OUT/$m.fixups.tsv $OUT/$m.gates.tsv Gen/dm/; done
+  # 产物身份（审计 2026-10-27）：写进 Gen/dm.xcconfig，所以 run.sh 自己构建与 DM_GEN_ONLY 之后由 testflight / adhoc 归档都带上。
+  # 源码 = 完整提交号 + 工作区差异指纹；构建输入 = 着色器链版本、可选字体内容指纹（不写路径）与字重、测量开关、过场解码、免费账号、旧接口版、设备族
+  # Artifact identity (audit 2026-10-27): written into Gen/dm.xcconfig, so both run.sh builds and the testflight / adhoc archives after DM_GEN_ONLY carry it.
+  # Source = full commit + working-tree diff fingerprint; build inputs = shader chain version, optional font content fingerprint (no path) and weight, sampling switch, movie decode, free account, older-API build, device family
+  SC=$(git rev-parse HEAD 2>/dev/null || echo unknown); DF=$(git diff --name-only HEAD 2>/dev/null | sort)
+  if [ -z "$DF" ]; then SDIRTY=clean; else SDIRTY="$(echo "$DF" | wc -l | tr -d ' '):$(git diff HEAD 2>/dev/null | shasum -a 256 | cut -c1-12):$(echo "$DF" | sed 's|.*/||' | paste -sd, -)"; fi
+  CHAIN=$(sed -n 's/^#define DMSH_CHAIN "\(.*\)"/\1/p' ../gfx/nvn/dmsh_chain.h)
+  FONTFP=none; [ -n "${DM_UI_FONT:-}" ] && [ -f "$DM_UI_FONT" ] && FONTFP=$(shasum -a 256 "$DM_UI_FONT" | cut -c1-12)
+  BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default}"
+  printf 'DM_SOURCE_COMMIT = %s\nDM_SOURCE_DIRTY = %s\nDM_BUILD_INPUTS = %s\n' "$SC" "$SDIRTY" "$BINPUTS" >> Gen/dm.xcconfig
+  t "产物身份：源码 ${SC}，工作区 ${SDIRTY}，构建输入 ${BINPUTS}"
   # 启动块清单（缺省开预取：宿主到产物目录 = App 内 dm/ 找 bootlist.tsv）+ main.cuts.tsv（宿主据此核清单构建号）；产物没有就不带
   # Boot block list (prefetch on by default: the host looks for bootlist.tsv in the build output directory = dm/ inside the App) + main.cuts.tsv (the host uses it to check the list's build ID); not included if the build output lacks them
   for f in bootlist.tsv main.cuts.tsv; do [ -f $OUT/$f ] && cp $OUT/$f Gen/dm/; done
@@ -125,13 +136,8 @@ if [ "$1" = build ]; then
   # This affects only this development package build command: release packages (tools/testflight.sh, tools/adhoc.sh) and the Mac package
   # (tools/smoke_mac.sh) come in with DM_GEN_ONLY=1 and exit on the line above, so their build numbers do not pass through here.
   BN=$(git log -1 --format=%ct 2>/dev/null); [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] && BN=1; BN=${BN:-1}
-  # 源码身份（审计 2026-10-27）：完整提交号 + 工作区差异指纹写进 Info.plist（DMSourceCommit / DMSourceDirty），启动日志首行打出。
-  # 本机着色器链元数据（dmsh_chain.h / .lock、c1_full.tsv）会影响加载哪份着色器缓存，所以不排除，照实计入指纹
-  # Source identity (audit 2026-10-27): full commit + working-tree diff fingerprint go into Info.plist (DMSourceCommit / DMSourceDirty) and the first boot log line.
-  # Local shader-chain metadata (dmsh_chain.h / .lock, c1_full.tsv) changes which shader cache loads, so it is not excluded but counted in the fingerprint
-  SC=$(git rev-parse HEAD 2>/dev/null || echo unknown); DF=$(git diff --name-only HEAD 2>/dev/null | sort)
-  if [ -z "$DF" ]; then SDIRTY=clean; else SDIRTY="$(echo "$DF" | wc -l | tr -d ' '):$(git diff HEAD 2>/dev/null | shasum -a 256 | cut -c1-12):$(echo "$DF" | sed 's|.*/||' | paste -sd, -)"; fi
-  t "源码身份：提交 ${SC}，工作区 ${SDIRTY}"
+  # 源码身份已在上面写进 Gen/dm.xcconfig（本机着色器链元数据照实计入工作区指纹，它决定加载哪份着色器缓存）
+  # The source identity was written into Gen/dm.xcconfig above (local shader-chain metadata is counted in the working-tree fingerprint, it decides which shader cache loads)
   [ "$BN" = 1 ] && t "⚠ 工作区有未提交改动（或读不到提交）：开发包构建号 = 1，不能用于放行" || t "开发包构建号 ${BN}（提交 $(git log -1 --format=%h | cut -c1-9) 的提交时间戳）"
   # 构建目标：平常是「通用 iOS 设备」。免费账号（个人团队）名下起初没有任何设备，苹果不给生成描述文件
   # （「Your team has no devices from which to generate a provisioning profile」，真拿免费账号签时实测撞到）——
@@ -145,7 +151,7 @@ if [ "$1" = build ]; then
     else t "⚠ 免费账号第一次构建要把手机连上，并在本机配置里填 DM_IOS_UDID（见 local.env.example）；没填，先按通用目标试"; fi
   fi
   xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination "$DEST" \
-    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} DM_BUILD_NUMBER=$BN DM_SOURCE_COMMIT="$SC" DM_SOURCE_DIRTY="$SDIRTY" ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
+    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} DM_BUILD_NUMBER=$BN ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
       grep -q 'no devices from which to generate a provisioning profile' "$R/build.log" && t "原因：这个团队名下还没有设备。把手机用数据线连上并解锁，在本机配置里填 DM_IOS_UDID、DM_FREE_ACCOUNT=1，再构建一次"; exit 1; }
   codesign -d --entitlements :- $APP 2>/dev/null | plutil -p - ; t "构建完成"
   # DM_NOINSTALL 保持兼容；build 现在本来就只编译，不触碰设备。

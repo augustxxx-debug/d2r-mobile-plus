@@ -9,6 +9,7 @@ original game font; writes to --out (default DM_ROOT/run/font-weight), never int
   python3 font_sample.py [--font F] [--original blizzardglobal.ttf|<RomFS>] [--weights 0 1 2 3 4 6] [--sizes 20 28] [--scales 1 1.43 1.66] [--out DIR]
 """
 import argparse
+import hashlib
 import os
 from pathlib import Path
 import sys
@@ -23,10 +24,15 @@ LINES = ['图形设置　渲染分辨率　自动／省电／均衡／原生　�
 INK, PAPER = (222, 196, 140), (18, 14, 12)   # 游戏常见的金字黑底 | the game's usual gold text on a dark panel
 
 
+def sample_key(original, requested, weight):
+    """样张缓存键：原字体、自选字体的内容与档位、每档的量（复审：换字体或换原字体不能沿用旧样张） | Sample cache key: contents of both fonts, the level and the per-level amount (re-audit: a different font must not reuse an old sample)"""
+    return hashlib.sha256(b'font-sample-v1\0' + ('w%d/%d\0' % (weight, font_override.WEIGHT_STEP)).encode() + hashlib.sha256(original).digest() + hashlib.sha256(Path(requested).read_bytes()).digest()).hexdigest()[:16]
+
+
 def compose_all(original, requested, weights, out):
     paths = {}
     for weight in weights:
-        target = out / ('theme-w%d.ttf' % weight)
+        target = out / ('theme-w%d-%s.ttf' % (weight, sample_key(original, requested, weight)))
         if not target.is_file():
             font_override.compose(original, requested, target, weight)
         paths[weight] = target

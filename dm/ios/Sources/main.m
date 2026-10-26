@@ -1312,7 +1312,7 @@ int main(int argc, char *argv[]) {
           NSDictionary *inf = NSBundle.mainBundle.infoDictionary; NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyy-MM-dd HH:mm:ss ZZZ";
           plog("boot: 版本 %s 构建 %s 机型 %s 系统 %s 时间 %s", [inf[@"CFBundleShortVersionString"] description].UTF8String ?: "未知", [inf[@"CFBundleVersion"] description].UTF8String ?: "未知",
                hw, NSProcessInfo.processInfo.operatingSystemVersionString.UTF8String, [df stringFromDate:NSDate.date].UTF8String);
-          plog("boot: 源码 %s 工作区 %s", [inf[@"DMSourceCommit"] description].UTF8String ?: "未知", [inf[@"DMSourceDirty"] description].UTF8String ?: "未知");   // 审计核对安装包身份用（run.sh 写入） | For auditors to tie the installed app to its source (written by run.sh)
+          plog("boot: 源码 %s 工作区 %s 构建输入 %s", [inf[@"DMSourceCommit"] description].UTF8String ?: "未知", [inf[@"DMSourceDirty"] description].UTF8String ?: "未知", [inf[@"DMBuildInputs"] description].UTF8String ?: "未知");   // 审计核对安装包身份用（run.sh 写入） | For auditors to tie the installed app to its source (written by run.sh)
           // 机型是 iPhone 却按 iPad 身份运行：重签名工具的「iPad 模式」。画面会按 iPad 屏幕比例（如 1640x2360 ≈ 1.44）显示、两边黑边，这不是本包能改的；记红并在进游戏后提示一次
           // Model is an iPhone yet running with the iPad idiom: a re-signing tool's "iPad mode". The picture shows at an iPad aspect (e.g. 1640x2360 ≈ 1.44) with black bars on both sides, which this app cannot change; log a failure and warn once after launch
           if (!strncmp(hw, "iPhone", 6) && UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) { g_ipad_compat = 1; CGRect nb = UIScreen.mainScreen.nativeBounds;
