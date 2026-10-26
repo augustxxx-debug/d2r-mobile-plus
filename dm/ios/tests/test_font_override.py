@@ -106,6 +106,66 @@ class FontComposition(unittest.TestCase):
                 self.assertEqual(set(merged.getBestCmap()), {65, 0x4e00, 0x4e8c})
                 self.assertNotIn('vhea', merged)
 
+    def test_weight_thickens_requested_glyphs_only_and_keeps_metrics(self):
+        with tempfile.TemporaryDirectory() as work:
+            base, custom, plain, bold = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'plain.ttf', 'bold.ttf')]
+            synthetic(base, [65, 0x4e00, 0xe001], 1000, 'GameBase')
+            synthetic(custom, [65, 0x4e8c, 0xe001], 2048, 'Requested')
+            data = base.read_bytes()
+            font_override.compose(data, custom, plain)
+            font_override.compose(data, custom, bold, weight=2)
+            with TTFont(plain) as a, TTFont(bold) as b:
+                ca, cb = a.getBestCmap(), b.getBestCmap()
+                for c in (65, 0x4e8c):   # 自选字形：更粗、字宽不变 | requested glyphs: thicker, same advance
+                    ga, gb = a['glyf'][ca[c]], b['glyf'][cb[c]]
+                    self.assertEqual(a['hmtx'][ca[c]][0], b['hmtx'][cb[c]][0])
+                    self.assertGreater(gb.xMax - gb.xMin, ga.xMax - ga.xMin)
+                    self.assertGreater(gb.yMax - gb.yMin, ga.yMax - ga.yMin)
+                    self.assertLess(gb.xMin, ga.xMin)   # 回中：左右各长半个加粗量 | re-centred: grows on both sides
+                    self.assertEqual(b['hmtx'][cb[c]][1], gb.xMin)
+                    growth = (gb.xMax - gb.xMin) - (ga.xMax - ga.xMin)   # 直边各长半量，锐角顶点外推更多 | straight edges grow by half each; the acute vertex more
+                    self.assertGreaterEqual(growth, 2 * font_override.WEIGHT_STEP)
+                    self.assertLessEqual(growth, 4 * font_override.WEIGHT_STEP)
+                for c in (0x4e00, 0xe001):   # 原字体回退字形与图标：原样 | fallback glyphs and icons: unchanged
+                    self.assertEqual(list(a['glyf'][ca[c]].coordinates), list(b['glyf'][cb[c]].coordinates))
+                    self.assertEqual(a['hmtx'][ca[c]], b['hmtx'][cb[c]])
+                for key in ('ascent', 'descent', 'lineGap'):
+                    self.assertEqual(getattr(a['hhea'], key), getattr(b['hhea'], key))
+                self.assertEqual(b['head'].unitsPerEm, 1000)
+
+    def test_weight_levels_grow_monotonically_and_zero_is_identity(self):
+        with tempfile.TemporaryDirectory() as work:
+            custom = Path(work) / 'custom.ttf'
+            synthetic(custom, [65], 1000, 'Requested')
+            widths = []
+            for level in range(font_override.WEIGHT_MAX + 1):
+                with TTFont(custom) as font:
+                    name = font.getBestCmap()[65]
+                    before = list(font['glyf'][name].coordinates)
+                    font_override.embolden(font, level * font_override.WEIGHT_STEP)
+                    glyph = font['glyf'][name]
+                    if level == 0:
+                        self.assertEqual(before, list(glyph.coordinates))
+                    widths.append(glyph.xMax - glyph.xMin)
+            self.assertEqual(widths, sorted(widths))
+            self.assertEqual(len(set(widths)), len(widths))
+
+    def test_weight_level_env_and_fingerprint(self):
+        with tempfile.TemporaryDirectory() as work:
+            font = Path(work) / 'input.ttf'
+            synthetic(font, [65], 1000, 'Requested')
+            digest = hashlib.sha256(font.read_bytes()).hexdigest()
+            with patch.dict(os.environ, DM_UI_FONT=str(font), DM_UI_FONT_WEIGHT=''):
+                self.assertEqual(font_override.weight_level(), 0)
+                self.assertEqual(font_override.source_fingerprint(), digest)
+                os.environ['DM_UI_FONT_WEIGHT'] = '2'
+                self.assertEqual(font_override.weight_level(), 2)
+                self.assertEqual(font_override.source_fingerprint(), digest + '+w2')
+                for bad in ('x', '-1', str(font_override.WEIGHT_MAX + 1), '1.5'):
+                    os.environ['DM_UI_FONT_WEIGHT'] = bad
+                    with self.assertRaises(ValueError):
+                        font_override.weight_level()
+
     def test_fingerprint_and_disabled_cleanup(self):
         with tempfile.TemporaryDirectory() as work:
             font = Path(work) / 'input.ttf'

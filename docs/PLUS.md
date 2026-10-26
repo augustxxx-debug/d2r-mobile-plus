@@ -35,7 +35,27 @@ The generator normalizes units per em, retains original vertical metrics and reg
 
 Coverage: the shared `BlizzardGlobal-V5_81.ttf` face, generated text that requests that face and the native rift HUD font loader. Other decorative font faces, classic bitmap text and text baked into game artwork are outside this change. Retaining vertical metrics does not guarantee identical glyph widths; line breaks, fallback appearance and clipping must be checked with the real target font in both languages and screen layouts.
 
-Synthetic tests cover Unicode fallback, units-per-em conversion, original registration/vertical metrics, unchanged input files, content fingerprints, disabled cleanup and invalid input paths. Tests also cover custom vertical-table compatibility and preservation of original private-use game symbols, for six tests total. Chinese and English Graphics/Custom pages were inspected on device; full panel coverage remains pending.
+Synthetic tests cover Unicode fallback, units-per-em conversion, original registration/vertical metrics, unchanged input files, content fingerprints, disabled cleanup and invalid input paths. Tests also cover custom vertical-table compatibility and preservation of original private-use game symbols, plus the weight levels below (thicker requested glyphs, unchanged advances, line metrics, fallback glyphs and icons; monotonic levels; level 0 identity; fingerprint and invalid values), for nine tests total. Chinese and English Graphics/Custom pages were inspected on device; full panel coverage remains pending.
+
+### Weight
+
+Status: implemented and unit-tested; sample sheets rendered on a Mac; **level 3 accepted on an iPhone Duo** (2026-10-27, by eye at the launch and character screens; full panel coverage still pending).
+
+The requested font can be darkened at build time with `DM_UI_FONT_WEIGHT=0..8` (default 0 = the font's own outlines). The aim is to fill in hairlines that anti-aliasing leaves grey, not to make a bold face: each level widens every stroke by only 5‰ of an em (about 0.1 px per stroke at 20 px) using the point-offset algorithm of FreeType's `FT_Outline_EmboldenXY` applied to the outlines inside `dm/ios/tools/font_override.py`; the result is re-centred so advance widths, side-bearing sums and the original line metrics do not change, and glyphs filled in from the original game font (including private-use icons) are never touched. The composed font is a plain static TrueType file, so the game's runtime rasteriser and the native rift HUD loader both pick up the weight without code changes. Changing the level re-fingerprints the generated font and text.
+
+Calibration on AR ZhongkaiGBK Medium (stems 35–60‰ em, rendered at 20 px): level 0 has a mean ink coverage of 0.45 against 0.58 for the original `BlizzardGlobal`; levels 2–3 (0.50–0.52) darken the hairlines while the glyph shapes stay visibly kai; level 6 (0.59) matches the original's density but already reads as a bold weight, which an earlier 16‰ calibration showed on a Mac run and was rejected as too heavy; level 8 is for very thin faces and clutters dense characters such as 龘. On a Mac run levels 2, 4 and the old 32‰ were compared on the character-selection screen: 2 left the small text grey, 32‰ read as bold, 4 (20‰) looked right in a 1280x720 window. On the iPhone Duo inner screen (about 490 ppi, text rasterised with roughly twice the pixels) 4 was then judged too dark and 3 (15‰) was accepted. Start at 3 for this face on a dense screen; use 2 for a heavier face.
+
+```sh
+export DM_UI_FONT='/path/to/your/font.ttf'
+export DM_UI_FONT_WEIGHT=2
+cd dm/ios && ./run.sh build
+```
+
+`python3 dm/ios/tools/font_override.py <blizzardglobal.ttf or RomFS dir> [font.ttf] out.ttf --weight N` composes one font outside a build, and `python3 dm/ios/tools/font_sample.py --weights 0 1 2 3 4 6 --sizes 20 28` renders sample sheets (needs PIL): the levels side by side, plus a simulation of the Graphics **Resolution** cap in which the text is rasterised at the smaller output size and bilinearly upscaled as a whole frame (×1.43 ≈ Auto/Balanced on the iPhone Duo inner screen, ×1.66 ≈ Eco). Output goes to `$DM_ROOT/run/font-weight/`, never into the repository.
+
+Why lower render resolutions soften the text, and what the font can and cannot do about it: the UI layer is rendered at the capped output size, so the game rasterises each glyph at a correspondingly smaller pixel size and the present pass stretches the finished frame back to the screen with a bilinear filter. The font is vector, with no pre-rendered bitmaps or size table to pre-scale, so nothing in the font can give the glyphs more pixels; only an uncapped UI pass could, and that is a render-path change outside this feature. What the weight does is keep thin kai strokes from fading below one output pixel after the upscale. Recommended trade-off: level 3 (the device-accepted level) together with Auto/Balanced on dense screens; drop to 2 only if Native-resolution text looks heavy. The level is fixed at build time; a per-resolution font chosen at launch is a possible follow-up, not part of this change.
+
+Device run: the iOS build with level 4 and then level 3 was installed on an iPhone Duo; 4 was too dark on the dense screen and 3 was accepted. The macOS App was checked earlier at levels 2 and 4 in a 1280x720 window. Still pending on the device: text in the Chinese and English settings pages, quest log, item tooltips and the rift HUD at Native and Auto resolution, with attention to clipping in narrow fields (longer strokes stay inside the same advance, so widths do not change, but ascender/descender pixels grow by half a level) and to dense characters at level 6 and above.
 
 ## Verification
 
