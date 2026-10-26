@@ -1214,7 +1214,7 @@ def _drop_rows(*rows):
 # Custom reuses the native Video destination; Graphics uses a new layout and
 # leaves the native Game Settings destination intact. The host owns only our controls.
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above')
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above', 'fps_hud')
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines

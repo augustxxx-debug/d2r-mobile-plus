@@ -849,7 +849,7 @@ static void touch_ui_message(const char *cat,const char *act,const char *arg) {
 @implementation DmRateHint
 - (void)tick:(CADisplayLink *)l {
     extern int mtl_fps_target(void);
-    { static int last = -1; int f = mtl_fps_target(); if (f != last) { last = f; l.preferredFrameRateRange = f == 30 ? CAFrameRateRangeMake(30, 30, 30) : CAFrameRateRangeMake(60, 60, 60); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
+    { static int last = -1; int f = mtl_fps_target(); if (f != last) { last = f; l.preferredFrameRateRange = f == 30 ? CAFrameRateRangeMake(30, 30, 30) : f == 120 ? CAFrameRateRangeMake(120, 120, 120) : CAFrameRateRangeMake(60, 60, 60); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
     DmMetalView *v = g_touch_view;
     if (v) {
         if (g_full) { static int lx = -1, ly, lw, lh, lrh, lrw; int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h);   // 界面矩形由宿主定（开机后才有、切档会变）：变了就让容器重摆游戏视图 | The UI rectangle is decided by the host (available only after boot, changes when the profile switches): on change, have the container re-lay out the game view
@@ -927,6 +927,26 @@ static UIView *test_fold(UIView *top) {
     }
     return top;
 }
+// 自定义页「显示帧数」（键 fps_hud，缺省关）：画面右上角半透明小标签，每 0.5 秒按实际上屏次数算帧率；UIKit 层，不碰游戏界面。开关每次刷新时读，点「应用」即时显示 / 隐藏
+// Custom page "Show frame rate" (key fps_hud, off by default): a small translucent label at the top right of the picture, frame rate from the actual present count every 0.5 s; UIKit layer, the game UI is untouched. The switch is read on every refresh, so Apply shows / hides it at once
+static UIView *attach_fps_hud(UIView *top) {
+    if (!top) return top;
+    // 字体：游戏的字体不是系统能装的 TTF，取风格最接近其正文字体（Formal 436）的系统衬线体 Palatino Bold，金色字；拿不到就退回系统等宽数字字体。精确跟随游戏字体要改成游戏内文本控件（待做）
+    // Font: the game's font is not an installable TTF; use the system serif closest in style to its body font (Formal 436), Palatino Bold, in gold; fall back to the system monospaced-digit font. Exact game-font rendering needs an in-game text widget (to do)
+    UILabel *l = [UILabel new]; l.font = [UIFont fontWithName:@"Palatino-Bold" size:13] ?: [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold]; l.textColor = [UIColor colorWithRed:0.92 green:0.82 blue:0.58 alpha:1];
+    l.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45]; l.layer.cornerRadius = 4; l.clipsToBounds = YES; l.textAlignment = NSTextAlignmentCenter; l.hidden = YES; l.userInteractionEnabled = NO;
+    l.translatesAutoresizingMaskIntoConstraints = NO; [top addSubview:l];
+    [NSLayoutConstraint activateConstraints:@[[l.topAnchor constraintEqualToAnchor:top.safeAreaLayoutGuide.topAnchor constant:6], [l.trailingAnchor constraintEqualToAnchor:top.safeAreaLayoutGuide.trailingAnchor constant:-8],
+                                              [l.widthAnchor constraintGreaterThanOrEqualToConstant:64], [l.heightAnchor constraintEqualToConstant:20]]];
+    __block uint64_t lp = 0, lt = 0; __weak UILabel *wl = l;
+    [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *tm) { UILabel *lab = wl; if (!lab) { [tm invalidate]; return; }
+        int dm_custom_get(const char *); uint64_t mtl_present_count(void);
+        if (!dm_custom_get("fps_hud")) { lab.hidden = YES; lt = 0; return; }
+        uint64_t t = now_ns(), p = mtl_present_count();
+        if (lt && t > lt) { lab.text = [NSString stringWithFormat:@" %.0f fps ", (double)(p - lp) * 1e9 / (double)(t - lt)]; lab.hidden = NO; }
+        lt = t; lp = p; }];
+    return top;
+}
 UIView *front_ios_view(CGRect frame) {
     front_game_res(1);   // 「真全屏」开没开（g_full）是它第一次被调时按屏幕比例定的；下面摆视图要用，不能指望别处碰巧先调过 | whether "true fullscreen" is on (g_full) is decided from the screen aspect ratio the first time this is called; the view layout below needs it and cannot count on something else happening to have called it first
     CGRect full = frame; frame = letterbox_rect(frame);
@@ -946,9 +966,9 @@ UIView *front_ios_view(CGRect frame) {
             CAMetalLayer *ml = [CAMetalLayer layer]; ml.device = g_layer.device; ml.pixelFormat = MTLPixelFormatBGRA8Unorm; ml.contentsScale = g_layer.contentsScale; ml.frame = box.bounds;
             ml.drawableSize = CGSizeMake(full.size.width * ml.contentsScale, full.size.height * ml.contentsScale); [box.layer insertSublayer:ml atIndex:0];
             v.opaque = NO; v.layer.opaque = NO; v.backgroundColor = UIColor.clearColor; g_layer = ml; mtl_set_ui_rect_fn(ui_rect_frac);
-            LOG("画面：窗口 %.0fx%.0f 比 16:9 窄 → 真全屏已开：出图层铺满整窗；游戏视图跟宿主的界面矩形走（局内贴底、局外居中），启动先按居中的 %.0fx%.0f 摆", full.size.width, full.size.height, frame.size.width, frame.size.height); return test_fold(box); }
-        LOG("画面：窗口 %.0fx%.0f 与游戏画面比例不同 → 游戏视图 %.0fx%.0f 居中（左右各留 %.0f 点、上下各留 %.0f 点）", full.size.width, full.size.height, frame.size.width, frame.size.height, frame.origin.x - full.origin.x, frame.origin.y - full.origin.y); return test_fold(box); }
-    return test_fold(v);
+            LOG("画面：窗口 %.0fx%.0f 比 16:9 窄 → 真全屏已开：出图层铺满整窗；游戏视图跟宿主的界面矩形走（局内贴底、局外居中），启动先按居中的 %.0fx%.0f 摆", full.size.width, full.size.height, frame.size.width, frame.size.height); return test_fold(attach_fps_hud(box)); }
+        LOG("画面：窗口 %.0fx%.0f 与游戏画面比例不同 → 游戏视图 %.0fx%.0f 居中（左右各留 %.0f 点、上下各留 %.0f 点）", full.size.width, full.size.height, frame.size.width, frame.size.height, frame.origin.x - full.origin.x, frame.origin.y - full.origin.y); return test_fold(attach_fps_hud(box)); }
+    return test_fold(attach_fps_hud(v));
 }
 
 void *front_metal_layer(void) { return (__bridge void *)g_layer; }

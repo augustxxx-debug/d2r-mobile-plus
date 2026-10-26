@@ -5389,7 +5389,9 @@ void mtl_host_apply(uint64_t v) { int frz = (int)(uint32_t)v - 1, force = (int)(
 // Game logic already runs at 25 ticks / second and unit positions are interpolated by time, so there are no repeated frames at 30 frames (measured on a real device: coefficient of variation of per-frame camera displacement 0.292 at 30 frames, 0.296 at 60 frames).
 // The switch is on the 「自定义」(Custom) page (dm_custom.c eco_fps, off by default, takes effect on apply); the test switch DM_FPS=30/60 pins it.
 __attribute__((weak)) int dm_fps_setting(void) { return 60; }   // 宿主 dm_custom.c 提供强定义；图形单测不链宿主时恒 60 | The host's dm_custom.c provides the strong definition; always 60 when graphics unit tests do not link the host
-int mtl_fps_target(void) { static int env = -2; if (env == -2) { const char *e = getenv("DM_FPS"); env = e ? atoi(e) : -1; if (env != 30 && env != 60) env = -1; else MLOG("DM_FPS=%d：帧数由测试开关钉住", env); }
+// DM_FPS=120：120 Hz 实验开关（配合 DM_PRESENT_HZ=120）；节拍器、ProMotion 申请与 3D 比例控制器的周期都跟着它。只是实验，不进设置页
+// DM_FPS=120: 120 Hz experiment switch (together with DM_PRESENT_HZ=120); the pacer, the ProMotion request and the 3D scale controller's period all follow it. Experiment only, not a settings option
+int mtl_fps_target(void) { static int env = -2; if (env == -2) { const char *e = getenv("DM_FPS"); env = e ? atoi(e) : -1; if (env != 30 && env != 60 && env != 120) env = -1; else MLOG("DM_FPS=%d：帧数由测试开关钉住", env); }
     return env > 0 ? env : dm_fps_setting() == 30 ? 30 : 60; }
 // 外推启用状态一变（省电模式切换、世界冻结接手 / 交回）：先让「跨帧不写回」账本重学（试用期里照常写回），外推晚一帧再真正切换——
 // 保证切换前最后一次提交是全量写回的。不然 30 帧时每帧先清空的附件被学成不写回，切回 60 帧的第一个外推帧读到旧内容、闪一帧（测试版实测，xv 自检报红后才撤销）
@@ -5949,7 +5951,7 @@ int mtl_display_hz(void) { return (int)(mtl_display_refresh() + 0.5); }
 // 原先固定 60：144 Hz 屏上 60 不整除，系统只能 2 拍 / 3 拍交替（13.9 / 20.8 ms），看着一顿一顿。算式见 nvn_pace.h nvn_pace_hz
 // Previously fixed at 60: 60 does not evenly divide a 144 Hz screen, so the system can only alternate 2 / 3 refreshes (13.9 / 20.8 ms), which looks stuttery. Formula in nvn_pace.h nvn_pace_hz
 double dm_pace_hz(double screen_hz, double floor_hz) { return nvn_pace_hz(screen_hz, floor_hz); }
-double mtl_pace_hz(void) { return dm_pace_hz(mtl_display_refresh(), mtl_fps_target() == 30 ? 30 : 60); }
+double mtl_pace_hz(void) { int f = mtl_fps_target(); return dm_pace_hz(mtl_display_refresh(), f == 30 ? 30 : f == 120 ? 120 : 60); }
 static _Atomic uint64_t g_present_stall_ns;   // 单测用：出图线程每次出图前额外停顿（模拟 drawable 迟迟不可用） | For unit tests: an extra pause before each present on the present thread (simulating a drawable that stays unavailable)
 #if !DM_NVN_M3
 static CAMetalLayer *g_present_layer_resident;

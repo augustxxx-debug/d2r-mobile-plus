@@ -54,6 +54,8 @@ STAT='7=25600000,9=25600000,97:59=20,97:56=20,97:64=20,97:53=20,97:62=20'; CAST=
 CASTENV=(); [ "$CAST" = 0 ] || CASTENV=(DEVICECTL_CHILD_DM_TEST_STAT="$STAT" DEVICECTL_CHILD_DM_TEST_CAST="$CAST")
 [ -z "${BENCH_STATLOG:-}" ] || CASTENV+=(DEVICECTL_CHILD_DM_TEST_STAT_LOG="$BENCH_STATLOG")   # 冒烟时 BENCH_STATLOG=8 看法力变化证明施法成功 | BENCH_STATLOG=8 in the smoke run: mana changes prove casts land
 FXENV=(); [ "$FX" = keep ] || FXENV=(DEVICECTL_CHILD_DM_METALFX="$FX")
+# BENCH_EXTRA_ENV="DM_FPS=120 DM_PRESENT_HZ=120 DM_3D_SCALE=0.5"：原样透传给 App（空格分隔的 名=值），做 120 Hz 之类的实验 | passed through to the App as-is (space-separated name=value), for experiments such as 120 Hz
+for kv in ${BENCH_EXTRA_ENV:-}; do FXENV+=("DEVICECTL_CHILD_$kv"); done
 devlock_acquire "power_bench $RUN" $((TOTAL + 1800)) || exit 1
 trap devlock_release EXIT
 env ${FXENV[@]+"${FXENV[@]}"} ${CASTENV[@]+"${CASTENV[@]}"} DEVICECTL_CHILD_DM_SAVE_TEST=1 DEVICECTL_CHILD_DM_TEST_ICLOUD_OFF=1 DEVICECTL_CHILD_DM_TEST_GOD=1 DEVICECTL_CHILD_DM_TEST_BRIGHTNESS="${BENCH_BRIGHTNESS:-0.5}" DEVICECTL_CHILD_DM_GAME_SEED=0x5a17 DEVICECTL_CHILD_DM_KEYS="$K" \
@@ -61,7 +63,7 @@ env ${FXENV[@]+"${FXENV[@]}"} ${CASTENV[@]+"${CASTENV[@]}"} DEVICECTL_CHILD_DM_S
   DEVICECTL_CHILD_DM_HEAT="bench_$RUN/heat.tsv,5" DEVICECTL_CHILD_DM_THRCPU="bench_$RUN/thrcpu.tsv,10" DEVICECTL_CHILD_DM_SOAK="bench_$RUN/soak.tsv,30" \
   DEVICECTL_CHILD_DM_NVN_PASSGPU=0 DEVICECTL_CHILD_DM_WATCH=$((TOTAL + 240)) DEVICECTL_CHILD_DM_BENCH_DIR="bench_$RUN" \
   xcrun devicectl device process launch --device "$D" --terminate-existing "$B" -mode boot > "$OUT/launch.log" 2>&1 || { t "🔴 启动失败"; tail -3 "$OUT/launch.log"; exit 1; }
-printf '%s\n' "run=$RUN" "god=1" "slot=$SLOT" "brightness=${BENCH_BRIGHTNESS:-0.5}" "cast=$CAST" "stat=$STAT" "seg_s=$SEGS" "levels=$LEVELS" "metalfx=$FX" "schedule=$SCHED" "warp=$WARP" "spawn=$SPAWN" "walk_s=$WALK" > "$OUT/params.txt"
+printf '%s\n' "run=$RUN" "god=1" "slot=$SLOT" "brightness=${BENCH_BRIGHTNESS:-0.5}" "cast=$CAST" "stat=$STAT" "extra=${BENCH_EXTRA_ENV:-}" "seg_s=$SEGS" "levels=$LEVELS" "metalfx=$FX" "schedule=$SCHED" "warp=$WARP" "spawn=$SPAWN" "walk_s=$WALK" > "$OUT/params.txt"
 t "已启动：档位 $LEVELS，每段 $SEG 分钟，共 $((TOTAL / 60)) 分钟；MetalFX=$FX。现在请拔掉数据线，屏幕保持亮着（自动锁定设为永不；电量按每小时约 35% 预估要够用）。"
 sleep $((TOTAL + 60))
 t "时间到。等设备重新接上…"
