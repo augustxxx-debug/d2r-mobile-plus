@@ -195,6 +195,8 @@ static float s3_effective_cfg(void) { float hint = mtl_metalfx_scale_hint(); ret
 //   掉帧 = 上屏间隔 > 1.5 × 目标周期（60 帧时 25 ms），或被系统丢弃（−1）；每 2 秒一个窗，记窗内帧数与掉帧数，留最近 30 窗（60 秒）。
 //   降：最近 5 窗（10 秒）掉帧率 > 5%（快：重场景一来就降），或最近 30 窗（60 秒）掉帧率 > 1.5%（慢：长期小掉帧也降）→ 降一档，停判 3 秒、窗记录清空。
 //   升：连续 15 窗（30 秒）一帧不掉 → 升一档；升上去 15 秒内又被打回，下一次升要连续 45 窗（90 秒）。
+//   已攒满 30 窗（60 秒）时，升档还要最近 30 窗掉帧率不高于慢降线 1.5%：否则重轻交替的场景（每 90 秒换图刷怪）会在轻的半段升上去、
+//   重的半段立刻掉回，每次换级重建 3D 目标与放大器，玩家看到一下卡顿（2026-10-27 夜间真机：「10 秒 0.0%、60 秒 7.9% → 升」，下一窗掉帧 14.7% 打回）。
 //   阈值按实玩记录定：实玩第二段（帧率 59+、偶发卡顿）最坏 10 秒 3.7%、每分钟 0.97% / 0.47% / 0.39%，两条都不触发；v1.0.15 热机重场景 12.6% 触发。
 //   一段连续掉帧只计前 3 帧，除非这段连续满 1 秒（此后每帧都计）：截图、存盘、系统通知这类偶发卡顿，降分辨率也没用（2026-10-20 Redmi 上测试脚本每 10 秒截图一次，
 //   每次连掉约 20 帧，旧计法一路降到 0.60）；持续吃紧（长段，或频繁的短段）照常计。
@@ -203,6 +205,9 @@ static float s3_effective_cfg(void) { float hint = mtl_metalfx_scale_hint(); ret
 // Dropped frame = present interval > 1.5 × target period (25 ms at 60 fps), or discarded by the system (−1); one window every 2 s, recording the frames and dropped frames in it, keeping the last 30 windows (60 s).
 // Lower: dropped-frame rate over the last 5 windows (10 s) > 5% (fast: lower as soon as a heavy scene arrives), or over the last 30 windows (60 s) > 1.5% (slow: also lower on long-term minor drops) → down one level, pause judging for 3 s, clear window records.
 // Raise: 15 consecutive windows (30 s) without a dropped frame → up one level; if knocked back within 15 s of being raised, the next raise needs 45 consecutive windows (90 s).
+// Once 30 windows (60 s) are recorded, a raise also needs the 30-window rate at or below the slow-lowering line of 1.5%: otherwise scenes that alternate heavy and light
+// (level change and spawns every 90 s) raise in the light half and fall back at once in the heavy half, and each level change rebuilds the 3D targets and the upscaler, a visible hitch
+// (real device, night of 2026-10-27: "10 s 0.0%, 60 s 7.9% → raise", knocked back by 14.7% in the next window).
 // Thresholds set from real-play recordings: real-play segment 2 (59+ fps, occasional stutter) worst 10 s 3.7%, per minute 0.97% / 0.47% / 0.39%, triggering neither rule; v1.0.15 warm-device heavy scene 12.6% triggers.
 // A run of consecutive dropped frames counts only its first 3, unless the run lasts 1 s (from then on every frame counts): one-off stalls such as a
 // screenshot, a save or a system notification are not helped by a lower resolution (on 2026-10-20 the Redmi test harness's screenshot every 10 s dropped
@@ -240,7 +245,7 @@ static int scale3d_ctl_step(scale3d_ctl *c, double iv_ms, uint64_t now) {   // �
         if (c->last_up && now - c->last_up < 15 * S3_SEC) c->need_good = 45;   // 刚升上去 15 秒内又掉：下次升要 90 秒 | Dropped again within 15 s of being raised: the next raise needs 90 s
         c->level++; scale3d_ctl_hold(c, now, 3 * S3_SEC); return c->level;
     }
-    if (clean) { if (++c->good_run >= (c->need_good ? c->need_good : 15) && c->level > 0) { c->level--; c->last_up = now; c->need_good = 0; scale3d_ctl_hold(c, now, 3 * S3_SEC); } }
+    if (clean) { if (++c->good_run >= (c->need_good ? c->need_good : 15) && c->level > 0 && (c->nw < 30 || c->last_r60 <= 0.015)) { c->level--; c->last_up = now; c->need_good = 0; scale3d_ctl_hold(c, now, 3 * S3_SEC); } }
     else c->good_run = 0;
     return c->level;
 }
