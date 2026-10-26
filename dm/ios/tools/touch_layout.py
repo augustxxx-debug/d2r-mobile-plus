@@ -240,7 +240,7 @@ def _upd_btn(name, scale, anchor=_C):
     return ('        { "type": "ButtonWidget", "name": "%s", "fields": { %s"rect": { "x": 99999, "y": 99999%s }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonLarge", '
             '"textString": "@dmUpdButton", "onClickMessage": "PanelManager:ClosePanel:TouchUpdate", "text/style": "$StyleFEButtonText", "pointSize": "$ExtraLargeFontSize", "textColor": "$LightButtonTextColor", '
             '"hoveredFrame": 3, "disabledFrame": 2%s } },\n') % (name, anchor, ', "scale": %s' % scale if scale else '', ', "hitMargin": { "left": 30, "top": 40, "right": 30, "bottom": 40 }' if scale else '')
-_UPDATE = (_upd_text('TouchBuild', 79, 2046, 420, 30, (150, 140, 115))
+_UPDATE = (_upd_text('TouchBuild', 79, 2046, 420, 30, (150, 140, 115), fit='"fitToText": true, ')   # 显示版本长短不一：量出宽度，提示字跟在后面（dm_update.c） | the display version varies in length: measured, and the notice follows it (dm_update.c)
            + _upd_text('TouchUpdNote', 420, 2046, 1500, 30, (199, 179, 119), fit='"fitToText": true, ')
            + _upd_btn('TouchUpdSmall', 0.6, '')
            + '        { "type": "RectangleWidget", "name": "TouchUpdBg", "fields": { "anchor": { "x": 0.5 }, "rect": { "x": 99999, "y": 99999, "width": 1400, "height": 186 }, "color": [ 0.0, 0.0, 0.0, 0.59 ] } },\n'
@@ -251,7 +251,7 @@ _UPDATE = (_upd_text('TouchBuild', 79, 2046, 420, 30, (150, 140, 115))
 # 原版手柄主菜单面板的矩形是 0×0，锚点无从算起：这一组都不带锚点，位置全由宿主按屏宽摆（dm_update.c），这里的坐标只是 16:9 下的初值
 # The same group of widgets on the controller layout's original main menu (pad_mainmenu): the bottom left holds the original button ribbon and legend, so the build number and hint text go to the top right, right-aligned.
 # The original controller main menu panel's rectangle is 0×0, with nothing to compute an anchor from: none of this group carries an anchor, their position is set entirely by the host from the screen width (dm_update.c), and the coordinates here are only initial values for 16:9
-_UPDATE_PAD = (_upd_text('TouchBuild', 3341, 60, 420, 30, (150, 140, 115), 'right')
+_UPDATE_PAD = (_upd_text('TouchBuild', 3161, 60, 600, 30, (150, 140, 115), 'right')   # 宽 600 放得下「版本 1.0.0+28 · b346e40*」；宿主按屏宽摆在 xr - 600 - 边距 | 600 wide fits the display version; the host places it at xr - 600 - margin
                + _upd_text('TouchUpdNote', 1761, 130, 2000, 42, (199, 179, 119), 'right')   # 手柄版没有「更新」按钮可看，这一行字放大（触屏版同色 30 号） | The controller layout has no 「更新」(Update) button to look at, so this line of text is enlarged (the touch version uses the same color at size 30)
                + _upd_btn('TouchUpdSmall', 0.6, '')
                + '        { "type": "RectangleWidget", "name": "TouchUpdBg", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1400, "height": 186 }, "color": [ 0.0, 0.0, 0.0, 0.59 ] } },\n'

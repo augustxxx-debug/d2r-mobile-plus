@@ -1,11 +1,11 @@
 键	中文	English	Español	Español MX	Русский	한국어	用在哪
 dmPauseRestart	一键重开	Quick Restart	Reinicio rápido		Быстрый рестарт	빠른 재시작	暂停菜单按钮（touch_layout.py）
-dmUpdBuild	构建 %d	Build %d	Versión %d		Сборка %d	빌드 %d	选角页左下角构建号（dm_update.c）
-dmUpdNew	有新版本 %d · %s	New version %d · %s	Nueva versión %d · %s		Новая версия %d · %s	새 버전 %d · %s	选角页新版本提示；%s = 版本文件里的说明（服务端给，未翻）
+dmUpdBuild	版本 %s	Version %s	Versión %s		Версия %s	버전 %s	选角页左下角显示版本「1.0.0+28 · b346e40」（dm_update.c；dm/tools/version.sh）
+dmUpdNew	有新版本 %s · %s	New version %s · %s	Nueva versión %s · %s		Новая версия %s · %s	새 버전 %s · %s	选角页新版本提示；%s = 版本文件里的说明（服务端给，未翻）
 dmUpdNoNet	无法联网检查更新 · 请在 设置 → D2R Mobile → 无线数据 里允许	Can't check for updates · Allow Wireless Data for this app in iOS Settings	No se pueden buscar actualizaciones · Permite Datos inalámbricos a esta app en Ajustes de iOS	No se pueden buscar actualizaciones · Permite Datos inalámbricos a esta app en Configuración de iOS	Не удаётся проверить обновления · Разрешите сотовые данные для приложения в Настройках iOS	업데이트 확인 불가 · iOS 설정 → D2R Mobile → 무선 데이터 허용	选角页：查更新被系统拦了
 dmUpdFail	检查更新失败	Update check failed	Error al buscar actualizaciones		Проверка обновлений не удалась	업데이트 확인 실패	选角页：查更新失败（包里没配下载站地址时）
 dmUpdFailSite	检查更新失败 · 可在浏览器打开 %s 手动更新	Update check failed · Open %s in a browser to update	Error al buscar actualizaciones · Abre %s en un navegador para actualizar		Проверка обновлений не удалась · Откройте %s в браузере, чтобы обновить	업데이트 확인 실패 · 브라우저에서 %s 열어 수동 업데이트	选角页：查更新失败；%s = 下载站地址（读本机配置，不写死）
-dmUpdNewUrgent	新版本 %d · %s	New version %d · %s	Nueva versión %d · %s		Новая версия %d · %s	새 버전 %d · %s	建议立即更新档的说明行
+dmUpdNewUrgent	新版本 %s · %s	New version %s · %s	Nueva versión %s · %s		Новая версия %s · %s	새 버전 %s · %s	建议立即更新档的说明行
 dmUpdUrgentTitle	建议立即更新	Update Recommended	Actualización recomendada		Рекомендуем обновиться	즉시 업데이트 권장	建议立即更新档的红字标题
 dmUpdButton	更新	Update	Actualizar		Обновить	업데이트	选角页两个「更新」按钮（touch_layout.py）
 dmVaultStored	存着	Stored	Guardado		Сохранено	보관됨	编年史格子下的状态（dm_vault_ui.c）

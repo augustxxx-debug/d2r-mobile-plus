@@ -59,8 +59,9 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: D2R Mobile
-        CFBundleVersion: $(CURRENT_PROJECT_VERSION)         # 构建号（testflight.sh 传月日时分）；xcodegen 缺省写死 1，TestFlight 会当重复构建 | Build number (testflight.sh passes month-day-hour-minute); xcodegen hardcodes 1 by default, which TestFlight treats as a duplicate build
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)         # 构建号 = 提交时间戳（dm/tools/version.sh）；新版本提示按它比大小，TestFlight 要求递增 | Build number = commit timestamp (dm/tools/version.sh); the update notice compares it, TestFlight needs it to grow
         CFBundleShortVersionString: $(MARKETING_VERSION)
+        DMVersionLabel: $(DM_VERSION_LABEL)                 # 显示版本「1.0.0+28 · b346e40」：选角页左下角、启动日志、诊断（dm/tools/version.sh） | Display version shown on character select, in the boot log and diagnostics
         DMSourceCommit: $(DM_SOURCE_COMMIT)                 # 源码提交（run.sh 传 git rev-parse HEAD）；启动日志首行打出来，核对安装包与源码身份 | Source commit (run.sh passes git rev-parse HEAD); printed in the first boot log line to tie the installed app to its source
         DMSourceDirty: $(DM_SOURCE_DIRTY)                   # 工作区差异：clean，或「改动文件数:差异 sha256 前 12 位:文件列表」 | Working-tree difference: clean, or "changed file count:first 12 hex of the diff sha256:file list"
         DMBuildInputs: $(DM_BUILD_INPUTS)                   # 构建输入：着色器链、字体指纹与字重、测量 / 过场 / 免费账号 / 旧接口 / 设备族开关（run.sh 写进 Gen/dm.xcconfig） | Build inputs: shader chain, font fingerprint and weight, sampling / movie / free account / older API / device family (written into Gen/dm.xcconfig by run.sh)
@@ -105,9 +106,7 @@ targets:
       PRODUCT_BUNDLE_IDENTIFIER: ${DM_BUNDLE_ID}
       ENABLE_USER_SCRIPT_SANDBOXING: NO              # 构建前脚本「从游戏文件生成资源」要读工程外的 RomFS（沙盒里读不到） | The pre-build script 「从游戏文件生成资源」(Generate assets from game files) needs to read the RomFS outside the project (unreadable inside the sandbox)
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-      MARKETING_VERSION: "1.0"
-      CURRENT_PROJECT_VERSION: $(DM_BUILD_NUMBER)   # TestFlight 每次上传须递增；tools/testflight.sh 传入，本地构建缺省 1 | Must be incremented for every TestFlight upload; passed in by tools/testflight.sh, defaults to 1 for local builds
-      DM_BUILD_NUMBER: "1"
+      # MARKETING_VERSION / CURRENT_PROJECT_VERSION / DM_BUILD_NUMBER / DM_VERSION_LABEL 只由 run.sh 写进 Gen/dm.xcconfig（dm/tools/version.sh）；target 层不给缺省值，原因同下 | come only from Gen/dm.xcconfig (dm/tools/version.sh); no target defaults, same reason as below
       # DM_SOURCE_COMMIT / DM_SOURCE_DIRTY / DM_BUILD_INPUTS 只由 run.sh 写进 Gen/dm.xcconfig（项目层）；这里不能再给默认值——target 层设置优先于项目层 xcconfig，会把真实值盖成默认值（2026-10-27 实测 Info.plist 全是 unknown）
       # DM_SOURCE_COMMIT / DM_SOURCE_DIRTY / DM_BUILD_INPUTS come only from Gen/dm.xcconfig (project level, written by run.sh); no defaults here: target settings take precedence over the project-level xcconfig and would mask the real values (seen on 2026-10-27: Info.plist all "unknown")
       DM_UPDATE_URL: ""                             # tools/adhoc.sh 在环境里有 DM_UPDATE_URL 时传入；本地构建缺省空 | Passed in by tools/adhoc.sh when DM_UPDATE_URL is in the environment; empty by default for local builds
@@ -145,9 +144,6 @@ targets:
       DM_DEVICE_FAMILY: "1,2"
       IPHONEOS_DEPLOYMENT_TARGET: "26.0"
       SWIFT_VERSION: "6.0"
-      MARKETING_VERSION: "1.0"
-      CURRENT_PROJECT_VERSION: $(DM_BUILD_NUMBER)
-      DM_BUILD_NUMBER: "1"
   TouchSmokeTests:
     type: bundle.ui-testing
     platform: iOS
@@ -213,8 +209,6 @@ targets:
       PRODUCT_BUNDLE_IDENTIFIER: ${DM_BUNDLE_ID}.tv
       ENABLE_USER_SCRIPT_SANDBOXING: NO
       ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-      MARKETING_VERSION: "1.0"
-      CURRENT_PROJECT_VERSION: "1"
       DEVELOPMENT_TEAM: ${DM_TEAM_ID}
       CODE_SIGN_STYLE: Automatic
       TARGETED_DEVICE_FAMILY: "3"

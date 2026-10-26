@@ -31,7 +31,7 @@ The default build takes ten-odd seconds and produces `~/dm-work/out/macapp/D2R M
 
 The App contains only our own program. The rewritten game program, the shader libraries and the UI overlay are all made from your game files; they stay in your working directory (`~/dm-work`) and the App only records where they are — so **the App runs only on the Mac that built it**. Please do not copy it to anyone, and do not delete or move the working directory (the shader libraries recompiled for the older-API build are in the output directory). Signing is local ad-hoc signing: no developer account and no device registration.
 
-Version and build number can be set: `DM_MAC_VERSION` (default 1.0) and `DM_MAC_BUILD` (default: the current month-day-hour-minute).
+Version, build number and display version come from the same source as the iOS package, `dm/tools/version.sh` (see "Version numbers" in [dm/ios/README.md](../dm/ios/README.md)): version = highest `vX.Y.Z` tag, build number = commit timestamp. `DM_MAC_VERSION` and `DM_MAC_BUILD` can still override the first two.
 
 The App gets the project's own icon (`dm/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png`). Use your own picture with `DM_MAC_ICON_SOURCE=<image>` (an opaque square that fills the whole picture; macOS 26 and later round the corners themselves, and a picture with transparent margins is shown shrunk inside a gray frame), or build without an icon with `DM_MAC_ICON_SOURCE=none`.
 

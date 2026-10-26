@@ -31,7 +31,7 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25
 
 这个 App 里只有我们自己的程序。改写后的游戏程序、着色器库、界面覆盖层都是从你的游戏文件做出来的，它们留在你的工作区（`~/dm-work`）里，App 只记着它们的位置——所以**这个 App 只能在构建它的这台 Mac 上跑**，请不要拷给别人，也不要删掉或挪动工作区（旧接口版重编的着色器库就在输出目录里）。签名用的是本机临时签名，不需要开发者账号，也不需要登记设备。
 
-版本号与构建号可以指定：`DM_MAC_VERSION`（缺省 1.0）、`DM_MAC_BUILD`（缺省取当前的月日时分）。
+版本号、构建号与显示版本和 iOS 包同一来源 `dm/tools/version.sh`（见 [dm/ios/README.zh-CN.md](../dm/ios/README.zh-CN.md) 的「版本号」）：版本号 = 最高的 `vX.Y.Z` 标签，构建号 = 提交时间戳。仍可用 `DM_MAC_VERSION`、`DM_MAC_BUILD` 指定前两项。
 
 App 带本项目自己的图标（`dm/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png`）。想换成自己的图：`DM_MAC_ICON_SOURCE=<图>`（要不透明、铺满的正方形；macOS 26 起圆角由系统自己裁，四周留透明边的图会被缩小放进灰色底框）；不要图标：`DM_MAC_ICON_SOURCE=none`。
 

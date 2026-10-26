@@ -1,13 +1,13 @@
-// 选角页的构建号与新版本提示。地址为 3.3.94012 原映像偏移。
+// 选角页的显示版本与新版本提示。地址为 3.3.94012 原映像偏移。
 // 画面上的东西全是游戏自己的控件：布局覆盖层在主菜单面板（MainMenuPanel，选角页那一层）下加了七个（dm/ios/tools/touch_layout.py 的 _UPDATE）——
-//   TouchBuild 构建号（左下角常显）；TouchUpdNote + TouchUpdSmall 普通更新的一行字与小「更新」；
+//   TouchBuild 显示版本「版本 1.0.0+28 · b346e40」（左下角常显，外壳给的字串，dm/tools/version.sh）；TouchUpdNote + TouchUpdSmall 普通更新的一行字与小「更新」；
 //   TouchUpdBg / TouchUpdTitle / TouchUpdDesc / TouchUpdBig 建议立即更新的底板、红字标题、说明与大「更新」（「进入游戏」正上方）。
 // 布局里字是空的、按钮与底板在屏幕外；这里在游戏主线程上写字、把要显示的挪回原位。没有这些控件（Mac 宿主跑原版布局）或没人调 dm_update_init = 什么都不做。
 // 两个「更新」按钮发 PanelManager:ClosePanel:TouchUpdate，这里收到后转给外壳登记的回调（iOS：交系统打开安装链接，dm/ios/Sources/dm_update.m）。
 // 联网、比新旧、一天一次都在外壳那边；这里只认 dm_update_offer 给的结果。
-// Build number and new version notice on the character select page. Addresses are offsets in the 3.3.94012 original image.
+// Display version and new version notice on the character select page. Addresses are offsets in the 3.3.94012 original image.
 // Everything on screen is the game's own widgets: the layout overlay adds seven under the main menu panel (MainMenuPanel, the character select page layer) (_UPDATE in dm/ios/tools/touch_layout.py) -
-//   TouchBuild build number (always shown at the bottom left); TouchUpdNote + TouchUpdSmall the one line of text and small 「更新」(Update) for an ordinary update;
+//   TouchBuild display version "Version 1.0.0+28 · b346e40" (always shown at the bottom left, a string from the shell, dm/tools/version.sh); TouchUpdNote + TouchUpdSmall the one line of text and small 「更新」(Update) for an ordinary update;
 //   TouchUpdBg / TouchUpdTitle / TouchUpdDesc / TouchUpdBig the backplate, red title, description and large 「更新」(Update) for a recommended immediate update (right above 「进入游戏」(Play)).
 // In the layout the text is empty and the buttons and backplate are off screen; here, on the game main thread, we write the text and move what should be shown back into place. With no such widgets (Mac host running the original layout) or nobody calling dm_update_init = do nothing.
 // The two 「更新」(Update) buttons send PanelManager:ClosePanel:TouchUpdate; on receiving it here we forward to the callback registered by the shell (iOS: hand the install link to the system to open, dm/ios/Sources/dm_update.m).
@@ -23,15 +23,16 @@
 #include <pthread.h>
 #include <TargetConditionals.h>
 
-static int g_own = -1; static void (*g_on_select)(void), (*g_on_click)(void);
-static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER; static struct { int build, urgent; char note[160]; } g_offer;   // g_mu 护 g_offer | g_mu guards g_offer
+static int g_own = -1; static char g_label[64]; static void (*g_on_select)(void), (*g_on_click)(void);   // g_own 只用来判「初始化过没有」，比新旧在外壳 | g_own only tells whether init ran; comparing versions is on the shell side
+static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER; static struct { int build, urgent; char ver[24], note[160]; } g_offer;   // g_mu 护 g_offer | g_mu guards g_offer
 static _Atomic int g_safe_l = -1, g_dirty, g_click, g_appear, g_fg;   // g_safe_l < 0 = 外壳还没给左安全区，先不写字（免得字先出在安全区里再跳一下）。g_dirty：还要重写几帧（>0 时每帧找控件、写字、摆位置；写完一次后再跟 30 帧，等文字框量出新宽度） | g_safe_l < 0 = the shell has not supplied the left safe area yet, so do not write text for now (to avoid the text first showing inside the safe area and then jumping). g_dirty: how many more frames to rewrite (when >0, every frame find widgets, write text, set positions; after one write keep following for 30 more frames, waiting for the text box to measure the new width)
 
-void dm_update_init(int own_build, void (*on_select)(void), void (*on_click)(void)) { g_own = own_build; g_on_select = on_select; g_on_click = on_click; atomic_store(&g_dirty, 30); }   // 不在这里置「选角页出现」：启动时游戏自己会发一次 OpenPanel CharacterSelectPanel，这里再置就每次启动查两遍 | Do not set "character select page appears" here: at startup the game sends OpenPanel CharacterSelectPanel once by itself, and setting it here too would check twice on every startup
-// 外壳查完的结果：任意线程调。new_build > 0 = 有比自己新的构建（note = 一句话更新说明，UTF-8；urgent = 建议立即更新）；0 = 没有，撤掉已有提示
-// Result of the shell's check: callable from any thread. new_build > 0 = there is a build newer than ours (note = one-sentence update note, UTF-8; urgent = immediate update recommended); 0 = none, remove any existing notice
-void dm_update_offer(int new_build, const char *note, int urgent) {
-    pthread_mutex_lock(&g_mu); g_offer.build = new_build; g_offer.urgent = urgent; strlcpy(g_offer.note, note ? note : "", sizeof g_offer.note); pthread_mutex_unlock(&g_mu);
+// label = 显示版本（空 = 退回写构建号） | label = display version (empty = fall back to the build number)
+void dm_update_init(int own_build, const char *label, void (*on_select)(void), void (*on_click)(void)) { g_own = own_build; if (label && *label) strlcpy(g_label, label, sizeof g_label); else snprintf(g_label, sizeof g_label, "%d", own_build); g_on_select = on_select; g_on_click = on_click; atomic_store(&g_dirty, 30); }   // 不在这里置「选角页出现」：启动时游戏自己会发一次 OpenPanel CharacterSelectPanel，这里再置就每次启动查两遍 | Do not set "character select page appears" here: at startup the game sends OpenPanel CharacterSelectPanel once by itself, and setting it here too would check twice on every startup
+// 外壳查完的结果：任意线程调。new_build > 0 = 有比自己新的构建（ver = 版本文件里给人看的版本号，空 = 写构建号；note = 一句话更新说明，UTF-8；urgent = 建议立即更新）；0 = 没有，撤掉已有提示
+// Result of the shell's check: callable from any thread. new_build > 0 = there is a build newer than ours (ver = the human version from the version file, empty = show the build number; note = one-sentence update note, UTF-8; urgent = immediate update recommended); 0 = none, remove any existing notice
+void dm_update_offer(int new_build, const char *ver, const char *note, int urgent) {
+    pthread_mutex_lock(&g_mu); g_offer.build = new_build; g_offer.urgent = urgent; if (ver && *ver) strlcpy(g_offer.ver, ver, sizeof g_offer.ver); else snprintf(g_offer.ver, sizeof g_offer.ver, "%d", new_build); strlcpy(g_offer.note, note ? note : "", sizeof g_offer.note); pthread_mutex_unlock(&g_mu);
     atomic_store(&g_dirty, 30);
 }
 // 查新版本失败（玩家停在旧包、更新查询静默失败，玩家不知道有新版）：任意线程调。
@@ -91,34 +92,36 @@ void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Ca
     if (atomic_exchange(&g_appear, 0) && g_on_select) g_on_select();   // 外壳这时给左安全区、查一次新版本 | At this point the shell supplies the left safe area and checks once for a new version
     if (atomic_load(&g_safe_l) < 0) return;
     atomic_compare_exchange_strong(&g_dirty, &left, left - 1);   // 期间又被置回 30（新结果 / 面板重建）就不减 | If it was set back to 30 in the meantime (new result / panel rebuilt), do not decrement
-    int build, urgent; char note[160]; pthread_mutex_lock(&g_mu); build = g_offer.build; urgent = g_offer.urgent; memcpy(note, g_offer.note, sizeof note); pthread_mutex_unlock(&g_mu);
-    char t[256]; snprintf(t, sizeof t, dm_str(b, "dmUpdBuild"), g_own); set_text(b, bw, t);
+    int build, urgent; char ver[24], note[160]; pthread_mutex_lock(&g_mu); build = g_offer.build; urgent = g_offer.urgent; memcpy(ver, g_offer.ver, sizeof ver); memcpy(note, g_offer.note, sizeof note); pthread_mutex_unlock(&g_mu);
+    char t[256]; snprintf(t, sizeof t, dm_str(b, "dmUpdBuild"), g_label); set_text(b, bw, t);
     int sl = atomic_load(&g_safe_l), bx = sl + 6 > 79 ? sl + 6 : 79; int dm_padmode_current(void); int pad = dm_padmode_current();
     // 手柄模式（原版手柄主菜单）：左下角是原版的按钮栏和提示条，这两行改放右上角、靠右对齐。原版手柄主菜单面板的矩形是 0×0（锚点无从算起），
     // 这份控件在布局里不带锚点（touch_layout.pad_mainmenu），位置全由这里按屏宽（布局单位：2160 = 屏高）算
     // Controller mode (the original controller main menu): the bottom left holds the original button ribbon and legend, so these two lines go to the top right instead, right-aligned. The original controller main menu panel's rectangle is 0×0 (nothing to compute an anchor from),
     // so these widgets carry no anchor in the layout (touch_layout.pad_mainmenu), and their position is computed entirely here from the screen width (layout units: 2160 = screen height)
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
-    if (pad) place(bw, xr - 420 - bx, 60); else place(bw, bx, 2046+bottom);
+    if (pad) place(bw, xr - 600 - bx, 60); else place(bw, bx, 2046+bottom);
   // 触屏：左下角那行，离屏幕左边 79 单位，有安全区时贴安全线内 6 单位
   // Touch: the line at the bottom left, 79 units from the left edge of the screen, or 6 units inside the safe line when there is a safe area
     uint64_t nt = find(mm, "TouchUpdNote", 0), sm = find(mm, "TouchUpdSmall", 0), bg = find(mm, "TouchUpdBg", 0), ti = find(mm, "TouchUpdTitle", 0), de = find(mm, "TouchUpdDesc", 0), big = find(mm, "TouchUpdBig", 0);
     if (!nt || !sm || !bg || !ti || !de || !big) { LOG("【红】更新：主菜单面板里的提示控件不全，不显示提示"); return; }
     int normal = build > 0 && !urgent, urg = build > 0 && urgent, fail = build > 0 ? 0 : atomic_load(&g_fail);
-    snprintf(t, sizeof t, dm_str(b, "dmUpdNew"), build, note);
+    snprintf(t, sizeof t, dm_str(b, "dmUpdNew"), ver, note);
     char ft[192]; if (g_site[0]) snprintf(ft, sizeof ft, dm_str(b, "dmUpdFailSite"), g_site); else snprintf(ft, sizeof ft, "%s", dm_str(b, "dmUpdFail"));
     if (pad && normal) { size_t L = strlen(t); snprintf(t + L, sizeof t - L, "   \xee\x80\x91 %s", dm_str(b, "dmUpdButton")); }   // 手柄：行尾接「Y 键帽 + 更新」（键帽 = 界面字体里的手柄键字形 U+E011，原版提示条用的同一个） | Controller: append "Y keycap + Update" at the end of the line (keycap = the controller button glyph U+E011 in the UI font, the same one the original legend uses)
     set_text(b, nt, normal ? t : fail == 1 ? dm_str(b, "dmUpdNoNet") : fail ? ft : "");
-    snprintf(t, sizeof t, dm_str(b, "dmUpdNewUrgent"), build, note); if (pad && urg) { size_t L = strlen(t); snprintf(t + L, sizeof t - L, "   \xee\x80\x91 %s", dm_str(b, "dmUpdButton")); } set_text(b, de, urg ? t : ""); set_text(b, ti, urg ? dm_str(b, "dmUpdUrgentTitle") : "");
+    snprintf(t, sizeof t, dm_str(b, "dmUpdNewUrgent"), ver, note); if (pad && urg) { size_t L = strlen(t); snprintf(t + L, sizeof t - L, "   \xee\x80\x91 %s", dm_str(b, "dmUpdButton")); } set_text(b, de, urg ? t : ""); set_text(b, ti, urg ? dm_str(b, "dmUpdUrgentTitle") : "");
     if (pad) { place(bg, urg ? xr / 2 - 700 : 99999, urg ? 1506 : 99999); place(ti, xr / 2 - 700, 1524); place(de, xr / 2 - 700, 1610); }
     else { place(bg, urg ? -700 : 99999, urg ? 1506 : 99999); place(big, urg ? -303 : 99999, urg ? 1712 : 99999); }
-    // 提示字在构建号右边 341 单位处起；小「更新」跟在它后面隔 34 单位：文字框开了 fitToText，每帧更新（0xadc8e8）把量出的宽度写回 +0x78
-    // The notice text starts 341 units to the right of the build number; the small 「更新」(Update) follows it 34 units behind: the text box has fitToText on, and the per-frame update (0xadc8e8) writes the measured width back to +0x78
-    int nw = *(int32_t *)(nt + 0x78);
+    // 提示字在显示版本右边起：至少 341 单位，版本字更宽就跟在它后面隔 34 单位；小「更新」再跟在提示字后面隔 34 单位。
+    // 两个文字框都开了 fitToText，每帧更新（0xadc8e8）把量出的宽度写回 +0x78（显示版本没量出来前是布局宽 420）
+    // The notice text starts right of the display version: at least 341 units, or 34 units after the version text when that is wider; the small 「更新」(Update) follows the notice 34 units behind.
+    // Both text boxes have fitToText on, and the per-frame update (0xadc8e8) writes the measured width back to +0x78 (the layout width 420 until the display version is measured)
+    int nw = *(int32_t *)(nt + 0x78), tw = *(int32_t *)(bw + 0x78), nx = bx + (tw + 34 > 341 ? tw + 34 : 341);
     if (pad) { place(nt, xr - 2000 - bx, 130); place(sm, 99999, 99999); place(big, 99999, 99999); }   // 手柄：提示字在构建号下面一行；两个「更新」按钮不摆出来（按 Y，见上） | Controller: the hint text goes on the line below the build number; the two 「更新」(Update) buttons are not shown (press Y, see above)
-    else { place(nt, bx + 341, 2046+bottom); place(sm, normal ? bx + 341 + nw + 34 : 99999, normal ? 2030+bottom : 99999); }
-    static dm_wref lw; static int ls = -1, lnw; int st = normal ? 1 : urg ? 2 : fail ? 2 + fail : 0;
-    if (dm_wref_get(&lw) != bw || ls != st || (normal && lnw != nw)) { dm_wref_set(&lw, bw); ls = st; lnw = nw; LOG("更新：选角页写上构建 %d%s（提示字宽 %d）", g_own, normal ? "，普通更新提示" : urg ? "，建议立即更新提示" : fail == 1 ? "，查更新失败提示（无线数据许可）" : fail ? "，查更新失败提示（浏览器手动更新）" : "，无提示", normal ? nw : 0); }
+    else { place(nt, nx, 2046+bottom); place(sm, normal ? nx + nw + 34 : 99999, normal ? 2030+bottom : 99999); }
+    static dm_wref lw; static int ls = -1, lnw, ltw; int st = normal ? 1 : urg ? 2 : fail ? 2 + fail : 0;
+    if (dm_wref_get(&lw) != bw || ls != st || ltw != tw || (normal && lnw != nw)) { dm_wref_set(&lw, bw); ls = st; lnw = nw; ltw = tw; LOG("更新：选角页写上版本 %s%s（版本字宽 %d，提示字宽 %d）", g_label, normal ? "，普通更新提示" : urg ? "，建议立即更新提示" : fail == 1 ? "，查更新失败提示（无线数据许可）" : fail ? "，查更新失败提示（浏览器手动更新）" : "，无提示", tw, normal ? nw : 0); }
 }
 #if TARGET_OS_OSX
 // Mac App：鼠标点主菜单右上角那行「有新版本…」= 按 Y（打开下载页）。Mac 玩家第一反应是点它；这一行在手柄版里是纯文字、没有按钮可点，所以按位置认：

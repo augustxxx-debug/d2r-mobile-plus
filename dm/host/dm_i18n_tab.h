@@ -2,12 +2,12 @@
 #pragma once
 static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[] = {
     { "dmPauseRestart", "一键重开", "Quick Restart", "Reinicio rápido", "Reinicio rápido", "Быстрый рестарт", "빠른 재시작" },
-    { "dmUpdBuild", "构建 %d", "Build %d", "Versión %d", "Versión %d", "Сборка %d", "빌드 %d" },
-    { "dmUpdNew", "有新版本 %d · %s", "New version %d · %s", "Nueva versión %d · %s", "Nueva versión %d · %s", "Новая версия %d · %s", "새 버전 %d · %s" },
+    { "dmUpdBuild", "版本 %s", "Version %s", "Versión %s", "Versión %s", "Версия %s", "버전 %s" },
+    { "dmUpdNew", "有新版本 %s · %s", "New version %s · %s", "Nueva versión %s · %s", "Nueva versión %s · %s", "Новая версия %s · %s", "새 버전 %s · %s" },
     { "dmUpdNoNet", "无法联网检查更新 · 请在 设置 → D2R Mobile → 无线数据 里允许", "Can't check for updates · Allow Wireless Data for this app in iOS Settings", "No se pueden buscar actualizaciones · Permite Datos inalámbricos a esta app en Ajustes de iOS", "No se pueden buscar actualizaciones · Permite Datos inalámbricos a esta app en Configuración de iOS", "Не удаётся проверить обновления · Разрешите сотовые данные для приложения в Настройках iOS", "업데이트 확인 불가 · iOS 설정 → D2R Mobile → 무선 데이터 허용" },
     { "dmUpdFail", "检查更新失败", "Update check failed", "Error al buscar actualizaciones", "Error al buscar actualizaciones", "Проверка обновлений не удалась", "업데이트 확인 실패" },
     { "dmUpdFailSite", "检查更新失败 · 可在浏览器打开 %s 手动更新", "Update check failed · Open %s in a browser to update", "Error al buscar actualizaciones · Abre %s en un navegador para actualizar", "Error al buscar actualizaciones · Abre %s en un navegador para actualizar", "Проверка обновлений не удалась · Откройте %s в браузере, чтобы обновить", "업데이트 확인 실패 · 브라우저에서 %s 열어 수동 업데이트" },
-    { "dmUpdNewUrgent", "新版本 %d · %s", "New version %d · %s", "Nueva versión %d · %s", "Nueva versión %d · %s", "Новая версия %d · %s", "새 버전 %d · %s" },
+    { "dmUpdNewUrgent", "新版本 %s · %s", "New version %s · %s", "Nueva versión %s · %s", "Nueva versión %s · %s", "Новая версия %s · %s", "새 버전 %s · %s" },
     { "dmUpdUrgentTitle", "建议立即更新", "Update Recommended", "Actualización recomendada", "Actualización recomendada", "Рекомендуем обновиться", "즉시 업데이트 권장" },
     { "dmUpdButton", "更新", "Update", "Actualizar", "Actualizar", "Обновить", "업데이트" },
     { "dmVaultStored", "存着", "Stored", "Guardado", "Guardado", "Сохранено", "보관됨" },

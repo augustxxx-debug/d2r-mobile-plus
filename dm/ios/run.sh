@@ -64,6 +64,14 @@ if [ "$1" = build ]; then
   BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default}"
   printf 'DM_SOURCE_COMMIT = %s\nDM_SOURCE_DIRTY = %s\nDM_BUILD_INPUTS = %s\n' "$SC" "$SDIRTY" "$BINPUTS" >> Gen/dm.xcconfig
   t "产物身份：源码 ${SC}，工作区 ${SDIRTY}，构建输入 ${BINPUTS}"
+  # 版本号（dm/tools/version.sh，与 Mac 包同一来源）：版本 = 最高的 vX.Y.Z 标签，构建号 = 提交时间戳，显示版本 =「1.0.0+28 · b346e40」（有未提交代码改动加 *）。
+  # 也写在项目层 Gen/dm.xcconfig：project.yml 的 target 层不许再给缺省值（会盖住这里）；出包脚本在命令行传 DM_BUILD_NUMBER 仍然优先。
+  # Version numbers (dm/tools/version.sh, the same source as the Mac package): version = highest vX.Y.Z tag, build number = commit timestamp, display version = "1.0.0+28 · b346e40" (* with uncommitted code changes).
+  # Also written at project level in Gen/dm.xcconfig: project.yml targets must not set defaults (they would mask these); a DM_BUILD_NUMBER passed on the command line by a packaging script still wins.
+  eval "$(bash ../tools/version.sh)" || { t "🔴 取版本号失败（dm/tools/version.sh）"; exit 1; }
+  printf 'MARKETING_VERSION = %s\nDM_BUILD_NUMBER = %s\nCURRENT_PROJECT_VERSION = $(DM_BUILD_NUMBER)\nDM_VERSION_LABEL = %s\n' "$DM_VERSION" "$DM_BUILD" "$DM_VERSION_LABEL" >> Gen/dm.xcconfig
+  t "版本 ${DM_VERSION}，构建号 ${DM_BUILD}，显示「${DM_VERSION_LABEL}」"; [ -n "$DM_VERSION_WARN" ] && t "⚠ ${DM_VERSION_WARN}"
+  case $DM_VERSION_LABEL in *\*) t "⚠ 工作区有未提交的代码改动：显示版本带 *，这种包不能用于放行";; esac
   # 启动块清单（缺省开预取：宿主到产物目录 = App 内 dm/ 找 bootlist.tsv）+ main.cuts.tsv（宿主据此核清单构建号）；产物没有就不带
   # Boot block list (prefetch on by default: the host looks for bootlist.tsv in the build output directory = dm/ inside the App) + main.cuts.tsv (the host uses it to check the list's build ID); not included if the build output lacks them
   for f in bootlist.tsv main.cuts.tsv; do [ -f $OUT/$f ] && cp $OUT/$f Gen/dm/; done
@@ -125,20 +133,8 @@ if [ "$1" = build ]; then
   fi
   [ "${DM_GEN_ONLY:-}" = 1 ] && { t "生成完成（DM_GEN_ONLY）"; exit 0; }   # tools/testflight.sh 只要生成，自己 archive | tools/testflight.sh only needs the generation step and does the archive itself
   asc_auth   # App Store Connect API 密钥（有就带上，供签名自动注册 App Group 等能力；见 tools/asc_env.sh） | App Store Connect API key (included if present, so signing can auto-register capabilities such as the App Group; see tools/asc_env.sh)
-  # 开发包带上被测提交的标识（真机收数时把包里的标识读出来核对，不靠「锁内装过包」推断）：构建号 = HEAD 的提交时间戳，
-  # 启动日志首行「boot: 版本 … 构建 N」原样打出来，tools/uireg/run_dev.sh 收数时核。工作区有未提交改动 = 认不出是哪个提交 → 构建号留 1，这种包不能用于放行。
-  # 只影响这条开发包构建命令：正式包（tools/testflight.sh、tools/adhoc.sh）与 Mac 包（tools/smoke_mac.sh）带 DM_GEN_ONLY=1 进来，上面一行就退出了，各自的构建号不经过这里。
-  # Development packages carry the identity of the commit under test (when collecting results from a real device, the identity is read out of the package
-  # and checked, rather than inferred from "a package was installed while holding the lock"): build number = the commit timestamp of HEAD,
-  # printed verbatim in the first line of the boot log ("boot: version ... build N") and checked by tools/uireg/run_dev.sh when collecting results.
-  # Uncommitted changes in the working tree = the commit cannot be identified → the build number stays 1, and such a package cannot be used for release
-  # sign-off.
-  # This affects only this development package build command: release packages (tools/testflight.sh, tools/adhoc.sh) and the Mac package
-  # (tools/smoke_mac.sh) come in with DM_GEN_ONLY=1 and exit on the line above, so their build numbers do not pass through here.
-  BN=$(git log -1 --format=%ct 2>/dev/null); [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] && BN=1; BN=${BN:-1}
-  # 源码身份已在上面写进 Gen/dm.xcconfig（本机着色器链元数据照实计入工作区指纹，它决定加载哪份着色器缓存）
-  # The source identity was written into Gen/dm.xcconfig above (local shader-chain metadata is counted in the working-tree fingerprint, it decides which shader cache loads)
-  [ "$BN" = 1 ] && t "⚠ 工作区有未提交改动（或读不到提交）：开发包构建号 = 1，不能用于放行" || t "开发包构建号 ${BN}（提交 $(git log -1 --format=%h | cut -c1-9) 的提交时间戳）"
+  # 构建号、版本号与显示版本已在上面写进 Gen/dm.xcconfig（dm/tools/version.sh）；启动日志首行「boot: 版本 … 构建 N」原样打出，tools/uireg/run_dev.sh 收数时核提交与 *。
+  # The build number, version and display version were written into Gen/dm.xcconfig above (dm/tools/version.sh); the first boot log line "boot: version ... build N" prints them and tools/uireg/run_dev.sh checks the commit and the *.
   # 构建目标：平常是「通用 iOS 设备」。免费账号（个人团队）名下起初没有任何设备，苹果不给生成描述文件
   # （「Your team has no devices from which to generate a provisioning profile」，真拿免费账号签时实测撞到）——
   # 所以免费档改用连着的那台手机做目标（DM_IOS_UDID），构建时 Xcode 会把它登记到团队名下。付费账号不受影响，照旧用通用目标。
@@ -151,7 +147,7 @@ if [ "$1" = build ]; then
     else t "⚠ 免费账号第一次构建要把手机连上，并在本机配置里填 DM_IOS_UDID（见 local.env.example）；没填，先按通用目标试"; fi
   fi
   xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination "$DEST" \
-    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} DM_BUILD_NUMBER=$BN ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
+    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
       grep -q 'no devices from which to generate a provisioning profile' "$R/build.log" && t "原因：这个团队名下还没有设备。把手机用数据线连上并解锁，在本机配置里填 DM_IOS_UDID、DM_FREE_ACCOUNT=1，再构建一次"; exit 1; }
   codesign -d --entitlements :- $APP 2>/dev/null | plutil -p - ; t "构建完成"
   # DM_NOINSTALL 保持兼容；build 现在本来就只编译，不触碰设备。

@@ -1313,6 +1313,7 @@ int main(int argc, char *argv[]) {
           plog("boot: 版本 %s 构建 %s 机型 %s 系统 %s 时间 %s", [inf[@"CFBundleShortVersionString"] description].UTF8String ?: "未知", [inf[@"CFBundleVersion"] description].UTF8String ?: "未知",
                hw, NSProcessInfo.processInfo.operatingSystemVersionString.UTF8String, [df stringFromDate:NSDate.date].UTF8String);
           { NSString *(^idv)(NSString *) = ^NSString *(NSString *k) { NSString *v = [inf[k] description]; return v.length ? v : @"未知"; };   // 没经 run.sh 构建时为空 | empty when not built through run.sh
+            plog("boot: 显示版本 %s", idv(@"DMVersionLabel").UTF8String);   // 选角页左下角同一行字（dm/tools/version.sh）；末尾 * = 有未提交的代码改动 | the same line as on character select; a trailing * = uncommitted code changes
             plog("boot: 源码 %s 工作区 %s 构建输入 %s", idv(@"DMSourceCommit").UTF8String, idv(@"DMSourceDirty").UTF8String, idv(@"DMBuildInputs").UTF8String); }   // 审计核对安装包身份用（run.sh 写入） | For auditors to tie the installed app to its source (written by run.sh)
           // 机型是 iPhone 却按 iPad 身份运行：重签名工具的「iPad 模式」。画面会按 iPad 屏幕比例（如 1640x2360 ≈ 1.44）显示、两边黑边，这不是本包能改的；记红并在进游戏后提示一次
           // Model is an iPhone yet running with the iPad idiom: a re-signing tool's "iPad mode". The picture shows at an iPad aspect (e.g. 1640x2360 ≈ 1.44) with black bars on both sides, which this app cannot change; log a failure and warn once after launch
