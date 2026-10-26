@@ -111,6 +111,7 @@ static _Atomic int g_touch_navigation = 1;
 
 static _Atomic int g_nav_pub; int dm_front_navigation(void) { return atomic_load(&g_nav_pub); }   // 面板 / 读取画面 / 过场开着（非零）：dm_gamepad.m 据此只在游戏态接管 ZR | A panel / loading screen / cutscene is open (non-zero): dm_gamepad.m uses this to take over ZR only in the gameplay state
 static void pad_mode_changed(int pad) { dispatch_async(dispatch_get_main_queue(),^{ [g_touch_view padMode:pad]; }); }   // dm_gamepad.m 在主队列回调，照样切一次主线程（与上面同法） | dm_gamepad.m calls back on the main queue; still hop to the main thread once (same approach as above)
+void front_touch_overlay_mode(int pad) { pad_mode_changed(pad); }   // 宿主模式切换事务重建完成后（dm_mode_items.h 登记项「触屏控件层随模式」，游戏主线程）：不经 dm_gamepad.m 的切换（DM_TEST_PADMODE、宿主自发）也让触屏层跟上，否则底栏与原版手柄 HUD 重叠 | After the host's mode switch transaction finishes its rebuild (dm_mode_items.h item "touch overlay follows the mode", game main thread): switches that bypass dm_gamepad.m (DM_TEST_PADMODE, host-initiated) also bring the touch layer along, otherwise the bottom bar overlaps the original controller HUD
 static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(),^{ [g_touch_view restartCover:on]; }); }   // 0 撤 / 1 黑屏 / 2 透明（读取画面露出来，照样吞触点）   // 宿主在游戏主线程调，切到界面主线程开关 | 0 remove / 1 black screen / 2 transparent (the loading screen shows through, touch points still swallowed)   // Called by the host on the game main thread; switches to the UI main thread to toggle
 // 一键重开遮罩：吞掉落在它上面的所有触点（不调 super，不沿响应链交给下面的游戏视图——诊断日志里见过：遮罩是游戏视图的子视图时，
 // 落在遮罩上的点按经响应链交给了游戏视图，黑屏期间点到选角页的「开始」就自己进了局）
@@ -181,7 +182,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 - (void)hudBlocked:(int)n { _overlay.hudBlocked=n>0; _overlay.dialogOnly=n<0; dm_tc_set_joy_block(&_controls,n<0); [_overlay setNeedsDisplay]; }   // 只开着讲话文字框 / 对话菜单：点底座那一下不起摇杆（只关它，人不走） | only the speech text box / dialogue menu is open: a tap on the base starts no stick (it only closes it, the character does not move)
 // 前端页面（主菜单 / 选角 / 建角 / 读取画面，即不在局内）：不显示摇杆与技能圆钮，触点直接当原生点击交给游戏界面（dm_ui_touch → 鼠标消息，dm_cursor.c）
 // Front-end pages (main menu / character select / character creation / loading screen, i.e. not in a run): no stick or round skill buttons shown; touch points are given straight to the game UI as native clicks (dm_ui_touch → mouse messages, dm_cursor.c)
-- (void)padMode:(BOOL)pad { _padMode=pad; _overlay.hidden=_feMode || pad; _info.hidden=_feMode; if(pad) { _tipUntil=-2; dm_tc_cancel_all(&_controls); [self pushFrom:"padmode" phase:"none"]; } }   // 手柄模式藏触屏控件层（dm_gamepad.m 回调） | Controller mode hides the touch controls layer (dm_gamepad.m callback)
+- (void)padMode:(BOOL)pad { BOOL same=(_padMode==pad); _padMode=pad; _overlay.hidden=_feMode || pad; _info.hidden=_feMode; if(same) return; if(pad) { _tipUntil=-2; dm_tc_cancel_all(&_controls); [self pushFrom:"padmode" phase:"none"]; } }   // 手柄模式藏触屏控件层（dm_gamepad.m 回调） | Controller mode hides the touch controls layer (dm_gamepad.m callback)
 - (void)frontendMode:(BOOL)fe { _feMode=fe; _overlay.hidden=fe || _padMode; _info.hidden=fe; if(fe) { _pendEnd=nil; _finalAsked=NO; for(int i_=0;i_<16;i_++) _slot[i_]=nil; dm_tc_cancel_all(&_controls); [self pushFrom:"frontend" phase:"none"]; } }
 - (void)navigationMode:(int)n {
     if (_navigation==n) return;
@@ -427,7 +428,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 }
 - (void)tickTouchControls:(double)now {
     [self mapGoalSync];
-    { int dm_padmode_busy(void); BOOL hide=_feMode || _padMode || dm_padmode_busy(); if(_overlay.hidden!=hide) _overlay.hidden=hide; }   // 手柄 → 触屏切换事务还没完成（界面还在重建）时触屏控件层先不露出来（dm_padmode.c） | While the controller → touch switch transaction is not yet complete (the UI is still rebuilding) the touch control layer is not revealed yet (dm_padmode.c)
+    { int dm_padmode_busy(void); BOOL hide=_feMode || _padMode || dm_padmode_busy(); if(_overlay.hidden!=hide) _overlay.hidden=hide; }   // 切换事务进行中也藏触屏层；宿主自己发起的切换（测试开关 DM_TEST_PADMODE 等）由注册表项「触屏控件层随模式」经 front_touch_overlay_mode 通知，见下 | Also hidden while a switch transaction is in progress; switches the host starts itself (DM_TEST_PADMODE and the like) reach us through the registry item "touch overlay follows the mode" via front_touch_overlay_mode, see below
     { void dm_rift_hud_draw(UIView *, CGRect, BOOL); dm_rift_hud_draw(_info, world_rect(self), _navigation || _info.hidden); }
     {   // 高价值掉落震动（宿主 dm_drophaptic.c 判档）：1 重 / 2 中 / 3 轻 | High-value drop haptics (the host's dm_drophaptic.c decides the level): 1 heavy / 2 medium / 3 light
         int dm_drop_haptic_take(void); int t = dm_drop_haptic_take();

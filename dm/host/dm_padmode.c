@@ -173,6 +173,8 @@ void dm_padmode_request(int pad) { pad = pad ? 1 : 0;
 #endif
     atomic_store(&g_want, pad); if (g_have && pad != g_cur) atomic_store(&g_freeze, 1); }   // 前端（任意线程）：从这一刻起输入就不再交给游戏 | Front end (any thread): from this moment on input is no longer handed to the game
 int dm_padmode_current(void) { return g_cur; }
+__attribute__((weak)) void front_touch_overlay_mode(int pad) { (void)pad; }   // 前端弱钩子（front_ios.m 实现；Mac App / 测试件没有触屏层，缺省空） | Weak front-end hook (front_ios.m implements it; the Mac App / test binaries have no touch layer, default empty)
+void dm_touch_overlay_mode_enter(void) { front_touch_overlay_mode(g_cur); }   // 登记项「触屏控件层随模式」（dm_mode_items.h，侧 2）：每次切换重建完成后把当前模式交给前端藏 / 露触屏控件层 | Registry item "touch overlay follows the mode" (dm_mode_items.h, side 2): after every switch's rebuild, hand the current mode to the front end to hide / show the touch controls layer
 int dm_padmode_busy(void) { return atomic_load(&g_freeze); }   // 切换事务进行中（含请求已到、事务还没起的那一小段） | Switch transaction in progress (including the short span where the request has arrived but the transaction has not started yet)
 int dm_padmode_input_gate(uint64_t *buttons) { static dm_modegate g; return dm_modegate_apply(&g, atomic_load(&g_freeze), buttons); }   // 取手柄处（hle_hid.c fill，游戏主线程） | Where the controller is read (hle_hid.c fill, game main thread)
 static void dm_mode_none(void) {}
