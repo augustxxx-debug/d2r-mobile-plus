@@ -844,13 +844,21 @@ static void touch_ui_message(const char *cat,const char *act,const char *arg) {
 // Called on the main thread: creates the fullscreen Metal view; the graphics backend gets its layer through front_metal_layer to present frames
 // ProMotion frame rate request: on iPhone, when the App calls nextDrawable / present itself, the system by default hands out drawables at 60 Hz (real device: adding only Info.plist's
 // CADisableMinimumFrameDurationOnPhone still gives 60 fps and a 16.6 ms drawable wait). Attach a declaration-only CADisplayLink (empty callback) requesting 80–120 Hz, and only then does the system switch to 120 Hz.
+// 刷新率表态与每帧的触控 / 布局工作分开（复审 F03）：tick: 只在表态链接上调用，先表态再做 work；DM_RATE_HINT=0 时没有表态链接，由主线程 60 Hz 定时器直接调 work，
+// 触点结束、长按、绑定 / 拖放同步、自绘 HUD 与界面矩形变化后的重排照常进行，实验只少了“刷新率表态”这一个变量
+// The refresh-rate declaration is separated from the per-frame touch / layout work (re-audit F03): tick: runs only on the declaration link, declares and then calls work; with DM_RATE_HINT=0 there is no
+// declaration link and a 60 Hz main-thread timer calls work directly, so touch ends, long presses, binding / drag sync, the self-drawn HUD and relayout on UI-rect changes all continue; the experiment drops only the rate declaration
 @interface DmRateHint : NSObject
 - (void)tick:(CADisplayLink *)l;
+- (void)work;
 @end
 @implementation DmRateHint
 - (void)tick:(CADisplayLink *)l {
     extern int mtl_fps_target(void);
     { static int last = -1; int f = mtl_fps_target(); if (f != last) { last = f; l.preferredFrameRateRange = f == 30 ? CAFrameRateRangeMake(30, 30, 30) : f == 120 ? CAFrameRateRangeMake(120, 120, 120) : CAFrameRateRangeMake(60, 60, 60); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
+    [self work];
+}
+- (void)work {
     DmMetalView *v = g_touch_view;
     if (v) {
         if (g_full) { static int lx = -1, ly, lw, lh, lrh, lrw; int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h);   // 界面矩形由宿主定（开机后才有、切档会变）：变了就让容器重摆游戏视图 | The UI rectangle is decided by the host (available only after boot, changes when the profile switches): on change, have the container re-lay out the game view
@@ -941,9 +949,9 @@ static UIView *attach_fps_hud(UIView *top) {
                                               [l.widthAnchor constraintGreaterThanOrEqualToConstant:64], [l.heightAnchor constraintEqualToConstant:20]]];
     __block uint64_t lp = 0, lt = 0; __weak UILabel *wl = l;
     [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *tm) { UILabel *lab = wl; if (!lab) { [tm invalidate]; return; }
-        int dm_custom_get(const char *); uint64_t mtl_present_count(void);
+        int dm_custom_get(const char *); uint64_t mtl_presented_count(void);   // 系统确认真正上屏的帧（复审 F08），不是出图尝试 | frames the system confirms on screen (re-audit F08), not present attempts
         if (!dm_custom_get("fps_hud")) { lab.hidden = YES; lt = 0; return; }
-        uint64_t t = now_ns(), p = mtl_present_count();
+        uint64_t t = now_ns(), p = mtl_presented_count();
         if (lt && t > lt) { lab.text = [NSString stringWithFormat:@" %.0f fps ", (double)(p - lp) * 1e9 / (double)(t - lt)]; lab.hidden = NO; }
         lt = t; lp = p; }];
     return top;
@@ -957,7 +965,12 @@ UIView *front_ios_view(CGRect frame) {
         g_rate_link = [CADisplayLink displayLinkWithTarget:[DmRateHint new] selector:@selector(tick:)];
         g_rate_link.preferredFrameRateRange = CAFrameRateRangeMake(60, 60, 60);
         [g_rate_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-    } else LOG("DM_RATE_HINT=0：不挂帧率表态显示链接");
+    } else {   // 实验：不表态刷新率，但触控 / 布局工作照常由 60 Hz 定时器驱动（复审 F03） | experiment: no rate declaration, touch / layout work still driven by a 60 Hz timer (re-audit F03)
+        static DmRateHint *worker; static NSTimer *timer; worker = [DmRateHint new];
+        timer = [NSTimer timerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer *tm) { (void)tm; [worker work]; }];
+        [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
+        LOG("DM_RATE_HINT=0：不挂帧率表态显示链接；触控 / 布局改由主线程 60 Hz 定时器驱动");
+    }
     g_layer = (CAMetalLayer *)v.layer;
     g_layer.device = MTLCreateSystemDefaultDevice();
     g_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;

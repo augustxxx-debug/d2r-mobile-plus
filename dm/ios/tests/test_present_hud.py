@@ -1,0 +1,63 @@
+"""复审 F03 / F08（2026-10-27）的源码级回归：
+F03：DM_RATE_HINT=0 只去掉刷新率表态，触控 / 布局工作仍由主线程定时器驱动；
+F08：显示帧数标签读系统确认上屏的计数（presentedTime > 0 才计），计数器跨线程读写走原子操作。
+Source-level regression for re-audit F03 / F08 (2026-10-27):
+F03: DM_RATE_HINT=0 drops only the refresh-rate declaration; touch / layout work keeps running from a main-thread timer;
+F08: the frame-rate label reads the system-confirmed presented count (counted only when presentedTime > 0); the counters use atomic access across threads."""
+import re
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+FRONT = (ROOT / 'ios' / 'Sources' / 'front_ios.m').read_text(encoding='utf-8')
+MTL = (ROOT / 'gfx' / 'nvn' / 'nvn_mtl.m').read_text(encoding='utf-8')
+
+
+def block(src, start):
+    i = src.index(start); depth = 0; j = src.index('{', i)
+    for k in range(j, len(src)):
+        depth += src[k] == '{'; depth -= src[k] == '}'
+        if depth == 0:
+            return src[i:k + 1]
+    raise AssertionError('unbalanced: ' + start)
+
+
+class RateHint(unittest.TestCase):
+    def test_tick_declares_then_delegates_to_work(self):
+        tick = block(FRONT, '- (void)tick:(CADisplayLink *)l {')
+        self.assertIn('preferredFrameRateRange', tick); self.assertIn('[self work]', tick)
+        self.assertNotIn('tickTouchControls', tick)
+
+    def test_work_does_touch_and_layout(self):
+        work = block(FRONT, '- (void)work {')
+        for needed in ('tickTouchControls', 'refreshPortalBinding', 'setNeedsLayout'):
+            self.assertIn(needed, work)
+        self.assertNotIn('preferredFrameRateRange', work)
+
+    def test_rate_hint_off_still_drives_work(self):
+        i = FRONT.index('if (!getenv("DM_RATE_HINT") || atoi(getenv("DM_RATE_HINT")))')
+        off = FRONT[i:i + 1500].split('} else {', 1)[1]
+        self.assertRegex(off, r'NSTimer timerWithTimeInterval:1\.0 / 60')
+        self.assertIn('[worker work]', off); self.assertIn('NSRunLoopCommonModes', off)
+
+
+class PresentedCount(unittest.TestCase):
+    def test_label_reads_presented_count(self):
+        i = FRONT.index('static UIView *attach_fps_hud(UIView *top)')
+        hud = FRONT[i:i + 3000]
+        self.assertIn('mtl_presented_count()', hud); self.assertNotIn('mtl_present_count()', hud)
+
+    def test_presented_counter_only_on_real_presentation(self):
+        i = MTL.index('[dr addPresentedHandler:^(id<MTLDrawable> d) {')
+        handler = MTL[i:i + 600]
+        self.assertRegex(handler, r'if \(tt > 0\) atomic_fetch_add_explicit\(&g_presented_ok, 1')
+        self.assertIn('static _Atomic uint64_t g_presented_ok;', MTL)
+
+    def test_attempt_counter_atomic_access(self):
+        self.assertIn('__atomic_add_fetch(&g_present_n, 1, __ATOMIC_RELAXED)', MTL)
+        self.assertIn('return __atomic_load_n(&g_present_n, __ATOMIC_RELAXED)', MTL)
+        self.assertEqual(len(re.findall(r'\bg_present_n\+\+', MTL)), 0)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=1)

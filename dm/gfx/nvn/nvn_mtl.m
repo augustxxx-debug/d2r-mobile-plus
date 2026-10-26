@@ -5642,7 +5642,7 @@ void mtl_exec(const uint8_t *p) {
 static id<MTLRenderPipelineState> g_blit_pso; static MTLPixelFormat g_blit_fmt;
 static id<MTLSamplerState> g_blit_samp;
 static uint64_t g_present_n;
-uint64_t mtl_present_count(void) { return g_present_n; }   // 实际出图次数（发热归因 DM_HEAT 算出图帧率） | Actual present count (heat attribution DM_HEAT computes the present frame rate)
+uint64_t mtl_present_count(void) { return __atomic_load_n(&g_present_n, __ATOMIC_RELAXED); }   // 出图尝试次数（进入 present_now 即计，含后来失败 / 被系统丢弃的）；跨线程读用原子读 | present attempts (counted on entering present_now, including ones that later fail / are dropped); atomic for cross-thread reads   // 实际出图次数（发热归因 DM_HEAT 算出图帧率） | Actual present count (heat attribution DM_HEAT computes the present frame rate)
 void mtl_res_snapshot(mtl_res_count *out) {
     memset(out, 0, sizeof *out);
     out->pso = g_pso.n;
@@ -5926,6 +5926,9 @@ typedef struct { uint64_t n; double t; } pres_ent;
 static pres_ent g_pres[PRING];
 // 取第 n 次出图的实际呈现时刻（未就绪返回 0，被丢弃返回 −1）
 // Get the actual presentation time of the nth present (returns 0 if not ready, -1 if dropped)
+// 系统确认真正上屏的帧数（presentedTime > 0 的回调才计，复审 F08）：显示帧数标签用它，不用出图尝试次数 | Frames the system confirms as actually displayed (only callbacks with presentedTime > 0, re-audit F08): the frame-rate label uses this, not present attempts
+static _Atomic uint64_t g_presented_ok;
+uint64_t mtl_presented_count(void) { return atomic_load_explicit(&g_presented_ok, memory_order_relaxed); }
 double mtl_presented_time(uint64_t n) { pres_ent e = g_pres[n % PRING]; return e.n == n ? e.t : 0; }
 static _Atomic uint64_t g_drawable_ns;   // 出图里等 nextDrawable 的累计墙钟（计时埋点） | Accumulated wall clock waiting for nextDrawable in present (timing instrumentation)
 uint64_t mtl_drawable_ns_take(void) { return atomic_exchange(&g_drawable_ns, 0); }
@@ -6117,7 +6120,7 @@ static void present_rgb(id<MTLTexture> dt, uint64_t ticket) {
 static double g_link_it_tin;   // 节拍回调正在上屏的那一帧的入队时刻（只在节拍线程读写） | Enqueue time of the frame the display-link callback is presenting (read and written only on the display-link thread)
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
-    g_present_n++;
+    __atomic_add_fetch(&g_present_n, 1, __ATOMIC_RELAXED);
     if (g_use != USE_OFF && g_use != USE_DONE) use_tick();
     if (bootprof() && (g_present_n == 1 || g_present_n % 120 == 0)) {
         if (g_present_n == 1) g_bp_first_present = bp_now() - g_bp_t0;
@@ -6244,6 +6247,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     [dr addPresentedHandler:^(id<MTLDrawable> d) {   // 真实呈现时刻（屏幕上真正换上这一帧的时间，CACurrentMediaTime 基准） | Actual presentation time (the time this frame is really put on screen, CACurrentMediaTime base)
         CFTimeInterval tt = d.presentedTime;
         g_pres[pn % PRING] = (pres_ent){pn, tt > 0 ? tt : -1};
+        if (tt > 0) atomic_fetch_add_explicit(&g_presented_ok, 1, memory_order_relaxed);
     }];
     // 每张至少显示一个出图周期：GPU 完成时刻在 120 Hz 刷新边界附近抖动时，不再出现「25 ms + 8.33 ms」成对的顿挫
     // Each frame is displayed for at least one present period: when the GPU completion time jitters around a 120 Hz refresh boundary, the paired "25 ms + 8.33 ms" stutter no longer appears
