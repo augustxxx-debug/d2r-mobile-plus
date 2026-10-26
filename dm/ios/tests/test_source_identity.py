@@ -60,15 +60,17 @@ class Wiring(unittest.TestCase):
         yml = (IOS / 'project.yml').read_text(encoding='utf-8')
         self.assertIn('DMSourceCommit: $(DM_SOURCE_COMMIT)', yml)
         self.assertIn('DMSourceDirty: $(DM_SOURCE_DIRTY)', yml)
-        self.assertIn('DM_SOURCE_COMMIT: "unknown"', yml)
-        self.assertIn('DMBuildInputs: $(DM_BUILD_INPUTS)', yml); self.assertIn('DM_BUILD_INPUTS: "unknown"', yml)
+        self.assertIn('DMBuildInputs: $(DM_BUILD_INPUTS)', yml)
+        # target 层不得定义这三项：它们会盖住项目层 Gen/dm.xcconfig 里的真实值（2026-10-27 实测） | target settings must not define them: they would mask the real values in the project-level Gen/dm.xcconfig (seen 2026-10-27)
+        for key in ('DM_SOURCE_COMMIT', 'DM_SOURCE_DIRTY', 'DM_BUILD_INPUTS'):
+            self.assertNotRegex(yml, r'(?m)^\s+' + key + r':\s', key)
 
     def test_boot_log_prints_identity(self):
         main = (IOS / 'Sources' / 'main.m').read_text(encoding='utf-8')
         boot = main.index('plog("boot: 版本 %s 构建 %s')
         ident = main.index('plog("boot: 源码 %s 工作区 %s 构建输入 %s"')
         self.assertLess(boot, ident); self.assertLess(ident - boot, 800)   # 紧跟日志头 | right after the log header
-        self.assertIn('inf[@"DMSourceCommit"]', main[ident:ident + 400]); self.assertIn('inf[@"DMBuildInputs"]', main[ident:ident + 400])
+        self.assertIn('idv(@"DMSourceCommit")', main[ident:ident + 400]); self.assertIn('idv(@"DMBuildInputs")', main[ident:ident + 400])
 
 
 if __name__ == '__main__':
