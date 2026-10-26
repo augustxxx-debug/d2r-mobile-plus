@@ -58,6 +58,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	  clang -fobjc-arc -framework Foundation t_diagnostic_scrub.m -o /tmp/dm-test-diagnostic-scrub && /tmp/dm-test-diagnostic-scrub; \
 	else echo "Skip diagnostic export redaction test: requires Apple Foundation"; fi
 	python3 test_casc_add_paths.py
+	python3 test_bench_device.py
 	python3 test_touch_layout_options.py
 	python3 test_touch_layout_language.py
 	$(call fixture_test,t_native_binding)

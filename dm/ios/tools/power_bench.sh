@@ -3,9 +3,10 @@
 # 结束后拉回 Documents/bench_<run>/ 并生成报告。测的是整机电量下降速率（%/小时），电量只有 1% 分辨率，所以每段至少 10 分钟才有意义。
 # 用法：dm/ios/tools/power_bench.sh <每段分钟> <档位序列如 1,3,0,2> [MetalFX: keep|off|auto|eco|balanced|quality（缺省 keep）] [存档备份目录（首次建 save.test 用）]
 #   例：dm/ios/tools/power_bench.sh 12 1,3,0,2 keep "$DM_ROOT/run/save-backup/<时刻>/<子目录>"
-# 流程：① 核对设备在、游戏没在跑；② Documents/save.test 不在就从备份目录推一份（绝不碰 Documents/save）；③ 带环境变量启动（测试存档、固定种子、按键脚本、
-#   轮换关卡、刷怪、档位时间表、采样）；④ 提示拔线，等待 总时长+1 分钟；⑤ 等设备重新接上后拉回数据、停进程、出报告。
-# 不装机：装机用 run.sh install。走设备锁（测量类）。产物：$DM_RUN_DIR 或 $DM_ROOT/run/ios-fable5/bench/<run>/
+# 流程：① 取设备锁（整个测量期间持有：手机在跑基准，别的会话不该装机或启动）；② 锁内核对设备在、目标 App 没在跑（按安装目录识别，见 bench_device.py）、
+#   Documents/save.test 是否存在（读不到设备直接退出，不当作“不存在”）；不在就从备份目录推一份（绝不碰 Documents/save）；③ 带环境变量启动，**不带 --terminate-existing**，
+#   不会结束任何已在运行的进程；④ 提示拔线，等待 总时长+1 分钟；⑤ 等设备接回，只结束目标 App 的进程、拉回数据、出报告，最后放锁。
+# 不装机：装机用 run.sh install。产物：$DM_RUN_DIR 或 $DM_ROOT/run/ios-fable5/bench/<run>/
 # Power benchmark (real device, unattended): one launch runs the whole render-resolution matrix; in-game the script walks, cycles through levels and spawns monsters on a timer;
 # one row every 5 s with battery / thermal / fps / GPU, then results are pulled from Documents/bench_<run>/ and a report is written. Measures whole-device battery drain (%/hour);
 # the battery level has 1% resolution, so each segment needs at least 10 minutes to mean anything.
@@ -22,17 +23,21 @@ SEG=${1:?每段分钟}; LEVELS=${2:?档位序列，如 1,3,0,2}; FX=${3:-keep}; 
 D=$DM_DEVICE; B=$DM_BUNDLE_ID; RUN=$(date +%Y%m%d-%H%M%S)
 OUT=${DM_RUN_DIR:-${DM_ROOT:-$HOME/dm-work}/run/ios-fable5}/bench/$RUN; mkdir -p "$OUT"
 t(){ echo "[$(date +%T)] $*" | tee -a "$OUT/bench.log"; }
-alive(){ xcrun devicectl device info processes --device "$D" 2>/dev/null | grep -q "DmIOS.app/DmIOS"; }
 present(){ xcrun devicectl list devices 2>/dev/null | grep -q "$D"; }
+BD=(python3 -I tools/bench_device.py)
+SEG_CHECK=$((SEG * 60)); NLV=$(echo "$LEVELS" | tr ',' '\n' | wc -l | tr -d ' ')
+# 设备锁：从第一次碰设备到拉回数据一直持有；上限 = 总时长 + 最长等接回 12 小时 + 30 分钟余量（看门狗超限会结束本脚本） | Device lock: held from the first device access until the data is pulled; limit = run time + up to 12 h waiting for reconnection + 30 min margin (the watchdog ends this script past the limit)
+devlock_acquire "power_bench $RUN" $((NLV * SEG_CHECK + 43200 + 1800)) || exit 1
+trap devlock_release EXIT
 present || { t "🔴 设备没接上（devicectl 看不到 $D）"; exit 1; }
-alive && { t "🔴 游戏正在运行：请先在游戏里保存退出并关闭 App，再跑基准"; exit 1; }
+STATE=$("${BD[@]}" state "$D" "$B") || { t "🔴 读不到设备状态（见上一行），不继续"; exit 1; }
+case "$STATE" in *app=absent*) t "🔴 手机上没装目标 App"; exit 1;; *app=running*) t "🔴 目标 App 正在运行（${STATE%%$'\n'*}）：请先在游戏里保存退出并关闭 App，再跑基准"; exit 1;; esac
 # ---- 测试存档：只用 Documents/save.test，缺了就从备份推一份 | Test save: only Documents/save.test; push one from the backup if missing
-if ! xcrun devicectl device copy from --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source Documents/save.test/Settings --destination "$OUT/.probe-settings" > /dev/null 2>&1; then
+if [ "${STATE##*savetest=}" != yes ]; then
   [ -n "$SAVESRC" ] && [ -d "$SAVESRC/save" ] || { t "🔴 设备上没有 Documents/save.test，且没给存档备份目录（第 4 个参数，里面要有 save/）"; exit 1; }
   xcrun devicectl device copy to --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source "$SAVESRC/save" --destination Documents/save.test > "$OUT/push_save.log" 2>&1 || { t "🔴 推测试存档失败（见 $OUT/push_save.log）"; exit 1; }
   t "已从备份建立 Documents/save.test（Documents/save 未动）"
 fi
-rm -rf "$OUT/.probe-settings"
 # ---- 时间表 | Schedule
 IFS=, read -r -a LV <<< "$LEVELS"; N=${#LV[@]}; SEGS=$((SEG * 60)); TOTAL=$((N * SEGS))
 SCHED=""; for i in "${!LV[@]}"; do SCHED="$SCHED${SCHED:+,}${LV[$i]}@$((i * SEGS))"; done
@@ -56,20 +61,21 @@ CASTENV=(); [ "$CAST" = 0 ] || CASTENV=(DEVICECTL_CHILD_DM_TEST_STAT="$STAT" DEV
 FXENV=(); [ "$FX" = keep ] || FXENV=(DEVICECTL_CHILD_DM_METALFX="$FX")
 # BENCH_EXTRA_ENV="DM_FPS=120 DM_PRESENT_HZ=120 DM_3D_SCALE=0.5"：原样透传给 App（空格分隔的 名=值），做 120 Hz 之类的实验 | passed through to the App as-is (space-separated name=value), for experiments such as 120 Hz
 for kv in ${BENCH_EXTRA_ENV:-}; do FXENV+=("DEVICECTL_CHILD_$kv"); done
-devlock_acquire "power_bench $RUN" $((TOTAL + 1800)) || exit 1
-trap devlock_release EXIT
+# 启动前在锁内再确认一次（上面推存档要时间） | Re-check inside the lock right before launch (pushing the save takes time)
+PID=$("${BD[@]}" pid "$D" "$B") || { t "🔴 读不到设备状态，不启动"; exit 1; }
+[ -z "$PID" ] || { t "🔴 目标 App 刚被启动（进程 $PID），放弃本次基准，不结束它"; exit 1; }
 env ${FXENV[@]+"${FXENV[@]}"} ${CASTENV[@]+"${CASTENV[@]}"} DEVICECTL_CHILD_DM_SAVE_TEST=1 DEVICECTL_CHILD_DM_TEST_ICLOUD_OFF=1 DEVICECTL_CHILD_DM_TEST_GOD=1 DEVICECTL_CHILD_DM_TEST_BRIGHTNESS="${BENCH_BRIGHTNESS:-0.5}" DEVICECTL_CHILD_DM_GAME_SEED=0x5a17 DEVICECTL_CHILD_DM_KEYS="$K" \
   DEVICECTL_CHILD_DM_TEST_WARP_LV="$WARP" DEVICECTL_CHILD_DM_TEST_SPAWN="$SPAWN" DEVICECTL_CHILD_DM_TEST_RENDER_RES="$SCHED" \
   DEVICECTL_CHILD_DM_HEAT="bench_$RUN/heat.tsv,5" DEVICECTL_CHILD_DM_THRCPU="bench_$RUN/thrcpu.tsv,10" DEVICECTL_CHILD_DM_SOAK="bench_$RUN/soak.tsv,30" \
   DEVICECTL_CHILD_DM_NVN_PASSGPU=0 DEVICECTL_CHILD_DM_WATCH=$((TOTAL + 240)) DEVICECTL_CHILD_DM_BENCH_DIR="bench_$RUN" \
-  xcrun devicectl device process launch --device "$D" --terminate-existing "$B" -mode boot > "$OUT/launch.log" 2>&1 || { t "🔴 启动失败"; tail -3 "$OUT/launch.log"; exit 1; }
+  xcrun devicectl device process launch --device "$D" "$B" -mode boot > "$OUT/launch.log" 2>&1 || { t "🔴 启动失败"; tail -3 "$OUT/launch.log"; exit 1; }
 printf '%s\n' "run=$RUN" "god=1" "slot=$SLOT" "brightness=${BENCH_BRIGHTNESS:-0.5}" "cast=$CAST" "stat=$STAT" "extra=${BENCH_EXTRA_ENV:-}" "seg_s=$SEGS" "levels=$LEVELS" "metalfx=$FX" "schedule=$SCHED" "warp=$WARP" "spawn=$SPAWN" "walk_s=$WALK" > "$OUT/params.txt"
 t "已启动：档位 $LEVELS，每段 $SEG 分钟，共 $((TOTAL / 60)) 分钟；MetalFX=$FX。现在请拔掉数据线，屏幕保持亮着（自动锁定设为永不；电量按每小时约 35% 预估要够用）。"
 sleep $((TOTAL + 60))
 t "时间到。等设备重新接上…"
 w=0; until present; do sleep 30; w=$((w + 30)); [ $w -ge 43200 ] && { t "🔴 等了 12 小时设备还没接回来"; exit 1; }; done   # 可以隔夜：第二天接回线再拉 | May run overnight: plug back in the next day and the data is pulled then
 sleep 5
-p=$(xcrun devicectl device info processes --device "$D" 2>/dev/null | grep "DmIOS.app/DmIOS" | awk '{print $1}'); [ -n "$p" ] && xcrun devicectl device process terminate --device "$D" --pid "$p" > /dev/null 2>&1; sleep 3
+p=$("${BD[@]}" pid "$D" "$B") || t "🔴 读不到目标 App 进程，不结束任何进程"; [ -n "${p:-}" ] && xcrun devicectl device process terminate --device "$D" --pid "$p" > /dev/null 2>&1; sleep 3   # 只结束目标 App（按安装目录核对） | Only the target App is ended (matched by its install directory)
 for f in heat.tsv thrcpu.tsv soak.tsv; do xcrun devicectl device copy from --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source "Documents/bench_$RUN/$f" --destination "$OUT/$f" > /dev/null 2>&1 || t "🔴 拉 $f 失败"; done
 xcrun devicectl device copy from --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source Documents/boot.txt --destination "$OUT/boot.txt" > /dev/null 2>&1 || t "🔴 拉 boot.txt 失败"
 t "数据已拉回 $OUT"
