@@ -3,7 +3,9 @@ End-to-end benchmark script tests (re-audit F01 / F02 / F07, 2026-10-27): the fu
 lock directory); no device is touched.
 - F01：macOS 自带 Bash 3.2 在 C.UTF-8 / en_US.UTF-8 / C 下都能跑完，不因变量紧邻中文标点报 unbound variable
 - F02：收尾只结束本次启动的进程；用户中途重开同一个 App（新进程号）时不结束它
-- F07：拉回关键文件失败或报告生成失败时，整个脚本以非零退出，不打印“数据已拉回”的成功行"""
+- F07：拉回关键文件失败或报告生成失败时，整个脚本以非零退出，不打印“数据已拉回”的成功行
+- 二审 R02：设备启动后断开但仍在清单里时，按真实查询继续等，接回后才拉数据；等到上限才失败且不拉数据
+- 二审归属：进程号对得上但本次采样表不再前进（证明不了是本次实例）时不结束"""
 import json
 import os
 import shutil
@@ -31,16 +33,24 @@ def out_json(result):
         else: json.dump(doc, open(dst, 'w'))
     sys.exit(0)
 def proc(pid): return {'processIdentifier': pid, 'executable': 'file://' + st['appdir'] + '/DmIOS'}
-if a[:3] == ['devicectl', 'list', 'devices']:
-    print('Name   Hostname   Identifier   State'); print('iPhone x.local ' + st['device'] + ' available'); sys.exit(0)
+if a[:3] == ['devicectl', 'list', 'devices']:   # 断开的设备也照样列出（二审 R02 的前提） | a disconnected device is still listed (the premise of second review R02)
+    state = 'unavailable' if st.get('launched') and st.get('offline', 0) > 0 else 'available'
+    print('Name   Hostname   Identifier   State'); print('iPhone x.local ' + st['device'] + ' ' + state); sys.exit(0)
 if a[:2] != ['devicectl', 'device']: sys.exit(2)
 cmd = a[2:4]
+if st.get('launched') and st.get('offline', 0) > 0 and cmd != ['process', 'launch']:   # 启动后断开：前 N 次设备查询都失败 | offline after launch: the first N device queries fail
+    st['offline'] -= 1; save(); print('ERROR: device is not connected', file=sys.stderr); sys.exit(1)
 if cmd == ['info', 'apps']:
     out_json({'apps': [{'bundleIdentifier': st['bundle'], 'url': 'file://' + st['appdir'] + '/', 'name': 'D2R'}]})
 if cmd == ['info', 'processes']:
     pids = st['after'] if st.get('launched') else st['before']
     out_json({'runningProcesses': [proc(p) for p in pids]})
 if cmd == ['info', 'files']:
+    sub = a[a.index('--subdirectory') + 1]
+    if sub.startswith('Documents/bench_'):   # 本次采样表：在写就每次读修改时间前进 | this run's heat table: its mtime advances per read while it is being written
+        st['heat_reads'] = st.get('heat_reads', 0) + 1; save()
+        k = st['heat_reads'] if st.get('heat_live', True) else 1
+        out_json({'files': [{'name': 'heat.tsv', 'resources': {'isDirectory': False}, 'metadata': {'lastModDate': '2026-10-27T10:00:%02d.000Z' % (k * 5 % 60)}}]})
     out_json({'files': [{'name': 'save.test', 'resources': {'isDirectory': True}}]})
 if cmd == ['process', 'launch']:
     st['launched'] = True; save()
@@ -71,7 +81,7 @@ FAKE_SLEEP = '#!/bin/bash\n# 长等待瞬时返回；看门狗的短轮询照常
 
 
 class Bench(unittest.TestCase):
-    def run_bench(self, locale='en_US.UTF-8', **scenario):
+    def run_bench(self, locale='en_US.UTF-8', extra_env=None, **scenario):
         tmp = Path(tempfile.mkdtemp(prefix='bench-e2e-')); self.addCleanup(shutil.rmtree, tmp, True)
         bin_ = tmp / 'bin'; bin_.mkdir()
         (bin_ / 'xcrun').write_text(FAKE_XCRUN); (bin_ / 'sleep').write_text(FAKE_SLEEP)
@@ -84,6 +94,7 @@ class Bench(unittest.TestCase):
                'FAKE_STATE': str(tmp / 'state.json'), 'FAKE_CALLS': str(tmp / 'calls.log'), 'DM_LOCAL_ENV': str(tmp / 'local.env'),
                'DM_ROOT': str(tmp / 'root'), 'DM_RUN_DIR': str(tmp / 'run'), 'DM_DEVLOCK_DIR': str(tmp / 'lock' / 'device.lock'),
                'DM_DEVLOCK_HIST': str(tmp / 'lock' / 'hist.tsv'), 'DM_DEVLOCK_WD_LOG': str(tmp / 'lock' / 'wd.log')}
+        env.update(extra_env or {})
         r = subprocess.run([BASH, str(IOS / 'tools' / 'power_bench.sh'), '1', '1,3'], env=env, capture_output=True, text=True, errors='replace', timeout=120)
         calls = (tmp / 'calls.log').read_text() if (tmp / 'calls.log').exists() else ''
         out = r.stdout + r.stderr
@@ -120,6 +131,28 @@ class Bench(unittest.TestCase):
     def test_f07_report_failure_fails_the_run(self):
         rc, out, _, _, _ = self.run_bench(heat_garbage=True)
         self.assertNotEqual(rc, 0, out[-1500:]); self.assertIn('报告生成失败', out)
+
+    def test_r02_listed_but_offline_waits_then_pulls(self):
+        rc, out, calls, runs, _ = self.run_bench(offline=4)
+        self.assertEqual(rc, 0, out[-1500:]); self.assertIn('设备还连不上', out); self.assertIn('设备已接回', out)
+        lines = calls.splitlines()
+        launch = next(i for i, l in enumerate(lines) if 'process launch' in l)
+        first_copy = next(i for i, l in enumerate(lines) if 'copy from' in l)
+        ready_after = [l for l in lines[launch + 1:first_copy] if 'info apps' in l]
+        self.assertGreaterEqual(len(ready_after), 5, 'four failed readiness queries, then one that succeeds, before any pull')
+
+    def test_r02_reconnect_limit_fails_without_pulling(self):
+        rc, out, calls, _, _ = self.run_bench(offline=1000, extra_env={'BENCH_RECONNECT_S': '90'})
+        self.assertNotEqual(rc, 0); self.assertIn('还连不上，本次基准失败', out)
+        self.assertNotIn('copy from', calls); self.assertNotIn('process terminate', calls)
+
+    def test_r02_bad_reconnect_value_refused_before_device(self):
+        rc, out, calls, _, _ = self.run_bench(extra_env={'BENCH_RECONNECT_S': '12h'})
+        self.assertNotEqual(rc, 0); self.assertIn('BENCH_RECONNECT_S', out); self.assertEqual(calls, '')
+
+    def test_ownership_needs_live_heat_table(self):
+        rc, out, calls, _, _ = self.run_bench(after=[111], heat_live=False)
+        self.assertEqual(rc, 0, out[-1500:]); self.assertNotIn('process terminate', calls); self.assertIn('证明不了是本次实例', out)
 
 
 class ShellVarBoundary(unittest.TestCase):

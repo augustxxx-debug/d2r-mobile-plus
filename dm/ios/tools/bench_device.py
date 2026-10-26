@@ -9,7 +9,11 @@ installed bundle directory, never by executable name (several ports share the na
   bench_device.py pid <device> <bundle>     打印目标 App 的进程号（没在跑则不打印）；设备读不到退出码 2
   bench_device.py pids <device> <bundle>    打印目标 App 的全部进程号（空格分隔）；设备读不到退出码 2
                                             prints all of the target App's pids (space-separated); exit 2 when the device cannot be read
-                                            prints the target App's pid (nothing if not running); exit 2 when the device cannot be read
+  bench_device.py ready <device> <bundle>   真的查一次设备（带超时的只读查询）；能读到退出码 0，否则 2。设备“在清单里”不等于“连得上”（二审 R02）
+                                            does one real read-only query with a timeout; exit 0 when it answers, 2 otherwise. Being listed is not being reachable (second review R02)
+  bench_device.py mtime <device> <bundle> <dir> <name>
+                                            打印 App 容器里 <dir>/<name> 的修改时间（设备给的原文，没有该文件则不打印）；设备读不到退出码 2
+                                            prints the modification time of <dir>/<name> in the App container (as the device reports it; nothing if absent); exit 2 when unreadable
 """
 import json
 import subprocess
@@ -56,6 +60,14 @@ def has_savetest(documents):
     return any(f.get('name') == 'save.test' and f.get('resources', {}).get('isDirectory') for f in documents)
 
 
+def file_mtime(files, name):
+    """files 为 devicectl info files 的结果；返回 name 的 metadata.lastModDate（原文），没有返回 None | lastModDate of name as reported, None when absent"""
+    for f in files:
+        if f.get('name') == name and not f.get('resources', {}).get('isDirectory'):
+            return f.get('metadata', {}).get('lastModDate') or None
+    return None
+
+
 def device_json(device, *arguments):
     r = subprocess.run(['xcrun', 'devicectl', 'device', *arguments, '--device', device, '--timeout', '30', '--json-output', '-'],
                        capture_output=True, text=True)
@@ -79,6 +91,19 @@ def query(device, bundle, want_savetest):
 
 
 def main(argv):
+    if len(argv) == 4 and argv[1] == 'ready':
+        try:
+            device_json(argv[2], 'info', 'apps', '--bundle-id', argv[3]); return 0
+        except (DeviceError, ValueError, KeyError) as e:
+            print('🔴 ' + str(e), file=sys.stderr); return 2
+    if len(argv) == 6 and argv[1] == 'mtime':
+        try:
+            m = file_mtime(device_json(argv[2], 'info', 'files', '--domain-type', 'appDataContainer', '--domain-identifier', argv[3],
+                                       '--subdirectory', argv[4], '--no-recurse')['files'], argv[5])
+        except (DeviceError, ValueError, KeyError) as e:
+            print('🔴 ' + str(e), file=sys.stderr); return 2
+        if m: print(m)
+        return 0
     if len(argv) != 4 or argv[1] not in ('state', 'pid', 'pids'):
         print(__doc__, file=sys.stderr); return 64
     try:

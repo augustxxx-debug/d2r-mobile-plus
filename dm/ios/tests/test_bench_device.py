@@ -52,6 +52,31 @@ class Identity(unittest.TestCase):
             bd.device_json = orig
 
 
+class Queries(unittest.TestCase):
+    def test_mtime_picks_named_file(self):
+        files = [{'name': 'thrcpu.tsv', 'resources': {'isDirectory': False}, 'metadata': {'lastModDate': 'A'}},
+                 {'name': 'heat.tsv', 'resources': {'isDirectory': False}, 'metadata': {'lastModDate': '2026-10-27T10:00:05.000Z'}}]
+        self.assertEqual(bd.file_mtime(files, 'heat.tsv'), '2026-10-27T10:00:05.000Z')
+        self.assertIsNone(bd.file_mtime(files[:1], 'heat.tsv'))
+        self.assertIsNone(bd.file_mtime([{'name': 'heat.tsv', 'resources': {'isDirectory': True}}], 'heat.tsv'))
+
+    def test_ready_and_mtime_report_device_errors(self):
+        orig = bd.device_json
+        def boom(*a):
+            raise bd.DeviceError('设备不可用')
+        bd.device_json = boom
+        try:
+            self.assertEqual(bd.main(['x', 'ready', 'dev', 'org.example.d2r']), 2)
+            self.assertEqual(bd.main(['x', 'mtime', 'dev', 'org.example.d2r', 'Documents/bench_x', 'heat.tsv']), 2)
+        finally:
+            bd.device_json = orig
+        bd.device_json = lambda *a: {'apps': []}
+        try:
+            self.assertEqual(bd.main(['x', 'ready', 'dev', 'org.example.d2r']), 0)
+        finally:
+            bd.device_json = orig
+
+
 class ScriptOrder(unittest.TestCase):
     src = (TOOLS / 'power_bench.sh').read_text(encoding='utf-8')
     code = '\n'.join(l for l in src.splitlines() if not l.lstrip().startswith('#'))
@@ -81,7 +106,20 @@ class ScriptOrder(unittest.TestCase):
         self.assertIn('|| { t "🔴 读不到设备状态，不启动"; exit 1; }', self.code)
 
     def test_lock_limit_covers_reconnect_wait(self):
-        self.assertIn('43200', self.code[self.first(r'\ndevlock_acquire '):self.first(r'trap devlock_release')])
+        self.assertIn('RECONNECT=${BENCH_RECONNECT_S:-43200}', self.code)
+        self.assertIn('+ RECONNECT +', self.code[self.first(r'\ndevlock_acquire '):self.first(r'trap devlock_release')])
+
+    def test_ready_is_a_real_query_not_the_device_list(self):
+        # 二审 R02：设备“在清单里”不等于“连得上” | second review R02: listed is not reachable
+        self.assertNotIn('list devices', self.code)
+        self.assertIn('present(){ "${BD[@]}" ready', self.code)
+
+    def test_ownership_window_matches_app_lifetime(self):
+        # 二审：寿命窗口与 DM_WATCH 同一个值，不再多给 60 秒 | second review: the lifetime window is the same value as DM_WATCH, no extra 60 s
+        self.assertIn('WATCH=$((TOTAL + 240))', self.code); self.assertIn('DEVICECTL_CHILD_DM_WATCH=$WATCH', self.code)
+        self.assertNotIn('TOTAL + 300', self.code)
+        tail = self.code[self.first(r'等设备重新接上'):]
+        self.assertIn('-gt "$WATCH"', tail); self.assertIn('-le "$WATCH"', tail); self.assertIn('heat_mtime', tail)
 
     def test_end_only_terminates_target(self):
         tail = self.code[self.first(r'等设备重新接上'):]

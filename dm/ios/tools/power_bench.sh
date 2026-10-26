@@ -24,13 +24,17 @@ SEG=${1:?每段分钟}; LEVELS=${2:?档位序列，如 1,3,0,2}; FX=${3:-keep}; 
 D=$DM_DEVICE; B=$DM_BUNDLE_ID; RUN=$(date +%Y%m%d-%H%M%S)
 OUT=${DM_RUN_DIR:-${DM_ROOT:-$HOME/dm-work}/run/ios-fable5}/bench/$RUN; mkdir -p "$OUT"
 t(){ echo "[$(date +%T)] $*" | tee -a "$OUT/bench.log"; }
-present(){ xcrun devicectl list devices 2>/dev/null | grep -q "$D"; }
+# 设备就绪 = 一次带超时的真实只读查询成功；已配对但断开的设备仍会出现在 devicectl 清单里，不能拿“在清单里”当“接上了”（二审 R02）
+# Device ready = one real read-only query with a timeout succeeds; a paired but disconnected device still shows in the devicectl list, so being listed is not being connected (second review R02)
+present(){ "${BD[@]}" ready "$D" "$B" > /dev/null 2>&1; }
 BD=(python3 -I tools/bench_device.py)
 SEG_CHECK=$((SEG * 60)); NLV=$(echo "$LEVELS" | tr ',' '\n' | wc -l | tr -d ' ')
-# 设备锁：从第一次碰设备到拉回数据一直持有；上限 = 总时长 + 最长等接回 12 小时 + 30 分钟余量（看门狗超限会结束本脚本） | Device lock: held from the first device access until the data is pulled; limit = run time + up to 12 h waiting for reconnection + 30 min margin (the watchdog ends this script past the limit)
-devlock_acquire "power_bench $RUN" $((NLV * SEG_CHECK + 43200 + 1800)) || exit 1
+RECONNECT=${BENCH_RECONNECT_S:-43200}   # 结束后最多等设备接回多少秒（缺省 12 小时，可隔夜） | how long to wait for the device after the run (default 12 h, may run overnight)
+case "$RECONNECT" in ''|*[!0-9]*) echo "🔴 BENCH_RECONNECT_S 必须是秒数：${RECONNECT}"; exit 1;; esac
+# 设备锁：从第一次碰设备到拉回数据一直持有；上限 = 总时长 + 最长等接回 + 30 分钟余量（看门狗超限会结束本脚本） | Device lock: held from the first device access until the data is pulled; limit = run time + the reconnect wait + 30 min margin (the watchdog ends this script past the limit)
+devlock_acquire "power_bench $RUN" $((NLV * SEG_CHECK + RECONNECT + 1800)) || exit 1
 trap devlock_release EXIT
-present || { t "🔴 设备没接上（devicectl 看不到 ${D}）"; exit 1; }
+present || { t "🔴 设备没接上或连不上（对 ${D} 的只读查询失败）"; exit 1; }
 STATE=$("${BD[@]}" state "$D" "$B") || { t "🔴 读不到设备状态（见上一行），不继续"; exit 1; }
 case "$STATE" in *app=absent*) t "🔴 手机上没装目标 App"; exit 1;; *app=running*) t "🔴 目标 App 正在运行（${STATE%%$'\n'*}）：请先在游戏里保存退出并关闭 App，再跑基准"; exit 1;; esac
 # ---- 测试存档：只用 Documents/save.test，缺了就从备份推一份 | Test save: only Documents/save.test; push one from the backup if missing
@@ -41,6 +45,7 @@ if [ "${STATE##*savetest=}" != yes ]; then
 fi
 # ---- 时间表 | Schedule
 IFS=, read -r -a LV <<< "$LEVELS"; N=${#LV[@]}; SEGS=$((SEG * 60)); TOTAL=$((N * SEGS))
+WATCH=$((TOTAL + 240))   # App 自身在这么多秒后退出（DM_WATCH）；收尾的寿命窗口用同一个值（二审） | the App exits by itself after this many seconds (DM_WATCH); the wrap-up lifetime window uses the same value (second review)
 SCHED=""; for i in "${!LV[@]}"; do SCHED="$SCHED${SCHED:+,}${LV[$i]}@$((i * SEGS))"; done
 # 进局：主菜单 X 开选角 → 载入第 0 个角色 → 进游戏；之后左摇杆 左→上→右→下 各 10 秒循环（最多 256 项，首 2 项进局）
 # Enter the game: X on the main menu opens character select → load character 0 → into the game; then left stick left→up→right→down 10 s each in a loop (at most 256 entries, first 2 enter the game)
@@ -68,27 +73,41 @@ PID=$("${BD[@]}" pid "$D" "$B") || { t "🔴 读不到设备状态，不启动";
 env ${FXENV[@]+"${FXENV[@]}"} ${CASTENV[@]+"${CASTENV[@]}"} DEVICECTL_CHILD_DM_SAVE_TEST=1 DEVICECTL_CHILD_DM_TEST_ICLOUD_OFF=1 DEVICECTL_CHILD_DM_TEST_GOD=1 DEVICECTL_CHILD_DM_TEST_BRIGHTNESS="${BENCH_BRIGHTNESS:-0.5}" DEVICECTL_CHILD_DM_GAME_SEED=0x5a17 DEVICECTL_CHILD_DM_KEYS="$K" \
   DEVICECTL_CHILD_DM_TEST_WARP_LV="$WARP" DEVICECTL_CHILD_DM_TEST_SPAWN="$SPAWN" DEVICECTL_CHILD_DM_TEST_RENDER_RES="$SCHED" \
   DEVICECTL_CHILD_DM_HEAT="bench_$RUN/heat.tsv,5" DEVICECTL_CHILD_DM_THRCPU="bench_$RUN/thrcpu.tsv,10" DEVICECTL_CHILD_DM_SOAK="bench_$RUN/soak.tsv,30" \
-  DEVICECTL_CHILD_DM_NVN_PASSGPU=0 DEVICECTL_CHILD_DM_WATCH=$((TOTAL + 240)) DEVICECTL_CHILD_DM_BENCH_DIR="bench_$RUN" \
+  DEVICECTL_CHILD_DM_NVN_PASSGPU=0 DEVICECTL_CHILD_DM_WATCH=$WATCH DEVICECTL_CHILD_DM_BENCH_DIR="bench_$RUN" \
   xcrun devicectl device process launch --device "$D" "$B" -mode boot --json-output "$OUT/launch.json" > "$OUT/launch.log" 2>&1 || { t "🔴 启动失败"; tail -3 "$OUT/launch.log"; exit 1; }
 # 记下本次启动的进程号与时刻：收尾只结束这个实例（复审 F02）。App 自身在 DM_WATCH = 总时长 + 240 秒时退出，所以超过这个时间仍在的同号进程不可能是本次实例
 # Record this launch's pid and time: the wrap-up ends only this instance (re-audit F02). The App exits by itself at DM_WATCH = run time + 240 s, so a same-pid process alive after that cannot be this instance
 LPID=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["result"]["process"]["processIdentifier"])' "$OUT/launch.json" 2>/dev/null || true); LAUNCH_T=$(date +%s)
-[ -n "$LPID" ] || t "⚠ 没读到本次启动的进程号：收尾不会结束任何进程（App 会在约 $(( (TOTAL + 240) / 60 )) 分钟后自行退出）"
+[ -n "$LPID" ] || t "⚠ 没读到本次启动的进程号：收尾不会结束任何进程（App 会在约 $(( WATCH / 60 )) 分钟后自行退出）"
 printf '%s\n' "run=$RUN" "god=1" "slot=$SLOT" "brightness=${BENCH_BRIGHTNESS:-0.5}" "cast=$CAST" "stat=$STAT" "extra=${BENCH_EXTRA_ENV:-}" "seg_s=$SEGS" "levels=$LEVELS" "metalfx=$FX" "schedule=$SCHED" "warp=$WARP" "spawn=$SPAWN" "walk_s=$WALK" "launch_pid=${LPID}" > "$OUT/params.txt"
 t "已启动：档位 ${LEVELS}，每段 ${SEG} 分钟，共 $((TOTAL / 60)) 分钟；MetalFX=${FX}。现在请拔掉数据线，屏幕保持亮着（自动锁定设为永不；电量按每小时约 35% 预估要够用）。"
 sleep $((TOTAL + 60))
 t "时间到。等设备重新接上…"
-w=0; until present; do sleep 30; w=$((w + 30)); [ $w -ge 43200 ] && { t "🔴 等了 12 小时设备还没接回来"; exit 1; }; done   # 可以隔夜：第二天接回线再拉 | May run overnight: plug back in the next day and the data is pulled then
+w=0; until present; do
+  [ $w = 0 ] && t "设备还连不上（在清单里也算没接上，按真实查询判断），每 30 秒再试，最多等 $((RECONNECT / 60)) 分钟"
+  sleep 30; w=$((w + 30)); [ $w -ge "$RECONNECT" ] && { t "🔴 等了 $((RECONNECT / 60)) 分钟设备还连不上，本次基准失败，未拉数据"; exit 1; }
+done   # 可以隔夜：第二天接回线再拉 | May run overnight: plug back in the next day and the data is pulled then
+t "设备已接回（只读查询成功）"
 sleep 5
-# 收尾：只结束本次启动的实例（复审 F02）。进程号对得上、且仍在 App 自身的寿命内才结束；对不上的同 App 进程（用户后来自己打开的）一律不动
-# Wrap-up: end only this launch's instance (re-audit F02): only when the pid matches and we are still within the App's own lifetime; any other process of the same App (one the user opened later) is left alone
+# 收尾：只结束本次启动的实例（复审 F02、二审）。三条同时成立才结束：进程号是本次启动的；仍在 App 自身寿命 DM_WATCH 内；
+# 本次专属的 Documents/bench_<run>/heat.tsv 在两次读之间（隔 8 秒，采样每 5 秒一行）修改时间前进了——只有带本次环境变量启动的实例会写它，
+# 两次读都用设备自己的时间，不比较 Mac 与手机的时钟。任何一条证明不了就不结束，App 到时自行退出
+# Wrap-up: end only this launch's instance (re-audit F02, second review). All three must hold: the pid is this launch's; we are within the App's own DM_WATCH lifetime;
+# this run's own Documents/bench_<run>/heat.tsv advanced its modification time between two reads 8 s apart (one row every 5 s) -- only the instance launched with this run's
+# environment writes it, and both reads use the device's own clock, never comparing Mac and phone clocks. If any cannot be proven, nothing is terminated; the App exits on its own
+heat_mtime(){ "${BD[@]}" mtime "$D" "$B" "Documents/bench_$RUN" heat.tsv; }
 NOW=$("${BD[@]}" pids "$D" "$B") || { NOW=""; t "🔴 读不到目标 App 进程，不结束任何进程"; }
-AGE=$(( $(date +%s) - LAUNCH_T ))
 for p in $NOW; do
-  if [ -n "$LPID" ] && [ "$p" = "$LPID" ] && [ "$AGE" -le $((TOTAL + 300)) ]; then
-    xcrun devicectl device process terminate --device "$D" --pid "$p" > /dev/null 2>&1 && t "已结束本次基准启动的进程 ${p}" || t "⚠ 结束进程 ${p} 失败"
+  AGE=$(( $(date +%s) - LAUNCH_T ))
+  if [ -z "$LPID" ] || [ "$p" != "$LPID" ] || [ "$AGE" -gt "$WATCH" ]; then
+    t "目标 App 进程 ${p} 不是本次基准启动的实例（本次 ${LPID:-未知}，已过 ${AGE} 秒，寿命 ${WATCH} 秒），不结束"; continue
+  fi
+  M1=$(heat_mtime) || M1=""; sleep 8; M2=$(heat_mtime) || M2=""
+  AGE=$(( $(date +%s) - LAUNCH_T ))
+  if [ -n "$M1" ] && [ -n "$M2" ] && [ "$M1" != "$M2" ] && [ "$AGE" -le "$WATCH" ]; then
+    xcrun devicectl device process terminate --device "$D" --pid "$p" > /dev/null 2>&1 && t "已结束本次基准启动的进程 ${p}（本次采样表仍在写：${M1} → ${M2}）" || t "⚠ 结束进程 ${p} 失败"
   else
-    t "目标 App 进程 ${p} 不是本次基准启动的实例（本次 ${LPID:-未知}，已过 ${AGE} 秒），不结束"
+    t "进程 ${p} 号码对得上，但证明不了是本次实例（本次采样表修改时间 ${M1:-读不到} → ${M2:-读不到}，已过 ${AGE} 秒），不结束；App 会在启动后 ${WATCH} 秒自行退出"
   fi
 done
 sleep 3
