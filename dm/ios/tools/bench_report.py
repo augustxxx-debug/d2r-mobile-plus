@@ -175,16 +175,23 @@ def main():
     print("| 档位 | 时长 | 电量 起→止 | 下降速率 %/h（±量化误差） | 温控档位分布 | 帧率均值 | GPU 均值 / 各 5 秒窗口 p95 的均值 ms | CPU% 均值 | 掉帧 | 传送/刷怪 |")
     print("|---|---|---|---|---|---|---|---|---|---|")
     for i, (lv, a, b) in enumerate(segs):
-        part = [r for r in rows if a + 15 <= r['sec'] < b and r['n'] > 0]   # 切档后 15 秒不算 | skip 15 s after the switch
+        # 区间原始行用于电量、温控、帧率、CPU 与完整性判断；GPU 样本数只决定 GPU 列（二审 R01），一个指标缺失不让其他指标“变干净”
+        # Raw rows in the window feed battery, thermal, fps, CPU and completeness; the GPU sample count only gates the GPU columns (second review R01), so one missing metric never cleans the others
+        part = [r for r in rows if a + 15 <= r['sec'] < b]   # 切档后 15 秒不算 | skip 15 s after the switch
         if not part:
             print(f"| {NAMES.get(lv, lv)} | — | 无样本 | | | | | | | |"); continue
+        gpart = [r for r in part if r['n'] > 0]
         dur_h = (part[-1]['sec'] - part[0]['sec']) / 3600
         th = {}
         for r in part:
             th[r['thermal']] = th.get(r['thermal'], 0) + 1
         thtxt = ' '.join(f"{k}:{v * 100 // len(part)}%" for k, v in sorted(th.items()))
         fps = sum(r['fps'] for r in part) / len(part)
-        gpu = sum(r['gpu'] for r in part) / len(part); gpu95 = sum(r['gpu95'] for r in part) / len(part)
+        if gpart:
+            gpu = sum(r['gpu'] for r in gpart) / len(gpart); gpu95 = sum(r['gpu95'] for r in gpart) / len(gpart)
+            gputxt = f"{gpu:.2f} / {gpu95:.2f}" + (f"（{len(part) - len(gpart)}/{len(part)} 窗无 GPU 样本）" if len(gpart) < len(part) else '')
+        else:
+            gputxt = '无 GPU 样本'
         cpu = sum(r['cpu'] for r in part) / len(part)
         if has_batt:
             br = battery_rate(part, step)
@@ -199,12 +206,12 @@ def main():
         dr = seg_drops[i]
         drtxt = f"{dr['dropped']}/{dr['frames']}（{100 * dr['dropped'] / max(dr['frames'], 1):.2f}%）" if dr else '无法归属'
         ev = f"{dr['warps']}/{dr['spawned']}" if dr else '—'
-        print(f"| {NAMES.get(lv, lv)} | {dur_h * 60:.1f} min | {batt} | {ratetxt} | {thtxt} | {fps:.1f} | {gpu:.2f} / {gpu95:.2f} | {cpu:.0f} | {drtxt} | {ev} |")
+        print(f"| {NAMES.get(lv, lv)} | {dur_h * 60:.1f} min | {batt} | {ratetxt} | {thtxt} | {fps:.1f} | {gputxt} | {cpu:.0f} | {drtxt} | {ev} |")
     if has_batt:
         rk = ranking(named)
         print("\n**功耗排名**：" + (" < ".join(rk) + "（误差区间不重叠）" if rk else "不给。有段不可比，或各段误差区间重叠；要分出高低，需拔线、同亮度、更长的段，或改用整机功率计。"))
-    print("\n说明：电量按上面的步长量化，±误差 = 步长 ÷ 段时长；温控分布为各档位占比；GPU 第二个数是各 5 秒采样窗口 p95 的算术平均，不是整段的 p95，不能据此证明整段尾延迟；GPU 毫秒受 GPU 调频影响，只作参考；各档共用一条不断前进的关卡 / 刷怪 / 施法时间线，固定种子不等于每档初始世界相同，排名需要同场景、预热、重复与换序实验；掉帧按日志中各段的「上屏」行累计。")
-    print("Notes: battery is quantized to the step above, ±error = step ÷ segment length; thermal shows the share of each state; the second GPU number is the mean of per-5-s-window p95s, not the segment p95; GPU ms is affected by GPU DVFS and is indicative only; all levels share one advancing level / spawn / cast timeline, so a fixed seed does not give each level the same starting world, and a ranking needs matched scenes, warm-up, repeats and reordering; dropped frames are summed from the present rows in each segment of the log.")
+    print("\n说明：电量按上面的步长量化，±误差 = 步长 ÷ 段时长；温控分布为各档位占比；GPU 第二个数是各 5 秒采样窗口 p95 的算术平均，不是整段的 p95，不能据此证明整段尾延迟；GPU 毫秒受 GPU 调频影响，只作参考；各档共用一条不断前进的关卡 / 刷怪 / 施法时间线，固定种子不等于每档初始世界相同，排名需要同场景、预热、重复与换序实验；掉帧按日志中各段的「上屏」行累计；电量、温控、帧率、CPU 用段内全部采样行，GPU 列只用有 GPU 样本的行并注明缺样本窗数。")
+    print("Notes: battery is quantized to the step above, ±error = step ÷ segment length; thermal shows the share of each state; the second GPU number is the mean of per-5-s-window p95s, not the segment p95; GPU ms is affected by GPU DVFS and is indicative only; all levels share one advancing level / spawn / cast timeline, so a fixed seed does not give each level the same starting world, and a ranking needs matched scenes, warm-up, repeats and reordering; dropped frames are summed from the present rows in each segment of the log; battery, thermal, fps and CPU use every sample row in the segment, the GPU columns use only rows with GPU samples and state how many windows had none.")
 
 
 if __name__ == '__main__':

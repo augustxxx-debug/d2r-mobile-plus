@@ -137,5 +137,61 @@ class Segments(unittest.TestCase):
         self.assertIsNone(r['rate']); self.assertIn('读不到电量', r['reason'])
 
 
+class MissingGpu(unittest.TestCase):
+    """二审 R01：GPU 样本数为 0 的行不能把同一行的电量 / 充电 / 帧率缺口一起删掉；每种缺失组合独立检验
+    Second review R01: a row with zero GPU samples must not delete the same row's battery / charging / fps gaps; each missing combination is tested on its own"""
+    def heat(self, patch):
+        lines = ['h\t' * 13 + 'h']
+        for i in range(133):   # 660 秒，单段 | 660 s, one segment
+            r = {'sec': i * 5, 'fps': 60, 'gpu': 10, 'gpu95': 11, 'n': 300, 'battery': 60 - 5 * (i // 66), 'charging': '未充电'}
+            if i * 5 == 300: r.update(patch)
+            lines.append('\t'.join(map(str, [r['sec'], 1, 100, r['fps'], r['gpu'], r['gpu95'], r['n'], 0.5, 120, r['battery'], r['charging'], 0, 1, 2])))
+        return '\n'.join(lines) + '\n'
+
+    def report(self, patch):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, 'params.txt').write_text('run=t\nseg_s=660\nlevels=1\n', encoding='utf-8')
+            Path(d, 'heat.tsv').write_text(self.heat(patch), encoding='utf-8')
+            out = io.StringIO(); argv = sys.argv; sys.argv = ['bench_report.py', d]
+            try:
+                with redirect_stdout(out): br.main()
+            finally:
+                sys.argv = argv
+            return next(l for l in out.getvalue().splitlines() if l.startswith('| 省电'))
+
+    def cells(self, row):
+        return [c.strip() for c in row.strip('|').split('|')]
+
+    def test_reviewer_scenario_gpu0_fps0_battery_unknown_charging_unknown(self):
+        row = self.cells(self.report({'n': 0, 'gpu': 0, 'gpu95': 0, 'fps': 0, 'battery': -1, 'charging': '未知'}))
+        self.assertIn('不给', row[3]); self.assertNotEqual(row[5], '60.0')
+
+    def test_gpu0_only_keeps_battery_and_marks_gpu(self):
+        row = self.cells(self.report({'n': 0, 'gpu': 0, 'gpu95': 0}))
+        self.assertNotIn('不给', row[3]); self.assertEqual(row[5], '60.0')
+        self.assertTrue(row[6].startswith('10.00 / 11.00'), row[6]); self.assertIn('1/', row[6])
+
+    def test_unknown_battery_alone_blocks_rate(self):
+        self.assertIn('读不到电量', self.cells(self.report({'battery': -1}))[3])
+
+    def test_unknown_charging_alone_blocks_rate(self):
+        self.assertIn('未知', self.cells(self.report({'charging': '未知'}))[3])
+
+    def test_low_fps_window_lowers_mean_even_without_gpu(self):
+        self.assertNotEqual(self.cells(self.report({'n': 0, 'fps': 0}))[5], '60.0')
+
+    def test_all_windows_without_gpu_still_reports_other_metrics(self):
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, 'params.txt').write_text('run=t\nseg_s=660\nlevels=1\n', encoding='utf-8')
+            Path(d, 'heat.tsv').write_text(self.heat({}).replace('\t300\t', '\t0\t'), encoding='utf-8')
+            out = io.StringIO(); argv = sys.argv; sys.argv = ['bench_report.py', d]
+            try:
+                with redirect_stdout(out): br.main()
+            finally:
+                sys.argv = argv
+            row = self.cells(next(l for l in out.getvalue().splitlines() if l.startswith('| 省电')))
+        self.assertEqual(row[6], '无 GPU 样本'); self.assertEqual(row[5], '60.0'); self.assertNotIn('不给', row[3])
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=1)
