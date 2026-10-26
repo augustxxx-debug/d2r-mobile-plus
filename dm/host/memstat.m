@@ -129,9 +129,11 @@ __attribute__((constructor)) static void memstat_start(void) {
 // Every interval, walk all threads of this process (task_threads), take the thread name and user + system CPU time (ns) from THREAD_EXTENDED_INFO, and difference them by thread id:
 // each line is "seconds, thread id, thread name, CPU% (100 = one core)"; the last line is "seconds, -, total, CPU%". Used for heat attribution (which thread eats CPU); enable together with DM_HEAT to compare against thermal state.
 #include <mach/thread_info.h>
+#include <sys/stat.h>
 #define THR_MAX 512
 static void *thrcpu_thread(void *p) {
     char path[1024]; int iv = 10; { const char *c = strchr((const char *)p, ','); snprintf(path, sizeof path, "%.*s", c ? (int)(c - (const char *)p) : (int)strlen(p), (const char *)p); if (c) iv = atoi(c + 1); }
+    { char dir[1024]; snprintf(dir, sizeof dir, "%s", path); char *sl = strrchr(dir, '/'); if (sl && sl != dir) { *sl = 0; mkdir(dir, 0755); } }   // 目录不在就建（基准把表放子目录） | Create the directory if missing (the benchmark puts the table in a subdirectory)
     FILE *f = fopen(path, "w"); if (!f) return NULL;
     fprintf(f, "秒\t线程号\t线程名\tCPU%%\n"); fflush(f);
     static uint64_t ids[THR_MAX], last[THR_MAX]; int n = 0; uint64_t t0 = now_ns(), tl = t0;
@@ -157,12 +159,16 @@ static void *thrcpu_thread(void *p) {
     }
     return NULL;
 }
-__attribute__((constructor)) static void thrcpu_start(void) {
-    const char *p = getenv("DM_THRCPU");
-    if (!p || !*p) return;
+static int g_thrcpu_started;   // 构造函数与 dm_thrcpu_start_env 只起一个 | Only one sampler, whether started by the constructor or by dm_thrcpu_start_env
+static void thrcpu_start_spec(const char *p) {
+    if (g_thrcpu_started++) return;
     char *spec = strdup(p);
 #if TARGET_OS_IPHONE
     if (*p != '/') { size_t n = strlen(getenv("HOME")) + strlen(p) + 16; spec = malloc(n); snprintf(spec, n, "%s/Documents/%s", getenv("HOME"), p); }
 #endif
     pthread_t th; pthread_create(&th, NULL, thrcpu_thread, spec); pthread_detach(th);
 }
+__attribute__((constructor)) static void thrcpu_start(void) { const char *p = getenv("DM_THRCPU"); if (p && *p) thrcpu_start_spec(p); }
+// 环境变量在 main() 里才设上的情形（iOS 测量包 main.m 的采样开关）：构造函数那时还读不到，这里再起；已起过不重复
+// For the case where the variable is only set inside main() (the sampling switch in the iOS measurement build's main.m): the constructor could not see it yet, so start here; never twice
+void dm_thrcpu_start_env(void) { const char *p = getenv("DM_THRCPU"); if (p && *p) thrcpu_start_spec(p); }

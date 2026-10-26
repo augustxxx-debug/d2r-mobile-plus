@@ -539,6 +539,7 @@ static BOOL astc_dl_configured(void) {   // 自动下载地址配了没有：测
 // Install package self-check (only for packages made from the shell on the releases page: the shell carries dm/shell_manifest.txt; packages built with Xcode do not have it and are not checked). Every item in the shell manifest must have been built in by d2rm_pack.py;
 // missing = the shell was installed without doing step 1 (or the package was assembled), and starting the host would exit where the loader reads dm/main.fixups.tsv (a crash for players). The product generation is also compared: the pack record dm/pack_info.txt against the shell's
 // dm/shell_info.txt (only when both exist; older pack tools did not write a pack record). If the check fails, do not start the host; show a message saying what is missing and which step to do
+static int g_ipad_compat;   // iPhone 上以 iPad 身份运行（签名工具的「iPad 模式」把 UIDeviceFamily 改成只剩 2）：系统按 iPad 比例加黑边，游戏改不了，只能提示 | Running as an iPad app on an iPhone (a signing tool's "iPad mode" leaves only 2 in UIDeviceFamily): the system letterboxes at the iPad aspect, the game cannot change that, only warn
 static NSString *g_block_title, *g_block_msg, *g_block_why;   // 非空 = 这台设备 / 这个安装包起不了游戏：不起宿主，场景里弹框（BlockVC）说明；why 进日志 | Non-empty = this device / this install package cannot start the game: do not start the host, show a message in the scene (BlockVC); why goes to the log
 static NSString *g_romfs; static char g_romfs_why[2048];   // 起宿主前那次资源校验的结果（host_start 写，boot_prepare 用） | Result of the resource check before starting the host (written by host_start, used by boot_prepare)
 static UIWindow *g_window;
@@ -677,7 +678,31 @@ static void boot_prepare(void) {
     }
     for (NSString *d in @[@"save", @"temp"])
         [fm createDirectoryAtPath:[doc stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
-    { void dm_custom_init(const char *dir); dm_custom_init(doc.fileSystemRepresentation); }   // 「自定义」设置文件在 Documents（覆盖层选择等启动期的读也要用，存档还没挂） | The "Custom" settings file lives in Documents (boot-time reads such as overlay selection need it too, and the save is not mounted yet)
+    { void dm_custom_init(const char *dir); dm_custom_init(doc.fileSystemRepresentation); }
+    if (getenv("DM_BENCH_DIR")) {   // 功耗基准（tools/power_bench.sh）：各采样文件都写进 Documents/<DM_BENCH_DIR>/，宿主起来前先把目录建好（DM_SOAK 打不开文件会直接退出） | Power benchmark (tools/power_bench.sh): all sampling files go under Documents/<DM_BENCH_DIR>/; create it before the host starts (DM_SOAK exits if it cannot open its file)
+        NSString *bd = [doc stringByAppendingPathComponent:@(getenv("DM_BENCH_DIR"))]; [fm createDirectoryAtPath:bd withIntermediateDirectories:YES attributes:nil error:nil]; plog("boot: 基准输出目录 Documents/%s", getenv("DM_BENCH_DIR"));
+        dispatch_async(dispatch_get_main_queue(), ^{ UIApplication.sharedApplication.idleTimerDisabled = YES; plog("boot: 基准期间禁用自动锁屏"); });   // 锁屏 = 进后台 = 游戏暂停，基准作废 | Auto-lock = background = game paused, the run is void
+    }
+    {   // 测量采样开关（只影响诊断输出，不改游戏行为；正式包不设）：编译时 DM_DIAG_SAMPLING=1（run.sh build 前 export DM_DIAG_SAMPLING=1）或 Documents/diag_sampling.txt 存在时打开。
+        // 三项都写进 Documents/diag/：逐通道 GPU 计时 DM_NVN_PASSGPU（passgpu.tsv，每通道一行，几分钟可达几十 MB）、逐线程 CPU DM_THRCPU（thrcpu.tsv，每 5 秒）、发热归因 DM_HEAT（heat.tsv，每 5 秒）。
+        // 启动时已带这些变量（Xcode 方案）则不覆盖。逐通道计时会让提交线程等 8 次提交之前的 GPU 完成，读数本身略有扰动，只作相对比较
+        // Measurement sampling switch (diagnostic output only, no gameplay change; never set in release builds): on when compiled with DM_DIAG_SAMPLING=1 (export DM_DIAG_SAMPLING=1 before run.sh build) or when Documents/diag_sampling.txt exists.
+        // All three write to Documents/diag/: per-pass GPU timing DM_NVN_PASSGPU (passgpu.tsv, one row per pass, tens of MB in a few minutes), per-thread CPU DM_THRCPU (thrcpu.tsv, every 5 s), heat attribution DM_HEAT (heat.tsv, every 5 s).
+        // Variables already present at launch (Xcode scheme) are not overridden. Per-pass timing makes the submit thread wait for the GPU of the submission 8 back, so the readings are slightly perturbed and are for relative comparison only
+        int diag = 0;
+#ifdef DM_DIAG_SAMPLING
+        diag = 1;
+#endif
+        if (!diag && [fm fileExistsAtPath:[doc stringByAppendingPathComponent:@"diag_sampling.txt"]]) diag = 2;
+        if (diag) {
+            NSString *dg = [doc stringByAppendingPathComponent:@"diag"]; [fm createDirectoryAtPath:dg withIntermediateDirectories:YES attributes:nil error:nil];
+            setenv("DM_NVN_PASSGPU", [dg stringByAppendingPathComponent:@"passgpu.tsv"].fileSystemRepresentation, 0);
+            setenv("DM_THRCPU", [[dg stringByAppendingPathComponent:@"thrcpu.tsv"] stringByAppendingString:@",5"].fileSystemRepresentation, 0);
+            setenv("DM_HEAT", "diag/heat.tsv,5", 0);   // 相对 Documents（front_ios.m front_ios_heat_start） | Relative to Documents (front_ios.m front_ios_heat_start)
+            { void dm_thrcpu_start_env(void); dm_thrcpu_start_env(); }
+            plog("boot: 测量采样已开（%s）：Documents/diag/passgpu.tsv 逐通道 GPU、thrcpu.tsv 逐线程 CPU、heat.tsv 发热归因（每 5 秒）", diag == 1 ? "编译开关 DM_DIAG_SAMPLING" : "Documents/diag_sampling.txt");
+        }
+    }   // 「自定义」设置文件在 Documents（覆盖层选择等启动期的读也要用，存档还没挂） | The "Custom" settings file lives in Documents (boot-time reads such as overlay selection need it too, and the save is not mounted yet)
     setenv("DM_ROMFS", romfs.fileSystemRepresentation, 0);
     NSString *bundledOverlay = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:g_astc_dir ? @"romfs_overlay_astc" : @"romfs_overlay"];   // 老机型补充包：贴图指向补充包的那套 | Legacy Device Pack: the set whose textures point to the Legacy Device Pack
     {   // 走覆盖层的自定义开关（物品注释…）：构建时出了全部组合 romfs_overlay_variants/<键+键…>（gen_romfs_overlay.py），按已生效的开关挑键集合正好相等的那份；全关用 romfs_overlay。重启后生效 | Custom switches that go through the overlay (item annotations...): the build produces every combination as romfs_overlay_variants/<key+key...> (gen_romfs_overlay.py); pick the one whose key set exactly equals the switches in effect; with all off use romfs_overlay. Takes effect after restart
@@ -1154,7 +1179,12 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
 - (void)sceneWillResignActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(0); }
 - (void)sceneDidEnterBackground:(UIScene *)s { if (g_host_up) front_ios_focus_event(1); }
 - (void)sceneWillEnterForeground:(UIScene *)s { log_promote(); if ([g_mode isEqualToString:@"boot"] && !g_need_assets && !g_no_bc && !g_block_title) { host_start(); if (g_host_up) front_ios_focus_event(2); } }
-- (void)sceneDidBecomeActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(3); }
+- (void)sceneDidBecomeActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(3);
+    static int warned; if (g_ipad_compat && !warned && [g_mode isEqualToString:@"boot"] && self.window.rootViewController) { warned = 1;   // 只提示一次，不拦启动 | Warn once, do not block the launch
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:T("dmIpadModeTitle") message:T("dmIpadModeMsg") preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:T("dmIpadModeOk") style:UIAlertActionStyleDefault handler:nil]];
+        [self.window.rootViewController presentViewController:a animated:YES completion:nil]; }
+}
 // 场景断开 / App 终止：宿主有序收尾后 _exit（hle_lifecycle.c）。注意：用户在多任务界面划掉一个已在后台挂起的 App 时，系统直接 SIGKILL，不走这两个回调
 // Scene disconnect / App termination: the host shuts down in order, then _exit (hle_lifecycle.c). Note: when the user swipes away an App already suspended in the background from the multitasking screen, the system sends SIGKILL directly and neither of these two callbacks runs
 - (void)sceneDidDisconnect:(UIScene *)s { if (g_host_up) dm_host_shutdown("iOS 场景断开"); }
@@ -1279,6 +1309,10 @@ int main(int argc, char *argv[]) {
           NSDictionary *inf = NSBundle.mainBundle.infoDictionary; NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyy-MM-dd HH:mm:ss ZZZ";
           plog("boot: 版本 %s 构建 %s 机型 %s 系统 %s 时间 %s", [inf[@"CFBundleShortVersionString"] description].UTF8String ?: "未知", [inf[@"CFBundleVersion"] description].UTF8String ?: "未知",
                hw, NSProcessInfo.processInfo.operatingSystemVersionString.UTF8String, [df stringFromDate:NSDate.date].UTF8String);
+          // 机型是 iPhone 却按 iPad 身份运行：重签名工具的「iPad 模式」。画面会按 iPad 屏幕比例（如 1640x2360 ≈ 1.44）显示、两边黑边，这不是本包能改的；记红并在进游戏后提示一次
+          // Model is an iPhone yet running with the iPad idiom: a re-signing tool's "iPad mode". The picture shows at an iPad aspect (e.g. 1640x2360 ≈ 1.44) with black bars on both sides, which this app cannot change; log a failure and warn once after launch
+          if (!strncmp(hw, "iPhone", 6) && UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad) { g_ipad_compat = 1; CGRect nb = UIScreen.mainScreen.nativeBounds;
+              plog("boot: 🔴 iPhone（%s）正以 iPad 身份运行，屏幕 %.0fx%.0f：签名工具开了「iPad 模式」，系统会按 iPad 比例加黑边；关掉 iPad 模式重新签名才能铺满", hw, nb.size.width, nb.size.height); }
         }
         // 跨提交附件有效性账本的违规记录落 Documents：触发过的键以后每次启动都不再做（玩家最多见一次），也是回收现场的途径
         // Violation records of the cross-commit attachment validity ledger go to Documents: a key that has triggered is never done again on any later launch (the player sees it at most once); it is also how the diagnostic record gets collected

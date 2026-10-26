@@ -11,7 +11,7 @@ source tools/devlock.sh
 source tools/asc_env.sh
 source tools/local_env.sh   # 本机设备配置（不进仓，见 local.env.example）；出包不需要设备号，装机 / 启动时才核 | Local device configuration (not committed, see local.env.example); packaging does not need a device ID, it is only checked at install / launch
 D=${DM_DEVICE:-}; B=${DM_BUNDLE_ID:?先在本机配置里设 DM_BUNDLE_ID（App 包名，见 dm/ios/local.env.example）}
-R=${DM_ROOT:-$HOME/dm-work}/run/ios; mkdir -p "$R/out"
+R=${DM_RUN_DIR:-${DM_ROOT:-$HOME/dm-work}/run/ios}; mkdir -p "$R/out"   # DM_RUN_DIR：多个工作树并行时各用自己的日志 / 产物目录（缺省共用 $DM_ROOT/run/ios） | DM_RUN_DIR: separate log / output directory per worktree when several build in parallel (default shared $DM_ROOT/run/ios)
 DD=${DM_IOS_DD:-$R/dd}
 APP=$DD/Build/Products/Release-iphoneos/DmIOS.app
 t(){ echo "[$(date +%T)] $*"; }
@@ -47,6 +47,9 @@ if [ "$1" = build ]; then
   python3 tools/gen_assets.py "${DM_ROMFS_SRC:-${DM_ROOT:-$HOME/dm-work}/data/switch/3.3.94012/Update/RomFS}" || { t "🔴 gen_assets 失败（见上）"; exit 1; }
   make -s -C ../host dm_vault_tab.h dm_hud_exp.h dm_bright_levels.inc ROMFS="${DM_ROMFS_SRC:-${DM_ROOT:-$HOME/dm-work}/data/switch/3.3.94012/Update/RomFS}" || { t "🔴 宿主表头生成失败（见上）"; exit 1; }
   python3 tools/gen_build.py ../host Gen > Gen/dm.xcconfig || { t "🔴 gen_build 失败"; exit 1; }
+  # 测量包：DM_DIAG_SAMPLING=1 时编入同名宏，main.m 启动即打开逐通道 GPU / 逐线程 CPU / 发热归因采样（写 Documents/diag/）。正式包不要设
+  # Measurement build: with DM_DIAG_SAMPLING=1 the macro of the same name is compiled in, and main.m turns on per-pass GPU / per-thread CPU / heat attribution sampling at launch (written to Documents/diag/). Never set for release builds
+  if [ "${DM_DIAG_SAMPLING:-0}" = 1 ]; then sed -i '' 's/^OTHER_CFLAGS = /OTHER_CFLAGS = -DDM_DIAG_SAMPLING=1 /' Gen/dm.xcconfig; grep -q 'DDM_DIAG_SAMPLING' Gen/dm.xcconfig || { t "🔴 测量开关没写进 Gen/dm.xcconfig"; exit 1; }; t "测量包：编入 DM_DIAG_SAMPLING（逐通道 GPU / 逐线程 CPU / 发热归因写到 Documents/diag/）"; fi
   F=$(python3 tools/gen_embed.py $OUT Gen/embed.S $MODS) || { t "🔴 gen_embed 失败"; exit 1; }
   echo "OTHER_LDFLAGS = \$(inherited) \$(DM_FRAMEWORKS) $F $MOVIE_LDFLAGS" >> Gen/dm.xcconfig
   for m in $MODS; do cp $OUT/$m.fixups.tsv $OUT/$m.gates.tsv Gen/dm/; done

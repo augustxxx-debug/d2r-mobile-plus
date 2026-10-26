@@ -87,8 +87,23 @@ The following checks used the current local audit build on **2026-10-26**. They 
 
 The full game could not run in the standard iOS Simulator because its graphics capability checks were not satisfied. Local game screenshots above came from the native Mac host using isolated test-save copies with cloud access disabled. They are not iOS Simulator screenshots and do not verify UIKit touch delivery, physical folding, iPhone thermal behavior or power savings. Broader panel/localization coverage remains subject to the checks below.
 
+### Render resolution cap and measurement build
+
+The Graphics tab's Resolution slider (`dm/host/dm_res_cap.h`, `dm_custom.c` key `render_res`, `front_ios.m` `front_game_res`) is covered by `t_res_cap` (budget, aspect, even sizes, shrink-only, idempotence on Duo/17 Pro Max/iPad sizes), by `t_render_profile` (persistence, Apply/Discard/Defaults, one re-read notification per effective change) and by `test_touch_layout_options.py` (slider row placement under the profile row, hint not overlapped). The Mac host and the iOS Simulator cannot exercise the real device path; device verification of the live resolution switch, the present-thread upscale and the fold/unfold interaction is still pending.
+
+For measurements, build with `DM_DIAG_SAMPLING=1 dm/ios/run.sh build` (or create `Documents/diag_sampling.txt` in any build). At launch the app sets `DM_NVN_PASSGPU`, `DM_THRCPU` (5 s) and `DM_HEAT` (5 s) and writes `Documents/diag/passgpu.tsv`, `thrcpu.tsv` and `heat.tsv`. Per-pass timing makes the submit thread wait for the GPU of the submission eight back, so use it for relative comparison; `passgpu.tsv` grows by one row per render pass and can reach tens of MB in a few minutes. Measure unplugged at a fixed brightness; readings taken while charging cannot be used for power claims.
+
+### Local debugging: run the iOS build on a Mac (instead of the Simulator)
+
+The iOS Simulator SDK has no MetalFX framework, so the graphics backend does not compile, and the shader library only targets devices; that route is closed. The workable local path launches the iphoneos `DmIOS.app` as "Designed for iPad" on an Apple silicon Mac (the same method as `tools/smoke_mac.sh`): wrap the build product as `<name>.app/Wrapper/DmIOS.app` plus a `WrappedBundle` symlink and start it with `open -n <name>.app --env ... --args -mode boot`; the provisioning profile must include the Mac. The container lives at `~/Library/Containers/<UUID>/Data` (find it through `.com.apple.containermanagerd.metadata.plist` or `Documents/boot.txt`); clone the RomFS `data/` into `Library/Application Support/romfs/` and put a test save in `Documents/save.test`. Useful environment: `DM_TEST_SCREEN=2622x1206` treats the screen as an iPhone 16 Pro (with `DM_TEST_SAFE_L/R` for the safe area), `DM_SAVE_TEST=1`, `DM_TEST_ICLOUD_OFF=1`, `DM_KEYS` to enter a game, `DM_SCREEN_SHOT=<sec>:<file>` for a whole-window screenshot into Documents. It verifies the shell, layout, resolution and aspect logic and entering a game; it cannot verify real touch, thermal state or A-series GPU time.
+
+### Unattended power benchmark
+
+`dm/ios/tools/power_bench.sh <minutes per segment> <level sequence> [MetalFX] [save backup dir]` launches the game once with a test save (`Documents/save.test`, never `Documents/save`), a fixed seed, a key script that enters the game and walks in a loop, a level rotation every 90 s (`DM_TEST_WARP_LV=every<ticks>:<levels>`), timed monster spawns (`DM_TEST_SPAWN` multi-entry form) and a render-resolution schedule (`DM_TEST_RENDER_RES=<level>@<sec>,...`). `heat.tsv` gains battery %, charging state, Low Power Mode, the render level and the MetalFX profile every 5 s; `tools/bench_report.py` splits the run by the render-level column and reports %/hour per segment with the ±(1% ÷ segment length) quantization error. Run it unplugged at a fixed brightness; segments shorter than 10 minutes cannot resolve the battery gauge.
+
 ### Remaining checks
 
+- Render resolution slider: verify on the iPhone Duo inner/outer screen that Apply re-reads the output size without restart, that the picture stays filled, and compare per-pass GPU time against Native.
 - Landscape fold/unfold on Graphics is user-confirmed; extend coverage to other pages and menu/loading transitions.
 - Graphics controls are confirmed with a physical Xbox controller; extend focus, prompt and action coverage to other panels.
 - Reproduce all achievement/notification overlaps, including bottom HUD masking.

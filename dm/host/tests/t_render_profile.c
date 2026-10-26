@@ -47,7 +47,27 @@ int main(void) {
     CHECK(dm_3d_profile_get()==2);
     graphics_select_profile(-1); graphics_select_profile(4);
     CHECK(atomic_load(&g_pend[K_Q3D])==-1);
-    for (int row=0;row<NK-3;row++) CHECK(!graphics_key(custom_key_at(row)));
+    for (int row=0;row<NK-N_GFX;row++) CHECK(!graphics_key(custom_key_at(row)));
+    // 渲染分辨率档位 render_res：读盘范围 0–3、非法回 0；应用才生效并通知游戏重读；放弃不通知；默认回 0 | Render resolution level: parsed 0–3, invalid falls back to 0; only Apply takes effect and notifies the game; Discard does not notify; Defaults return to 0
+    { const char *rs[]={"render_res=2\n","render_res=3\n","render_res=4\n","render_res=-1\n","render_res=1x\n","render_res=0\n",""}; const int re[]={2,3,0,0,0,0,0};
+      for (unsigned i=0;i<sizeof rs/sizeof *rs;i++) { FILE *file=fopen(path,"w"); CHECK(file); fputs("q3d=0\nq3d_v2=1\n",file); fputs(rs[i],file); fclose(file);
+          atomic_store(&g_loaded,0); CHECK(dm_render_res_level()==re[i]); }
+      unsigned n0=dm_render_res_notify_count();
+      graphics_select_res(2); CHECK(atomic_load(&g_pend[K_RES])==2); CHECK(dm_render_res_level()==0); CHECK(dm_render_res_notify_count()==n0);
+      dm_custom_on_uimsg("OptionsPanelMessage","CancelChanges",NULL); CHECK(atomic_load(&g_pend[K_RES])==-1); CHECK(dm_render_res_level()==0); CHECK(dm_render_res_notify_count()==n0);
+      graphics_select_res(2); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_render_res_level()==2); CHECK(dm_render_res_notify_count()==n0+1);
+      graphics_select_res(2); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_render_res_notify_count()==n0+1);   // 没变不通知 | unchanged: no notification
+      graphics_select_res(-1); graphics_select_res(DM_RES_LEVELS); CHECK(atomic_load(&g_pend[K_RES])==-1);
+      atomic_store(&g_loaded,0); CHECK(dm_render_res_level()==2);   // 已存盘 | persisted
+      { FILE *file=fopen(path,"r"); CHECK(file); char text[4096]={0}; fread(text,1,sizeof text-1,file); fclose(file); CHECK(strstr(text,"render_res=2\n")); }
+      dm_custom_on_uimsg("OptionsPanelMessage","ResetToDefaults",NULL); CHECK(atomic_load(&g_pend[K_RES])==0); CHECK(dm_render_res_level()==2);
+      dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_render_res_level()==0); CHECK(dm_render_res_notify_count()==n0+2); }
+    // DM_TEST_RENDER_RES 时间表（纯函数）：单档、带时刻的多档、非法串 | DM_TEST_RENDER_RES schedule (pure function): single level, timed levels, invalid strings
+    CHECK(res_schedule_level("2",0)==2); CHECK(res_schedule_level("2",999)==2);
+    CHECK(res_schedule_level("1@0,3@720,0@1440,2@2160",0)==1); CHECK(res_schedule_level("1@0,3@720,0@1440,2@2160",719.9)==1);
+    CHECK(res_schedule_level("1@0,3@720,0@1440,2@2160",720)==3); CHECK(res_schedule_level("1@0,3@720,0@1440,2@2160",1500)==0); CHECK(res_schedule_level("1@0,3@720,0@1440,2@2160",5000)==2);
+    CHECK(res_schedule_level("3@60",0)==-1 || res_schedule_level("3@60",0)==3);   // 首项晚于 0 秒：0 秒前无档，实现按首项补 | first entry later than 0 s: implementation falls back to the first entry
+    CHECK(res_schedule_level("",0)==-1); CHECK(res_schedule_level("x",0)==-1); CHECK(res_schedule_level("4",0)==-1); CHECK(res_schedule_level("1@-5",0)==-1); CHECK(res_schedule_level("1@0;2@5",0)==-1);
     // Upstream defaults reset all enhanced preferences together, retaining language/voice.
     int auto_mana=key_index("auto_mana"); atomic_store(&g_val[auto_mana],0);
     atomic_store(&g_val[K_Q3D],3); atomic_store(&g_val[K_UPSCALE],0);

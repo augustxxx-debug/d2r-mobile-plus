@@ -11,6 +11,7 @@
 // UI: the 「自定义」(Custom) page of the options panel (borrowing the original game's video page VideoOptionsPanel), one original-game checkbox per row, widget name TouchCustom_<key> (_custom_page in the layout touch_layout.py). Checking only records a pending value;
 // only 「应用」(Apply) (OptionsPanelMessage:AcceptChanges) makes it take effect and saves to disk, 「放弃」(Discard) (CancelChanges) throws away the pending values, and 「默认」(Default) (ResetToDefaults) sets the pending values back to each key's default (power-saving mode off, the rest on; Apply still has to be tapped)
 #include "dm_custom.h"
+#include "dm_res_cap.h"
 #include "dm_widget.h"
 #include "dm_cursor.h"
 #include "hle.h"
@@ -19,6 +20,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,13 +35,13 @@ static const char *const k_keys[] = { "lang",
 #if VOICE_ROW
     "voice",
 #endif
-    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "upscale" };   // upscale 开关与上次选择的 q3d 档位分开保存
+    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "upscale", "render_res" };   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
 static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1 };   // 缺省：60 FPS、MetalFX 开、Auto 档
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0 };   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
@@ -47,8 +49,10 @@ static const int k_def[NK] = { 0,
 #define K_FPS (11 + VOICE_ROW)
 #define K_Q3D (12 + VOICE_ROW)
 #define K_TOUCH_SWAP (15 + VOICE_ROW)
-#define K_UPSCALE (NK - 1)
-static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_UPSCALE; }
+#define K_UPSCALE (NK - 2)
+#define K_RES (NK - 1)
+#define N_GFX 4   // 图形页的键数：eco_fps / q3d / upscale / render_res（自定义页的行数 = NK - N_GFX） | Number of Graphics-tab keys (Custom-page rows = NK - N_GFX)
+static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_UPSCALE || i == K_RES; }
 static int custom_key_at(int row) {
     for (int i = 0; i < NK; i++) if (!graphics_key(i) && row-- == 0) return i;
     return 0;
@@ -101,6 +105,7 @@ static void load_once(void) {
     int lang = -1, voice = -1, merc = -1, qv2 = 0;
     while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0';
         if (i == K_Q3D) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 4) v[i] = (int)q; else v[i] = 0; }
+        if (i == K_RES) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q < DM_RES_LEVELS) v[i] = (int)q; else v[i] = 0; }
         if (!strcmp(ln, "q3d_v2")) qv2 = eq[1] == '1';
         if (i == 0) { int l = atoi(eq + 1); if (l >= 0 && l < LANG_N) lang = v[0] = l; }
 #if VOICE_ROW
@@ -135,6 +140,37 @@ int dm_custom_get(const char *key) {
 int dm_3d_profile_get(void) { return dm_custom_get("upscale") ? dm_custom_get("q3d") : 4; }
 int dm_custom_lang_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_lang_explicit) : -1; }
 int dm_custom_voice_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_voice_explicit) : -1; }
+// 测试开关 DM_TEST_RENDER_RES=<档>[@秒][,<档>@秒…]（功耗基准 power_bench.sh 用）：按宿主初始化起的秒数切档，不读也不写设置文件；切档时同样通知游戏重读。
+// 纯函数 res_schedule_level 给单测：返回 elapsed 秒时应生效的档，非法串返回 -1
+// Test switch DM_TEST_RENDER_RES=<level>[@sec][,<level>@sec...] (used by the power benchmark power_bench.sh): switches the level by seconds since host init, reads and writes no settings file; a switch notifies the game to re-read just the same.
+// Pure function res_schedule_level for unit tests: returns the level in effect at elapsed seconds, -1 for an invalid string
+void dm_oe_res_changed(void);   // 弱定义在下面 | weak definition below
+static int res_schedule_level(const char *spec, double elapsed) {
+    if (!spec || !*spec) return -1;
+    int cur = -1; const char *p = spec;
+    while (*p) { char *end; long lv = strtol(p, &end, 10); if (end == p || lv < 0 || lv >= DM_RES_LEVELS) return -1;
+        double at = 0; p = end; if (*p == '@') { at = strtod(p + 1, &end); if (end == p + 1 || at < 0) return -1; p = end; }
+        if (elapsed >= at && cur < 0) cur = (int)lv; else if (elapsed >= at) cur = (int)lv;
+        if (*p == ',') p++; else if (*p) return -1; }
+    return cur;
+}
+static _Atomic int g_res_test_last = -1;
+static int res_test_level(void) {
+    static int on = -1; static const char *spec; static uint64_t t0;
+    if (on < 0) { spec = getenv("DM_TEST_RENDER_RES"); on = spec && res_schedule_level(spec, 0) >= 0; t0 = (uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC); if (spec && !on) LOG("【红】DM_TEST_RENDER_RES 非法：%s", spec); }
+    if (!on) return -1;
+    int lv = res_schedule_level(spec, ((uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC) - t0) / 1e9); if (lv < 0) lv = 0;
+    int prev = atomic_exchange(&g_res_test_last, lv);
+    if (prev != lv) { LOG("测试 DM_TEST_RENDER_RES：第 %.0f 秒 → 渲染分辨率档位 %d%s", ((uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC) - t0) / 1e9, lv, prev < 0 ? "" : "（通知游戏重读输出尺寸）"); if (prev >= 0) dm_oe_res_changed(); }
+    return lv;
+}
+int dm_render_res_level(void) { int t = res_test_level(); if (t >= 0) return t; int v = dm_custom_get("render_res"); return v >= 0 && v < DM_RES_LEVELS ? v : 0; }   // iOS 前端 front_game_res 每拍读 | Read every tick by the iOS front end's front_game_res
+// 档位改了要让游戏重读输出尺寸（hle_oe.c 推性能模式通知 31，与折叠屏换屏同一条路）；弱定义给不链 hle_oe.c 的单测。计数只供单测核对
+// A changed level makes the game re-read the output size (hle_oe.c pushes performance-mode notification 31, the same path as the fold-screen switch); the weak definition serves unit tests that do not link hle_oe.c. The counter is only for unit tests
+__attribute__((weak)) void dm_oe_res_changed(void) {}
+static _Atomic unsigned g_res_notify_n;
+unsigned dm_render_res_notify_count(void) { return atomic_load(&g_res_notify_n); }
+static void res_notify(void) { atomic_fetch_add(&g_res_notify_n, 1); LOG("图形设置：渲染分辨率档位 → %d（通知游戏重读输出尺寸）", dm_render_res_level()); dm_oe_res_changed(); }
 int dm_fps_setting(void) { return dm_custom_get("eco_fps") ? 30 : 60; }   // 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义） | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol)
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
@@ -149,11 +185,12 @@ static void save(void) {
 void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     (void)arg; if (!cat || !act || strcmp(cat, "OptionsPanelMessage")) return;
     load_once();
-    if (!strcmp(act, "AcceptChanges")) { int ch = 0;
+    if (!strcmp(act, "AcceptChanges")) { int ch = 0, res_changed = 0;
         // Migrate the former fifth radio option to the independent enable switch.
         if (atomic_load(&g_pend[K_Q3D]) == 4) { atomic_store(&g_pend[K_Q3D], 0); atomic_store(&g_pend[K_UPSCALE], 0); }
-        for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd == 3); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd == 3 ? "Quality" : "Adaptive", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
+        for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_RES) res_changed = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd == 3); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd == 3 ? "Quality" : "Adaptive", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
         dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && atomic_load(&g_val[K_Q3D]) == 3);
+        if (res_changed) res_notify();
         atomic_fetch_add(&g_repaint, 1);
         if (ch) save(); }
     else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); atomic_fetch_add(&g_repaint, 1); }
@@ -201,6 +238,11 @@ static void graphics_select_profile(int value) {
     atomic_store(&g_pend[K_Q3D], value);
     LOG("图形设置：MetalFX 档位 → %d（点应用生效）", value);
 }
+static void graphics_select_res(int value) {
+    if (value < 0 || value >= DM_RES_LEVELS || value == pending_value(K_RES)) return;
+    atomic_store(&g_pend[K_RES], value);
+    LOG("图形设置：渲染分辨率档位 → %d（点应用生效）", value);
+}
 static void graphics_text(uint64_t w, const char *s) {
     if (!w || !s || !DM_WIDGET_OK(main_base(), w, DM_VT_TEXT, "图形设置文字")) return;
     size_t n = strlen(s); const char *old = *(const char **)(w + 0x88);
@@ -215,7 +257,7 @@ static void ui_show_ours(uint64_t w, int on) {
 }
 void dm_graphics_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
-    static dm_wref seen[3]; static int paint;
+    static dm_wref seen[4]; static int paint;
     uint64_t sp = dm_ui_top(root, "3PlusGraphicsOptionsPanel");
     if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); return; }
     load_once(); int repaint = atomic_load(&g_repaint);
@@ -241,9 +283,12 @@ void dm_graphics_ui_pump(unsigned long long root) {
     if (dm_wref_get(&focus_panel) != sp) { dm_wref_set(&focus_panel, sp); selected = 0; }
     int pad = dm_padmode_current() && !dm_ui_modal_active(root);
     uint64_t ev = pad ? dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A | DM_BTN_LEFT | DM_BTN_RIGHT) : 0;
-    int rows = pending_value(K_UPSCALE) ? 3 : 2;
+    // 行：0 帧率 / 1 超分开关 / 2 超分档位（开关开着才有）/ 3 渲染分辨率。selected 是可见行的序号，row_id 是布局里的行号（档位行藏起来时第三行就是分辨率）
+    // Rows: 0 frame rate / 1 upscale switch / 2 upscale profile (only while the switch is on) / 3 render resolution. selected indexes visible rows; row_id is the layout row (with the profile row hidden, the third visible row is resolution)
+    int rows = pending_value(K_UPSCALE) ? 4 : 3;
     if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
     if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
+    int row_id = selected >= 2 && !pending_value(K_UPSCALE) ? 3 : selected;
     if (selected == 0 && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
         int to = (!pending_value(K_FPS)) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
         if (to>=0 && to<=1) { graphics_select_fps(to);
@@ -274,9 +319,26 @@ void dm_graphics_ui_pump(unsigned long long root) {
                 ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, to, 0, 0); }
         }
     }
+    uint64_t res = find_w(sp, "TouchGraphicsRes", 0);
+    if (res && DM_WIDGET_OK(main_base(), res, DM_VT_SLIDER, "图形设置分辨率滑块")) {
+        if (dm_wref_get(&seen[3]) != res) {
+            *(int32_t *)(res + 0x5b0) = 1; *(int32_t *)(res + 0x5b8) = DM_RES_LEVELS - 1;
+            *(int32_t *)(res + 0x5bc) = 0; *(int32_t *)(res + 0x5c0) = DM_RES_LEVELS - 1;
+            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(res, pending_value(K_RES), 0, 0);
+            dm_wref_set(&seen[3], res);
+        } else graphics_select_res(*(int32_t *)(res + 0x5c4));
+        if (row_id == 3 && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
+            int to = pending_value(K_RES) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
+            if (to >= 0 && to < DM_RES_LEVELS) { graphics_select_res(to);
+                ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(res, to, 0, 0); }
+        }
+    }
+    { static const char *const res_captions[DM_RES_LEVELS] = { "dmGraphicsResAuto", "dmGraphicsResEco", "dmGraphicsResBalanced", "dmGraphicsResNative" };
+      int lv = pending_value(K_RES); if (lv < 0 || lv >= DM_RES_LEVELS) lv = 0;
+      graphics_text(find_w(sp, "TouchGraphicsResText", 0), dm_str(main_base(), res_captions[lv])); }
     graphics_text(find_w(sp,"TouchGraphicsFpsText",0),dm_str(main_base(),pending_value(K_FPS)?"dmGraphicsFrameRate30":"dmGraphicsFrameRate60"));
     uint64_t focus = find_w(sp, "TouchGraphicsSel", 0);
-    if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? -20 : 99999, y = pad ? 170 + 180 * selected : 0;
+    if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? -20 : 99999, y = pad ? 170 + 180 * row_id : 0;
         if (r[0] != x || r[1] != y) { r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)focus + 0x10))(focus); } }
     static const char *const captions[] = { "dmGraphicsProfileAuto", "dmGraphicsProfileEco", "dmGraphicsProfileBalanced", "dmGraphicsProfileQuality" };
     int profile = pending_value(K_Q3D); if (profile < 0 || profile > 3) profile = 0;
@@ -307,7 +369,7 @@ void dm_custom_ui_pump(unsigned long long root) {
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
       uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64];
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
-          if (ev & DM_BTN_DOWN) sel = sel + 1 < NK - 3 ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
+          if (ev & DM_BTN_DOWN) sel = sel + 1 < NK - N_GFX ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
           int ci = custom_key_at(sel);
           snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[ci]); cw = find_w(sp, ci == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[ci]); tw = find_w(sp, nm, 0);   // 语言行：框住标签到最右那一格 | Language row: box from the label to the rightmost cell
           if ((ev & DM_BTN_A) && cw && dm_wref_get(&seen[ci]) == cw) {

@@ -1411,8 +1411,21 @@ def _graphics_page(text):
             'onUpdateMessage': 'OptionsPanelMessage:SetD2RUpscaleProfile',
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}}]}
+    # 渲染分辨率（整帧输出尺寸的像素预算，dm/host/dm_res_cap.h）：四档滑块 自动 / 省电 / 均衡 / 原生，宿主 dm_graphics_ui_pump 读写 TouchGraphicsRes
+    # Render resolution (pixel budget of the whole-frame output size, dm/host/dm_res_cap.h): four-position slider Auto / Eco / Balanced / Native, read and written by the host's dm_graphics_ui_pump via TouchGraphicsRes
+    res_row = {'type': 'Widget', 'name': 'TouchGraphicsResRow', 'fields': {
+        'rect': {'x': 0, 'y': 720, 'width': 1730, 'height': 180}}, 'children': [
+        label('TouchGraphicsResText', 'dmGraphicsResAuto', 0, 0, 1000, 180),
+        {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsRes', 'fields': {
+            'rect': {'x': 1110, 'y': 55, 'width': 480, 'height': 72},
+            'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',
+            'focusIndicatorFilename': '$OptionsSliderFocusIndicatorFilename', 'isHorizontal': True, 'increment': 1,
+            'indicatorFilepath': 'PauseMenu\\HorizontalIndicator', 'background': '$SettingsSliderBackground',
+            'onUpdateMessage': 'OptionsPanelMessage:SetD2RRenderResolution',
+            'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
+            'valueText': '$SettingsSliderValueFields'}}]}
     rows = {'type': 'Widget', 'name': 'TouchGraphicsRows', 'fields': {
-        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1120}}, 'children': [title,
+        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1300}}, 'children': [title,
         label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 180, 1000, 180),
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsFps', 'fields': {
             'rect': {'x': 1110, 'y': 235, 'width': 480, 'height': 72},
@@ -1423,7 +1436,7 @@ def _graphics_page(text):
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}},
         label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 360, 1000, 180), toggle('TouchGraphicsUpscale', 360),
-        profile, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 800, 1670, 300),
+        profile, res_row, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 900, 1670, 300),
         {'type': 'NineTileImageWidget', 'name': 'TouchGraphicsSel', 'fields': {
             'rect': {'x': 99999, 'y': 0, 'width': 1700, 'height': 180}, 'backgroundColor': [0, 0, 0, 0],
             'filename': 'Controller/PANEL/ControllerSelector/ControllerSelectorBorder', 'tileScale': 0.5}}]}

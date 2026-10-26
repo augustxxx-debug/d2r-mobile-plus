@@ -26,6 +26,7 @@ void dm_gamepad_start(void (*on_mode)(int pad)); void dm_gamepad_touched(void); 
 #include "../../host/dm_hud.h"
 #include "../../host/dm_world.h"
 #include "../../host/dm_uiscreen.h"
+#include "../../host/dm_res_cap.h"
 #include "../../host/dm_actions.h"
 #include "../../host/dm_i18n.h"
 static NSString *SWT(const char *k) { return @(dm_ui(k)); }   // 我们自己的界面文字（中英表 dm/i18n/ui_text.tsv，语言跟原版设置走） | our own UI text (Chinese-English string table dm/i18n/ui_text.tsv, language follows the original game's setting)
@@ -981,7 +982,22 @@ uint64_t front_game_res(int docked) {
             LOG("画面：比 16:9 窄的手机屏 %ux%u（折叠屏）→ 窗口按 %ux2160 预留，内外屏切换时出图尺寸在这以内跟着窗口变", fw, fh, cw); }
         atomic_store(&g_res_now, (uint64_t)fh << 32 | fw);
     }
-    if (fw && docked) return dm_uiscreen_res_live() ? atomic_load(&g_res_now) : g_res_cap;
+    if (fw && docked) {
+        // 启动预留不缩：游戏只接受不超过启动尺寸的新值，档位要能在运行中改回原生。实际出图尺寸按「渲染分辨率」档位（dm_custom.c render_res）的像素预算等比缩小，
+        // 出图线程现有的整屏放大把它铺回窗口（比例不变、不留边）；界面矩形与触控都是相对坐标，不受影响。档位改了由 dm_custom.c 推 31 让游戏重读
+        // The startup reserve is never shrunk: the game only accepts new values no larger than the startup size, and the level must be able to go back to Native at runtime. The actual output size is shrunk proportionally
+        // to the pixel budget of the render-resolution level (dm_custom.c render_res); the present thread's existing full-screen upscale fills the window again (same aspect, no bars); UI rect and touch are relative and unaffected. A level change pushes 31 from dm_custom.c
+        if (!dm_uiscreen_res_live()) return g_res_cap;
+        int dm_render_res_level(void); int lv = dm_render_res_level();
+        static int cls_gen, cls_pro, cls_m, cls_done;   // 自动档预算按 GPU 代际（dm_res_cap.h），设备名只读一次 | Auto budget by GPU generation (dm_res_cap.h); the device name is read once
+        if (!cls_done) { cls_done = 1; id<MTLDevice> dev = MTLCreateSystemDefaultDevice(); const char *nm = dev.name.UTF8String; dm_res_gpu_class(nm, &cls_gen, &cls_pro, &cls_m);
+            LOG("画面：显卡「%s」→ 代际 A%d%s M%d，自动档像素预算 %u", nm ?: "?", cls_gen, cls_pro ? " Pro" : "", cls_m, dm_res_cap_budget_auto(cls_gen, cls_pro, cls_m)); }
+        uint32_t budget = dm_res_cap_budget_class(lv, cls_gen, cls_pro, cls_m);
+        uint64_t now = atomic_load(&g_res_now), capped = dm_res_cap_apply((uint32_t)now, (uint32_t)(now >> 32), budget);
+        static _Atomic uint64_t logged; if (capped != now && atomic_exchange(&logged, capped) != capped)
+            LOG("画面：渲染分辨率档位 %d → 出图 %ux%u（窗口 %ux%u，像素预算 %u）", lv, (unsigned)capped, (unsigned)(capped >> 32), (unsigned)now, (unsigned)(now >> 32), budget);
+        return capped;
+    }
     uint64_t h = docked ? 900 : 720, w = (uint64_t)llround(h * aspect / 8) * 8;
     return h << 32 | w;
 }
@@ -1575,15 +1591,22 @@ void front_ios_heat_start(uint64_t (*presents)(void), int has_gpu) {
     char rel[512]; snprintf(rel, sizeof rel, "%.*s", (int)strcspn(e, ","), e); const char *c = strchr(e, ','); int iv = c ? atoi(c + 1) : 10;
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
     FILE *f = fopen([doc stringByAppendingPathComponent:@(rel)].fileSystemRepresentation, "w"); if (!f) return;
-    fprintf(f, "秒\t温控\tCPU%%\t出图帧率\tGPU均值ms\tGPU_p95ms\tGPU样本\t亮度\t最高刷新\n"); fflush(f);
+    UIDevice.currentDevice.batteryMonitoringEnabled = YES;   // 电量 / 充电状态也进表：GPU 毫秒受 GPU 调频影响，不能单独代表功耗 | Battery level / charging state go into the table too: GPU ms is affected by GPU DVFS and cannot stand for power on its own
+    fprintf(f, "秒\t温控\tCPU%%\t出图帧率\tGPU均值ms\tGPU_p95ms\tGPU样本\t亮度\t最高刷新\t电量%%\t充电\t低电量模式\t渲染档\tMetalFX档\n"); fflush(f);
     __block uint64_t t0 = now_ns(), tl = t0, pl = presents(); __block double cl = 0;
     { struct rusage ru; getrusage(RUSAGE_SELF, &ru); cl = ru.ru_utime.tv_sec + ru.ru_utime.tv_usec / 1e6 + ru.ru_stime.tv_sec + ru.ru_stime.tv_usec / 1e6; }
+    // 测试开关 DM_TEST_BRIGHTNESS=<0–1>（功耗基准）：每次取样前把屏幕亮度钉回这个值（自动亮度会改它）；OLED 功耗随亮度变化，不钉住各段没法比
+    // Test switch DM_TEST_BRIGHTNESS=<0–1> (power benchmark): pin the screen brightness back to this value before every sample (auto-brightness changes it); OLED power varies with brightness, so segments are not comparable unless it is pinned
+    double pin = -1; { const char *be = getenv("DM_TEST_BRIGHTNESS"); if (be) { pin = atof(be); if (!(pin >= 0 && pin <= 1)) pin = -1; else { UIScreen.mainScreen.brightness = pin; LOG("测试 DM_TEST_BRIGHTNESS：屏幕亮度钉在 %.2f", pin); } } }
     [NSTimer scheduledTimerWithTimeInterval:iv repeats:YES block:^(NSTimer *tm) { (void)tm;
+        if (pin >= 0 && fabs(UIScreen.mainScreen.brightness - pin) > 0.005) UIScreen.mainScreen.brightness = pin;
         uint64_t t = now_ns(), p = presents(); struct rusage ru; getrusage(RUSAGE_SELF, &ru);
         double cpu = ru.ru_utime.tv_sec + ru.ru_utime.tv_usec / 1e6 + ru.ru_stime.tv_sec + ru.ru_stime.tv_usec / 1e6, dt = (t - tl) / 1e9;
         double ga = -1, gp = -1; unsigned gn = 0; if (has_gpu) nvn_gpu_recent(&ga, &gp, &gn);
-        fprintf(f, "%.0f\t%ld\t%.1f\t%.1f\t%.2f\t%.2f\t%u\t%.2f\t%ld\n", (t - t0) / 1e9, (long)NSProcessInfo.processInfo.thermalState, (cpu - cl) / dt * 100,
-                (p - pl) / dt, ga, gp, gn, UIScreen.mainScreen.brightness, (long)UIScreen.mainScreen.maximumFramesPerSecond);
+        UIDeviceBatteryState bs = UIDevice.currentDevice.batteryState; float bl = UIDevice.currentDevice.batteryLevel; int dm_render_res_level(void), dm_3d_profile_get(void);
+        fprintf(f, "%.0f\t%ld\t%.1f\t%.1f\t%.2f\t%.2f\t%u\t%.2f\t%ld\t%.0f\t%s\t%d\t%d\t%d\n", (t - t0) / 1e9, (long)NSProcessInfo.processInfo.thermalState, (cpu - cl) / dt * 100,
+                (p - pl) / dt, ga, gp, gn, UIScreen.mainScreen.brightness, (long)UIScreen.mainScreen.maximumFramesPerSecond,
+                bl >= 0 ? bl * 100 : -1, bs == UIDeviceBatteryStateCharging ? "充电中" : bs == UIDeviceBatteryStateFull ? "已充满" : bs == UIDeviceBatteryStateUnplugged ? "未充电" : "未知", NSProcessInfo.processInfo.lowPowerModeEnabled ? 1 : 0, dm_render_res_level(), dm_3d_profile_get());   // 末两列：渲染分辨率档与 MetalFX 档，基准报告靠它们分段，不靠时钟对齐 | Last two columns: render-resolution level and MetalFX profile; the benchmark report segments by them, not by clock alignment
         fflush(f); tl = t; pl = p; cl = cpu; }];
 }
 

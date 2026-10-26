@@ -1648,7 +1648,7 @@ static pg_stat g_pg_st[256]; static uint64_t g_pg_rep_frame;
 static int pg_on(void) {
     if (g_pg >= 0) return g_pg;
     const char *e = getenv("DM_NVN_PASSGPU"); g_pg = 0;
-    if (!e) return 0;
+    if (!e || !*e || !strcmp(e, "0") || !strcmp(e, "off")) return 0;   // 测量包缺省开着；功耗基准传 0 关掉（它会让提交线程等 GPU） | On by default in the measurement build; the power benchmark passes 0 to turn it off (it makes the submit thread wait for the GPU)
 #if DM_NVN_M3
     if (![g_dev supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary]) { MLOG("【红】DM_NVN_PASSGPU：本设备不支持阶段边界计数采样"); return 0; }
     id<MTLCounterSet> ts = nil; for (id<MTLCounterSet> c in g_dev.counterSets) if ([c.name isEqualToString:MTLCommonCounterSetTimestamp]) ts = c;

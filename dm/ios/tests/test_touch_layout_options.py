@@ -40,8 +40,8 @@ for voice in (False, True):
         os.environ['MOVIE_FFMPEG'] = '1'; layout = importlib.reload(layout)
     host = host_variant(voice)
     keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
-    assert [key for key in keys if key not in ('eco_fps', 'q3d', 'upscale')] == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)
-    assert keys[-1] == 'upscale'
+    assert [key for key in keys if key not in ('eco_fps', 'q3d', 'upscale', 'render_res')] == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)   # 图形页四键不在自定义页 | the four Graphics-tab keys are not Custom-page rows
+    assert keys[-2:] == ['upscale', 'render_res']
     assert ('voice' in keys) == voice
     defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
@@ -82,6 +82,13 @@ assert '@dmGraphicsFrameRate60' in graphics_out and '@dmGraphicsUpscaling' in gr
 assert 'Row Offline' not in g_nodes and 'Row Online' not in g_nodes
 assert not g_nodes['OptionsTable'].get('children')
 assert g_nodes['TouchGraphicsRows']['type'] == 'Widget'
+# 渲染分辨率行：四档滑块与标签在档位行之后、说明之前，不与说明重叠 | Render resolution row: four-position slider and label after the profile row and before the hint, without overlapping it
+assert g_nodes['TouchGraphicsRes']['type'] == 'SettingsSliderWidget'
+assert g_nodes['TouchGraphicsRes']['fields']['onUpdateMessage'].endswith('SetD2RRenderResolution')
+assert g_nodes['TouchGraphicsResText']['fields']['text'] == '@dmGraphicsResAuto'
+_res_y = g_nodes['TouchGraphicsResRow']['fields']['rect']['y']; _hint = g_nodes['TouchGraphicsApplyHint']['fields']['rect']
+assert _res_y == g_nodes['TouchGraphicsProfileRow']['fields']['rect']['y'] + 180 and _hint['y'] >= _res_y + 180
+assert g_nodes['TouchGraphicsRows']['fields']['rect']['height'] >= _hint['y'] + _hint['height']
 print('PASS Graphics page: native FPS/profile sliders, independent upscale toggle, localization hooks')
 
 # Regression: adding Graphics must preserve all original destinations and native settings.

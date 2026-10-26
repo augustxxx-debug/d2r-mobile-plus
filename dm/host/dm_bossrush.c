@@ -342,20 +342,53 @@ void dm_bossrush_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     R.last_t = t;
     int lv = unit_level(player); uint64_t room = unit_room(player); if (!lv || !room) return;
     boss_drop_watch(G, t);
+    // 测试开关 DM_TEST_GOD=1（功耗基准等无人值守局用）：每 5 拍把玩家当前生命 / 法力写回上限（服务端属性 6←7、8←9，同秘境 DM_RIFT_TEST_PETGOD 对随从的做法），
+    // 角色不会因为脚本刷的怪死掉回城。不是真无敌：一下打掉全部生命的伤害仍会死；写的是服务端值，客户端血球等下一次生命通知才跟上
+    // Test switch DM_TEST_GOD=1 (for unattended runs such as the power benchmark): every 5 ticks write the player's current life / mana back to maximum (server stats 6←7, 8←9, as DM_RIFT_TEST_PETGOD does for minions),
+    // so the character does not die to scripted spawns and return to town. Not true invulnerability: a single hit for all remaining life still kills; the server value is written, and the client orbs catch up on the next life notification
+    { static int god = -1; if (god < 0) { god = getenv("DM_TEST_GOD") != NULL; if (god) LOG("测试 DM_TEST_GOD：每 5 拍回满玩家生命 / 法力"); }
+      if (god && t % 5 == 0) { int (*gs)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(B + 0x5b9290); void (*ss)(uint64_t, int, int, int) = (void (*)(uint64_t, int, int, int))(B + 0x5bc1f0);
+          int hp = gs(player, 6, 0), mhp = gs(player, 7, 0), mp = gs(player, 8, 0), mmp = gs(player, 9, 0);
+          if (hp > 0 && mhp > 0 && hp < mhp) ss(player, 6, mhp, 0);
+          if (mmp > 0 && mp < mmp) ss(player, 8, mmp, 0); } }
     // 测试开关 DM_TEST_WARP_LV=<拍>:<关卡号>（造现场用，亮度对比截图）：到这一拍照原版王座门的做法 0x634000(游戏, 玩家, 关卡, 11) 把人送进这个关卡，一局一次
     // Test switch DM_TEST_WARP_LV=<tick>:<level id> (for setting up a scenario, brightness comparison screenshots): at this tick send the player into this level the way the original game's Throne door does, 0x634000(game, player, level, 11), once per run
-    { static int at = -1, wl; if (at < 0) { const char *e = getenv("DM_TEST_WARP_LV"); at = 0; if (e && sscanf(e, "%d:%d", &at, &wl) != 2) at = 0; }
-      if (at > 0 && t >= (uint32_t)at && lv != wl) { at = 0; LOG("测试 DM_TEST_WARP_LV：拍 %u 从关卡 %d 进 %d", t, lv, wl); ((void (*)(uint64_t, uint64_t, int, int))(B + 0x634000))(G, player, wl, 11); return; } }
+    // 另一种写法（功耗基准 power_bench.sh）：DM_TEST_WARP_LV=every<周期拍>:<关卡>,<关卡>,…  每隔周期拍按表轮换传送（到表尾回到表头），在同一关不传。关卡号同原版 levels.txt（2 血沼、8 邪恶洞穴、34 墓穴 1…）
+    // Alternative form (power benchmark power_bench.sh): DM_TEST_WARP_LV=every<period ticks>:<level>,<level>,...  warp through the list every period (wrapping around), skipping when already in that level. Level ids as in the original levels.txt (2 Blood Moor, 8 Den of Evil, 34 Catacombs 1...)
+    { static int at = -1, wl, period, cyc[16], ncyc, ci; static uint32_t next;
+      if (at < 0) { const char *e = getenv("DM_TEST_WARP_LV"); at = 0;
+          if (e && !strncmp(e, "every", 5)) { char *end; period = (int)strtol(e + 5, &end, 10); const char *p = *end == ':' ? end + 1 : NULL;
+              while (p && *p && ncyc < 16) { cyc[ncyc++] = (int)strtol(p, &end, 10); if (end == p) break; p = *end == ',' ? end + 1 : end; }
+              if (period > 0 && ncyc) { next = (uint32_t)period; LOG("测试 DM_TEST_WARP_LV：每 %d 拍轮换 %d 个关卡", period, ncyc); } else period = 0; }
+          else if (e && sscanf(e, "%d:%d", &at, &wl) != 2) at = 0; }
+      if (at > 0 && t >= (uint32_t)at && lv != wl) { at = 0; LOG("测试 DM_TEST_WARP_LV：拍 %u 从关卡 %d 进 %d", t, lv, wl); ((void (*)(uint64_t, uint64_t, int, int))(B + 0x634000))(G, player, wl, 11); return; }
+      if (period > 0 && t >= next) { next += (uint32_t)period; int to = cyc[ci]; ci = (ci + 1) % ncyc;
+          if (to != lv) { LOG("测试 DM_TEST_WARP_LV：拍 %u 从关卡 %d 轮换进 %d", t, lv, to); ((void (*)(uint64_t, uint64_t, int, int))(B + 0x634000))(G, player, to, 11); return; } } }
     if (R.eligible < 0) { R.eligible = eligible(G, player); R.total = *(uint8_t *)(uintptr_t)(G + 0x104) == 2 ? 12 : 10;
         LOG("首领连战：本局%s资格（难度 %u，共 %d 关）", R.eligible ? "有" : "没有", *(uint8_t *)(uintptr_t)(G + 0x104), R.total); }
     // 测试开关 DM_TEST_SPAWN=<拍>:<类号>:<dx>,<dy>（造现场用）：到拍在玩家格 + (dx, dy) 附近找空地刷一只怪（同连战刷首领：0x7160d0 找空地、0x7ce630 刷）。
     // 首领顶部血条复现用（远处 / 画面边上的首领）
     // Test switch DM_TEST_SPAWN=<tick>:<class id>:<dx>,<dy> (for setting up a scenario): at the tick, find open ground near player cell + (dx, dy) and spawn one monster (same as boss rush boss spawning: 0x7160d0 finds open ground, 0x7ce630 spawns).
     // Used to reproduce the boss top health bar (bosses far away / at the edge of the screen)
-    { static int st = -1, at, cls, dx, dy; if (st < 0) { const char *e = getenv("DM_TEST_SPAWN"); st = e && sscanf(e, "%d:%d:%d,%d", &at, &cls, &dx, &dy) == 4 ? 0 : 1; }
-      if (!st && t >= (uint32_t)at) { st = 1; int x = 0, y = 0; unit_xy(player, &x, &y); int32_t pos[2] = { x + dx, y + dy }; uint64_t rr = free_spot(G, room, pos);
-          uint64_t u = rr ? ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(B + 0x7ce630))(G, rr, 1, cls, pos[0], pos[1], 1, 0, 0x10) : 0;
-          LOG("DM_TEST_SPAWN：拍 %u 在 %d,%d（玩家 %d,%d）刷类号 %d → %s", t, pos[0], pos[1], x, y, cls, u ? "成" : "败"); } }
+    // 多条写法（功耗基准）：分号分隔，每条 [every<周期拍>+<偏移拍>|<拍>]:<类号>:<dx>,<dy>[*<只数>]；every 条每个周期在偏移拍刷一批，多只绕着目标点一圈圈放（每只隔 2 格）
+    // Multi-entry form (power benchmark): semicolon-separated, each [every<period ticks>+<offset ticks>|<tick>]:<class id>:<dx>,<dy>[*<count>]; an every entry spawns a batch at the offset in every period, placing extra monsters ring by ring around the target cell (2 cells apart)
+    { typedef struct { int period, cls, dx, dy, n; uint32_t next; int done; } spawn_ent; static spawn_ent sp[8]; static int nsp = -1;
+      if (nsp < 0) { nsp = 0; const char *e = getenv("DM_TEST_SPAWN");
+          while (e && *e && nsp < 8) { spawn_ent s = {0}; const char *q = e; char *end; int at = 0, off = 0;
+              if (!strncmp(q, "every", 5)) { s.period = (int)strtol(q + 5, &end, 10); q = end; if (*q == '+') { off = (int)strtol(q + 1, &end, 10); q = end; } }
+              else { at = (int)strtol(q, &end, 10); if (end == q) break; q = end; }
+              if (*q != ':' || sscanf(q, ":%d:%d,%d", &s.cls, &s.dx, &s.dy) != 3) { LOG("【红】DM_TEST_SPAWN 条目不认识：%s", e); break; }
+              const char *star = strchr(q, '*'), *semi = strchr(q, ';'); s.n = star && (!semi || star < semi) ? atoi(star + 1) : 1; if (s.n < 1) s.n = 1; if (s.n > 24) s.n = 24;
+              s.next = s.period > 0 ? (uint32_t)(off > 0 ? off : s.period) : (uint32_t)at; sp[nsp++] = s;
+              e = semi ? semi + 1 : NULL; }
+          if (nsp) LOG("测试 DM_TEST_SPAWN：%d 条刷怪计划", nsp); }
+      for (int k = 0; k < nsp; k++) { spawn_ent *s = &sp[k]; if (s->done || t < s->next) continue;
+          if (s->period > 0) s->next += (uint32_t)s->period; else s->done = 1;
+          int x = 0, y = 0, ok = 0; unit_xy(player, &x, &y);
+          for (int i = 0; i < s->n; i++) { int ring = (i + 3) / 4, side = i % 4; int ox = side == 0 ? ring * 2 : side == 1 ? -ring * 2 : 0, oy = side == 2 ? ring * 2 : side == 3 ? -ring * 2 : 0;
+              int32_t pos[2] = { x + s->dx + ox, y + s->dy + oy }; uint64_t rr = free_spot(G, room, pos);
+              uint64_t u = rr ? ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(B + 0x7ce630))(G, rr, 1, s->cls, pos[0], pos[1], 1, 0, 0x10) : 0; ok += u != 0; }
+          LOG("DM_TEST_SPAWN：拍 %u 在玩家 %d,%d 偏移 %d,%d 刷类号 %d × %d → 成 %d", t, x, y, s->dx, s->dy, s->cls, s->n, ok); } }
     if (!R.eligible) return;
     dm_door_label(B, G, DOOR_OBJ, "dmDoorBossRush", lv == LV_TOWN);
 

@@ -40,6 +40,7 @@ run: \
 	$(B)/t_notice_geometry \
 	$(B)/t_oe \
 	$(B)/t_render_profile \
+	$(B)/t_res_cap \
 	$(B)/t_uiscreen_frontend \
 	$(B)/t_padmap \
 	$(B)/t_pouch_notice \
@@ -88,6 +89,7 @@ run: \
 	$(B)/t_metalfx_handoff
 	$(B)/t_metalfx_handoff --disabled
 	$(B)/t_render_profile
+	$(B)/t_res_cap
 	$(B)/t_pouch_notice
 	$(B)/t_modal_input_gate
 	$(B)/t_settings_modal_input
@@ -222,6 +224,9 @@ $(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
 
 $(B)/t_render_profile: t_render_profile.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_render_profile.c
+
+$(B)/t_res_cap: t_res_cap.c ../dm_res_cap.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_res_cap.c -lm
 
 $(B)/t_pouch_notice: t_pouch_notice.c ../dm_pouch.c ../dm_widget.h ../hle.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_pouch_notice.c

@@ -43,7 +43,20 @@ Auto samples system state at most once per second. Reductions take effect at the
 
 The frame-timing controller retains its 3-second post-change hold, approximately 30-second clean recovery, and approximately 90-second recovery after a failed upward step. Auto cap changes retain any further reduction imposed by frame timing; recovering the cap does not reset actual resolution. The game thread receives one final absolute target, avoiding transient cap/level mismatches. Low Power Mode refers to the system switch, not battery percentage. Local state-sequence and production-controller tests cover these timing rules; device stutter and power measurements for this change remain pending.
 
-Ratios apply separately to width and height, not energy savings. Only 3D color is upscaled, retaining the original mask; subsequent UI composition retains its resolution. The frame-rate setting is independent. Auto, Eco and Balanced can reduce 3D resolution further during sustained frame drops. Unsupported devices or initialization failure retain the original upscale pass automatically.
+Ratios apply separately to width and height, not energy savings. Only 3D color is upscaled, retaining the original mask; subsequent UI composition retains its resolution.
+
+### Render resolution (whole-frame output cap)
+
+The 3D ratio above never touches the UI layer, the final composite, the upscale pass or the present blit, which all run at the full output size. On very dense screens that part dominates GPU time: the iPhone Duo inner screen renders the game at 2852x2006 (about 5.7 MP, 2.8x the Switch's 1080p), and on-device logs showed the same ~15 ms GPU frame with MetalFX Eco and with the original upscaler once the 3D ratio had reached its 0.60 floor. The Graphics tab therefore has a fourth row, **Resolution**, a four-position slider that caps the whole-frame output size by pixel budget; the present thread's existing aspect-preserving bilinear upscale fills the screen again, UI rectangles and touch coordinates are relative and unchanged, and the change applies live with Apply (the game re-reads its output size through the same notification the foldable screen switch uses).
+
+| Level | Pixel budget | Effect |
+|---|---|---|
+| Auto (default) | By GPU generation: A16 and earlier 2.07 MP, A17 Pro / A18 2.8 MP, A18 Pro / A19 3.8 MP, A19 Pro / A20 and later 4.0 MP, M series 4.5 MP | 17 Pro Max (A19 Pro) and the Duo outer screen unchanged; the Duo inner screen shrinks to about 2384x1676; 15 Pro (A17 Pro) to about 0.96x edge; 14 Pro and earlier to about 0.83x |
+| Eco | 2.07 MP | 1080p-equivalent pixel count on every device |
+| Balanced | 2.8 MP | Between the two |
+| Native | no cap | Previous behavior: output size = window size |
+
+The cap only ever shrinks and keeps the window aspect ratio within 0.5%, so no black bars appear. The startup reserve is not reduced, so the level can be raised again at runtime without restarting. Status: implemented with unit tests for the budget math and the settings plumbing (`dm/host/tests/t_res_cap.c`, `t_render_profile.c`, `dm/ios/tests/test_touch_layout_options.py`); **not yet verified on a device**, and no power or GPU-time measurement for it exists yet. The slider is read by the iOS front end only; the Mac host keeps native output. The frame-rate setting is independent. Auto, Eco and Balanced can reduce 3D resolution further during sustained frame drops. Unsupported devices or initialization failure retain the original upscale pass automatically.
 
 ### Exploratory device power probe
 
@@ -95,6 +108,8 @@ The font override is **off by default**. See [optional font configuration](docs/
 ## Verification and limitations
 
 The preview has passed focused host geometry/classification tests, the iOS touch suite, notification generator checks and a signed device build. The quest narration issue was reproduced before the change and retested after it. See [verification details](docs/PLUS.md#verification) for the checks actually performed and those still pending.
+
+**Large black bars on both sides (on an iPhone)**: the package itself is universal (iPhone + iPad). If the signing tool's "iPad mode" is on (device type set to iPad), iOS runs it on the iPhone as an iPad app in compatibility mode, at the iPad aspect ratio (about 1.44:1) with black bars on both sides that the game cannot remove. Turn off "iPad mode", set the device type to iPhone, re-sign and reinstall. The app detects this at launch: the log says it is running with the iPad identity, and one alert is shown after entering the game.
 
 Physical folding transitions, complete controller navigation, all achievement/notification combinations and every game panel still need broader regression testing. Please report reproducible cases with screen dimensions, input mode, steps and the source commit. Remove personal information from diagnostics before sharing; do not upload game files, keys, saves or signed packages.
 

@@ -883,7 +883,26 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
       if (tk && main && player && !killed && tk_rd(G + 0x170, &tq, 4) && tq >= (uint32_t)atoi(tk) && tk_rd(player + 8, &pid, 4)) { killed = 1;
           int r = ((int (*)(uint64_t, uint64_t, uint64_t, int, int, uint32_t, int, int))(main->base + 0x6cd2c0))(G, player, 0, 0, 0, pid, 0, 0); LOG("DM_TEST_KILL：拍 %u 对玩家 id %u 开始死亡模式 → %d", tq, pid, r); } }
     { uint32_t tq = 0; static int once2; const char *ts = getenv("DM_TEST_STAT");   // 测试开关 DM_TEST_STAT=<属性号>=<值>[,…]：进局第 30 拍设玩家属性（5 剩余技能点、15 箱内金币…；验加点 / 买卖用） | Test switch DM_TEST_STAT=<stat number>=<value>[,...]: set player stats at tick 30 after joining the run (5 remaining skill points, 15 gold in stash...; for verifying point allocation / buying and selling)
-      if (ts && main && player && tk_rd(G + 0x170, &tq, 4) && tq >= 30 && !once2++) { char buf[128]; strlcpy(buf, ts, sizeof buf); for (char *sv, *t = strtok_r(buf, ",", &sv); t; t = strtok_r(NULL, ",", &sv)) { int a = 0, v = 0; if (sscanf(t, "%d=%d", &a, &v) == 2) ((void (*)(uint64_t, int, int, int))(main->base + 0x5bc1f0))(player, a, v, 0); } } }
+      if (ts && main && player && tk_rd(G + 0x170, &tq, 4) && tq >= 30 && !once2++) { char buf[128]; strlcpy(buf, ts, sizeof buf); for (char *sv, *t = strtok_r(buf, ",", &sv); t; t = strtok_r(NULL, ",", &sv)) { int a = 0, v = 0, pm = 0;   // 带参数写法 <属性号>:<参数>=<值>（97:<技能号>=<级> 给非本职技能，功耗基准「终局特效」场景用） | Param form <stat>:<param>=<value> (97:<skill>=<level> grants a non-class skill, used by the power benchmark effects scenario)
+              if (sscanf(t, "%d:%d=%d", &a, &pm, &v) == 3 || sscanf(t, "%d=%d", &a, &v) == 2) ((void (*)(uint64_t, int, int, int))(main->base + 0x5bc1f0))(player, a, v, pm); } LOG("DM_TEST_STAT：拍 %u 已设 %s", tq, ts); } }
+    // 测试开关 DM_TEST_CAST=every<周期拍>:<技能号>[/<技能号>…]:<半径格>（功耗基准「终局特效」场景）：每隔周期拍先交「选右手技能」包（0x3c：技能、手 0x00、无物品）再交「右手技能对坐标」包（0x0c），
+    // 坐标 = 玩家格 + 半径内的伪随机偏移，技能按表轮换；走游戏自己的收包分发 main+0x6e5b40，与 DM_TEST_GIVE_INV 同一入口。技能要先由 DM_TEST_STAT 的 97:<技能号>=<级> 给到角色，法力由 DM_TEST_GOD 回满
+    // Test switch DM_TEST_CAST=every<period ticks>:<skill>[/<skill>...]:<radius cells> (power benchmark effects scenario): every period, hand the game a "select right-hand skill" packet (0x3c: skill, hand 0x00, no item) and then a "right-hand skill at location" packet (0x0c),
+    // location = player cell + a pseudo-random offset within the radius, skills rotate through the list; goes through the game's own receive dispatch main+0x6e5b40, the same entry as DM_TEST_GIVE_INV. The skills must first be granted by DM_TEST_STAT 97:<skill>=<level>; mana is refilled by DM_TEST_GOD
+    { static int st = -1, period, skills[8], nsk, rad, si; static uint32_t next, cnt; uint32_t tq = 0;
+      if (st < 0) { st = 0; const char *e = getenv("DM_TEST_CAST");
+          if (e && !strncmp(e, "every", 5)) { char *end; period = (int)strtol(e + 5, &end, 10); const char *p = *end == ':' ? end + 1 : NULL;
+              while (p && *p && nsk < 8) { skills[nsk++] = (int)strtol(p, &end, 10); if (end == p) break; p = end; if (*p == '/') p++; else break; }
+              if (p && *p == ':') rad = atoi(p + 1); if (rad <= 0) rad = 6;
+              if (period > 0 && nsk) { st = 1; next = (uint32_t)period; LOG("测试 DM_TEST_CAST：每 %d 拍轮放 %d 个技能，半径 %d 格", period, nsk, rad); } else LOG("【红】DM_TEST_CAST 不认识：%s", e); } }
+      if (st == 1 && main && player && tk_rd(G + 0x170, &tq, 4) && tq >= next) { next += (uint32_t)period; uint64_t pp = 0; tk_rd(player + 0x38, &pp, 8);
+          if (pp) { int x = *(uint16_t *)(pp + 2), y = *(uint16_t *)(pp + 6); int sk = skills[si]; si = (si + 1) % nsk; cnt++;
+              int dx = (int)((cnt * 7919u) % (unsigned)(2 * rad + 1)) - rad, dy = (int)((cnt * 104729u) % (unsigned)(2 * rad + 1)) - rad;
+              uint8_t sel[9] = { 0x3c }; uint16_t s16 = (uint16_t)sk; memcpy(sel + 1, &s16, 2); sel[3] = 0; sel[4] = 0x00; uint32_t none = 0xffffffffu; memcpy(sel + 5, &none, 4);
+              uint8_t cast[5] = { 0x0c }; uint16_t cx = (uint16_t)(x + dx), cy = (uint16_t)(y + dy); memcpy(cast + 1, &cx, 2); memcpy(cast + 3, &cy, 2);
+              void (*disp)(uint64_t, uint64_t, uint8_t *, uint32_t) = (void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(main->base + 0x6e5b40);
+              *(uint32_t *)(G + 0x19050) = 1; disp(G, player, sel, 9); disp(G, player, cast, 5); *(uint32_t *)(G + 0x19050) = 0;
+              if (cnt <= 3 || cnt % 300 == 0) LOG("DM_TEST_CAST：拍 %u 技能 %d → %d,%d（第 %u 次）", tq, sk, cx, cy, cnt); } } }
     // 测试开关 DM_TEST_MERC_HP=<百分比>[@拍]（造现场用，缺省第 60 拍）：把佣兵当前生命设成上限的这个比例（服务端直接写属性 6，不走受伤流程：头像血条要等下一次生命变化才跟上）。
     // 设了这个变量就同时记佣兵生命读数：有变化时一行「佣兵 类号 id 生命 当前/上限」（每 25 拍最多一行，回血会一直变）。佣兵 = 怪物表里类号 271 / 338 / 359 / 560 / 561 且活着的那只。
     // Test switch DM_TEST_MERC_HP=<percent>[@tick] (for test setup, default tick 60): set the mercenary's current life to this fraction of its maximum (the server writes stat 6 directly, bypassing the damage flow: the portrait health bar only catches up on the next life change).

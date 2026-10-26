@@ -87,8 +87,23 @@ make -C dm/host/tests build/t_minimap_lift build/t_uiscreen_frontend
 
 标准 iOS 模拟器不满足整款游戏的图形能力检查，未能运行完整游戏。上述游戏画面来自原生 Mac 宿主，使用独立测试存档副本并关闭云访问；它们不是 iOS 模拟器截图，也不验证 UIKit 触摸投递、物理折叠、iPhone 温控或省电效果。更多面板及语言的覆盖仍受下列检查限制。
 
+### 渲染分辨率上限与测量包
+
+图形页「渲染分辨率」滑块（`dm/host/dm_res_cap.h`、`dm_custom.c` 键 `render_res`、`front_ios.m` 的 `front_game_res`）由 `t_res_cap`（预算、宽高比、偶数、只缩不放、幂等，覆盖 Duo／17 Pro Max／iPad 尺寸）、`t_render_profile`（持久化、应用／放弃／默认、每次有效变更只通知一次重读）与 `test_touch_layout_options.py`（滑块行位于档位行之下、不与说明重叠）覆盖。Mac 宿主与 iOS 模拟器都走不到真机这条路；运行中切分辨率、出图线程放大、折叠／展开联动的真机验收仍待完成。
+
+测量用 `DM_DIAG_SAMPLING=1 dm/ios/run.sh build` 出包（或在任意包的 `Documents/diag_sampling.txt` 放一个文件）。启动时 App 设置 `DM_NVN_PASSGPU`、`DM_THRCPU`（5 秒）、`DM_HEAT`（5 秒），写出 `Documents/diag/passgpu.tsv`、`thrcpu.tsv`、`heat.tsv`。逐通道计时会让提交线程等待 8 次提交之前的 GPU 完成，只作相对比较；`passgpu.tsv` 每个渲染通道一行，几分钟可达几十 MB。测量要拔线、固定亮度；充电状态下的读数不能用于功耗结论。
+
+### 本机调试：在 Mac 上跑 iOS 包（代替模拟器）
+
+iOS 模拟器 SDK 里没有 MetalFX 框架，图形后端编不过，着色器库也只有真机目标，所以模拟器这条路走不通。可行的本机路径是把 iphoneos 的 `DmIOS.app` 按“Designed for iPad”在 Apple 芯片 Mac 上原样启动（同 `tools/smoke_mac.sh` 的做法）：把构建产物包成 `<名>.app/Wrapper/DmIOS.app` 加 `WrappedBundle` 软链，`open -n <名>.app --env … --args -mode boot` 启动；描述文件要包含这台 Mac。容器在 `~/Library/Containers/<UUID>/Data`（按 `.com.apple.containermanagerd.metadata.plist` 或 `Documents/boot.txt` 找），把 RomFS 的 `data/` 克隆进 `Library/Application Support/romfs/`、测试存档放进 `Documents/save.test`。常用环境：`DM_TEST_SCREEN=2622x1206` 把屏幕当成 iPhone 16 Pro（配 `DM_TEST_SAFE_L/R` 安全区），`DM_SAVE_TEST=1`、`DM_TEST_ICLOUD_OFF=1`、`DM_KEYS` 进局、`DM_SCREEN_SHOT=<秒>:<文件名>` 整窗截图到 Documents。能验的是外壳、布局、分辨率与比例逻辑、进局；验不了真机触点、热态与 A 系列 GPU 时间。
+
+### 无人值守功耗基准
+
+`dm/ios/tools/power_bench.sh <每段分钟> <档位序列> [MetalFX] [存档备份目录]` 只启动一次游戏：用测试存档（`Documents/save.test`，绝不碰 `Documents/save`）、固定种子、进局并循环走动的按键脚本、每 90 秒轮换关卡（`DM_TEST_WARP_LV=every<拍>:<关卡…>`）、定时刷怪（`DM_TEST_SPAWN` 多条写法）和渲染分辨率时间表（`DM_TEST_RENDER_RES=<档>@<秒>,…`）。`heat.tsv` 每 5 秒多记电量、充电状态、低电量模式、渲染档与 MetalFX 档；`tools/bench_report.py` 按渲染档列分段，给每段的 %/小时及 ±(1% ÷ 段时长) 的量化误差。要拔线、固定亮度跑；每段短于 10 分钟分不出电量计的变化。
+
 ### 后续检查
 
+- 渲染分辨率滑块：在 iPhone Duo 内外屏验证点应用后无需重启即重读输出尺寸、画面仍铺满，并与原生档对比逐通道 GPU 时间。
 - 图形页横屏的实体折叠／展开已由使用者确认；仍需覆盖其他页面、菜单与加载切换。
 - 图形页实体 Xbox 手柄已确认；仍需遍历其余前端和游戏内面板的焦点、提示与操作。
 - 复现所有成就／通知叠加情况，包括底部 HUD 遮罩。
