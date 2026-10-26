@@ -79,6 +79,29 @@ class FontComposition(unittest.TestCase):
                 self.assertEqual(merged['glyf'][cmap[32]].numberOfContours,0)
             self.assertEqual(before,(base.read_bytes(),custom.read_bytes()))
 
+    def test_shared_non_cjk_codepoints_keep_game_glyphs(self):
+        # 楷体等 GB 字库的数字比大写字母高、% 偏小，带重音拉丁 / 西里尔 / 希腊 / 通用标点（· ’ —）是全角：
+        # 两边都有的码位只有中日文汉字、标点与全角形式取自选字体，其余保留游戏原字形（HUD「Lv 17 · 23%」错位、俄语 / 西语正文被撑开）
+        # GB fonts such as the Kai face carry digits taller than capitals, a small %, and full-width accented Latin / Cyrillic / Greek /
+        # general punctuation (· ’ —): for codepoints both fonts cover, only CJK ideographs, punctuation and full-width forms come from the
+        # requested font, the rest keep the game glyphs (HUD "Lv 17 · 23%" misaligned, Russian / Spanish text spread apart)
+        game = [0x31, 0x25, 0x4c, 0xb7, 0xe1, 0x416, 0x3a9, 0x2019, 0x2014]
+        cjk = [0x4e00, 0x3002, 0xff1a, 0x3042]
+        with tempfile.TemporaryDirectory() as work:
+            base, custom, output = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'out.ttf')]
+            synthetic(base, game + cjk, 1000, 'GameBase')
+            synthetic(custom, game + cjk, 1000, 'Requested')
+            with TTFont(base) as font:
+                cmap = font.getBestCmap()
+                for c in game + cjk:
+                    font['hmtx'][cmap[c]] = (300, 0)
+                font.save(base)
+            font_override.compose(base.read_bytes(), custom, output)
+            with TTFont(output) as merged:
+                cmap = merged.getBestCmap()
+                self.assertEqual({c: merged['hmtx'][cmap[c]][0] for c in game}, {c: 300 for c in game})
+                self.assertEqual({c: merged['hmtx'][cmap[c]][0] for c in cjk}, {c: 1000 for c in cjk})
+
     def test_game_private_use_symbols_keep_original_metrics(self):
         with tempfile.TemporaryDirectory() as work:
             base, custom, output = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'out.ttf')]
@@ -110,13 +133,13 @@ class FontComposition(unittest.TestCase):
         with tempfile.TemporaryDirectory() as work:
             base, custom, plain, bold = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'plain.ttf', 'bold.ttf')]
             synthetic(base, [65, 0x4e00, 0xe001], 1000, 'GameBase')
-            synthetic(custom, [65, 0x4e8c, 0xe001], 2048, 'Requested')
+            synthetic(custom, [65, 0x4e8c, 0x4e8d, 0xe001], 2048, 'Requested')
             data = base.read_bytes()
             font_override.compose(data, custom, plain)
             font_override.compose(data, custom, bold, weight=2)
             with TTFont(plain) as a, TTFont(bold) as b:
                 ca, cb = a.getBestCmap(), b.getBestCmap()
-                for c in (65, 0x4e8c):   # 自选字形：更粗、字宽不变 | requested glyphs: thicker, same advance
+                for c in (0x4e8c, 0x4e8d):   # 自选字形：更粗、字宽不变 | requested glyphs: thicker, same advance
                     ga, gb = a['glyf'][ca[c]], b['glyf'][cb[c]]
                     self.assertEqual(a['hmtx'][ca[c]][0], b['hmtx'][cb[c]][0])
                     self.assertGreater(gb.xMax - gb.xMin, ga.xMax - ga.xMin)
@@ -126,7 +149,7 @@ class FontComposition(unittest.TestCase):
                     growth = (gb.xMax - gb.xMin) - (ga.xMax - ga.xMin)   # 直边各长半量，锐角顶点外推更多 | straight edges grow by half each; the acute vertex more
                     self.assertGreaterEqual(growth, 2 * font_override.WEIGHT_STEP)
                     self.assertLessEqual(growth, 4 * font_override.WEIGHT_STEP)
-                for c in (0x4e00, 0xe001):   # 原字体回退字形与图标：原样 | fallback glyphs and icons: unchanged
+                for c in (65, 0x4e00, 0xe001):   # 原字体回退字形、共有的西文与图标：原样 | fallback glyphs, shared Western letters and icons: unchanged
                     self.assertEqual(list(a['glyf'][ca[c]].coordinates), list(b['glyf'][cb[c]].coordinates))
                     self.assertEqual(a['hmtx'][ca[c]], b['hmtx'][cb[c]])
                 for key in ('ascent', 'descent', 'lineGap'):

@@ -1,5 +1,6 @@
-"""可选主字体：保留原字体缺字回退和排版度量，所有产物只在 Gen 内生成。
-Optional main font: retain fallback glyphs and layout metrics; generate only inside Gen.
+"""可选主字体：只替换中日文字形（CJK_RANGES），西文、数字与缺字保留原字体，排版度量不变，所有产物只在 Gen 内生成。
+Optional main font: replace CJK glyphs only (CJK_RANGES); Western letters, digits and missing glyphs keep the original font, layout
+metrics stay; generate only inside Gen.
 
 字重：`DM_UI_FONT_WEIGHT=0..8` 按档把自选字体的每一笔描边加深（每档 WEIGHT_STEP‰ em），用 FreeType FT_Outline_EmboldenXY 的
 同一套点位外推算法做在轮廓上；加粗后轮廓回中，字宽（advance）和行高度量不变，原字体回退的字形与私用区图标不动。
@@ -23,6 +24,21 @@ GAME_FONT = 'data/hd/ui/fonts/blizzardglobal-v5_81.ttf'
 # above approach a synthetic bold (FreeType uses em/24 ≈ 42‰).
 WEIGHT_STEP = 5
 WEIGHT_MAX = 8
+# 两边都有的码位里只有这些区段取自选字体：中日文部首、标点、假名、注音、汉字（含扩展与兼容区）、竖排 / 全角形式。
+# GB 字库（楷体等）的拉丁 / 西里尔 / 希腊 / 通用标点多为全角，数字比大写字母高、% 偏小，游戏按原字体排的数字与西文会错位、被撑开；
+# 这些码位一律保留游戏原字形。自选字体独有的码位（扩展汉字等）照样补进来。
+# For codepoints both fonts cover, only these ranges come from the requested font: CJK radicals, punctuation, kana, bopomofo,
+# ideographs (extensions and compatibility included), vertical / full-width forms. GB fonts (Kai and the like) carry mostly full-width
+# Latin / Cyrillic / Greek / general punctuation, digits taller than capitals and a small %, which misalign and spread numbers and
+# Western text laid out for the original font; those codepoints keep the game glyphs. Codepoints only the requested font has
+# (extension ideographs and so on) are still added.
+CJK_RANGES = ((0x2e80, 0x2fff), (0x3000, 0x30ff), (0x3100, 0x312f), (0x31a0, 0x31ff), (0x3200, 0x33ff),
+              (0x3400, 0x4dbf), (0x4e00, 0x9fff), (0xf900, 0xfaff), (0xfe10, 0xfe1f), (0xfe30, 0xfe4f),
+              (0xff00, 0xffef), (0x20000, 0x3ffff))
+
+
+def is_cjk(codepoint):
+    return any(lo <= codepoint <= hi for lo, hi in CJK_RANGES)
 
 
 def source_path():
@@ -146,7 +162,7 @@ def embolden(font, strength):
 
 
 def compose(original, requested, output, weight=0):
-    """优先使用自选字体，原字体补齐缺字；不改写输入文件。 | Prefer the requested font, retain missing glyphs from the original, and leave inputs unchanged."""
+    """中日文码位优先使用自选字体，其余与原字体缺字由原字体补齐；不改写输入文件。 | Prefer the requested font for CJK codepoints, retain the original glyphs for the rest and for missing glyphs, and leave inputs unchanged."""
     from fontTools import subset
     from fontTools.merge import Merger
     from fontTools.ttLib import TTFont
@@ -169,7 +185,8 @@ def compose(original, requested, output, weight=0):
     placeholders = {c for c in base_chars & custom_chars
                     if custom['glyf'][custom_map[c]].numberOfContours == 0
                     and base['glyf'][base_map[c]].numberOfContours != 0}
-    protected = symbols | placeholders
+    western = {c for c in base_chars & custom_chars if not is_cjk(c)}
+    protected = symbols | placeholders | western
     if protected:
         keep = subset.Subsetter()
         keep.populate(unicodes=custom_chars - protected)
@@ -233,7 +250,7 @@ def prepare(romfs):
     original = romfs_art.read(romfs, GAME_FONT)
     weight = weight_level()
     # 指纹带档位和每档的量：改标定也要重建 | The fingerprint carries the level and the per-level amount, so a recalibration rebuilds too
-    digest = hashlib.sha256(b'font-override-v6\0' + ('w%d/%d\0' % (weight, WEIGHT_STEP)).encode() + original + path.read_bytes()).hexdigest()
+    digest = hashlib.sha256(b'font-override-v7\0' + ('w%d/%d\0' % (weight, WEIGHT_STEP)).encode() + original + path.read_bytes()).hexdigest()
     if output.is_file() and stamp.is_file() and stamp.read_text() == digest:
         return str(output)
     with tempfile.TemporaryDirectory(dir=directory) as work:
