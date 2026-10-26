@@ -1,6 +1,6 @@
 """复审 F03 / F08（2026-10-27）的源码级回归：
-F03：DM_RATE_HINT=0 只去掉刷新率表态，触控 / 布局工作仍由主线程定时器驱动；
-F08：显示帧数标签读系统确认上屏的计数（presentedTime > 0 才计），计数器跨线程读写走原子操作。
+F03 / 二审 R03：DM_RATE_HINT=0 只去掉刷新率表态，触控 / 布局工作由主队列定时器按目标帧率（30 / 60 / 120）驱动；
+F08 / 二审 R04：显示帧数标签读系统确认上屏的计数（presentedTime > 0 才计），计数器跨线程读写（含截图请求）走原子操作。
 Source-level regression for re-audit F03 / F08 (2026-10-27):
 F03: DM_RATE_HINT=0 drops only the refresh-rate declaration; touch / layout work keeps running from a main-thread timer;
 F08: the frame-rate label reads the system-confirmed presented count (counted only when presentedTime > 0); the counters use atomic access across threads."""
@@ -36,9 +36,20 @@ class RateHint(unittest.TestCase):
 
     def test_rate_hint_off_still_drives_work(self):
         i = FRONT.index('if (!getenv("DM_RATE_HINT") || atoi(getenv("DM_RATE_HINT")))')
-        off = FRONT[i:i + 1500].split('} else {', 1)[1]
-        self.assertRegex(off, r'NSTimer timerWithTimeInterval:1\.0 / 60')
-        self.assertIn('[worker work]', off); self.assertIn('NSRunLoopCommonModes', off)
+        j = FRONT.index('} else {', i) + 2
+        off = block(FRONT[j:], 'else {')
+        self.assertIn('[worker work]', off)
+        # 二审 R03：不得固定 60 Hz；定时器频率跟随目标帧率 30 / 60 / 120，并在目标变化时重设 | second review R03: no fixed 60 Hz; the timer follows the 30 / 60 / 120 target and is re-armed on change
+        self.assertNotRegex(off, r'1\.0 / 60\b')
+        self.assertIn('mtl_fps_target()', off)
+        self.assertRegex(off, r'f == 30 \? 30 : f == 120 \? 120 : 60')
+        self.assertRegex(off, r'if \(hz != cur_hz\).*dispatch_source_set_timer', 're-arm on change')
+        self.assertIn('dispatch_get_main_queue()', off)
+        self.assertIn('g_work_driver = 2', off)
+
+    def test_work_logs_actual_rate_and_driver(self):
+        work = block(FRONT, '- (void)work {')
+        self.assertIn('g_work_driver', work); self.assertRegex(work, r'次/秒')
 
 
 class PresentedCount(unittest.TestCase):
@@ -52,6 +63,11 @@ class PresentedCount(unittest.TestCase):
         handler = MTL[i:i + 600]
         self.assertRegex(handler, r'if \(tt > 0\) atomic_fetch_add_explicit\(&g_presented_ok, 1')
         self.assertIn('static _Atomic uint64_t g_presented_ok;', MTL)
+
+    def test_shot_request_reads_counter_atomically(self):
+        # 二审 R04：截图请求来自其他线程，不得直接读 g_present_n | second review R04: shot requests come from other threads and must not read g_present_n directly
+        shot = block(MTL, 'void dm_gfx_shot_at(')
+        self.assertNotRegex(shot, r'\bg_present_n\b'); self.assertIn('mtl_present_count()', shot)
 
     def test_attempt_counter_atomic_access(self):
         self.assertIn('__atomic_add_fetch(&g_present_n, 1, __ATOMIC_RELAXED)', MTL)

@@ -5745,7 +5745,9 @@ static void burst_grab(id<MTLTexture> src) {
 }
 void dm_gfx_shot_at(long k, const char *path) {
     pthread_mutex_lock(&g_shotq_mu);
-    if (g_nshotq < SHOTQ_MAX) { g_shotq[g_nshotq].frame = g_present_n + (uint64_t)(k > 0 ? k : 0); strlcpy(g_shotq[g_nshotq].path, path, sizeof g_shotq[0].path); g_nshotq++; }
+    // 调用方不在出图线程（diag.c 的等待线程、dm_world.c）：计数器用原子读（二审 R04）；出图线程内对它的读写与本函数之外的写同线程，不构成竞争
+    // Callers are not on the present thread (diag.c's waiting thread, dm_world.c): read the counter atomically (second review R04); reads inside present_now share the writer's thread and do not race
+    if (g_nshotq < SHOTQ_MAX) { g_shotq[g_nshotq].frame = mtl_present_count() + (uint64_t)(k > 0 ? k : 0); strlcpy(g_shotq[g_nshotq].path, path, sizeof g_shotq[0].path); g_nshotq++; }
     else MLOG("【红】截图请求超过 %d 个，丢弃 %s", SHOTQ_MAX, path);
     pthread_mutex_unlock(&g_shotq_mu);
 }

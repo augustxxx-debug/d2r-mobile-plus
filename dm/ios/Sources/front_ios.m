@@ -858,7 +858,12 @@ static void touch_ui_message(const char *cat,const char *act,const char *arg) {
     { static int last = -1; int f = mtl_fps_target(); if (f != last) { last = f; l.preferredFrameRateRange = f == 30 ? CAFrameRateRangeMake(30, 30, 30) : f == 120 ? CAFrameRateRangeMake(120, 120, 120) : CAFrameRateRangeMake(60, 60, 60); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
     [self work];
 }
+// 驱动方式：1 = 刷新率表态显示链接（缺省），2 = DM_RATE_HINT=0 时的定时器；每 30 秒记一行实际 work 频率，便于实验报告核对（二审 R03）
+// Driver: 1 = the rate-declaration display link (default), 2 = the timer under DM_RATE_HINT=0; logs the actual work rate every 30 s so experiment reports can check it (second review R03)
+static int g_work_driver = 1;
 - (void)work {
+    { static uint64_t n, t0; uint64_t t = now_ns(); n++; if (!t0) t0 = t;
+      if (t - t0 >= 30000000000ull) { LOG("触控 / 布局驱动：%s，近 %.0f 秒 work %.1f 次/秒", g_work_driver == 2 ? "定时器（DM_RATE_HINT=0）" : "刷新率表态显示链接", (t - t0) / 1e9, n * 1e9 / (double)(t - t0)); n = 0; t0 = t; } }
     DmMetalView *v = g_touch_view;
     if (v) {
         if (g_full) { static int lx = -1, ly, lw, lh, lrh, lrw; int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h);   // 界面矩形由宿主定（开机后才有、切档会变）：变了就让容器重摆游戏视图 | The UI rectangle is decided by the host (available only after boot, changes when the profile switches): on change, have the container re-lay out the game view
@@ -965,11 +970,18 @@ UIView *front_ios_view(CGRect frame) {
         g_rate_link = [CADisplayLink displayLinkWithTarget:[DmRateHint new] selector:@selector(tick:)];
         g_rate_link.preferredFrameRateRange = CAFrameRateRangeMake(60, 60, 60);
         [g_rate_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-    } else {   // 实验：不表态刷新率，但触控 / 布局工作照常由 60 Hz 定时器驱动（复审 F03） | experiment: no rate declaration, touch / layout work still driven by a 60 Hz timer (re-audit F03)
-        static DmRateHint *worker; static NSTimer *timer; worker = [DmRateHint new];
-        timer = [NSTimer timerWithTimeInterval:1.0 / 60 repeats:YES block:^(NSTimer *tm) { (void)tm; [worker work]; }];
-        [NSRunLoop.mainRunLoop addTimer:timer forMode:NSRunLoopCommonModes];
-        LOG("DM_RATE_HINT=0：不挂帧率表态显示链接；触控 / 布局改由主线程 60 Hz 定时器驱动");
+    } else {   // 实验：不表态刷新率，触控 / 布局工作由主队列定时器按与缺省路径相同的目标频率（30 / 60 / 120）驱动（复审 F03、二审 R03）
+               // 与缺省路径仍有的差别：没有刷新率表态，且定时器与屏幕刷新不同相位（不对齐 vsync）；实验结论按这两点解释，不说成“只差一个变量”
+               // Experiment: no rate declaration; touch / layout work is driven by a main-queue timer at the same target rate as the default path (30 / 60 / 120) (re-audit F03, second review R03).
+               // Remaining differences from the default path: no rate declaration, and the timer is not phase-aligned with the display refresh (not vsync-aligned); interpret results with both, never as "a single variable"
+        static DmRateHint *worker; static dispatch_source_t timer; static int cur_hz; worker = [DmRateHint new]; g_work_driver = 2;
+        timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        void (^retime)(void) = ^{ extern int mtl_fps_target(void); int f = mtl_fps_target(), hz = f == 30 ? 30 : f == 120 ? 120 : 60;
+            if (hz != cur_hz) { cur_hz = hz; uint64_t iv = NSEC_PER_SEC / (uint64_t)hz; dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)iv), iv, iv / 10);
+                LOG("DM_RATE_HINT=0：触控 / 布局定时器 %d Hz（跟随目标帧率，不对齐屏幕刷新）", hz); } };
+        dispatch_source_set_event_handler(timer, ^{ retime(); [worker work]; });
+        retime(); dispatch_resume(timer);
+        LOG("DM_RATE_HINT=0：不挂帧率表态显示链接；触控 / 布局改由主队列定时器驱动");
     }
     g_layer = (CAMetalLayer *)v.layer;
     g_layer.device = MTLCreateSystemDefaultDevice();
