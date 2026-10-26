@@ -139,7 +139,7 @@ class UiregPackageCheck(unittest.TestCase):
             return Path(o, 'boot_wrongpkg.txt').exists(), Path(o, 'boot.txt').read_text(encoding='utf-8')
 
     def boot(self, ct, sha, label):
-        return f'[dm] boot: 版本 1.0.0 构建 {ct} 机型 iPhone19,4 系统 27.1 时间 x\n[dm] boot: 显示版本 {label}\n[dm] boot: 源码 {sha} 工作区 clean 构建输入 chain=x\n'
+        return f'[dm] boot: 版本 1.0.0 构建 {ct} 机型 iPhone00,0 系统 00.0 时间 x\n[dm] boot: 显示版本 {label}\n[dm] boot: 源码 {sha} 工作区 clean 构建输入 chain=x\n'
 
     def test_cases(self):
         with tempfile.TemporaryDirectory() as d:
