@@ -52,6 +52,8 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 ### Validation
 
+- Audit build `c7ea42a`: user-confirmed physical Xbox navigation across all five settings tabs, Graphics controls and Apply, plus landscape inner/outer-screen folding on Graphics. Final configuration: 60 FPS + Quality. Loading transitions and other panel/modal combinations remain outside this acceptance.
+
 - Dedicated Graphics settings passed device touch tests and a user-confirmed physical Xbox controller test, including left/right 30 / 60 FPS selection. The final configuration was 60 FPS with Quality.
 - The user confirmed landscape fold/unfold transitions on the Graphics page across inner and outer displays. Menu/loading transitions and all other pages still require broader coverage.
 - Profile migration, persistence and Apply/Discard/global Defaults semantics passed **195 checks**. The iOS touch suite passed **49 cases / 4,487 checks**; host UI classification passed **381 checks** and front-end geometry passed **44 checks**.

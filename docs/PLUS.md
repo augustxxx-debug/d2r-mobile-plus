@@ -49,7 +49,7 @@ Validation record: **2026-10-26**, upstream baseline `195ae11dc70f1ba7735c6063e1
 | Notification generator | Automated frame construction checks passed |
 | Font composition | 6 font-composition tests passed; target Chinese and English settings inspected on device |
 | Graphics settings | 195 migration/persistence/Apply/Discard/global Defaults checks passed |
-| Physical device acceptance | Previous four-tab revision: user confirmed Xbox/folding; see below for five-tab regression scope |
+| Physical device acceptance | Current five-tab audit build: user confirmed a physical Xbox controller and landscape inner/outer-screen folding on iPhone Duo; scope below |
 | Device build | Signed iOS build succeeded |
 | Quest reproduction | Baseline slow release missed; modified slow and quick releases stopped narration |
 | Indicator frame review | 44 captured frames reviewed in the preceding layout build |
@@ -112,4 +112,6 @@ The six touch/controller Audio, Gameplay and Game Settings layouts were compared
 
 Defaults continues to send the native reset message. The enhancement layer resets Graphics and Custom together as pending values, retaining language and voice. Apply saves enhanced values; Discard cancels pending values. The game continues to handle its own options; character progress is outside the reset scope.
 
-This regression used a separate test save on the physical device: all five tabs opened; applying Graphics after disabling native Terror Zones preserved that setting; Defaults → Discard retained 30 FPS / Quality and disabled Terror Zones; Defaults → Apply restored 60 FPS / Auto, enabled Terror Zones and native offline scaling 1 while retaining language and voice. Injected controller input verified the five-tab cycle, frame-rate selection, upscaling switch and profile selection. This run does not substitute for pressing a physical controller, and the five-tab revision has not repeated physical folding acceptance.
+This regression used a separate test save on the physical device: all five tabs opened; applying Graphics after disabling native Terror Zones preserved that setting; Defaults → Discard retained 30 FPS / Quality and disabled Terror Zones; Defaults → Apply restored 60 FPS / Auto, enabled Terror Zones and native offline scaling 1 while retaining language and voice. Injected controller input verified the five-tab cycle, frame-rate selection, upscaling switch and profile selection. That automated run did not substitute for physical controller or folding acceptance.
+
+After installing audit build `c7ea42a`, the user confirmed physical Xbox controller acceptance on **2026-10-26**: LT/RT navigation across all five settings tabs, 30/60 FPS selection, the MetalFX switch, profile selection and Apply. The final configuration was restored to 60 FPS + Quality. The user also confirmed landscape folding to the outer screen and unfolding to the inner screen on Graphics, pausing about five seconds on each, without reported clipping or misalignment. This acceptance does not cover folding during loading, every modal or panel combination, or sustained power measurements.
