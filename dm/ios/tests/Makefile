@@ -60,6 +60,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_casc_add_paths.py
 	python3 test_bench_device.py
 	python3 test_bench_report.py
+	python3 test_power_bench_e2e.py
 	python3 test_source_identity.py
 	python3 test_touch_layout_options.py
 	python3 test_touch_layout_language.py

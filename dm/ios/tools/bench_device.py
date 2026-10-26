@@ -7,6 +7,8 @@ installed bundle directory, never by executable name (several ports share the na
   bench_device.py state <device> <bundle>   打印两行：app=<absent|idle|running:<pid>>、savetest=<yes|no>；设备读不到退出码 2
                                             prints app=<absent|idle|running:<pid>> and savetest=<yes|no>; exit 2 when the device cannot be read
   bench_device.py pid <device> <bundle>     打印目标 App 的进程号（没在跑则不打印）；设备读不到退出码 2
+  bench_device.py pids <device> <bundle>    打印目标 App 的全部进程号（空格分隔）；设备读不到退出码 2
+                                            prints all of the target App's pids (space-separated); exit 2 when the device cannot be read
                                             prints the target App's pid (nothing if not running); exit 2 when the device cannot be read
 """
 import json
@@ -77,7 +79,7 @@ def query(device, bundle, want_savetest):
 
 
 def main(argv):
-    if len(argv) != 4 or argv[1] not in ('state', 'pid'):
+    if len(argv) != 4 or argv[1] not in ('state', 'pid', 'pids'):
         print(__doc__, file=sys.stderr); return 64
     try:
         folder, pids, save = query(argv[2], argv[3], argv[1] == 'state')
@@ -85,6 +87,9 @@ def main(argv):
         print('🔴 ' + str(e), file=sys.stderr); return 2
     if argv[1] == 'pid':
         if pids: print(pids[0])
+        return 0
+    if argv[1] == 'pids':
+        print(' '.join(str(p) for p in pids))
         return 0
     print('app=' + ('absent' if not folder else 'running:%s' % pids[0] if pids else 'idle'))
     print('savetest=' + ('yes' if save else 'no'))

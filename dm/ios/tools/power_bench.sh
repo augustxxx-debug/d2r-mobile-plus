@@ -15,6 +15,7 @@
 # The whole body lives in a function that is called at the end: bash reads scripts incrementally, and editing the file while it runs executes the new text as commands (that is how the 2026-10-26 baseline lost its wrap-up)
 power_bench_main() {
 set -u
+set -o pipefail   # 管道里任何一段失败都算失败（报告生成失败不能被 tee 掩盖，复审 F07） | any failing stage fails the pipeline (a failed report must not be masked by tee, re-audit F07)
 cd "$(dirname "$0")/.."
 source tools/local_env.sh && local_env_need DM_DEVICE DM_BUNDLE_ID || exit 1
 export DM_DEVBATTERY=0 DM_DEVLOCK_CLASS=measure
@@ -29,7 +30,7 @@ SEG_CHECK=$((SEG * 60)); NLV=$(echo "$LEVELS" | tr ',' '\n' | wc -l | tr -d ' ')
 # 设备锁：从第一次碰设备到拉回数据一直持有；上限 = 总时长 + 最长等接回 12 小时 + 30 分钟余量（看门狗超限会结束本脚本） | Device lock: held from the first device access until the data is pulled; limit = run time + up to 12 h waiting for reconnection + 30 min margin (the watchdog ends this script past the limit)
 devlock_acquire "power_bench $RUN" $((NLV * SEG_CHECK + 43200 + 1800)) || exit 1
 trap devlock_release EXIT
-present || { t "🔴 设备没接上（devicectl 看不到 $D）"; exit 1; }
+present || { t "🔴 设备没接上（devicectl 看不到 ${D}）"; exit 1; }
 STATE=$("${BD[@]}" state "$D" "$B") || { t "🔴 读不到设备状态（见上一行），不继续"; exit 1; }
 case "$STATE" in *app=absent*) t "🔴 手机上没装目标 App"; exit 1;; *app=running*) t "🔴 目标 App 正在运行（${STATE%%$'\n'*}）：请先在游戏里保存退出并关闭 App，再跑基准"; exit 1;; esac
 # ---- 测试存档：只用 Documents/save.test，缺了就从备份推一份 | Test save: only Documents/save.test; push one from the backup if missing
@@ -63,23 +64,46 @@ FXENV=(); [ "$FX" = keep ] || FXENV=(DEVICECTL_CHILD_DM_METALFX="$FX")
 for kv in ${BENCH_EXTRA_ENV:-}; do FXENV+=("DEVICECTL_CHILD_$kv"); done
 # 启动前在锁内再确认一次（上面推存档要时间） | Re-check inside the lock right before launch (pushing the save takes time)
 PID=$("${BD[@]}" pid "$D" "$B") || { t "🔴 读不到设备状态，不启动"; exit 1; }
-[ -z "$PID" ] || { t "🔴 目标 App 刚被启动（进程 $PID），放弃本次基准，不结束它"; exit 1; }
+[ -z "$PID" ] || { t "🔴 目标 App 刚被启动（进程 ${PID}），放弃本次基准，不结束它"; exit 1; }
 env ${FXENV[@]+"${FXENV[@]}"} ${CASTENV[@]+"${CASTENV[@]}"} DEVICECTL_CHILD_DM_SAVE_TEST=1 DEVICECTL_CHILD_DM_TEST_ICLOUD_OFF=1 DEVICECTL_CHILD_DM_TEST_GOD=1 DEVICECTL_CHILD_DM_TEST_BRIGHTNESS="${BENCH_BRIGHTNESS:-0.5}" DEVICECTL_CHILD_DM_GAME_SEED=0x5a17 DEVICECTL_CHILD_DM_KEYS="$K" \
   DEVICECTL_CHILD_DM_TEST_WARP_LV="$WARP" DEVICECTL_CHILD_DM_TEST_SPAWN="$SPAWN" DEVICECTL_CHILD_DM_TEST_RENDER_RES="$SCHED" \
   DEVICECTL_CHILD_DM_HEAT="bench_$RUN/heat.tsv,5" DEVICECTL_CHILD_DM_THRCPU="bench_$RUN/thrcpu.tsv,10" DEVICECTL_CHILD_DM_SOAK="bench_$RUN/soak.tsv,30" \
   DEVICECTL_CHILD_DM_NVN_PASSGPU=0 DEVICECTL_CHILD_DM_WATCH=$((TOTAL + 240)) DEVICECTL_CHILD_DM_BENCH_DIR="bench_$RUN" \
-  xcrun devicectl device process launch --device "$D" "$B" -mode boot > "$OUT/launch.log" 2>&1 || { t "🔴 启动失败"; tail -3 "$OUT/launch.log"; exit 1; }
-printf '%s\n' "run=$RUN" "god=1" "slot=$SLOT" "brightness=${BENCH_BRIGHTNESS:-0.5}" "cast=$CAST" "stat=$STAT" "extra=${BENCH_EXTRA_ENV:-}" "seg_s=$SEGS" "levels=$LEVELS" "metalfx=$FX" "schedule=$SCHED" "warp=$WARP" "spawn=$SPAWN" "walk_s=$WALK" > "$OUT/params.txt"
-t "已启动：档位 $LEVELS，每段 $SEG 分钟，共 $((TOTAL / 60)) 分钟；MetalFX=$FX。现在请拔掉数据线，屏幕保持亮着（自动锁定设为永不；电量按每小时约 35% 预估要够用）。"
+  xcrun devicectl device process launch --device "$D" "$B" -mode boot --json-output "$OUT/launch.json" > "$OUT/launch.log" 2>&1 || { t "🔴 启动失败"; tail -3 "$OUT/launch.log"; exit 1; }
+# 记下本次启动的进程号与时刻：收尾只结束这个实例（复审 F02）。App 自身在 DM_WATCH = 总时长 + 240 秒时退出，所以超过这个时间仍在的同号进程不可能是本次实例
+# Record this launch's pid and time: the wrap-up ends only this instance (re-audit F02). The App exits by itself at DM_WATCH = run time + 240 s, so a same-pid process alive after that cannot be this instance
+LPID=$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["result"]["process"]["processIdentifier"])' "$OUT/launch.json" 2>/dev/null || true); LAUNCH_T=$(date +%s)
+[ -n "$LPID" ] || t "⚠ 没读到本次启动的进程号：收尾不会结束任何进程（App 会在约 $(( (TOTAL + 240) / 60 )) 分钟后自行退出）"
+printf '%s\n' "run=$RUN" "god=1" "slot=$SLOT" "brightness=${BENCH_BRIGHTNESS:-0.5}" "cast=$CAST" "stat=$STAT" "extra=${BENCH_EXTRA_ENV:-}" "seg_s=$SEGS" "levels=$LEVELS" "metalfx=$FX" "schedule=$SCHED" "warp=$WARP" "spawn=$SPAWN" "walk_s=$WALK" "launch_pid=${LPID}" > "$OUT/params.txt"
+t "已启动：档位 ${LEVELS}，每段 ${SEG} 分钟，共 $((TOTAL / 60)) 分钟；MetalFX=${FX}。现在请拔掉数据线，屏幕保持亮着（自动锁定设为永不；电量按每小时约 35% 预估要够用）。"
 sleep $((TOTAL + 60))
 t "时间到。等设备重新接上…"
 w=0; until present; do sleep 30; w=$((w + 30)); [ $w -ge 43200 ] && { t "🔴 等了 12 小时设备还没接回来"; exit 1; }; done   # 可以隔夜：第二天接回线再拉 | May run overnight: plug back in the next day and the data is pulled then
 sleep 5
-p=$("${BD[@]}" pid "$D" "$B") || t "🔴 读不到目标 App 进程，不结束任何进程"; [ -n "${p:-}" ] && xcrun devicectl device process terminate --device "$D" --pid "$p" > /dev/null 2>&1; sleep 3   # 只结束目标 App（按安装目录核对） | Only the target App is ended (matched by its install directory)
-for f in heat.tsv thrcpu.tsv soak.tsv; do xcrun devicectl device copy from --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source "Documents/bench_$RUN/$f" --destination "$OUT/$f" > /dev/null 2>&1 || t "🔴 拉 $f 失败"; done
-xcrun devicectl device copy from --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source Documents/boot.txt --destination "$OUT/boot.txt" > /dev/null 2>&1 || t "🔴 拉 boot.txt 失败"
-t "数据已拉回 $OUT"
-python3 -I tools/bench_report.py "$OUT" | tee "$OUT/report.md"
+# 收尾：只结束本次启动的实例（复审 F02）。进程号对得上、且仍在 App 自身的寿命内才结束；对不上的同 App 进程（用户后来自己打开的）一律不动
+# Wrap-up: end only this launch's instance (re-audit F02): only when the pid matches and we are still within the App's own lifetime; any other process of the same App (one the user opened later) is left alone
+NOW=$("${BD[@]}" pids "$D" "$B") || { NOW=""; t "🔴 读不到目标 App 进程，不结束任何进程"; }
+AGE=$(( $(date +%s) - LAUNCH_T ))
+for p in $NOW; do
+  if [ -n "$LPID" ] && [ "$p" = "$LPID" ] && [ "$AGE" -le $((TOTAL + 300)) ]; then
+    xcrun devicectl device process terminate --device "$D" --pid "$p" > /dev/null 2>&1 && t "已结束本次基准启动的进程 ${p}" || t "⚠ 结束进程 ${p} 失败"
+  else
+    t "目标 App 进程 ${p} 不是本次基准启动的实例（本次 ${LPID:-未知}，已过 ${AGE} 秒），不结束"
+  fi
+done
+sleep 3
+# 拉数据：heat.tsv 与 boot.txt 是报告的输入，缺一个整个基准算失败；thrcpu / soak 只是附加读数（复审 F07）
+# Pull: heat.tsv and boot.txt feed the report, missing either fails the whole run; thrcpu / soak are supplementary (re-audit F07)
+MISSING=""
+for f in heat.tsv thrcpu.tsv soak.tsv; do
+  xcrun devicectl device copy from --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source "Documents/bench_$RUN/$f" --destination "$OUT/$f" > /dev/null 2>&1 || { t "🔴 拉 ${f} 失败"; [ "$f" = heat.tsv ] && MISSING="$MISSING $f"; }
+done
+xcrun devicectl device copy from --device "$D" --domain-type appDataContainer --domain-identifier "$B" --source Documents/boot.txt --destination "$OUT/boot.txt" > /dev/null 2>&1 || { t "🔴 拉 boot.txt 失败"; MISSING="$MISSING boot.txt"; }
+[ -z "$MISSING" ] || { t "🔴 关键数据没拉全（缺${MISSING}），本次基准失败；已拉到的在 ${OUT}"; exit 1; }
+t "数据已拉回 ${OUT}"
+python3 -I tools/bench_report.py "$OUT" > "$OUT/report.md"; RC=$?
+cat "$OUT/report.md"
+[ "$RC" = 0 ] || { t "🔴 报告生成失败（退出码 ${RC}），report.md 不完整"; exit 1; }
 
 }
 power_bench_main "$@"

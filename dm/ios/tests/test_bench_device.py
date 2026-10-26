@@ -86,7 +86,7 @@ class ScriptOrder(unittest.TestCase):
     def test_end_only_terminates_target(self):
         tail = self.code[self.first(r'等设备重新接上'):]
         self.assertNotIn('DmIOS.app/DmIOS', tail)
-        self.assertIn('"${BD[@]}" pid', tail)
+        self.assertIn('"${BD[@]}" pids', tail)
 
 
 if __name__ == '__main__':
