@@ -125,6 +125,13 @@ if [ "$1" = build ]; then
   # This affects only this development package build command: release packages (tools/testflight.sh, tools/adhoc.sh) and the Mac package
   # (tools/smoke_mac.sh) come in with DM_GEN_ONLY=1 and exit on the line above, so their build numbers do not pass through here.
   BN=$(git log -1 --format=%ct 2>/dev/null); [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ] && BN=1; BN=${BN:-1}
+  # 源码身份（审计 2026-10-27）：完整提交号 + 工作区差异指纹写进 Info.plist（DMSourceCommit / DMSourceDirty），启动日志首行打出。
+  # 本机着色器链元数据（dmsh_chain.h / .lock、c1_full.tsv）会影响加载哪份着色器缓存，所以不排除，照实计入指纹
+  # Source identity (audit 2026-10-27): full commit + working-tree diff fingerprint go into Info.plist (DMSourceCommit / DMSourceDirty) and the first boot log line.
+  # Local shader-chain metadata (dmsh_chain.h / .lock, c1_full.tsv) changes which shader cache loads, so it is not excluded but counted in the fingerprint
+  SC=$(git rev-parse HEAD 2>/dev/null || echo unknown); DF=$(git diff --name-only HEAD 2>/dev/null | sort)
+  if [ -z "$DF" ]; then SDIRTY=clean; else SDIRTY="$(echo "$DF" | wc -l | tr -d ' '):$(git diff HEAD 2>/dev/null | shasum -a 256 | cut -c1-12):$(echo "$DF" | sed 's|.*/||' | paste -sd, -)"; fi
+  t "源码身份：提交 ${SC}，工作区 ${SDIRTY}"
   [ "$BN" = 1 ] && t "⚠ 工作区有未提交改动（或读不到提交）：开发包构建号 = 1，不能用于放行" || t "开发包构建号 ${BN}（提交 $(git log -1 --format=%h | cut -c1-9) 的提交时间戳）"
   # 构建目标：平常是「通用 iOS 设备」。免费账号（个人团队）名下起初没有任何设备，苹果不给生成描述文件
   # （「Your team has no devices from which to generate a provisioning profile」，真拿免费账号签时实测撞到）——
@@ -138,7 +145,7 @@ if [ "$1" = build ]; then
     else t "⚠ 免费账号第一次构建要把手机连上，并在本机配置里填 DM_IOS_UDID（见 local.env.example）；没填，先按通用目标试"; fi
   fi
   xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination "$DEST" \
-    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} DM_BUILD_NUMBER=$BN ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
+    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} DM_BUILD_NUMBER=$BN DM_SOURCE_COMMIT="$SC" DM_SOURCE_DIRTY="$SDIRTY" ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
       grep -q 'no devices from which to generate a provisioning profile' "$R/build.log" && t "原因：这个团队名下还没有设备。把手机用数据线连上并解锁，在本机配置里填 DM_IOS_UDID、DM_FREE_ACCOUNT=1，再构建一次"; exit 1; }
   codesign -d --entitlements :- $APP 2>/dev/null | plutil -p - ; t "构建完成"
   # DM_NOINSTALL 保持兼容；build 现在本来就只编译，不触碰设备。
