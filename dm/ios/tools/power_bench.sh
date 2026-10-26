@@ -1,6 +1,6 @@
 #!/bin/bash
 # 功耗基准（真机、无人值守）：一次启动跑完整个渲染分辨率档位矩阵，游戏内按脚本走动、轮换关卡、定时刷怪；每 5 秒记一行电量 / 温控 / 帧率 / GPU，
-# 结束后拉回 Documents/bench_<run>/ 并生成报告。测的是整机电量下降速率（%/小时），电量只有 1% 分辨率，所以每段至少 10 分钟才有意义。
+# 结束后拉回 Documents/bench_<run>/ 并生成报告。测的是整机电量下降速率（%/小时）。系统电量读数是量化的（iPhone Duo 上 5% 一档），短段分不出高低；报告按实际步长给误差、不可比时不排名（bench_report.py）。
 # 用法：dm/ios/tools/power_bench.sh <每段分钟> <档位序列如 1,3,0,2> [MetalFX: keep|off|auto|eco|balanced|quality（缺省 keep）] [存档备份目录（首次建 save.test 用）]
 #   例：dm/ios/tools/power_bench.sh 12 1,3,0,2 keep "$DM_ROOT/run/save-backup/<时刻>/<子目录>"
 # 流程：① 取设备锁（整个测量期间持有：手机在跑基准，别的会话不该装机或启动）；② 锁内核对设备在、目标 App 没在跑（按安装目录识别，见 bench_device.py）、
@@ -9,7 +9,7 @@
 # 不装机：装机用 run.sh install。产物：$DM_RUN_DIR 或 $DM_ROOT/run/ios-fable5/bench/<run>/
 # Power benchmark (real device, unattended): one launch runs the whole render-resolution matrix; in-game the script walks, cycles through levels and spawns monsters on a timer;
 # one row every 5 s with battery / thermal / fps / GPU, then results are pulled from Documents/bench_<run>/ and a report is written. Measures whole-device battery drain (%/hour);
-# the battery level has 1% resolution, so each segment needs at least 10 minutes to mean anything.
+# the battery reading is quantized (5% steps on the iPhone Duo), so short segments cannot separate levels; the report uses the actual step and refuses to rank when not comparable (bench_report.py).
 # Usage: dm/ios/tools/power_bench.sh <minutes per segment> <level sequence e.g. 1,3,0,2> [MetalFX: keep|off|auto|eco|balanced|quality (default keep)] [save backup dir (to create save.test the first time)]
 # 整个脚本体放在函数里再调用：bash 边读边执行，跑着的时候再编辑文件会把新内容当命令执行（2026-10-26 基线收尾因此失败）
 # The whole body lives in a function that is called at the end: bash reads scripts incrementally, and editing the file while it runs executes the new text as commands (that is how the 2026-10-26 baseline lost its wrap-up)

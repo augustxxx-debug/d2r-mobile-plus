@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """功耗基准报告：读 power_bench.sh 拉回的 heat.tsv / boot.txt / params.txt，按渲染分辨率档位分段，给每段的电量下降速率、温控、帧率、GPU、掉帧。
-电量只有 1% 分辨率：每段的 %/小时 带 ±(1% ÷ 段时长) 的量化误差，报告里一并给出。
+电量读数是量化的（UIDevice.batteryLevel；iPhone Duo 上观测到 5% 一档）：每段的 %/小时 带 ±(步长 ÷ 段时长) 的量化误差。步长用 --battery-step 显式给，
+不给就从拔线数据推断（见到 1% 的变化取 1，读数全是 5 的倍数取 5，推断不出按保守的 5），报告写明来源。充电中、样本不足的段不给速率，误差区间重叠时不给排名。
+用法：bench_report.py <结果目录> [--battery-step N]
 Power benchmark report: reads heat.tsv / boot.txt / params.txt pulled by power_bench.sh, splits by render-resolution level, and gives each segment's battery drain rate,
-thermal state, fps, GPU and dropped frames. The battery level has 1% resolution: each segment's %/hour carries a quantization error of ±(1% ÷ segment length), stated in the report."""
+thermal state, fps, GPU and dropped frames. The battery level is quantized (UIDevice.batteryLevel; 5% steps observed on the iPhone Duo): each segment's %/hour carries ±(step ÷ segment length).
+Pass the step with --battery-step, otherwise it is inferred from unplugged data (a 1% change → 1, all readings multiples of 5 → 5, undecidable → a conservative 5) and the source is printed.
+Segments that were charging or have too few samples get no rate; no ranking is printed when the error intervals overlap.
+Usage: bench_report.py <result dir> [--battery-step N]"""
 import os
 import re
 import sys
@@ -69,8 +74,56 @@ def dropped_by_segment(d):
     return out
 
 
+def infer_step(rows):
+    """返回 (步长, 来源)。只看拔线的行 | Returns (step, source), using unplugged rows only"""
+    v = [r['battery'] for r in rows if r.get('charging') == '未充电' and r.get('battery', -1) >= 0]
+    if not v:
+        return 5.0, '无拔线数据，按保守 5% | no unplugged data, conservative 5%'
+    deltas = {round(abs(a - b), 3) for a, b in zip(v, v[1:]) if a != b}
+    if any(abs(x - round(x)) < 1e-6 and round(x) % 5 != 0 for x in deltas):
+        return 1.0, '数据推断：见到非 5 倍数的变化 | inferred: a change that is not a multiple of 5'
+    if all(abs(x % 5) < 1e-6 for x in v):
+        return 5.0, '数据推断：读数全是 5 的倍数 | inferred: every reading is a multiple of 5'
+    return 5.0, '推断不出，按保守 5% | undecidable, conservative 5%'
+
+
+def battery_rate(part, step, min_hours=1 / 6):
+    """一段的电量速率。不可比时 rate 为 None 并给原因 | Battery rate for one segment; rate is None with a reason when not comparable"""
+    out = {'rate': None, 'err': None, 'reason': '', 'b0': None, 'b1': None}
+    rows = [r for r in part if r.get('battery', -1) >= 0]
+    if len(rows) < 2:
+        out['reason'] = '电量样本不足'; return out
+    out['b0'], out['b1'] = rows[0]['battery'], rows[-1]['battery']
+    states = {r.get('charging') for r in rows}
+    if states != {'未充电'}:
+        out['reason'] = '含充电 / 未知状态：' + '/'.join(sorted(str(x) for x in states)); return out
+    dur_h = (rows[-1]['sec'] - rows[0]['sec']) / 3600
+    if dur_h < min_hours:
+        out['reason'] = '段太短（%.1f 分钟 < %.0f 分钟）' % (dur_h * 60, min_hours * 60); return out
+    out['rate'] = (out['b0'] - out['b1']) / dur_h; out['err'] = step / dur_h
+    if out['b0'] == out['b1']:
+        out['reason'] = '段内电量读数没变，只能给上限'
+    return out
+
+
+def ranking(named):
+    """named = [(名字, rate, err)]；所有段都有速率且误差区间两两不重叠才排名，否则返回 None | rank only when every segment has a rate and no error intervals overlap"""
+    if len(named) < 2 or any(r is None for _, r, _ in named):
+        return None
+    for i in range(len(named)):
+        for j in range(i + 1, len(named)):
+            (_, a, ea), (_, b, eb) = named[i], named[j]
+            if abs(a - b) <= ea + eb:
+                return None
+    return [n for n, _, _ in sorted(named, key=lambda x: x[1])]
+
+
 def main():
-    d = sys.argv[1]
+    args = sys.argv[1:]
+    step_arg = None
+    if '--battery-step' in args:
+        i = args.index('--battery-step'); step_arg = float(args[i + 1]); del args[i:i + 2]
+    d = args[0]
     params = load_params(d)
     rows = load_heat(d)
     # heat 的秒从进局计，时间表的秒从宿主初始化计：用日志里第一条时间表切档行对齐不可得，按 heat 第一行当 0 处理，误差 = 进局前的几秒
@@ -90,6 +143,13 @@ def main():
     has_batt = rows and 'battery' in rows[0]
     if not has_batt:
         print("**heat.tsv 没有电量列**（旧包）：只能给温控 / 帧率 / GPU。\n")
+    if step_arg:
+        step, step_src = step_arg, '显式参数 --battery-step | explicit --battery-step'
+    else:
+        step, step_src = infer_step(rows)
+    if has_batt:
+        print(f"电量量化步长：**{step:g}%**（{step_src}）。速率误差 = 步长 ÷ 段时长。\n")
+    named = []
     print("| 档位 | 时长 | 电量 起→止 | 下降速率 %/h（±量化误差） | 温控档位分布 | 帧率均值 | GPU 均值 / p95 ms | CPU% 均值 | 掉帧 | 传送/刷怪 |")
     print("|---|---|---|---|---|---|---|---|---|---|")
     for i, (lv, a, b) in enumerate(segs):
@@ -104,20 +164,25 @@ def main():
         fps = sum(r['fps'] for r in part) / len(part)
         gpu = sum(r['gpu'] for r in part) / len(part); gpu95 = sum(r['gpu95'] for r in part) / len(part)
         cpu = sum(r['cpu'] for r in part) / len(part)
-        if has_batt and dur_h > 0:
-            b0, b1 = part[0]['battery'], part[-1]['battery']
-            rate = (b0 - b1) / dur_h; err = 1.0 / dur_h
-            charging = {r['charging'] for r in part}
-            batt = f"{b0:.0f}%→{b1:.0f}%" + ('' if charging == {'未充电'} else f"（{'/'.join(sorted(charging))}）")
-            ratetxt = f"{rate:.1f} ±{err:.1f}"
+        if has_batt:
+            br = battery_rate(part, step)
+            batt = '—' if br['b0'] is None else f"{br['b0']:.0f}%→{br['b1']:.0f}%"
+            if br['rate'] is None:
+                ratetxt = f"不给（{br['reason']}）"
+            else:
+                ratetxt = f"{br['rate']:.1f} ±{br['err']:.1f}" + (f"（{br['reason']}）" if br['reason'] else '')
+            named.append((NAMES.get(lv, str(lv)), br['rate'], br['err']))
         else:
             batt, ratetxt = '—', '—'
         dr = drops[i] if i < len(drops) else None
         drtxt = f"{dr['dropped']}/{dr['frames']}（{100 * dr['dropped'] / max(dr['frames'], 1):.2f}%）" if dr else '—'
         ev = f"{dr['warps']}/{dr['spawned']}" if dr else '—'
         print(f"| {NAMES.get(lv, lv)} | {dur_h * 60:.1f} min | {batt} | {ratetxt} | {thtxt} | {fps:.1f} | {gpu:.2f} / {gpu95:.2f} | {cpu:.0f} | {drtxt} | {ev} |")
-    print("\n说明：电量按 1% 量化，±误差 = 1% ÷ 段时长；温控分布为各档位占比；GPU 毫秒受 GPU 调频影响，只作参考；掉帧按日志中各段的「上屏」行累计。")
-    print("Notes: battery is quantized to 1%, ±error = 1% ÷ segment length; thermal shows the share of each state; GPU ms is affected by GPU DVFS and is indicative only; dropped frames are summed from the present rows in each segment of the log.")
+    if has_batt:
+        rk = ranking(named)
+        print("\n**功耗排名**：" + (" < ".join(rk) + "（误差区间不重叠）" if rk else "不给。有段不可比，或各段误差区间重叠；要分出高低，需拔线、同亮度、更长的段，或改用整机功率计。"))
+    print("\n说明：电量按上面的步长量化，±误差 = 步长 ÷ 段时长；温控分布为各档位占比；GPU 毫秒受 GPU 调频影响，只作参考；掉帧按日志中各段的「上屏」行累计。")
+    print("Notes: battery is quantized to the step above, ±error = step ÷ segment length; thermal shows the share of each state; GPU ms is affected by GPU DVFS and is indicative only; dropped frames are summed from the present rows in each segment of the log.")
 
 
 if __name__ == '__main__':

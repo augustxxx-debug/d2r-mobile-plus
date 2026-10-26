@@ -119,7 +119,7 @@ iOS 模拟器 SDK 里没有 MetalFX 框架，图形后端编不过，着色器�
 
 ### 无人值守功耗基准
 
-`dm/ios/tools/power_bench.sh <每段分钟> <档位序列> [MetalFX] [存档备份目录]` 只启动一次游戏：用测试存档（`Documents/save.test`，绝不碰 `Documents/save`）、固定种子、进局并循环走动的按键脚本、每 90 秒轮换关卡（`DM_TEST_WARP_LV=every<拍>:<关卡…>`）、定时刷怪（`DM_TEST_SPAWN` 多条写法）和渲染分辨率时间表（`DM_TEST_RENDER_RES=<档>@<秒>,…`）。`heat.tsv` 每 5 秒多记电量、充电状态、低电量模式、渲染档与 MetalFX 档；`tools/bench_report.py` 按渲染档列分段，给每段的 %/小时及 ±(1% ÷ 段时长) 的量化误差。要拔线、固定亮度跑；每段短于 10 分钟分不出电量计的变化。
+`dm/ios/tools/power_bench.sh <每段分钟> <档位序列> [MetalFX] [存档备份目录]` 只启动一次游戏：用测试存档（`Documents/save.test`，绝不碰 `Documents/save`）、固定种子、进局并循环走动的按键脚本、每 90 秒轮换关卡（`DM_TEST_WARP_LV=every<拍>:<关卡…>`）、定时刷怪（`DM_TEST_SPAWN` 多条写法）和渲染分辨率时间表（`DM_TEST_RENDER_RES=<档>@<秒>,…`）。`heat.tsv` 每 5 秒多记电量、充电状态、低电量模式、渲染档与 MetalFX 档；`tools/bench_report.py` 按渲染档列分段，给每段的 %/小时及 ±(电量步长 ÷ 段时长) 的量化误差。电量读数是量化的：iPhone Duo 上观测到 5% 一档，10 分钟一段的误差约 ±30 %/小时。步长取 `--battery-step`，不给就从拔线数据推断并写明来源；充电中、混合状态、短于 10 分钟或样本不足的段不给速率，各段误差区间重叠时不给排名。要拔线、固定亮度跑；基准从第一次访问设备到最后拉回数据一直持有设备锁，不会结束已在运行的 App。
 
 ### 后续检查
 
