@@ -6028,7 +6028,9 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src0, id<MTLTe
     static double last_vp[4];   // 视口变化时记一行（真机屏幕级验收 screen_check.py 核宽高比用） | Log one line when the viewport changes (used by the real-device screen-level acceptance screen_check.py to check the aspect ratio)
     if (memcmp(last_vp, &vp, sizeof last_vp)) { memcpy(last_vp, &vp, sizeof last_vp);
         MLOG("出图视口 %.0f,%.0f %.0fx%.0f / 画布 %.0fx%.0f（游戏画面 %lux%lu）", vp.originX, vp.originY, vp.width, vp.height, dw, dh, (unsigned long)src.width, (unsigned long)src.height); }
-    rp.colorAttachments[0].texture = dst; rp.colorAttachments[0].loadAction = full ? MTLLoadActionDontCare : MTLLoadActionClear;
+    // 一律 Clear：TBDR 上 Clear 与 DontCare 都不从内存读入，代价相同；DontCare 在启动头几帧（窗口刚布局、drawable 与画面尺寸还没对齐）会把 drawable 的未定义内存（常是品红）露在右边和下边各一像素
+    // Always Clear: on TBDR both Clear and DontCare skip the memory load, same cost; DontCare exposed the drawable's undefined memory (often magenta) as a one-pixel strip at the right and bottom during the first frames after launch, while the window is still being laid out
+    rp.colorAttachments[0].texture = dst; rp.colorAttachments[0].loadAction = MTLLoadActionClear; (void)full;
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     id<MTLRenderCommandEncoder> en = [cb renderCommandEncoderWithDescriptor:rp];
@@ -6058,7 +6060,7 @@ static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, c
     int full = vp.originX == 0 && vp.originY == 0 && vp.width == dw && vp.height == dh;
     RPD *rp = [RPD new];
     rp.colorAttachments[0].texture = dst;
-    rp.colorAttachments[0].loadAction = full ? MTLLoadActionDontCare : MTLLoadActionClear;
+    rp.colorAttachments[0].loadAction = MTLLoadActionClear; (void)full;   // 同上：一律 Clear，免得冷启动露出品红边 | Same as above: always Clear so cold start never shows a magenta edge
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
     RENC en = [cb renderCommandEncoderWithDescriptor:rp];
