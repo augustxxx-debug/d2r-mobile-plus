@@ -156,6 +156,7 @@ HLE_FORCE("_ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE", "前后台
 // DM_3D_SCALE_DYN_INJECT=start frame-end frame (counted by dm_nvn_frame_count): diagnostics; within that frame range every interval fed to the controller is treated as two periods (dropped), outside it as one period
 // (the Mac has no present timestamps, so this verifies the whole downgrade / recovery chain). Active only in-game (no judging outside a game); the first level drops after a full 10 s (5 windows).
 #include <TargetConditionals.h>
+#include "dm_res_cap.h"
 // 3D 比例的档位表：0 档 = 配置值（iPhone 0.75），往下依次是表里低于配置值的各档（每档 0.05）；下限由 DM_3D_SCALE_FLOOR（缺省见 S3_FLOOR_DEF）截断。
 // 配置值 0.75 时档位仍是 0.75 / 0.70 / 0.65 / 0.60；配得更高（如 DM_3D_SCALE=0.85）时中间多出 0.80、0.75 两档，重场景一档档往下退。只动 3D 渲染比例，界面和文字不降
 // 3D scale level table: level 0 = configured value (iPhone 0.75), then in order the table's scales below the configured value (0.05 apart); the floor is clamped by DM_3D_SCALE_FLOOR (default: see S3_FLOOR_DEF).
@@ -208,7 +209,7 @@ static float s3_effective_cfg(void) { float hint = mtl_metalfx_scale_hint(); ret
 // about 20 frames in a row each time, and the old count stepped down to 0.60); sustained load (long runs, or frequent short ones) still counts.
 // Old rule (lower only when the window frame rate < target × 0.92, only two levels 0.72 / 0.70) bottomed out at 0.70 in heavy scenes, and warm steady state still dropped 12.6% (Hc run).
 typedef struct { int level, max_level; double period_ms; uint64_t hold_until, last_up; double win_ms; unsigned win_n, win_d;
-                 uint16_t wn[30], wd[30]; int nw; int good_run, need_good; double last_r10, last_r60; unsigned run_n; double run_ms; } scale3d_ctl;
+                 uint16_t wn[30], wd[30]; int nw; int good_run, need_good; double last_r10, last_r60; unsigned run_n; double run_ms; unsigned wins; } scale3d_ctl;   // wins：关过的窗计数（输出档闭环按它认「新窗」） | wins: closed-window counter (the output-level loop uses it to detect a new window)
 #define S3_SEC 1000000000ull
 // 连续掉帧：只计前 S3_BURST_FRAMES 帧，连续满 S3_BURST_MS 之后才每帧都计
 // Runs of dropped frames: only the first S3_BURST_FRAMES count until the run has lasted S3_BURST_MS
@@ -232,7 +233,7 @@ static int scale3d_ctl_step(scale3d_ctl *c, double iv_ms, uint64_t now) {   // �
     c->win_ms += iv_ms > 0 ? iv_ms : per;
     if (c->win_ms < 2000) return c->level;
     memmove(c->wn + 1, c->wn, sizeof c->wn - sizeof c->wn[0]); memmove(c->wd + 1, c->wd, sizeof c->wd - sizeof c->wd[0]);
-    c->wn[0] = (uint16_t)c->win_n; c->wd[0] = (uint16_t)c->win_d; if (c->nw < 30) c->nw++;
+    c->wn[0] = (uint16_t)c->win_n; c->wd[0] = (uint16_t)c->win_d; if (c->nw < 30) c->nw++; c->wins++;
     int clean = c->win_d == 0; c->win_ms = 0; c->win_n = c->win_d = 0;
     c->last_r10 = s3_rate(c, 5); c->last_r60 = c->nw >= 30 ? s3_rate(c, 30) : 0;
     if (c->level < c->max_level && ((c->nw >= 5 && c->last_r10 > 0.05) || (c->nw >= 30 && c->last_r60 > 0.015))) {
@@ -300,6 +301,11 @@ static void s3g_feed(double iv_ms) {
     if (lv != old) { hold = now + 4 * S3_SEC; atomic_store(&g_s3g_scale, lv ? cfg * g_s3g_mult[lv - 1] : 0.0f);
         LOG("3D 比例控制（按 GPU 耗时）：帧 %.1f ms、GPU %.1f ms → %s到第 %d 档（3D 比例 %.2f）", fr, g, lv > old ? "降" : "升", lv, lv ? cfg * g_s3g_mult[lv - 1] : cfg); }
 }
+// 自动输出档闭环的当前步（0 = 代际预算，1 = 均衡，2 = 省电）：iOS 前端 front_game_res 读；只在自动档、非画质优先时由 dm_3d_scale_feed 推进。DM_RES_AUTO_OFF=1 关（测量时钉住）
+// Current step of the auto output-level loop (0 = generation budget, 1 = Balanced, 2 = Eco): read by the iOS front end's front_game_res; advanced by dm_3d_scale_feed only in Auto and not in quality-first. DM_RES_AUTO_OFF=1 disables it (pin for measurements)
+static _Atomic int g_res_auto_step;
+int dm_res_auto_step_get(void) { return atomic_load(&g_res_auto_step); }
+__attribute__((weak)) int dm_render_res_level(void) { return 0; }   // 宿主 dm_custom.c 提供强定义；单测不链它时当自动档 | Strong definition in dm_custom.c; unit tests without it behave as Auto
 void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_perf_present 转来）：实际上屏间隔 ms，−1 = 被丢弃，0 = 无读数 | called by the present thread every frame (forwarded from diag.c dm_perf_present): actual present interval in ms, −1 = dropped, 0 = no reading
     static scale3d_ctl c; static float floor = S3_FLOOR_DEF; static int on = -1; static long inj0 = -1, inj1 = -1;
     if (on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK");
@@ -329,6 +335,13 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     if (lv != was) LOG("3D 比例控制：最近 10 秒掉帧 %.1f%%、60 秒 %.1f%% → %s到第 %d 档（3D 比例 %.2f）%s", c.last_r10 * 100, c.last_r60 * 100, lv > was ? "降" : "升", lv,
                        s3_level_scale(effective, lv), c.need_good ? "（刚升又掉：下次升档要 90 秒）" : "");
     scale3d_publish(effective,lv);
+    // 自动输出档闭环（dm_res_cap.h dm_res_auto_step）：3D 已到下限还掉帧 → 整帧输出再降一档，稳定 60 秒升回；变档推 31 让游戏重读输出尺寸，并让 3D 控制器停判 5 秒
+    // Auto output-level loop (dm_res_cap.h dm_res_auto_step): still dropping with 3D at its floor → one more whole-frame output step down, back up after 60 s clean; a change pushes 31 so the game re-reads the output size, and holds the 3D controller for 5 s
+    { static dm_res_auto_state ra; static unsigned seen; static int off = -1; if (off < 0) off = getenv("DM_RES_AUTO_OFF") != NULL;
+      if (!off && c.wins != seen && dm_render_res_level() == 0 && atomic_load(&g_3d_quality_mode) != 1) { seen = c.wins;
+          int st = dm_res_auto_step(&ra, lv >= c.max_level, c.last_r10, c.nw >= 5, c.last_r60, c.nw >= 30, c.wd[0] == 0, now);
+          if (st != atomic_load(&g_res_auto_step)) { atomic_store(&g_res_auto_step, st); scale3d_ctl_hold(&c, now, 5 * S3_SEC);
+              LOG("输出分辨率闭环：3D 比例已在下限，最近 10 秒掉帧 %.1f%%、60 秒 %.1f%% → 自动档第 %d 步（通知游戏重读输出尺寸）", c.last_r10 * 100, c.last_r60 * 100, st); dm_oe_res_changed(); } } }
 }
 void dm_3d_scale_hot(int hot) { (void)hot; }   // 过热不再直接降档（改按实际掉帧）；保留符号给前端 | overheating no longer lowers the level directly (now by actual dropped frames); the symbol is kept for the front end
 static _Atomic float g_scale3d_cur = 1.0f;

@@ -1017,6 +1017,8 @@ uint64_t front_game_res(int docked) {
             LOG("画面：显卡「%s」→ 代际 A%d%s M%d，自动档像素预算 %u", nm ?: "?", cls_gen, cls_pro ? " Pro" : "", cls_m, dm_res_cap_budget_auto(cls_gen, cls_pro, cls_m)); }
         uint64_t now = atomic_load(&g_res_now);
         uint32_t budget = dm_res_cap_budget_screen(lv, cls_gen, cls_pro, cls_m, (uint32_t)now, (uint32_t)(now >> 32));   // 超大屏自动档取均衡预算（dm_res_cap.h） | Very large screens: Auto takes the Balanced budget (dm_res_cap.h)
+        { int dm_res_auto_step_get(void); int st = lv == 0 ? dm_res_auto_step_get() : 0; budget = dm_res_auto_budget(budget, st);   // 自动档闭环（hle_oe.c 按实际掉帧推进） | Auto closed loop (advanced by hle_oe.c from measured dropped frames)
+          static _Atomic int logged_step; if (atomic_exchange(&logged_step, st) != st) LOG("画面：自动输出档闭环 → 第 %d 步，像素预算 %u", st, budget); }
         uint64_t capped = dm_res_cap_apply((uint32_t)now, (uint32_t)(now >> 32), budget);
         static _Atomic uint64_t logged; if (capped != now && atomic_exchange(&logged, capped) != capped)
             LOG("画面：渲染分辨率档位 %d → 出图 %ux%u（窗口 %ux%u，像素预算 %u）", lv, (unsigned)capped, (unsigned)(capped >> 32), (unsigned)now, (unsigned)(now >> 32), budget);

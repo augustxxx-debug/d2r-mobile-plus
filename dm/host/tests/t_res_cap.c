@@ -70,6 +70,22 @@ int main(void) {
       // iPhone 17 Pro Max（A19 Pro，2868x1320）自动档不缩；iPhone 15 Pro（A17 Pro，2556x1179 ≈ 301 万）自动档缩到 280 万以内并保持比例 | 17 Pro Max unchanged on Auto; 15 Pro shrinks within 2.8 MP keeping aspect
       CHECK(dm_res_cap_apply(2868, 1320, dm_res_cap_budget_auto(19, 1, 0)) == (((uint64_t)1320 << 32) | 2868));
       { uint64_t r = dm_res_cap_apply(2556, 1179, dm_res_cap_budget_auto(17, 1, 0)); CHECK((uint64_t)W(r) * H(r) <= 2800000u); CHECK(fabs(((double)W(r) / H(r)) / (2556.0 / 1179) - 1) < 0.005); } }
+    // 自动档闭环（纯函数）：不在下限不降；下限 + 10 秒掉帧 > 5% 降一步并停判 10 秒；最多 2 步；30 个干净窗升一步；刚升 15 秒内又降 → 下次要 45 窗；预算只降不升
+    // Auto closed loop (pure): never steps down unless at the floor; floor + 10 s drops > 5% steps down once and holds 10 s; at most 2 steps; 30 clean windows step up; dropped again within 15 s of a raise → next raise needs 45
+    { dm_res_auto_state ra = {0}; const uint64_t sec = 1000000000ull; uint64_t t = 100 * sec;
+      CHECK(dm_res_auto_budget(4000000u, 0) == 4000000u); CHECK(dm_res_auto_budget(4000000u, 1) == 2800000u); CHECK(dm_res_auto_budget(4000000u, 2) == 2073600u);
+      CHECK(dm_res_auto_budget(2073600u, 1) == 2073600u); CHECK(dm_res_auto_budget(2800000u, 2) == 2073600u);   // 不高于代际预算 | never above the generation budget
+      for (int i = 0; i < 10; i++) { t += 2 * sec; CHECK(dm_res_auto_step(&ra, 0, 0.20, 1, 0.20, 1, 0, t) == 0); }      // 3D 没到下限：不降 | not at the floor: no step
+      t += 2 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.06, 0, 0.0, 0, 0, t) == 0);                                           // 窗不够：不降 | not enough windows
+      t += 2 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.06, 1, 0.0, 0, 0, t) == 1);                                           // 降一步 | one step down
+      for (int i = 0; i < 4; i++) { t += 2 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.30, 1, 0.30, 1, 0, t) == 1); }         // 停判 10 秒内不再动 | held for 10 s
+      t += 4 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.0, 1, 0.02, 1, 0, t) == 2);                                           // 60 秒规则降第二步 | second step via the 60 s rule
+      for (int i = 0; i < 10; i++) { t += 2 * sec; dm_res_auto_step(&ra, 1, 0.30, 1, 0.30, 1, 0, t); } CHECK(ra.step == 2);  // 最多 2 步 | capped at 2
+      int n = 0; while (ra.step == 2 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 1, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 1 && n == 30);   // 30 个干净窗升一步 | 30 clean windows step up
+      t += 12 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.06, 1, 0.0, 0, 0, t) == 2);                                         // 刚升 15 秒内又降 | dropped again within 15 s of the raise
+      n = 0; t += 12 * sec; while (ra.step == 2 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 1, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 1 && n == 45);   // 下次升要 45 窗 | next raise needs 45
+      n = 0; t += 12 * sec; while (ra.step == 1 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 0, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 0 && n == 30);   // 回到代际预算 | back to the generation budget
+      t += 12 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.0, 1, 0.0, 1, 1, t) == 0); }   // 已在 0 步：干净窗不再升 | at step 0 clean windows do nothing
     printf("t_res_cap: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

@@ -66,3 +66,28 @@ static inline uint64_t dm_res_cap_apply(uint32_t w, uint32_t h, uint32_t budget)
     uint32_t ch = (uint32_t)((((uint64_t)best * h + w / 2) / w) & ~1ull); if (ch < 2) ch = 2;
     return (uint64_t)ch << 32 | best;
 }
+
+// ---------- 自动档闭环（按实际掉帧，不按机型表）----------
+// 输入每个 2 秒窗（与 hle_oe.c 的 3D 比例控制器同窗）：3D 比例已在下限 + 最近 10 秒掉帧 > 5%（≥5 窗）或 60 秒 > 1.5%（≥30 窗）→ 输出档再降一步（最多 2 步：均衡 280 万 → 省电 207 万，且不高于代际预算）；
+// 连续 30 个干净窗（60 秒）→ 升一步；刚升 15 秒内又降 → 下次升要 45 窗。每次变档停判 10 秒（换尺寸本身有停顿）。只在自动档、非「画质优先」时生效。
+// ---------- Auto-level closed loop (by measured dropped frames, not a device table) ----------
+// Fed once per 2 s window (same window as the 3D-scale controller in hle_oe.c): 3D already at its floor + drops > 5% over 10 s (≥5 windows) or > 1.5% over 60 s (≥30 windows) → one more output step down
+// (at most 2: Balanced 2.8 MP → Eco 2.07 MP, never above the generation budget); 30 clean windows in a row (60 s) → one step up; dropped again within 15 s of a raise → the next raise needs 45 windows.
+// 10 s hold after every change (the resize itself stalls). Only in Auto and not in "quality first".
+#define DM_RES_AUTO_STEPS 2
+typedef struct { int step; uint64_t hold_until, last_up; int good, need_good; } dm_res_auto_state;
+static inline uint32_t dm_res_auto_budget(uint32_t class_budget, int step) {
+    uint32_t cap = step <= 0 ? 0 : step == 1 ? 2800000u : 2073600u;
+    return cap && cap < class_budget ? cap : class_budget;
+}
+static inline int dm_res_auto_step(dm_res_auto_state *s, int at_floor, double r10, int enough10, double r60, int enough60, int clean, uint64_t now) {
+    const uint64_t sec = 1000000000ull;
+    if (now < s->hold_until) return s->step;
+    if (at_floor && s->step < DM_RES_AUTO_STEPS && ((enough10 && r10 > 0.05) || (enough60 && r60 > 0.015))) {
+        if (s->last_up && now - s->last_up < 15 * sec) s->need_good = 45;
+        s->step++; s->good = 0; s->hold_until = now + 10 * sec; return s->step;
+    }
+    if (clean) { if (++s->good >= (s->need_good ? s->need_good : 30) && s->step > 0) { s->step--; s->good = 0; s->need_good = 0; s->last_up = now; s->hold_until = now + 10 * sec; } }
+    else s->good = 0;
+    return s->step;
+}

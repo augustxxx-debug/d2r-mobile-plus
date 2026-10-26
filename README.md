@@ -56,6 +56,8 @@ The 3D ratio above never touches the UI layer, the final composite, the upscale 
 | Balanced | 2.8 MP | Between the two |
 | Native | no cap | Previous behavior: output size = window size |
 
+Auto also has a measured closed loop on top of the table: when the 3D ratio is already at its floor and frames keep dropping (over 5% in the last 10 s or over 1.5% over 60 s), the whole-frame output steps down once more (Balanced 2.8 MP → Eco 2.07 MP) and steps back up after 60 s without drops; every change holds for 10 s. Any chip and thermal state therefore converges on measured frame pacing, and the generation table is only the starting point. Active only in Auto and not in "quality first"; `DM_RES_AUTO_OFF=1` pins it for measurements.
+
 The cap only ever shrinks and keeps the window aspect ratio within 0.5%, so no black bars appear. The startup reserve is not reduced, so the level can be raised again at runtime without restarting. Status: implemented with unit tests for the budget math and the settings plumbing (`dm/host/tests/t_res_cap.c`, `t_render_profile.c`, `dm/ios/tests/test_touch_layout_options.py`); **not yet verified on a device**, and no power or GPU-time measurement for it exists yet. The slider is read by the iOS front end only; the Mac host keeps native output. The frame-rate setting is independent. Auto, Eco and Balanced can reduce 3D resolution further during sustained frame drops. Unsupported devices or initialization failure retain the original upscale pass automatically.
 
 ### Exploratory device power probe
