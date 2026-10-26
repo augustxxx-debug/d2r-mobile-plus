@@ -305,7 +305,27 @@ static void s3g_feed(double iv_ms) {
 // Current step of the auto output-level loop (0 = generation budget, 1 = Balanced, 2 = Eco): read by the iOS front end's front_game_res; advanced by dm_3d_scale_feed only in Auto and not in quality-first. DM_RES_AUTO_OFF=1 disables it (pin for measurements)
 static _Atomic int g_res_auto_step;
 int dm_res_auto_step_get(void) { return atomic_load(&g_res_auto_step); }
+// 闭环退出策略（审计 P1，2026-10-27）：只在「渲染分辨率 = 自动、3D 非画质优先、DM_RES_AUTO_OFF 未设、动态控制器开着」时生效。
+// 任一条件不满足：立即清零状态与额外降档；原来不为 0 就推一次 31 让游戏按代际预算重读输出尺寸。重新满足条件后从第 0 步重新开始，不沿用旧步数。
+// 画质优先下 dm_3d_scale_feed 会提前返回，所以这个判断放在函数开头，每帧都走
+// Loop exit policy (audit P1, 2026-10-27): active only while render resolution = Auto, 3D not quality-first, DM_RES_AUTO_OFF unset and the dynamic controller on.
+// When any condition fails: clear the state and the extra downstep immediately, pushing 31 once (if it was non-zero) so the game re-reads the output size at the generation budget. When the conditions hold again it restarts at step 0.
+// dm_3d_scale_feed returns early in quality-first, so this check sits at the top of the function and runs every frame
+int dm_render_res_level(void);   // 定义在下面（弱）或 dm_custom.c（强） | defined below (weak) or in dm_custom.c (strong)
+static dm_res_auto_state g_res_ra;
+static int g_res_armed; static unsigned g_res_arm_wins;   // 重新进入闭环时的窗口序号：之前的掉帧证据是在别的输出尺寸下测的，不算 | window index at (re-)entry: drop evidence from before was measured at another output size and does not count
+static int res_auto_off(void) { static int off = -1; if (off < 0) off = getenv("DM_RES_AUTO_OFF") != NULL; return off; }
+static int res_auto_eligible(int controller_on) { return controller_on && !res_auto_off() && dm_render_res_level() == 0 && atomic_load(&g_3d_quality_mode) != 1; }
+static void res_auto_disarm(void) {
+    g_res_ra = (dm_res_auto_state){0}; g_res_armed = 0;
+    int was = atomic_exchange(&g_res_auto_step, 0);
+    if (was) { LOG("输出分辨率闭环：离开自动闭环（渲染档 %d、画质优先 %d），额外降档第 %d 步清零（通知游戏重读输出尺寸）", dm_render_res_level(), atomic_load(&g_3d_quality_mode) == 1, was); dm_oe_res_changed(); }
+}
+#ifndef DM_RES_LEVEL_TEST_HOOK   // 单测直接包含本文件并自带强定义时打开（t_res_auto_policy.c） | defined by unit tests that include this file and bring their own strong definition (t_res_auto_policy.c)
 __attribute__((weak)) int dm_render_res_level(void) { return 0; }   // 宿主 dm_custom.c 提供强定义；单测不链它时当自动档 | Strong definition in dm_custom.c; unit tests without it behave as Auto
+#else
+int dm_render_res_level(void);
+#endif
 void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_perf_present 转来）：实际上屏间隔 ms，−1 = 被丢弃，0 = 无读数 | called by the present thread every frame (forwarded from diag.c dm_perf_present): actual present interval in ms, −1 = dropped, 0 = no reading
     static scale3d_ctl c; static float floor = S3_FLOOR_DEF; static int on = -1; static long inj0 = -1, inj1 = -1;
     if (on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK");
@@ -313,6 +333,7 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
         const char *fe = getenv("DM_3D_SCALE_FLOOR"); floor = fe ? strtof(fe, NULL) : S3_FLOOR_DEF;   // 下限：档位表里不低于它的最深一档 | Floor: the deepest level in the level table that is not below it
         c.max_level = s3_max_level(s3_cfg(), floor);
         LOG("3D 比例控制：%s，配置 %.2f，下限 %.2f（第 %d 档）", on ? "开" : "关", s3_cfg(), s3_level_scale(s3_cfg(), c.max_level), c.max_level); }
+    if (!res_auto_eligible(on)) res_auto_disarm();
     float effective = s3_effective_cfg();
     if (!on) { scale3d_publish(effective,0);return; }
     static float previous = -1;static int previous_auto=-1;
@@ -337,9 +358,11 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     scale3d_publish(effective,lv);
     // 自动输出档闭环（dm_res_cap.h dm_res_auto_step）：3D 已到下限还掉帧 → 整帧输出再降一档，稳定 60 秒升回；变档推 31 让游戏重读输出尺寸，并让 3D 控制器停判 5 秒
     // Auto output-level loop (dm_res_cap.h dm_res_auto_step): still dropping with 3D at its floor → one more whole-frame output step down, back up after 60 s clean; a change pushes 31 so the game re-reads the output size, and holds the 3D controller for 5 s
-    { static dm_res_auto_state ra; static unsigned seen; static int off = -1; if (off < 0) off = getenv("DM_RES_AUTO_OFF") != NULL;
-      if (!off && c.wins != seen && dm_render_res_level() == 0 && atomic_load(&g_3d_quality_mode) != 1) { seen = c.wins;
-          int st = dm_res_auto_step(&ra, lv >= c.max_level, c.last_r10, c.nw >= 5, c.last_r60, c.nw >= 30, c.wd[0] == 0, now);
+    { static unsigned seen;
+      if (c.wins != seen && res_auto_eligible(on)) { seen = c.wins;
+          if (!g_res_armed) { g_res_armed = 1; g_res_arm_wins = c.wins; g_res_ra.hold_until = now + 10 * S3_SEC; }   // (重新)进入闭环：停判 10 秒，只认此后的窗口 | (re-)entry: hold 10 s and count only later windows
+          unsigned fresh = c.wins - g_res_arm_wins;
+          int st = dm_res_auto_step(&g_res_ra, lv >= c.max_level, c.last_r10, c.nw >= 5 && fresh >= 5, c.last_r60, c.nw >= 30 && fresh >= 30, c.wd[0] == 0, now);
           if (st != atomic_load(&g_res_auto_step)) { atomic_store(&g_res_auto_step, st); scale3d_ctl_hold(&c, now, 5 * S3_SEC);
               LOG("输出分辨率闭环：3D 比例已在下限，最近 10 秒掉帧 %.1f%%、60 秒 %.1f%% → 自动档第 %d 步（通知游戏重读输出尺寸）", c.last_r10 * 100, c.last_r60 * 100, st); dm_oe_res_changed(); } } }
 }

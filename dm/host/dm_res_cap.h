@@ -80,6 +80,10 @@ static inline uint32_t dm_res_auto_budget(uint32_t class_budget, int step) {
     uint32_t cap = step <= 0 ? 0 : step == 1 ? 2800000u : 2073600u;
     return cap && cap < class_budget ? cap : class_budget;
 }
+// 前端实际套用的步数：只有渲染档 = 自动且不是画质优先时才套用闭环步数，否则 0。宿主那边离开闭环时已清零，这里再兜一层（审计 P1）
+// Step the front end actually applies: the loop step only when the render level is Auto and not quality-first, otherwise 0. The host already clears it on leaving the loop; this is a second guard (audit P1)
+#define DM_RES_AUTO_HAVE_EFFECTIVE 1
+static inline int dm_res_auto_step_effective(int step, int level, int quality) { return level == 0 && !quality && step > 0 ? step : 0; }
 static inline int dm_res_auto_step(dm_res_auto_state *s, int at_floor, double r10, int enough10, double r60, int enough60, int clean, uint64_t now) {
     const uint64_t sec = 1000000000ull;
     if (now < s->hold_until) return s->step;
