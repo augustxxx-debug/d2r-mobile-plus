@@ -1017,7 +1017,10 @@ uint64_t front_game_res(int docked) {
             LOG("画面：显卡「%s」→ 代际 A%d%s M%d，自动档像素预算 %u", nm ?: "?", cls_gen, cls_pro ? " Pro" : "", cls_m, dm_res_cap_budget_auto(cls_gen, cls_pro, cls_m)); }
         uint64_t now = atomic_load(&g_res_now);
         uint32_t budget = dm_res_cap_budget_screen(lv, cls_gen, cls_pro, cls_m, (uint32_t)now, (uint32_t)(now >> 32));   // 超大屏自动档取均衡预算（dm_res_cap.h） | Very large screens: Auto takes the Balanced budget (dm_res_cap.h)
-        { int dm_res_auto_step_get(void), dm_3d_quality_mode_get(void); int st = dm_res_auto_step_effective(dm_res_auto_step_get(), lv, dm_3d_quality_mode_get() == 1); budget = dm_res_auto_budget(budget, st);   // 自动档闭环（hle_oe.c 按实际掉帧推进） | Auto closed loop (advanced by hle_oe.c from measured dropped frames)
+        { int dm_res_auto_step_get(void), dm_3d_quality_mode_get(void); void dm_res_auto_base_set(uint32_t);
+          uint64_t win_px = (uint64_t)(uint32_t)now * (uint32_t)(now >> 32); uint32_t base = budget && budget < win_px ? budget : (uint32_t)(win_px > 0xffffffffu ? 0xffffffffu : win_px);   // 有效基础 = 预算与窗口实际像素取小（复审 F05） | effective base = min(budget, actual window pixels) (re-audit F05)
+          if (lv == 0) dm_res_auto_base_set(base);
+          int st = dm_res_auto_step_effective(dm_res_auto_step_get(), lv, dm_3d_quality_mode_get() == 1); budget = st ? dm_res_auto_budget(base, st) : budget;   // 自动档闭环（hle_oe.c 按实际掉帧推进） | Auto closed loop (advanced by hle_oe.c from measured dropped frames)
           static _Atomic int logged_step; if (atomic_exchange(&logged_step, st) != st) LOG("画面：自动输出档闭环 → 第 %d 步，像素预算 %u", st, budget); }
         uint64_t capped = dm_res_cap_apply((uint32_t)now, (uint32_t)(now >> 32), budget);
         static _Atomic uint64_t logged; if (capped != now && atomic_exchange(&logged, capped) != capped)

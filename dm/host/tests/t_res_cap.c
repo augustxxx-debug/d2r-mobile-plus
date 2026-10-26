@@ -75,17 +75,28 @@ int main(void) {
     { dm_res_auto_state ra = {0}; const uint64_t sec = 1000000000ull; uint64_t t = 100 * sec;
       CHECK(dm_res_auto_budget(4000000u, 0) == 4000000u); CHECK(dm_res_auto_budget(4000000u, 1) == 2800000u); CHECK(dm_res_auto_budget(4000000u, 2) == 2073600u);
       CHECK(dm_res_auto_budget(2073600u, 1) == 2073600u); CHECK(dm_res_auto_budget(2800000u, 2) == 2073600u);   // 不高于代际预算 | never above the generation budget
-      for (int i = 0; i < 10; i++) { t += 2 * sec; CHECK(dm_res_auto_step(&ra, 0, 0.20, 1, 0.20, 1, 0, t) == 0); }      // 3D 没到下限：不降 | not at the floor: no step
-      t += 2 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.06, 0, 0.0, 0, 0, t) == 0);                                           // 窗不够：不降 | not enough windows
-      t += 2 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.06, 1, 0.0, 0, 0, t) == 1);                                           // 降一步 | one step down
-      for (int i = 0; i < 4; i++) { t += 2 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.30, 1, 0.30, 1, 0, t) == 1); }         // 停判 10 秒内不再动 | held for 10 s
-      t += 4 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.0, 1, 0.02, 1, 0, t) == 2);                                           // 60 秒规则降第二步 | second step via the 60 s rule
-      for (int i = 0; i < 10; i++) { t += 2 * sec; dm_res_auto_step(&ra, 1, 0.30, 1, 0.30, 1, 0, t); } CHECK(ra.step == 2);  // 最多 2 步 | capped at 2
-      int n = 0; while (ra.step == 2 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 1, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 1 && n == 30);   // 30 个干净窗升一步 | 30 clean windows step up
-      t += 12 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.06, 1, 0.0, 0, 0, t) == 2);                                         // 刚升 15 秒内又降 | dropped again within 15 s of the raise
-      n = 0; t += 12 * sec; while (ra.step == 2 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 1, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 1 && n == 45);   // 下次升要 45 窗 | next raise needs 45
-      n = 0; t += 12 * sec; while (ra.step == 1 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 0, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 0 && n == 30);   // 回到代际预算 | back to the generation budget
-      t += 12 * sec; CHECK(dm_res_auto_step(&ra, 1, 0.0, 1, 0.0, 1, 1, t) == 0); }   // 已在 0 步：干净窗不再升 | at step 0 clean windows do nothing
+      // 复审 F05：台阶只取严格低于基础的档 | re-audit F05: only caps strictly below the base
+      CHECK(dm_res_auto_steps_for(4500000u) == 2); CHECK(dm_res_auto_steps_for(4000000u) == 2); CHECK(dm_res_auto_steps_for(3800000u) == 2);
+      CHECK(dm_res_auto_steps_for(2800000u) == 1); CHECK(dm_res_auto_steps_for(2800001u) == 2); CHECK(dm_res_auto_steps_for(2073600u) == 0); CHECK(dm_res_auto_steps_for(0) == 0);
+      CHECK(dm_res_auto_budget(2800000u, 1) == 2073600u);   // Duo 大屏：第一步就严格降到 207 万 | Duo large screen: the first step is strictly lower
+      { const uint32_t bases[] = { 2073600u, 2800000u, 3800000u, 4000000u, 4500000u };
+        for (int bi = 0; bi < 5; bi++) { uint32_t b = bases[bi]; int ns = dm_res_auto_steps_for(b); uint32_t prev = dm_res_auto_budget(b, 0); CHECK(prev == b);
+          for (int k = 1; k <= ns; k++) { uint32_t cur = dm_res_auto_budget(b, k); CHECK(cur < prev); prev = cur; }   // 每一步严格变小 | every step strictly smaller
+          CHECK(dm_res_auto_budget(b, ns + 1) == dm_res_auto_budget(b, ns)); } }
+      { dm_res_auto_state rb = {0}; const uint64_t s2 = 1000000000ull; uint64_t tt = 100 * s2;
+        for (int i = 0; i < 40; i++) { tt += 2 * s2; dm_res_auto_step(&rb, 1, 1, 0.5, 1, 0.5, 1, 0, tt); } CHECK(rb.step == 1);   // 只剩一档可降：停在第 1 步 | only one lower cap: stops at step 1
+        for (int i = 0; i < 40; i++) { tt += 2 * s2; dm_res_auto_step(&rb, 0, 1, 0.5, 1, 0.5, 1, 0, tt); } CHECK(rb.step == 0); }   // 基础降到 207 万：步数被夹回 0 | base fell to 2.07 MP: the step is clamped to 0
+      for (int i = 0; i < 10; i++) { t += 2 * sec; CHECK(dm_res_auto_step(&ra, 2, 0, 0.20, 1, 0.20, 1, 0, t) == 0); }      // 3D 没到下限：不降 | not at the floor: no step
+      t += 2 * sec; CHECK(dm_res_auto_step(&ra, 2, 1, 0.06, 0, 0.0, 0, 0, t) == 0);                                           // 窗不够：不降 | not enough windows
+      t += 2 * sec; CHECK(dm_res_auto_step(&ra, 2, 1, 0.06, 1, 0.0, 0, 0, t) == 1);                                           // 降一步 | one step down
+      for (int i = 0; i < 4; i++) { t += 2 * sec; CHECK(dm_res_auto_step(&ra, 2, 1, 0.30, 1, 0.30, 1, 0, t) == 1); }         // 停判 10 秒内不再动 | held for 10 s
+      t += 4 * sec; CHECK(dm_res_auto_step(&ra, 2, 1, 0.0, 1, 0.02, 1, 0, t) == 2);                                           // 60 秒规则降第二步 | second step via the 60 s rule
+      for (int i = 0; i < 10; i++) { t += 2 * sec; dm_res_auto_step(&ra, 2, 1, 0.30, 1, 0.30, 1, 0, t); } CHECK(ra.step == 2);  // 最多 2 步 | capped at 2
+      int n = 0; while (ra.step == 2 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 2, 1, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 1 && n == 30);   // 30 个干净窗升一步 | 30 clean windows step up
+      t += 12 * sec; CHECK(dm_res_auto_step(&ra, 2, 1, 0.06, 1, 0.0, 0, 0, t) == 2);                                         // 刚升 15 秒内又降 | dropped again within 15 s of the raise
+      n = 0; t += 12 * sec; while (ra.step == 2 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 2, 1, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 1 && n == 45);   // 下次升要 45 窗 | next raise needs 45
+      n = 0; t += 12 * sec; while (ra.step == 1 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 2, 0, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 0 && n == 30);   // 回到代际预算 | back to the generation budget
+      t += 12 * sec; CHECK(dm_res_auto_step(&ra, 2, 1, 0.0, 1, 0.0, 1, 1, t) == 0); }   // 已在 0 步：干净窗不再升 | at step 0 clean windows do nothing
     printf("t_res_cap: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

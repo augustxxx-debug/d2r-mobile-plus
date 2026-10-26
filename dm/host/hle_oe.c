@@ -313,9 +313,17 @@ int dm_res_auto_step_get(void) { return atomic_load(&g_res_auto_step); }
 // dm_3d_scale_feed returns early in quality-first, so this check sits at the top of the function and runs every frame
 int dm_render_res_level(void);   // 定义在下面（弱）或 dm_custom.c（强） | defined below (weak) or in dm_custom.c (strong)
 static dm_res_auto_state g_res_ra;
+// 前端每拍报来的当前有效基础预算（像素）；0 = 没有前端报（Mac 宿主等），闭环不降（复审 F05） | Current effective base budget reported by the front end every tick; 0 = no front end reports it (Mac host etc.), the loop never steps (re-audit F05)
+static _Atomic uint32_t g_res_auto_base; static uint32_t g_res_auto_base_seen;
+void dm_res_auto_base_set(uint32_t px) { atomic_store(&g_res_auto_base, px); }
 static int g_res_armed; static unsigned g_res_arm_wins;   // 重新进入闭环时的窗口序号：之前的掉帧证据是在别的输出尺寸下测的，不算 | window index at (re-)entry: drop evidence from before was measured at another output size and does not count
 static int res_auto_off(void) { static int off = -1; if (off < 0) off = getenv("DM_RES_AUTO_OFF") != NULL; return off; }
 static int res_auto_eligible(int controller_on) { return controller_on && !res_auto_off() && dm_render_res_level() == 0 && atomic_load(&g_3d_quality_mode) != 1; }
+// 作废恢复证据（复审 F06）：出局 / 读图、回前台、目标帧率或输出基础变化时调用。当前步数保留，但之前累计的干净窗作废；
+// 下次满足条件时按“重新进入”处理：停判 10 秒、只认此后的窗口，所以“连续 60 秒健康”不会跨场景拼接
+// Invalidate the recovery evidence (re-audit F06): called on leaving the run / loading, returning to the foreground, and target frame rate or output base changes. The current step is kept,
+// but clean windows counted so far are discarded; the next eligible window re-arms (10 s hold, only later windows count), so "60 s healthy" is never stitched across scenes
+static void res_auto_forget(void) { g_res_armed = 0; g_res_ra.good = 0; }
 static void res_auto_disarm(void) {
     g_res_ra = (dm_res_auto_state){0}; g_res_armed = 0;
     int was = atomic_exchange(&g_res_auto_step, 0);
@@ -345,12 +353,12 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     if (s3g_on() && atomic_load(&g_3d_quality_mode) != 1) { s3g_feed(iv_ms);scale3d_publish(effective,c.level);return; }
     if (atomic_load(&g_3d_quality_mode) == 1) { if (c.level) { c.level = 0; LOG("3D 比例控制：画质优先，回到配置值"); } scale3d_publish(effective,0); return; }
     uint64_t now = now_ns();
-    if (atomic_exchange(&g_scale3d_resumed, 0)) scale3d_ctl_hold(&c, now, 3 * S3_SEC);
+    if (atomic_exchange(&g_scale3d_resumed, 0)) { scale3d_ctl_hold(&c, now, 3 * S3_SEC); res_auto_forget(); }
     { static int was; int in = dm_ingame_now();   // 不在局内（菜单 / 读取）不判；刚进局的 20 秒也不判（进局头十几秒的慢帧是装载，不是 GPU 吃紧） | not judged outside a run (menu / loading); not judged in the first 20 seconds of a run either (slow frames in the first ten-odd seconds of a run are loading, not GPU pressure)
-      if (!in) { was = 0; scale3d_ctl_hold(&c, now, S3_SEC);scale3d_publish(effective,c.level);return; }
+      if (!in) { was = 0; scale3d_ctl_hold(&c, now, S3_SEC); res_auto_forget(); scale3d_publish(effective,c.level);return; }
       if (!was) { was = 1; if (inj0 < 0) scale3d_ctl_hold(&c, now, 20 * S3_SEC); } }
     { int mtl_fps_target(void); double mtl_display_refresh(void), dm_pace_hz(double, double), r = mtl_display_refresh(); int f = mtl_fps_target(); double hz = dm_pace_hz(r, f == 30 ? 30 : f == 120 ? 120 : 60);
-      double p = hz != 60 ? 1000.0 / hz : 0;   /* 30 / 120 实验档与非 60 倍数屏的整除档都走这里 | 30 fps, the 120 Hz experiment and non-60-multiple screens all take this path */ if (p != c.period_ms) { c.period_ms = p; scale3d_ctl_hold(&c, now, 2 * S3_SEC); } }   // 目标周期跟着出图帧率换（省电 30 帧、非 60 倍数的屏取整除档，如 144 Hz 屏 72），切换后停判 2 秒 | The target period follows the present frame rate (power saving 30 fps; screens not a multiple of 60 take the evenly dividing tier, e.g. 72 on a 144 Hz screen); checking pauses for 2 seconds after a switch
+      double p = hz != 60 ? 1000.0 / hz : 0;   /* 30 / 120 实验档与非 60 倍数屏的整除档都走这里 | 30 fps, the 120 Hz experiment and non-60-multiple screens all take this path */ if (p != c.period_ms) { c.period_ms = p; scale3d_ctl_hold(&c, now, 2 * S3_SEC); res_auto_forget(); } }   // 目标周期跟着出图帧率换（省电 30 帧、非 60 倍数的屏取整除档，如 144 Hz 屏 72），切换后停判 2 秒 | The target period follows the present frame rate (power saving 30 fps; screens not a multiple of 60 take the evenly dividing tier, e.g. 72 on a 144 Hz screen); checking pauses for 2 seconds after a switch
     if (inj0 >= 0) { long f = (long)dm_nvn_frame_count(); double per = c.period_ms > 0 ? c.period_ms : 1000.0 / 60; iv_ms = f >= inj0 && f <= inj1 ? 2 * per : per; }   // 注入：段内每帧当掉一帧（两个周期） | Injection: every frame within the segment counts as a dropped frame (two periods)
     int was = c.level, lv = scale3d_ctl_step(&c, iv_ms, now);
     if (lv != was) LOG("3D 比例控制：最近 10 秒掉帧 %.1f%%、60 秒 %.1f%% → %s到第 %d 档（3D 比例 %.2f）%s", c.last_r10 * 100, c.last_r60 * 100, lv > was ? "降" : "升", lv,
@@ -359,10 +367,11 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     // 自动输出档闭环（dm_res_cap.h dm_res_auto_step）：3D 已到下限还掉帧 → 整帧输出再降一档，稳定 60 秒升回；变档推 31 让游戏重读输出尺寸，并让 3D 控制器停判 5 秒
     // Auto output-level loop (dm_res_cap.h dm_res_auto_step): still dropping with 3D at its floor → one more whole-frame output step down, back up after 60 s clean; a change pushes 31 so the game re-reads the output size, and holds the 3D controller for 5 s
     { static unsigned seen;
+      { uint32_t base = atomic_load(&g_res_auto_base); if (base != g_res_auto_base_seen) { g_res_auto_base_seen = base; res_auto_forget(); } }   // 输出基础变了（折叠 / 换屏 / 换档预算）：旧证据作废 | output base changed (fold / screen / budget): old evidence void
       if (c.wins != seen && res_auto_eligible(on)) { seen = c.wins;
           if (!g_res_armed) { g_res_armed = 1; g_res_arm_wins = c.wins; g_res_ra.hold_until = now + 10 * S3_SEC; }   // (重新)进入闭环：停判 10 秒，只认此后的窗口 | (re-)entry: hold 10 s and count only later windows
           unsigned fresh = c.wins - g_res_arm_wins;
-          int st = dm_res_auto_step(&g_res_ra, lv >= c.max_level, c.last_r10, c.nw >= 5 && fresh >= 5, c.last_r60, c.nw >= 30 && fresh >= 30, c.wd[0] == 0, now);
+          int st = dm_res_auto_step(&g_res_ra, dm_res_auto_steps_for(atomic_load(&g_res_auto_base)), lv >= c.max_level, c.last_r10, c.nw >= 5 && fresh >= 5, c.last_r60, c.nw >= 30 && fresh >= 30, c.wd[0] == 0, now);
           if (st != atomic_load(&g_res_auto_step)) { atomic_store(&g_res_auto_step, st); scale3d_ctl_hold(&c, now, 5 * S3_SEC);
               LOG("输出分辨率闭环：3D 比例已在下限，最近 10 秒掉帧 %.1f%%、60 秒 %.1f%% → 自动档第 %d 步（通知游戏重读输出尺寸）", c.last_r10 * 100, c.last_r60 * 100, st); dm_oe_res_changed(); } } }
 }

@@ -76,18 +76,24 @@ static inline uint64_t dm_res_cap_apply(uint32_t w, uint32_t h, uint32_t budget)
 // 10 s hold after every change (the resize itself stalls). Only in Auto and not in "quality first".
 #define DM_RES_AUTO_STEPS 2
 typedef struct { int step; uint64_t hold_until, last_up; int good, need_good; } dm_res_auto_state;
+// 台阶只取严格低于“当前有效基础”（代际 / 屏幕预算与窗口实际像素取小）的那几档，每一步都必然让输出变小；基础已 ≤ 207 万时没有台阶（复审 F05）
+// Steps are only the caps strictly below the current effective base (the generation / screen budget or the window's actual pixels, whichever is smaller), so every step shrinks the output; no steps once the base is ≤ 2.07 MP (re-audit F05)
+static const uint32_t dm_res_auto_caps[DM_RES_AUTO_STEPS] = { 2800000u, 2073600u };
+static inline int dm_res_auto_steps_for(uint32_t base) { int n = 0; for (int i = 0; i < DM_RES_AUTO_STEPS; i++) n += dm_res_auto_caps[i] < base; return n; }
 static inline uint32_t dm_res_auto_budget(uint32_t class_budget, int step) {
-    uint32_t cap = step <= 0 ? 0 : step == 1 ? 2800000u : 2073600u;
-    return cap && cap < class_budget ? cap : class_budget;
+    int n = dm_res_auto_steps_for(class_budget), k = step < n ? step : n;
+    return k <= 0 ? class_budget : dm_res_auto_caps[DM_RES_AUTO_STEPS - n + k - 1];
 }
 // 前端实际套用的步数：只有渲染档 = 自动且不是画质优先时才套用闭环步数，否则 0。宿主那边离开闭环时已清零，这里再兜一层（审计 P1）
 // Step the front end actually applies: the loop step only when the render level is Auto and not quality-first, otherwise 0. The host already clears it on leaving the loop; this is a second guard (audit P1)
 #define DM_RES_AUTO_HAVE_EFFECTIVE 1
 static inline int dm_res_auto_step_effective(int step, int level, int quality) { return level == 0 && !quality && step > 0 ? step : 0; }
-static inline int dm_res_auto_step(dm_res_auto_state *s, int at_floor, double r10, int enough10, double r60, int enough60, int clean, uint64_t now) {
+// max_steps = dm_res_auto_steps_for(当前有效基础)：没有更低的台阶就不降，也就不会发一次无效的重读通知 | max_steps = dm_res_auto_steps_for(current effective base): no lower cap, no step and no futile re-read notification
+static inline int dm_res_auto_step(dm_res_auto_state *s, int max_steps, int at_floor, double r10, int enough10, double r60, int enough60, int clean, uint64_t now) {
     const uint64_t sec = 1000000000ull;
+    if (s->step > max_steps) s->step = max_steps;
     if (now < s->hold_until) return s->step;
-    if (at_floor && s->step < DM_RES_AUTO_STEPS && ((enough10 && r10 > 0.05) || (enough60 && r60 > 0.015))) {
+    if (at_floor && s->step < max_steps && ((enough10 && r10 > 0.05) || (enough60 && r60 > 0.015))) {
         if (s->last_up && now - s->last_up < 15 * sec) s->need_good = 45;
         s->step++; s->good = 0; s->hold_until = now + 10 * sec; return s->step;
     }

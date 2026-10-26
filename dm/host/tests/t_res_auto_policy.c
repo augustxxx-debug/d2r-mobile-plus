@@ -18,7 +18,8 @@ int dm_nvn_ruler_truth(void) { return 0; }
 void dm_ui_gen_bump(int why) { (void)why; }
 void dm_uiscreen_res_reread(void) {}
 uint64_t dm_nvn_frame_count(void) { return 0; }
-int dm_ingame_now(void) { return 1; }
+static int test_ingame = 1;
+int dm_ingame_now(void) { return test_ingame; }
 int mtl_fps_target(void) { return 60; }
 double mtl_display_refresh(void) { return 60; }
 double dm_pace_hz(double screen, double desired) { (void)screen; return desired; }
@@ -35,7 +36,7 @@ static int drive_down(void) { for (int i = 0; i < 400 && dm_res_auto_step_get() 
 int main(void) {
     unsetenv("DM_3D_SCALE_DYN"); unsetenv("DM_THERMAL_NOFALLBACK"); unsetenv("DM_3D_SCALE_DYN_INJECT"); unsetenv("DM_3D_SCALE_GPU"); unsetenv("DM_RES_AUTO_OFF");
     setenv("DM_3D_SCALE_FLOOR", "0.6", 1);
-    g_ntf_perfmode = 1; test_level = 0; dm_3d_quality_mode_set(0);
+    g_ntf_perfmode = 1; test_level = 0; dm_3d_quality_mode_set(0); dm_res_auto_base_set(4000000u);
     // ① 自动档下闭环能降到第 2 步 | in Auto the loop reaches step 2
     feed(16.666667, 30); pending31();
     CHECK(drive_down() == 2); pending31();
@@ -60,6 +61,25 @@ int main(void) {
     CHECK(dm_res_auto_budget(4000000u, dm_res_auto_step_effective(2, 0, 0)) == 2073600u);
     CHECK(dm_res_auto_step_effective(2, 3, 0) == 0);
 #endif
+    // ⑧ 复审 F05：基础 280 万（Duo 大屏）只有一档可降，且必须严格降低；基础 207 万不降、不发通知 | re-audit F05: a 2.8 MP base has one lower cap, strictly lower; a 2.07 MP base never steps or notifies
+    test_level = 3; feed(16.666667, 1); test_level = 0; pending31();
+    dm_res_auto_base_set(2800000u); feed(16.666667, 1); pending31();
+    for (int i = 0; i < 400 && dm_res_auto_step_get() < 1; i++) feed(33.333333, 2);
+    CHECK(dm_res_auto_step_get() == 1); CHECK(pending31() == 1); feed(33.333333, 200); CHECK(dm_res_auto_step_get() == 1); CHECK(pending31() == 0);
+    CHECK(dm_res_auto_budget(2800000u, dm_res_auto_step_get()) == 2073600u);
+    test_level = 3; feed(16.666667, 1); test_level = 0; pending31();
+    dm_res_auto_base_set(2073600u); feed(33.333333, 300); CHECK(dm_res_auto_step_get() == 0); CHECK(pending31() == 0);
+    // ⑨ 复审 F06：29 个干净窗后出局 120 秒再进局，22 秒内不得升档；之后要攒够进局后的新窗 | re-audit F06: 29 clean windows, 120 s out of the run, back in: no raise within 22 s, only fresh windows count
+    test_level = 3; feed(16.666667, 1); test_level = 0; pending31(); dm_res_auto_base_set(4000000u); feed(16.666667, 1);
+    CHECK(drive_down() == 2); pending31();
+    feed(16.666667, 58); CHECK(dm_res_auto_step_get() == 2);   // 约 29 个干净窗，还差一个 | about 29 clean windows, one short
+    test_ingame = 0; feed(16.666667, 120); test_ingame = 1;
+    feed(16.666667, 22); CHECK(dm_res_auto_step_get() == 2);
+    feed(16.666667, 40); CHECK(dm_res_auto_step_get() == 2);   // 进局停判 20 秒 + 重新进入停判 10 秒后，干净窗还不足 30 个 | after the 20 s entry hold + 10 s re-arm hold, still fewer than 30 fresh clean windows
+    feed(16.666667, 60); CHECK(dm_res_auto_step_get() == 1);   // 攒够新的连续 60 秒才升 | raises only after 60 fresh continuous seconds
+    // ⑩ 回前台同样作废证据 | returning to the foreground voids the evidence too
+    for (int i = 0; i < 400 && dm_res_auto_step_get() < 2; i++) feed(33.333333, 2); pending31();
+    feed(16.666667, 58); dm_3d_scale_resumed(); feed(16.666667, 4); CHECK(dm_res_auto_step_get() == 2);
     printf("PASS auto output loop exit policy: %d checks (quality-first, manual level, re-entry, no spurious 31)\n", checks);
     return 0;
 }
