@@ -109,7 +109,7 @@ class Wiring(unittest.TestCase):
     def test_screens_and_logs_show_label(self):
         upd = (DM / 'host' / 'dm_update.c').read_text(encoding='utf-8')
         self.assertIn('snprintf(t, sizeof t, dm_str(b, "dmUpdBuild"), g_label)', upd)
-        self.assertIn('dm_str(b, "dmUpdNew"), ver, note)', upd); self.assertIn('dm_str(b, "dmUpdNewUrgent"), ver, note)', upd)
+        self.assertIn('dm_str(b, "dmUpdNew"), ver)', upd); self.assertIn('dm_str(b, "dmUpdNewUrgent"), ver, note)', upd)
         tsv = {l.split('\t')[0]: l.split('\t') for l in (DM / 'i18n' / 'ui_text.tsv').read_text(encoding='utf-8').splitlines()}
         for key in ('dmUpdBuild', 'dmUpdNew', 'dmUpdNewUrgent'):
             for cell in tsv[key][1:7]:
@@ -118,6 +118,16 @@ class Wiring(unittest.TestCase):
         self.assertIn('plog("boot: 显示版本 %s", idv(@"DMVersionLabel").UTF8String)', main)
         for src in ('ios/Sources/dm_update.m', 'host/app_mac.m'):
             self.assertIn('DMVersionLabel', (DM / src).read_text(encoding='utf-8'), src)
+
+    def test_short_language_neutral_texts(self):
+        # 2026-10-27 用户：多语言越简单越好，普通档只要一行新版本提示，不要说明和按钮（iPad 等窄屏会挤到「进入游戏」）
+        # user, 2026-10-27: keep every language as short as possible; the ordinary tier is one new-version line, no note, no button (narrow screens such as iPad would crowd Play)
+        tsv = {l.split('\t')[0]: l.split('\t') for l in (DM / 'i18n' / 'ui_text.tsv').read_text(encoding='utf-8').splitlines()}
+        self.assertEqual({c for c in tsv['dmUpdBuild'][1:7] if c}, {'v%s'})
+        for cell in (c for c in tsv['dmUpdNew'][1:7] if c):
+            self.assertEqual(cell.count('%'), 1, cell); self.assertNotIn('·', cell); self.assertLessEqual(len(cell), 12, cell)
+        upd = (DM / 'host' / 'dm_update.c').read_text(encoding='utf-8')
+        self.assertIn('else { place(nt, nx, 2046+bottom); place(sm, 99999, 99999); }', upd)   # 触屏普通档不摆小「更新」 | touch ordinary tier never places the small Update
 
     def test_layout_measures_version_width(self):
         tl = (DM / 'ios' / 'tools' / 'touch_layout.py').read_text(encoding='utf-8')

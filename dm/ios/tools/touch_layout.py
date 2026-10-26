@@ -226,11 +226,11 @@ def _sub1(s, old, new):
     return s.replace(old, new)
 # 构建号 + 新版本提示：都是主菜单面板（选角页那一层）的子控件，用原版的字与「进入游戏」那张按钮图。
 # 布局里文字全空、按钮与底板摆在屏幕外：字由宿主写（dm/host/dm_update.c：构建号常显；查到新版本才写提示），按钮与底板由宿主挪回下面 _UPD_POS 的位置。
-# 普通档 = 左下角构建号右边一行字 + 0.6 倍的小「更新」（这一行从屏幕左边量、让开左安全区，x 由宿主算：字多宽按钮就跟到哪）；建议立即更新档 = 「进入游戏」（x -303, y 1865）正上方：半透明底 + 红字标题 + 说明 + 同大的「更新」。
+# 普通档 = 左下角显示版本右边一行短字「有新版本 1.1.0」（这一行从屏幕左边量、让开左安全区，x 由宿主算）；0.6 倍的小「更新」TouchUpdSmall 留着但宿主不再摆出来（2026-10-27：字太长，窄屏会挤到「进入游戏」）；建议立即更新档 = 「进入游戏」（x -303, y 1865）正上方：半透明底 + 红字标题 + 说明 + 同大的「更新」。
 # 两个「更新」都发 PanelManager:ClosePanel:TouchUpdate（关一个不存在的面板 = 空操作，宿主当信号收）。位置数字宿主那边也用到，改这里要一起改。
 # Build number + new version notice: both are child widgets of the main menu panel (the layer of the character select page), using the original game's text and the 「进入游戏」(Play) button image.
 # In the layout all text is empty and the button and backing are placed off screen: the text is written by the host (dm/host/dm_update.c: build number always shown; the notice is written only when a new version is found), and the button and backing are moved back by the host to the positions in _UPD_POS below.
-# Normal tier = one line of text to the right of the build number at the bottom left + a small 0.6× 「更新」(Update) (this line is measured from the left edge of the screen and clears the left safe area; x is computed by the host: the button follows wherever the text width ends); recommended-immediate-update tier = right above 「进入游戏」(Play) (x -303, y 1865): semi-transparent backing + red title + description + a same-size 「更新」(Update).
+# Normal tier = one short line "New version 1.1.0" to the right of the display version at the bottom left (measured from the left edge of the screen, clearing the left safe area; x is computed by the host); the 0.6× small 「更新」(Update) TouchUpdSmall stays in the layout but the host no longer places it (2026-10-27: the text got too long and narrow screens crowded 「进入游戏」(Play)); recommended-immediate-update tier = right above 「进入游戏」(Play) (x -303, y 1865): semi-transparent backing + red title + description + a same-size 「更新」(Update).
 # Both 「更新」(Update) buttons send PanelManager:ClosePanel:TouchUpdate (closing a panel that does not exist = no-op, which the host receives as a signal). The position numbers are also used on the host side, so change them together when changing here.
 _C = '"anchor": { "x": 0.5 }, '
 def _upd_text(name, x, y, w, size, color, h='left', anchor='', fit=''):
@@ -251,7 +251,7 @@ _UPDATE = (_upd_text('TouchBuild', 79, 2046, 420, 30, (150, 140, 115), fit='"fit
 # 原版手柄主菜单面板的矩形是 0×0，锚点无从算起：这一组都不带锚点，位置全由宿主按屏宽摆（dm_update.c），这里的坐标只是 16:9 下的初值
 # The same group of widgets on the controller layout's original main menu (pad_mainmenu): the bottom left holds the original button ribbon and legend, so the build number and hint text go to the top right, right-aligned.
 # The original controller main menu panel's rectangle is 0×0, with nothing to compute an anchor from: none of this group carries an anchor, their position is set entirely by the host from the screen width (dm_update.c), and the coordinates here are only initial values for 16:9
-_UPDATE_PAD = (_upd_text('TouchBuild', 3161, 60, 600, 30, (150, 140, 115), 'right')   # 宽 600 放得下「版本 1.0.0+28 · b346e40*」；宿主按屏宽摆在 xr - 600 - 边距 | 600 wide fits the display version; the host places it at xr - 600 - margin
+_UPDATE_PAD = (_upd_text('TouchBuild', 3161, 60, 600, 30, (150, 140, 115), 'right')   # 宽 600 放得下「v1.0.0+28 · b346e40*」；宿主按屏宽摆在 xr - 600 - 边距 | 600 wide fits the display version; the host places it at xr - 600 - margin
                + _upd_text('TouchUpdNote', 1761, 130, 2000, 42, (199, 179, 119), 'right')   # 手柄版没有「更新」按钮可看，这一行字放大（触屏版同色 30 号） | The controller layout has no 「更新」(Update) button to look at, so this line of text is enlarged (the touch version uses the same color at size 30)
                + _upd_btn('TouchUpdSmall', 0.6, '')
                + '        { "type": "RectangleWidget", "name": "TouchUpdBg", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1400, "height": 186 }, "color": [ 0.0, 0.0, 0.0, 0.59 ] } },\n'
