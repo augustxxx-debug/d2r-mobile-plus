@@ -24,7 +24,7 @@ import sys, statistics as st
 R = sys.argv[1]
 for g, name in (('B', '空白负对照'), ('A', '我们的 App 选角页')):
     rows = [l.rstrip('\n').split('\t') for l in open(f'{R}/heat_{g}.tsv')][1:]
-    rows = [r for r in rows if len(r) == 9]
+    rows = [r for r in rows if len(r) >= 9]   # heat.tsv 现在有 14 列（电量、充电、低电量、渲染档、MetalFX 档），只用前 9 列 | heat.tsv now has 14 columns; only the first 9 are used here
     th = [int(r[1]) for r in rows]; cpu = [float(r[2]) for r in rows]; fps = [float(r[3]) for r in rows]
     ga = [float(r[4]) for r in rows if float(r[4]) >= 0]; gp = [float(r[5]) for r in rows if float(r[5]) >= 0]
     print(f'{g} {name}：{len(rows)} 行 / {rows[-1][0] if rows else 0} 秒；温控 起 {th[0] if th else "?"} 止 {th[-1] if th else "?"}（序列 {"".join(map(str, th))}）；'

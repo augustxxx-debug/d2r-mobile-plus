@@ -6304,7 +6304,12 @@ __attribute__((weak)) int dm_focus_now(void) { return 1; }   // 宿主 hle_oe.c 
 __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
 @implementation NvMetalDisplayLinkDelegate
 - (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update {
-    (void)link;
+    // 诊断（120 Hz 实验）：系统实际给的刷新周期 = targetTimestamp − timestamp；变化超过 5% 就记一行，带温控 / 低电量 / 我们请求的区间 / 延迟设置，查 ProMotion 为何回落 60
+    // Diagnostics (120 Hz experiment): the refresh period the system actually grants = targetTimestamp − timestamp; log a line whenever it changes by more than 5%, with thermal state / Low Power Mode / our requested range / latency, to see why ProMotion falls back to 60
+    { static double last_ms = 0, last_target = 0; static uint64_t n; double ms = last_target > 0 ? (update.targetTimestamp - last_target) * 1000 : 0; last_target = update.targetTimestamp; n++;   // 相邻两次回调的目标时刻之差 = 系统给的周期 | Difference between consecutive target timestamps = the granted period
+      if (ms > 0 && ms < 200 && (last_ms <= 0 || fabs(ms - last_ms) > last_ms * 0.05)) { CAFrameRateRange rr = link.preferredFrameRateRange;
+          MLOG("显示节拍周期 %.2f → %.2f ms（第 %llu 次回调，帧 %llu）：请求区间 %.0f–%.0f 首选 %.0f，延迟 %d，温控 %ld，低电量 %d", last_ms, ms, (unsigned long long)n, (unsigned long long)atomic_load(&g_cur_frame), rr.minimum, rr.maximum, rr.preferred, g_present_latency, (long)NSProcessInfo.processInfo.thermalState, NSProcessInfo.processInfo.lowPowerModeEnabled);
+          last_ms = ms; } }
     pthread_mutex_lock(&g_pq_mu);
     if (g_stall_t0) { uint64_t since = dm_focus_in_since(), t = now_ns();
         MLOG("显示节拍恢复：这段停了 %.0f ms（其中激活中 %.0f ms），兜底丢了 %llu 帧（第 %llu 段）", (t - g_stall_t0) / 1e6, (t - (g_stall_t0 > since ? g_stall_t0 : since)) / 1e6, (unsigned long long)g_stall_drop, (unsigned long long)g_stall_n); g_stall_t0 = 0; }
@@ -6338,6 +6343,9 @@ static CAMetalDisplayLink *g_link; static CFRunLoopRef g_link_rl; static int g_l
 static int g_link_owns_layer, g_classic_busy;   // 持 g_pq_mu：图层挂着节拍对象期间 nextDrawable 会抛异常，自取 drawable 的出图线程与节拍对象互斥 | Under g_pq_mu: nextDrawable throws while the layer has the display link object attached, so the present thread that takes its own drawable and the display link object are mutually exclusive
 static int link_on(void) { return g_dm_present_link && g_link != nil; }
 static CAFrameRateRange link_range(int mode) {   // 1 / 3 按屏幕刷新率选整除的那一档（mtl_pace_hz）；2（120 Hz 节拍、测试档）不变 | 1 / 3 pick the evenly dividing tier by screen refresh rate (mtl_pace_hz); 2 (120 Hz pacing, test tier) unchanged
+    { static int got; static float a, b, c; static int on;   // 实验开关 DM_LINK_RANGE=最小,最大,首选（如 80,120,120）：覆盖请求区间，查固定 120 是否被系统拒绝 | Experiment switch DM_LINK_RANGE=min,max,preferred (e.g. 80,120,120): override the requested range, to see whether a fixed 120 is refused by the system
+      if (!got) { got = 1; const char *e = getenv("DM_LINK_RANGE"); on = e && sscanf(e, "%f,%f,%f", &a, &b, &c) == 3 && a > 0 && b >= a && c >= a && c <= b; if (on) MLOG("DM_LINK_RANGE：显示节拍请求区间 %.0f–%.0f 首选 %.0f", a, b, c); }
+      if (on) return CAFrameRateRangeMake(a, b, c); }
     if (mode == 2) return CAFrameRateRangeMake(60, 120, 120);
     float r = (float)mtl_pace_hz(); return CAFrameRateRangeMake(r, r, r); }
 static int g_link_mode = 1;   // 节拍对象当前的模式：1 / 2 同 g_dm_present_link，3 = 省电模式 30 Hz | Current mode of the display link object: 1 / 2 same as g_dm_present_link, 3 = power-saving mode 30 Hz

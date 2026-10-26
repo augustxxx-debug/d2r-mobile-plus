@@ -952,9 +952,11 @@ UIView *front_ios_view(CGRect frame) {
     CGRect full = frame; frame = letterbox_rect(frame);
     dm_tc_set_tall_scale(UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad);   // UIKit 点数：iPad 开启有上限的平板缩放（手机大屏另在布局时按短边判，见 DmMetalView layoutSubviews）
     DmMetalView *v = [[DmMetalView alloc] initWithFrame:frame];
-    g_rate_link = [CADisplayLink displayLinkWithTarget:[DmRateHint new] selector:@selector(tick:)];
-    g_rate_link.preferredFrameRateRange = CAFrameRateRangeMake(60, 60, 60);
-    [g_rate_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    if (!getenv("DM_RATE_HINT") || atoi(getenv("DM_RATE_HINT"))) {   // 实验开关 DM_RATE_HINT=0：不挂这条表态用的显示链接，查它是否把 ProMotion 仲裁拉回 60 | Experiment switch DM_RATE_HINT=0: do not attach the declaration-only display link, to see whether it pulls the ProMotion arbitration back to 60
+        g_rate_link = [CADisplayLink displayLinkWithTarget:[DmRateHint new] selector:@selector(tick:)];
+        g_rate_link.preferredFrameRateRange = CAFrameRateRangeMake(60, 60, 60);
+        [g_rate_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    } else LOG("DM_RATE_HINT=0：不挂帧率表态显示链接");
     g_layer = (CAMetalLayer *)v.layer;
     g_layer.device = MTLCreateSystemDefaultDevice();
     g_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;

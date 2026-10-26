@@ -693,14 +693,17 @@ static void boot_prepare(void) {
 #ifdef DM_DIAG_SAMPLING
         diag = 1;
 #endif
-        if (!diag && [fm fileExistsAtPath:[doc stringByAppendingPathComponent:@"diag_sampling.txt"]]) diag = 2;
+        // 文件开关只开便宜的两项（发热归因、逐线程 CPU）；逐通道 GPU 计时会让提交线程等 GPU、每分钟写几十 MB，正式包里要文件内容含 passgpu 一词才开
+        // The file switch turns on only the two cheap samplers (heat attribution, per-thread CPU); per-pass GPU timing makes the submit thread wait for the GPU and writes tens of MB per minute, so in release builds it needs the word passgpu inside the file
+        int passgpu = diag == 1; NSString *dsf = [doc stringByAppendingPathComponent:@"diag_sampling.txt"];
+        if (!diag && [fm fileExistsAtPath:dsf]) { diag = 2; NSString *txt = [NSString stringWithContentsOfFile:dsf encoding:NSUTF8StringEncoding error:nil] ?: @""; passgpu = [txt rangeOfString:@"passgpu"].location != NSNotFound; }
         if (diag) {
             NSString *dg = [doc stringByAppendingPathComponent:@"diag"]; [fm createDirectoryAtPath:dg withIntermediateDirectories:YES attributes:nil error:nil];
-            setenv("DM_NVN_PASSGPU", [dg stringByAppendingPathComponent:@"passgpu.tsv"].fileSystemRepresentation, 0);
+            if (passgpu) setenv("DM_NVN_PASSGPU", [dg stringByAppendingPathComponent:@"passgpu.tsv"].fileSystemRepresentation, 0);
             setenv("DM_THRCPU", [[dg stringByAppendingPathComponent:@"thrcpu.tsv"] stringByAppendingString:@",5"].fileSystemRepresentation, 0);
             setenv("DM_HEAT", "diag/heat.tsv,5", 0);   // 相对 Documents（front_ios.m front_ios_heat_start） | Relative to Documents (front_ios.m front_ios_heat_start)
             { void dm_thrcpu_start_env(void); dm_thrcpu_start_env(); }
-            plog("boot: 测量采样已开（%s）：Documents/diag/passgpu.tsv 逐通道 GPU、thrcpu.tsv 逐线程 CPU、heat.tsv 发热归因（每 5 秒）", diag == 1 ? "编译开关 DM_DIAG_SAMPLING" : "Documents/diag_sampling.txt");
+            plog("boot: 测量采样已开（%s）：%sthrcpu.tsv 逐线程 CPU、heat.tsv 发热归因（每 5 秒）", diag == 1 ? "编译开关 DM_DIAG_SAMPLING" : "Documents/diag_sampling.txt", passgpu ? "Documents/diag/passgpu.tsv 逐通道 GPU、" : "");
         }
     }   // 「自定义」设置文件在 Documents（覆盖层选择等启动期的读也要用，存档还没挂） | The "Custom" settings file lives in Documents (boot-time reads such as overlay selection need it too, and the save is not mounted yet)
     setenv("DM_ROMFS", romfs.fileSystemRepresentation, 0);
