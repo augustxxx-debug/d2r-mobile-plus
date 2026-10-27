@@ -21,6 +21,9 @@ int main(void) { printf("SKIP：旧接口版没有光追阴影模块\n"); return
 #ifndef RTS_MAP_CLEARED
 #define RTS_MAP_CLEARED() 0   // 79d571f 从不清阴影图（靠不画） | 79d571f never clears the shadow map (it skips the draws instead)
 #endif
+#ifndef RTS_WHY
+#define RTS_WHY() ""   // 4978d39 及更早：不记跳过追踪的具体原因 | 4978d39 and earlier: the specific reason for skipping the trace is not recorded
+#endif
 static int fail, count;
 #define EXPECT(name, want, got) do { long long w_=(long long)(want), g_=(long long)(got); count++; printf("%s 期望 %lld → 真结果 %lld %s\n", name, w_, g_, w_==g_?"✓":"✗"); fail += w_ != g_; } while (0)
 static uint8_t *g_pool, *g_mat, *g_cb3, *g_cam, *g_vtx, *g_idx, *g_big;
@@ -145,6 +148,29 @@ int main(void) { @autoreleasepool {
       uint64_t b = cache_bytes(); printf("缓存字节：峰值 %.2f MB，现在 %.2f MB（%d 个网格）\n", peak / 1048576.0, b / 1048576.0, g_rts.nmesh);
       EXPECT("帧开始时缓存不超过 1 MB 预算", 1, b <= (1u << 20)); EXPECT("最久没用的大网格 0 被淘汰", 1, mesh_by_ib(g_big, 6000) == NULL); EXPECT("最近用的大网格 35 还在", 1, mesh_by_ib(g_big + 35 * 6000, 6000) != NULL);
       EXPECT("预算淘汰后光追照常", 1, until_applied(a, 1)); }
+    // 5. 真机 4978d39 局内的形态：阴影图第一次挂上的通道是读入（生产 rp_begin_ex 开通道、R.clear_d = 0）。
+    //    A：本帧先由游戏的 ClearTexture（生产 clear_tex）清成 1.0 → 光追要能生效；B：本帧没清（缓存的级联）→ 照原版，回退原因要写明「读入」
+    // 5. The in-game shape on the device with 4978d39: the first pass on the shadow map opens with a load (production rp_begin_ex, R.clear_d = 0).
+    //    A: the game's ClearTexture (production clear_tex) cleared it to 1.0 earlier this frame → ray tracing must apply; B: not cleared this frame (cached cascade) → original, and the fallback reason must say "load"
+    { int ok2 = 0;
+      for (int pass = 0; pass < 2; pass++) {
+        int applied = 0; char why[256] = "";
+        for (int i = 0; i < 12 && !applied; i++) {
+            frame_open(); prepass(); rp_end();
+            if (pass == 0) { p_clear_tex ct = {0}; ct.tex = &g_sdepth; ct.r.width = ct.r.height = 256; ct.r.depth = 1; ct.mask = 0xf; ct.c.f[0] = 1.0f; clear_tex(&ct); }
+            { RPD *rp = [RPD new]; rp.depthAttachment.texture = tex_mtl(&g_sdepth); rp.depthAttachment.loadAction = MTLLoadActionClear; rp.depthAttachment.clearDepth = 0.25; rp.depthAttachment.storeAction = MTLStoreActionStore;
+              RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; m4_end(en); }   // 代表画上去的影（不经 rp_begin_ex，不登记） | stands for the rasterized shadows (not through rp_begin_ex, not registered)
+            memset(&R, 0, sizeof R); R.rt.depth = &g_sdepth; R.has_rt = 1; rp_begin_ex(0);   // 生产开通道：读入 | production pass begin: load
+            sh(0); main_pass(); hdr_again(); ok2 = frame_close();
+            const char *w = RTS_WHY(); if (w && *w) snprintf(why, sizeof why, "%s", w);   // 刚结束这一帧的回退原因（生产在下一帧开头记同一句） | the fallback reason of the frame just finished (production logs the same text at the next frame's start)
+            applied = map_depth() == 1.0f;
+        }
+        if (pass == 0) { EXPECT("ClearTexture 清过、通道读入：光追生效（阴影图清回 1.0）", 1, applied); EXPECT("ClearTexture 那几帧 GPU 无错", 1, ok2); }
+        else { printf("没清的读入通道：回退原因「%s」\n", why); EXPECT("本帧没清、通道读入：不清阴影图（原版阴影保留）", 0, applied); EXPECT("回退原因写明是读入", 1, strstr(why, "读入") != NULL); }
+      }
+      // 退避中的帧（不是光追帧）不算网格键：真机键摘要每帧上毫秒，退避帧白算 | Frames in backoff (not ray-traced) compute no mesh key: on the device the key digest costs over a millisecond per frame, wasted in backoff
+      int b1[2] = {1, 2}; uint64_t k0 = g_rts.key_ns; run_frame(1, b1, 2, &ok);
+      EXPECT("测试前提：这帧在退避中", 0, g_rts.rt_frame); EXPECT("退避帧不算网格键", 0, (long long)(g_rts.key_ns - k0)); }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

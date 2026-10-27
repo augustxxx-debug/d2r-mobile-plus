@@ -95,7 +95,7 @@ int main(void) { @autoreleasepool {
     frame_open(); prepass(); sh(4); g_rts.on = 0; ok = frame_close();
     for (int i = 0; i < 5; i++) { frame_open(); EXPECT("关着：绘制照原版", 0, sh(4)); frame_close(); }
     g_rts.on = 1; frame_open(); prepass(); sh(5); r = g_rts.ninst;
-    EXPECT("再开首帧：排队里只有本帧的网格 5（不带关之前的过期源地址）", 1, g_rts.npend); EXPECT("再开首帧：上一帧不是光追帧，本帧没有实例", 0, r);
+    EXPECT("再开首帧：排队里只有本帧的网格 5（不带关之前的过期源地址；不是光追帧时不排队）", g_rts.rt_frame ? 1 : 0, g_rts.npend); EXPECT("再开首帧：上一帧不是光追帧，本帧没有实例", 0, r);
     main_pass(); hdr_again(); ok = frame_close(); EXPECT("再开首帧：GPU 无错", 1, ok);
     int e6[6] = {0, 1, 2, 3, 4, 5}; for (int i = 0; i < 3; i++) r = full_frame(1, e6, 6, &ok);
     EXPECT("再开后：六次绘制都走光追", 6, r); EXPECT("再开后：GPU 无错", 1, ok);

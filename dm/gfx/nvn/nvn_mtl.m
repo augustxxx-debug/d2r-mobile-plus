@@ -2036,6 +2036,7 @@ static void attach(MTLRenderPassAttachmentDescriptor *a, const tex_t *t, const v
 // (Mac character select screen: the color-clear pass drags along a 400x225 depth load and store)
 static RENC rp_begin_ex(int clear_only);
 static void rts_note_pass(RPD *pd);   // nvn_rtshadow.inc：阴影通道登记深度附件与清除值 | nvn_rtshadow.inc: a shadow pass registers its depth attachment and clear value
+static void rts_note_clear(id<MTLTexture> t, NSUInteger level, NSUInteger slice, double cd);   // nvn_rtshadow.inc：ClearTexture 清深度也登记 | nvn_rtshadow.inc: a ClearTexture depth clear is registered too
 static RENC rp_begin(void) { return rp_begin_ex(0); }
 static RENC rp_begin_ex(int clear_only) {
     if (g_enc) return g_enc;
@@ -5394,7 +5395,7 @@ static void copy_t2t(const p_copy_t2t *c) {
 // view with changed format: clear on a view of that format; partial region, partial channels, compressed / packaged textures (no render target usage): report a failure, to be implemented
 static void clear_tex(const p_clear_tex *c) {
     if (c->tex) zskip_del(c->tex->serial);
-    id<MTLTexture> t = tex_mtl(c->tex);
+    id<MTLTexture> t = tex_mtl(c->tex), base = t;
     PD("X ser=%llu 视图格式 %#x 区域 %d,%d,%d %dx%dx%d 掩码 %#x %s %g,%g,%g,%g", c->tex->serial, c->has_view && c->view.set_format ? c->view.format : -1, c->r.xoffset, c->r.yoffset, c->r.zoffset, c->r.width, c->r.height, c->r.depth, c->mask,
        c->is_uint ? "ui" : "f", c->is_uint ? (double)c->c.u[0] : c->c.f[0], c->is_uint ? (double)c->c.u[1] : c->c.f[1], c->is_uint ? (double)c->c.u[2] : c->c.f[2], c->is_uint ? (double)c->c.u[3] : c->c.f[3]);
     if (!t) return;
@@ -5431,6 +5432,7 @@ static void clear_tex(const p_clear_tex *c) {
         else if (stencil) rp.stencilAttachment.clearStencil = c->c.u[0];
         else rp.colorAttachments[0].clearColor = c->is_uint ? MTLClearColorMake(c->c.u[0], c->c.u[1], c->c.u[2], c->c.u[3]) : MTLClearColorMake(c->c.f[0], c->c.f[1], c->c.f[2], c->c.f[3]);
         ser_gate(); enc_r_end(enc_r_begin(rp));
+        if (depth && !is3d) rts_note_clear(base, lv, a.slice, c->c.f[0]);   // 光追阴影：阴影图本帧清过、清成什么（之后的阴影通道以读入开） | ray-traced shadows: the shadow map was cleared this frame and to what (the shadow passes after it open with a load)
     }
 }
 

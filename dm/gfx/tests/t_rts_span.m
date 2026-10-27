@@ -59,7 +59,12 @@ static int shadow_draw(int itype, int n, const void *ib, int base, const void *v
 #endif
     return r;
 }
-static void next_frame(void) { mtl_set_frame(++g_frame); }
+// 只驱动阴影绘制、没有主通道，帧永远不会被判完整：开帧后直接当光追帧（生产只在光追帧算网格键、查缓存） | Only shadow draws are driven, with no main pass, so no frame is ever judged complete: treat each frame as ray-traced right after opening it (production computes the mesh key and looks up the cache only in ray-traced frames)
+static void next_frame(void) { mtl_set_frame(++g_frame);
+#ifdef RTS_MESH_READY
+    rts_frame_begin(g_frame); g_rts.rt_frame = 1;
+#endif
+}
 static void fill_idx(void *p, int itype, int n, uint32_t mod) { for (int k = 0; k < n; k++) { uint32_t v = (uint32_t)((k * 5 + 1) % mod); if (itype == 1) ((uint16_t *)p)[k] = (uint16_t)v; else ((uint32_t *)p)[k] = v; } }
 static rts_mesh *mesh_with(uint32_t tris, uint32_t isz) { for (uint32_t i = 0; i < g_rts.meshes.cap; i++) { rts_mesh *m = g_rts.meshes.vals[i]; if (m && m->tris == tris && m->isz == isz && m->last_frame == g_rts.frame) return m; } return NULL; }
 
