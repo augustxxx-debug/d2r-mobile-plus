@@ -105,12 +105,13 @@ static id<MTL4CommandAllocator> g_alloc4[ALLOC_MAX];   // 主提交的命令分�
 static id<MTL4CommandAllocator> g_up_alloc4[3];
 static id<MTL4CommandAllocator> g_present_alloc4[3];
 static CBUF g_present_cb[3];
+static _Atomic int g_present_slot_busy[3];   // 上屏槽：已提交、完成回调还没来 | Present slot: committed, completion callback not yet arrived
 static id<MTL4ArgumentTable> g_vt, g_ft, g_ct, g_up_ct;
 static id<MTL4ArgumentTable> g_present_args;
 #endif
 static id<MTLBuffer> g_present_uv[3];
-#define MP_SLOTS 9
-static id<MTLBuffer> g_mp_buf[3];   // 紫闪探针：每个出图槽一份，5 个画面点 + 4 格调色表 | Magenta probe: one per present slot, 5 picture points + 4 color-table cells
+#define MP_SLOTS 11
+static id<MTLBuffer> g_mp_buf[3];   // 紫闪探针：每个出图槽一份，5 个画面点 + 4 格调色表 + 两块网格扫描（游戏画面 / drawable） | Magenta probe: one per present slot, 5 picture points + 4 color-table cells + two grid scans (game picture / drawable)
 int g_bloom_q = -1;   // 泛光 1/4 起点（非 static：真机同进程交替直接改 0 / 1） | Bloom 1/4 starting point (non-static: real-device same-process alternation sets it to 0 / 1 directly)
 #if !DM_NVN_M3
 static id<MTL4ArgumentTable> g_bloomq_args;
@@ -854,12 +855,44 @@ int mtl_gpu_span(uint64_t f, uint64_t *t0, uint64_t *t1) {
     *t0 = atomic_load(&g_gpu[k].t0); *t1 = atomic_load(&g_gpu[k].t1);
     return *t1 >= *t0 && *t1;
 }
+// 测试开关 DM_TEST_GPU_BURN=<千次>[,起始秒,时长秒]：每次主提交末尾加一段空转计算（每线程循环 <千次>×1000 次、256×64 线程），把 GPU 拖慢。
+// 用来在 Mac 上造出真机「GPU 被系统抢走 / 重负载」的时序（下拉通知栏时系统合成模糊，真机日志 GPU 从约 7 ms 涨到 20–38 ms；A16 重负载紫闪），
+// 查只在 GPU 落后时才露出来的竞争。起止按第一次提交起算；不给起止就一直开。产品不设
+// Test switch DM_TEST_GPU_BURN=<thousands>[,start s,duration s]: append a spinning compute pass (each thread loops <thousands>x1000 times, 256x64 threads) to the end of every main submission to slow the GPU down.
+// Used to reproduce on Mac the timing of a real device whose "GPU is taken by the system / heavily loaded" (pulling down the notification shade makes the system composite a blur; the device log shows GPU going from about 7 ms to 20–38 ms; the A16 heavy-load magenta flashes),
+// to find races that only show when the GPU falls behind. Start and end count from the first submission; without them it is on all the time. Not set in the product
+static void gpu_burn_test(CBUF cb) {
+#if !DM_NVN_M3
+    static int st = -1; static unsigned n; static double at, dur, t0; static id<MTLComputePipelineState> ps; static id<MTL4ArgumentTable> tab; static id<MTLBuffer> b;
+    if (st < 0) { st = 0; const char *e = getenv("DM_TEST_GPU_BURN"); int k = e ? sscanf(e, "%u,%lf,%lf", &n, &at, &dur) : 0; if (k < 1 || !n) return;
+        if (k < 3) { at = 0; dur = 1e9; }
+        NSError *err = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;\n"
+            "kernel void burn(device uint *o [[buffer(0)]], constant uint &n [[buffer(1)]], uint t [[thread_position_in_grid]]) {\n"
+            "  uint x = t; for (uint k = 0; k < n; k++) x = x * 1664525u + 1013904223u; if (x == 0x9e3779b9u) o[0] = t; }\n" options:nil error:&err];
+        id<MTLFunction> f = lib ? [lib newFunctionWithName:@"burn"] : nil; ps = f ? [g_dev newComputePipelineStateWithFunction:f error:&err] : nil;
+        MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 2; tab = [g_dev newArgumentTableWithDescriptor:ad error:&err];
+        b = [g_dev newBufferWithLength:16 options:MTLResourceStorageModeShared];
+        if (!ps || !tab || !b) { MLOG("【红】DM_TEST_GPU_BURN：空转管线建不出 %s", err.localizedDescription.UTF8String); return; }
+        res_add(b); ((uint32_t *)b.contents)[2] = n * 1000; st = 1; t0 = CACurrentMediaTime();
+        MLOG("DM_TEST_GPU_BURN：每次提交空转 %u 千次 × 16384 线程，第 %.1f 秒起 %.1f 秒", n, at, dur); }
+    if (!st) return;
+    double now = CACurrentMediaTime() - t0; if (now < at || now >= at + dur) return;
+    CENC e = [cb computeCommandEncoder];
+    [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
+    [e setArgumentTable:tab]; [tab setAddress:b.gpuAddress atIndex:0]; [tab setAddress:b.gpuAddress + 8 atIndex:1];
+    [e setComputePipelineState:ps]; [e dispatchThreadgroups:MTLSizeMake(256, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+    m4_end(e);
+#else
+    (void)cb;
+#endif
+}
 static void rp_flush(void);
 static const char *cctx_snap(void);   // 这次提交里有什么（出错时打进红行；定义在 mtl_exec 之前） | What is in this submission (printed into the failure line on error; defined before mtl_exec)
 uint64_t mtl_sub_commit(void) {
     defer_fallback();   // 推迟合并通道：提交结束仍有未回放的 P 绘制（正常路径不会到这里） | Deferred merged pass: at the end of the submission there are still P draws not replayed (the normal path never gets here)
     rp_flush();
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
+    gpu_burn_test(g_cb);
     up_flush();
     uint64_t fence = ++g_fence;
     if (g_vis_ring_i >= 0) g_vis_ring[g_vis_ring_i].fence = fence;
@@ -4944,27 +4977,89 @@ static void warm_claim(void) {
 // If ≥3 of the 5 picture points are magenta (R≥200, G≤60, B≥200), log a red line with the color-table readings, the brightening factor and the number of display-link callback stalls; a color-table cell that is NaN / infinite / magenta gets its own red line; log a summary every 3600 presents (coverage).
 // Color table = the 32³ table looked up by tone mapping (see the 3D brightening section below), recorded at dispatch 552f45c348a61b86. Only on the Metal 4 present path (iOS / Mac release builds)
 static os_unfair_lock g_mp_lk = OS_UNFAIR_LOCK_INIT; static id<MTLTexture> g_mp_lut;
-static MTLPixelFormat g_mp_fmt[3]; static int g_mp_haslut[3];
-static _Atomic uint64_t g_mp_n, g_mp_mag, g_mp_lutbad;
+static MTLPixelFormat g_mp_fmt[3]; static int g_mp_haslut[3], g_mp_grid[3];   // g_mp_grid：本槽做了哪几块网格扫描（位 0 游戏画面、位 1 drawable） | g_mp_grid: which grid scans this slot ran (bit 0 game picture, bit 1 drawable)
+static _Atomic uint64_t g_mp_n, g_mp_mag, g_mp_lutbad, g_mp_gmag[2];
 static uint64_t g_stall_t0, g_stall_n;   // 定义在显示节拍那段 | Defined in the display-link section
 float dm_bright_k(void);   // 定义在下面 3D 画面加亮（弱定义，宿主 dm_bright.c 给强定义） | Defined below in the 3D brightening section (weak definition; the host dm_bright.c provides the strong one)
 static int mp_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_MAGENTA_PROBE_OFF"); v = !(e && *e && strcmp(e, "0")); } return v; }
+// 测试开关 DM_MAGENTA_PROBE_DRAWABLE=1：网格扫描另扫一遍交给系统的 drawable（玩家真正看到的那张；要把图层设成可读，只供测试）
+// Test switch DM_MAGENTA_PROBE_DRAWABLE=1: the grid scan also scans the drawable handed to the system (the one the player actually sees; the layer must be made readable, test only)
+static int mp_drawable_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_MAGENTA_PROBE_DRAWABLE"); v = e && *e == '1'; } return v; }
 static int mp_fmt_ok(MTLPixelFormat f) { return f == MTLPixelFormatRGBA8Unorm || f == MTLPixelFormatRGBA8Unorm_sRGB || f == MTLPixelFormatBGRA8Unorm || f == MTLPixelFormatBGRA8Unorm_sRGB || f == MTLPixelFormatRGB10A2Unorm || f == MTLPixelFormatRGBA16Float; }
-static void mp_encode(CBUF cb, id<MTLTexture> src, int i) {
+// 网格扫描：有效画面矩形里均匀取 64×36 点（各格中心），品红点计数、外接框（网格坐标）、16×9 粗格位图写进槽 9（游戏画面）/ 10（drawable）。
+// 只取 5 点的旧判据要整屏三点以上品红才响，下拉通知栏那种「局部块状」抓不到；没写过的显存在 Apple GPU 上读出来正是品红 (255,0,255)。
+// 一次 2304 线程的小派发，不等 GPU；读写都在上屏命令缓冲里，结果在完成回调 mp_check 里判
+// Grid scan: take 64x36 evenly spaced points (cell centers) in the valid picture rectangle; magenta point count, bounding box (grid coordinates) and a 16x9 coarse-cell bitmap go into slot 9 (game picture) / 10 (drawable).
+// The old 5-point criterion only fires with three or more magenta points across the whole screen and misses "local blocks" like the notification-shade case; never-written memory reads back as exactly magenta (255,0,255) on Apple GPUs.
+// One small dispatch of 2304 threads, no GPU wait; reads and writes stay in the present command buffer and the result is judged in the completion callback mp_check
+#define MP_GX 64
+#define MP_GY 36
+static const char k_mpg_msl[] =
+"#include <metal_stdlib>\nusing namespace metal;\n"
+"struct P { uint cx, cy, cw, ch, srgb; };\n"
+"kernel void mpg(texture2d<float, access::read> t [[texture(0)]], device atomic_uint *o [[buffer(0)]], constant P &p [[buffer(1)]], uint2 g [[thread_position_in_grid]]) {\n"
+"  if (g.x >= 64 || g.y >= 36) return;\n"
+"  float3 c = clamp(t.read(uint2(p.cx + (2 * g.x + 1) * p.cw / 128, p.cy + (2 * g.y + 1) * p.ch / 72)).rgb, 0.0, 1.0);\n"
+"  if (p.srgb) c = select(1.055 * pow(c, 1.0 / 2.4) - 0.055, 12.92 * c, c <= 0.0031308);\n"   // sRGB 格式读出的是线性值：换回编码值再按 0–255 判，与 5 点判据同一口径 | sRGB formats read back linear values: convert to encoded values before judging on 0–255, same yardstick as the 5-point criterion
+"  if (!(c.r >= 200.0 / 255 && c.g <= 60.0 / 255 && c.b >= 200.0 / 255)) return;\n"
+"  atomic_fetch_add_explicit(&o[0], 1u, memory_order_relaxed);\n"
+"  atomic_fetch_min_explicit(&o[1], g.x, memory_order_relaxed); atomic_fetch_max_explicit(&o[2], g.x, memory_order_relaxed);\n"
+"  atomic_fetch_min_explicit(&o[3], g.y, memory_order_relaxed); atomic_fetch_max_explicit(&o[4], g.y, memory_order_relaxed);\n"
+"  uint cell = (g.y / 4) * 16 + g.x / 4; atomic_fetch_or_explicit(&o[5 + cell / 32], 1u << (cell % 32), memory_order_relaxed); }\n";
+static int mp_srgb(MTLPixelFormat f) { return f == MTLPixelFormatRGBA8Unorm_sRGB || f == MTLPixelFormatBGRA8Unorm_sRGB || f == MTLPixelFormatBGRA10_XR_sRGB || f == MTLPixelFormatBGR10_XR_sRGB; }
+#if !DM_NVN_M3
+// 管线在后台线程编（Mac 实测首编约 0.3 秒，放在出图线程上就是一次 0.3 秒的卡顿）；编好之前这几帧只做 5 点判据
+// The pipeline is compiled on a background thread (the first compile measured about 0.3 s on Mac, which would be a 0.3 s hitch on the present thread); until it is ready those frames only run the 5-point criterion
+static id<MTLComputePipelineState> g_mpg_ps; static id<MTL4ArgumentTable> g_mpg_at; static _Atomic int g_mpg_state;   // 0 未开始 1 编译中 2 可用 3 失败 | 0 not started 1 compiling 2 ready 3 failed
+static int mp_grid_ready(void) {
+    int st = atomic_load_explicit(&g_mpg_state, memory_order_acquire); if (st) return st == 2;
+    atomic_store(&g_mpg_state, 1);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        NSError *err = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_mpg_msl) options:nil error:&err]; id<MTLFunction> f = lib ? [lib newFunctionWithName:@"mpg"] : nil;
+        id<MTLComputePipelineState> ps = f ? [g_dev newComputePipelineStateWithFunction:f error:&err] : nil;
+        MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxTextureBindCount = 1; ad.maxBufferBindCount = 2; id<MTL4ArgumentTable> at = [g_dev newArgumentTableWithDescriptor:ad error:&err];
+        if (!ps || !at) { MLOG("【红】紫闪探针：网格扫描管线建不出 %s（只剩 5 点判据）", err.localizedDescription.UTF8String); atomic_store(&g_mpg_state, 3); return; }
+        g_mpg_ps = ps; g_mpg_at = at; atomic_store_explicit(&g_mpg_state, 2, memory_order_release); });
+    return 0;
+}
+static void mp_grid(CENC e, id<MTLTexture> t, const NSUInteger r[4], id<MTLBuffer> buf, int slot) {
+    id<MTLComputePipelineState> ps = g_mpg_ps; id<MTL4ArgumentTable> at = g_mpg_at;
+    uint32_t *o = (uint32_t *)((uint8_t *)buf.contents + slot * 256);
+    memset(o, 0, 64); o[1] = o[3] = UINT32_MAX;
+    o[32] = (uint32_t)r[0]; o[33] = (uint32_t)r[1]; o[34] = (uint32_t)r[2]; o[35] = (uint32_t)r[3]; o[36] = (uint32_t)mp_srgb(t.pixelFormat);
+    [e setArgumentTable:at]; [at setTexture:t.gpuResourceID atIndex:0];
+    [at setAddress:buf.gpuAddress + slot * 256 atIndex:0]; [at setAddress:buf.gpuAddress + slot * 256 + 128 atIndex:1];
+    [e setComputePipelineState:ps];
+    [e dispatchThreadgroups:MTLSizeMake(MP_GX / 8, MP_GY / 4, 1) threadsPerThreadgroup:MTLSizeMake(8, 4, 1)];
+}
+#endif
+// 有效矩形：出图裁切（越界 / 没给时整张）。5 点与网格都只在这里面取——裁切外是游戏从不画的区域，没写过就是品红
+// （Mac 上 iOS 包「紫闪探针常报红」即此：游戏画面只占交换链贴图上半，下半 3 点读到的是从没写过的显存）
+// Valid rectangle: the present crop (the whole texture when out of bounds / not given). Both the 5 points and the grid are taken only inside it -- outside the crop is an area the game never draws, and unwritten memory is magenta
+// (this is the "magenta probe often red" of the iOS app on Mac: the game picture only covers the upper part of the swapchain texture, and the 3 lower points read never-written memory)
+static void mp_rect(id<MTLTexture> t, const int crop[4], NSUInteger r[4]) {
+    r[0] = 0; r[1] = 0; r[2] = t.width; r[3] = t.height;
+    if (crop && crop[0] >= 0 && crop[1] >= 0 && crop[2] > 0 && crop[3] > 0 && (uint64_t)crop[0] + crop[2] <= t.width && (uint64_t)crop[1] + crop[3] <= t.height) { r[0] = crop[0]; r[1] = crop[1]; r[2] = crop[2]; r[3] = crop[3]; }
+}
+static void mp_encode(CBUF cb, id<MTLTexture> src, const int crop[4], id<MTLTexture> drawable, int i) {
 #if !DM_NVN_M3
     uint64_t t_start = bp_now();   // 成本测量：CPU 耗时起点 | Cost measurement: CPU time start
-    g_mp_fmt[i] = 0; g_mp_haslut[i] = 0;
+    g_mp_fmt[i] = 0; g_mp_haslut[i] = 0; g_mp_grid[i] = 0;
     if (!mp_on() || !g_mp_buf[i] || !src || src.textureType != MTLTextureType2D || !mp_fmt_ok(src.pixelFormat)) return;
     os_unfair_lock_lock(&g_mp_lk); id<MTLTexture> lut = g_mp_lut; os_unfair_lock_unlock(&g_mp_lk);
     if (lut && (lut.pixelFormat != MTLPixelFormatRGBA16Float || lut.width < 2 || lut.height < 2 || lut.depth < 2)) lut = nil;
-    NSUInteger w = src.width, h = src.height, bpp = src.pixelFormat == MTLPixelFormatRGBA16Float ? 8 : 4;
-    const NSUInteger px[5][2] = {{w / 2, h / 2}, {w / 4, h / 4}, {w * 3 / 4, h / 4}, {w / 4, h * 3 / 4}, {w * 3 / 4, h * 3 / 4}};
+    NSUInteger r[4]; mp_rect(src, crop, r);
+    NSUInteger x0 = r[0], y0 = r[1], w = r[2], h = r[3], bpp = src.pixelFormat == MTLPixelFormatRGBA16Float ? 8 : 4;
+    const NSUInteger px[5][2] = {{x0 + w / 2, y0 + h / 2}, {x0 + w / 4, y0 + h / 4}, {x0 + w * 3 / 4, y0 + h / 4}, {x0 + w / 4, y0 + h * 3 / 4}, {x0 + w * 3 / 4, y0 + h * 3 / 4}};
     CENC e = [cb computeCommandEncoder];
     [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
     for (int k = 0; k < 5; k++) enc_b_copy_texture_buffer(e, src, 0, 0, MTLOriginMake(px[k][0], px[k][1], 0), MTLSizeMake(1, 1, 1), g_mp_buf[i], k * 256, bpp, bpp);
     if (lut) { NSUInteger lw = lut.width - 1, lh = lut.height - 1, ld = lut.depth - 1; const NSUInteger q[4][3] = {{0, 0, 0}, {lw / 2, lh / 2, ld / 2}, {lw, lh, ld}, {lw / 2, lh / 4, ld * 3 / 4}};
         for (int k = 0; k < 4; k++) enc_b_copy_texture_buffer(e, lut, 0, 0, MTLOriginMake(q[k][0], q[k][1], q[k][2]), MTLSizeMake(1, 1, 1), g_mp_buf[i], (5 + k) * 256, 8, 8);
         g_mp_haslut[i] = 1; }
+    int gr = mp_grid_ready();
+    if (gr && (src.usage & MTLTextureUsageShaderRead)) { mp_grid(e, src, r, g_mp_buf[i], 9); g_mp_grid[i] |= 1; }
+    if (gr && drawable && mp_drawable_on() && (drawable.usage & MTLTextureUsageShaderRead)) { NSUInteger dr4[4]; mp_rect(drawable, NULL, dr4); mp_grid(e, drawable, dr4, g_mp_buf[i], 10); g_mp_grid[i] |= 2; }
     m4_end(e);
     g_mp_fmt[i] = src.pixelFormat;
     // 成本测量：每次调用记 CPU 耗时（ns），每 600 次汇总
@@ -4973,7 +5068,7 @@ static void mp_encode(CBUF cb, id<MTLTexture> src, int i) {
     cost_sum += cost_ns; cost_n++; if (cost_ns > cost_max) cost_max = cost_ns;
     if (cost_n % 600 == 0) { MLOG("紫闪探针 CPU 成本：前 %llu 次，平均 %.3f μs / 峰值 %.3f μs", (unsigned long long)cost_n, cost_sum / (double)cost_n / 1000, cost_max / 1000.0); }
 #else
-    (void)cb; (void)src; (void)i;
+    (void)cb; (void)src; (void)crop; (void)drawable; (void)i;
 #endif
 }
 static void mp_px(MTLPixelFormat f, const uint8_t *p, int *r, int *g, int *b) {
@@ -4994,7 +5089,17 @@ static void mp_check(int i, uint64_t ticket) {
     if (mag >= 3 && (nm <= 30 || nm % 50 == 0)) MLOG("【红】紫闪探针：出图 %llu 画面品红（5 点%s，%d 点品红）；调色表 4 格 %s；加亮 k=%.2f；显示节拍停回调累计 %llu 段，此刻%s停顿中；累计品红 %llu 次",
         (unsigned long long)ticket, pt, mag, lt, dm_bright_k(), (unsigned long long)g_stall_n, g_stall_t0 ? "在" : "不在", (unsigned long long)nm);
     if (lutbad && (nl <= 30 || nl % 50 == 0)) MLOG("【红】紫闪探针：出图 %llu 调色表格子异常（非数 / 无穷 / 品红）%s；画面 5 点%s；累计 %llu 次", (unsigned long long)ticket, lt, pt, (unsigned long long)nl);
-    if (n % 3600 == 0 || n == 600) MLOG("紫闪探针 至出图 %llu：取样 %llu 次，画面品红 %llu 次，调色表异常 %llu 次（本次 5 点%s，调色表 %s）", (unsigned long long)ticket, (unsigned long long)n, (unsigned long long)nm, (unsigned long long)nl, pt, lt);
+    for (int k = 0; k < 2; k++) if (g_mp_grid[i] >> k & 1) {
+        const uint32_t *q = (const uint32_t *)(m + (9 + k) * 256); if (!q[0]) continue;
+        uint64_t ng = atomic_fetch_add(&g_mp_gmag[k], 1) + 1; if (ng > 30 && ng % 50) continue;
+        char map[48]; for (int c = 0; c < 5; c++) snprintf(map + c * 8, sizeof map - c * 8, "%08x", q[5 + c]);
+        const uint32_t *pr = q + 32;
+        MLOG("【红】紫闪探针·网格：出图 %llu %s %d×%d 点中 %u 点品红，范围像素 (%u,%u)–(%u,%u)，16×9 格位图 %s；显示节拍停回调累计 %llu 段，此刻%s停顿中；累计 %llu 次",
+             (unsigned long long)ticket, k ? "drawable" : "游戏画面", MP_GX, MP_GY, q[0], pr[0] + (2 * q[1] + 1) * pr[2] / (2 * MP_GX), pr[1] + (2 * q[3] + 1) * pr[3] / (2 * MP_GY),
+             pr[0] + (2 * q[2] + 1) * pr[2] / (2 * MP_GX), pr[1] + (2 * q[4] + 1) * pr[3] / (2 * MP_GY), map, (unsigned long long)g_stall_n, g_stall_t0 ? "在" : "不在", (unsigned long long)ng);
+    }
+    if (n % 3600 == 0 || n == 600) MLOG("紫闪探针 至出图 %llu：取样 %llu 次，画面品红 %llu 次，调色表异常 %llu 次，网格品红 游戏画面 %llu / drawable %llu 次（本次 5 点%s，调色表 %s）", (unsigned long long)ticket, (unsigned long long)n, (unsigned long long)nm, (unsigned long long)nl,
+        (unsigned long long)atomic_load(&g_mp_gmag[0]), (unsigned long long)atomic_load(&g_mp_gmag[1]), pt, lt);
 }
 // ---------- 3D 画面加亮 ----------
 // 色调映射（片元 a1b1aab66933fa8f）= 把合成后的 HDR ×0.008 做 PQ 编码、再查 32³ 调色表（每帧由计算着色器 552f45c348a61b86 按区域重算，只被色调映射读）。
@@ -6180,7 +6285,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 #if TARGET_OS_OSX
     if (!layer.displaySyncEnabled) layer.displaySyncEnabled = YES;   // 窗口模式按显示器垂直同步，防撕裂 | Windowed mode follows the display's vsync to prevent tearing
 #endif
-    if (present_rgb_n() && layer.framebufferOnly) layer.framebufferOnly = NO;   // 测试取色要回读 drawable | Sampling colors for the test requires reading back the drawable
+    if ((present_rgb_n() || (mp_on() && mp_drawable_on())) && layer.framebufferOnly) layer.framebufferOnly = NO;   // 测试取色 / 网格扫描 drawable 要回读它 | Sampling colors for the test / grid-scanning the drawable requires reading it back
     present_pipeline(layer.pixelFormat);   // 和原路径一样，首帧编管线在取drawable之前 | Same as the original path: the first frame compiles the pipeline before taking the drawable
     if (g_grab_cb) grab_present(src, crop, layer.drawableSize);   // 整窗截图要的游戏画面（不加锁先看一眼，真取在函数里加锁） | Game picture needed by the whole-window screenshot (peek without the lock first; the real take locks inside the function)
     uint64_t dt0 = now_ns();
@@ -6197,12 +6302,16 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     CBUF cb = [g_q commandBuffer];   // 旧接口：交画面记在命令缓冲上（presentDrawable），这一帧的绘制做完才上屏 | older API: presentation is recorded on the command buffer (presentDrawable), so the frame reaches the screen only after its drawing is done
     if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) return 0;
 #else
+    // 守卫：这一槽的命令缓冲 / 分配器上一轮还在 GPU 上就被复用 = 水位走在 GPU 前面（nvn_pqdone.h 修的就是这个）。只记不挡
+    // Guard: reusing this slot's command buffer / allocator while its previous round is still on the GPU = the watermark ran ahead of the GPU (what nvn_pqdone.h fixes). Log only, do not block
+    if (atomic_load(&g_present_slot_busy[alloc_i])) { static _Atomic uint64_t nb; uint64_t k = atomic_fetch_add(&nb, 1) + 1;
+        if (k <= 20 || k % 100 == 0) MLOG("【红】上屏命令分配器槽 %d 复用时上一轮还在 GPU 上（票 %llu，水位 %llu，第 %llu 次）", alloc_i, (unsigned long long)ticket, (unsigned long long)g_pq_done, (unsigned long long)k); }
     [g_present_alloc4[alloc_i] reset];
     [g_q4 waitForDrawable:dr];
     CBUF cb = g_present_cb[alloc_i];
     [cb beginCommandBufferWithAllocator:g_present_alloc4[alloc_i]];
     if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) { [cb endCommandBuffer]; [g_q4 signalDrawable:dr]; return 0; }
-    mp_encode(cb, src, alloc_i);
+    mp_encode(cb, src, crop, dr.texture, alloc_i);
     [cb endCommandBuffer];
 #endif
 #if !DM_NVN_M3
@@ -6213,12 +6322,12 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 #if !DM_NVN_M3
         else mp_check(alloc_i, ticket);
 #endif
-        pthread_mutex_lock(&g_pq_mu); if (ticket > g_pq_done) g_pq_done = ticket; g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
+        pthread_mutex_lock(&g_pq_mu); M4_ONLY(atomic_store(&g_present_slot_busy[alloc_i], 0);) if (ticket > g_pq_done) g_pq_done = ticket; g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
     }];
 #if !DM_NVN_M3
     CBUF buffers[] = {cb};
 #endif
-    pthread_mutex_lock(&g_pq_mu); g_pq_inflight++; pthread_mutex_unlock(&g_pq_mu);
+    pthread_mutex_lock(&g_pq_mu); g_pq_inflight++; M4_ONLY(atomic_store(&g_present_slot_busy[alloc_i], 1);) pthread_mutex_unlock(&g_pq_mu);
 #if !DM_NVN_M3
     [g_q4 commit:buffers count:1 options:o];
 #endif
