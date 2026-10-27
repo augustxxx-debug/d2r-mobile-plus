@@ -55,3 +55,7 @@ t_ltring
 t_ltring.dSYM/
 t_ltring_tsan
 t_ltring_tsan.dSYM/
+t_rts_span
+t_rts_span.dSYM/
+t_rts_span_asan
+t_rts_span_asan.dSYM/

@@ -94,6 +94,7 @@ static int rts_on(void) {
 }
 static const uint8_t *rts_mem(uint64_t addr, uint64_t len) { void *m; uint64_t o; if (!addr || !len || !mtl_addr(addr, len, &m, &o)) return NULL; const uint8_t *b = [(__bridge id<MTLBuffer>)m contents]; return b ? b + o : NULL; }
 static uint64_t rts_fnv(uint64_t h, const void *p, size_t n) { const uint8_t *b = p; for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 1099511628211ull; return h; }
+static uint64_t rts_attr_bytes(uint32_t fmt) { return fmt == 0x2e ? 16 : fmt == 0x22 ? 12 : 8; }   // 解码核读的属性 0 宽度（FLOAT4 / FLOAT3 / SNORM16x4、HALF4） | Width of attribute 0 as read by the decode kernel
 static int rts_setup(void) {
     if (g_rts.ps_trace) return 1;
     if (g_rts.failed) return 0;
@@ -165,22 +166,27 @@ static int rts_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di, int prim
     if (!sm.stride || sm.divisor || !vb.address || (at.fmt != 0x2b && at.fmt != 0x2e && at.fmt != 0x29 && at.fmt != 0x22)) { g_rts.nskip_fmt++; return 1; }
     if (di && di->itype != 1 && di->itype != 2) { g_rts.nskip_fmt++; return 1; }
     const p_bind_buf *c0 = &S.ubo[0][0]; const uint8_t *m0 = c0->addr && c0->size >= 64 ? rts_mem(c0->addr, 64) : NULL; if (!m0) return 1;
-    // 网格键：布局 + 首 32 字节索引与顶点的指纹（池内存会被别的网格复用） | Mesh key: layout + fingerprint of the first 32 bytes of indices and vertices (pool memory gets reused by other meshes)
+    // 网格键：布局 + 索引与顶点各自已校验跨度内前至多 32 字节的指纹（池内存会被别的网格复用）。指纹只读校验过的字节：最小三角形的 16 位索引只有 6 字节（五审 Q5-01）
+    // Mesh key: layout + fingerprint of at most the first 32 bytes of the validated index and vertex spans (pool memory gets reused by other meshes). The fingerprint reads validated bytes only: a minimal triangle's 16-bit indices are just 6 bytes (fifth review Q5-01)
     uint64_t key = 1469598103934665603ull; uint64_t lay[6] = {vb.address + at.offset, sm.stride, at.fmt, dw ? 0 : di->ibuf, (uint64_t)n, dw ? (uint64_t)dw->first : (uint64_t)(int64_t)di->base_vertex};
     key = rts_fnv(key, lay, sizeof lay);
-    int isz = di ? (di->itype == 1 ? 2 : 4) : 0; const uint8_t *ib = di ? rts_mem(di->ibuf, (uint64_t)n * isz) : NULL; if (di && !ib) return 1;
-    if (ib) key = rts_fnv(key, ib, 32);
-    int64_t vfirst = dw ? dw->first : di->base_vertex; const uint8_t *v0 = rts_mem(vb.address + (uint64_t)vfirst * sm.stride + at.offset, 32); if (v0) key = rts_fnv(key, v0, 32);
+    int isz = di ? (di->itype == 1 ? 2 : 4) : 0; uint64_t ibytes = 0; const uint8_t *ib = NULL;
+    if (di) { if (__builtin_mul_overflow((uint64_t)n, (uint64_t)isz, &ibytes) || !(ib = rts_mem(di->ibuf, ibytes))) return 1; key = rts_fnv(key, ib, MIN(ibytes, 32)); }
+    int64_t vfirst = dw ? dw->first : di->base_vertex; uint64_t voff;   // 首顶点相对顶点缓冲的偏移；负基顶点、溢出、越出缓冲都不取顶点指纹 | Offset of the first vertex in the vertex buffer; no vertex fingerprint for a negative base, an overflow or past the buffer
+    if (vfirst >= 0 && !__builtin_mul_overflow((uint64_t)vfirst, (uint64_t)sm.stride, &voff) && !__builtin_add_overflow(voff, (uint64_t)at.offset, &voff) && voff < vb.size && voff <= UINT64_MAX - vb.address) {
+        uint64_t vlen = MIN(vb.size - voff, 32); const uint8_t *v0 = rts_mem(vb.address + voff, vlen); if (v0) key = rts_fnv(key, v0, vlen); }
     rts_mesh *m = nvn_hm_get(&g_rts.meshes, &key);
     if (!m) {
         if (g_rts.npend >= RTS_BUILDS_PER_FRAME) return 1;   // 本帧配额用完：下一帧再建 | quota for this frame used up: build next frame
-        uint32_t nv = (uint32_t)n; int64_t vbase = vfirst;
-        if (ib) { uint32_t mx = 0; for (int k = 0; k < n; k++) { uint32_t v = isz == 2 ? ((const uint16_t *)ib)[k] : ((const uint32_t *)ib)[k]; if (v > mx) mx = v; } nv = mx + 1; }
-        if (vbase < 0 || (uint64_t)(vbase + nv) * sm.stride + at.offset + 16 > vb.size + sm.stride) return 1;
-        void *mb; uint64_t mo, vgpu; if (!mtl_gpu_addr(vb.address + at.offset, 16, &mb, &mo, &vgpu)) return 1;
-        m = calloc(1, sizeof *m); m->key = key; m->nverts = nv; m->tris = (uint32_t)(n / 3); m->isz = (uint32_t)isz;
+        uint64_t nv = (uint64_t)n; int64_t vbase = vfirst;
+        if (ib) { uint32_t mx = 0; for (int k = 0; k < n; k++) { uint32_t v = isz == 2 ? ((const uint16_t *)ib)[k] : ((const uint32_t *)ib)[k]; if (v > mx) mx = v; } nv = (uint64_t)mx + 1; }
+        // 解码核读第 vbase … vbase+nv−1 个顶点的属性 0：这段要在顶点缓冲声明的范围内，整段（不只开头 16 字节）也要落在内存池里；乘加都查溢出 | The decode kernel reads attribute 0 of vertices vbase … vbase+nv−1: that range must lie within the declared vertex buffer and entirely (not just the first 16 bytes) inside a memory pool; every multiply / add is overflow-checked
+        uint64_t vlast, vend;
+        if (vbase < 0 || nv > UINT32_MAX || __builtin_mul_overflow((uint64_t)vbase + nv - 1, (uint64_t)sm.stride, &vlast) || __builtin_add_overflow(vlast, (uint64_t)at.offset + rts_attr_bytes(at.fmt), &vend) || vend > vb.size) return 1;
+        void *mb; uint64_t mo, vgpu; if (!mtl_gpu_addr(vb.address + at.offset, vend - at.offset, &mb, &mo, &vgpu)) return 1;
+        m = calloc(1, sizeof *m); m->key = key; m->nverts = (uint32_t)nv; m->tris = (uint32_t)(n / 3); m->isz = (uint32_t)isz;
         m->pos = [g_dev newBufferWithLength:(NSUInteger)nv * 12 options:MTLResourceStorageModePrivate];
-        if (ib) { m->ib = [g_dev newBufferWithBytes:ib length:(NSUInteger)n * isz options:MTLResourceStorageModeShared]; }   // 索引拷一份：游戏的索引内存会被复用 | copy the indices: the game's index memory gets reused
+        if (ib) { m->ib = [g_dev newBufferWithBytes:ib length:(NSUInteger)ibytes options:MTLResourceStorageModeShared]; }   // 索引拷一份：游戏的索引内存会被复用 | copy the indices: the game's index memory gets reused
         MTL4PrimitiveAccelerationStructureDescriptor *pd = [MTL4PrimitiveAccelerationStructureDescriptor new]; MTL4AccelerationStructureTriangleGeometryDescriptor *gd = [MTL4AccelerationStructureTriangleGeometryDescriptor new];
         gd.vertexBuffer = (MTL4BufferRange){m->pos.gpuAddress, m->pos.length}; gd.vertexFormat = MTLAttributeFormatFloat3; gd.vertexStride = 12; gd.triangleCount = m->tris; gd.opaque = YES;
         if (m->ib) { gd.indexBuffer = (MTL4BufferRange){m->ib.gpuAddress, m->ib.length}; gd.indexType = isz == 2 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32; }
@@ -191,7 +197,7 @@ static int rts_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di, int prim
         if (sz.buildScratchBufferSize > g_rts.scratch_len) { res_remove(g_rts.scratch); defer_obj_release(g_rts.scratch); g_rts.scratch_len = sz.buildScratchBufferSize * 2; g_rts.scratch = [g_dev newBufferWithLength:g_rts.scratch_len options:MTLResourceStorageModePrivate]; res_add(g_rts.scratch); }
         res_add(m->pos); res_add(m->as); if (m->ib) res_add(m->ib);
         nvn_hm_put(&g_rts.meshes, &key, m); g_rts.nmesh++;
-        g_rts.pending[g_rts.npend] = m; g_rts.pend_src[g_rts.npend] = (typeof(g_rts.pend_src[0])){vgpu, nv, sm.stride, at.fmt, (uint32_t)vbase}; g_rts.npend++;
+        g_rts.pending[g_rts.npend] = m; g_rts.pend_src[g_rts.npend] = (typeof(g_rts.pend_src[0])){vgpu, (uint32_t)nv, sm.stride, at.fmt, (uint32_t)vbase}; g_rts.npend++;
         (void)pd;   // 构建描述在 rts_build 里按网格重建（描述对象不保存） | the build descriptor is recreated per mesh in rts_build (descriptor objects are not kept)
     }
     m->last_frame = f;
