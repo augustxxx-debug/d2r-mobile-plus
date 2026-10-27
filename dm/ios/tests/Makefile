@@ -62,6 +62,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_bench_report.py
 	python3 test_power_bench_e2e.py
 	python3 test_present_hud.py
+	python3 test_sharelog_summary.py
 	python3 test_font_sample_cache.py
 	python3 test_source_identity.py
 	python3 test_version.py

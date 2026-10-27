@@ -24,6 +24,7 @@ run: \
 	$(B)/t_cloudsync \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
+	$(B)/t_custom_readlog \
 	$(B)/t_doorspot \
 	$(B)/t_fs \
 	$(B)/t_fs_case \
@@ -90,6 +91,7 @@ run: \
 	$(B)/t_metalfx_handoff
 	$(B)/t_metalfx_handoff --disabled
 	$(B)/t_render_profile
+	$(B)/t_custom_readlog
 	$(B)/t_res_cap
 	$(B)/t_res_auto_policy 2>/dev/null
 	$(B)/t_pouch_notice
@@ -226,6 +228,8 @@ $(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
 
 $(B)/t_render_profile: t_render_profile.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_render_profile.c
+$(B)/t_custom_readlog: t_custom_readlog.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_custom_readlog.c
 
 $(B)/t_res_auto_policy: t_res_auto_policy.c t_metalfx_handoff_backend.c ../hle_oe.c ../dm_res_cap.h ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_res_auto_policy.c t_metalfx_handoff_backend.c
