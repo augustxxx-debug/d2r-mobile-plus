@@ -86,7 +86,8 @@ static int rts_on(void) {
     if (g_rts.on < 0) {
         const char *e = getenv("DM_RT_SHADOW"); g_rts.gate = mtl_rt_shadow_supported(); g_rts.dbg = getenv("DM_RT_SHADOW_DBG") ? atoi(getenv("DM_RT_SHADOW_DBG")) : 0;
         g_rts.on = e ? atoi(e) != 0 : -2;
-        if (e) MLOG("DM_RT_SHADOW=%s：光追阴影由环境变量钉住%s", e, g_rts.gate ? "" : "（机器不可用，仍不生效）");
+        // 前缀与宿主 dm_rt_shadow_setting 的「光追阴影：生效」同一个：钉住时不走宿主那条，分享诊断日志的摘要照样取得到 | same prefix as "光追阴影：生效" in the host dm_rt_shadow_setting: when pinned that path is skipped, and the share-diagnostics summary still finds the line
+        if (e) MLOG("光追阴影：生效 %s（测试开关 DM_RT_SHADOW=%s 钉住%s）", atoi(e) && g_rts.gate ? "开" : "关", e, g_rts.gate ? "" : "，机器不可用，仍不生效");
     }
     if (!g_rts.gate || g_rts.failed) return 0;
     return g_rts.on == -2 ? dm_rt_shadow_setting() != 0 : g_rts.on;
