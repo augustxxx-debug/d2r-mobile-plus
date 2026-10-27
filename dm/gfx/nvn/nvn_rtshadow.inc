@@ -164,13 +164,14 @@ static int rts_flip(int v) {
     return r;
 }
 static void rts_release_all(const char *why);
-static void rts_lvl_update(void) { g_rts.eff = rts_lvl_apply(g_rts.gov.lvl, g_rts.point_on, g_rts.point_n, g_rts.point_div, g_rts.sun_half, g_rts.soft > 0); }
-static const char *rts_lvl_desc(char *b, size_t n) {   // 本档实际参数（日志用） | effective parameters of the level (for the log)
-    const rts_lvl_params *e = &g_rts.eff;
+static rts_lvl_params rts_lvl_of(int lvl) { return rts_lvl_apply(lvl, g_rts.point_on, g_rts.point_n, g_rts.point_div, g_rts.sun_half, g_rts.soft > 0); }
+static void rts_lvl_update(void) { g_rts.eff = rts_lvl_of(g_rts.gov.lvl); }
+static const char *rts_lvl_desc_p(const rts_lvl_params *e, char *b, size_t n) {   // 某档的实际参数（日志用） | effective parameters of a level (for the log)
     if (e->point_on) snprintf(b, n, "太阳 %s、点光 ≤ %d 盏 1/%d 分辨率", e->soft ? "全分辨率软阴影" : e->sun_div == 1 ? "全分辨率" : e->sun_div == 2 ? "1/2 分辨率" : "1/4 分辨率", e->point_n, e->point_div);
     else snprintf(b, n, "太阳 %s、点光阴影关", e->soft ? "全分辨率软阴影" : e->sun_div == 1 ? "全分辨率" : e->sun_div == 2 ? "1/2 分辨率" : "1/4 分辨率");
     return b;
 }
+static const char *rts_lvl_desc(char *b, size_t n) { return rts_lvl_desc_p(&g_rts.eff, b, n); }
 static int rts_on(void) {
     if (g_rts.on < 0) {
         const char *e = getenv("DM_RT_SHADOW"); g_rts.gate = mtl_rt_shadow_supported(); g_rts.dbg = getenv("DM_RT_SHADOW_DBG") ? atoi(getenv("DM_RT_SHADOW_DBG")) : 0;
@@ -222,7 +223,7 @@ static int rts_slot_new(void) {   // 新加一个每帧槽；失败返回 -1 | A
     RTS_NEW(s->picks, [g_dev newBufferWithLength:sizeof(rts_picks) options:MTLResourceStorageModeShared]); RTS_NEW(s->bb, [g_dev newBufferWithLength:64 options:MTLResourceStorageModeShared]);
     RTS_NEW(s->ai, [g_dev newBufferWithLength:RTS_MAX_ALPHA * sizeof(rts_ai) options:MTLResourceStorageModeShared]); RTS_NEW(s->aargs, [g_dev newBufferWithLength:RTS_MAX_ALPHA * RTS_AARG options:MTLResourceStorageModeShared]);   // 镂空判定记录与参数块快照 | alpha judge records and argument snapshots
     if (!s->inst || !s->k || !s->d || !s->pk || !s->picks || !s->bb || !s->ai || !s->aargs) { id o[8] = {s->inst, s->k, s->d, s->pk, s->picks, s->bb, s->ai, s->aargs}; for (int j = 0; j < 8; j++) if (o[j]) defer_obj_release(o[j]); memset(s, 0, sizeof *s); return -1; }
-    if (g_rts.auto_on) { MTL4CounterHeapDescriptor *hd = [MTL4CounterHeapDescriptor new]; hd.type = MTL4CounterHeapTypeTimestamp; hd.count = 2; s->ts = [g_dev newCounterHeapWithDescriptor:hd error:nil];   // 建不出就不量这个槽（不影响光追本身） | if it cannot be created this slot is just not measured (ray tracing unaffected)
+    { MTL4CounterHeapDescriptor *hd = [MTL4CounterHeapDescriptor new]; hd.type = MTL4CounterHeapTypeTimestamp; hd.count = 2; s->ts = [g_dev newCounterHeapWithDescriptor:hd error:nil];   // 自动关 / 钉住档位时也量（日志照样有光追 GPU 耗时）；建不出就不量这个槽（不影响光追本身） | measured also with automatic off / a pinned level (the log still has the ray-tracing GPU time); if it cannot be created this slot is just not measured (ray tracing unaffected)
         if (!g_rts.ts_tick) { uint64_t fq = [g_dev queryTimestampFrequency]; g_rts.ts_tick = fq ? 1e3 / (double)fq : 1e-6; } }
     rts_picks *o = s->picks.contents; memset(o, 0, sizeof *o); o->player = o->cand_rec = -1;
     g_rts.nslot++; return i;
@@ -241,8 +242,8 @@ static void rts_ts_take(rts_fslot *s) {
     if (!g_rts.auto_on) return;
     const char *why = ""; int old = g_rts.gov.lvl, r = rts_gov_step(&g_rts.gov, rt, fr, budget, rts_now(), &why); if (!r) return;
     if (r > 0) g_rts.n_lvl_down++; else g_rts.n_lvl_up++;
-    rts_lvl_update(); char b[160];
-    MLOG("光追降档：第 %d 档 → 第 %d 档（%s：光追 GPU 约 %.2f ms、整帧 GPU 约 %.2f ms，预算 %.2f ms / %.0f Hz；再升档要先有余量 %.0f 秒）→ %s", old, g_rts.gov.lvl, why, g_rts.gov.rt, g_rts.gov.fr, budget, hz > 0 ? hz : 60, g_rts.gov.hold_up, rts_lvl_desc(b, sizeof b));
+    char b[160]; rts_lvl_params nx = rts_lvl_of(g_rts.gov.lvl);   // 下一帧开头才换（rts_frame_begin）：本帧前后用同一套参数 | applied at the next frame start (rts_frame_begin): the whole of this frame keeps one set of parameters
+    MLOG("光追降档：第 %d 档 → 第 %d 档（%s：光追 GPU 约 %.2f ms、整帧 GPU 约 %.2f ms，预算 %.2f ms / %.0f Hz；再升档要先有余量 %.0f 秒）→ %s", old, g_rts.gov.lvl, why, g_rts.gov.rt, g_rts.gov.fr, budget, hz > 0 ? hz : 60, g_rts.gov.hold_up, rts_lvl_desc_p(&nx, b, sizeof b));
 }
 static int rts_frame_slot(void) {
     if (g_rts.slot_frame == g_rts.frame && g_rts.cur >= 0) return g_rts.cur;
@@ -417,6 +418,7 @@ static void rts_frame_begin(uint64_t f) {
         else if (g_rts.backoff) { MLOG("光追阴影：恢复（帧 %llu 光追完整，此前退避 %d 帧）", (unsigned long long)g_rts.frame, g_rts.backoff); g_rts.backoff = 0; }
     }
     g_rts.rt_frame = !why && f >= g_rts.retry_at; g_rts.n_rt_frames += g_rts.rt_frame;
+    rts_lvl_update();   // 自动降档换了档：从这一帧起生效 | the automatic downgrade changed level: effective from this frame
     // 2. 上一帧编进构建的网格转可用；3. 没建的排队作废（源地址只在当帧有效） | 2. Meshes built last frame become usable; 3. unbuilt queue entries are dropped (source addresses are per frame)
     for (int i = 0; i < g_rts.nsub; i++) g_rts.submitted[i]->state = RTS_READY;
     g_rts.nsub = 0;
