@@ -61,3 +61,5 @@ t_rts_span_asan
 t_rts_span_asan.dSYM/
 t_rts_state
 t_rts_state.dSYM/
+t_rts_gate
+t_rts_gate.dSYM/

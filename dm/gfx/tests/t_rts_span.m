@@ -23,6 +23,11 @@ static int fail, count;
 #define ASAN 1
 #endif
 #endif
+#ifdef RTS_HAS_NOTE_PASS
+#define RTS_KEY_NS() g_rts.key_ns
+#else
+#define RTS_KEY_NS() 0ull   // 79d571f 没有这项统计 | 79d571f has no such counter
+#endif
 static sigjmp_buf g_jb; static volatile int g_in;
 static void on_fault(int sig) { if (g_in) siglongjmp(g_jb, sig); signal(sig, SIG_DFL); raise(sig); }
 static size_t PG; static uint8_t *g_pool, *g_guard, *g_mat, *g_cb3, *g_vtx;
@@ -91,6 +96,20 @@ int main(void) { @autoreleasepool {
       next_frame(); int before = g_rts.nmesh; shadow_draw(1, 3, ib, -2, g_vtx + 64, 64 * 8, &fault); EXPECT("负基顶点：不建网格", before, g_rts.nmesh);
       next_frame(); shadow_draw(2, 0x7fffffff, ib, 0, g_vtx, 64 * 8, &fault); EXPECT("索引数量 × 4 超出内存池：不建网格", before, g_rts.nmesh); EXPECT("索引数量 × 4：不越界读", 0, fault);
       ib[4] = 0; ib[5] = 1; ib[6] = 900; next_frame(); shadow_draw(1, 3, ib + 4, 0, g_vtx, 64 * 8, &fault); EXPECT("索引 900 越过 64 个顶点：不建网格", before, g_rts.nmesh); }
+    // 6. 同一地址、前 32 字节相同、后段不同（六审第 5.2 节）：索引第 50 个、顶点第 40 个改了，都不能命中旧缓存项 | 6. Same address, same first 32 bytes, different later bytes (sixth review 5.2): index 50 or vertex 40 changed must not hit the old cache entry
+    { uint16_t *ib = (uint16_t *)(g_pool + 16384); uint8_t *v = g_pool + 200000; for (int k = 0; k < 99; k++) ib[k] = (uint16_t)(k % 64);
+      for (int i = 0; i < 64; i++) { int16_t *q = (int16_t *)(v + i * 8); q[0] = (int16_t)(i * 11); q[1] = (int16_t)(i * 5); q[2] = (int16_t)i; q[3] = 0; }
+      next_frame(); int n0 = g_rts.nmesh; shadow_draw(1, 99, ib, 0, v, 64 * 8, &fault);
+      next_frame(); shadow_draw(1, 99, ib, 0, v, 64 * 8, &fault); EXPECT("内容不变：命中同一缓存项", n0 + 1, g_rts.nmesh);
+      ib[50] = 63; next_frame(); shadow_draw(1, 99, ib, 0, v, 64 * 8, &fault); EXPECT("第 50 个索引变了（第 100 字节）：另建缓存项", n0 + 2, g_rts.nmesh);
+      ((int16_t *)(v + 40 * 8))[1] += 7; next_frame(); shadow_draw(1, 99, ib, 0, v, 64 * 8, &fault); EXPECT("第 40 个顶点变了（第 320 字节）：另建缓存项", n0 + 3, g_rts.nmesh); }
+    // 7. 键摘要的 CPU 开销（只打印）：按真机六审的量级，一帧 218 次阴影绘制 = 120 份不同几何 + 98 次两级级联重复，每份 2600 个 16 位索引、约 600 个顶点 | 7. CPU cost of the key digest (printed only): at the scale seen on device in the sixth review, 218 shadow draws per frame = 120 distinct pieces of geometry + 98 cascade repeats, 2600 16-bit indices and about 600 vertices each
+    { enum { NG = 120 }; uint8_t *base = g_pool + 330000;
+      for (int g = 0; g < NG; g++) { uint16_t *ib = (uint16_t *)(base + g * 5200); for (int k = 0; k < 2600; k++) ib[k] = (uint16_t)((k * 7 + g) % 600); }
+      for (int w = 0; w < NG / 10 + 2; w++) { next_frame(); for (int g = 0; g < NG; g++) shadow_draw(1, 2600, base + g * 5200, 0, g_vtx, 4096 * 8, &fault); }   // 先把 120 份都建进缓存（每帧最多 12 个） | first get all 120 into the cache (at most 12 per frame)
+      uint64_t t0 = bp_now(), k0 = RTS_KEY_NS(); int frames = 20;
+      for (int f = 0; f < frames; f++) { next_frame(); for (int d = 0; d < 218; d++) shadow_draw(1, 2600, base + (d % NG) * 5200, 0, g_vtx, 4096 * 8, &fault); }
+      printf("键摘要开销：%.1f µs / 帧（218 次绘制 = 120 份几何 + 98 次重复，每份 2600 索引 × 600 顶点，全部命中），其中算键 %.1f µs\n", (bp_now() - t0) / 1e3 / frames, (RTS_KEY_NS() - k0) / 1e3 / frames); }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

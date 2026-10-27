@@ -2035,6 +2035,7 @@ static void attach(MTLRenderPassAttachmentDescriptor *a, const tex_t *t, const v
 // clear_only: a pass opened only to land pending clears, attaching only the attachments that have clears - the other attachments are not touched by this pass, and attaching them costs a pointless load and store on TBDR
 // (Mac character select screen: the color-clear pass drags along a 400x225 depth load and store)
 static RENC rp_begin_ex(int clear_only);
+static void rts_note_pass(RPD *pd);   // nvn_rtshadow.inc：阴影通道登记深度附件与清除值 | nvn_rtshadow.inc: a shadow pass registers its depth attachment and clear value
 static RENC rp_begin(void) { return rp_begin_ex(0); }
 static RENC rp_begin_ex(int clear_only) {
     if (g_enc) return g_enc;
@@ -2098,6 +2099,7 @@ static RENC rp_begin_ex(int clear_only) {
         }
     }
     if (!any) { RED_ONCE(4, "渲染目标都建不出 MTLTexture"); return nil; }
+    rts_note_pass(pd);   // 光追阴影：成功时主通道前按这次登记把阴影图清回全亮 | ray-traced shadows: on success the shadow map is cleared back to fully lit before the main pass using this record
     for (int i = 0; i < R.rt.n && i < 8; i++) if (R.rt.color[i] && zskip_zero_clear(i)) {
         g_zskip_cand_ok[i] = 1; g_zskip_cand[i] = (zskip_zero){R.rt.color[i]->serial, (uint16_t)(R.rt.has_cview[i] && R.rt.cview[i].set_levels ? R.rt.cview[i].base_level : 0), (uint16_t)(R.rt.has_cview[i] && R.rt.cview[i].set_layers ? R.rt.cview[i].min_layer : 0)};
     }
@@ -4925,7 +4927,7 @@ frz_plain:;
     rr_snap(dw,di);
 #endif
     rtcap_draw(pr, dw, di, prim);   // 光追评估抓帧（DM_NVN_RTCAP，缺省关） | RT evaluation capture (DM_NVN_RTCAP, off by default)
-    if (rts_draw(pr, dw, di, prim)) return;   // 光追阴影：阴影图绘制改进加速结构，不编码 | Ray-traced shadows: shadow-map draws go into the acceleration structure instead of being encoded
+    if (rts_draw(pr, dw, di, prim)) return;   // 光追阴影：阴影图绘制同时登记进加速结构；照常编码（返回 0），成功时主通道前再清阴影图 | Ray-traced shadows: shadow-map draws are also recorded into the acceleration structure; still encoded (returns 0), the shadow map is cleared before the main pass on success
     udc_note_draw(pr);
     // 0 个图元的绘制（游戏会发 count=0）不画任何像素，跳过编码；Metal 规定计数必须非零，校验层否则当场中止（营地 / 野外 / 战斗页实测）
     // A draw with 0 primitives (the game does send count=0) draws no pixels, so skip encoding; Metal requires the count to be non-zero, otherwise the validation layer aborts on the spot (measured on the camp / wilderness / combat pages)
