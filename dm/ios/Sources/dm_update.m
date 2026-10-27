@@ -1,23 +1,23 @@
 // 显示版本 + 新版本提示的 iOS 侧。
 // 画面上的字是游戏自己的控件（布局 tools/touch_layout.py，写字与显隐 dm/host/dm_update.c）；这里只管两件（只提示、不提供更新动作，四审 Q4-04）：
-//   ① 把自己的构建号（CFBundleVersion = 提交时间戳，与日志头「构建」同一个数，比新旧用）和显示版本（DMVersionLabel「1.0.0+28 · b346e40」，dm/tools/version.sh）交给宿主，选角页左下角常显显示版本；
+//   ① 把自己的构建号（CFBundleVersion = dm/tools/version.sh 的构建号，与日志头「构建」同一个数，比新旧用）和显示版本（DMVersionLabel「1.0.0+28 · b346e40」，dm/tools/version.sh）交给宿主，选角页左下角常显显示版本；
 //   ② 每次选角页出现（启动、从局里退回来）都在后台取一次版本文件（这是我们自己加的唯一一处联网，只读一个小文件，单次 10 秒超时、失败隔几秒重试共 3 次，不挡启动与进局；同一时刻只有一个查询在途）；
 // 版本文件地址不在仓库里：出包脚本写进 Info.plist 的 SWUpdateURL（tools/adhoc.sh 传 DM_UPDATE_URL）。没有这个键、或构建号不是大于 1 的整数
 // （读不到提交时出的包是 1）→ 不联网、不提示。不比自己新：画面上什么都不出；没网 / 超时 / 地址失效 / 格式不对：选角页构建号右边出一行失败提示（dm_update_fail：没有无线数据许可 → 提示去设置里允许；其余 → 提示去浏览器打开版本文件所在的站点），这次启动取到了就撤掉。
 // 版本文件 latest.json（UTF-8）三个必填字段：{"build": 1793043416, "note": "一句话 ≤ 24 个汉字", "urgent": false}，缺字段或类型不对 = 格式不对（旧文件里的 "install_url" 不再用、有没有都行）；
-// 可选 "version": "1.1.0"（给人看的版本号，≤ 20 个字符，只许数字字母与 .+-）：有就在提示里写它，没有写 build。build 必须与新包的 CFBundleVersion 一致（提交时间戳）。
+// 可选 "version": "1.1.0"（给人看的版本号，≤ 20 个字符，只许数字字母与 .+-）：有就在提示里写它，没有写 build。build 必须与新包的 CFBundleVersion 一致。
 // 每次查完按新结果处理（不限一天一次，进首页就查、有新的就提示）：比自己新 → 显示 / 换成这次的；不比自己新 → 撤掉已有提示；
 // 取不到 / 格式不对 → 已有的提示留着不动（一次网络抖动不该把确实存在的新版本提示抹掉；这次启动还没提示过的话照旧什么都不出）。
 // 测试注入（只影响这两件的输入，不设就是产品行为）：DM_TEST_UPDATE_URL 换版本文件地址（可用 file://），DM_TEST_UPDATE_BUILD 换自己的构建号，
 //   DM_TEST_UPDATE_DENY=1 把取不到当成「无线数据许可被拒」。
 // iOS side of the display version + new-version notice.
 // The text on screen is the game's own widgets (layout in tools/touch_layout.py, text writing and show/hide in dm/host/dm_update.c); only two things are handled here (notice only, no update action, fourth review Q4-04):
-//   ① Hand our own build number (CFBundleVersion = commit timestamp, the same number as 「构建」(Build) in the log header, used for comparing) and display version (DMVersionLabel "1.0.0+28 · b346e40", dm/tools/version.sh) to the host; the display version is always shown at the bottom-left of the character select page;
+//   ① Hand our own build number (CFBundleVersion = the build number from dm/tools/version.sh, the same number as 「构建」(Build) in the log header, used for comparing) and display version (DMVersionLabel "1.0.0+28 · b346e40", dm/tools/version.sh) to the host; the display version is always shown at the bottom-left of the character select page;
 //   ② Each time the character select page appears (launch, returning from a run), fetch the version file once in the background (this is the only network access we added ourselves; it reads one small file, 10-second timeout per attempt, retries a few seconds after a failure for 3 attempts in total, does not block launch or entering a run; only one query is in flight at any moment);
 // The version file address is not in the repository: the packaging script writes it into SWUpdateURL in Info.plist (tools/adhoc.sh passes DM_UPDATE_URL). Without this key, or when the build number is not an integer greater than 1
 // (packages built without a readable commit are 1) → no network access, no notice. Not newer than ours: nothing appears on screen; no network / timeout / dead address / bad format: a failure notice line appears to the right of the build number on the character select page (dm_update_fail: no wireless data permission → tell the player to allow it in Settings; otherwise → tell the player to open in a browser the site that serves the version file), removed once a fetch succeeds during this launch.
 // The version file latest.json (UTF-8) has three required fields: {"build": 1793043416, "note": "one sentence, ≤ 24 Chinese characters", "urgent": false}; a missing field or wrong type = bad format (an old file's "install_url" is no longer used and may be present or absent);
-// optional "version": "1.1.0" (the human version, ≤ 20 characters, digits, letters and .+- only): shown in the notice when present, otherwise build. build must equal the new package's CFBundleVersion (commit timestamp).
+// optional "version": "1.1.0" (the human version, ≤ 20 characters, digits, letters and .+- only): shown in the notice when present, otherwise build. build must equal the new package's CFBundleVersion.
 // After each query, act on the new result (not limited to once a day; query on entering the home page and show a notice if there is a new one): newer than ours → show / replace with this one; not newer than ours → remove the existing notice;
 // fetch failed / bad format → leave the existing notice untouched (one network glitch should not erase a notice for a new version that really exists; if nothing has been shown yet during this launch, still show nothing as before).
 // Test injection (affects only the inputs of these two things; unset = product behavior): DM_TEST_UPDATE_URL replaces the version file address (file:// is allowed), DM_TEST_UPDATE_BUILD replaces our own build number,

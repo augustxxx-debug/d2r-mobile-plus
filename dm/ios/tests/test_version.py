@@ -1,7 +1,7 @@
-"""版本号管理（2026-10-27）：唯一来源 dm/tools/version.sh——版本 = 最高的 vX.Y.Z 标签、构建号 = 提交时间戳、显示版本「1.0.0+28 · b346e40」（有未提交代码改动加 *）；
-iOS（run.sh → Gen/dm.xcconfig → Info.plist）与 Mac（mac_app.sh）都从它取，选角页、启动日志、诊断显示同一行，uireg 收数按提交与 * 验包。
-Version management (2026-10-27): single source dm/tools/version.sh -- version = highest vX.Y.Z tag, build number = commit timestamp, display version "1.0.0+28 · b346e40" (* with uncommitted
-code changes); iOS (run.sh → Gen/dm.xcconfig → Info.plist) and Mac (mac_app.sh) both take it, character select, boot log and diagnostics show the same line, uireg checks the package by commit and *."""
+"""版本号管理（2026-10-27）：唯一来源 dm/tools/version.sh——版本 = 最高的 vX.Y.Z 标签、构建号 = 沿提交历史严格递增的序号（通常就是提交时间戳，四审 Q4-01）、显示版本「1.0.0+28 · b346e40」（有未提交代码改动加 *）；
+iOS（run.sh → Gen/dm.xcconfig → Info.plist）与 Mac（mac_app.sh）都从它取，选角页、启动日志、诊断显示同一行，uireg 收数按构建号、提交、显示版本与工作区验包（四审 Q4-02）。
+Version management (2026-10-27): single source dm/tools/version.sh -- version = highest vX.Y.Z tag, build number = a sequence strictly increasing along the commit history (usually the commit timestamp, fourth review Q4-01), display version "1.0.0+28 · b346e40" (* with uncommitted
+code changes); iOS (run.sh → Gen/dm.xcconfig → Info.plist) and Mac (mac_app.sh) both take it, character select, boot log and diagnostics show the same line, uireg checks the package by build, commit, display version and working tree (fourth review Q4-02)."""
 import re
 import shutil
 import subprocess
@@ -28,17 +28,18 @@ class Repo:
     def git(self, *a, env=None):
         return subprocess.run(['git', *a], cwd=self.d, check=True, capture_output=True, text=True, env=env).stdout.strip()
 
-    def commit(self):
+    def commit(self, at=None):
         self.n += 1; (self.d / 'n.txt').write_text(str(self.n)); self.git('add', '-A')
-        t = f'@{1793000000 + self.n * 100} +0000'
+        t = f'@{at if at is not None else 1793000000 + self.n * 100} +0000'
         import os
         env = dict(os.environ, GIT_COMMITTER_DATE=t, GIT_AUTHOR_DATE=t)
         self.git('commit', '-qm', f'c{self.n}', env=env)
 
-    def version(self):
-        out = subprocess.run(['bash', '-c', 'eval "$(bash dm/tools/version.sh)"; printf "%s|%s|%s|%s" "$DM_VERSION" "$DM_BUILD" "$DM_VERSION_LABEL" "$DM_VERSION_WARN"'],
-                             cwd=self.d, check=True, capture_output=True, text=True).stdout
-        return dict(zip(('ver', 'build', 'label', 'warn'), out.split('|')))
+    def version(self, rev='', **env):
+        import os
+        out = subprocess.run(['bash', '-c', 'eval "$(bash dm/tools/version.sh ' + rev + ')"; printf "%s|%s|%s|%s|%s|%s" "$DM_VERSION" "$DM_BUILD" "$DM_VERSION_LABEL" "$DM_VERSION_WARN" "$DM_BUILD_SOURCE" "$DM_VERSION_ERROR"'],
+                             cwd=self.d, check=True, capture_output=True, text=True, env=dict(os.environ, **env)).stdout
+        return dict(zip(('ver', 'build', 'label', 'warn', 'src', 'err'), out.split('|')))
 
     def short(self):
         return self.git('rev-parse', '--short=7', 'HEAD')
@@ -69,6 +70,50 @@ class VersionScript(unittest.TestCase):
             (r.d / 'dm/host/a.c').write_text('dirty\n'); self.assertEqual(r.version()['build'], ct)   # 旧规则：脏 → 1 | old rule: dirty → 1
             (r.d / 'dm/host/a.c').write_text('0\n'); before = int(ct); r.commit(); self.assertGreater(int(r.version()['build']), before)
 
+    def test_same_second_and_clock_back_still_increase(self):
+        # 四审 Q4-01：同一秒的父子提交、时钟回拨的提交，构建号也必须比所有祖先大，否则旧包判成「没有新版本」
+        # Fourth review Q4-01: a child in the same second as its parent, or after a clock went back, must still be above every ancestor, or old packages see "no new version"
+        with tempfile.TemporaryDirectory() as d:
+            r = Repo(d); r.commit(at=1793001000); first = int(r.version()['build']); self.assertEqual(first, 1793001000)
+            r.commit(at=1793001000); second = int(r.version()['build']); self.assertGreater(second, first)
+            r.commit(at=1793000950); third = int(r.version()['build']); self.assertGreater(third, second)
+            r.commit(at=1793009999); self.assertEqual(r.version()['build'], '1793009999')   # 时间正常往前走时就是提交时间戳 | equals the commit timestamp while time moves forward
+            self.assertEqual(r.version()['src'], 'history')
+
+    def test_merge_is_above_both_parents(self):
+        with tempfile.TemporaryDirectory() as d:
+            import os
+            def at(t): return dict(os.environ, GIT_COMMITTER_DATE=f'@{t} +0000', GIT_AUTHOR_DATE=f'@{t} +0000')
+            r = Repo(d); r.git('checkout', '-qb', 'side'); (r.d / 'side.txt').write_text('s\n'); r.git('add', '-A'); r.git('commit', '-qm', 's', env=at(1793005000))
+            side = int(r.version()['build']); r.git('checkout', '-q', '-'); (r.d / 'main.txt').write_text('m\n'); r.git('add', '-A'); r.git('commit', '-qm', 'm', env=at(1793000300))
+            r.git('merge', '-q', '--no-ff', '-m', 'merge', 'side', env=at(1793000301))
+            self.assertGreater(int(r.version()['build']), side)
+
+    def test_rev_argument(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = Repo(d); old = r.git('rev-parse', 'HEAD'); old_build = r.version()['build']; r.commit()
+            (r.d / 'dm/host/a.c').write_text('dirty\n')
+            v = r.version(old); self.assertEqual(v['build'], old_build); self.assertEqual(v['label'], '0.0.0 · ' + old[:7])   # 不看工作区 | the working tree is ignored
+
+    def test_override_and_release_floor(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = Repo(d); b = int(r.version()['build'])
+            v = r.version(DM_BUILD_NUMBER='1800000000'); self.assertEqual((v['build'], v['src'], v['err']), ('1800000000', 'override', ''))
+            for bad in ('abc', '012', '-5'):
+                self.assertIn('DM_BUILD_NUMBER', r.version(DM_BUILD_NUMBER=bad)['err'], bad)
+            self.assertIn('不大于上次发布', r.version(DM_BUILD_FLOOR=str(b))['err'])
+            self.assertIn('不大于上次发布', r.version(DM_BUILD_FLOOR=str(b + 10))['err'])
+            self.assertEqual(r.version(DM_BUILD_FLOOR=str(b - 1))['err'], '')
+            self.assertIn('不大于上次发布', r.version(DM_BUILD_NUMBER='5', DM_BUILD_FLOOR=str(b))['err'])   # 覆盖值同样过闸门 | an override goes through the floor too
+            self.assertIn('不是整数', r.version(DM_BUILD_FLOOR='x')['err'])
+
+    def test_shallow_clone_warns_about_history(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as c:
+            r = Repo(d); r.git('tag', 'v1.0.0'); r.commit(); r.commit()
+            subprocess.run(['git', 'clone', '-q', '--depth', '1', 'file://' + d, c], check=True, capture_output=True)
+            v = Repo.__new__(Repo); v.d = Path(c); out = v.version()
+            self.assertEqual(out['ver'], '0.0.0'); self.assertIn('浅克隆缺历史', out['warn']); self.assertIn('构建号只按看得见的历史', out['warn'])
+
     def test_star_for_code_changes_only(self):
         with tempfile.TemporaryDirectory() as d:
             r = Repo(d); r.git('tag', 'v1.0.0')
@@ -88,6 +133,12 @@ class VersionScript(unittest.TestCase):
 
 
 class Wiring(unittest.TestCase):
+    def test_packaging_refuses_on_version_error(self):
+        self.assertIn('[ -n "${DM_VERSION_ERROR:-}" ] && { t "🔴 ${DM_VERSION_ERROR}"; exit 1; }', RUN)
+        mac = (DM / 'tools' / 'mac_app.sh').read_text(encoding='utf-8')
+        self.assertIn('[ -n "$DM_VERSION_ERROR" ] && { echo "🔴 $DM_VERSION_ERROR"; exit 2; }', mac)
+        self.assertIn('DM_BUILD_NUMBER=${DM_MAC_BUILD:-${DM_BUILD_NUMBER:-}} bash "$HERE/version.sh"', mac)
+
     def test_run_sh_writes_versions_before_gen_only_exit(self):
         w = RUN.index('eval "$(bash ../tools/version.sh)"')
         p = RUN.index("printf 'MARKETING_VERSION = %s\\nDM_BUILD_NUMBER = %s\\nCURRENT_PROJECT_VERSION = $(DM_BUILD_NUMBER)\\nDM_VERSION_LABEL = %s\\n'")
@@ -104,7 +155,7 @@ class Wiring(unittest.TestCase):
 
     def test_mac_app_uses_same_source(self):
         mac = (DM / 'tools' / 'mac_app.sh').read_text(encoding='utf-8')
-        self.assertIn('eval "$(bash "$HERE/version.sh")"', mac); self.assertIn('<key>DMVersionLabel</key><string>$LABEL</string>', mac)
+        self.assertIn('bash "$HERE/version.sh")"', mac); self.assertIn('<key>DMVersionLabel</key><string>$LABEL</string>', mac)
         self.assertNotIn('date +%m%d%H%M', mac)
 
     def test_screens_and_logs_show_label(self):
@@ -169,29 +220,47 @@ class PromptOnly(unittest.TestCase):
 
 
 class UiregPackageCheck(unittest.TestCase):
-    """tools/uireg/run_dev.sh 的验包段原样执行 | run the package check block of tools/uireg/run_dev.sh verbatim"""
+    """tools/uireg/run_dev.sh 的验包段原样执行；缺字段、空字段、未知标签、脏源码、错构建号都要拒（四审 Q4-02）
+    Run the package check block of tools/uireg/run_dev.sh verbatim; missing / empty fields, unknown labels, dirty source and wrong builds are all refused (fourth review Q4-02)"""
     SRC = (DM / 'ios' / 'tools' / 'uireg' / 'run_dev.sh').read_text(encoding='utf-8')
 
-    def check(self, repo, boot):
-        s = self.SRC; block = s[s.index('EXP=$(git -C "$HERE"'):]; block = block[:block.index('\nfi\n') + 4]
+    def check(self, repo, boot, **env):
+        s = self.SRC; block = s[s.index('# ---- 验包 | package check ----'):s.index('# ---- 验包完 | end of package check ----')]
         with tempfile.TemporaryDirectory() as o:
-            Path(o, 'boot.txt').write_text(boot, encoding='utf-8')
-            subprocess.run(['bash', '-c', block], cwd=o, check=True, env={'PATH': '/usr/bin:/bin', 'HERE': str(repo.d), 'O': o, 'HOME': o})
-            return Path(o, 'boot_wrongpkg.txt').exists(), Path(o, 'boot.txt').read_text(encoding='utf-8')
+            if boot is not None: Path(o, 'boot.txt').write_text(boot, encoding='utf-8')
+            subprocess.run(['bash', '-c', block], cwd=o, check=True, env=dict({'PATH': '/usr/bin:/bin', 'HERE': str(repo.d), 'O': o, 'HOME': o}, **env))
+            return Path(o, 'boot_wrongpkg.txt').exists(), Path(o, 'boot.txt').read_text(encoding='utf-8') if Path(o, 'boot.txt').exists() else ''
 
-    def boot(self, ct, sha, label):
-        return f'[dm] boot: 版本 1.0.0 构建 {ct} 机型 iPhone00,0 系统 00.0 时间 x\n[dm] boot: 显示版本 {label}\n[dm] boot: 源码 {sha} 工作区 clean 构建输入 chain=x\n'
+    def boot(self, build, sha, label, dirty='clean'):
+        lines = [f'[dm] boot: 版本 1.0.0 构建 {build} 机型 iPhone00,0 系统 00.0 时间 x']
+        if label is not None: lines.append(f'[dm] boot: 显示版本 {label}'.rstrip())
+        lines.append(f'[dm] boot: 源码 {sha} 工作区 {dirty} 构建输入 chain=x')
+        return '\n'.join(lines) + '\n'
 
     def test_cases(self):
         with tempfile.TemporaryDirectory() as d:
-            r = Repo(d); ct = r.git('log', '-1', '--format=%ct'); sha = r.git('rev-parse', 'HEAD')
-            self.assertFalse(self.check(r, self.boot(ct, sha, '1.0.0 · ' + sha[:7]))[0])
-            bad, text = self.check(r, self.boot(ct, sha, '1.0.0 · ' + sha[:7] + '*'))
-            self.assertTrue(bad); self.assertIn('带 *', text)
-            bad, text = self.check(r, self.boot(ct, 'f' * 40, '1.0.0 · fffffff'))
-            self.assertTrue(bad); self.assertIn('源码', text)
-            bad, text = self.check(r, self.boot('1', sha, '1.0.0 · ' + sha[:7]))
-            self.assertTrue(bad); self.assertIn('构建号 1', text)
+            r = Repo(d); r.git('tag', 'v1.0.0'); r.commit(); v = r.version(); b, lbl = v['build'], v['label']; sha = r.git('rev-parse', 'HEAD')
+            self.assertEqual(lbl, '1.0.0+1 · ' + sha[:7])
+            ok = lambda **k: self.assertFalse(self.check(r, self.boot(**dict(dict(build=b, sha=sha, label=lbl), **k)))[0], k)
+            bad = lambda why, env={}, **k: self.assertIn(why, self.check(r, self.boot(**dict(dict(build=b, sha=sha, label=lbl), **k)), **env)[1], k)
+            ok(); ok(dirty='3:abcdef012345:c1_full.tsv,dmsh_chain.h,dmsh_chain.lock')   # 只有本机元数据 | local metadata only
+            bad('带 *', label=lbl + '*')
+            bad('源码', sha='f' * 40, label='1.0.0+1 · fffffff')
+            bad('构建号 1，', build='1')
+            bad('显示版本读不到', label=None)                     # 缺行 | line missing
+            bad('显示版本读不到', label='')                       # 空 | empty
+            bad('期望「' + lbl + '」', label='1.0.0+1 · 未知')    # 未知 | unknown
+            bad('期望「' + lbl + '」', label='0.9.0 · ' + sha[:7])
+            bad('没提交的代码改动 a.c', dirty='2:abcdef012345:a.c,c1_full.tsv')
+            bad('工作区标记读不到', dirty='')
+            bad('期望 1800000000', env={'UIREG_EXPECT_BUILD': '1800000000'})
+            self.assertFalse(self.check(r, self.boot(build='1800000000', sha=sha, label=lbl), UIREG_EXPECT_BUILD='1800000000')[0])   # 显式覆盖值 | explicit override
+
+    def test_expect_other_commit(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = Repo(d); old = r.git('rev-parse', 'HEAD'); v = r.version(); r.commit()
+            self.assertFalse(self.check(r, self.boot(v['build'], old, v['label']), UIREG_EXPECT_COMMIT=old)[0])
+            self.assertTrue(self.check(r, self.boot(v['build'], old, v['label']))[0])   # 缺省按 HEAD | HEAD by default
 
 
 if __name__ == '__main__':

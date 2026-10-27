@@ -169,12 +169,12 @@ cp local.env.example local.env
 | 数 | 写进 | 来源 | 例 |
 |---|---|---|---|
 | 版本号 | `CFBundleShortVersionString` | `HEAD` 能到达的最高 `vX.Y.Z` 标签；没有标签 = `0.0.0` 并警告 | `1.0.0` |
-| 构建号 | `CFBundleVersion` | `HEAD` 的提交时间戳（秒）：随提交递增，不随工作区干不干净变，浅克隆里也不变 | `1793043416` |
+| 构建号 | `CFBundleVersion` | 沿提交历史严格递增的序号：每个提交取自己的提交时间戳与各父提交构建号 + 1 中较大的，所以通常就是提交时间戳，同一秒或时钟回拨的提交也比所有祖先大；不随工作区干不干净变；浅克隆只按看得见的历史算（会警告） | `1793043416` |
 | 显示版本 | `DMVersionLabel` | 版本号 + 标签之后的提交数 + 短提交号；有未提交的代码改动加 `*` | `1.0.0+18 · b346e40` |
 
-显示版本出现在选角页左下角、启动日志（`boot: 显示版本 …`）和导出的诊断里，玩家截图就能看出是哪份代码。`*` 不算本机着色器链生成的三份元数据（`dmsh_chain.h`、`dmsh_chain.lock`、`c1_full.tsv`），它们的版本记在构建输入 `chain=` 里。带 `*` 的包不能用于放行，`tools/uireg/run_dev.sh` 收数时按构建号、源码提交与 `*` 验包。
+显示版本出现在选角页左下角、启动日志（`boot: 显示版本 …`）和导出的诊断里，玩家截图就能看出是哪份代码。`*` 不算本机着色器链生成的三份元数据（`dmsh_chain.h`、`dmsh_chain.lock`、`c1_full.tsv`），它们的版本记在构建输入 `chain=` 里。带 `*` 的包不能用于放行，`tools/uireg/run_dev.sh` 收数时按构建号、源码提交、显示版本与工作区标记验包，任何一项读不到都判不对。
 
-发布：在发布提交上 `git tag vX.Y.Z`，再出包。新版本提示的版本文件 `latest.json` 里 `build` 填新包的构建号（提交时间戳），可选 `version` 填 `X.Y.Z`（提示里显示它，不给就显示构建号）。旧口径的构建号（月日时分，8 位）比提交时间戳小，所以装着旧包的玩家照样能收到新版本提示。出包脚本仍可在命令行传 `DM_BUILD_NUMBER` 覆盖构建号，但这样就不再和提交对应，不建议。版本号只在 `Gen/dm.xcconfig` 里，`project.yml` 的 target 层不许再写 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` / `DM_BUILD_NUMBER`（会盖住真值；`tests/test_version.py` 守着）。
+发布：在发布提交上 `git tag vX.Y.Z`，再出包。新版本提示的版本文件 `latest.json` 里 `build` 填新包的构建号（出包日志「构建号 N」），可选 `version` 填 `X.Y.Z`（提示里显示它，不给就显示构建号）。旧口径的构建号（月日时分，8 位）比提交时间戳小，所以装着旧包的玩家照样能收到新版本提示。出包时设 `DM_BUILD_FLOOR=<上次发布的构建号>`，构建号不大于它就拒绝出包（旧包会判成「没有新版本」）。出包脚本仍可用环境变量 `DM_BUILD_NUMBER` 覆盖构建号（同样过这道闸门），但这样就不再和提交对应，验包时要用 `UIREG_EXPECT_BUILD` 说明。版本号只在 `Gen/dm.xcconfig` 里，`project.yml` 的 target 层不许再写 `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` / `DM_BUILD_NUMBER`（会盖住真值；`tests/test_version.py` 守着）。
 
 常用的环境变量：
 

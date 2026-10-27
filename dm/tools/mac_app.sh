@@ -3,7 +3,7 @@
 # 包里有：宿主程序、改写后的游戏程序（产物目录，种类 DM_MAC_PRODUCT，缺省 touch）、有界面覆盖层就带上（DM_MAC_OVERLAY=<目录>）。
 # DM_MAC_LINK=1：不带派生物的出法——改写后的游戏程序、着色器库、界面覆盖层都是从游戏内容派生的，公开发布的包不能带；
 #   这样出的包里只有宿主程序和 Resources/paths.txt（各项指向本机构建产物的路径），只在构建它的这台机器上能跑。
-# 版本：与 iOS 包同一来源 dm/tools/version.sh——版本号 = 最高的 vX.Y.Z 标签、构建号 = 提交时间戳、显示版本「1.0.0+28 · b346e40」；DM_MAC_VERSION / DM_MAC_BUILD 仍可指定（覆盖前两项）。产物代号与提交号写在包里的 Resources/build.txt。
+# 版本：与 iOS 包同一来源 dm/tools/version.sh——版本号 = 最高的 vX.Y.Z 标签、构建号 = 沿提交历史递增的序号（通常就是提交时间戳）、显示版本「1.0.0+28 · b346e40」；DM_MAC_VERSION / DM_MAC_BUILD 仍可指定（覆盖前两项）。产物代号与提交号写在包里的 Resources/build.txt。
 # 更新检查：DM_MAC_UPDATE_URL=<版本文件地址>（如下载站的 latest_mac.json）写进 Info.plist 的 SWUpdateURL，App 启动后读它、比包内构建号新就在主菜单提示；不给 = 不检查（公开版 / 自己构建的包）。
 # 游戏资源缺省不进包（DM_MAC_ROMFS_COPY=1 可带自己的资源）：第一次启动请玩家选资源文件夹（host/app_mac.m）。签名缺省用本地临时签名；要 iCloud 同步用 DM_MAC_ICLOUD=1（见下）。
 set -eu
@@ -106,8 +106,9 @@ if [ -z "$LINK" ] && [ -n "$(find "$RES" -type l -print -quit)" ]; then
   echo "🔴 自带资源的包里不许有符号链接（换到别的机器就断）"; exit 3
 fi
 [ -s "$RES/paths.txt" ] || rm -f "$RES/paths.txt"
-eval "$(bash "$HERE/version.sh")" || { echo "🔴 取版本号失败（dm/tools/version.sh）"; exit 2; }; [ -n "$DM_VERSION_WARN" ] && echo "⚠ $DM_VERSION_WARN"
-VER=${DM_MAC_VERSION:-$DM_VERSION}; BUILD=${DM_MAC_BUILD:-$DM_BUILD}; LABEL=$DM_VERSION_LABEL
+eval "$(DM_BUILD_NUMBER=${DM_MAC_BUILD:-${DM_BUILD_NUMBER:-}} bash "$HERE/version.sh")" || { echo "🔴 取版本号失败（dm/tools/version.sh）"; exit 2; }; [ -n "$DM_VERSION_WARN" ] && echo "⚠ $DM_VERSION_WARN"
+[ -n "$DM_VERSION_ERROR" ] && { echo "🔴 $DM_VERSION_ERROR"; exit 2; }   # DM_MAC_BUILD 也过发布闸门（DM_BUILD_FLOOR） | DM_MAC_BUILD also goes through the release floor (DM_BUILD_FLOOR)
+VER=${DM_MAC_VERSION:-$DM_VERSION}; BUILD=$DM_BUILD; LABEL=$DM_VERSION_LABEL
 echo "版本 ${VER} 构建 ${BUILD} 显示 ${LABEL} 产物 $(basename "$P") 提交 $(git -C "$DM" rev-parse --short HEAD 2>/dev/null || echo 未知)" > "$RES/build.txt"
 cat > "$APP/Contents/Info.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>

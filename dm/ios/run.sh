@@ -64,13 +64,14 @@ if [ "$1" = build ]; then
   BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default}"
   printf 'DM_SOURCE_COMMIT = %s\nDM_SOURCE_DIRTY = %s\nDM_BUILD_INPUTS = %s\n' "$SC" "$SDIRTY" "$BINPUTS" >> Gen/dm.xcconfig
   t "产物身份：源码 ${SC}，工作区 ${SDIRTY}，构建输入 ${BINPUTS}"
-  # 版本号（dm/tools/version.sh，与 Mac 包同一来源）：版本 = 最高的 vX.Y.Z 标签，构建号 = 提交时间戳，显示版本 =「1.0.0+28 · b346e40」（有未提交代码改动加 *）。
+  # 版本号（dm/tools/version.sh，与 Mac 包同一来源）：版本 = 最高的 vX.Y.Z 标签，构建号 = 沿提交历史递增的序号（通常就是提交时间戳），显示版本 =「1.0.0+28 · b346e40」（有未提交代码改动加 *）。
   # 也写在项目层 Gen/dm.xcconfig：project.yml 的 target 层不许再给缺省值（会盖住这里）；出包脚本在命令行传 DM_BUILD_NUMBER 仍然优先。
-  # Version numbers (dm/tools/version.sh, the same source as the Mac package): version = highest vX.Y.Z tag, build number = commit timestamp, display version = "1.0.0+28 · b346e40" (* with uncommitted code changes).
+  # Version numbers (dm/tools/version.sh, the same source as the Mac package): version = highest vX.Y.Z tag, build number = a sequence increasing along the commit history (usually the commit timestamp), display version = "1.0.0+28 · b346e40" (* with uncommitted code changes).
   # Also written at project level in Gen/dm.xcconfig: project.yml targets must not set defaults (they would mask these); a DM_BUILD_NUMBER passed on the command line by a packaging script still wins.
   eval "$(bash ../tools/version.sh)" || { t "🔴 取版本号失败（dm/tools/version.sh）"; exit 1; }
+  [ -n "${DM_VERSION_ERROR:-}" ] && { t "🔴 ${DM_VERSION_ERROR}"; exit 1; }   # eval 吞掉退出码，拒绝出包的原因写在这个变量里 | eval swallows the exit status; the refusal is carried in this variable
   printf 'MARKETING_VERSION = %s\nDM_BUILD_NUMBER = %s\nCURRENT_PROJECT_VERSION = $(DM_BUILD_NUMBER)\nDM_VERSION_LABEL = %s\n' "$DM_VERSION" "$DM_BUILD" "$DM_VERSION_LABEL" >> Gen/dm.xcconfig
-  t "版本 ${DM_VERSION}，构建号 ${DM_BUILD}，显示「${DM_VERSION_LABEL}」"; [ -n "$DM_VERSION_WARN" ] && t "⚠ ${DM_VERSION_WARN}"
+  t "版本 ${DM_VERSION}，构建号 ${DM_BUILD}（${DM_BUILD_SOURCE}），显示「${DM_VERSION_LABEL}」"; [ -n "$DM_VERSION_WARN" ] && t "⚠ ${DM_VERSION_WARN}"
   case $DM_VERSION_LABEL in *\*) t "⚠ 工作区有未提交的代码改动：显示版本带 *，这种包不能用于放行";; esac
   # 启动块清单（缺省开预取：宿主到产物目录 = App 内 dm/ 找 bootlist.tsv）+ main.cuts.tsv（宿主据此核清单构建号）；产物没有就不带
   # Boot block list (prefetch on by default: the host looks for bootlist.tsv in the build output directory = dm/ inside the App) + main.cuts.tsv (the host uses it to check the list's build ID); not included if the build output lacks them

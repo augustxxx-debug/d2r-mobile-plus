@@ -59,7 +59,7 @@ targets:
       path: Sources/Info.plist
       properties:
         CFBundleDisplayName: D2R Mobile
-        CFBundleVersion: $(CURRENT_PROJECT_VERSION)         # 构建号 = 提交时间戳（dm/tools/version.sh）；新版本提示按它比大小，TestFlight 要求递增 | Build number = commit timestamp (dm/tools/version.sh); the update notice compares it, TestFlight needs it to grow
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)         # 构建号 = 沿提交历史递增的序号（dm/tools/version.sh）；新版本提示按它比大小，TestFlight 要求递增 | Build number = a sequence increasing along the commit history (dm/tools/version.sh); the update notice compares it, TestFlight needs it to grow
         CFBundleShortVersionString: $(MARKETING_VERSION)
         DMVersionLabel: $(DM_VERSION_LABEL)                 # 显示版本「1.0.0+28 · b346e40」：选角页左下角、启动日志、诊断（dm/tools/version.sh） | Display version shown on character select, in the boot log and diagnostics
         DMSourceCommit: $(DM_SOURCE_COMMIT)                 # 源码提交（run.sh 传 git rev-parse HEAD）；启动日志首行打出来，核对安装包与源码身份 | Source commit (run.sh passes git rev-parse HEAD); printed in the first boot log line to tie the installed app to its source
