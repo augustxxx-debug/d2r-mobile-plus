@@ -4677,6 +4677,7 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
 // 超分接入限定在原版最终 3D 放大通道，实现在独立文件。
 // Upscaling hooks only the original final 3D upscale pass; implementation is separate.
 #include "nvn_metalfx.inc"
+#include "nvn_rtcap.inc"
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); return; }
     __unsafe_unretained NvProg *pr = prog_get(S.prog);
@@ -4918,6 +4919,7 @@ frz_plain:;
 #ifdef NVN_RT_RANGE_TEST
     rr_snap(dw,di);
 #endif
+    rtcap_draw(pr, dw, di, prim);   // 光追评估抓帧（DM_NVN_RTCAP，缺省关） | RT evaluation capture (DM_NVN_RTCAP, off by default)
     udc_note_draw(pr);
     // 0 个图元的绘制（游戏会发 count=0）不画任何像素，跳过编码；Metal 规定计数必须非零，校验层否则当场中止（营地 / 野外 / 战斗页实测）
     // A draw with 0 primitives (the game does send count=0) draws no pixels, so skip encoding; Metal requires the count to be non-zero, otherwise the validation layer aborts on the spot (measured on the camp / wilderness / combat pages)
