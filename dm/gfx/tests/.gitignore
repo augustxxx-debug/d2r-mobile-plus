@@ -51,3 +51,11 @@ t_rt_srgb_view.dSYM/
 
 t_metalfx
 t_metalfx_m3
+t_rts_span
+t_rts_span.dSYM/
+t_rts_span_asan
+t_rts_span_asan.dSYM/
+t_rts_state
+t_rts_state.dSYM/
+t_rtshadow
+t_rtshadow.dSYM/

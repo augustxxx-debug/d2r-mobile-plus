@@ -49,6 +49,11 @@ int main(void) { @autoreleasepool {
     { uint16_t strip[] = {0, 1, 2, 2, 3, 4}; uint32_t out[12]; uint32_t t = rts_strip_expand(strip, 2, 6, out);   // 0,1,2 | 1,2,2 退化 | 2,2,3 退化 | 2,3,4 → 2 个 | two triangles, two degenerate ones dropped
       if (t != 2 || out[0] != 0 || out[1] != 1 || out[2] != 2 || out[3] != 2 || out[4] != 3 || out[5] != 4) FAIL("rts_strip_expand indexed: %u tris", t);
       t = rts_strip_expand(NULL, 0, 5, out); if (t != 3 || out[6] != 2 || out[7] != 3 || out[8] != 4) FAIL("rts_strip_expand non-indexed: %u tris", t); }
+    { rts_player_track t = {.rec = -1}; float torch[3] = {40, 0, 0}, player[3] = {5, 0, 5}; int sure = 0;   // 相机沿 x 走：火把偏移在变、随身光偏移不变 | the camera walks along x: the torch's offset changes, the player light's does not
+      for (int f = 0; f < 80; f++) { double p0[3] = {f * 0.5, 0, 0}; float pp[3] = {player[0] + f * 0.5f, player[1], player[2]}; sure = rts_player_feed(&t, 7, pp, p0); if (f < 59 && sure) FAIL("player light recognized too early (frame %d)", f); }
+      if (!sure) FAIL("player light not recognized after 80 moving frames");
+      for (int f = 0; f < 80; f++) { double p0[3] = {f * 0.5, 0, 0}; if (rts_player_feed(&t, 3, torch, p0)) FAIL("a static torch was taken for the player light (frame %d)", f); }
+      for (int f = 0; f < 80; f++) { double p0[3] = {10, 0, 0}; if (rts_player_feed(&t, 9, player, p0)) FAIL("recognized while the camera stands still"); } }
     // 相机：列主序 VP（与 MSL float4x4 同） | camera: column-major VP (same as the MSL float4x4)
     double VP[16] = {0}; VP[0] = 1.0 / 50; VP[2 * 4 + 1] = 1.0 / 50; VP[1 * 4 + 2] = -0.01; VP[3 * 4 + 2] = 0.5; VP[15] = 1; double IA[16]; rts_inv4(VP, IA);
     { float L[16 * 4] = {0};   // 4 盏光：#1 在视线上且亮、#2 远、#3 亮度 0（忽略）、#0 偏离视线 | 4 lights: #1 on the view line and bright, #2 far, #3 zero brightness (ignored), #0 off the line

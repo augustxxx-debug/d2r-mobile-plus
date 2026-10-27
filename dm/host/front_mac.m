@@ -99,7 +99,7 @@ static NSString *share_logs(NSString *to) {
     // Settings summary (same as perf_block in the iOS share log): the last "custom settings: load", "Graphics", frame-rate-mode (effective value, present path) and ray-traced-shadow (machine gate, effective value) lines of this run's log, so what the player turned on (including the frame-rate display, 120 fps and ray tracing) is visible at a glance; the whole info still goes through scrub below
     NSData *cur = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:@"host.log"] options:NSDataReadingMappedIfSafe error:nil];
     NSMutableString *sum = [NSMutableString stringWithString:@"\n—— 设置摘要 ——\n"];
-    for (NSString *k in @[@"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：第", @"光追点光：记录"]) {
+    for (NSString *k in @[@"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：第", @"光追点光：记录"]) {
         NSRange r = cur.length ? [cur rangeOfData:[k dataUsingEncoding:NSUTF8StringEncoding] options:NSDataSearchBackwards range:NSMakeRange(0, cur.length)] : NSMakeRange(NSNotFound, 0);
         if (r.location == NSNotFound) { [sum appendFormat:@"（没有「%@」行）\n", k]; continue; }
         const char *b = cur.bytes; NSUInteger ls = r.location, le = r.location; while (ls > 0 && b[ls - 1] != '\n') ls--; while (le < cur.length && b[le] != '\n') le++;

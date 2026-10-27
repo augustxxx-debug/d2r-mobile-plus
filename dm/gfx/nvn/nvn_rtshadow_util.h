@@ -55,3 +55,19 @@ static inline int rts_pick_lights_cpu(const float *L, uint32_t nrec, const doubl
     int n = 0; for (int i = 0; i < maxn && bi[i] >= 0; i++) { out_rec[n] = bi[i]; out_best[n] = best[i]; n++; }
     return n;
 }
+// 玩家随身光识别：游戏给角色一圈「光照半径」点光，它跟着相机走——相对画面中心视线起点 p0 的偏移连续多帧不变、而 p0 本身在动。每帧喂入候选（得分最高的记录）与 p0；
+// 返回 1 = 已认定为玩家光（rec 有效）。换候选、偏移跳变、相机静止都从头计；认定后只要候选还是它就一直成立
+// Player-light recognition: the game gives the character a "light radius" point light that follows the camera - its offset from the screen-center view-line origin p0 stays constant over many frames while p0 itself moves.
+// Feed the candidate (top-scored record) and p0 every frame; returns 1 = recognized as the player light (rec valid). A new candidate, an offset jump or a static camera restarts the count; once recognized it holds while the candidate stays the same
+typedef struct { int rec, frames, sure; double off[3], p0[3], moved; } rts_player_track;
+static inline int rts_player_feed(rts_player_track *t, int rec, const float *pos, const double *p0) {
+    double off[3] = {pos[0] - p0[0], pos[1] - p0[1], pos[2] - p0[2]};
+    if (rec < 0) { t->rec = -1; t->frames = 0; t->sure = 0; return 0; }
+    if (rec != t->rec) { t->rec = rec; t->frames = 0; t->moved = 0; t->sure = 0; memcpy(t->off, off, sizeof off); memcpy(t->p0, p0, 3 * sizeof *p0); return 0; }
+    double d = 0, m = 0; for (int i = 0; i < 3; i++) { double q = off[i] - t->off[i]; d += q * q; double c = p0[i] - t->p0[i]; m += c * c; }
+    double tol = 0.5 + 0.02 * sqrt(t->off[0] * t->off[0] + t->off[1] * t->off[1] + t->off[2] * t->off[2]);   // 偏移允许抖 0.5 单位 + 2% | the offset may jitter by 0.5 units + 2%
+    if (d > tol * tol) { t->frames = 0; t->moved = 0; t->sure = 0; memcpy(t->off, off, sizeof off); memcpy(t->p0, p0, 3 * sizeof *p0); return 0; }
+    t->frames++; t->moved += sqrt(m); memcpy(t->p0, p0, 3 * sizeof *p0);
+    if (!t->sure && t->frames >= 60 && t->moved > 4 * tol) t->sure = 1;   // 一秒以上偏移不变、相机累计走过的路远大于容差 | over a second of constant offset while the camera travelled well beyond the tolerance
+    return t->sure;
+}

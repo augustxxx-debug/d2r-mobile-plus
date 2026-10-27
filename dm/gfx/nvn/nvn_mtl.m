@@ -2796,6 +2796,7 @@ static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvS
 }
 // 管线键：当前状态 S + 通道格式（普通通道；合并通道另带 lmap / 特化函数，由 pso_get 填）
 // Pipeline key: current state S + pass formats (normal pass; a merged pass additionally carries lmap / specialized function, filled in by pso_get)
+static int g_draw_reentry;   // draw 正在为同一次绘制重来（资源版本变了）：nvn_rtshadow.inc 复用上一答案 | draw is retrying the same draw (resource version changed): nvn_rtshadow.inc reuses the previous answer
 static uint8_t g_pso_noraster;   // 本次绘制关光栅化（nvn_rtshadow.inc 的蒙皮位置导出） | this draw rasterizes nothing (skinned position export in nvn_rtshadow.inc)
 static void pso_key_fill(pso_key *k, NvShader *vs, NvShader *fs, const uint32_t cfmt[8], uint32_t dfmt, uint32_t sfmt, uint32_t samples, int lmap) {
     memset(k, 0, sizeof *k);
@@ -4698,7 +4699,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); return; }
     __unsafe_unretained NvProg *pr = prog_get(S.prog);
     rts_select_fs(pr);   // 光追阴影：按开关换片元 _rt 变体 | ray-traced shadows: swap in the _rt fragment variant per the switch
-    int rtsd = rts_draw(pr, dw, di, dw ? dw->prim : di->prim);   // 光追阴影：阴影图绘制进加速结构（1 = 不编码；2 = 蒙皮位置导出，换 _pos 顶点变体、关光栅化照常编码） | ray-traced shadows: shadow-map draws go into the acceleration structure (1 = do not encode; 2 = skinned position export: _pos vertex variant, rasterization off, encoded as usual)
+    int rtsd = rts_draw(pr, dw, di, dw ? dw->prim : di->prim); g_draw_reentry = 0;   // 光追阴影：阴影图绘制进加速结构（1 = 不编码；2 = 蒙皮位置导出，换 _pos 顶点变体、关光栅化照常编码） | ray-traced shadows: shadow-map draws go into the acceleration structure (1 = do not encode; 2 = skinned position export: _pos vertex variant, rasterization off, encoded as usual)
     if (g_ruler_truth == 0) {   // 尺子负对照（DM_NVN_RULER_NEG=<片元键>）：被测模式下丢掉该着色器的绘制，尺子必须报不等价 | Ruler negative control (DM_NVN_RULER_NEG=<fragment key>): in the mode under test drop this shader's draws, and the ruler must report non-equivalence
         static const char *neg; static int ng = -1; if (ng < 0) { neg = getenv("DM_NVN_RULER_NEG"); ng = neg && *neg; }
         if (ng && pr) for (int st = 0; st < 5; st++) { __unsafe_unretained NvShader *sh = pr->sh[st]; if (sh && sh->stage == 1 && !strncmp(sh->key, neg, strlen(neg))) { static int once; if (!once++) MLOG("DM_NVN_RULER_NEG：被测模式丢弃着色器 %s 的绘制", sh->key); return; } }
@@ -4876,7 +4877,7 @@ frz_plain:;
     if (pr->sh[1]) encode_args(en, pr->sh[1], 1, 0);
     // 参数绑定在登记表锁内捕获实际资源；资格判断到绑定期间有版本变化，则在任何GPU draw前切开重试。
     // Parameter binding captures the actual resources under the registry lock; if the version changed between the eligibility check and the binding, split and retry before any GPU draw.
-    if (g_rt_range_active && (g_pass.reg_gen != g_reg_gen || g_pass.ser_gen != g_ser_gen || g_pass.range_dirty != nvn_dirty_now())) { rp_end(); draw(dw, di); return; }
+    if (g_rt_range_active && (g_pass.reg_gen != g_reg_gen || g_pass.ser_gen != g_ser_gen || g_pass.range_dirty != nvn_dirty_now())) { rp_end(); g_draw_reentry = 1; draw(dw, di); return; }
     int prim = dw ? dw->prim : di->prim;
     MTLPrimitiveType mp;
     switch (prim) {
