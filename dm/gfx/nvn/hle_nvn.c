@@ -1385,7 +1385,7 @@ static double present_auto_hz(double screen_hz) {
     // 自适应目标是最高60，而旧Apple策略是至少60；两者不共用取整方向。首帧/刷新率改变也受上限约束。
     // Adaptive pacing caps at 60; the legacy Apple policy has a floor of 60. Cap the first frame and refresh changes too.
     if (pace_adapt_enabled() && screen_hz > 0) return screen_hz / nvn_adaptive_divisor(screen_hz, g_pa_k, g_pa_screen_hz);
-    return dm_pace_hz(screen_hz, 60);
+    return dm_pace_hz(screen_hz, nvn_present_floor_hz(mtl_fps_target()));   // 120 帧档 = 120（与显示节拍同速，见 nvn_pace.h nvn_present_floor_hz），其余 60 | 120 fps mode = 120 (same rate as the display link, see nvn_pace.h nvn_present_floor_hz), otherwise 60
 }
 static int g_hz = -1, g_display_mode, g_hz_auto;   // g_hz_auto：有窗口、没用 DM_PRESENT_HZ 钉住——帧率跟着窗口所在屏的刷新率取整除档（每帧重读，换屏即换） | g_hz_auto: has a window and not pinned by DM_PRESENT_HZ; the frame rate takes the evenly dividing tier of the refresh rate of the screen the window is on (re-read every frame, changes with the screen)
 void nvn_present_config(int hz, int display_mode) { g_hz = hz; g_display_mode = display_mode; g_hz_auto = 0; }
@@ -1584,7 +1584,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     if (g_hz_auto && !dm_detclock_enabled()) pace_adapt_tick(mtl_display_refresh());
     uint64_t period = present_period(o), now = dm_detclock_enabled() ? guest_ns() : now_ns();
     nvn_pacer pc = {o->pace};
-    uint64_t slot = now + nvn_pace(&pc, now, period);
+    uint64_t slot = now + (mtl_link_active() ? nvn_pace_link : nvn_pace)(&pc, now, period);   // 显示节拍驱动时游戏可比节拍器快，目标不许往前漂（nvn_pace.h nvn_pace_link） | When the display link drives, the game can outrun the pacer; the target must not drift ahead (nvn_pace.h nvn_pace_link)
     o->pace = pc.target;
     if (idx >= 0 && idx < 4) o->avail[idx] = period ? slot + period : 0;
     static uint64_t prev_slot; if (prev_slot && period) trow(f, "@display_ms", (slot - prev_slot) / 1e6); prev_slot = slot;   // 屏幕上相邻两帧的显示间隔（掉帧看这个） | display interval between two adjacent frames on screen (this is the one to look at for dropped frames)

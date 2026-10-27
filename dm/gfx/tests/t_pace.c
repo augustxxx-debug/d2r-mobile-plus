@@ -36,6 +36,40 @@ int main(void) {
         double got = nvn_pace_hz(h[i].scr, h[i].floor); int ok = got > h[i].want - 1e-9 && got < h[i].want + 1e-9;
         printf("%-52s 期望 %7.3f Hz → 真结果 %7.3f Hz %s\n", h[i].why, h[i].want, got, ok ? "✓" : "✗"); fail += !ok; n++;
     }
+    // 显示节拍驱动（nvn_pace_link）：游戏跟着节拍走、比节拍器周期快（真机：DM_FPS=120 单开，节拍 120 Hz、节拍器 60 Hz，游戏 80–90 帧）。
+    // 旧做法 nvn_pace 的目标每帧多走（周期 − 帧间隔），2000 帧后领先当前时刻 11 秒，节拍回调一迟到，取图兜底就睡到那时（拍 984 卡死）。
+    // 期望：目标领先当前时刻不超过一个周期，兜底可睡到的时刻（目标 + 周期）不超过两个周期
+    // Display-link driven (nvn_pace_link): the game follows the display link and runs faster than the pacer period (real device: DM_FPS=120 alone, link 120 Hz, pacer 60 Hz, game 80–90 fps).
+    // The old nvn_pace target advanced (period − frame interval) extra per frame, leading now by 11 s after 2000 frames; one late link callback and the acquire fallback slept until then (stuck at tick 984).
+    // Expected: the target leads now by at most one period, and the fallback sleep deadline (target + period) by at most two periods
+    {
+        nvn_pacer q = {0}; uint64_t t = 1000 * MS, lead_max = 0, step = 11 * MS; int ok = 1;
+        for (int i = 0; i < 2000; i++, t += step) { nvn_pace_link(&q, t, P); uint64_t lead = q.target > t ? q.target - t : 0; if (lead > lead_max) lead_max = lead; }
+        ok = lead_max <= P && q.target + P <= t - step + 2 * P;
+        printf("%-52s 期望领先 ≤ %7.3f ms → 真结果 %9.3f ms %s\n", "节拍 11 ms、节拍器 16.7 ms（2000 帧）：目标不漂", P / 1e6, lead_max / 1e6, ok ? "✓" : "✗"); fail += !ok; n++;
+        // 与节拍同速（8.33 ms 节拍、8.33 ms 周期，回调时刻 ±1 ms 抖动）：照常保持相位，不被误判成漂移而清零
+        // Same rate as the link (8.33 ms ticks, 8.33 ms period, callback jitter ±1 ms): phase is kept as usual, not mistaken for drift and reset
+        const uint64_t Q = 8333333; nvn_pacer r = {0}; uint64_t t2 = 1000 * MS, base = 0; int reset = 0;
+        for (int i = 0; i < 600; i++) { uint64_t now = t2 + (uint64_t)i * Q + (i % 2 ? MS : 0); uint64_t before = r.target; nvn_pace_link(&r, now, Q); if (i == 0) base = r.target; else if (r.target != before + Q && r.target != now) reset++; }
+        ok = reset == 0 && r.target == base + 599 * Q;
+        printf("%-52s 期望相位保持 → 真结果 %s %s\n", "节拍与节拍器同速（±1 ms 抖动）：相位不变", reset ? "被重置" : "保持", ok ? "✓" : "✗"); fail += !ok; n++;
+        // 比节拍器慢（节拍器 8.33 ms，游戏 11 ms 一帧）：同 nvn_pace，每帧迟到、不等
+        // Slower than the pacer (pacer 8.33 ms, game 11 ms per frame): same as nvn_pace, late every frame, no wait
+        nvn_pacer s = {0}; uint64_t t3 = 1000 * MS, waited = 0;
+        for (int i = 0; i < 300; i++, t3 += step) waited += nvn_pace_link(&s, t3, Q);
+        ok = waited == 0 && s.target <= t3;
+        printf("%-52s 期望等 0 → 真结果 %8.3f ms %s\n", "游戏比节拍器慢（11 ms / 8.33 ms）：不等", waited / 1e6, ok ? "✓" : "✗"); fail += !ok; n++;
+    }
+    // 出图节拍器的下限跟目标帧率走（nvn_present_floor_hz）：120 帧档在 120 Hz 屏上节拍器也是 120，与显示节拍一致；60 Hz 屏只能 60；省电 30 由显示节拍定，节拍器照旧 60 档
+    // The pacer floor follows the target frame rate (nvn_present_floor_hz): in 120 fps mode on a 120 Hz screen the pacer is 120 too, matching the display link; a 60 Hz screen can only do 60; power saving 30 is set by the display link, the pacer keeps the 60 tier
+    struct { double scr; int target; double want; const char *why; } f[] = {
+        {120, 120, 120, "目标 120、120 Hz 屏：节拍器 120（与显示节拍一致）"}, {60, 120, 60, "目标 120、60 Hz 屏：60"}, {144, 120, 144, "目标 120、144 Hz 屏：144"},
+        {120, 60, 60, "目标 60、120 Hz 屏：60（与原先相同）"}, {120, 30, 60, "省电 30、120 Hz 屏：节拍器 60 档（与原先相同）"},
+    };
+    for (int i = 0; i < (int)(sizeof f / sizeof *f); i++) {
+        double got = nvn_pace_hz(f[i].scr, nvn_present_floor_hz(f[i].target)); int ok = got > f[i].want - 1e-9 && got < f[i].want + 1e-9;
+        printf("%-52s 期望 %7.3f Hz → 真结果 %7.3f Hz %s\n", f[i].why, f[i].want, got, ok ? "✓" : "✗"); fail += !ok; n++;
+    }
     printf("== %d 项，失败 %d ==\n", n, fail);
     return fail != 0;
 }

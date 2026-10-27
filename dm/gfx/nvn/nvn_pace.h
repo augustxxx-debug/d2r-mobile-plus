@@ -19,6 +19,25 @@ static inline uint64_t nvn_pace(nvn_pacer *p, uint64_t now, uint64_t period) {
     return 0;
 }
 
+// 显示节拍驱动出图时（取图先等显示节拍，节拍器只作等不到节拍时的兜底）：游戏跟着节拍走，可以比节拍器的周期跑得快，
+// nvn_pace 的目标时刻就每帧多走（周期 − 实际帧间隔）、越漂越远。真机：DM_FPS=120 单开，节拍 120 Hz、节拍器 60 Hz，游戏 80–90 帧，
+// 目标每帧超前 5 ms 多；节拍回调迟到一次（39.7 ms），取图兜底睡到「目标 + 周期」即几十秒后，游戏卡在拍 984 / 1447。
+// 上一帧的节拍点还没到游戏就来了（只有跑得比节拍器快才会这样）就从当前时刻重新起拍：之后目标最多领先当前时刻一个周期；同速时的回调抖动照常保持相位
+// When the display link drives presents (acquire waits for the link first; the pacer is only the fallback when no tick comes): the game follows the link and can run faster than the pacer period,
+// so nvn_pace's target advances (period − actual frame interval) extra each frame and drifts ever further. Real device: DM_FPS=120 alone, link 120 Hz, pacer 60 Hz, game 80–90 fps,
+// target ahead by 5+ ms more each frame; one late link callback (39.7 ms) and the acquire fallback slept until "target + period", tens of seconds later, with the game stuck at tick 984 / 1447.
+// When the game arrives before the previous frame's slot (only possible when running faster than the pacer), restart the cadence from now: afterwards the target leads now by at most one period; callback jitter at equal rates keeps the phase as usual
+static inline uint64_t nvn_pace_link(nvn_pacer *p, uint64_t now, uint64_t period) {
+    if (period && p->target > now) p->target = now;
+    return nvn_pace(p, now, period);
+}
+
+// 节拍器的下限帧率：120 帧档（DM_FPS=120 / 设置页 120）= 120，与显示节拍同速（两者不一致时游戏跟着 120 Hz 节拍跑、节拍器按 60 走，见 nvn_pace_link）；
+// 其余 60——省电 30 帧由显示节拍决定，节拍器照旧 60 档（60 / 120 Hz 屏与原先逐字相同）
+// The pacer's floor frame rate: in 120 fps mode (DM_FPS=120 / settings 120) = 120, the same rate as the display link (when they differ the game runs with the 120 Hz link while the pacer goes by 60, see nvn_pace_link);
+// otherwise 60 -- power saving 30 fps is decided by the display link and the pacer keeps the 60 tier (identical to before on 60 / 120 Hz screens)
+static inline double nvn_present_floor_hz(int fps_target) { return fps_target == 120 ? 120 : 60; }
+
 // 出图帧率 = 屏幕刷新率的整数分之一里不低于目标（60，省电模式 30）的最小一档：每帧在屏上停整数个刷新周期，没有交替抖动。
 // 60 / 120 Hz 屏 → 60；144 → 72；165 → 82.5；100 → 100；240 → 60；省电 30：120 → 30、144 → 36。刷新率读不到（0）就按目标。
 // 0.02 的余量让 119.88 / 59.94 这类 NTSC 档按 2 / 1 倍算
