@@ -104,10 +104,10 @@ def test_point_light_transform_is_noop_without_cube():
 def test_skinned_vertex_exports_clip_position():
     out, aid = rv.transform_pos(VS)
     assert aid == 2 and 'device float4* rts_pos [[id(2)]];' in out
-    assert 'uint rts_vid [[vertex_id]], uint rts_bv [[base_vertex]])' in out
-    body = out[out.index('vertex main0_out main0('):]
-    assert body.rstrip().endswith('spvDescriptorSet0.rts_pos[rts_vid - rts_bv] = out.gl_Position;\n    return out;\n}')
-    assert body.count('return out;') == 1
+    assert 'vertex void main0(' in out and 'uint rts_vid [[vertex_id]], uint rts_bv [[base_vertex]])' in out   # 关光栅化要求 void 返回 | rasterization off needs a void return
+    body = out[out.index('vertex void main0('):]
+    assert body.rstrip().endswith('spvDescriptorSet0.rts_pos[rts_vid - rts_bv] = out.gl_Position;\n    return;\n}')
+    assert 'return out;' not in body
 
 
 def test_skin_key_table_matches_translation_layer():

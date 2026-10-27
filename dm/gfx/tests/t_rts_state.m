@@ -62,7 +62,7 @@ static rts_mesh *mesh_of(int i) {   // 用同一次绘制的键找网格（不�
 }
 
 int main(void) { @autoreleasepool {
-    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); mtl_init();
+    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_REPLACE", "1", 1); setenv("DM_RT_SHADOW_DBG", "1", 1); mtl_init();   // 替换模式（就绪闸门管的就是跳过哪些阴影绘制）；调试叠加 = 合成那一步，测试里没有 _rt 变体 | replace mode (the gate decides which shadow draws are skipped); debug overlay = the compositing step, there are no _rt variants in the test
     if (!mtl_rt_shadow_supported()) { printf("SKIP：本机不支持光追阴影\n"); return 77; }
     setup(); rts_on(); g_rts.on = 1;   // 相当于设置页开着光追阴影（g_rts.on 置 0 = 关） | as if the settings page had ray-traced shadows on (g_rts.on = 0 = off)
     int ok, r; int a[1] = {0};
@@ -103,6 +103,9 @@ int main(void) { @autoreleasepool {
     { rts_mesh *m = mesh_of(40); EXPECT("网格 40 在缓存且没建成", 1, m && !RTS_MESH_READY(m)); }
     int before = g_rts.nmesh; for (int i = 0; i < 1300; i++) rts_frame_begin(++g_frame);
     EXPECT("1300 帧后未建成的网格 40 被淘汰", 1, mesh_of(40) == NULL); EXPECT("1300 帧后缓存清空", 0, g_rts.nmesh); (void)before;
+    // 9. 阶段零缺省「保留原图」：阴影绘制一律照原版编码，光追照建照追（本帧任何一步失败都等于原版） | 9. Phase-0 default "keep raster": every shadow draw is encoded as original, ray tracing still builds and traces (any failure in the frame equals the original)
+    g_rts.replace = 0; int e2[2] = {0, 1}; int kept = 0; for (int i = 0; i < 4; i++) kept += full_frame(1, e2, 2, &ok);
+    EXPECT("保留原图：阴影绘制全部照原版编码（返回 0）", 0, kept); EXPECT("保留原图：本帧照样进 TLAS", 2, g_rts.ninst); EXPECT("保留原图：遮罩照算", 1, g_rts.mask_done); EXPECT("保留原图：GPU 无错", 1, ok);
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

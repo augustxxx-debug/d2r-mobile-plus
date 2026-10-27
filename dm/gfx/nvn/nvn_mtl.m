@@ -3041,7 +3041,11 @@ static uint64_t dummy_buf_gpu(void) { static uint64_t gpu; if (!gpu) gpu = dummy
 static uint8_t g_args_dirty[6] = {1, 1, 1, 1, 1, 1};
 static uint64_t g_args_reg_seen, g_args_dirty_seen;
 static inline void args_dirty_all(void) { memset(g_args_dirty, 1, sizeof g_args_dirty); }
-static uint64_t rts_mask_rid(void); static id<MTLTexture> rts_mask_tex(void); static uint64_t rts_pos_gpu(void); static id<MTLBuffer> rts_pos_buf(void); static uint64_t rts_pmask_rid(void); static id<MTLTexture> rts_pmask_tex(void); static uint64_t rts_plidx_gpu(void); static id<MTLBuffer> rts_plidx_buf(void);   // nvn_rtshadow.inc：光追阴影遮罩（没有时为 1x1 全亮） | nvn_rtshadow.inc: ray-traced shadow mask (1x1 fully lit when absent)
+#define RTS_LIGHT_TBUF_REG 8   // 主通道片元着色器的光源记录纹理缓冲 fp_t_tcb_6A 所在贴图槽（230 个 _rt 变体一致） | texture slot of the main-pass fragment shaders' light record texture buffer fp_t_tcb_6A (the same in all 230 _rt variants)
+#define RTS_LIGHT_HDR_REG 4   // 主通道片元着色器的簇头存储缓冲 fp_s0 | cluster-header storage buffer fp_s0 of the main-pass fragment shaders
+#define RTS_LIGHT_IDX_REG 5   // 簇槽位 → 光源记录 texel 下标 fp_s1 | cluster slot → light record texel index fp_s1
+static uint64_t rts_mask_rid(void); static id<MTLTexture> rts_mask_tex(void); static uint64_t rts_pos_gpu(void); static id<MTLBuffer> rts_pos_buf(void); static uint64_t rts_pmask_rid(void); static id<MTLTexture> rts_pmask_tex(void);
+static uint64_t rts_plidx_gpu(void); static id<MTLBuffer> rts_plidx_buf(void); static uint64_t rts_lcopy_rid(NvShader *sh, void **tex); static int rts_keep_raster(void); static void rts_export_state(NvProg *pr, int on);   // nvn_rtshadow.inc：光追阴影遮罩（没有时为 1x1 全亮） | nvn_rtshadow.inc: ray-traced shadow mask (1x1 fully lit when absent)
 static inline void args_sync_dirty(void) {
     uint64_t reg = g_reg_gen, dirty = nvn_dirty_now();
     if (reg != g_args_reg_seen || dirty != g_args_dirty_seen) {
@@ -3184,6 +3188,7 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             int tid = reg < 128 ? (int)(S.tex[nvn_stage][reg] & 0xfffff) : 0;
             void *tv = NULL; uint64_t trid = tid ? tex_fast_rid(tid, &tv) : 0; __unsafe_unretained id<MTLTexture> t = (__bridge id<MTLTexture>)tv;
             if (t && t.textureType != MTLTextureTypeTextureBuffer) { RED_ONCE(40, "类型化缓冲槽绑的不是缓冲贴图（贴图号 %d 类型 %lu）", tid, (unsigned long)t.textureType); t = nil; }
+            if (nvn_stage == 1 && reg == RTS_LIGHT_TBUF_REG) { void *ov = NULL; uint64_t orid = rts_lcopy_rid(sh, &ov); if (orid) { trid = orid; t = (__bridge id<MTLTexture>)ov; } }   // 光追：_rt 变体读光源记录的派生副本（玩家光调弱） | ray tracing: _rt variants read the derived copy of the light records (player light weakened)
             if (bl) PD("B %llu st%d tbuf reg%d tid=%d %s ser=%llu", g_stat_pass, nvn_stage, reg, tid, t ? "实" : "哑", t && tid < g_ntreg ? g_treg[tid].t.serial : 0ull);
             if (!t) { t = dummy_tbuf(b->dpf); trid = g_dummy_tbuf_rid[b->dpf & 3]; }
             slots[aid] = trid;
@@ -4699,7 +4704,8 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); return; }
     __unsafe_unretained NvProg *pr = prog_get(S.prog);
     rts_select_fs(pr);   // 光追阴影：按开关换片元 _rt 变体 | ray-traced shadows: swap in the _rt fragment variant per the switch
-    int rtsd = rts_draw(pr, dw, di, dw ? dw->prim : di->prim); g_draw_reentry = 0;   // 光追阴影：阴影图绘制进加速结构（1 = 不编码；2 = 蒙皮位置导出，换 _pos 顶点变体、关光栅化照常编码） | ray-traced shadows: shadow-map draws go into the acceleration structure (1 = do not encode; 2 = skinned position export: _pos vertex variant, rasterization off, encoded as usual)
+    int rts_reent = g_draw_reentry, rtsd = rts_draw(pr, dw, di, dw ? dw->prim : di->prim); g_draw_reentry = 0;
+    if (rtsd == 2 && !rts_reent && rts_keep_raster()) { g_rts_plain = 1; draw(dw, di); g_rts_plain = 0; rts_export_state(pr, 1); }   // 保留原图模式：蒙皮导出前先照原版画进阴影图 | keep-raster mode: draw the original into the shadow map before the skinned export   // 光追阴影：阴影图绘制进加速结构（1 = 不编码；2 = 蒙皮位置导出，换 _pos 顶点变体、关光栅化照常编码） | ray-traced shadows: shadow-map draws go into the acceleration structure (1 = do not encode; 2 = skinned position export: _pos vertex variant, rasterization off, encoded as usual)
     if (g_ruler_truth == 0) {   // 尺子负对照（DM_NVN_RULER_NEG=<片元键>）：被测模式下丢掉该着色器的绘制，尺子必须报不等价 | Ruler negative control (DM_NVN_RULER_NEG=<fragment key>): in the mode under test drop this shader's draws, and the ruler must report non-equivalence
         static const char *neg; static int ng = -1; if (ng < 0) { neg = getenv("DM_NVN_RULER_NEG"); ng = neg && *neg; }
         if (ng && pr) for (int st = 0; st < 5; st++) { __unsafe_unretained NvShader *sh = pr->sh[st]; if (sh && sh->stage == 1 && !strncmp(sh->key, neg, strlen(neg))) { static int once; if (!once++) MLOG("DM_NVN_RULER_NEG：被测模式丢弃着色器 %s 的绘制", sh->key); return; } }

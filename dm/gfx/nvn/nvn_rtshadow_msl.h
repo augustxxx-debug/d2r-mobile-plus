@@ -43,15 +43,42 @@ static const char *k_rts_msl =
 "  int r = int(clamp(dm * b.soft, 0.0, 12.0)); if (r == 0) { dst.write(float4(c.x, dm, 0, 0), g); return; }\n"
 "  float sum = 0.0, wsum = 0.0; for (int k = -r; k <= r; k++) { int2 q = clamp(int2(g) + b.dir * k, int2(0), int2(b.size) - 1); float2 s = src.read(uint2(q)).xy; float z = depth.read(uint2(q)); float wgt = 1.0 / (1.0 + 4000.0 * abs(z - z0)); sum += s.x * wgt; wsum += wgt; }\n"
 "  dst.write(float4(sum / wsum, dm, 0, 0), g); }\n"
-// 点光：半分辨率，每像素向挑中的每盏光一条遮挡射线（到光源为止），RGBA 各一盏 | point lights: half resolution, one occlusion ray per pixel toward each chosen light (up to the light), one per RGBA channel
-"struct P { float4x4 invVP; float4 lp[4]; uint2 size; uint2 full; uint n; float bias; float2 pad; };\n"
-"kernel void rts_ptrace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> pm [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant P &k [[buffer(1)]], uint2 g [[thread_position_in_grid]]) {\n"
+// 点光（阶段零）：光源记录由 GPU 在本帧、主通道之前读（与片元读的是同一份），选灯、追踪、派生副本都在 GPU 上，CPU 不读游戏内存。
+// 记录 = 每盏 4 个 float4 texel：[0] 位置、[1] 颜色、[2].w 阴影标志、[3] 打包参数（按 _rt 变体里原 MSL 的读法）。Picks 与 CPU 侧 rts_picks 布局一致（128 字节）
+// Point lights (phase 0): the light records are read by the GPU in this frame before the main pass (the same copy the fragments read); picking, tracing and the derived copy all run on the GPU and the CPU never reads game memory.
+// Record = 4 float4 texels per light: [0] position, [1] color, [2].w shadow flag, [3] packed parameters (as the original MSL in the _rt variants reads them). Picks matches the CPU-side rts_picks layout (128 bytes)
+"struct Picks { int4 rec; float4 pos[4]; int n; int player; int cand_rec; int pad; float4 cand_off; float4 p0; };\n"
+// 选灯（单线程）：得分 = 最大颜色分量 / (到画面中心视线的距离² + 1e4)；上一帧选中的（位置 1 单位内）得分 ×1.5（滞后，免得排序抖动换灯）；另出：离视线最近的候选（给 CPU 认玩家光）、
+// 与 CPU 认定的玩家光偏移匹配的记录（派生副本里调弱它）| picking (one thread): score = max color component / (distance² to the screen-center view line + 1e4); last frame's picks (within 1 unit) get ×1.5 (hysteresis so the order does not flip lights);
+// also outputs the candidate nearest the view line (for CPU player-light recognition) and the record matching the player-light offset the CPU confirmed (weakened in the derived copy)
+"struct PK { float4x4 invVP; uint nrec; uint maxn; uint player_on; float ptol; float4 poff; };\n"
+"kernel void rts_pick(device const float4 *L [[buffer(0)]], device Picks &o [[buffer(1)]], constant PK &k [[buffer(2)]], device float4 *prev [[buffer(3)]], uint t [[thread_position_in_grid]]) {\n"
+"  if (t) return; float4 a = k.invVP * float4(0, 0, 0.5, 1), b = k.invVP * float4(0, 0, 0.9, 1); float3 p0 = a.xyz / a.w, dir = normalize(b.xyz / b.w - p0);\n"   // 视线取深度 0.5 / 0.9 两点（深度 0 / 1 在本游戏的投影下会落到无穷远） | the view line uses depth 0.5 / 0.9 (depth 0 / 1 lands at infinity with this game's projection)
+
+"  float best[4] = {0, 0, 0, 0}; int bi[4] = {-1, -1, -1, -1}; float cd = 1e30; int cr = -1, pl = -1; float pd = 1e30; uint mx = min(k.maxn, 4u);\n"
+"  for (uint r = 0; r < k.nrec; r++) { float3 pos = L[r * 4].xyz, col = L[r * 4 + 1].xyz; float lum = max(col.x, max(col.y, col.z));\n"
+"    if (!(lum > 0.0) || any(isnan(pos)) || any(isinf(pos))) continue;\n"
+"    float3 v = pos - p0; float3 q = v - dot(v, dir) * dir; float d2 = dot(q, q); if (d2 < cd) { cd = d2; cr = int(r); }\n"
+"    if (k.player_on) { float e = length(v - k.poff.xyz); if (e < k.ptol && e < pd) { pd = e; pl = int(r); } }\n"
+"    float s = lum / (d2 + 1e4); for (uint j = 0; j < 4; j++) if (prev[j].w > 0.0 && distance(prev[j].xyz, pos) < 1.0) { s *= 1.5; break; }\n"
+"    int kk = -1; for (uint j = 0; j < mx; j++) if (bi[j] < 0 || s > best[j]) { kk = int(j); break; }\n"
+"    if (kk < 0) continue; for (int j = int(mx) - 1; j > kk; j--) { best[j] = best[j - 1]; bi[j] = bi[j - 1]; } best[kk] = s; bi[kk] = int(r); }\n"
+"  int n = 0; for (uint j = 0; j < mx; j++) n += bi[j] >= 0;\n"
+"  o.n = n; for (int j = 0; j < 4; j++) { bool u = j < n; o.rec[j] = u ? bi[j] * 4 : -1; float4 pp = u ? float4(L[bi[j] * 4].xyz, 1) : float4(0); o.pos[j] = pp; prev[j] = pp; }\n"
+"  o.player = pl; o.cand_rec = cr; o.cand_off = cr >= 0 ? float4(L[cr * 4].xyz - p0, 1) : float4(0); o.p0 = float4(p0, 1); }\n"
+// 派生副本：整份光源记录拷到我们自己的缓冲，玩家光（o.player）的颜色乘倍率；_rt 变体绑这份副本，游戏的原记录不动 | derived copy: the whole light record buffer copied into our own buffer with the player light's (o.player) color scaled; the _rt variants bind this copy and the game's records stay untouched
+"struct LC { uint ntex; float scale; uint2 pad; };\n"
+"kernel void rts_lcopy(device const float4 *L [[buffer(0)]], device float4 *D [[buffer(1)]], device const Picks &o [[buffer(2)]], constant LC &c [[buffer(3)]], uint i [[thread_position_in_grid]]) {\n"
+"  if (i >= c.ntex) return; float4 v = L[i]; if (o.player >= 0 && i == uint(o.player) * 4 + 1) v.xyz *= c.scale; D[i] = v; }\n"
+// 点光追踪：半分辨率（宽高各半），每像素向 GPU 选中的每盏光一条遮挡射线（到光源为止），RGBA 各一盏 | point-light trace: half resolution (half width and height), one occlusion ray per pixel toward each GPU-picked light (up to the light), one per RGBA channel
+"struct P { float4x4 invVP; uint2 size; uint2 full; float bias; float pad0; float pad1; float pad2; };\n"
+"kernel void rts_ptrace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> pm [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant P &k [[buffer(1)]], device const Picks &o [[buffer(2)]], uint2 g [[thread_position_in_grid]]) {\n"
 "  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 fg = min(g * 2, k.full - 1); float z = depth.read(fg); float4 r = float4(1);\n"
 "  if (z < 1.0) {\n"
 "    float2 ndc = float2((float(fg.x) + 0.5) / float(k.full.x) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(k.full.y) * 2.0);\n"
 "    float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
 "    intersector<instancing> is; is.accept_any_intersection(true); is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque);\n"
-"    for (uint i = 0; i < k.n; i++) { float3 d = k.lp[i].xyz - p; float len = length(d); if (len <= k.bias * 2.0) continue; d /= len;\n"
+"    for (int i = 0; i < min(o.n, 4); i++) { float3 d = o.pos[i].xyz - p; float len = length(d); if (len <= k.bias * 2.0) continue; d /= len;\n"
 "      ray ry; ry.origin = p + d * k.bias; ry.direction = d; ry.min_distance = 0.0; ry.max_distance = len - k.bias * 2.0;\n"
 "      intersection_result<instancing> h = is.intersect(ry, as, 0xffu); if (h.type != intersection_type::none) r[i] = 0.0; } }\n"
 "  pm.write(r, g); }\n"

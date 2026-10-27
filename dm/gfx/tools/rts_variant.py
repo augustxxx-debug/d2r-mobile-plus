@@ -23,7 +23,7 @@ import os, re, sys, json, tempfile, subprocess, concurrent.futures as cf
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../ios/tools')); import ios_metal
 SRC = OUT = None; WANT = set()   # 命令行在文件末尾赋值；测试直接调各变换函数 | assigned at the end of the file from the command line; tests call the transformation functions directly
 CASCADES = ('fp_t_cb196610_105980A8', 'fp_t_cb196610_105980AA')
-VERSION = 'rts_variant 4'   # 改了变换规则就升版本：旧产物全部重出 | bump when the transformation changes: every old product is regenerated
+VERSION = 'rts_variant 5'   # 改了变换规则就升版本：旧产物全部重出 | bump when the transformation changes: every old product is regenerated
 SKIN_KEYS = ('0fa4eb7559f1637a', '1d97d33ab66abcba', '3deaf68fd65b5298', '4dffa355f2fbcdaf', '54c93fa22abff9ee', '64dd7d022f3fae39', '67e2ebc28c830f44', 'add86ee8e20f89b9', 'b3ae9be5cc670f35', 'fbf6dc1873a449e9')
 def fresh(key, suffix):   # 产物已有且版本一致 | product present with the same version
     try: return VERSION in json.load(open(os.path.join(OUT, key + suffix + '.json'))).get('notes', [])
@@ -38,10 +38,12 @@ def transform_pos(msl):   # 顶点：写裁剪坐标到 rts_pos | vertex: write 
     msl = msl[:m.end(1)] + '\n    device float4* rts_pos [[id(%d)]];' % aid + msl[m.end(1):]
     sig = 'vertex main0_out main0(main0_in in [[stage_in]], constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]])'
     if sig not in msl: raise ValueError('入口签名不是预期的')
-    msl = msl.replace(sig, 'vertex main0_out main0(main0_in in [[stage_in]], constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]], uint rts_vid [[vertex_id]], uint rts_bv [[base_vertex]])', 1)
+    # 关光栅化的管线要求顶点函数返回 void（Mac 实测：否则建管线报错）：入口改成 void，末尾写完导出就返回 | a pipeline with rasterization off needs a void vertex function (measured on the Mac: pipeline creation fails otherwise): the entry returns void and returns right after the export
+    msl = msl.replace(sig, 'vertex void main0(main0_in in [[stage_in]], constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]], uint rts_vid [[vertex_id]], uint rts_bv [[base_vertex]])', 1)
     i = msl.rfind('    return out;\n}')
     if i < 0: raise ValueError('没找到入口末尾的 return out')
-    msl = msl[:i] + '    spvDescriptorSet0.rts_pos[rts_vid - rts_bv] = out.gl_Position;\n' + msl[i:]
+    msl = msl[:i] + '    spvDescriptorSet0.rts_pos[rts_vid - rts_bv] = out.gl_Position;\n    return;\n}' + msl[i + len('    return out;\n}'):]
+    if msl.count('return out;'): raise ValueError('入口中途还有 return out')
     return msl, aid
 def strip_call(s, start):   # start 指向 "sample_compare(" 的左括号；返回右括号下标 | start points at the "(" of "sample_compare("; returns the index of the matching ")"
     depth = 0
@@ -103,13 +105,18 @@ def transform_point(msl, aid):   # 点光：立方体阴影采样 → 先查光�
     msl = msl[:m.end(1)] + '\n    texture2d<float> rts_pmask [[id(%d)]];\n    constant int4* rts_plidx [[id(%d)]];' % (aid, aid + 1) + msl[m.end(1):]
     k = msl.find('\nfragment '); msl = msl[:k + 1] + RTS_PL_FN + msl[k + 1:]
     return msl, n
+MAC = os.environ.get('RTS_TARGET') == 'mac'   # RTS_TARGET=mac：出 Mac 宿主用的 macosx metallib（输出目录 = Mac 着色器库，DM_MSL_DIR/b-<链>） | RTS_TARGET=mac: emit macosx metallibs for the Mac host (output dir = the Mac shader library, DM_MSL_DIR/b-<chain>)
+MAC_RECORD = 'xcrun -sdk macosx metal -c; xcrun -sdk macosx metallib'   # 同 dmsh_build.py | same as dmsh_build.py
+def mac_compile(msl, air, lib):
+    subprocess.run(['xcrun', '-sdk', 'macosx', 'metal', '-c', msl, '-o', air], check=True)
+    subprocess.run(['xcrun', '-sdk', 'macosx', 'metallib', air, '-o', lib], check=True)
 def emit(key, suffix, out, j, binding, note):
     j['key'] = key + suffix
     if binding: j['bindings'].append(binding)
-    j['chain_metal'] = ios_metal.RECORD; j['notes'] = [n for n in j.get('notes', []) if not n.startswith('rts_variant')] + [VERSION, note]
+    j['chain_metal'] = MAC_RECORD if MAC else ios_metal.RECORD; j['notes'] = [n for n in j.get('notes', []) if not n.startswith('rts_variant')] + [VERSION, note]
     with tempfile.TemporaryDirectory() as td:
         mp, ap = os.path.join(td, key + suffix + '.metal'), os.path.join(td, key + suffix + '.air'); open(mp, 'w').write(out)
-        try: ios_metal.compile(mp, ap, os.path.join(OUT, key + suffix + '.metallib'))
+        try: (mac_compile if MAC else ios_metal.compile)(mp, ap, os.path.join(OUT, key + suffix + '.metallib'))
         except subprocess.CalledProcessError as e: return 'FAIL %s' % e
     open(os.path.join(OUT, key + suffix + '.metal'), 'w').write(out); json.dump(j, open(os.path.join(OUT, key + suffix + '.json'), 'w'), indent=1, ensure_ascii=False)
     return 'ok'

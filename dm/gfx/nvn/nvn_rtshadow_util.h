@@ -39,7 +39,7 @@ static inline uint32_t rts_strip_expand(const void *ib, int isz, int n, uint32_t
 // screen-center view line = ia·(0,0,0,1) to ia·(0,0,1,1); score = max color component / (distance² to the line + 1e4); top maxn (≤ 4); out_rec = record indices, out_best = scores, p0 = line origin
 static inline int rts_pick_lights_cpu(const float *L, uint32_t nrec, const double *ia, int maxn, int *out_rec, double *out_best, double *p0) {
     if (maxn > 4) maxn = 4; if (maxn < 1) return 0;
-    double p1[3]; { double c0[4] = {0, 0, 0, 1}, c1[4] = {0, 0, 1, 1}, o0[4], o1[4];
+    double p1[3]; { double c0[4] = {0, 0, 0.5, 1}, c1[4] = {0, 0, 0.9, 1}, o0[4], o1[4];   // 同 rts_pick：深度 0.5 / 0.9 | same as rts_pick: depth 0.5 / 0.9
         for (int r = 0; r < 4; r++) { o0[r] = o1[r] = 0; for (int c = 0; c < 4; c++) { o0[r] += ia[c * 4 + r] * c0[c]; o1[r] += ia[c * 4 + r] * c1[c]; } }
         if (o0[3] == 0 || o1[3] == 0) return 0;
         for (int i = 0; i < 3; i++) { p0[i] = o0[i] / o0[3]; p1[i] = o1[i] / o1[3]; } }

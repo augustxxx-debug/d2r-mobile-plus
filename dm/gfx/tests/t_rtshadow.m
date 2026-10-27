@@ -67,15 +67,15 @@ int main(void) { @autoreleasepool {
     if (!dev || ![dev supportsRaytracing] || ![dev supportsFamily:MTLGPUFamilyApple9]) { puts("SKIP t_rtshadow: no hardware ray tracing"); return 77; }
     NSError *e = nil;
     id<MTLLibrary> lib = [dev newLibraryWithSource:@(k_rts_msl) options:nil error:&e]; if (!lib) FAIL("MSL compile: %s", e.localizedDescription.UTF8String);
-    id<MTLComputePipelineState> ps[6]; const char *names[6] = {"rts_decode", "rts_unproj", "rts_trace", "rts_trace_soft", "rts_blur", "rts_ptrace"};
-    for (int i = 0; i < 6; i++) { ps[i] = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@(names[i])] error:&e]; if (!ps[i]) FAIL("pipeline %s: %s", names[i], e.localizedDescription.UTF8String); }
-    id<MTLComputePipelineState> ps_decode = ps[0], ps_unproj = ps[1], ps_trace = ps[2], ps_soft = ps[3], ps_blur = ps[4], ps_ptrace = ps[5];   // 块里不能引用数组 | arrays cannot be referenced inside blocks
+    id<MTLComputePipelineState> ps[8]; const char *names[8] = {"rts_decode", "rts_unproj", "rts_trace", "rts_trace_soft", "rts_blur", "rts_ptrace", "rts_pick", "rts_lcopy"};
+    for (int i = 0; i < 8; i++) { ps[i] = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@(names[i])] error:&e]; if (!ps[i]) FAIL("pipeline %s: %s", names[i], e.localizedDescription.UTF8String); }
+    id<MTLComputePipelineState> ps_decode = ps[0], ps_unproj = ps[1], ps_trace = ps[2], ps_soft = ps[3], ps_blur = ps[4], ps_ptrace = ps[5], ps_pick = ps[6], ps_lcopy = ps[7];   // 块里不能引用数组 | arrays cannot be referenced inside blocks
     { MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new]; pd.vertexFunction = [lib newFunctionWithName:@"rts_vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"rts_fs"]; pd.colorAttachments[0].pixelFormat = MTLPixelFormatRG11B10Float;
       if (![dev newRenderPipelineStateWithDescriptor:pd error:&e]) FAIL("overlay pipeline: %s", e.localizedDescription.UTF8String); }
     queue = [dev newMTL4CommandQueueWithDescriptor:[MTL4CommandQueueDescriptor new] error:&e]; if (!queue) FAIL("MTL4 queue");
     resident = [dev newResidencySetWithDescriptor:[MTLResidencySetDescriptor new] error:&e]; [queue addResidencySet:resident];
     alloc = [dev newCommandAllocatorWithDescriptor:[MTL4CommandAllocatorDescriptor new] error:&e];
-    MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 3; ad.maxTextureBindCount = 3;
+    MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 4; ad.maxTextureBindCount = 3;
     id<MTL4ArgumentTable> at = [dev newArgumentTableWithDescriptor:ad error:&e];
     // 场景：地面 y=0 [−100,100]²（FLOAT3 原样）、方板 y=10 [−10,10]²（SNORM16x4·exp2(w·13)，w = 8/13 → 比例 256） | scene: ground y=0 (raw FLOAT3), square y=10 (SNORM16x4·exp2(w·13), w = 8/13 → scale 256)
     float ground[4][3] = {{-100, 0, -100}, {100, 0, -100}, {100, 0, 100}, {-100, 0, 100}}; uint16_t quad[6] = {0, 1, 2, 0, 2, 3};
@@ -104,7 +104,16 @@ int main(void) { @autoreleasepool {
     // 常量：K（硬）/ KS（软）/ P（点光）/ B（模糊）/ U（反投影） | constants
     float K[64]; for (int i = 0; i < 16; i++) K[i] = (float)IA[i]; float sun[3] = {(float)M_SQRT1_2, (float)M_SQRT1_2, 0}; K[16] = sun[0]; K[17] = sun[1]; K[18] = sun[2]; K[19] = 0; ((uint32_t *)K)[20] = W; ((uint32_t *)K)[21] = H; K[22] = 0.6f; K[23] = 20.f;   // 软阴影的距离归一取 20：方板离地 14 → 半径 ≈ 0.7·12 = 8 像素（生产缺省 200 下这么近的遮挡体是硬的） | soft-shadow distance scale 20: the square 14 above the ground → radius ≈ 0.7·12 = 8 px (with the production default 200 such a near blocker stays hard)
     id<MTLBuffer> kb = buf(K, sizeof K);
-    float P[64]; for (int i = 0; i < 16; i++) P[i] = (float)IA[i]; memset(P + 16, 0, 16 * 4); P[16] = 30; P[17] = 40; P[18] = 0; ((uint32_t *)P)[32] = W / 2; ((uint32_t *)P)[33] = H / 2; ((uint32_t *)P)[34] = W; ((uint32_t *)P)[35] = H; ((uint32_t *)P)[36] = 1; P[37] = 0.6f;
+    // 点光：光源记录（每盏 4 个 float4：位置 / 颜色 / 标志 / 参数）——#0 远处暗、#1 在 (30,40,0) 亮、#2 颜色 0（忽略）；GPU 选 2 盏，#1 排第一；玩家光按偏移认出 #1，副本里颜色 × 0.5
+    // point lights: records (4 float4 each: position / color / flags / parameters) - #0 far and dim, #1 bright at (30,40,0), #2 zero color (ignored); the GPU picks 2 with #1 first; the player light is matched to #1 by offset and halved in the copy
+    float LR[3][16] = {{0}}; float lpos[3][3] = {{-200, 5, 0}, {30, 40, 0}, {0, 3, 0}}, lcol[3] = {0.5f, 2.0f, 0};
+    for (int i = 0; i < 3; i++) { LR[i][0] = lpos[i][0]; LR[i][1] = lpos[i][1]; LR[i][2] = lpos[i][2]; LR[i][4] = LR[i][5] = LR[i][6] = lcol[i]; LR[i][7] = 1; }
+    id<MTLBuffer> lrec = buf(LR, sizeof LR), picks = buf(NULL, 128), prev = buf(NULL, 64), lcopyb = buf(NULL, sizeof LR);
+    float PK[32] = {0}; for (int i = 0; i < 16; i++) PK[i] = (float)IA[i]; uint32_t *pku = (uint32_t *)(PK + 16); pku[0] = 3; pku[1] = 2; pku[2] = 1; ((float *)pku)[3] = 1.0f;
+    { double a0[4] = {0, 0, 0.5, 1}, o0[4]; for (int r = 0; r < 4; r++) { o0[r] = 0; for (int c = 0; c < 4; c++) o0[r] += IA[c * 4 + r] * a0[c]; } PK[20] = 30 - (float)(o0[0] / o0[3]); PK[21] = 40 - (float)(o0[1] / o0[3]); PK[22] = 0 - (float)(o0[2] / o0[3]); }
+    id<MTLBuffer> pkb = buf(PK, sizeof PK);
+    uint32_t LC[4] = {12, 0, 0, 0}; ((float *)LC)[1] = 0.5f; id<MTLBuffer> lcb = buf(LC, sizeof LC);
+    float P[32] = {0}; for (int i = 0; i < 16; i++) P[i] = (float)IA[i]; ((uint32_t *)P)[16] = W / 2; ((uint32_t *)P)[17] = H / 2; ((uint32_t *)P)[18] = W; ((uint32_t *)P)[19] = H; P[20] = 0.6f;
     id<MTLBuffer> pb = buf(P, sizeof P);
     uint32_t B0[8] = {W, H, 1, 0, 0, 0, 0, 0}, B1[8] = {W, H, 0, 1, 0, 0, 0, 0}; ((float *)B0)[4] = ((float *)B1)[4] = 12.f; id<MTLBuffer> bb0 = buf(B0, 32), bb1 = buf(B1, 32);
     float U[20]; for (int i = 0; i < 16; i++) U[i] = (float)IA[i]; ((uint32_t *)U)[16] = 4; id<MTLBuffer> ub = buf(U, sizeof U);
@@ -150,7 +159,13 @@ int main(void) { @autoreleasepool {
         [ce dispatchThreadgroups:tg threadsPerThreadgroup:tt];
         // 点光 (30,40,0)：地面 x≈19.5 被移位后的方板挡，x=−35 不挡 | point light (30,40,0): ground x≈19.5 is blocked by the shifted square, x=−35 is not
         [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-        [ce setComputePipelineState:ps_ptrace]; [at setTexture:pm.gpuResourceID atIndex:1]; [at setAddress:pb.gpuAddress atIndex:1]; [ce dispatchThreadgroups:MTLSizeMake(W / 16, H / 16, 1) threadsPerThreadgroup:tt];
+        [ce setComputePipelineState:ps_pick]; [at setAddress:lrec.gpuAddress atIndex:0]; [at setAddress:picks.gpuAddress atIndex:1]; [at setAddress:pkb.gpuAddress atIndex:2]; [at setAddress:prev.gpuAddress atIndex:3];
+        [ce dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+        [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+        [ce setComputePipelineState:ps_lcopy]; [at setAddress:lrec.gpuAddress atIndex:0]; [at setAddress:lcopyb.gpuAddress atIndex:1]; [at setAddress:picks.gpuAddress atIndex:2]; [at setAddress:lcb.gpuAddress atIndex:3];
+        [ce dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+        [ce setComputePipelineState:ps_ptrace]; [at setTexture:depth.gpuResourceID atIndex:0]; [at setTexture:pm.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:pb.gpuAddress atIndex:1]; [at setAddress:picks.gpuAddress atIndex:2];
+        [ce dispatchThreadgroups:MTLSizeMake(W / 16, H / 16, 1) threadsPerThreadgroup:tt];
         // 软阴影：最近命中 + 两趟模糊 → raw / tmp / mask | soft shadows: nearest hit + two blur passes
         [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
         [ce setComputePipelineState:ps_soft]; [at setTexture:raw.gpuResourceID atIndex:1]; [at setAddress:kb.gpuAddress atIndex:1]; [ce dispatchThreadgroups:tg threadsPerThreadgroup:tt];
@@ -166,9 +181,15 @@ int main(void) { @autoreleasepool {
     if (px(raw, gx_of(20), gy_of(0), 0) > 0.01f || px(raw, gx_of(20), gy_of(0), 1) < 0.02f) FAIL("soft trace: hit + distance expected at x=20 (%g, %g)", px(raw, gx_of(20), gy_of(0), 0), px(raw, gx_of(20), gy_of(0), 1));
     { int mid = 0, hard_mid = 0; for (int x = 0; x < W; x++) { float v = px(mask, x, gy_of(0), 0), r = px(raw, x, gy_of(0), 0); if (v > 0.1f && v < 0.9f) mid++; if (r > 0.1f && r < 0.9f) hard_mid++; }
       if (hard_mid != 0) FAIL("hard mask has %d intermediate values", hard_mid); if (mid < 2) FAIL("soft mask has only %d intermediate values along the shadow row", mid); }
+    { const int32_t *o = picks.contents; const float *of = picks.contents;
+      if (o[20] != 2 || o[0] != 4 || o[1] != 0 || o[2] != -1 || fabsf(of[4] - 30) > 1e-3f || fabsf(of[5] - 40) > 1e-3f) FAIL("rts_pick: n=%d rec %d %d %d first (%g, %g)", o[20], o[0], o[1], o[2], of[4], of[5]);
+      if (o[21] != 1) FAIL("rts_pick: player light record %d (want 1)", o[21]);
+      const float *lc = lcopyb.contents; if (fabsf(lc[1 * 16 + 4] - 1.0f) > 1e-5f || fabsf(lc[1 * 16 + 7] - 1.0f) > 1e-5f || fabsf(lc[0 * 16 + 4] - 0.5f) > 1e-5f || fabsf(lc[1 * 16 + 0] - 30) > 1e-5f)
+          FAIL("rts_lcopy: player color %g (want 1.0 = 2.0 x 0.5), alpha %g, other %g", lc[20], lc[23], lc[4]);
+      if (fabsf(((const float *)lrec.contents)[1 * 16 + 4] - 2.0f) > 1e-6f) FAIL("rts_lcopy wrote the source records"); }
     if (px(pm, gx_of(19.5) / 2, gy_of(0) / 2, 0) > 0.01f) FAIL("point light: ground x≈19.5 should be shadowed (%g)", px(pm, gx_of(19.5) / 2, gy_of(0) / 2, 0));
     if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 0) < 0.99f) FAIL("point light: ground x=−35 should be lit");
-    if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 1) < 0.99f) FAIL("point light: unused channels stay lit");
-    puts("PASS t_rtshadow: MSL compiles, decode / BLAS / TLAS / sun trace / unproject / refit / point light / soft blur checked on a synthetic scene");
+    if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 2) < 0.99f) FAIL("point light: unused channels stay lit");
+    puts("PASS t_rtshadow: MSL compiles, decode / BLAS / TLAS / sun trace / unproject / refit / GPU light picking / player-light copy / point light / soft blur checked on a synthetic scene");
     return 0;
 } }
