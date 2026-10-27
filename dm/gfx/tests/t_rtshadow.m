@@ -114,7 +114,7 @@ int main(void) { @autoreleasepool {
     uint32_t HDR[2] = {2u << 24, 3u | (1u << 24)}; uint32_t *SL = calloc(512, 4); SL[0] = 4; SL[1] = 9; SL[256 + 3] = 4;
     id<MTLBuffer> lrec = buf(LR, sizeof LR), picks = buf(NULL, 128), prev = buf(NULL, 64), lcopyb = buf(NULL, sizeof LR), hdrb = buf(HDR, sizeof HDR), slotb = buf(SL, 512 * 4), seen = buf(NULL, 2048 * 4), list = buf(NULL, 257 * 4); free(SL);
     uint32_t LG[4] = {2, 512, 16, 256}; id<MTLBuffer> lgb = buf(LG, sizeof LG);
-    float PK[32] = {0}; for (int i = 0; i < 16; i++) PK[i] = (float)IA[i]; uint32_t *pku = (uint32_t *)(PK + 16); pku[0] = 2; pku[1] = 1; ((float *)pku)[2] = 1.0f; pku[3] = 256;
+    float PK[40] = {0}; for (int i = 0; i < 16; i++) PK[i] = (float)IA[i]; PK[24] = PK[29] = PK[34] = PK[39] = 1;   /* 逆视矩阵 = 单位阵：记录已是世界坐标 | inverse view = identity: records already in world space */ uint32_t *pku = (uint32_t *)(PK + 16); pku[0] = 2; pku[1] = 1; ((float *)pku)[2] = 1.0f; pku[3] = 256;
     { double a0[4] = {0, 0, 0.5, 1}, o0[4]; for (int r = 0; r < 4; r++) { o0[r] = 0; for (int c = 0; c < 4; c++) o0[r] += IA[c * 4 + r] * a0[c]; } PK[20] = 30 - (float)(o0[0] / o0[3]); PK[21] = 40 - (float)(o0[1] / o0[3]); PK[22] = 0 - (float)(o0[2] / o0[3]); }
     id<MTLBuffer> pkb = buf(PK, sizeof PK);
     uint32_t LC[4] = {16, 0, 0, 0}; ((float *)LC)[1] = 0.5f; id<MTLBuffer> lcb = buf(LC, sizeof LC);

@@ -45,9 +45,11 @@ static const char *k_rts_msl =
 "  dst.write(float4(sum / wsum, dm, 0, 0), g); }\n"
 // 点光（阶段零，Mac 实测后改）：光源记录不是按 4 texel 对齐排的，真正的点光要经分簇表找——簇头 hdr[簇] 的位 0–5 / 6–15 / 16–23 是前三类光在本簇槽位里的结束下标，
 // 位 24–31 是点光数；点光 j 的记录起点（texel 下标）= slots[簇 × 256 + 起点 + j]（起点 = 前三类结束下标的最大值），与 _rt 变体里 rts_pl 比对的值同一口径。
+// 记录里的位置是视空间的（片元算光照用的位置 = 世界 · 视矩阵，视常量 cb 第 5–8 行；Mac 上读模型顶点着色器得出），追踪前用逆视矩阵换回世界坐标。
 // 记录：texel+0 位置、texel+1 颜色 rgb + 半径、texel+2 第二位置 + 阴影标志（w == 0 才采立方体阴影）、texel+3.x 衰减指数。全在 GPU 上（本帧、主通道之前，与片元读的同一份）；CPU 不读游戏内存。
 // Point lights (phase 0, revised after the Mac run): light records are not laid out on 4-texel boundaries; the real point lights are found through the cluster tables - bits 0–5 / 6–15 / 16–23 of hdr[cluster] are the end slots of the first three light kinds,
 // bits 24–31 the point-light count; point light j's record start (texel index) = slots[cluster × 256 + start + j] (start = the largest of the three end slots), the same value rts_pl compares in the _rt variants.
+// Positions in the records are in view space (the position the fragments light with = world · view matrix, rows 5–8 of the view constants; found by reading the model vertex shader on the Mac) and are taken back to world space with the inverse view matrix before tracing.
 // Record: texel+0 position, texel+1 color rgb + radius, texel+2 second position + shadow flag (cube shadow only when w == 0), texel+3.x falloff exponent. All on the GPU (this frame, before the main pass, the same copy the fragments read); the CPU never reads game memory.
 "struct Picks { int4 rec; float4 pos[4]; int n; int player; int cand_rec; int pad; float4 cand_off; float4 p0; };\n"
 // 收集：先清已见位图与计数（rts_lclear），每簇一个线程把本簇点光的记录起点去重后追加进列表（list[0] = 条数，list[1…cap] = texel 下标） | gather: clear the seen bitmap and count first (rts_lclear), then one thread per cluster appends its point lights' record starts, deduplicated, to the list (list[0] = count, list[1…cap] = texel indices)
@@ -62,11 +64,11 @@ static const char *k_rts_msl =
 // 选灯（单线程，列表里的点光）：得分 = 亮度 × 半径覆盖画面中心视线的程度（灯到视线的距离 / 半径越小越大）+ 远近细分；上一帧选中的（位置 1 单位内）×1.5（滞后）；
 // 另出离视线最近的候选（CPU 认玩家光用）与 CPU 认定的玩家光偏移匹配的记录（派生副本里调弱它）| picking (one thread, over the listed point lights): score = brightness × how much the radius covers the screen-center view line (distance to the line / radius, smaller is better) + a distance tiebreak; last frame's picks (within 1 unit) ×1.5 (hysteresis);
 // also outputs the candidate nearest the view line (for CPU player-light recognition) and the record matching the player-light offset the CPU confirmed (weakened in the derived copy)
-"struct PK { float4x4 invVP; uint maxn; uint player_on; float ptol; uint cap; float4 poff; };\n"
+"struct PK { float4x4 invVP; uint maxn; uint player_on; float ptol; uint cap; float4 poff; float4x4 invV; };\n"
 "kernel void rts_pick(device const float4 *L [[buffer(0)]], device Picks &o [[buffer(1)]], constant PK &k [[buffer(2)]], device float4 *prev [[buffer(3)]], device const uint *list [[buffer(4)]], uint t [[thread_position_in_grid]]) {\n"
 "  if (t) return; float4 a = k.invVP * float4(0, 0, 0.5, 1), b = k.invVP * float4(0, 0, 0.9, 1); float3 p0 = a.xyz / a.w, dir = normalize(b.xyz / b.w - p0);\n"   // 视线取深度 0.5 / 0.9 两点 | the view line uses depth 0.5 / 0.9
 "  float best[4] = {0, 0, 0, 0}; int bi[4] = {-1, -1, -1, -1}; float cd = 1e30; int cr = -1, pl = -1; float pd = 1e30; uint mx = min(k.maxn, 4u), nl = min(list[0], k.cap);\n"
-"  for (uint q = 0; q < nl; q++) { uint r = list[1 + q]; float3 pos = L[r].xyz; float4 cr4 = L[r + 1]; float lum = max(cr4.x, max(cr4.y, cr4.z)), rad = cr4.w;\n"
+"  for (uint q = 0; q < nl; q++) { uint r = list[1 + q]; float4 pw = k.invV * float4(L[r].xyz, 1.0); float3 pos = pw.xyz / pw.w; float4 cr4 = L[r + 1]; float lum = max(cr4.x, max(cr4.y, cr4.z)), rad = cr4.w;\n"
 "    if (!(lum > 0.0) || !(rad > 0.0) || any(isnan(pos)) || any(isinf(pos))) continue;\n"
 "    float3 v = pos - p0; float3 qv = v - dot(v, dir) * dir; float d2 = dot(qv, qv); if (d2 < cd) { cd = d2; cr = int(r); }\n"
 "    if (k.player_on) { float e = length(v - k.poff.xyz); if (e < k.ptol && e < pd) { pd = e; pl = int(r); } }\n"
@@ -74,8 +76,8 @@ static const char *k_rts_msl =
 "    if (!(s > 0.0)) continue; int kk = -1; for (uint j = 0; j < mx; j++) if (bi[j] < 0 || s > best[j]) { kk = int(j); break; }\n"
 "    if (kk < 0) continue; for (int j = int(mx) - 1; j > kk; j--) { best[j] = best[j - 1]; bi[j] = bi[j - 1]; } best[kk] = s; bi[kk] = int(r); }\n"
 "  int n = 0; for (uint j = 0; j < mx; j++) n += bi[j] >= 0;\n"
-"  o.n = n; for (int j = 0; j < 4; j++) { bool u = j < n; o.rec[j] = u ? bi[j] : -1; float4 pp = u ? float4(L[bi[j]].xyz, 1) : float4(0); o.pos[j] = pp; prev[j] = pp; }\n"
-"  o.player = pl; o.cand_rec = cr; o.cand_off = cr >= 0 ? float4(L[cr].xyz - p0, 1) : float4(0); o.p0 = float4(p0, 1); }\n"
+"  o.n = n; for (int j = 0; j < 4; j++) { bool u = j < n; o.rec[j] = u ? bi[j] : -1; float4 pw = u ? k.invV * float4(L[bi[j]].xyz, 1.0) : float4(0, 0, 0, 1); float4 pp = u ? float4(pw.xyz / pw.w, 1) : float4(0); o.pos[j] = pp; prev[j] = pp; }\n"
+"  float4 cw = cr >= 0 ? k.invV * float4(L[cr].xyz, 1.0) : float4(0, 0, 0, 1); o.player = pl; o.cand_rec = cr; o.cand_off = cr >= 0 ? float4(cw.xyz / cw.w - p0, 1) : float4(0); o.p0 = float4(p0, 1); }\n"
 // 派生副本：整份光源记录拷到我们自己的缓冲，玩家光（o.player）的颜色乘倍率；_rt 变体绑这份副本，游戏的原记录不动 | derived copy: the whole light record buffer copied into our own buffer with the player light's (o.player) color scaled; the _rt variants bind this copy and the game's records stay untouched
 "struct LC { uint ntex; float scale; uint2 pad; };\n"
 "kernel void rts_lcopy(device const float4 *L [[buffer(0)]], device float4 *D [[buffer(1)]], device const Picks &o [[buffer(2)]], constant LC &c [[buffer(3)]], uint i [[thread_position_in_grid]]) {\n"

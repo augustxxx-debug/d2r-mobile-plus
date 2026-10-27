@@ -90,7 +90,7 @@ static struct {
     struct { id<MTLTexture> t; NSUInteger level, slice; double cd; int cleared, used; } smap[RTS_MAX_SMAP]; int nsmap, cur_smap, nuncov, clear_tried, map_cleared;
     struct { uint64_t frame, lay, key; } memo[RTS_MEMO];
     rts_mesh *exp_mesh[RTS_MAX_EXPORT]; rts_islot *exp_slot[RTS_MAX_EXPORT]; int nexp; id<MTLBuffer> cur_pos4;   // 本帧的蒙皮导出；cur_pos4 = 正在编码的那次导出绘制写的缓冲 | this frame's skinned exports; cur_pos4 = the buffer the export draw being encoded writes
-    float cam[16]; int have_cam, have_sun; float sun[3];
+    float cam[16], view[16], cb3raw[128]; int have_cam, have_sun, cb3n; float sun[3];   // view：预渲染 cb3 第 5–8 行的视矩阵（点光记录在视空间） | view: the view matrix in rows 5–8 of the prepass cb3 (point-light records are in view space)   // cb3raw：预渲染 cb3 前 512 字节（诊断用） | cb3raw: first 512 bytes of the prepass cb3 (diagnostic)
     int main_seen, mask_done, overlay_done; uint64_t hdr_ser, ds_ser; id<MTLTexture> main_hdr;
     int shadow_draws, prepass_occ, nprepass;   // 本帧阴影通道绘制数；本帧遮挡体来自深度预渲染（上一帧没有阴影绘制 = 无太阳关卡）；本帧登记的预渲染遮挡体数 | shadow-pass draws this frame; occluders from the depth prepass (no shadow draw last frame = level without a sun); prepass occluders this frame
     id<MTLComputePipelineState> ps_decode, ps_unproj, ps_trace, ps_trace_soft, ps_blur, ps_ptrace, ps_pick, ps_lcopy, ps_lclear, ps_lgather; id<MTLRenderPipelineState> ps_overlay;
@@ -125,7 +125,8 @@ int mtl_rt_shadow_supported(void) {   // 宿主设置页用：这台机器能不
     MLOG("光追阴影：机器判定 %s（supportsRaytracing %d、GPU 家族 Apple9 %d、机型 %s %s）", v ? "可用" : "不可用", rt, fam, hw, model ? "在白名单" : "不在白名单");
     return v;
 }
-// 测试翻转 DM_RT_SHADOW_FLIP=<秒>[,<秒>…] 或 f<帧号>[,…]（造对比素材用）：到点把开关取反，同一局同一机位拍开 / 关 | test flip DM_RT_SHADOW_FLIP=<s>[,<s>...] or f<frame>[,...] (for comparison material): invert the switch at these points, shooting on / off in one run from one spot
+// 测试翻转 DM_RT_SHADOW_FLIP=<秒>[,<秒>…] 或 f<出图次数>[,…]（造对比素材用；f 与 DM_NVN_SHOT 的帧号同一口径）：到点把开关取反，同一局同一机位拍开 / 关 | test flip DM_RT_SHADOW_FLIP=<s>[,<s>...] or f<present count>[,...] (for comparison material; f uses the same numbering as DM_NVN_SHOT): invert the switch at these points, shooting on / off in one run from one spot
+uint64_t mtl_present_count(void);   // nvn_mtl.m：出图次数（与 DM_NVN_SHOT 的帧号同一口径） | nvn_mtl.m: present count (the same numbering as DM_NVN_SHOT)
 static double rts_proc_secs(void) {
     static double t0 = -1; struct timeval now; gettimeofday(&now, NULL);
     if (t0 < 0) { struct kinfo_proc kp; size_t len = sizeof kp; int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
@@ -137,7 +138,7 @@ static int rts_flip(int v) {
     if (n < 0) { n = 0; const char *e = getenv("DM_RT_SHADOW_FLIP"); by_frame = e && e[0] == 'f';
         for (const char *q = e; q && *q && n < 16; q = strchr(q, ',') ? strchr(q, ',') + 1 : NULL) at[n++] = atof(q + (*q == 'f')); }
     if (!n) return v;
-    double t = by_frame ? (double)atomic_load(&g_cur_frame) : rts_proc_secs(); int k = 0; for (int i = 0; i < n; i++) k += t >= at[i];
+    double t = by_frame ? (double)mtl_present_count() : rts_proc_secs(); int k = 0; for (int i = 0; i < n; i++) k += t >= at[i];
     int r = k & 1 ? !v : v; if (r != last) { last = r; MLOG("光追阴影：测试翻转 → %s（%s %.1f，DM_RT_SHADOW_FLIP）", r ? "开" : "关", by_frame ? "帧" : "进程第几秒", t); }
     return r;
 }
@@ -184,7 +185,7 @@ static int rts_slot_new(void) {   // 新加一个每帧槽；失败返回 -1 | A
     int i = g_rts.nslot; rts_fslot *s = &g_rts.slot[i]; memset(s, 0, sizeof *s);
     RTS_NEW(s->inst, [g_dev newBufferWithLength:RTS_MAX_INST * sizeof(MTLIndirectAccelerationStructureInstanceDescriptor) options:MTLResourceStorageModeShared]);
     RTS_NEW(s->k, [g_dev newBufferWithLength:256 options:MTLResourceStorageModeShared]); RTS_NEW(s->d, [g_dev newBufferWithLength:64 options:MTLResourceStorageModeShared]);
-    RTS_NEW(s->pk, [g_dev newBufferWithLength:512 options:MTLResourceStorageModeShared]);   // 0 选灯常量 PK、128 点光追踪常量 P、256 副本常量 LC、384 收集常量 LG | 0 pick PK, 128 point trace P, 256 copy LC, 384 gather LG
+    RTS_NEW(s->pk, [g_dev newBufferWithLength:512 options:MTLResourceStorageModeShared]);   // 0 选灯常量 PK（160 字节，含逆视矩阵）、160 点光追踪常量 P、256 副本常量 LC、384 收集常量 LG | 0 pick PK (160 bytes incl. the inverse view), 160 point trace P, 256 copy LC, 384 gather LG
     RTS_NEW(s->picks, [g_dev newBufferWithLength:sizeof(rts_picks) options:MTLResourceStorageModeShared]); RTS_NEW(s->bb, [g_dev newBufferWithLength:64 options:MTLResourceStorageModeShared]);
     if (!s->inst || !s->k || !s->d || !s->pk || !s->picks || !s->bb) { id o[6] = {s->inst, s->k, s->d, s->pk, s->picks, s->bb}; for (int j = 0; j < 6; j++) if (o[j]) defer_obj_release(o[j]); memset(s, 0, sizeof *s); return -1; }
     rts_picks *o = s->picks.contents; memset(o, 0, sizeof *o); o->player = o->cand_rec = -1;
@@ -421,7 +422,8 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
     { NvShader *vs = pr->vs_base ? pr->vs_base : pr->sh[0]; for (int i = 0; i < vs->rf.nb; i++) if (vs->rf.b[i].kind == NVN_RB_CBUF && vs->rf.b[i].reg == 3) has_c3 = 1; }
     int prepass = !shadow && !R.rt.n && R.rt.depth && !g_rts.main_seen;
     if (!shadow) {   // 深度预渲染：记相机；无太阳关卡还把它的绘制当遮挡体 | depth prepass: note the camera; in a level without a sun its draws also serve as occluders
-        if (prepass && has_c3 && c3->addr && c3->size >= 400) { const uint8_t *b = rts_mem(c3->addr, 400); if (b) { memcpy(g_rts.cam, b + 336, 64); g_rts.have_cam = 1; } }
+        if (prepass && has_c3 && c3->addr && c3->size >= 400) { const uint8_t *b = rts_mem(c3->addr, 400); if (b) { memcpy(g_rts.cam, b + 336, 64); memcpy(g_rts.view, b + 80, 64); g_rts.have_cam = 1;
+            if (getenv("DM_RT_POINT_DUMP")) { uint64_t nb = MIN(c3->size, (uint64_t)sizeof g_rts.cb3raw); const uint8_t *bb = rts_mem(c3->addr, nb); if (bb) { memcpy(g_rts.cb3raw, bb, nb); g_rts.cb3n = (int)(nb / 4); } } } }
         if (!prepass || !g_rts.prepass_occ || !g_rts.point_on || !rts_setup()) return 0;
         if (pr->sh[1] && pr->sh[1]->rf.may_discard) return 0;
     } else {
@@ -513,8 +515,12 @@ static void rts_picks_readback(void) {
         int idx[512]; for (uint32_t c = 0; c < ncl; c++) { uint32_t w = h[c], a = w & 63, b = (w >> 6) & 1023, cc = (w >> 16) & 255, d = w >> 24, st = MAX(a, MAX(b, cc)); if (d) ncl_used++;
             for (uint32_t q = 0; q < d; q++) { uint32_t sl = c * 256 + st + q; if (sl >= nslot) { nbad++; continue; } uint32_t t = x[sl]; if (t + 3 >= ntex || t >= (1u << 16)) { nbad++; continue; } if (!seen[t]) { seen[t] = 1; if (nu < 512) idx[nu] = (int)t; nu++; } } }
         MLOG("光追点光·诊断：簇 %u 个（有点光的 %d 个）、槽位 %u、点光（去重）%d 盏、越界 %d；视线起点 (%.0f, %.0f, %.0f)", ncl, ncl_used, nslot, nu, nbad, o->p0[0], o->p0[1], o->p0[2]);
-        for (int q = 0; q < nu && q < 12; q++) { const float *e = L + idx[q] * 4; MLOG("  texel %d：位置 (%.1f, %.1f, %.1f) %.3g ｜颜色 (%.3g, %.3g, %.3g) 半径 %.3g ｜(%.1f, %.1f, %.1f) 标志 %d ｜衰减 %.3g", idx[q],
-            e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9], e[10], *(const int32_t *)&e[11], e[12]); } } }
+        for (int q = 0; q + 3 < g_rts.cb3n; q += 4) MLOG("  预渲染 cb3[%d] = (%.3f, %.3f, %.3f, %.3f)", q / 4, g_rts.cb3raw[q], g_rts.cb3raw[q + 1], g_rts.cb3raw[q + 2], g_rts.cb3raw[q + 3]);
+        for (int q = 0; q < g_rts.ninst && q < 4; q++) { MTLPackedFloat4x3 *tm = &g_rts.inst[q].transformationMatrix; MLOG("  遮挡体实例 %d 平移 (%.1f, %.1f, %.1f)（与点光位置同一世界坐标才对得上）", q, tm->columns[3].x, tm->columns[3].y, tm->columns[3].z); }
+        double v[16], iv[16]; for (int i = 0; i < 16; i++) v[i] = g_rts.view[i]; rts_inv4(v, iv);
+        for (int q = 0; q < nu && q < 12; q++) { const float *e = L + idx[q] * 4; double w4[4]; for (int r = 0; r < 4; r++) w4[r] = iv[0 * 4 + r] * e[0] + iv[1 * 4 + r] * e[1] + iv[2 * 4 + r] * e[2] + iv[3 * 4 + r];
+            MLOG("  texel %d：视空间 (%.1f, %.1f, %.1f) → 世界 (%.1f, %.1f, %.1f) ｜颜色 (%.3g, %.3g, %.3g) 半径 %.3g ｜标志 %d ｜衰减 %.3g", idx[q],
+            e[0], e[1], e[2], w4[0] / w4[3], w4[1] / w4[3], w4[2] / w4[3], e[4], e[5], e[6], e[7], *(const int32_t *)&e[11], e[12]); } } }
     { static int nlog; if (o->n && nlog < 3) { nlog++; MLOG("光追点光：GPU 选中 %d 盏（记录 texel %d、%d），首盏位置 (%.0f, %.0f, %.0f)；视线起点 (%.0f, %.0f, %.0f)；玩家光记录 %d", o->n, o->rec[0], o->rec[1], o->pos[0][0], o->pos[0][1], o->pos[0][2], o->p0[0], o->p0[1], o->p0[2], o->player); } }
 }
 // 光源记录缓冲与分簇表：主通道第一次绘制时片元阶段绑的那份（贴图槽 8 的纹理缓冲、存储缓冲 4 / 5） | light records and cluster tables: the ones bound to the fragment stage at the first main-pass draw (texture slot 8 texture buffer, storage buffers 4 / 5)
@@ -650,7 +656,8 @@ static void rts_build_and_trace(id<MTLTexture> depth) {
         uint32_t *pku = (uint32_t *)(kb + 64); pku[0] = (uint32_t)g_rts.point_n; pku[1] = (uint32_t)(g_rts.ptrack.sure != 0);
         ((float *)pku)[2] = 0.5f + 0.02f * sqrtf((float)(g_rts.ptrack.off[0] * g_rts.ptrack.off[0] + g_rts.ptrack.off[1] * g_rts.ptrack.off[1] + g_rts.ptrack.off[2] * g_rts.ptrack.off[2])); pku[3] = RTS_LIGHT_CAP;
         float *po = (float *)(kb + 80); po[0] = (float)g_rts.ptrack.off[0]; po[1] = (float)g_rts.ptrack.off[1]; po[2] = (float)g_rts.ptrack.off[2]; po[3] = 0;
-        float *pt = (float *)(kb + 128); for (int i = 0; i < 16; i++) pt[i] = (float)ia[i]; uint32_t *ptu = (uint32_t *)(kb + 192); ptu[0] = (uint32_t)hw; ptu[1] = (uint32_t)hh; ptu[2] = (uint32_t)depth.width; ptu[3] = (uint32_t)depth.height; ((float *)ptu)[4] = bias;
+        { double v[16], iv[16]; for (int i = 0; i < 16; i++) v[i] = g_rts.view[i]; rts_inv4(v, iv); float *pv = (float *)(kb + 96); for (int i = 0; i < 16; i++) pv[i] = (float)iv[i]; }   // 逆视矩阵：记录位置 视空间 → 世界 | inverse view: record positions view space → world
+        float *pt = (float *)(kb + 160); for (int i = 0; i < 16; i++) pt[i] = (float)ia[i]; uint32_t *ptu = (uint32_t *)(kb + 224); ptu[0] = (uint32_t)hw; ptu[1] = (uint32_t)hh; ptu[2] = (uint32_t)depth.width; ptu[3] = (uint32_t)depth.height; ((float *)ptu)[4] = bias;
         uint32_t *lcu = (uint32_t *)(kb + 256); lcu[0] = ntex; ((float *)lcu)[1] = g_rts.player_scale;
         uint32_t *lg = (uint32_t *)(kb + 384); lg[0] = ncl; lg[1] = nslotx; lg[2] = ntex; lg[3] = RTS_LIGHT_CAP;
         [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
@@ -672,7 +679,7 @@ static void rts_build_and_trace(id<MTLTexture> depth) {
         if (g_rts.pmask) {
             [ce setArgumentTable:g_rts.at_trace]; enc_c_pso(ce, g_rts.ps_ptrace);
             [g_rts.at_trace setTexture:depth.gpuResourceID atIndex:0]; [g_rts.at_trace setTexture:g_rts.pmask.gpuResourceID atIndex:1]; [g_rts.at_trace setResource:g_rts.tlas.gpuResourceID atBufferIndex:0];
-            [g_rts.at_trace setAddress:fs->pk.gpuAddress + 128 atIndex:1]; [g_rts.at_trace setAddress:fs->picks.gpuAddress atIndex:2];
+            [g_rts.at_trace setAddress:fs->pk.gpuAddress + 160 atIndex:1]; [g_rts.at_trace setAddress:fs->picks.gpuAddress atIndex:2];
             enc_c_dispatch(ce, MTLSizeMake((hw + 7) / 8, (hh + 7) / 8, 1), tt);
             g_rts.pl_done = 1; g_rts.n_ptraced++; }
     }
