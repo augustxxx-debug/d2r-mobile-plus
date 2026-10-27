@@ -26,7 +26,7 @@ OUT=${DM_RUN_DIR:-${DM_ROOT:-$HOME/dm-work}/run/ios-fable5}/bench/$RUN; mkdir -p
 t(){ echo "[$(date +%T)] $*" | tee -a "$OUT/bench.log"; }
 # 设备就绪 = 一次带超时的真实只读查询成功；已配对但断开的设备仍会出现在 devicectl 清单里，不能拿“在清单里”当“接上了”（二审 R02）
 # Device ready = one real read-only query with a timeout succeeds; a paired but disconnected device still shows in the devicectl list, so being listed is not being connected (second review R02)
-present(){ "${BD[@]}" ready "$D" "$B" > /dev/null 2>&1; }
+present(){ "${BD[@]}" ready "$D" "$B" ${1:+"$1"} > /dev/null 2>&1; }   # 可选参数：这次查询最多几秒 | optional argument: seconds this query may take
 BD=(python3 -I tools/bench_device.py)
 SEG_CHECK=$((SEG * 60)); NLV=$(echo "$LEVELS" | tr ',' '\n' | wc -l | tr -d ' ')
 RECONNECT=${BENCH_RECONNECT_S:-43200}   # 结束后最多等设备接回多少秒（缺省 12 小时，可隔夜） | how long to wait for the device after the run (default 12 h, may run overnight)
@@ -83,9 +83,17 @@ printf '%s\n' "run=$RUN" "god=1" "slot=$SLOT" "brightness=${BENCH_BRIGHTNESS:-0.
 t "已启动：档位 ${LEVELS}，每段 ${SEG} 分钟，共 $((TOTAL / 60)) 分钟；MetalFX=${FX}。现在请拔掉数据线，屏幕保持亮着（自动锁定设为永不；电量按每小时约 35% 预估要够用）。"
 sleep $((TOTAL + 60))
 t "时间到。等设备重新接上…"
-w=0; until present; do
-  [ $w = 0 ] && t "设备还连不上（在清单里也算没接上，按真实查询判断），每 30 秒再试，最多等 $((RECONNECT / 60)) 分钟"
-  sleep 30; w=$((w + 30)); [ $w -ge "$RECONNECT" ] && { t "🔴 等了 $((RECONNECT / 60)) 分钟设备还连不上，本次基准失败，未拉数据"; exit 1; }
+# 等设备接回：截止时刻按墙钟（与设备锁看门狗同一个钟）从这里起算 BENCH_RECONNECT_S 秒，只读查询与两次查询之间的等待共用这份预算（四审 Q4-03）；
+# 每次查询的超时压到剩余时间以内，剩不到 5 秒就不再查，按到限失败：不拉数据、不结束任何进程。第一次查询不论预算都做（设备在线时不该因为预算 0 而失败）
+# Waiting for the device: the deadline is BENCH_RECONNECT_S seconds from here on the wall clock (the same clock as the device lock watchdog), and read-only queries share this budget with the waits between them (fourth review Q4-03);
+# each query's timeout is capped at the time left, and with under 5 s left no further query is made and the run fails at the limit: nothing is pulled and no process is ended. The first query is always made (an online device must not fail because the budget is 0)
+END=$(( $(date +%s) + RECONNECT )); said=
+present || while :; do
+  [ -n "$said" ] || { said=1; t "设备还连不上（在清单里也算没接上，按真实查询判断），每 30 秒再试，最多等 $((RECONNECT / 60)) 分钟（查询时间也算在内）"; }
+  left=$(( END - $(date +%s) )); [ "$left" -ge 5 ] || { t "🔴 等了 $((RECONNECT / 60)) 分钟设备还连不上，本次基准失败，未拉数据"; exit 1; }
+  sleep $(( left - 5 < 30 ? left - 5 : 30 ))
+  left=$(( END - $(date +%s) )); [ "$left" -ge 5 ] || { t "🔴 等了 $((RECONNECT / 60)) 分钟设备还连不上，本次基准失败，未拉数据"; exit 1; }
+  present $(( left < 30 ? left : 30 )) && break
 done   # 可以隔夜：第二天接回线再拉 | May run overnight: plug back in the next day and the data is pulled then
 t "设备已接回（只读查询成功）"
 sleep 5

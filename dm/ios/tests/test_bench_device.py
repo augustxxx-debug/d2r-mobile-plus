@@ -62,7 +62,7 @@ class Queries(unittest.TestCase):
 
     def test_ready_and_mtime_report_device_errors(self):
         orig = bd.device_json
-        def boom(*a):
+        def boom(*a, **k):
             raise bd.DeviceError('设备不可用')
         bd.device_json = boom
         try:
@@ -70,11 +70,33 @@ class Queries(unittest.TestCase):
             self.assertEqual(bd.main(['x', 'mtime', 'dev', 'org.example.d2r', 'Documents/bench_x', 'heat.tsv']), 2)
         finally:
             bd.device_json = orig
-        bd.device_json = lambda *a: {'apps': []}
+        bd.device_json = lambda *a, **k: {'apps': []}
         try:
             self.assertEqual(bd.main(['x', 'ready', 'dev', 'org.example.d2r']), 0)
         finally:
             bd.device_json = orig
+
+    def test_ready_timeout_is_bounded(self):
+        # 四审 Q4-03：就绪查询按调用方给的剩余预算限时；超出 5–30 秒的值在碰设备前拒绝；外层超时也算失败
+        # Fourth review Q4-03: the readiness query is limited to the budget the caller has left; values outside 5–30 s are refused before touching the device; an outer timeout counts as a failure
+        orig_json, orig_run = bd.device_json, bd.subprocess.run; seen = []
+        bd.device_json = lambda *a, **k: seen.append(k.get('timeout')) or {'apps': []}
+        try:
+            self.assertEqual(bd.main(['x', 'ready', 'dev', 'org.example.d2r', '7']), 0); self.assertEqual(seen, [7])
+            for bad in ('4', '31', 'x'):
+                self.assertEqual(bd.main(['x', 'ready', 'dev', 'org.example.d2r', bad]), 2, bad)
+            self.assertEqual(seen, [7])
+        finally:
+            bd.device_json = orig_json
+        calls = []
+        def slow(cmd, **k):
+            calls.append((cmd, k)); raise bd.subprocess.TimeoutExpired(cmd, k.get('timeout'))
+        bd.subprocess.run = slow
+        try:
+            with self.assertRaises(bd.DeviceError): bd.device_json('dev', 'info', 'apps', timeout=9)
+            cmd, k = calls[0]; self.assertEqual(cmd[cmd.index('--timeout') + 1], '9'); self.assertEqual(k['timeout'], 11)
+        finally:
+            bd.subprocess.run = orig_run
 
 
 class ScriptOrder(unittest.TestCase):

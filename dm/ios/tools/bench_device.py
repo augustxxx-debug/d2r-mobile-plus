@@ -68,9 +68,14 @@ def file_mtime(files, name):
     return None
 
 
-def device_json(device, *arguments):
-    r = subprocess.run(['xcrun', 'devicectl', 'device', *arguments, '--device', device, '--timeout', '30', '--json-output', '-'],
-                       capture_output=True, text=True)
+def device_json(device, *arguments, timeout=30):
+    # 外层再兜一道（多给 2 秒起进程）：devicectl 自己的超时不一定守得住，查询总时长要计进调用方的预算（四审 Q4-03）
+    # An outer guard (2 extra seconds for process start-up): devicectl's own timeout is not always honoured, and the query time counts against the caller's budget (fourth review Q4-03)
+    try:
+        r = subprocess.run(['xcrun', 'devicectl', 'device', *arguments, '--device', device, '--timeout', str(timeout), '--json-output', '-'],
+                           capture_output=True, text=True, timeout=timeout + 2)
+    except subprocess.TimeoutExpired:
+        raise DeviceError('devicectl 超时（%d 秒）：%s' % (timeout, ' '.join(arguments)))
     if r.returncode:
         raise DeviceError('devicectl 失败：%s' % ' '.join(arguments))
     data = json.loads(r.stdout)
@@ -91,9 +96,11 @@ def query(device, bundle, want_savetest):
 
 
 def main(argv):
-    if len(argv) == 4 and argv[1] == 'ready':
+    if len(argv) in (4, 5) and argv[1] == 'ready':   # 可选第 5 个参数 = 这次查询最多几秒（5–30，缺省 30） | optional 5th argument = seconds this query may take (5–30, default 30)
         try:
-            device_json(argv[2], 'info', 'apps', '--bundle-id', argv[3]); return 0
+            timeout = int(argv[4]) if len(argv) == 5 else 30
+            if not 5 <= timeout <= 30: raise ValueError('查询超时要在 5–30 秒：%s' % argv[4])
+            device_json(argv[2], 'info', 'apps', '--bundle-id', argv[3], timeout=timeout); return 0
         except (DeviceError, ValueError, KeyError) as e:
             print('🔴 ' + str(e), file=sys.stderr); return 2
     if len(argv) == 6 and argv[1] == 'mtime':

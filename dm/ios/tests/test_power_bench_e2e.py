@@ -5,7 +5,8 @@ lock directory); no device is touched.
 - F02：收尾只结束本次启动的进程；用户中途重开同一个 App（新进程号）时不结束它
 - F07：拉回关键文件失败或报告生成失败时，整个脚本以非零退出，不打印“数据已拉回”的成功行
 - 二审 R02：设备启动后断开但仍在清单里时，按真实查询继续等，接回后才拉数据；等到上限才失败且不拉数据
-- 二审归属：进程号对得上但本次采样表不再前进（证明不了是本次实例）时不结束"""
+- 二审归属：进程号对得上但本次采样表不再前进（证明不了是本次实例）时不结束
+- 四审 Q4-03：重连预算按截止时刻算，查询耗时与等待共用；假 date / sleep / xcrun 共用一个虚拟钟，不真等"""
 import json
 import os
 import shutil
@@ -23,7 +24,11 @@ FAKE_XCRUN = r'''#!/usr/bin/env python3
 import json, os, sys
 st_path = os.environ['FAKE_STATE']; st = json.load(open(st_path))
 a = sys.argv[1:]
-open(os.environ['FAKE_CALLS'], 'a').write(' '.join(a) + '\n')
+clock = os.environ['FAKE_CLOCK']; now = int(open(clock).read())
+open(os.environ['FAKE_CALLS'], 'a').write('@%d ' % now + ' '.join(a) + '\n')
+if a[:2] == ['devicectl', 'device']:   # 每次设备查询花 query_s 秒虚拟时间（缺省 1），不超过它带的 --timeout | each device query takes query_s virtual seconds (default 1), capped by its --timeout
+    cap = int(a[a.index('--timeout') + 1]) if '--timeout' in a else 10 ** 9
+    open(clock, 'w').write(str(now + min(st.get('query_s', 1), cap)))
 def save(): json.dump(st, open(st_path, 'w'))
 def out_json(result):
     doc = {'info': {'outcome': 'success'}, 'result': result}
@@ -77,21 +82,26 @@ if cmd == ['copy', 'to']:
 sys.exit(3)
 '''
 
-FAKE_SLEEP = '#!/bin/bash\n# 长等待瞬时返回；看门狗的短轮询照常短睡，免得空转 | long waits return at once; short watchdog polls still sleep briefly\ncase "$1" in [0-9]|[0-9].*) exec /bin/sleep 0.02;; *) exit 0;; esac\n'
+# 虚拟钟：3 秒及以上的整数 sleep 瞬时返回并把钟往前拨；看门狗 / 排队的 1–2 秒短轮询照常短睡、不拨钟（它们在后台并发）
+# Virtual clock: an integer sleep of 3 s or more returns at once and advances the clock; the 1–2 s watchdog / queue polls still sleep briefly and leave the clock alone (they run concurrently in the background)
+FAKE_SLEEP = ('#!/bin/bash\ncase "$1" in \'\'|*[!0-9]*) exec /bin/sleep 0.02;; esac\n'
+              'if [ "$1" -ge 3 ]; then c=$(cat "$FAKE_CLOCK"); echo $((c + $1)) > "$FAKE_CLOCK"; exit 0; fi\nexec /bin/sleep 0.02\n')
+FAKE_DATE = '#!/bin/bash\n[ "$*" = +%s ] && exec cat "$FAKE_CLOCK"\nexec /bin/date "$@"\n'
 
 
 class Bench(unittest.TestCase):
     def run_bench(self, locale='en_US.UTF-8', extra_env=None, **scenario):
         tmp = Path(tempfile.mkdtemp(prefix='bench-e2e-')); self.addCleanup(shutil.rmtree, tmp, True)
         bin_ = tmp / 'bin'; bin_.mkdir()
-        (bin_ / 'xcrun').write_text(FAKE_XCRUN); (bin_ / 'sleep').write_text(FAKE_SLEEP)
-        os.chmod(bin_ / 'xcrun', 0o755); os.chmod(bin_ / 'sleep', 0o755)
+        (bin_ / 'xcrun').write_text(FAKE_XCRUN); (bin_ / 'sleep').write_text(FAKE_SLEEP); (bin_ / 'date').write_text(FAKE_DATE)
+        for name in ('xcrun', 'sleep', 'date'): os.chmod(bin_ / name, 0o755)
+        (tmp / 'clock').write_text('1793000000')
         state = {'device': DEV, 'bundle': BUNDLE, 'appdir': APPDIR, 'before': [], 'after': [111], 'launch_pid': 111}
         state.update(scenario)
         (tmp / 'state.json').write_text(json.dumps(state))
         (tmp / 'local.env').write_text(f'DM_DEVICE={DEV}\nDM_BUNDLE_ID={BUNDLE}\n')
         env = {'PATH': f'{bin_}:/usr/bin:/bin:/usr/sbin:/sbin', 'HOME': str(tmp), 'LC_ALL': locale, 'LANG': locale,
-               'FAKE_STATE': str(tmp / 'state.json'), 'FAKE_CALLS': str(tmp / 'calls.log'), 'DM_LOCAL_ENV': str(tmp / 'local.env'),
+               'FAKE_STATE': str(tmp / 'state.json'), 'FAKE_CALLS': str(tmp / 'calls.log'), 'FAKE_CLOCK': str(tmp / 'clock'), 'DM_LOCAL_ENV': str(tmp / 'local.env'),
                'DM_ROOT': str(tmp / 'root'), 'DM_RUN_DIR': str(tmp / 'run'), 'DM_DEVLOCK_DIR': str(tmp / 'lock' / 'device.lock'),
                'DM_DEVLOCK_HIST': str(tmp / 'lock' / 'hist.tsv'), 'DM_DEVLOCK_WD_LOG': str(tmp / 'lock' / 'wd.log')}
         env.update(extra_env or {})
@@ -146,6 +156,42 @@ class Bench(unittest.TestCase):
         self.assertNotEqual(rc, 0); self.assertIn('还连不上，本次基准失败', out)
         self.assertNotIn('copy from', calls); self.assertNotIn('process terminate', calls)
 
+    def reconnect(self, calls, tmp):
+        """重连阶段：从启动后第一次就绪查询开始到脚本结束的虚拟秒数，以及该阶段每次就绪查询的超时 | reconnect phase: virtual seconds from the first readiness query after launch to the end, and each readiness query's timeout"""
+        lines = calls.splitlines(); launch = next(i for i, l in enumerate(lines) if 'process launch' in l)
+        ready = [l for l in lines[launch + 1:] if 'info apps' in l]
+        start = int(ready[0].split()[0][1:]); end = int((tmp / 'clock').read_text())
+        return end - start, [int(l.split('--timeout ')[1].split()[0]) for l in ready]
+
+    def test_q4_03_slow_queries_count_against_the_budget(self):
+        # 审计员场景：每次查询都耗满 30 秒还失败，上限 90 秒 → 整段不超过 90 秒（旧脚本只数 sleep，实际 180 秒）
+        # Reviewer scenario: every query takes the full 30 s and fails, limit 90 s -> the whole phase stays within 90 s (the old script counted only sleeps: 180 s)
+        rc, out, calls, _, tmp = self.run_bench(offline=1000, query_s=30, extra_env={'BENCH_RECONNECT_S': '90'})
+        self.assertNotEqual(rc, 0); self.assertIn('还连不上，本次基准失败', out)
+        self.assertNotIn('copy from', calls); self.assertNotIn('process terminate', calls)
+        elapsed, timeouts = self.reconnect(calls, tmp)
+        self.assertLessEqual(elapsed, 90, (elapsed, timeouts)); self.assertTrue(all(5 <= t <= 30 for t in timeouts), timeouts)
+
+    def test_q4_03_limits(self):
+        for limit, query_s in ((0, 1), (1, 1), (29, 1), (30, 1), (90, 1), (29, 30), (300, 7)):
+            with self.subTest(limit=limit, query_s=query_s):
+                rc, out, calls, _, tmp = self.run_bench(offline=1000, query_s=query_s, extra_env={'BENCH_RECONNECT_S': str(limit)})
+                self.assertNotEqual(rc, 0); self.assertNotIn('copy from', calls)
+                elapsed, timeouts = self.reconnect(calls, tmp)
+                self.assertLessEqual(elapsed, max(limit, query_s), (elapsed, timeouts))   # 第一次查询不论预算都做 | the first query is always made
+
+    def test_q4_03_online_with_zero_budget_still_pulls(self):
+        rc, out, calls, runs, _ = self.run_bench(extra_env={'BENCH_RECONNECT_S': '0'})
+        self.assertEqual(rc, 0, out[-1500:]); self.assertIn('copy from', calls)
+
+    def test_q4_03_reconnect_just_before_the_deadline(self):
+        # 上限 60 秒、每次查询 1 秒：第 1 次（30 秒超时）失败后等 30 秒，剩 29 秒时第 2 次以 29 秒超时查询又失败，剩 28 秒，等 23 秒，最后一次以 5 秒超时查询并接上
+        # Limit 60 s, 1 s per query: the first query (30 s timeout) fails, wait 30 s; with 29 s left the second query (29 s timeout) fails too, 28 s left, wait 23 s, and the last query with a 5 s timeout connects
+        rc, out, calls, runs, tmp = self.run_bench(offline=2, query_s=1, extra_env={'BENCH_RECONNECT_S': '60'})
+        self.assertEqual(rc, 0, out[-1500:]); self.assertIn('设备已接回', out)
+        elapsed, timeouts = self.reconnect(calls, tmp)
+        self.assertEqual(timeouts[:3], [30, 29, 5], timeouts)
+
     def test_r02_bad_reconnect_value_refused_before_device(self):
         rc, out, calls, _, _ = self.run_bench(extra_env={'BENCH_RECONNECT_S': '12h'})
         self.assertNotEqual(rc, 0); self.assertIn('BENCH_RECONNECT_S', out); self.assertEqual(calls, '')
@@ -161,7 +207,8 @@ class ShellVarBoundary(unittest.TestCase):
         import re
         pat = re.compile(r'\$([A-Za-z_][A-Za-z0-9_]*)(?=[^\x00-\x7f])')
         bad = []
-        for f in sorted((IOS / 'tools').glob('*.sh')) + [IOS / 'run.sh']:
+        # 四审修版本脚本时 dm/tools/version.sh 里出过一处（${warn:+$warn；}），范围扩到 dm/tools 与 uireg | one slipped into dm/tools/version.sh during the fourth-review fix, so dm/tools and uireg are covered too
+        for f in sorted((IOS / 'tools').glob('*.sh')) + sorted((IOS / 'tools' / 'uireg').glob('*.sh')) + sorted((IOS.parent / 'tools').glob('*.sh')) + [IOS / 'run.sh']:
             for i, line in enumerate(f.read_text(encoding='utf-8').splitlines(), 1):
                 code = re.split(r'(?:^|\s)#', line, maxsplit=1)[0]   # 去掉注释 | drop comments
                 bad += [f'{f.name}:{i}: ${m.group(1)}' for m in pat.finditer(code)]
