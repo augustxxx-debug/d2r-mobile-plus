@@ -162,3 +162,33 @@ for _row, _name in enumerate(('ROW_RES', 'ROW_FPS', 'ROW_UPSCALE', 'ROW_PROFILE'
     assert 170 + 180 * _row + 10 == _rows_y[_row], (_name, _rows_y)
 assert 'selected == ROW_FPS' in _custom and 'selected == ROW_UPSCALE' in _custom and 'selected == ROW_PROFILE' in _custom and 'row_id == ROW_RES' in _custom
 print('PASS Graphics rows: render resolution first, host controller rows in the same order')
+# 局内选项页的手柄提示条（2026-10-27：触屏下「全部接受 / 默认 / 返回」露在「应用 / 默认 / 放弃」下面）：Console 这份 basedOn 原版手柄基页（字面路径，宿主改写前缀管不到），
+# 所以触屏这份自己把 Legend 挪出屏；手柄这份（pad_settings）原样留着提示条。夹具照原版 Console 那份的形状：Legend 没有 fields、带尾逗号
+# In-game options page controller legend (2026-10-27: under touch "Accept All / Default / Back" showed below 「应用 / 默认 / 放弃」): the Console copy is basedOn the original controller base page (a literal path the host prefix rewrite does not reach),
+# so the touch copy moves the Legend off screen itself; the controller copy (pad_settings) keeps the legend. The fixture follows the shape of the original Console copy: Legend without fields, trailing commas
+console_src = ('{\n    "basedOn": "Controller/SettingsPanelHD.json",\n    "type": "SettingsPanel", "name": "SettingsPanel",\n    "children": [\n'
+               '        { "type": "ClickCatcherWidget", "name": "catcher", },\n'
+               '        { "type": "RectangleWidget", "name": "Background", "children": [ { "type": "Widget", "name": "Anchor", "children": [\n'
+               '            { "type": "ImageWidget", "name": "Background", },\n            { "type": "TextBoxWidget", "name": "Title", },\n'
+               '            { "type": "ButtonLegendWidget", "name": "Legend", },\n        ] }, ] },\n'
+               '        { "type": "ImageWidget", "name": "SettingsBackground", "children": [ { "type": "ControllerCursorBoundsWidget", "name": "ControllerCursorBounds", }, ] },\n'
+               '        ' + json.dumps(json.loads(settings_src)['children'][0]) + ',\n    ]\n}\n')
+def legend_of(text):
+    found = []
+    def walk_legend(node):
+        if isinstance(node, dict):
+            if node.get('type') == 'ButtonLegendWidget': found.append(node)
+            for value in node.values(): walk_legend(value)
+        elif isinstance(node, list):
+            for value in node: walk_legend(value)
+    walk_legend(json.loads(re.sub(r',(\s*[}\]])', r'\1', text)))
+    assert len(found) == 1, found
+    return found[0]
+touch_console, _ = layout.PRESENT['controller/console/settingspanelhd.json'](console_src)
+rect = legend_of(touch_console)['fields']['rect']
+assert rect['x'] >= 99999 and rect['y'] >= 99999, rect   # 触屏：挪出屏 | touch: off screen
+assert 'fields' not in legend_of(layout.pad_settings(console_src))   # 手柄：不动，照旧继承原版提示条 | controller: untouched, still inherits the native legend
+assert json.loads(re.sub(r',(\s*[}\]])', r'\1', touch_console))['children'][-1]['fields']['tabCount'] == 5   # 页签变换照常 | the tab transform still applies
+front, _ = layout.PRESENT['controller/settingspanelhd.json']('{"children":[{"type": "ButtonLegendWidget", "name": "Legend", "fields": {"rect": {"x": 0, "y": 1661, "width": 1950, "height": 103}}}]}')
+assert legend_of(front)['fields']['rect']['y'] >= 99999   # 前端那份照旧挪走 | the front-end copy is still moved away
+print('PASS options legend: touch in-game and front-end copies move the controller legend off screen; controller copy keeps it')

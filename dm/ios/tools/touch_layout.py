@@ -1328,9 +1328,20 @@ def pad_settings(s): return _settings_tabs(s)[0]
 def pad_custom_page(s): return _custom_page(s)[0]
 # 挂进 PRESENT：build_ingame 对同一份文件（往选项页插「应用 / 默认 / 放弃」）会先套这里的变换再插按钮，不会出两份覆盖互相盖掉
 # Hooked into PRESENT: for the same file (inserting 「应用 / 默认 / 放弃」(Apply / Default / Discard) into the options page) build_ingame applies the transform here first and then inserts the buttons, so two overlays that overwrite each other are not produced
-PRESENT['controller/console/settingspanelhd.json'] = _settings_tabs
-# 选项页底部的手柄提示条（「默认」「返回」两段说明字；键图标已透明）：局内被外框底带挡着看不出，前端选项页没有外框、字露在三个按钮下面——挪走
-# The controller button legend at the bottom of the options page (the two caption texts 「默认」(Default) and 「返回」(Back); the key icons are already transparent): in-game it is hidden by the bottom band of the outer frame, but the front-end options page has no outer frame and the text shows below the three buttons -- moved away
+# 局内选项页（Console 这份）自己也挪走提示条：它 basedOn「Controller/SettingsPanelHD.json」是 JSON 里的字面路径，宿主改写的布局前缀（dm_padmode.c）管不到，
+# 触屏模式下继承的是原版手柄那份基页（提示条 y 1661、「全部接受 / 默认 / 返回」），不是下面已挪走提示条的触屏那份；字露在「应用 / 默认 / 放弃」下面、被按钮压住一半（俄 / 韩文更长更显眼）。
+# 手柄模式用 pad_settings，不经这里，提示条照旧
+# The in-game options page (the Console copy) moves its own legend away too: its basedOn "Controller/SettingsPanelHD.json" is a literal path in the JSON that the host's layout prefix rewrite (dm_padmode.c) does not reach,
+# so in touch mode it inherits the original controller base page (legend at y 1661, "Accept All / Default / Back"), not the touch copy below whose legend is already moved; the text showed under 「应用 / 默认 / 放弃」(Apply / Default / Discard), half covered by the buttons (longer and more visible in Russian / Korean).
+# Controller mode uses pad_settings, which does not pass through here, so its legend stays
+def _settings_tabs_touch(s):
+    s, n = _settings_tabs(s)
+    s, k = offscreen(s, types=('ButtonLegendWidget',))
+    if k != 1: raise SystemExit('touch_layout：局内选项页提示条应为 1 个，找到 %d 个' % k)
+    return s, n + k
+PRESENT['controller/console/settingspanelhd.json'] = _settings_tabs_touch
+# 选项页底部的手柄提示条（「默认」「返回」两段说明字；键图标已透明）：前端选项页没有外框、字露在三个按钮下面——挪走（局内那份另见上面 _settings_tabs_touch）
+# The controller button legend at the bottom of the options page (the two caption texts 「默认」(Default) and 「返回」(Back); the key icons are already transparent): the front-end options page has no outer frame and the text shows below the three buttons -- moved away (for the in-game copy see _settings_tabs_touch above)
 def _settings_no_legend(s):
     s, n = offscreen(s, types=('ButtonLegendWidget',))
     if n != 1: raise SystemExit('touch_layout：选项页提示条应为 1 个，找到 %d 个' % n)
