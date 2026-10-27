@@ -5496,10 +5496,13 @@ void mtl_host_apply(uint64_t v) { int frz = (int)(uint32_t)v - 1, force = (int)(
 // Game logic already runs at 25 ticks / second and unit positions are interpolated by time, so there are no repeated frames at 30 frames (measured on a real device: coefficient of variation of per-frame camera displacement 0.292 at 30 frames, 0.296 at 60 frames).
 // The switch is on the 「自定义」(Custom) page (dm_custom.c eco_fps, off by default, takes effect on apply); the test switch DM_FPS=30/60 pins it.
 __attribute__((weak)) int dm_fps_setting(void) { return 60; }   // 宿主 dm_custom.c 提供强定义；图形单测不链宿主时恒 60 | The host's dm_custom.c provides the strong definition; always 60 when graphics unit tests do not link the host
-// DM_FPS=120：120 Hz 实验开关（配合 DM_PRESENT_HZ=120）；节拍器、ProMotion 申请与 3D 比例控制器的周期都跟着它。只是实验，不进设置页
-// DM_FPS=120: 120 Hz experiment switch (together with DM_PRESENT_HZ=120); the pacer, the ProMotion request and the 3D scale controller's period all follow it. Experiment only, not a settings option
+// 120 帧档：图形页帧率滑块的第三格（dm_custom.c，屏幕最高刷新率 ≥ 120 才有）；测试开关 DM_FPS=120 钉住。显示节拍、ProMotion 表态、出图节拍器（hle_nvn.c present_auto_hz）
+// 与 3D 比例控制器的周期都跟着它——节拍器原先只认 30 / 60，DM_FPS=120 单开时节拍 120 Hz、节拍器 60 Hz，游戏跑到 80–90 帧后卡死（nvn_pace.h nvn_pace_link）
+// 120 fps mode: the third stop of the Graphics page frame-rate slider (dm_custom.c, present only when the screen's maximum refresh rate is >= 120); the test switch DM_FPS=120 pins it. The display link, the ProMotion declaration, the present pacer (hle_nvn.c present_auto_hz)
+// and the 3D scale controller's period all follow it -- the pacer used to know only 30 / 60, and with DM_FPS=120 alone the link ran at 120 Hz and the pacer at 60 Hz, and the game stalled after running at 80–90 fps (nvn_pace.h nvn_pace_link)
 int mtl_fps_target(void) { static int env = -2; if (env == -2) { const char *e = getenv("DM_FPS"); env = e ? atoi(e) : -1; if (env != 30 && env != 60 && env != 120) env = -1; else MLOG("DM_FPS=%d：帧数由测试开关钉住", env); }
-    return env > 0 ? env : dm_fps_setting() == 30 ? 30 : 60; }
+    if (env > 0) return env; int f = dm_fps_setting(); return f == 30 || f == 120 ? f : 60; }
+int dm_display_max_hz(void) { return mtl_display_hz(); }   // 给宿主 dm_custom.c（弱定义的强定义）：设置页要不要给 120 那一格 | For the host's dm_custom.c (strong definition of its weak one): whether the settings page offers the 120 stop
 // 外推启用状态一变（省电模式切换、世界冻结接手 / 交回）：先让「跨帧不写回」账本重学（试用期里照常写回），外推晚一帧再真正切换——
 // 保证切换前最后一次提交是全量写回的。不然 30 帧时每帧先清空的附件被学成不写回，切回 60 帧的第一个外推帧读到旧内容、闪一帧（测试版实测，xv 自检报红后才撤销）
 // Whenever the extrapolation enabled state changes (power-saving mode toggled, world freeze takes over / hands back): first let the "no store across frames" ledger relearn (during the trial period it stores as usual), and the extrapolation really switches one frame later --

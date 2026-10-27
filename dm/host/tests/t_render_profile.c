@@ -1,5 +1,6 @@
 // 画质配置迁移、持久化与旧布尔键兼容：只使用临时设置文件，不读游戏存档。
 // Test profile migration, persistence and legacy boolean compatibility using temporary settings only, never game saves.
+#define DM_DISPLAY_HZ_TEST_HOOK
 #include "../dm_custom.c"
 #include <unistd.h>
 #include <sys/stat.h>
@@ -9,6 +10,8 @@ int dm_lang_group(void) { return DM_LG_EN; }
 const char *dm_save_commitdir(void) { return NULL; }
 int dm_3d_quality_mode_get(void) { return quality; }
 float dm_3d_scale_cur(void) { return .75f; }
+static int display_hz;   // 屏幕最高刷新率替身（0 = 还没窗口） | stand-in for the screen's maximum refresh rate (0 = no window yet)
+int dm_display_max_hz(void) { return display_hz; }
 static int checks;
 #define CHECK(x) do { checks++; if (!(x)) { fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x); return 1; } } while (0)
 int main(void) {
@@ -112,5 +115,28 @@ int main(void) {
     graphics_select_fps(1); dm_custom_on_uimsg("OptionsPanelMessage","CancelChanges",NULL); CHECK(dm_fps_setting()==30);
     graphics_select_fps(1); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==60);
     graphics_select_fps(-1); graphics_select_fps(2); CHECK(atomic_load(&g_pend[K_FPS])==-1);
+    // 120 帧档（eco_fps=2）：只在屏幕最高刷新率 ≥ 120 时开放第三格并生效；60 Hz 屏上存着的 120 按 60 走、滑块停在 60 那格且不算改动；旧值 0 / 1 照旧
+    // 120 fps mode (eco_fps=2): the third stop is offered and takes effect only when the screen's maximum refresh rate is >= 120; a saved 120 on a 60 Hz screen runs at 60, the slider sits on the 60 stop and it is not a change; old values 0 / 1 unchanged
+    { const char *fs[]={"eco_fps=2\n","eco_fps=1\n","eco_fps=0\n","","eco_fps=2x\n","eco_fps=3\n"}; const int f120[]={120,30,60,60,30,30}, f60[]={60,30,60,60,30,30};
+      for (unsigned i=0;i<sizeof fs/sizeof *fs;i++) { FILE *file=fopen(path,"w"); CHECK(file); fputs("q3d=0\nq3d_v2=1\n",file); fputs(fs[i],file); fclose(file);
+          atomic_store(&g_loaded,0); display_hz=120; CHECK(dm_fps_setting()==f120[i]); display_hz=60; CHECK(dm_fps_setting()==f60[i]); display_hz=0; CHECK(dm_fps_setting()==f60[i]); }
+      FILE *file=fopen(path,"w"); CHECK(file); fputs("q3d=0\nq3d_v2=1\neco_fps=2\n",file); fclose(file); atomic_store(&g_loaded,0); load_once();
+      display_hz=60; CHECK(fps_max_pos()==1); CHECK(fps_pos(pending_value(K_FPS))==1);
+      graphics_select_fps(1); CHECK(atomic_load(&g_pend[K_FPS])==-1); CHECK(!enhanced_settings_dirty());   // 滑块读回 60 那格：不是改动 | slider reads back the 60 stop: not a change
+      graphics_select_fps(2); CHECK(atomic_load(&g_pend[K_FPS])==-1);                                       // 60 Hz 屏没有第三格 | no third stop on a 60 Hz screen
+      display_hz=120; CHECK(fps_max_pos()==2); CHECK(fps_pos(pending_value(K_FPS))==2); CHECK(dm_fps_setting()==120);
+      graphics_select_fps(1); CHECK(pending_value(K_FPS)==0); CHECK(dm_fps_setting()==120); CHECK(enhanced_settings_dirty());   // 应用前不生效 | not in effect before Apply
+      dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==60);
+      graphics_select_fps(2); CHECK(pending_value(K_FPS)==FPS_120); dm_custom_on_uimsg("OptionsPanelMessage","CancelChanges",NULL); CHECK(dm_fps_setting()==60);
+      graphics_select_fps(2); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==120);
+      file=fopen(path,"r"); CHECK(file); char text[4096]={0}; fread(text,1,sizeof text-1,file); fclose(file); CHECK(strstr(text,"eco_fps=2\n"));   // 存盘 | persisted
+      atomic_store(&g_loaded,0); CHECK(dm_fps_setting()==120);
+      graphics_select_fps(0); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==30);
+      graphics_select_fps(2); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==120);
+      dm_custom_on_uimsg("OptionsPanelMessage","ResetToDefaults",NULL); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==60);   // 默认回 60 | defaults back to 60
+      display_hz=0; }
+    // DM_TEST_FPS 时间表（纯函数）：帧率只认 30 / 60 / 120 | DM_TEST_FPS schedule (pure function): only 30 / 60 / 120 are accepted
+    CHECK(fps_schedule("120",0)==120); CHECK(fps_schedule("30@0,60@40,120@70",39.9)==30); CHECK(fps_schedule("30@0,60@40,120@70",40)==60); CHECK(fps_schedule("30@0,60@40,120@70",500)==120);
+    CHECK(fps_schedule("120@20",0)==120); CHECK(fps_schedule("",0)==-1); CHECK(fps_schedule("45",0)==-1); CHECK(fps_schedule("120@-1",0)==-1); CHECK(fps_schedule("60;120@5",0)==-1);
     unlink(path); rmdir(directory); printf("PASS render profiles: %d migration/persistence checks\n",checks); return 0;
 }

@@ -473,6 +473,7 @@ dmCustomFxOff	MetalFX 超分：原版	MetalFX upscaling: Original	MetalFX upscal
 dmCustomFxOffHint	可手动关闭 MetalFX；设备不支持时自动使用原版放大	Turn MetalFX off manually; unsupported devices use the original scaler	Turn MetalFX off manually; unsupported devices use the original scaler		Turn MetalFX off manually; unsupported devices use the original scaler	Turn MetalFX off manually; unsupported devices use the original scaler	Plus 3D upscaling profile
 dmGraphicsFrameRate30	帧率：30 FPS	Frame rate: 30 FPS	Fotogramas: 30 FPS	Fotogramas: 30 FPS	Частота кадров: 30 FPS	프레임 레이트: 30 FPS	Graphics FPS selector caption
 dmGraphicsFrameRate60	帧率：60 FPS	Frame rate: 60 FPS	Fotogramas: 60 FPS	Fotogramas: 60 FPS	Частота кадров: 60 FPS	프레임 레이트: 60 FPS	Graphics FPS selector caption
+dmGraphicsFrameRate120	帧率：120 FPS	Frame rate: 120 FPS	Fotogramas: 120 FPS	Fotogramas: 120 FPS	Частота кадров: 120 FPS	프레임 레이트: 120 FPS	Graphics FPS selector caption (ProMotion / 120 Hz screens only)
 dmGraphicsResAuto	渲染分辨率：自动	Resolution: Auto	Resolución: Automática	Resolución: Automática	Разрешение: авто	해상도: 자동	Graphics render resolution slider caption (dm_res_cap.h level 0, 4.0 MP budget)
 dmGraphicsResEco	渲染分辨率：省电	Resolution: Eco	Resolución: Ahorro	Resolución: Ahorro	Разрешение: экономия	해상도: 절전	Graphics render resolution slider caption (level 1, 2.07 MP)
 dmGraphicsResBalanced	渲染分辨率：均衡	Resolution: Balanced	Resolución: Equilibrada	Resolución: Equilibrada	Разрешение: баланс	해상도: 균형	Graphics render resolution slider caption (level 2, 2.8 MP)

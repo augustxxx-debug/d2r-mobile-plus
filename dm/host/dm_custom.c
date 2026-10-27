@@ -46,7 +46,8 @@ static const int k_def[NK] = { 0,
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
 #define K_MERC (2 + VOICE_ROW)
-#define K_FPS (11 + VOICE_ROW)
+#define K_FPS (11 + VOICE_ROW)   // eco_fps：0 = 60、1 = 30（省电）、FPS_120 = 120 帧档；旧文件只有 0 / 1，旧包读到 2 当省电 30 | eco_fps: 0 = 60, 1 = 30 (power saving), FPS_120 = 120 fps mode; old files only hold 0 / 1, and old builds read 2 as power saving 30
+#define FPS_120 2
 #define K_Q3D (12 + VOICE_ROW)
 #define K_TOUCH_SWAP (15 + VOICE_ROW)
 #define K_UPSCALE (NK - 2)
@@ -106,6 +107,7 @@ static void load_once(void) {
     while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0';
         if (i == K_Q3D) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 4) v[i] = (int)q; else v[i] = 0; }
         if (i == K_RES) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q < DM_RES_LEVELS) v[i] = (int)q; else v[i] = 0; }
+        if (i == K_FPS && eq[1] == '2' && (eq[2] == '\n' || eq[2] == '\r' || eq[2] == 0)) v[i] = FPS_120;   // 其余照旧：0 = 60、非 0 = 30 | Otherwise as before: 0 = 60, non-zero = 30
         if (!strcmp(ln, "q3d_v2")) qv2 = eq[1] == '1';
         if (i == 0) { int l = atoi(eq + 1); if (l >= 0 && l < LANG_N) lang = v[0] = l; }
 #if VOICE_ROW
@@ -175,7 +177,42 @@ __attribute__((weak)) void dm_oe_res_changed(void) {}
 static _Atomic unsigned g_res_notify_n;
 unsigned dm_render_res_notify_count(void) { return atomic_load(&g_res_notify_n); }
 static void res_notify(void) { atomic_fetch_add(&g_res_notify_n, 1); LOG("图形设置：渲染分辨率档位 → %d（通知游戏重读输出尺寸）", dm_render_res_level()); dm_oe_res_changed(); }
-int dm_fps_setting(void) { return dm_custom_get("eco_fps") ? 30 : 60; }   // 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义） | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol)
+// 测试开关 DM_TEST_FPS=<帧率>[@秒][,<帧率>@秒…]（帧率 30 / 60 / 120）：按宿主初始化起的秒数切帧率档，走与设置页「应用」相同的运行时路径（显示节拍、节拍器、
+// ProMotion 表态、3D 比例控制器的周期都每帧读 dm_fps_setting），不读也不写设置文件；120 同样只在屏幕撑得住时生效。真机验 省电 / 60 / 120 切换用
+// Test switch DM_TEST_FPS=<fps>[@sec][,<fps>@sec...] (fps 30 / 60 / 120): switches the frame rate by seconds since host init, through the same runtime path as Apply on the settings page (display link, pacer,
+// ProMotion declaration and the 3D scale controller period all read dm_fps_setting every frame); reads and writes no settings file; 120 likewise takes effect only on a screen that can do it. For checking 30 / 60 / 120 switching on a device
+static int fps_schedule(const char *spec, double elapsed) {
+    if (!spec || !*spec) return -1;
+    int cur = -1; const char *p = spec;
+    while (*p) { char *end; long f = strtol(p, &end, 10); if (end == p || (f != 30 && f != 60 && f != 120)) return -1;
+        double at = 0; p = end; if (*p == '@') { at = strtod(p + 1, &end); if (end == p + 1 || at < 0) return -1; p = end; }
+        if (elapsed >= at || cur < 0) cur = (int)f;
+        if (*p == ',') p++; else if (*p) return -1; }
+    return cur;
+}
+static int fps_test(void) {
+    static int on = -1; static const char *spec; static uint64_t t0; static _Atomic int last = -1;
+    if (on < 0) { spec = getenv("DM_TEST_FPS"); on = spec && fps_schedule(spec, 0) > 0; t0 = (uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC); if (spec && !on) LOG("【红】DM_TEST_FPS 非法：%s", spec); }
+    if (!on) return -1;
+    double el = ((uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC) - t0) / 1e9; int f = fps_schedule(spec, el);
+    if (atomic_exchange(&last, f) != f) LOG("测试 DM_TEST_FPS：第 %.0f 秒 → %d 帧档", el, f);
+    return f;
+}
+// 120 帧档只在屏幕最高刷新率 ≥ 120 时开放（ProMotion iPhone / iPad、高刷 Mac 屏）：设置页滑块才有第三格，存着 120 的设置换到 60 Hz 屏上按 60 走。
+// 屏幕刷新率由图形层给（nvn_mtl.m 的强定义，有窗口时读 UIScreen / CoreGraphics；未建窗口 0）；单测 / 不链图形层时 0 = 不开放
+// The 120 fps mode is offered only when the screen's maximum refresh rate is >= 120 (ProMotion iPhone / iPad, high-refresh Mac displays): only then does the settings slider get a third stop, and a saved 120 setting runs at 60 on a 60 Hz screen.
+// The refresh rate comes from the graphics layer (strong definition in nvn_mtl.m, reading UIScreen / CoreGraphics once there is a window; 0 before the window exists); 0 = not offered in unit tests / without the graphics layer
+#ifndef DM_DISPLAY_HZ_TEST_HOOK   // 单测直接包含本文件并自带强定义时打开（t_render_profile.c） | defined by unit tests that include this file and bring their own strong definition (t_render_profile.c)
+__attribute__((weak)) int dm_display_max_hz(void) { return 0; }
+#else
+int dm_display_max_hz(void);
+#endif
+static int fps120_ok(void) { return dm_display_max_hz() >= 119; }   // 119：容 119.88 这类档 | 119: tolerates rates like 119.88
+// 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义）：eco_fps 0 = 60 / 1 = 30（省电）/ 2 = 120 | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol): eco_fps 0 = 60 / 1 = 30 (power saving) / 2 = 120
+int dm_fps_setting(void) {
+    int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t == 120 ? FPS_120 : 0) : dm_custom_get("eco_fps");
+    return v == 1 ? 30 : v == FPS_120 && fps120_ok() ? 120 : 60;
+}
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
@@ -232,10 +269,15 @@ static int enhanced_settings_dirty(void) {
     for (int i=0;i<NK;i++) if (pending_value(i)!=atomic_load(&g_val[i])) return 1;
     return 0;
 }
-static void graphics_select_fps(int value) {
-    if (value < 0 || value > 1 || (!value) == pending_value(K_FPS)) return;
-    atomic_store(&g_pend[K_FPS], !value);
-    LOG("图形设置：帧率 → %d FPS（点应用生效）", value ? 60 : 30);
+// 帧率滑块的格：0 = 30、1 = 60、2 = 120（屏幕撑得住 120 才有第三格）；格 ↔ eco_fps 值。存着 120、屏幕只有 60 时停在 60 那格，不当成改动
+// Frame-rate slider stops: 0 = 30, 1 = 60, 2 = 120 (the third stop exists only when the screen can do 120); stop <-> eco_fps value. A saved 120 on a 60-only screen sits on the 60 stop and does not count as a change
+static int fps_max_pos(void) { return fps120_ok() ? 2 : 1; }
+static int fps_pos(int v) { return v == 1 ? 0 : v == FPS_120 && fps120_ok() ? 2 : 1; }
+static int fps_val(int pos) { return pos == 0 ? 1 : pos == 2 ? FPS_120 : 0; }
+static void graphics_select_fps(int pos) {
+    if (pos < 0 || pos > fps_max_pos() || pos == fps_pos(pending_value(K_FPS))) return;
+    atomic_store(&g_pend[K_FPS], fps_val(pos));
+    LOG("图形设置：帧率 → %d FPS（点应用生效）", pos == 0 ? 30 : pos == 2 ? 120 : 60);
 }
 static void graphics_select_profile(int value) {
     if (value < 0 || value > 3 || value == pending_value(K_Q3D)) return;
@@ -270,9 +312,9 @@ void dm_graphics_ui_pump(unsigned long long root) {
     int fps_ok = fps && DM_WIDGET_OK(main_base(), fps, DM_VT_SLIDER, "图形设置帧率");
     if (fps_ok) {
         if (dm_wref_get(&seen[0]) != fps) {
-            *(int32_t *)(fps + 0x5b0) = 1; *(int32_t *)(fps + 0x5b8) = 1;
-            *(int32_t *)(fps + 0x5bc) = 0; *(int32_t *)(fps + 0x5c0) = 1;
-            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(fps, !pending_value(K_FPS), 0, 0);
+            *(int32_t *)(fps + 0x5b0) = 1; *(int32_t *)(fps + 0x5b8) = fps_max_pos();
+            *(int32_t *)(fps + 0x5bc) = 0; *(int32_t *)(fps + 0x5c0) = fps_max_pos();
+            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(fps, fps_pos(pending_value(K_FPS)), 0, 0);
             dm_wref_set(&seen[0], fps);
         } else graphics_select_fps(*(int32_t *)(fps + 0x5c4));
     }
@@ -295,8 +337,8 @@ void dm_graphics_ui_pump(unsigned long long root) {
     if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
     int row_id = selected;
     if (selected == ROW_FPS && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
-        int to = (!pending_value(K_FPS)) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
-        if (to>=0 && to<=1) { graphics_select_fps(to);
+        int to = fps_pos(pending_value(K_FPS)) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
+        if (to>=0 && to<=fps_max_pos()) { graphics_select_fps(to);
             ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(fps,to,0,0); }
     }
     if ((ev & DM_BTN_A) && selected == ROW_UPSCALE) {
@@ -341,7 +383,8 @@ void dm_graphics_ui_pump(unsigned long long root) {
     { static const char *const res_captions[DM_RES_LEVELS] = { "dmGraphicsResAuto", "dmGraphicsResEco", "dmGraphicsResBalanced", "dmGraphicsResNative" };
       int lv = pending_value(K_RES); if (lv < 0 || lv >= DM_RES_LEVELS) lv = 0;
       graphics_text(find_w(sp, "TouchGraphicsResText", 0), dm_str(main_base(), res_captions[lv])); }
-    graphics_text(find_w(sp,"TouchGraphicsFpsText",0),dm_str(main_base(),pending_value(K_FPS)?"dmGraphicsFrameRate30":"dmGraphicsFrameRate60"));
+    { static const char *const fps_captions[3] = { "dmGraphicsFrameRate30", "dmGraphicsFrameRate60", "dmGraphicsFrameRate120" };
+      graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), dm_str(main_base(), fps_captions[fps_pos(pending_value(K_FPS))])); }
     uint64_t focus = find_w(sp, "TouchGraphicsSel", 0);
     if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? -20 : 99999, y = pad ? 170 + 180 * row_id : 0;
         if (r[0] != x || r[1] != y) { r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)focus + 0x10))(focus); } }

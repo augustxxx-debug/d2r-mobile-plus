@@ -142,6 +142,21 @@ static void test_scale3d(void) {
     CHECK(s3_n(1000, 45.0) == 0, "30 帧档：45 ms（未超 50）不算掉帧");
     s3 = (scale3d_ctl){.max_level = 2, .period_ms = 1000.0 / 30}; s3_now = 6500 * S3_SEC;   // 新起：不带上一段留在窗里的半个窗 | Fresh start: does not carry the half window left over from the previous segment
     CHECK(s3_n(149, 66.7) == 0 && s3_n(1, 66.7) == 1, "30 帧档：66.7 ms 全掉帧满 5 窗（每窗 30 帧 = 2001 ms，共 150 帧）→ 降到 1 档");
+    // 120 帧档：周期 8.33，掉帧线 12.5 ms（错过一次刷新 = 16.67 即算）。每窗 240 帧，同样的掉帧率阈值；单次错过刷新零星出现（1%）不降，持续 3% 由 60 秒慢降线降
+    // 120 fps mode: period 8.33, drop line 12.5 ms (one missed refresh = 16.67 counts). 240 frames per window, the same rate thresholds; scattered single misses (1%) do not lower, a sustained 3% lowers via the 60 s slow line
+    #define F120 8.33334
+    #define D120 16.6667
+    s3 = (scale3d_ctl){.max_level = 2, .period_ms = 1000.0 / 120}; s3_now = 6600 * S3_SEC;
+    CHECK(s3_n(2400, F120) == 0, "120 帧档：8.33 ms 稳 20 秒 → 保持 0 档");
+    CHECK(s3_n(2000, 12.4) == 0, "120 帧档：12.4 ms（未超 12.5）不算掉帧");
+    s3 = (scale3d_ctl){.max_level = 2, .period_ms = 1000.0 / 120}; s3_now = 6700 * S3_SEC;
+    for (int i = 0; i < 120 * 70; i++) s3_one(i % 100 == 99 ? D120 : F120);
+    CHECK(s3.level == 0, "120 帧档：每 100 帧错过一次刷新（约 1%）跑 70 秒 → 不降");
+    s3 = (scale3d_ctl){.max_level = 2, .period_ms = 1000.0 / 120}; s3_now = 6800 * S3_SEC; { int at = -1;
+    for (int i = 0; i < 120 * 70 && at < 0; i++) if (s3_one(i % 33 == 32 ? D120 : F120) == 1) at = i;
+    CHECK(at > 120 * 55 && at < 120 * 62, "120 帧档：每 33 帧错过一次（约 3%）→ 第 60 秒左右由慢降线降到 1 档（10 秒线 5% 不触发）"); }
+    s3 = (scale3d_ctl){.max_level = 2, .period_ms = 1000.0 / 120}; s3_now = 6900 * S3_SEC;
+    CHECK(s3_n(599, D120) == 0 && s3_n(1, D120) == 1, "120 帧档：屏幕只给 60 Hz（每帧 16.67）满 5 窗 → 降到 1 档（回落 60 不修，120 档会把 3D 比例压到底）");
     // 偶发卡顿：每约 10 秒一次连掉 20 帧（截图那样，约 0.67 秒）→ 每次只计 3 帧，90 秒都不降（旧计法 60 秒时掉帧率 3.3% > 1.5% 会降）
     // One-off stalls: 20 dropped frames in a row about every 10 s (like a screenshot, about 0.67 s) -> each counts 3, no step in 90 s (the old count reached 3.3% > 1.5% at 60 s and stepped down)
     s3 = (scale3d_ctl){.max_level = 2}; s3_now = 7000 * S3_SEC;
