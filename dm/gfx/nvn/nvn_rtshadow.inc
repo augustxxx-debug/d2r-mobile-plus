@@ -33,8 +33,9 @@
 __attribute__((weak)) int dm_rt_shadow_setting(void) { return 0; }   // 宿主设置页提供强定义；缺省关 | The host settings page provides the strong definition; off by default
 __attribute__((weak)) float dm_rt_shadow_ambient(void) { return 0.45f; }   // 第一阶段合成的环境项（阴影里保留的亮度比例） | Ambient term of the phase-1 compositing (brightness kept inside shadow)
 static int rt_is_skin(void);
-static void rx_inv4(const double *m, double *o);   // nvn_rtex.inc（在本文件之后包含） | nvn_rtex.inc (included after this file)
 #include <sys/sysctl.h>
+#include "nvn_rtshadow_util.h"
+#include "nvn_rtshadow_msl.h"
 #if DM_NVN_M3
 static int rts_on(void) { return 0; }
 static int rts_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di, int prim) { (void)pr; (void)dw; (void)di; (void)prim; return 0; }
@@ -77,64 +78,6 @@ static struct {
     uint64_t n_frames, n_builds, n_traced, n_skipped_draws, n_refit; double build_tris;
     const p_draw *last_dw; const p_draw_idx *last_di; uint64_t last_f, last_prog; int last_r;   // 同一次绘制再问（draw 重入）给同一个答案 | the same draw asked again (draw re-entry) gets the same answer
 } g_rts = { .on = -1, .meshes = {.klen = 8} };
-static const char *k_rts_msl =
-"#include <metal_stdlib>\n#include <metal_raytracing>\nusing namespace metal; using namespace metal::raytracing;\n"
-// 位置解码：fmt 0x2b SNORM16x4、0x2e FLOAT4、0x29 HALF4 都是 xyz · exp2(w · 13)；0x22 FLOAT3 原样 | Position decode
-"kernel void rts_decode(device const uchar *src [[buffer(0)]], device packed_float3 *dst [[buffer(1)]], constant uint4 &k [[buffer(2)]], uint i [[thread_position_in_grid]]) {\n"
-"  if (i >= k.x) return; device const uchar *p = src + (ulong)(k.w + i) * k.y; float4 f;\n"
-"  if (k.z == 0x2b) { device const short *s = (device const short *)p; f = float4(s[0], s[1], s[2], s[3]) / 32767.0; }\n"
-"  else if (k.z == 0x2e) { device const float *s = (device const float *)p; f = float4(s[0], s[1], s[2], s[3]); }\n"
-"  else if (k.z == 0x29) { device const half *s = (device const half *)p; f = float4(s[0], s[1], s[2], s[3]); }\n"
-"  else { device const float *s = (device const float *)p; dst[i] = packed_float3(s[0], s[1], s[2]); return; }\n"
-"  dst[i] = packed_float3(f.xyz * exp2(f.w * 13.0)); }\n"
-// 蒙皮导出的裁剪坐标 → 世界坐标（光源投影是正交的，逆矩阵精确） | skinned clip positions → world (the light projection is orthographic, the inverse is exact)
-"struct U { float4x4 inv; uint n; };\n"
-"kernel void rts_unproj(device const float4 *src [[buffer(0)]], device packed_float3 *dst [[buffer(1)]], constant U &u [[buffer(2)]], uint i [[thread_position_in_grid]]) {\n"
-"  if (i >= u.n) return; float4 w = u.inv * src[i]; dst[i] = packed_float3(w.xyz / w.w); }\n"
-"struct K { float4x4 invVP; float4 sun; uint2 size; float bias; float pad; };\n"
-"kernel void rts_trace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant K &k [[buffer(1)]], uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= k.size.x || g.y >= k.size.y) return; float z = depth.read(g);\n"
-"  if (z >= 1.0) { mask.write(float4(1), g); return; }\n"   // 远平面 = 没画东西（天空） | far plane = nothing drawn (sky)
-"  float2 ndc = float2((float(g.x) + 0.5) / float(k.size.x) * 2.0 - 1.0, 1.0 - (float(g.y) + 0.5) / float(k.size.y) * 2.0);\n"
-"  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
-"  ray r; r.origin = p + k.sun.xyz * k.bias; r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
-"  intersector<instancing> is; is.accept_any_intersection(true); is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque);\n"
-"  intersection_result<instancing> h = is.intersect(r, as, 0xffu);\n"
-"  mask.write(float4(h.type == intersection_type::none ? 1.0 : 0.0), g); }\n"
-// 软阴影：最近命中 + 命中距离（按 maxd 归一）→ RG8；模糊：半径 = 周围 ±2 像素内最远遮挡距离 × 强度（≤ 12 像素），深度差大的邻居权重小 | soft shadows: nearest hit + hit distance (normalized by maxd) → RG8; blur: radius = widest blocker distance within ±2 px × strength (≤ 12 px), neighbours with a large depth difference weigh less
-"struct KS { float4x4 invVP; float4 sun; uint2 size; float bias; float maxd; };\n"
-"kernel void rts_trace_soft(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant KS &k [[buffer(1)]], uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= k.size.x || g.y >= k.size.y) return; float z = depth.read(g);\n"
-"  if (z >= 1.0) { mask.write(float4(1, 0, 0, 0), g); return; }\n"
-"  float2 ndc = float2((float(g.x) + 0.5) / float(k.size.x) * 2.0 - 1.0, 1.0 - (float(g.y) + 0.5) / float(k.size.y) * 2.0);\n"
-"  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
-"  ray r; r.origin = p + k.sun.xyz * k.bias; r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
-"  intersector<instancing> is; is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque);\n"
-"  intersection_result<instancing> h = is.intersect(r, as, 0xffu); bool hit = h.type != intersection_type::none;\n"
-"  mask.write(float4(hit ? 0.0 : 1.0, hit ? min(h.distance / k.maxd, 1.0) : 0.0, 0, 0), g); }\n"
-"struct B { uint2 size; int2 dir; float soft; float pad; };\n"
-"kernel void rts_blur(texture2d<float, access::read> src [[texture(0)]], texture2d<float, access::write> dst [[texture(1)]], depth2d<float, access::read> depth [[texture(2)]], constant B &b [[buffer(0)]], uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= b.size.x || g.y >= b.size.y) return; float2 c = src.read(g).xy; float z0 = depth.read(g); float dm = c.y;\n"
-"  for (int k = -2; k <= 2; k++) { int2 q = clamp(int2(g) + b.dir * k, int2(0), int2(b.size) - 1); dm = max(dm, src.read(uint2(q)).y); }\n"
-"  int r = int(clamp(dm * b.soft, 0.0, 12.0)); if (r == 0) { dst.write(float4(c.x, dm, 0, 0), g); return; }\n"
-"  float sum = 0.0, wsum = 0.0; for (int k = -r; k <= r; k++) { int2 q = clamp(int2(g) + b.dir * k, int2(0), int2(b.size) - 1); float2 s = src.read(uint2(q)).xy; float z = depth.read(uint2(q)); float wgt = 1.0 / (1.0 + 4000.0 * abs(z - z0)); sum += s.x * wgt; wsum += wgt; }\n"
-"  dst.write(float4(sum / wsum, dm, 0, 0), g); }\n"
-// 点光：半分辨率，每像素向挑中的每盏光一条遮挡射线（到光源为止），RGBA 各一盏 | point lights: half resolution, one occlusion ray per pixel toward each chosen light (up to the light), one per RGBA channel
-"struct P { float4x4 invVP; float4 lp[4]; uint2 size; uint2 full; uint n; float bias; float2 pad; };\n"
-"kernel void rts_ptrace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> pm [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant P &k [[buffer(1)]], uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 fg = min(g * 2, k.full - 1); float z = depth.read(fg); float4 r = float4(1);\n"
-"  if (z < 1.0) {\n"
-"    float2 ndc = float2((float(fg.x) + 0.5) / float(k.full.x) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(k.full.y) * 2.0);\n"
-"    float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
-"    intersector<instancing> is; is.accept_any_intersection(true); is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque);\n"
-"    for (uint i = 0; i < k.n; i++) { float3 d = k.lp[i].xyz - p; float len = length(d); if (len <= k.bias * 2.0) continue; d /= len;\n"
-"      ray ry; ry.origin = p + d * k.bias; ry.direction = d; ry.min_distance = 0.0; ry.max_distance = len - k.bias * 2.0;\n"
-"      intersection_result<instancing> h = is.intersect(ry, as, 0xffu); if (h.type != intersection_type::none) r[i] = 0.0; } }\n"
-"  pm.write(r, g); }\n"
-"struct VO { float4 p [[position]]; };\n"
-"vertex VO rts_vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); VO o; o.p = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1); return o; }\n"
-"fragment float4 rts_fs(VO in [[stage_in]], texture2d<float> mask [[texture(0)]], constant float4 &a [[buffer(0)]]) {\n"
-"  float m = mask.read(uint2(in.p.xy)).r; float f = a.x + (1.0 - a.x) * m; return float4(f, f, f, 1.0); }\n";   // 乘到 HDR 上（混合：目标 × 源） | multiplied onto the HDR (blend: destination × source)
 int mtl_rt_shadow_supported(void) {   // 宿主设置页用：这台机器能不能显示「光追阴影」 | For the host settings page: whether this machine may show "ray-traced shadows"
     static int v = -1; if (v >= 0) return v;
     v = 0; if (!g_dev) return 0;
@@ -228,12 +171,9 @@ static void rts_frame_begin(uint64_t f) {
         for (uint32_t i = 0; i < g_rts.meshes.cap && nd < 64; i++) { rts_mesh *m = g_rts.meshes.vals[i]; if (m && m->built && f - m->last_frame > 600) dead[nd++] = m->key; }
         for (int i = 0; i < nd; i++) { rts_mesh *m = nvn_hm_del(&g_rts.meshes, &dead[i]); if (!m) continue; rts_mesh_free(m); g_rts.nmesh--; } }
 }
-// 三角带 → 三角列表索引（退化三角形丢掉）；ib 为空 = 非索引（下标 0..n−1） | triangle strip → list indices (degenerate triangles dropped); NULL ib = non-indexed (0..n−1)
+// 三角带 → 三角列表索引缓冲（展开在 nvn_rtshadow_util.h） | triangle strip → list index buffer (expansion in nvn_rtshadow_util.h)
 static id<MTLBuffer> rts_strip_ib(const uint8_t *ib, int isz, int n, uint32_t *ntris) {
-    uint32_t *o = malloc((size_t)(n - 2) * 12), t = 0;
-    #define IDX(k) (ib ? (isz == 2 ? ((const uint16_t *)ib)[k] : ((const uint32_t *)ib)[k]) : (uint32_t)(k))
-    for (int k = 2; k < n; k++) { uint32_t a = IDX(k - 2), b = IDX(k - 1), c = IDX(k); if (a == b || b == c || a == c) continue; o[t * 3] = a; o[t * 3 + 1] = b; o[t * 3 + 2] = c; t++; }
-    #undef IDX
+    uint32_t *o = malloc((size_t)(n - 2) * 12); uint32_t t = rts_strip_expand(ib, isz, n, o);
     id<MTLBuffer> r = t ? [g_dev newBufferWithBytes:o length:(NSUInteger)t * 12 options:MTLResourceStorageModeShared] : nil; free(o); *ntris = t; return r;
 }
 static MTL4PrimitiveAccelerationStructureDescriptor *rts_blas_desc(rts_mesh *m, id<MTLBuffer> pos) {
@@ -326,7 +266,7 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
             if (g_rts.n_pos_loaded + g_rts.n_pos_missing == 1) MLOG("光追阴影：蒙皮位置导出变体 %s（%s）", pr->vs_pos ? "已加载" : "缺", k.UTF8String); }
         rts_slot *s = shadow && pr->vs_pos && m->built && lvp && g_rts.nexp < RTS_MAX_EXPORT ? rts_slot_take(m) : NULL;   // 预渲染里不能关光栅化（要写深度）：按绑定姿势 | the prepass must rasterize (depth): bind pose
         if (s) {
-            double a[16], ia[16]; const float *L = (const float *)lvp; for (int i = 0; i < 16; i++) a[i] = L[i]; rx_inv4(a, ia);
+            double a[16], ia[16]; const float *L = (const float *)lvp; for (int i = 0; i < 16; i++) a[i] = L[i]; rts_inv4(a, ia);
             float *u = (float *)((uint8_t *)s->lvp.contents + g_rts.ri * 256); for (int i = 0; i < 16; i++) u[i] = (float)ia[i]; ((uint32_t *)u)[16] = m->nverts;
             g_rts.exp_mesh[g_rts.nexp] = m; g_rts.exp_slot[g_rts.nexp] = s; g_rts.nexp++; g_rts.cur_pos4 = s->pos4;
             d->transformationMatrix.columns[0].x = d->transformationMatrix.columns[1].y = d->transformationMatrix.columns[2].z = 1; d->accelerationStructureID = s->as.gpuResourceID;   // 位置已是世界坐标 | positions are already world space
@@ -356,22 +296,12 @@ static id<MTLBuffer> rts_pos_buf(void) { return g_rts.cur_pos4; }
 static int rts_pick_lights(const double *ia) {
     g_rts.npl = 0; if (!g_rts.lbuf || g_rts.lbuf_fmt != MTLPixelFormatRGBA32Float) return 0;
     const uint8_t *base = [g_rts.lbuf contents]; if (!base) return 0; const float *L = (const float *)(base + g_rts.lbuf_off); uint32_t nrec = g_rts.lbuf_texels / 4; if (nrec > 4096) nrec = 4096;
-    double p0[3], p1[3]; { double c0[4] = {0, 0, 0, 1}, c1[4] = {0, 0, 1, 1}, o0[4], o1[4];   // 画面中心的视线（正交：近远两点） | the screen-center view line (orthographic: near and far point)
-        for (int r = 0; r < 4; r++) { o0[r] = o1[r] = 0; for (int c = 0; c < 4; c++) { o0[r] += ia[c * 4 + r] * c0[c]; o1[r] += ia[c * 4 + r] * c1[c]; } }
-        for (int i = 0; i < 3; i++) { p0[i] = o0[i] / o0[3]; p1[i] = o1[i] / o1[3]; } }
-    double dir[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]}; double dl = sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]); if (dl <= 0) return 0; for (int i = 0; i < 3; i++) dir[i] /= dl;
-    double best[4] = {0, 0, 0, 0}; int bi[4] = {-1, -1, -1, -1}; int n = 0;
-    for (uint32_t r = 0; r < nrec; r++) { const float *rec = L + r * 16; float lum = fmaxf(rec[4], fmaxf(rec[5], rec[6]));
-        if (!(lum > 0) || !isfinite(rec[0]) || !isfinite(rec[1]) || !isfinite(rec[2])) continue;
-        double v[3] = {rec[0] - p0[0], rec[1] - p0[1], rec[2] - p0[2]}; double t = v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]; double d2 = 0; for (int i = 0; i < 3; i++) { double q = v[i] - t * dir[i]; d2 += q * q; }
-        double score = lum / (d2 + 1e4);
-        int k = g_rts.point_n; for (int i = 0; i < g_rts.point_n; i++) if (bi[i] < 0 || score > best[i]) { k = i; break; }   // 插入排序（≤ 4） | insertion (≤ 4)
-        if (k >= g_rts.point_n) continue;
-        for (int i = g_rts.point_n - 1; i > k; i--) { best[i] = best[i - 1]; bi[i] = bi[i - 1]; } best[k] = score; bi[k] = (int)r; }
-    for (int i = 0; i < g_rts.point_n && bi[i] >= 0; i++) { const float *rec = L + bi[i] * 16; g_rts.plpos[n][0] = rec[0]; g_rts.plpos[n][1] = rec[1]; g_rts.plpos[n][2] = rec[2]; g_rts.plrec[n] = bi[i] * 4; n++; }
+    double best[4], p0[3]; int bi[4];
+    int n = rts_pick_lights_cpu(L, nrec, ia, g_rts.point_n, bi, best, p0);
+    for (int i = 0; i < n; i++) { const float *rec = L + bi[i] * 16; g_rts.plpos[i][0] = rec[0]; g_rts.plpos[i][1] = rec[1]; g_rts.plpos[i][2] = rec[2]; g_rts.plrec[i] = bi[i] * 4; }
     g_rts.npl = n;
-    { static int once; if (n && once++ < 3) { const float *rec = L + bi[0] * 16; MLOG("光追点光：记录 %u 条，挑 %d 盏；首盏 #%d 位置 (%.0f, %.0f, %.0f) 颜色 (%.2f, %.2f, %.2f, %.2f) [2]=(%.2f, %.2f, %.2f, %.2f) [3]=(%.3g, %.3g, %.3g, %.3g) 距视线 %.0f；视线起点 (%.0f, %.0f, %.0f)",
-        nrec, n, bi[0], rec[0], rec[1], rec[2], rec[4], rec[5], rec[6], rec[7], rec[8], rec[9], rec[10], rec[11], rec[12], rec[13], rec[14], rec[15], sqrt(1.0 / best[0] * fmaxf(rec[4], fmaxf(rec[5], rec[6])) - 1e4 > 0 ? 1.0 / best[0] * fmaxf(rec[4], fmaxf(rec[5], rec[6])) - 1e4 : 0), p0[0], p0[1], p0[2]); } }
+    { static int once; if (n && once++ < 3) { const float *rec = L + bi[0] * 16; MLOG("光追点光：记录 %u 条，挑 %d 盏；首盏 #%d 位置 (%.0f, %.0f, %.0f) 颜色 (%.2f, %.2f, %.2f, %.2f) [2]=(%.2f, %.2f, %.2f, %.2f) [3]=(%.3g, %.3g, %.3g, %.3g) 得分 %.3g；视线起点 (%.0f, %.0f, %.0f)",
+        nrec, n, bi[0], rec[0], rec[1], rec[2], rec[4], rec[5], rec[6], rec[7], rec[8], rec[9], rec[10], rec[11], rec[12], rec[13], rec[14], rec[15], best[0], p0[0], p0[1], p0[2]); } }
     return n;
 }
 static id<MTLTexture> rts_pmask_tex(void) { return g_rts.pl_done && g_rts.pmask ? g_rts.pmask : g_rts.white; }
@@ -428,7 +358,7 @@ static void rts_build_and_trace(id<MTLTexture> depth) {
     [ce buildAccelerationStructure:g_rts.tlas descriptor:td scratchBuffer:scratch];
     [ce barrierAfterEncoderStages:MTLStageAccelerationStructure beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
     // 4. 追踪：常量 = 逆视投影（列主序 = 行向量矩阵求逆后原样当列）、太阳、尺寸 | 4. Trace: constants = inverse view-projection (column-major = the inverted row-vector matrix used as columns), sun, size
-    double a[16], ia[16]; for (int i = 0; i < 16; i++) a[i] = g_rts.cam[i]; rx_inv4(a, ia);
+    double a[16], ia[16]; for (int i = 0; i < 16; i++) a[i] = g_rts.cam[i]; rts_inv4(a, ia);
     float *k = g_rts.kbuf[ri].contents; for (int i = 0; i < 16; i++) k[i] = (float)ia[i];
     k[16] = g_rts.sun[0]; k[17] = g_rts.sun[1]; k[18] = g_rts.sun[2]; k[19] = 0; ((uint32_t *)k)[20] = (uint32_t)depth.width; ((uint32_t *)k)[21] = (uint32_t)depth.height;
     static float bias = -1; if (bias < 0) { const char *e = getenv("DM_RT_SHADOW_BIAS"); bias = e ? (float)atof(e) : 0.6f; } k[22] = bias; k[23] = g_rts.soft_maxd;

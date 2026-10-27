@@ -1,0 +1,57 @@
+// 光追阴影的纯计算部分（不碰 Metal 对象），nvn_rtshadow.inc 与单测 dm/gfx/tests/t_rtshadow.m 共用：4×4 求逆、三角带展开、点光挑选
+// Pure computations of the ray-traced shadows (no Metal objects), shared by nvn_rtshadow.inc and the unit test dm/gfx/tests/t_rtshadow.m: 4×4 inverse, strip expansion, point-light picking
+#pragma once
+#include <stdint.h>
+#include <math.h>
+// 4×4 求逆（伴随矩阵法，双精度；列主序 / 行主序都一样，逆的布局跟输入一致） | 4×4 inverse (adjugate, double precision; layout-agnostic: the inverse has the input's layout)
+static inline void rts_inv4(const double *m, double *o) {
+    double inv[16];
+    inv[0] = m[5] * m[10] * m[15] - m[5] * m[11] * m[14] - m[9] * m[6] * m[15] + m[9] * m[7] * m[14] + m[13] * m[6] * m[11] - m[13] * m[7] * m[10];
+    inv[4] = -m[4] * m[10] * m[15] + m[4] * m[11] * m[14] + m[8] * m[6] * m[15] - m[8] * m[7] * m[14] - m[12] * m[6] * m[11] + m[12] * m[7] * m[10];
+    inv[8] = m[4] * m[9] * m[15] - m[4] * m[11] * m[13] - m[8] * m[5] * m[15] + m[8] * m[7] * m[13] + m[12] * m[5] * m[11] - m[12] * m[7] * m[9];
+    inv[12] = -m[4] * m[9] * m[14] + m[4] * m[10] * m[13] + m[8] * m[5] * m[14] - m[8] * m[6] * m[13] - m[12] * m[5] * m[10] + m[12] * m[6] * m[9];
+    inv[1] = -m[1] * m[10] * m[15] + m[1] * m[11] * m[14] + m[9] * m[2] * m[15] - m[9] * m[3] * m[14] - m[13] * m[2] * m[11] + m[13] * m[3] * m[10];
+    inv[5] = m[0] * m[10] * m[15] - m[0] * m[11] * m[14] - m[8] * m[2] * m[15] + m[8] * m[3] * m[14] + m[12] * m[2] * m[11] - m[12] * m[3] * m[10];
+    inv[9] = -m[0] * m[9] * m[15] + m[0] * m[11] * m[13] + m[8] * m[1] * m[15] - m[8] * m[3] * m[13] - m[12] * m[1] * m[11] + m[12] * m[3] * m[9];
+    inv[13] = m[0] * m[9] * m[14] - m[0] * m[10] * m[13] - m[8] * m[1] * m[14] + m[8] * m[2] * m[13] + m[12] * m[1] * m[10] - m[12] * m[2] * m[9];
+    inv[2] = m[1] * m[6] * m[15] - m[1] * m[7] * m[14] - m[5] * m[2] * m[15] + m[5] * m[3] * m[14] + m[13] * m[2] * m[7] - m[13] * m[3] * m[6];
+    inv[6] = -m[0] * m[6] * m[15] + m[0] * m[7] * m[14] + m[4] * m[2] * m[15] - m[4] * m[3] * m[14] - m[12] * m[2] * m[7] + m[12] * m[3] * m[6];
+    inv[10] = m[0] * m[5] * m[15] - m[0] * m[7] * m[13] - m[4] * m[1] * m[15] + m[4] * m[3] * m[13] + m[12] * m[1] * m[7] - m[12] * m[3] * m[5];
+    inv[14] = -m[0] * m[5] * m[14] + m[0] * m[6] * m[13] + m[4] * m[1] * m[14] - m[4] * m[2] * m[13] - m[12] * m[1] * m[6] + m[12] * m[2] * m[5];
+    inv[3] = -m[1] * m[6] * m[11] + m[1] * m[7] * m[10] + m[5] * m[2] * m[11] - m[5] * m[3] * m[10] - m[9] * m[2] * m[7] + m[9] * m[3] * m[6];
+    inv[7] = m[0] * m[6] * m[11] - m[0] * m[7] * m[10] - m[4] * m[2] * m[11] + m[4] * m[3] * m[10] + m[8] * m[2] * m[7] - m[8] * m[3] * m[6];
+    inv[11] = -m[0] * m[5] * m[11] + m[0] * m[7] * m[9] + m[4] * m[1] * m[11] - m[4] * m[3] * m[9] - m[8] * m[1] * m[7] + m[8] * m[3] * m[5];
+    inv[15] = m[0] * m[5] * m[10] - m[0] * m[6] * m[9] - m[4] * m[1] * m[10] + m[4] * m[2] * m[9] + m[8] * m[1] * m[6] - m[8] * m[2] * m[5];
+    double det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12]; det = det != 0 ? 1.0 / det : 0;
+    for (int i = 0; i < 16; i++) o[i] = inv[i] * det;
+}
+// 三角带 → 三角列表（退化三角形丢掉）；ib 为空 = 非索引（下标 0..n−1）；out 至少 (n−2)·3 个 uint32；返回三角形数 | strip → list (degenerates dropped); NULL ib = non-indexed; out holds at least (n−2)·3 uint32; returns the triangle count
+static inline uint32_t rts_strip_expand(const void *ib, int isz, int n, uint32_t *out) {
+    uint32_t t = 0;
+    #define RTS_IDX(k) (ib ? (isz == 2 ? (uint32_t)((const uint16_t *)ib)[k] : ((const uint32_t *)ib)[k]) : (uint32_t)(k))
+    for (int k = 2; k < n; k++) { uint32_t a = RTS_IDX(k - 2), b = RTS_IDX(k - 1), c = RTS_IDX(k); if (a == b || b == c || a == c) continue; out[t * 3] = a; out[t * 3 + 1] = b; out[t * 3 + 2] = c; t++; }
+    #undef RTS_IDX
+    return t;
+}
+// 点光挑选：记录 = 每盏 16 个 float（4 个 float4 texel：[0] 位置 xyz、[1] 颜色 rgb、…），ia = 相机视投影的逆（16 个 double，与 MSL float4x4 同为列主序）；
+// 画面中心视线 = ia·(0,0,0,1) 到 ia·(0,0,1,1)；得分 = 最大颜色分量 / (到视线的距离² + 1e4)；取前 maxn（≤ 4），out_rec 为记录序号、out_best 为得分、p0 为视线起点
+// Point-light picking: record = 16 floats per light (4 float4 texels: [0] position xyz, [1] color rgb, ...), ia = inverse camera view-projection (16 doubles, column-major like the MSL float4x4);
+// screen-center view line = ia·(0,0,0,1) to ia·(0,0,1,1); score = max color component / (distance² to the line + 1e4); top maxn (≤ 4); out_rec = record indices, out_best = scores, p0 = line origin
+static inline int rts_pick_lights_cpu(const float *L, uint32_t nrec, const double *ia, int maxn, int *out_rec, double *out_best, double *p0) {
+    if (maxn > 4) maxn = 4; if (maxn < 1) return 0;
+    double p1[3]; { double c0[4] = {0, 0, 0, 1}, c1[4] = {0, 0, 1, 1}, o0[4], o1[4];
+        for (int r = 0; r < 4; r++) { o0[r] = o1[r] = 0; for (int c = 0; c < 4; c++) { o0[r] += ia[c * 4 + r] * c0[c]; o1[r] += ia[c * 4 + r] * c1[c]; } }
+        if (o0[3] == 0 || o1[3] == 0) return 0;
+        for (int i = 0; i < 3; i++) { p0[i] = o0[i] / o0[3]; p1[i] = o1[i] / o1[3]; } }
+    double dir[3] = {p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]}; double dl = sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]); if (dl <= 0) return 0; for (int i = 0; i < 3; i++) dir[i] /= dl;
+    double best[4] = {0, 0, 0, 0}; int bi[4] = {-1, -1, -1, -1};
+    for (uint32_t r = 0; r < nrec; r++) { const float *rec = L + r * 16; float lum = fmaxf(rec[4], fmaxf(rec[5], rec[6]));
+        if (!(lum > 0) || !isfinite(rec[0]) || !isfinite(rec[1]) || !isfinite(rec[2])) continue;
+        double v[3] = {rec[0] - p0[0], rec[1] - p0[1], rec[2] - p0[2]}; double t = v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]; double d2 = 0; for (int i = 0; i < 3; i++) { double q = v[i] - t * dir[i]; d2 += q * q; }
+        double score = lum / (d2 + 1e4);
+        int k = maxn; for (int i = 0; i < maxn; i++) if (bi[i] < 0 || score > best[i]) { k = i; break; }   // 插入排序（≤ 4） | insertion (≤ 4)
+        if (k >= maxn) continue;
+        for (int i = maxn - 1; i > k; i--) { best[i] = best[i - 1]; bi[i] = bi[i - 1]; } best[k] = score; bi[k] = (int)r; }
+    int n = 0; for (int i = 0; i < maxn && bi[i] >= 0; i++) { out_rec[n] = bi[i]; out_best[n] = best[i]; n++; }
+    return n;
+}
