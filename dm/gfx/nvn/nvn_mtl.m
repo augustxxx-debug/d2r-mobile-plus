@@ -1661,7 +1661,9 @@ static void pass_dims(RPD *pd, NSUInteger nc, NSUInteger *w, NSUInteger *h) {
 // Each line: frame idx kind gpu_ms inc_ms w h fmt0 dfmt load draws t0_ns t1_ns (kind: R render / C compute; load: L load / C clear for each color attachment + depth)
 // On TBDR passes overlap in the pipeline (the later pass's vertex stage is earlier than the end of the earlier pass's fragment stage): gpu_ms = this pass's start-to-end span (including queueing) and cannot be summed;
 // attribution uses the timeline increment inc_ms = t1 − max(t0, latest t1 of the passes completed so far); the sum of the increments of all passes = total time the GPU is busy (command buffers complete in submission order)
-typedef struct { uint64_t frame, pass; int idx, kind, w, h, draws, slot; uint32_t cfmt0, dfmt; char load[12]; } pg_pass;   // pass：全局通道号（同 DM_NVN_PASSDUMP 各行的通道号，供两份记录对接） | pass: global pass number (same as the pass number in the DM_NVN_PASSDUMP lines, for joining the two records)
+typedef struct { uint64_t frame, pass; int idx, kind, w, h, draws, slot; uint32_t cfmt0, dfmt; char load[12]; int rt; } pg_pass;   // rt：光追阴影的计算通道，耗时另计到 g_rts_gpu_*（nvn_rtshadow.inc 的统计行） | rt: the ray-traced shadow compute pass, also accumulated into g_rts_gpu_* (the statistics line of nvn_rtshadow.inc)
+static double g_rts_gpu_sum; static uint64_t g_rts_gpu_n;
+// pass：全局通道号（同 DM_NVN_PASSDUMP 各行的通道号，供两份记录对接） | pass: global pass number (same as the pass number in the DM_NVN_PASSDUMP lines, for joining the two records)
 #define PG_SLOTS 4096   // 计数采样缓冲上限 32768 字节 = 4096 个时间戳（本机报错实测） | Counter sample buffer limit 32768 bytes = 4096 timestamps (measured from the error on this machine)
 #define PG_RING 8
 static int g_pg = -1; static FILE *g_pg_f;
@@ -1768,6 +1770,7 @@ static id<MTLComputeCommandEncoder> pg_compute(void) {
     return enc_c_begin(cd);
 #endif
 }
+static void pg_tag_rt(void) { if (g_pg > 0 && g_pg_np) g_pg_pass[g_pg_np - 1].rt = 1; }   // 刚用 pg_compute 开的那个通道是光追阴影的 | the pass just opened with pg_compute is the ray-traced shadow one
 static void pg_compute_end(id e) {   // 收 pg_compute 开的计算编码器之前调 | Called before ending the compute encoder opened by pg_compute
 #if DM_NVN_M3
     (void)e;
@@ -1813,6 +1816,7 @@ static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回�
             fprintf(g_pg_f, "%llu\t%d\t%c\t%.4f\t%.4f\t%d\t%d\t%u\t%u\t%s\t%d\t%llu\t%llu\t%llu\n", (unsigned long long)p->frame, p->idx, p->kind ? 'C' : 'R', ms, inc,
                     p->w, p->h, p->cfmt0, p->dfmt, p->load, p->draws, (unsigned long long)a, (unsigned long long)b, (unsigned long long)p->pass);
             if (p->idx < 256 && p->frame > 300) { pg_stat *st = &g_pg_st[p->idx]; st->sum += inc; st->n++; st->last = inc; st->meta = *p; }
+            if (p->rt) { g_rts_gpu_sum += ms; g_rts_gpu_n++; }
             if (p->frame >= g_pg_rep_frame + 300 && p->frame > 300) {   // 每 300 帧报一次前五（第 300 帧起累计） | Report the top five every 300 frames (accumulated from frame 300)
                 g_pg_rep_frame = p->frame; double tot = 0; int top[5] = {-1, -1, -1, -1, -1};
                 for (int k = 0; k < 256; k++) if (g_pg_st[k].n) { double m = g_pg_st[k].sum / g_pg_st[k].n; tot += m;
@@ -2257,7 +2261,7 @@ static void shmap_load(void) {
     id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; } @end   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
 @implementation NvShader @end
 #include "nvn_pso_skey.h"
-@interface NvProg : NSObject { @public NvShader *sh[6]; __unsafe_unretained NvShader *fl_sh[6]; uint8_t fl_ok, fl_img, fl_img_w; uint32_t fl_cmask; NvShader *fs_base, *fs_rt; int rt_tried; } @end   // fs_base / fs_rt：片元原版与光追阴影 _rt 变体，draw 按开关选（nvn_rtshadow.inc rts_select_fs） | fs_base / fs_rt: original fragment shader and its ray-traced-shadow _rt variant, chosen per draw by the switch   // fl_*：按绘制要用的反射摘要（udc_note_draw），按 sh[] 核对后复用 | fl_*: reflection summary used per draw (udc_note_draw), reused after checking against sh[]
+@interface NvProg : NSObject { @public NvShader *sh[6]; __unsafe_unretained NvShader *fl_sh[6]; uint8_t fl_ok, fl_img, fl_img_w; uint32_t fl_cmask; NvShader *fs_base, *fs_rt; int rt_tried; NvShader *vs_base, *vs_pos; int pos_tried; } @end   // fs_base / fs_rt：片元原版与光追阴影 _rt 变体，draw 按开关选（nvn_rtshadow.inc rts_select_fs） | fs_base / fs_rt: original fragment shader and its ray-traced-shadow _rt variant, chosen per draw by the switch   // fl_*：按绘制要用的反射摘要（udc_note_draw），按 sh[] 核对后复用 | fl_*: reflection summary used per draw (udc_note_draw), reused after checking against sh[]
 @implementation NvProg @end
 // 预热项：后台建好、等提交线程领用。vs / fs 强引用（pso 里只是裸指针，后台字典随任务结束释放）
 // Warm-up entry: built in the background, waiting to be taken by the submit thread. vs / fs are strong references (in pso they are only raw pointers, and the background dictionary is released when the task ends)
@@ -2750,6 +2754,7 @@ static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvS
             break; } }
     d.rasterSampleCount = k->samples ? k->samples : 1;
     d.alphaToCoverageEnabled = k->a2c;
+    if (k->noraster) { d.rasterizationEnabled = NO; d.fragmentFunction = nil; }   // 光追阴影的蒙皮位置导出：只跑顶点阶段 | ray-traced shadows' skinned position export: vertex stage only
     for (int i = 0; i < 8; i++) {
         if (!k->cfmt[i]) continue;
         MTLRenderPipelineColorAttachmentDescriptor *c = d.colorAttachments[i];
@@ -2791,9 +2796,10 @@ static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvS
 }
 // 管线键：当前状态 S + 通道格式（普通通道；合并通道另带 lmap / 特化函数，由 pso_get 填）
 // Pipeline key: current state S + pass formats (normal pass; a merged pass additionally carries lmap / specialized function, filled in by pso_get)
+static uint8_t g_pso_noraster;   // 本次绘制关光栅化（nvn_rtshadow.inc 的蒙皮位置导出） | this draw rasterizes nothing (skinned position export in nvn_rtshadow.inc)
 static void pso_key_fill(pso_key *k, NvShader *vs, NvShader *fs, const uint32_t cfmt[8], uint32_t dfmt, uint32_t sfmt, uint32_t samples, int lmap) {
     memset(k, 0, sizeof *k);
-    k->vs = (__bridge void *)vs; k->fs = (__bridge void *)fs;
+    k->vs = (__bridge void *)vs; k->fs = (__bridge void *)fs; k->noraster = g_pso_noraster;
     memcpy(k->cfmt, cfmt, sizeof k->cfmt); k->dfmt = dfmt; k->sfmt = sfmt; k->samples = samples;
     k->blend_en = S.color.blend_en; k->chmask = S.chmask.mask; k->a2c = S.ms.a2c;
     for (int i = 0; i < 8; i++) if (k->cfmt[i] || lmap) k->blend[i] = S.blend[i];
@@ -3034,7 +3040,7 @@ static uint64_t dummy_buf_gpu(void) { static uint64_t gpu; if (!gpu) gpu = dummy
 static uint8_t g_args_dirty[6] = {1, 1, 1, 1, 1, 1};
 static uint64_t g_args_reg_seen, g_args_dirty_seen;
 static inline void args_dirty_all(void) { memset(g_args_dirty, 1, sizeof g_args_dirty); }
-static uint64_t rts_mask_rid(void); static id<MTLTexture> rts_mask_tex(void);   // nvn_rtshadow.inc：光追阴影遮罩（没有时为 1x1 全亮） | nvn_rtshadow.inc: ray-traced shadow mask (1x1 fully lit when absent)
+static uint64_t rts_mask_rid(void); static id<MTLTexture> rts_mask_tex(void); static uint64_t rts_pos_gpu(void); static id<MTLBuffer> rts_pos_buf(void); static uint64_t rts_pmask_rid(void); static id<MTLTexture> rts_pmask_tex(void); static uint64_t rts_plidx_gpu(void); static id<MTLBuffer> rts_plidx_buf(void);   // nvn_rtshadow.inc：光追阴影遮罩（没有时为 1x1 全亮） | nvn_rtshadow.inc: ray-traced shadow mask (1x1 fully lit when absent)
 static inline void args_sync_dirty(void) {
     uint64_t reg = g_reg_gen, dirty = nvn_dirty_now();
     if (reg != g_args_reg_seen || dirty != g_args_dirty_seen) {
@@ -3193,6 +3199,12 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             USE(cb, MTLResourceUsageRead);
         } else if (b->kind == NVN_RB_RTMASK) {   // 光追阴影遮罩（_rt 变体的附加贴图） | ray-traced shadow mask (extra texture of the _rt variants)
             slots[aid] = rts_mask_rid(); USE(rts_mask_tex(), MTLResourceUsageRead);
+        } else if (b->kind == NVN_RB_RTPOS) {   // 蒙皮位置导出缓冲（_pos 顶点变体，光追阴影） | skinned position export buffer (_pos vertex variants, ray-traced shadows)
+            slots[aid] = rts_pos_gpu(); USE(rts_pos_buf(), MTLResourceUsageWrite);
+        } else if (b->kind == NVN_RB_RTPMASK) {   // 光追点光遮罩 | ray-traced point-light mask
+            slots[aid] = rts_pmask_rid(); USE(rts_pmask_tex(), MTLResourceUsageRead);
+        } else if (b->kind == NVN_RB_RTPLIDX) {   // 光追点光的记录下标 | ray-traced point-light record indices
+            slots[aid] = rts_plidx_gpu(); USE(rts_plidx_buf(), MTLResourceUsageRead);
         } else if (b->kind == NVN_RB_SUPPORT) {   // support_buffer：缩放 1.0、BGRA 互换 0、视口变换未关闭（视口字段不读） | support_buffer: scale 1.0, BGRA swap 0, viewport transform not disabled (viewport fields are not read)
             slots[aid] = support_gpu();
             USE(support_buf(), MTLResourceUsageRead);
@@ -4686,6 +4698,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); return; }
     __unsafe_unretained NvProg *pr = prog_get(S.prog);
     rts_select_fs(pr);   // 光追阴影：按开关换片元 _rt 变体 | ray-traced shadows: swap in the _rt fragment variant per the switch
+    int rtsd = rts_draw(pr, dw, di, dw ? dw->prim : di->prim);   // 光追阴影：阴影图绘制进加速结构（1 = 不编码；2 = 蒙皮位置导出，换 _pos 顶点变体、关光栅化照常编码） | ray-traced shadows: shadow-map draws go into the acceleration structure (1 = do not encode; 2 = skinned position export: _pos vertex variant, rasterization off, encoded as usual)
     if (g_ruler_truth == 0) {   // 尺子负对照（DM_NVN_RULER_NEG=<片元键>）：被测模式下丢掉该着色器的绘制，尺子必须报不等价 | Ruler negative control (DM_NVN_RULER_NEG=<fragment key>): in the mode under test drop this shader's draws, and the ruler must report non-equivalence
         static const char *neg; static int ng = -1; if (ng < 0) { neg = getenv("DM_NVN_RULER_NEG"); ng = neg && *neg; }
         if (ng && pr) for (int st = 0; st < 5; st++) { __unsafe_unretained NvShader *sh = pr->sh[st]; if (sh && sh->stage == 1 && !strncmp(sh->key, neg, strlen(neg))) { static int once; if (!once++) MLOG("DM_NVN_RULER_NEG：被测模式丢弃着色器 %s 的绘制", sh->key); return; } }
@@ -4925,7 +4938,7 @@ frz_plain:;
     rr_snap(dw,di);
 #endif
     rtcap_draw(pr, dw, di, prim);   // 光追评估抓帧（DM_NVN_RTCAP，缺省关） | RT evaluation capture (DM_NVN_RTCAP, off by default)
-    if (rts_draw(pr, dw, di, prim)) return;   // 光追阴影：阴影图绘制改进加速结构，不编码 | Ray-traced shadows: shadow-map draws go into the acceleration structure instead of being encoded
+    if (rtsd == 1) return;   // 光追阴影：阴影图绘制已进加速结构，不编码 | Ray-traced shadows: the shadow-map draw went into the acceleration structure instead of being encoded
     udc_note_draw(pr);
     // 0 个图元的绘制（游戏会发 count=0）不画任何像素，跳过编码；Metal 规定计数必须非零，校验层否则当场中止（营地 / 野外 / 战斗页实测）
     // A draw with 0 primitives (the game does send count=0) draws no pixels, so skip encoding; Metal requires the count to be non-zero, otherwise the validation layer aborts on the spot (measured on the camp / wilderness / combat pages)

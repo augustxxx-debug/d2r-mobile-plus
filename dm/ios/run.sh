@@ -89,6 +89,12 @@ if [ "$1" = build ]; then
   # The host loads only from DM_MSL_DIR/b-<V>/ (V = the translation chain version in dm/gfx/nvn/dmsh_chain.h); inside the App it is placed as msl/b-<V>/, carrying only the current version
   MSL=${DM_MSL_IOS:-${DM_ROOT:-$HOME/dm-work}/build/ios/dmsh_b}; V=$(sed -n 's/^#define DMSH_CHAIN "\(.*\)"/\1/p' ../gfx/nvn/dmsh_chain.h)
   [ -n "$V" ] && [ -d "$MSL/b-$V" ] && ls "$MSL/b-$V" | grep -q "_b.metallib$" || { t "🔴 缺 iOS 版 B 着色器 $MSL/b-${V}（见上一行出包命令；V=${V}）"; exit 1; }
+  # 光追阴影的着色器变体（<键>_rt 片元读遮罩、<键>_pos 蒙皮顶点导出位置）：从 Mac 着色器缓存的 MSL 源出到同一 iOS 库目录，已有且版本一致的跳过；Mac 源缓存不在就报红（包里缺变体 = 光追阴影退回整屏叠遮罩）
+  # Ray-traced shadow shader variants (<key>_rt fragment reading the mask, <key>_pos skinned vertex exporting positions): generated from the Mac shader cache MSL into the same iOS library dir, fresh ones skipped; a missing Mac cache is an error (a package without variants falls back to the fullscreen mask overlay)
+  MACMSL=${DM_MSL_MAC:-${DM_ROOT:-$HOME/dm-work}/build/cache/metal_shader_cache}
+  [ -d "$MACMSL/b-$V" ] || { t "🔴 缺 Mac 着色器源缓存 $MACMSL/b-${V}（光追变体从它出；DM_MSL_MAC 指到 metal_shader_cache）"; exit 1; }
+  python3 ../gfx/tools/rts_variant.py "$MACMSL/b-$V" "$MSL/b-$V" > Gen/rts_variant.log 2>&1 || { t "🔴 光追着色器变体生成失败（见 Gen/rts_variant.log）"; exit 1; }
+  t "光追变体：$(tail -1 Gen/rts_variant.log)（_rt $(ls "$MSL/b-$V" | grep -c '_rt.json$') 个、_pos $(ls "$MSL/b-$V" | grep -c '_pos.json$') 个）"
   mkdir -p Gen/msl && cp -cR "$MSL/b-$V" Gen/msl/
   # 资源直接下载（直装包，Sources/asset_dl.m）：地址文件列表（仓库里的 asset_pointers.txt）+ 出包时的缺省下载根地址（DM_ASSET_BASE，tools/adhoc.sh 传隧道地址；没传就不带）
   # Direct asset download (direct-install package, Sources/asset_dl.m): URL file list (asset_pointers.txt in the repository) + the default download root URL at packaging time (DM_ASSET_BASE; tools/adhoc.sh passes the tunnel URL; omitted if not passed)
