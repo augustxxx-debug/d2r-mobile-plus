@@ -224,7 +224,14 @@ int dm_fps_setting(void) {
 // Ray-traced shadows (key rt_shadow, experimental, off by default, Graphics tab): read every frame by rts_on in nvn_rtshadow.inc; treated as off on machines that fail the gate (mtl_rt_shadow_supported), and the Graphics tab hides the row
 __attribute__((weak)) int mtl_rt_shadow_supported(void);
 static int rt_shadow_ok(void) { return mtl_rt_shadow_supported && mtl_rt_shadow_supported(); }
-int dm_rt_shadow_setting(void) { return rt_shadow_ok() && dm_custom_get("rt_shadow"); }   // 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义） | Read every frame by rts_on in nvn_rtshadow.inc (strong definition of a weak symbol)
+// 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义）。生效值、设置或机器判定一变就记一行「光追阴影：生效」（分享诊断日志的摘要按这个前缀取最后一行）
+// Read every frame by rts_on in nvn_rtshadow.inc (strong definition of a weak symbol). One "光追阴影：生效" (ray-traced shadows: effective) line whenever the effective value, the setting or the machine gate changes (the share-diagnostics summary takes the last line with this prefix)
+int dm_rt_shadow_setting(void) {
+    int ok = rt_shadow_ok(), set = dm_custom_get("rt_shadow") != 0, on = ok && set;
+    static _Atomic int last = -1; int key = on * 4 + set * 2 + ok;
+    if (atomic_exchange(&last, key) != key) LOG("光追阴影：生效 %s（设置 %s，机器%s）", on ? "开" : "关", set ? "开" : "关", ok ? "可用" : "不可用");
+    return on;
+}
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;

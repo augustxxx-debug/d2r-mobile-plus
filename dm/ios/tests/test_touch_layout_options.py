@@ -92,8 +92,8 @@ _rows_y = [_res_y, g_nodes['TouchGraphicsFpsText']['fields']['rect']['y'], g_nod
 assert _rows_y == [180, 360, 540, 720], _rows_y
 assert g_nodes['TouchGraphicsFps']['fields']['rect']['y'] == 360 + 55 and _hint['y'] >= _rows_y[-1] + 180
 assert g_nodes['TouchGraphicsRows']['fields']['rect']['height'] >= _hint['y'] + _hint['height']
-# 光追阴影（实验性）：自成一行，在渲染分辨率行下面；勾选框 + 标签都在行容器里，宿主按 mtl_rt_shadow_supported 藏整行 | Ray-traced shadows (experimental): its own row under render resolution; checkbox + label inside the row container so the host can hide the whole row
-_rt = g_nodes['TouchGraphicsRtRow']['fields']['rect']; assert _rt['y'] == _res_y + 180 and _hint['y'] >= _rt['y'] + 180
+# 光追阴影（实验性）：自成一行，缺省摆在档位行之后（宿主按可见行数挪：档位行藏着时上移到 720），说明再往下；勾选框 + 标签都在行容器里，宿主按 mtl_rt_shadow_supported 藏整行 | Ray-traced shadows (experimental): its own row, laid out after the profile row (the host moves it by the visible row count: up to 720 while the profile row is hidden), the hint below it; checkbox + label inside the row container, the host hides the whole row via mtl_rt_shadow_supported
+_rt = g_nodes['TouchGraphicsRtRow']['fields']['rect']; assert _rt['y'] == _rows_y[-1] + 180 and _hint['y'] == _rt['y'] + 180, (_rt, _hint)
 assert g_nodes['TouchGraphicsRtShadow']['type'] == 'ToggleButtonWidget' and g_nodes['TouchGraphicsRtText']['fields']['text'] == '@dmGraphicsRtShadow'
 print('PASS Graphics page: native FPS/profile sliders, independent upscale toggle, localization hooks')
 
@@ -156,14 +156,19 @@ assert layout._SETTINGS_LABELS == ('@Audio', '@dmTabGraphics', '@Gameplay', '@dm
 assert layout._SETTINGS_PANELS == ('SoundOptionsPanel', layout.GRAPHICS_PANEL, 'GameplayOptionsPanel', 'OnlineGameOptionsPanel', 'VideoOptionsPanel')
 print('PASS settings tabs: Graphics right after Audio')
 
-# 宿主手柄选行与布局同序：行号 0–3 = 渲染分辨率 / 帧率 / 超分开关 / 超分档位，选中框 y = 170 + 180 × 行号（与上面 _rows_y 对应）
-# The host's controller row selection matches the layout: rows 0–3 = render resolution / frame rate / upscale switch / profile, selection frame y = 170 + 180 × row (matching _rows_y above)
+# 宿主手柄选行与布局同序：行号 0–3 = 渲染分辨率 / 帧率 / 超分开关 / 超分档位，选中框 y = 170 + 180 × 可见序号（与上面 _rows_y 对应）
+# The host's controller row selection matches the layout: rows 0–3 = render resolution / frame rate / upscale switch / profile, selection frame y = 170 + 180 × visible index (matching _rows_y above)
 _custom = (root / 'host' / 'dm_custom.c').read_text(encoding='utf-8')
-assert 'enum { ROW_RES, ROW_FPS, ROW_UPSCALE, ROW_PROFILE };' in _custom
-assert 'y = pad ? 170 + 180 * row_id : 0' in _custom
+assert 'y = pad ? 170 + 180 * selected : 0' in _custom
 for _row, _name in enumerate(('ROW_RES', 'ROW_FPS', 'ROW_UPSCALE', 'ROW_PROFILE')):
     assert 170 + 180 * _row + 10 == _rows_y[_row], (_name, _rows_y)
-assert 'selected == ROW_FPS' in _custom and 'selected == ROW_UPSCALE' in _custom and 'selected == ROW_PROFILE' in _custom and 'row_id == ROW_RES' in _custom
+assert 'row_id == ROW_FPS' in _custom and 'row_id == ROW_UPSCALE' in _custom and 'row_id == ROW_PROFILE' in _custom and 'row_id == ROW_RES' in _custom and 'row_id == ROW_RT' in _custom
+# 光追行（实验性）接在最后：手柄行号 4；可见行紧挨着排，选中框按可见序号放；档位行藏着时光追行与说明各上移一格（与布局缺省 900 / 1080 对应）
+# Ray-tracing row (experimental) comes last: controller row 4; visible rows are packed and the selection frame follows the visible index; with the profile row hidden the ray-tracing row and the hint each move up one slot (matching the layout defaults 900 / 1080)
+assert 'enum { ROW_RES, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT };' in _custom
+assert 'int row_id = selected == 3 && !prof_on ? ROW_RT : selected;' in _custom
+assert 'move_ours_y(rtrow, enabled ? %d : %d)' % (_rt['y'], _rt['y'] - 180) in _custom
+assert 'move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), 180 + 180 * (3 + (enabled != 0) + (rt_ok != 0)))' in _custom and 180 + 180 * 5 == _hint['y']
 print('PASS Graphics rows: render resolution first, host controller rows in the same order')
 # 局内选项页的手柄提示条（2026-10-27：触屏下「全部接受 / 默认 / 返回」露在「应用 / 默认 / 放弃」下面）：Console 这份 basedOn 原版手柄基页（字面路径，宿主改写前缀管不到），
 # 所以触屏这份自己把 Legend 挪出屏；手柄这份（pad_settings）原样留着提示条。夹具照原版 Console 那份的形状：Legend 没有 fields、带尾逗号
