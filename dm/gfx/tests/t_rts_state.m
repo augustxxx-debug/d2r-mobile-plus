@@ -13,6 +13,11 @@ uint64_t now_ns(void) { return bp_now(); }
 #if DM_NVN_M3
 int main(void) { printf("SKIP：旧接口版没有光追阴影模块\n"); return 77; }
 #else
+#ifndef RTS_MAP_CLEARED
+#define RTS_MAP_CLEARED_T() 0
+#else
+#define RTS_MAP_CLEARED_T() RTS_MAP_CLEARED()
+#endif
 #ifndef RTS_MESH_READY
 #define RTS_MESH_READY(m) ((m)->built)   // 46e57ec 只有 built 一个标记：拿它当「可用」（对照旧代码用） | 46e57ec only has the built flag: used as "usable" (for running against the old code)
 #endif
@@ -43,6 +48,10 @@ static void prepass(void) {   // 深度预渲染的一次绘制：记相机 | On
 // 阴影通道的一次索引绘制：网格 i = 索引缓冲里第 i 段（每段 n 个索引） | One indexed shadow-pass draw: mesh i = segment i of the index buffer (n indices each)
 static int sdraw(int i, int n, int prim, uint32_t fmt) {
     memset(&R, 0, sizeof R); R.rt.depth = &g_sdepth;
+#ifdef RTS_HAS_NOTE_PASS
+    if (g_rts.frame != atomic_load(&g_cur_frame) || g_rts.cur_smap < 0) {   // 本帧第一次画阴影：按生产 rp_begin_ex 的位置登记阴影通道（清除值 1.0） | first shadow draw this frame: register the shadow pass where production rp_begin_ex does (clear value 1.0)
+        RPD *rp = [RPD new]; rp.depthAttachment.texture = tex_mtl(&g_sdepth); rp.depthAttachment.loadAction = MTLLoadActionClear; rp.depthAttachment.clearDepth = 1.0; rts_note_pass(rp); }
+#endif
     S.nattr = 1; S.attr[0] = (va_st){.fmt = fmt, .offset = 0, .stream = 0}; S.stream[0] = (vs_st){8, 0}; S.vbuf[0] = (NVNbufferRange){(uint64_t)g_vtx, 4096 * 8};
     S.ubo[0][0] = (p_bind_buf){0, 0, (uint64_t)g_mat, 64}; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)g_cb3, 400};
     p_draw_idx di = {prim, 1, n, 0, 0, 1, (uint64_t)(g_idx + (size_t)i * 64 * 2)};
@@ -52,9 +61,9 @@ static int sh(int i) { return sdraw(i, 48, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x2b); 
 static void set_rt(int n, const tex_t *c, const tex_t *d) { p_set_rt r = {0}; r.n = n; r.color[0] = c; r.depth = d; R.rt = r; R.has_rt = 1; rts_set_rt(&r); }
 static void main_pass(void) { set_rt(1, &g_hdr, &g_mdepth); }        // 主不透明通道：建 BLAS / TLAS、追踪 | Main opaque pass: build BLAS / TLAS, trace
 static void hdr_again(void) { set_rt(1, &g_hdr, NULL); }             // 主通道之后再挂 HDR：第一阶段合成 | HDR attached again after the main pass: phase-1 compositing
-// 一整帧：预渲染（可缺相机）→ 阴影通道画 ids → 主通道 → HDR；返回各次阴影绘制的返回值之和（1 = 走光追不编码） | A whole frame; returns the sum of the shadow draws' return values (1 = ray traced, not encoded)
+// 返回本帧进了 TLAS 的阴影绘制数（六审之后阴影绘制一律照原版编码，「走光追」看这个） | Returns how many shadow draws entered the TLAS this frame (after the sixth review every shadow draw is still encoded; "ray traced" is measured by this)
 static int full_frame(int cam, const int *ids, int nid, int *gpu_ok) {
-    frame_open(); if (cam) prepass(); int r = 0; for (int k = 0; k < nid; k++) r += sh(ids[k]); main_pass(); hdr_again(); *gpu_ok = frame_close(); return r;
+    frame_open(); if (cam) prepass(); for (int k = 0; k < nid; k++) sh(ids[k]); int r = g_rts.ninst + g_rts.ndup; main_pass(); hdr_again(); *gpu_ok = frame_close(); return r;
 }
 static rts_mesh *mesh_of(int i) {   // 用同一次绘制的键找网格（不改状态：直接算键） | Find mesh i by recomputing the key of the same draw (no state change)
     for (uint32_t k = 0; k < g_rts.meshes.cap; k++) { rts_mesh *m = g_rts.meshes.vals[k]; if (m && m->ib && m->ib.length == 48 * 2 && !memcmp(m->ib.contents, g_idx + (size_t)i * 128, 96)) return m; }
@@ -62,7 +71,7 @@ static rts_mesh *mesh_of(int i) {   // 用同一次绘制的键找网格（不�
 }
 
 int main(void) { @autoreleasepool {
-    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_REPLACE", "1", 1); setenv("DM_RT_SHADOW_DBG", "1", 1); mtl_init();   // 替换模式（就绪闸门管的就是跳过哪些阴影绘制）；调试叠加 = 合成那一步，测试里没有 _rt 变体 | replace mode (the gate decides which shadow draws are skipped); debug overlay = the compositing step, there are no _rt variants in the test
+    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_DBG", "1", 1); mtl_init();   // rt2：测试里没有 _rt 变体，调试模式下用叠加合成（审计分支「无变体 = 叠加」的同一路径） | rt2: no _rt variants in the test; debug mode composites with the overlay (the audit branch's "no variants = overlay" path)
     if (!mtl_rt_shadow_supported()) { printf("SKIP：本机不支持光追阴影\n"); return 77; }
     setup(); rts_on(); g_rts.on = 1;   // 相当于设置页开着光追阴影（g_rts.on 置 0 = 关） | as if the settings page had ray-traced shadows on (g_rts.on = 0 = off)
     int ok, r; int a[1] = {0};
@@ -85,14 +94,14 @@ int main(void) { @autoreleasepool {
     // 5. 关了再开：网格 4 排队后（本帧没到主通道）关掉，几帧后再开，那帧只画网格 5 | 5. Off then on: mesh 4 is queued (no main pass this frame), switched off, on again a few frames later drawing only mesh 5
     frame_open(); prepass(); sh(4); g_rts.on = 0; ok = frame_close();
     for (int i = 0; i < 5; i++) { frame_open(); EXPECT("关着：绘制照原版", 0, sh(4)); frame_close(); }
-    g_rts.on = 1; frame_open(); prepass(); r = sh(5);
-    EXPECT("再开首帧：排队里只有本帧的网格 5（不带关之前的过期源地址）", 1, g_rts.npend); EXPECT("再开首帧：上一帧不是光追帧，本帧先画原版", 0, r);
+    g_rts.on = 1; frame_open(); prepass(); sh(5); r = g_rts.ninst;
+    EXPECT("再开首帧：排队里只有本帧的网格 5（不带关之前的过期源地址）", 1, g_rts.npend); EXPECT("再开首帧：上一帧不是光追帧，本帧没有实例", 0, r);
     main_pass(); hdr_again(); ok = frame_close(); EXPECT("再开首帧：GPU 无错", 1, ok);
     int e6[6] = {0, 1, 2, 3, 4, 5}; for (int i = 0; i < 3; i++) r = full_frame(1, e6, 6, &ok);
     EXPECT("再开后：六次绘制都走光追", 6, r); EXPECT("再开后：GPU 无错", 1, ok);
     // 6. 不支持的图元 / 格式：照原版画（不能只丢掉） | 6. Unsupported primitive / format: drawn as original (not just dropped)
-    frame_open(); prepass(); EXPECT("三角带：照原版画", 0, sdraw(0, 48, NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP, 0x2b)); EXPECT("格式不认：照原版画", 0, sdraw(6, 48, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x30));
-    EXPECT("不足 3 个索引：照原版画", 0, sdraw(7, 2, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x2b)); main_pass(); hdr_again(); frame_close();
+    frame_open(); prepass(); sdraw(0, 48, NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP, 0x2b); sdraw(6, 48, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x30); sdraw(7, 2, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x2b);
+    EXPECT("三角带 / 格式不认 / 不足 3 个索引：都不进 TLAS", 0, g_rts.ninst); EXPECT("三角带 / 格式不认 / 不足 3 个索引：本帧阴影图不清（照原版）", 0, RTS_MAP_CLEARED_T()); main_pass(); hdr_again(); frame_close();
     // 7. 光追帧失败（本帧缺相机，遮罩算不出）→ 下一帧退回原版阴影图 → 原版帧条件齐全后恢复光追 | 7. A ray-traced frame fails (no camera, no mask) → the next frame uses the original shadow map → ray tracing resumes once a frame has everything
     r = full_frame(1, a, 1, &ok); EXPECT("失败前：光追帧", 1, r);
     r = full_frame(0, a, 1, &ok); EXPECT("缺相机的光追帧：遮罩没算", 0, g_rts.mask_done);
@@ -103,9 +112,6 @@ int main(void) { @autoreleasepool {
     { rts_mesh *m = mesh_of(40); EXPECT("网格 40 在缓存且没建成", 1, m && !RTS_MESH_READY(m)); }
     int before = g_rts.nmesh; for (int i = 0; i < 1300; i++) rts_frame_begin(++g_frame);
     EXPECT("1300 帧后未建成的网格 40 被淘汰", 1, mesh_of(40) == NULL); EXPECT("1300 帧后缓存清空", 0, g_rts.nmesh); (void)before;
-    // 9. 阶段零缺省「保留原图」：阴影绘制一律照原版编码，光追照建照追（本帧任何一步失败都等于原版） | 9. Phase-0 default "keep raster": every shadow draw is encoded as original, ray tracing still builds and traces (any failure in the frame equals the original)
-    g_rts.replace = 0; int e2[2] = {0, 1}; int kept = 0; for (int i = 0; i < 4; i++) kept += full_frame(1, e2, 2, &ok);
-    EXPECT("保留原图：阴影绘制全部照原版编码（返回 0）", 0, kept); EXPECT("保留原图：本帧照样进 TLAS", 2, g_rts.ninst); EXPECT("保留原图：遮罩照算", 1, g_rts.mask_done); EXPECT("保留原图：GPU 无错", 1, ok);
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}
