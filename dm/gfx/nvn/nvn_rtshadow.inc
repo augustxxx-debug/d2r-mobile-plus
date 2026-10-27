@@ -125,7 +125,9 @@ static struct {
     struct { uint64_t tag, last, seen; rts_mesh *m; MTLIndirectAccelerationStructureInstanceDescriptor d; } keep[RTS_KEEP]; int nkeep, nkeep_used;   // 邻近遮挡体保留（评审阶段一） | neighbourhood occluder retention (review phase 1)
     uint8_t exp_ok[RTS_MAX_EXPORT]; float exp_tr[RTS_MAX_EXPORT][3]; int16_t inst_exp[RTS_MAX_INST]; uint64_t n_exp_lost, n_instanced;   // 导出绘制真编进去了没有（draw 中途返回的不算）；实例 → 导出序号（−1 = 不是导出的） | whether the export draw was actually encoded (a draw that returns early does not count); instance → export index (−1 = not exported)
     int nai, ai_cap, ai_cap_fs, nalpha_rt, n_var_loaded, n_var_missing, n_alpha_logs; NvShader *exp_vs; uint64_t na_why[RA_N], n_alpha_rt_draws;   // 本帧镂空实例数 / 待抓参数块的记录；exp_vs = 本次导出绘制用的顶点变体（_pos / _var） | alpha instances this frame / the record awaiting its argument capture; exp_vs = the vertex variant of the export draw (_pos / _var)
+    double hang_t; int hang_seen, hang_events;   // GPU 挂起保护：已看过的挂起计数、上次挂起事件时刻、事件数 | GPU hang protection: hang count already seen, time of the last hang event, number of events
     rts_gov gov; rts_lvl_params eff; int auto_on, lvl_pin; double ts_tick, rt_sum, fr_sum; uint64_t rt_n, fr_n, n_lvl_down, n_lvl_up;   // 自动降档：档位状态、本档实际参数、时间戳每拍毫秒、600 帧统计 | automatic downgrade: level state, effective parameters, ms per timestamp tick, 600-frame counters
+    int ao_on, ao_rays, ao_done, ao_applied; float ao_radius, ao_strength; id<MTLComputePipelineState> ps_ao, ps_aoblur, ps_ao_a; id<MTLTexture> ao_half, ao_tmp, ao_full; uint64_t n_ao_traced, n_ao_applied, n_ao_missed;   // 光追 AO（实验性）：设置、管线、半分辨率 / 模糊 / 全分辨率贴图、统计 | ray-traced AO (experimental): settings, pipelines, half-res / blur / full-res textures, counters
     int last_r;   // 上一次绘制的答案：draw 重入（g_draw_reentry）时原样复用，不重复登记实例 / 槽 | the previous draw's answer: reused on draw re-entry (g_draw_reentry), so instances / slots are not registered twice
 } g_rts = { .on = -1, .meshes = {.klen = 8}, .cur_smap = -1, .cur = -1, .ai_cap = -1 };
 int mtl_rt_shadow_supported(void) {   // 宿主设置页用：这台机器能不能显示「光追阴影」 | For the host settings page: whether this machine may show "ray-traced shadows"
@@ -164,11 +166,12 @@ static int rts_flip(int v) {
     return r;
 }
 static void rts_release_all(const char *why);
-static rts_lvl_params rts_lvl_of(int lvl) { return rts_lvl_apply(lvl, g_rts.point_on, g_rts.point_n, g_rts.point_div, g_rts.sun_half, g_rts.soft > 0); }
+static rts_lvl_params rts_lvl_of(int lvl) { return rts_lvl_apply(lvl, g_rts.point_on, g_rts.point_n, g_rts.point_div, g_rts.sun_half, g_rts.soft > 0, g_rts.ao_on); }
 static void rts_lvl_update(void) { g_rts.eff = rts_lvl_of(g_rts.gov.lvl); }
 static const char *rts_lvl_desc_p(const rts_lvl_params *e, char *b, size_t n) {   // 某档的实际参数（日志用） | effective parameters of a level (for the log)
     if (e->point_on) snprintf(b, n, "太阳 %s、点光 ≤ %d 盏 1/%d 分辨率", e->soft ? "全分辨率软阴影" : e->sun_div == 1 ? "全分辨率" : e->sun_div == 2 ? "1/2 分辨率" : "1/4 分辨率", e->point_n, e->point_div);
     else snprintf(b, n, "太阳 %s、点光阴影关", e->soft ? "全分辨率软阴影" : e->sun_div == 1 ? "全分辨率" : e->sun_div == 2 ? "1/2 分辨率" : "1/4 分辨率");
+    if (g_rts.ao_on) { size_t l = strlen(b); snprintf(b + l, n > l ? n - l : 0, "、光追 AO %s", e->ao ? "开" : "关"); }
     return b;
 }
 static const char *rts_lvl_desc(char *b, size_t n) { return rts_lvl_desc_p(&g_rts.eff, b, n); }
@@ -182,6 +185,10 @@ static int rts_on(void) {
         { const char *pd = getenv("DM_RT_POINT_DIV"); g_rts.point_div = pd && (atoi(pd) == 2 || atoi(pd) == 4) ? atoi(pd) : 4; }   // 点光遮罩追踪分辨率：全分辨率的 1/4（缺省）或 1/2，之后深度感知上采样 | point-mask trace resolution: 1/4 (default) or 1/2 of full, then depth-aware upsampling
         { const char *sh = getenv("DM_RT_SUN_HALF"); g_rts.sun_half = sh ? atoi(sh) != 0 : 1; }   // 太阳射线半分辨率 + 深度感知上采样（缺省开；0 = 全分辨率） | half-resolution sun rays + depth-aware upsampling (default on; 0 = full resolution)
         const char *pe = getenv("DM_RT_POINT"), *pn = getenv("DM_RT_POINT_N"); g_rts.point_on = pe ? atoi(pe) != 0 : 1; g_rts.point_n = pn ? atoi(pn) : 2; if (g_rts.point_n > 4) g_rts.point_n = 4; if (g_rts.point_n < 1) g_rts.point_on = 0;
+        // 光追 AO（实验性，计划第 5 步）：缺省关，DM_RT_AO=1 开；半径（世界单位）、强度（0–1，HDR 乘 1 − 强度 × 遮挡）、每像素射线数 | ray-traced AO (experimental, plan step 5): off by default, DM_RT_AO=1 turns it on; radius (world units), strength (0–1, the HDR is multiplied by 1 − strength × occlusion), rays per pixel
+        { const char *ao = getenv("DM_RT_AO"), *ar = getenv("DM_RT_AO_RADIUS"), *as = getenv("DM_RT_AO_STRENGTH"), *an = getenv("DM_RT_AO_RAYS");
+          g_rts.ao_on = ao && atoi(ao) != 0; g_rts.ao_radius = ar ? (float)atof(ar) : 6.f; if (!(g_rts.ao_radius > 0 && g_rts.ao_radius <= 100)) g_rts.ao_radius = 6.f;
+          g_rts.ao_strength = as ? (float)atof(as) : 0.6f; if (!(g_rts.ao_strength >= 0 && g_rts.ao_strength <= 1)) g_rts.ao_strength = 0.6f; g_rts.ao_rays = an ? atoi(an) : 4; if (g_rts.ao_rays < 1 || g_rts.ao_rays > 16) g_rts.ao_rays = 4; }
         // 自动降档：缺省开（DM_RT_AUTO=0 关）；DM_RT_LEVEL=<0–3> 钉住档位（同时关掉自动） | automatic downgrade: on by default (DM_RT_AUTO=0 turns it off); DM_RT_LEVEL=<0–3> pins a level (and turns automatic off)
         { const char *ae = getenv("DM_RT_AUTO"), *le = getenv("DM_RT_LEVEL"); g_rts.lvl_pin = le ? atoi(le) : -1; if (g_rts.lvl_pin > RTS_LVL_MAX) g_rts.lvl_pin = RTS_LVL_MAX;
           g_rts.auto_on = g_rts.lvl_pin < 0 && (ae ? atoi(ae) != 0 : 1); rts_gov_init(&g_rts.gov, RTS_LVL_MAX); if (g_rts.lvl_pin > 0) g_rts.gov.lvl = g_rts.lvl_pin; rts_lvl_update(); }   // 缺省 2 盏（评审：先 1–2 盏重要灯） | 2 by default (review: 1–2 important lights first)
@@ -189,6 +196,7 @@ static int rts_on(void) {
         if (e) MLOG("光追阴影：生效 %s（测试开关 DM_RT_SHADOW=%s 钉住%s）", atoi(e) && g_rts.gate ? "开" : "关", e, g_rts.gate ? "" : "，机器不可用，仍不生效");
     }
     int v = !g_rts.gate || g_rts.failed ? 0 : rts_flip(g_rts.on == -2 ? dm_rt_shadow_setting() != 0 : g_rts.on);
+    if (!v) g_rts.hang_seen = atomic_load(&g_gpu_hang_n);   // 光追关着时的挂起不算光追的 | hangs while ray tracing is off do not count against it
     if (!v && g_rts.was_on) rts_release_all(g_rts.failed ? "模块失败" : "开关关了");   // 关掉 / 失败：整个缓存等 GPU 在途工作做完后释放（六审 5.1） | off / failed: the whole cache is released once in-flight GPU work is done (sixth review 5.1)
     g_rts.was_on = v;
     return v;
@@ -220,7 +228,7 @@ static int rts_slot_new(void) {   // 新加一个每帧槽；失败返回 -1 | A
     RTS_NEW(s->inst, [g_dev newBufferWithLength:RTS_MAX_INST * sizeof(MTLIndirectAccelerationStructureInstanceDescriptor) options:MTLResourceStorageModeShared]);
     RTS_NEW(s->k, [g_dev newBufferWithLength:256 options:MTLResourceStorageModeShared]); RTS_NEW(s->d, [g_dev newBufferWithLength:64 options:MTLResourceStorageModeShared]);
     RTS_NEW(s->pk, [g_dev newBufferWithLength:512 options:MTLResourceStorageModeShared]);   // 0 选灯常量 PK（160 字节，含逆视矩阵）、160 点光追踪常量 P、256 副本常量 LC、384 收集常量 LG、448 点光上采样 PU、464 太阳上采样 PU | 0 pick PK (160 bytes incl. the inverse view), 160 point trace P, 256 copy LC, 384 gather LG, 448 point upsampling PU, 464 sun upsampling PU
-    RTS_NEW(s->picks, [g_dev newBufferWithLength:sizeof(rts_picks) options:MTLResourceStorageModeShared]); RTS_NEW(s->bb, [g_dev newBufferWithLength:64 options:MTLResourceStorageModeShared]);
+    RTS_NEW(s->picks, [g_dev newBufferWithLength:sizeof(rts_picks) options:MTLResourceStorageModeShared]); RTS_NEW(s->bb, [g_dev newBufferWithLength:128 options:MTLResourceStorageModeShared]);   // 0–63 软阴影两趟模糊常量、64 光追 AO 的 PU | 0–63 soft-shadow blur constants (two passes), 64 the PU of the ray-traced AO
     RTS_NEW(s->ai, [g_dev newBufferWithLength:RTS_MAX_ALPHA * sizeof(rts_ai) options:MTLResourceStorageModeShared]); RTS_NEW(s->aargs, [g_dev newBufferWithLength:RTS_MAX_ALPHA * RTS_AARG options:MTLResourceStorageModeShared]);   // 镂空判定记录与参数块快照 | alpha judge records and argument snapshots
     if (!s->inst || !s->k || !s->d || !s->pk || !s->picks || !s->bb || !s->ai || !s->aargs) { id o[8] = {s->inst, s->k, s->d, s->pk, s->picks, s->bb, s->ai, s->aargs}; for (int j = 0; j < 8; j++) if (o[j]) defer_obj_release(o[j]); memset(s, 0, sizeof *s); return -1; }
     { MTL4CounterHeapDescriptor *hd = [MTL4CounterHeapDescriptor new]; hd.type = MTL4CounterHeapTypeTimestamp; hd.count = 2; s->ts = [g_dev newCounterHeapWithDescriptor:hd error:nil];   // 自动关 / 钉住档位时也量（日志照样有光追 GPU 耗时）；建不出就不量这个槽（不影响光追本身） | measured also with automatic off / a pinned level (the log still has the ray-tracing GPU time); if it cannot be created this slot is just not measured (ray tracing unaffected)
@@ -286,7 +294,7 @@ static void rts_alpha_start(void) {
         if (lib) { a = [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_trace"] error:&pe]; b = [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_trace_soft"] error:&pe]; c = [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_ptrace"] error:&pe]; }
         pthread_mutex_lock(&g_rts_alpha_mu);
         if (gen == atomic_load(&g_rts_alpha_gen)) {
-            if (a && b && c) { g_rts.ps_trace_a = a; g_rts.ps_trace_soft_a = b; g_rts.ps_ptrace_a = c; g_rts.alpha_ms = bp_now() / 1e6 - t0; atomic_store(&g_rts_alpha_st, 2); }
+            if (a && b && c) { g_rts.ps_trace_a = a; g_rts.ps_trace_soft_a = b; g_rts.ps_ptrace_a = c; g_rts.ps_ao_a = lib ? [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_ao"] error:nil] : nil; g_rts.alpha_ms = bp_now() / 1e6 - t0; atomic_store(&g_rts_alpha_st, 2); }
             else { atomic_store(&g_rts_alpha_st, -1); fprintf(stderr, "[rts] 光追镂空：判定库编不出 %s\n", (e ?: pe).localizedDescription.UTF8String ?: "?"); }
         }
         pthread_mutex_unlock(&g_rts_alpha_mu);
@@ -297,9 +305,9 @@ static int rts_setup(void) {
     if (g_rts.failed) return 0;
     NSError *e = nil; id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(k_rts_msl) options:nil error:&e];
     if (!lib) { g_rts.failed = 1; MLOG("【红】光追阴影：着色器编译失败 %s", e.localizedDescription.UTF8String); return 0; }
-    const char *fn[11] = {"rts_decode", "rts_unproj", "rts_trace", "rts_trace_soft", "rts_blur", "rts_ptrace", "rts_pick", "rts_lcopy", "rts_lclear", "rts_lgather", "rts_pup"};
-    id<MTLComputePipelineState> __strong *ps[11] = {&g_rts.ps_decode, &g_rts.ps_unproj, &g_rts.ps_trace, &g_rts.ps_trace_soft, &g_rts.ps_blur, &g_rts.ps_ptrace, &g_rts.ps_pick, &g_rts.ps_lcopy, &g_rts.ps_lclear, &g_rts.ps_lgather, &g_rts.ps_pup};
-    int ok = 1; for (int i = 0; i < 11 && ok; i++) { *ps[i] = [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@(fn[i])] error:&e]; ok = *ps[i] != nil; }
+    const char *fn[13] = {"rts_decode", "rts_unproj", "rts_trace", "rts_trace_soft", "rts_blur", "rts_ptrace", "rts_pick", "rts_lcopy", "rts_lclear", "rts_lgather", "rts_pup", "rts_ao", "rts_aoblur"};
+    id<MTLComputePipelineState> __strong *ps[13] = {&g_rts.ps_decode, &g_rts.ps_unproj, &g_rts.ps_trace, &g_rts.ps_trace_soft, &g_rts.ps_blur, &g_rts.ps_ptrace, &g_rts.ps_pick, &g_rts.ps_lcopy, &g_rts.ps_lclear, &g_rts.ps_lgather, &g_rts.ps_pup, &g_rts.ps_ao, &g_rts.ps_aoblur};
+    int ok = 1; for (int i = 0; i < 13 && ok; i++) { *ps[i] = [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@(fn[i])] error:&e]; ok = *ps[i] != nil; }
     MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 3; ad.maxTextureBindCount = 2;
     g_rts.at_decode = [g_dev newArgumentTableWithDescriptor:ad error:&e]; g_rts.at_overlay = [g_dev newArgumentTableWithDescriptor:ad error:&e];
     { MTL4ArgumentTableDescriptor *td4 = [MTL4ArgumentTableDescriptor new]; td4.maxBufferBindCount = 4; td4.maxTextureBindCount = 2; g_rts.at_trace = [g_dev newArgumentTableWithDescriptor:td4 error:&e]; }   // 第 4 个缓冲 = 镂空判定记录 | buffer 4 = alpha judge records
@@ -326,6 +334,8 @@ static int rts_setup(void) {
       MLOG("光追阴影：建好（TLAS %lu KiB、暂存 %lu KiB、最多 %d 实例、网格缓存预算 %llu MB、蒙皮导出每帧 ≤ %d、点光 %s ≤ %d 盏（GPU 分簇收集）、软阴影 %s、太阳射线 %s、点光射线 1/%d 分辨率、玩家光 × %.2f、包里 _rt 变体 %d 个）",
           (unsigned long)(sz.accelerationStructureSize >> 10), (unsigned long)(g_rts.scratch_len >> 10), RTS_MAX_INST, (unsigned long long)(g_rts.budget >> 20), RTS_MAX_EXPORT, g_rts.point_on ? "开" : "关", g_rts.point_n, g_rts.soft > 0 ? "开" : "关（DM_RT_SOFT）", g_rts.soft > 0 ? "全分辨率（软阴影）" : g_rts.sun_half ? "半分辨率 + 上采样" : "全分辨率", g_rts.point_div ? g_rts.point_div : 2, g_rts.player_scale, nrt); }
     { char b[160]; MLOG("光追降档：自动 %s，当前第 %d 档（%s；0 = 按设置、1 = 点光 1 盏、2 = 关点光阴影 + 太阳 1/2、3 = 太阳 1/4；按光追通道与整帧 GPU 时间对出图节拍预算判）", g_rts.auto_on ? "开" : g_rts.lvl_pin >= 0 ? "关（DM_RT_LEVEL 钉住）" : "关（DM_RT_AUTO=0）", g_rts.gov.lvl, rts_lvl_desc(b, sizeof b)); }
+    if (g_rts.ao_on) MLOG("光追 AO：开（实验性，DM_RT_AO=1）：半分辨率每像素 %d 条半球射线、半径 %.1f、强度 %.2f、5×5 深度感知模糊后上采样，主通道之后乘到画面上；自动降档 1 档起关", g_rts.ao_rays, g_rts.ao_radius, g_rts.ao_strength);
+    else MLOG("光追 AO：关（实验性，DM_RT_AO=1 打开）");
     rts_alpha_start();
     return 1;
 }
@@ -361,14 +371,15 @@ static void rts_release_all(const char *why) {
     if (!g_rts.nmesh && !g_rts.ps_trace && !g_rts.nslot) return;
     MLOG("光追阴影：释放（%s）：网格 %d 个 %.1f MB、TLAS、暂存 %lu KiB、遮罩、%d 个每帧槽、管线，等 GPU 在途工作做完后放掉", why, g_rts.nmesh, g_rts.cache_bytes / 1048576.0, (unsigned long)(g_rts.scratch_len >> 10), g_rts.nslot);
     while (g_rts.nmesh) { rts_mesh *m = NULL; for (uint32_t i = 0; i < g_rts.meshes.cap && !m; i++) m = g_rts.meshes.vals[i]; if (!m) break; rts_mesh_drop(m); }
-    id o[] = {g_rts.tlas, g_rts.scratch, g_rts.mask, g_rts.mask_raw, g_rts.mask_tmp, g_rts.pmask, g_rts.pmaskf, g_rts.mask_half, g_rts.prev, g_rts.lseen, g_rts.llist, g_rts.ps_overlay, g_rts.at_decode, g_rts.at_trace, g_rts.at_overlay, g_rts.at_blur, g_rts.at_pick};
+    id o[] = {g_rts.ao_half, g_rts.ao_tmp, g_rts.ao_full, g_rts.tlas, g_rts.scratch, g_rts.mask, g_rts.mask_raw, g_rts.mask_tmp, g_rts.pmask, g_rts.pmaskf, g_rts.mask_half, g_rts.prev, g_rts.lseen, g_rts.llist, g_rts.ps_overlay, g_rts.at_decode, g_rts.at_trace, g_rts.at_overlay, g_rts.at_blur, g_rts.at_pick};
     for (size_t i = 0; i < sizeof o / sizeof o[0]; i++) if (o[i]) defer_obj_release(o[i]);
-    id<MTLComputePipelineState> __strong *ps[11] = {&g_rts.ps_decode, &g_rts.ps_unproj, &g_rts.ps_trace, &g_rts.ps_trace_soft, &g_rts.ps_blur, &g_rts.ps_ptrace, &g_rts.ps_pick, &g_rts.ps_lcopy, &g_rts.ps_lclear, &g_rts.ps_lgather, &g_rts.ps_pup};
-    for (int i = 0; i < 11; i++) { if (*ps[i]) defer_obj_release(*ps[i]); *ps[i] = nil; }
+    id<MTLComputePipelineState> __strong *ps[13] = {&g_rts.ps_decode, &g_rts.ps_unproj, &g_rts.ps_trace, &g_rts.ps_trace_soft, &g_rts.ps_blur, &g_rts.ps_ptrace, &g_rts.ps_pick, &g_rts.ps_lcopy, &g_rts.ps_lclear, &g_rts.ps_lgather, &g_rts.ps_pup, &g_rts.ps_ao, &g_rts.ps_aoblur};
+    for (int i = 0; i < 13; i++) { if (*ps[i]) defer_obj_release(*ps[i]); *ps[i] = nil; }
     pthread_mutex_lock(&g_rts_alpha_mu); atomic_fetch_add(&g_rts_alpha_gen, 1);   // 判定库：换代（在编的编完即丢），已编好的等在途提交做完再放；再开时重编 | judge library: new generation (an in-flight compile is discarded), the ready one after in-flight submissions; recompiled on the next switch-on
-    { id<MTLComputePipelineState> __strong *pa[3] = {&g_rts.ps_trace_a, &g_rts.ps_trace_soft_a, &g_rts.ps_ptrace_a}; for (int i = 0; i < 3; i++) { if (*pa[i]) defer_obj_release(*pa[i]); *pa[i] = nil; } }
+    { id<MTLComputePipelineState> __strong *pa[4] = {&g_rts.ps_trace_a, &g_rts.ps_trace_soft_a, &g_rts.ps_ptrace_a, &g_rts.ps_ao_a}; for (int i = 0; i < 4; i++) { if (*pa[i]) defer_obj_release(*pa[i]); *pa[i] = nil; } }
     if (atomic_load(&g_rts_alpha_st) != -2) atomic_store(&g_rts_alpha_st, 0); g_rts.alpha_idx = nil; g_rts.nai = 0; g_rts.ai_cap = -1; g_rts.exp_vs = nil; pthread_mutex_unlock(&g_rts_alpha_mu);
     for (int i = 0; i < g_rts.nslot; i++) rts_fslot_free(&g_rts.slot[i]);
+    g_rts.ao_half = g_rts.ao_tmp = g_rts.ao_full = nil; g_rts.ao_done = g_rts.ao_applied = 0;
     g_rts.tlas = nil; g_rts.scratch = nil; g_rts.mask = g_rts.mask_raw = g_rts.mask_tmp = g_rts.pmask = g_rts.pmaskf = g_rts.mask_half = nil; g_rts.prev = g_rts.lseen = g_rts.llist = nil; g_rts.ps_overlay = nil;
     g_rts.at_decode = g_rts.at_trace = g_rts.at_overlay = g_rts.at_blur = g_rts.at_pick = nil; g_rts.scratch_len = 0; g_rts.nslot = 0; g_rts.cur = -1; g_rts.slot_frame = 0;
     g_rts.npend = g_rts.nsub = g_rts.ninst = g_rts.nexp = 0; g_rts.nkeep = 0; g_rts.cur_pos4 = nil; g_rts.cache_bytes = 0; g_rts.rt_frame = g_rts.backoff = 0; g_rts.retry_at = 0;
@@ -388,8 +399,23 @@ static const char *rts_frame_fail(void) {
     return NULL;
 }
 static void rts_check_dump(void);
+// GPU 挂起保护：光追开着时命令缓冲报「Caused GPU Hang」（Mac 上 141 局里见过 5 局，根因未定）。3 秒内的多条算一次事件；第一次 → 直接降到最低档、升档等待 120 秒；
+// 第二次 → 本次运行关掉光追（模块失败 → 整体释放，原版阴影图接手）。真机上反复挂起会被系统限制 GPU，宁可保守
+// GPU hang protection: command buffers reporting "Caused GPU Hang" while ray tracing is on (seen in 5 of 141 runs on the Mac, root cause open). Errors within 3 s count as one event; the first → straight to the lowest level, 120 s before stepping up;
+// the second → ray tracing off for the rest of the run (module failure → full release, the original shadow maps take over). Repeated hangs on a device can get the GPU restricted by the system, so err on the safe side
+static void rts_hang_check(uint64_t f) {
+    { static int nt = -1; static unsigned long long tf[2]; if (nt < 0) { const char *e = getenv("DM_TEST_RT_HANG"); nt = e ? sscanf(e, "%llu,%llu", &tf[0], &tf[1]) : 0; if (nt < 0) nt = 0; }   // 测试开关：到这些帧号假装报了一次挂起（只读环境变量，不分配） | test switch: pretend a hang was reported at these frames (reads an environment variable only, allocates nothing)
+      for (int i = 0; i < nt; i++) if (tf[i] && f == tf[i]) { atomic_fetch_add(&g_gpu_hang_n, 2); MLOG("DM_TEST_RT_HANG：第 %llu 帧假装 GPU 挂起", (unsigned long long)f); } }
+    int h = atomic_load(&g_gpu_hang_n); if (h == g_rts.hang_seen) return;
+    int nnew = h - g_rts.hang_seen; g_rts.hang_seen = h; double now = rts_now();
+    if (g_rts.hang_events && now - g_rts.hang_t < 3.0) { g_rts.hang_t = now; return; }   // 同一次挂起的后续报错 | follow-up errors of the same hang
+    g_rts.hang_t = now; g_rts.hang_events++;
+    if (g_rts.hang_events == 1) { g_rts.gov.lvl = RTS_LVL_MAX; g_rts.gov.t_change = now; g_rts.gov.hold_up = 120; rts_lvl_update();
+        MLOG("【红】光追阴影：GPU 挂起（命令缓冲报 Caused GPU Hang %d 条）→ 直接降到第 %d 档、120 秒内不升；再挂一次本次运行关掉光追", nnew, RTS_LVL_MAX); }
+    else { g_rts.failed = 1; MLOG("【红】光追阴影：GPU 又挂起（第 %d 次事件）→ 本次运行关掉光追，退回原版阴影图", g_rts.hang_events); }
+}
 static void rts_frame_begin(uint64_t f) {
-    rts_check_dump();
+    rts_check_dump(); rts_hang_check(f);
     if (g_rts.n_frames && g_rts.n_frames % 600 == 0) {
         MLOG("光追阴影：第 %llu 帧 实例 %d（重复 %d、蒙皮 %d、其中绑定姿势 %d、格式不认 %d、非三角列表 %d、镂空 %d）、网格缓存 %d（%.1f / %llu MB，预算淘汰 %llu）、累计建 %llu 个 BLAS（%.1f 万三角形）、refit %llu 次、追踪 %llu 帧、"
              "进 TLAS 的阴影绘制 %llu 次、_rt 变体 %d 个（缺 %d）、_pos 变体 %d 个（缺 %d）、点光 %d 盏（追踪 %llu 帧）、本帧太阳 %s、预渲染遮挡体 %d（保留表 %d、本帧补进 %d）、玩家光 %s（副本 %llu 次）、光追 GPU %.2f ms/帧（%llu 帧计时）；"
@@ -408,6 +434,8 @@ static void rts_frame_begin(uint64_t f) {
         { char b[160]; MLOG("光追降档：第 %llu 帧 当前第 %d 档（%s）%s；光追 GPU 均值 %.2f ms（%llu 帧）、整帧 GPU 均值 %.2f ms；累计降 %llu 次、升 %llu 次", (unsigned long long)g_rts.n_frames, g_rts.gov.lvl,
               g_rts.auto_on ? "自动" : g_rts.lvl_pin >= 0 ? "DM_RT_LEVEL 钉住" : "自动关（DM_RT_AUTO=0）", rts_lvl_desc(b, sizeof b), g_rts.rt_n ? g_rts.rt_sum / g_rts.rt_n : 0, (unsigned long long)g_rts.rt_n, g_rts.fr_n ? g_rts.fr_sum / g_rts.fr_n : 0,
               (unsigned long long)g_rts.n_lvl_down, (unsigned long long)g_rts.n_lvl_up); g_rts.rt_sum = g_rts.fr_sum = 0; g_rts.rt_n = g_rts.fr_n = 0; }
+        if (g_rts.ao_on) MLOG("光追 AO：第 %llu 帧 当前%s；累计追 %llu 帧、乘到画面 %llu 帧、算了没乘上 %llu 帧（主通道之后没再挂 HDR）", (unsigned long long)g_rts.n_frames, g_rts.eff.ao ? "开" : "关（自动降档）",
+            (unsigned long long)g_rts.n_ao_traced, (unsigned long long)g_rts.n_ao_applied, (unsigned long long)g_rts.n_ao_missed);
         g_rts_gpu_sum = 0; g_rts_gpu_n = 0; g_rts.n_rt_draws = g_rts.n_recv_skip = 0; }
     // 1. 就绪闸门：上一帧（必须紧挨着）完整才走光追；失败退避 2、4 … 512 帧。失败那一帧自己的阴影图没被清，原版阴影还在（六审 5.1） | 1. Readiness gate: ray trace only if the previous (adjacent) frame was complete; failures back off 2, 4 … 512 frames. The failing frame's own shadow map was not cleared (sixth review 5.1)
     const char *why = g_rts.n_frames && g_rts.frame + 1 == f ? rts_frame_fail() : "上一帧没经过光追模块";
@@ -419,6 +447,10 @@ static void rts_frame_begin(uint64_t f) {
     }
     g_rts.rt_frame = !why && f >= g_rts.retry_at; g_rts.n_rt_frames += g_rts.rt_frame;
     rts_lvl_update();   // 自动降档换了档：从这一帧起生效 | the automatic downgrade changed level: effective from this frame
+    if (g_rts.ao_done && !g_rts.ao_applied) g_rts.n_ao_missed++;   // 上一帧算了 AO 却没乘上去（主通道之后没再挂 HDR） | last frame traced AO but never applied it (the HDR was not attached again after the main pass)
+    g_rts.ao_done = g_rts.ao_applied = 0;
+    if (!g_rts.eff.ao && (g_rts.ao_half || g_rts.ao_tmp || g_rts.ao_full)) {   // 降档关了 AO：三张贴图等在途提交做完放掉，升回来再建 | AO switched off by the downgrade: the three textures are released after in-flight submissions and rebuilt on the way back up
+        defer_obj_release(g_rts.ao_half); defer_obj_release(g_rts.ao_tmp); defer_obj_release(g_rts.ao_full); g_rts.ao_half = g_rts.ao_tmp = g_rts.ao_full = nil; MLOG("光追 AO：降档关掉，贴图放掉（升回 0 档再建）"); }
     // 2. 上一帧编进构建的网格转可用；3. 没建的排队作废（源地址只在当帧有效） | 2. Meshes built last frame become usable; 3. unbuilt queue entries are dropped (source addresses are per frame)
     for (int i = 0; i < g_rts.nsub; i++) g_rts.submitted[i]->state = RTS_READY;
     g_rts.nsub = 0;
@@ -898,6 +930,30 @@ static void rts_build_and_trace(id<MTLTexture> depth) {
             [g_rts.at_blur setAddress:fs->bb.gpuAddress + pass * 32 atIndex:0]; enc_c_dispatch(ce, tg, tt); }
         g_rts.mask_done = 1;
     }
+    // 4b. 光追 AO（实验性）：半分辨率半球射线 → 5×5 深度感知模糊 → 上采样到全分辨率；主通道之后 rts_ao_apply 乘到 HDR 上。只读深度与 TLAS，不依赖太阳遮罩
+    // 4b. ray-traced AO (experimental): half-resolution hemisphere rays → 5×5 depth-aware blur → upsampled to full resolution; rts_ao_apply multiplies it onto the HDR after the main pass. Reads only depth and the TLAS, independent of the sun mask
+    if (g_rts.eff.ao) {
+        id<MTLComputePipelineState> pa = ua ? g_rts.ps_ao_a : g_rts.ps_ao; NSUInteger aw = (depth.width + 1) / 2, ah = (depth.height + 1) / 2;
+        g_rts.ao_half = rts_tex(g_rts.ao_half, MTLPixelFormatR8Unorm, aw, ah, "AO（半分辨率）"); g_rts.ao_tmp = rts_tex(g_rts.ao_tmp, MTLPixelFormatR8Unorm, aw, ah, "AO（模糊）");
+        g_rts.ao_full = rts_tex(g_rts.ao_full, MTLPixelFormatR8Unorm, depth.width, depth.height, "AO（上采样）");
+        if (pa && g_rts.ps_aoblur && g_rts.ao_half && g_rts.ao_tmp && g_rts.ao_full) {
+            RTS_SPLIT();
+            float *ak = (float *)((uint8_t *)fs->k.contents + 128); for (int i = 0; i < 16; i++) ak[i] = (float)ia[i];
+            uint32_t *aku = (uint32_t *)(ak + 16); aku[0] = (uint32_t)aw; aku[1] = (uint32_t)ah; ak[18] = g_rts.ao_radius; ak[19] = bias * 0.5f; aku[4] = 0; aku[5] = (uint32_t)g_rts.ao_rays; ak[22] = ak[23] = 0;
+            [ce setArgumentTable:g_rts.at_trace]; enc_c_pso(ce, pa);
+            [g_rts.at_trace setTexture:depth.gpuResourceID atIndex:0]; [g_rts.at_trace setTexture:g_rts.ao_half.gpuResourceID atIndex:1]; [g_rts.at_trace setResource:g_rts.tlas.gpuResourceID atBufferIndex:0]; [g_rts.at_trace setAddress:fs->k.gpuAddress + 128 atIndex:1];
+            enc_c_dispatch(ce, MTLSizeMake((aw + 7) / 8, (ah + 7) / 8, 1), tt);
+            [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+            uint32_t *pu = (uint32_t *)((uint8_t *)fs->bb.contents + 64); pu[0] = (uint32_t)depth.width; pu[1] = (uint32_t)depth.height; pu[2] = (uint32_t)aw; pu[3] = (uint32_t)ah;
+            [ce setArgumentTable:g_rts.at_blur]; enc_c_pso(ce, g_rts.ps_aoblur);
+            [g_rts.at_blur setTexture:g_rts.ao_half.gpuResourceID atIndex:0]; [g_rts.at_blur setTexture:g_rts.ao_tmp.gpuResourceID atIndex:1]; [g_rts.at_blur setTexture:depth.gpuResourceID atIndex:2]; [g_rts.at_blur setAddress:fs->bb.gpuAddress + 64 atIndex:0];
+            enc_c_dispatch(ce, MTLSizeMake((aw + 7) / 8, (ah + 7) / 8, 1), tt);
+            [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+            enc_c_pso(ce, g_rts.ps_pup);
+            [g_rts.at_blur setTexture:g_rts.ao_tmp.gpuResourceID atIndex:0]; [g_rts.at_blur setTexture:g_rts.ao_full.gpuResourceID atIndex:1]; [g_rts.at_blur setTexture:depth.gpuResourceID atIndex:2]; [g_rts.at_blur setAddress:fs->bb.gpuAddress + 64 atIndex:0];
+            enc_c_dispatch(ce, tg, tt);
+            g_rts.ao_done = 1; g_rts.n_ao_traced++; }
+    }
     RTS_SPLIT();
     // 5. 点光：分簇收集（本帧记录）→ 选灯 → 玩家光派生副本 → 半分辨率遮罩 | 5. Point lights: cluster gather (this frame's records) → pick → player-light derived copy → half-resolution mask
     if (g_rts.eff.point_on && g_rts.lbuf && g_rts.s0_gpu && g_rts.s1_gpu && g_rts.lbuf_texels >= 4) {
@@ -976,6 +1032,20 @@ static void rts_overlay(id<MTLTexture> hdr) {   // 调试叠加：HDR × (amb + 
     [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; m4_end(en);
     args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; g_rts.overlay_done = 1;
 }
+// 光追 AO 乘到 HDR 上：HDR × (1 − 强度 + 强度 · AO)，与调试叠加同一条管线（混合：目标 × 源）；主通道之后第一次再挂 HDR 时做（rts_set_rt），先于半透明 / 水面
+// ray-traced AO multiplied onto the HDR: HDR × (1 − strength + strength · AO), the same pipeline as the debug overlay (blend: destination × source); done the first time the HDR is attached again after the main pass (rts_set_rt), before transparents / water
+static void rts_ao_apply(id<MTLTexture> hdr) {
+    if (!g_rts.ao_done || g_rts.ao_applied || g_rts.cur < 0 || !hdr || !g_rts.ao_full || hdr.width != g_rts.ao_full.width || hdr.height != g_rts.ao_full.height || !rts_overlay_setup(hdr.pixelFormat)) return;
+    rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
+    id<MTLBuffer> dbuf = g_rts.slot[g_rts.cur].d; float *a = (float *)dbuf.contents + 4; a[0] = 1.f - g_rts.ao_strength; a[1] = a[2] = a[3] = 0;   // 本帧槽的 d 缓冲第 16 字节起（0–15 是调试叠加的） | from byte 16 of this frame slot's d buffer (0–15 belong to the debug overlay)
+    RPD *rp = [RPD new]; rp.colorAttachments[0].texture = hdr; rp.colorAttachments[0].loadAction = MTLLoadActionLoad; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; if (!en) return;
+    [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
+    [en setArgumentTable:g_rts.at_overlay atStages:MTLRenderStageFragment]; [g_rts.at_overlay setTexture:g_rts.ao_full.gpuResourceID atIndex:0]; [g_rts.at_overlay setAddress:dbuf.gpuAddress + 16 atIndex:0];
+    [en setViewport:(MTLViewport){0, 0, (double)hdr.width, (double)hdr.height, 0, 1}]; [en setRenderPipelineState:g_rts.ps_overlay];
+    [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; m4_end(en);
+    args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; g_rts.ao_applied = 1; g_rts.n_ao_applied++;
+}
 // _rt 变体的遮罩绑定：本帧太阳遮罩算了就给遮罩（阴影图清没清都对：清了 = min(遮罩, 1)，没清 = min(遮罩, 原采样)），否则 1x1 全亮 | Mask binding of the _rt variants: the mask when the sun mask was traced this frame (correct whether or not the maps were cleared: min(mask, 1) or min(mask, original)), else a 1x1 fully lit texel
 static id<MTLTexture> rts_mask_tex(void) { static int lit = -1; if (lit < 0) lit = getenv("DM_RT_MASK_LIT") != NULL; return g_rts.mask_done && g_rts.mask && !lit ? g_rts.mask : g_rts.white; }   // DM_RT_MASK_LIT（对照用）：遮罩恒亮，配合清图得「无阴影」画面 | DM_RT_MASK_LIT (for comparison): the mask is always lit; with the maps cleared this gives the "no shadow" picture
 static uint64_t rts_mask_rid(void) { id<MTLTexture> t = rts_mask_tex(); return t ? t.gpuResourceID._impl : 0; }
@@ -1009,6 +1079,7 @@ static void rts_set_rt(const p_set_rt *r) {
         return;
     }
     if (g_rts.trace_pending) { g_rts.trace_pending = 0; g_rts.n_late_trace++; rts_resolve_lbuf(); rts_build_and_trace(g_rts.trace_depth); g_rts.trace_depth = nil; }   // 主通道一次绘制都没有：照建照追，遮罩本帧用不上 | the main pass had no draw: build / trace anyway, the mask is unused this frame
-    if (g_rts.dbg && g_rts.mask_done && g_rts.map_cleared && !g_rts.overlay_done && r->n >= 1 && r->color[0] && r->color[0]->serial == g_rts.hdr_ser) rts_overlay(c0);   // 调试叠加：主通道之后第一次再挂 HDR | debug overlay: first time the HDR is attached again after the main pass
+    if (g_rts.dbg && g_rts.mask_done && g_rts.map_cleared && !g_rts.overlay_done && r->n >= 1 && r->color[0] && r->color[0]->serial == g_rts.hdr_ser) rts_overlay(c0);
+    if (!g_rts.dbg && g_rts.ao_done && !g_rts.ao_applied && r->n >= 1 && r->color[0] && r->color[0]->serial == g_rts.hdr_ser) rts_ao_apply(c0);   // 光追 AO：主通道之后第一次再挂 HDR | ray-traced AO: first time the HDR is attached again after the main pass   // 调试叠加：主通道之后第一次再挂 HDR | debug overlay: first time the HDR is attached again after the main pass
 }
 #endif

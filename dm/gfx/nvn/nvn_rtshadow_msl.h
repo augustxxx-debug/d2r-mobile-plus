@@ -163,6 +163,34 @@ static const char *k_rts_msl =
 "  for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) { int2 q = clamp(q0 + int2(i, j), int2(0), int2(u.half_) - 1); float bw = (i ? fr.x : 1.0 - fr.x) * (j ? fr.y : 1.0 - fr.y);\n"
 "    float zq = depth.read(min(uint2((float2(q) + 0.5) / sc), u.full - 1)); float w = (bw + 1e-3) / (1.0 + 4000.0 * abs(zq - z0)); acc += pm.read(uint2(q)) * w; ws += w; }\n"
 "  out.write(acc / max(ws, 1e-6), g); }\n"
+// 光追 AO（实验性，DM_RT_AO=1；计划第 5 步）：半分辨率，每像素 nray 条余弦分布的半球射线（法线由深度邻居重建、朝向相机），命中按距离衰减计遮挡；
+// 每像素的旋转是固定散列（不随帧变，不闪），噪点交给 rts_aoblur（5×5 深度感知）与 rts_pup 上采样；结果在主通道之后乘到 HDR 上（rts_fs）
+// ray-traced AO (experimental, DM_RT_AO=1; plan step 5): half resolution, nray cosine-distributed hemisphere rays per pixel (normal rebuilt from depth neighbours, facing the camera), hits weighted by distance;
+// the per-pixel rotation is a fixed hash (does not change per frame, no flicker), the noise is left to rts_aoblur (5×5 depth-aware) and the rts_pup upsampling; the result is multiplied onto the HDR after the main pass (rts_fs)
+"struct AOK { float4x4 invVP; uint2 size; float radius; float bias; uint seed; uint nray; float pad0; float pad1; };\n"
+"inline float3 rts_wp(float4x4 iv, uint2 q, uint2 full, float z) { float2 ndc = float2((float(q.x) + 0.5) / float(full.x) * 2.0 - 1.0, 1.0 - (float(q.y) + 0.5) / float(full.y) * 2.0); float4 w = iv * float4(ndc, z, 1.0); return w.xyz / w.w; }\n"
+"kernel void rts_ao(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> ao [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant AOK &k [[buffer(1)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
+"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 full = uint2(depth.get_width(), depth.get_height()); uint2 fg = min(g * 2, full - 1); float z = depth.read(fg);\n"
+"  if (z >= 1.0) { ao.write(float4(1), g); return; }\n"
+"  float3 p = rts_wp(k.invVP, fg, full, z);\n"
+"  uint2 xa = uint2(min(fg.x + 1, full.x - 1), fg.y), xb = uint2(fg.x > 0 ? fg.x - 1 : 0, fg.y), ya = uint2(fg.x, min(fg.y + 1, full.y - 1)), yb = uint2(fg.x, fg.y > 0 ? fg.y - 1 : 0);\n"
+"  float za = depth.read(xa), zb = depth.read(xb), wa = depth.read(ya), wb = depth.read(yb);\n"   // 每个方向取深度更接近的那个邻居（跨深度边缘不取）| per axis the neighbour with the closer depth (never across a depth edge)
+"  float3 dx = abs(za - z) <= abs(zb - z) ? rts_wp(k.invVP, xa, full, za) - p : p - rts_wp(k.invVP, xb, full, zb);\n"
+"  float3 dy = abs(wa - z) <= abs(wb - z) ? rts_wp(k.invVP, ya, full, wa) - p : p - rts_wp(k.invVP, yb, full, wb);\n"
+"  float3 n = cross(dx, dy); float nl = length(n); if (!(nl > 1e-12)) { ao.write(float4(1), g); return; } n /= nl;\n"
+"  if (dot(n, rts_wp(k.invVP, fg, full, 0.0) - p) < 0.0) n = -n;\n"   // 朝向相机（近平面那一侧）| face the camera (the near-plane side)
+"  float3 t = normalize(abs(n.y) < 0.99 ? cross(n, float3(0, 1, 0)) : cross(n, float3(1, 0, 0))), b = cross(n, t);\n"
+"  uint h = (g.x * 1973u) ^ (g.y * 9277u) ^ (k.seed * 26699u); h = h * 747796405u + 2891336453u; h ^= h >> 16; h *= 2246822519u; h ^= h >> 13;\n"
+"  float r0 = float(h & 0xffffu) / 65536.0, r1 = float(h >> 16) / 65536.0, occ = 0.0;\n"
+"  for (uint i = 0; i < k.nray; i++) { float u1 = fract(r0 + (float(i) + 0.5) / float(k.nray)), u2 = fract(r1 + float(i) * 0.618034), sr = sqrt(u1), ph = 6.2831853 * u2;\n"
+"    ray r; r.origin = p + n * k.bias; r.direction = t * (sr * cos(ph)) + b * (sr * sin(ph)) + n * sqrt(max(0.0, 1.0 - u1)); r.min_distance = 0.0; r.max_distance = k.radius;\n"
+"    float d; if (RTS_HIT(r, as, true, d)) { float f = d / k.radius; occ += 1.0 - f * f; } }\n"
+"  ao.write(float4(1.0 - occ / float(max(k.nray, 1u))), g); }\n"
+"kernel void rts_aoblur(texture2d<float, access::read> src [[texture(0)]], texture2d<float, access::write> dst [[texture(1)]], depth2d<float, access::read> depth [[texture(2)]], constant PU &u [[buffer(0)]], uint2 g [[thread_position_in_grid]]) {\n"
+"  if (g.x >= u.half_.x || g.y >= u.half_.y) return; float z0 = depth.read(min(g * 2, u.full - 1)), acc = 0.0, ws = 0.0;\n"
+"  for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) { int2 q = clamp(int2(g) + int2(i, j), int2(0), int2(u.half_) - 1); float zq = depth.read(min(uint2(q) * 2, u.full - 1));\n"
+"    float w = 1.0 / (1.0 + 4000.0 * abs(zq - z0)); acc += src.read(uint2(q)).r * w; ws += w; }\n"
+"  dst.write(float4(acc / max(ws, 1e-6)), g); }\n"
 "struct VO { float4 p [[position]]; };\n"
 "vertex VO rts_vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); VO o; o.p = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1); return o; }\n"
 "fragment float4 rts_fs(VO in [[stage_in]], texture2d<float> mask [[texture(0)]], constant float4 &a [[buffer(0)]]) {\n"

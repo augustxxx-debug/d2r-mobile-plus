@@ -64,8 +64,10 @@ int main(void) { @autoreleasepool {
         for (int i = 0; i < 300; i++, t += 1 / 60.0) rts_gov_step(&g2, 9.0, -1, B, t, &why); if (g2.lvl < 1) FAIL("gov: ray tracing alone over half the budget should step down");
         rts_gov g3; rts_gov_init(&g3, RTS_LVL_MAX); t = 0;   // 整帧超了但光追不重（< 12%）：不降（降了也没用） | frame over budget but ray tracing light (< 12%): no step down (it would not help)
         for (int i = 0; i < 300; i++, t += 1 / 60.0) rts_gov_step(&g3, 1.0, 25.0, B, t, &why); if (g3.lvl) FAIL("gov: stepped down although ray tracing is cheap");
-        rts_lvl_params p0 = rts_lvl_apply(0, 1, 2, 2, 0, 1), p1 = rts_lvl_apply(1, 1, 2, 2, 0, 1), p2 = rts_lvl_apply(2, 1, 2, 2, 0, 1), p3 = rts_lvl_apply(3, 1, 2, 2, 0, 1);
-        if (p0.point_n != 2 || p0.point_div != 2 || p0.sun_div != 1 || !p0.soft || p1.point_n != 1 || p1.point_div != 4 || !p1.point_on || p2.point_on || p2.sun_div != 2 || p2.soft || p3.sun_div != 4) FAIL("rts_lvl_apply levels wrong");
+        rts_gov g4; rts_gov_init(&g4, RTS_LVL_MAX); t = 0;   // 光追很贵（> 50%）但整帧有余量（78%）：不降（Mac 实测：AO 开时光追 9 ms、整帧 13 ms，原先误降） | ray tracing costly (> 50%) but the frame has headroom (78%): no step down (measured on the Mac: 9 ms ray tracing with AO, 13 ms frame, which used to step down)
+        for (int i = 0; i < 300; i++, t += 1 / 60.0) rts_gov_step(&g4, 9.2, 13.1, B, t, &why); if (g4.lvl) FAIL("gov: stepped down although the frame has headroom");
+        rts_lvl_params p0 = rts_lvl_apply(0, 1, 2, 2, 0, 1, 1), p1 = rts_lvl_apply(1, 1, 2, 2, 0, 1, 1), p2 = rts_lvl_apply(2, 1, 2, 2, 0, 1, 1), p3 = rts_lvl_apply(3, 1, 2, 2, 0, 1, 1);
+        if (p0.point_n != 2 || p0.point_div != 2 || p0.sun_div != 1 || !p0.soft || p1.point_n != 1 || p1.point_div != 4 || !p1.point_on || p2.point_on || p2.sun_div != 2 || p2.soft || p3.sun_div != 4 || !p0.ao || p1.ao) FAIL("rts_lvl_apply levels wrong");
     }
     { rts_player_track t = {.rec = -1}; float torch[3] = {40, 0, 0}, player[3] = {5, 0, 5}; int sure = 0;   // 相机沿 x 走：火把偏移在变、随身光偏移不变 | the camera walks along x: the torch's offset changes, the player light's does not
       for (int f = 0; f < 80; f++) { double p0[3] = {f * 0.5, 0, 0}; float pp[3] = {player[0] + f * 0.5f, player[1], player[2]}; sure = rts_player_feed(&t, 7, pp, p0); if (f < 59 && sure) FAIL("player light recognized too early (frame %d)", f); }
@@ -196,6 +198,29 @@ int main(void) { @autoreleasepool {
         if (px(mf, gx_of(-10), gy_of(0), 0) > 0.05f || px(mf, gx_of(35), gy_of(0), 0) < 0.95f) FAIL("quarter-res sun: shadow / lit spots wrong (%g, %g)", px(mf, gx_of(-10), gy_of(0), 0), px(mf, gx_of(35), gy_of(0), 0));
         if (diff > W * H / 20) FAIL("quarter-res sun: %d of %d pixels differ from the full-resolution mask", diff, W * H);
     }
+    {   // 光追 AO（实验性）：方板（y=10）边外紧挨着的地面被半球射线打到方板 → 变暗；远处地面、方板顶上 → 不暗；模糊 + 上采样后同样 | ray-traced AO (experimental): ground right outside the square (y=10) has hemisphere rays hitting the square → darker; far ground and the square's top → not; same after blur + upsampling
+        float AK[32] = {0}; for (int i = 0; i < 16; i++) AK[i] = (float)IA[i]; ((uint32_t *)AK)[16] = W / 2; ((uint32_t *)AK)[17] = H / 2; AK[18] = 30.f; AK[19] = 0.3f; ((uint32_t *)AK)[20] = 0; ((uint32_t *)AK)[21] = 16; id<MTLBuffer> akb = buf(AK, sizeof AK);
+        id<MTLTexture> ah = tex(MTLPixelFormatR8Unorm, W / 2, H / 2, MTLStorageModeShared), at2 = tex(MTLPixelFormatR8Unorm, W / 2, H / 2, MTLStorageModeShared), af = tex(MTLPixelFormatR8Unorm, W, H, MTLStorageModeShared);
+        uint32_t pu[4] = {W, H, W / 2, H / 2}; id<MTLBuffer> pub = buf(pu, 16);
+        id<MTLComputePipelineState> ps_ao = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_ao"] error:&e], ps_aob = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_aoblur"] error:&e],
+            ps_pup = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_pup"] error:&e];
+        if (!ps_ao || !ps_aob || !ps_pup) FAIL("AO pipelines: %s", e.localizedDescription.UTF8String);
+        [resident commit];
+        if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at];
+                [ce setComputePipelineState:ps_ao]; [at setTexture:depth.gpuResourceID atIndex:0]; [at setTexture:ah.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:akb.gpuAddress atIndex:1];
+                [ce dispatchThreadgroups:MTLSizeMake(W / 16, H / 16, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+                [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                [ce setComputePipelineState:ps_aob]; [at setTexture:ah.gpuResourceID atIndex:0]; [at setTexture:at2.gpuResourceID atIndex:1]; [at setTexture:depth.gpuResourceID atIndex:2]; [at setAddress:pub.gpuAddress atIndex:0];
+                [ce dispatchThreadgroups:MTLSizeMake(W / 16, H / 16, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+                [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                [ce setComputePipelineState:ps_pup]; [at setTexture:at2.gpuResourceID atIndex:0]; [at setTexture:af.gpuResourceID atIndex:1]; [at setTexture:depth.gpuResourceID atIndex:2]; [at setAddress:pub.gpuAddress atIndex:0];
+                [ce dispatchThreadgroups:MTLSizeMake(W / 8, H / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)]; })) return 1;
+        float near_ = px(ah, gx_of(13) / 2, gy_of(0) / 2, 0), far_ = px(ah, gx_of(-40) / 2, gy_of(-40) / 2, 0), top = px(ah, gx_of(0) / 2, gy_of(0) / 2, 0);
+        if (!(near_ < 0.92f) || !(far_ > 0.98f) || !(top > 0.98f)) FAIL("AO: ground beside the square %g (want < 0.92), far ground %g, square top %g (want ~1)", near_, far_, top);
+        float nf = px(af, gx_of(13), gy_of(0), 0), ff = px(af, gx_of(-40), gy_of(-40), 0), tf = px(af, gx_of(0), gy_of(0), 0);
+        if (!(nf < 0.95f) || !(ff > 0.97f) || !(tf > 0.97f) || !(nf < ff)) FAIL("AO after blur + upsampling: beside %g, far %g, top %g", nf, ff, tf);
+        printf("AO: beside the square %.2f (blurred %.2f), far ground %.2f, square top %.2f\n", near_, nf, far_, top);
+    }
     if (px(mask, gx_of(-30), gy_of(0), 0) < 0.99f) FAIL("sun: ground x=−30 should be lit (ray passes the square's edge)");
     // 2. 反投影 + refit：导出的裁剪坐标 → 世界坐标 → 以绑定姿势 BLAS 为源 refit 到槽；TLAS 换成槽；阴影应移到 x∈(10,30) | 2. unproject + refit: shadow moves to x∈(10,30)
     di[1].accelerationStructureID = as_slot.gpuResourceID;
@@ -307,6 +332,6 @@ int main(void) { @autoreleasepool {
                 if (want ? fabsf(o[i * 2 + 1] - 1.f) > 1e-3f : o[i * 2 + 1] >= 0) FAIL("alpha %s: ray x=%.3f closest %g", pass ? "opaque fallback" : "judge", x, o[i * 2 + 1]); }
         }
     }
-    puts("PASS t_rtshadow: MSL compiles, decode / BLAS / TLAS / sun trace / unproject / refit / GPU light picking / player-light copy / point light / soft blur / alpha-tested judge (RTS_ALPHA) / automatic downgrade levels / quarter-resolution sun checked on a synthetic scene");
+    puts("PASS t_rtshadow: MSL compiles, decode / BLAS / TLAS / sun trace / unproject / refit / GPU light picking / player-light copy / point light / soft blur / alpha-tested judge (RTS_ALPHA) / automatic downgrade levels / quarter-resolution sun / ray-traced AO checked on a synthetic scene");
     return 0;
 } }
