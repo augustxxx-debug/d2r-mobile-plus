@@ -475,7 +475,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCustomFxOffHint", "可手动关闭 MetalFX；设备不支持时自动使用原版放大", "Turn MetalFX off manually; unsupported devices use the original scaler", "Turn MetalFX off manually; unsupported devices use the original scaler", "Turn MetalFX off manually; unsupported devices use the original scaler", "Turn MetalFX off manually; unsupported devices use the original scaler", "Turn MetalFX off manually; unsupported devices use the original scaler" },
     { "dmGraphicsFrameRate30", "帧率：30 FPS", "Frame rate: 30 FPS", "Fotogramas: 30 FPS", "Fotogramas: 30 FPS", "Частота кадров: 30 FPS", "프레임 레이트: 30 FPS" },
     { "dmGraphicsFrameRate60", "帧率：60 FPS", "Frame rate: 60 FPS", "Fotogramas: 60 FPS", "Fotogramas: 60 FPS", "Частота кадров: 60 FPS", "프레임 레이트: 60 FPS" },
-    { "dmGraphicsFrameRate120", "帧率：120 FPS", "Frame rate: 120 FPS", "Fotogramas: 120 FPS", "Fotogramas: 120 FPS", "Частота кадров: 120 FPS", "프레임 레이트: 120 FPS" },
+    { "dmGraphicsFrameRate120", "帧率：120 FPS（实验性）", "Frame rate: 120 FPS (experimental)", "Fotogramas: 120 FPS (experimental)", "Fotogramas: 120 FPS (experimental)", "Частота кадров: 120 FPS (эксперимент)", "프레임 레이트: 120 FPS (실험적)" },
     { "dmGraphicsResAuto", "渲染分辨率：自动", "Resolution: Auto", "Resolución: Automática", "Resolución: Automática", "Разрешение: авто", "해상도: 자동" },
     { "dmGraphicsResEco", "渲染分辨率：省电", "Resolution: Eco", "Resolución: Ahorro", "Resolución: Ahorro", "Разрешение: экономия", "해상도: 절전" },
     { "dmGraphicsResBalanced", "渲染分辨率：均衡", "Resolution: Balanced", "Resolución: Equilibrada", "Resolución: Equilibrada", "Разрешение: баланс", "해상도: 균형" },

@@ -10,6 +10,8 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 ### Added
 
+- Experimental **120 FPS** stop on the Graphics frame-rate selector, shown only on screens with a maximum refresh rate of at least 120 Hz (stored as `eco_fps=2`; older builds read it as 30). On iOS, 120 FPS presents from the present thread instead of CAMetalDisplayLink, because the display-link path was composited at 60 Hz once the in-run UIKit overlay was on screen (every other frame dropped). Device-tested on an iPhone Duo inner screen with full effects (about 3 minutes, 0 system drops, 0.17% late; needs the Eco render resolution); power not measured; other devices untested. Diagnostic log lines 「帧率档：」 and the share-log summary record the effective frame rate and present path.
+
 - Custom tab **Show frame rate** switch (off by default): the actual presented frame rate, refreshed every 0.5 s, is appended to the bottom-bar experience line ("Lv 17 · 23% · 60 FPS") in the same game-font glyphs and color, without a backing plate; it is hidden whenever the bar is (e.g. with a panel open). `DM_FPS=120` with `DM_PRESENT_HZ=120` is a 120 Hz experiment switch for the pacer, ProMotion request and 3D scale controller; not a settings option.
 - Auto render resolution closed loop: with the 3D ratio at its floor and frames still dropping, the output steps down (Balanced → Eco) and recovers after 60 s clean; pure controller `dm_res_auto_step` in `dm/host/dm_res_cap.h` with unit tests, driven from the existing frame-interval controller in `hle_oe.c`. Not device-verified yet.
 - Graphics tab **Resolution** slider (Auto / Eco / Balanced / Native) capping the whole-frame output size by pixel budget (4.0 / 2.07 / 2.8 MP / none), aimed at very dense screens such as the iPhone Duo inner screen where the UI layer, final composite and present blit at 2852x2006 dominate GPU time regardless of the 3D ratio. Shrink-only, aspect-preserving, applies live, defaults keep regular iPhones unchanged. Pure budget math in `dm/host/dm_res_cap.h` with unit tests; localized in six text sets. Implemented and unit-tested; not yet device-verified or power-measured.
@@ -30,6 +32,8 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 - English and Simplified Chinese project, build, verification and change documentation.
 
 ### Fixed
+
+- `DM_FPS=120` without `DM_PRESENT_HZ=120` no longer stalls the game: the host pacer now follows the 120 FPS target, and while the display link drives presents its target can no longer drift ahead of real time (it used to drift tens of seconds, and one late link callback then put the acquire fallback to sleep until then).
 
 - Route enhanced UI notifications through a bounded queue drained on the game main thread. Paused-menu deposit feedback no longer waits for the server to resume; controller gold/item tooltips no longer move the notice.
 - Fit the notification frame to native font measurements, preserving fixed corner and medallion art with single-frame slices. Sprite and widget writes both require matching ownership, frame and atlas checks. Common modal backgrounds share the game-art treatment while retaining native controls and actions.

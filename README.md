@@ -26,7 +26,7 @@ These are changes on top of upstream commit [`195ae11`](https://github.com/jhaiz
 
 Settings retains five separate tabs: **Audio / Graphics / Gameplay / Settings / Custom** (Graphics right after Audio). The original offline Terror Zones control remains in Settings; Graphics uses a separate destination.
 
-Open **Options → Graphics** in game. Enable **MetalFX upscaling (experimental)** to reveal the four-position Auto / Eco / Balanced / Quality slider. Turning the switch off restores the original upscale pass and remembers the selected profile. Frame rate has a separate left/right 30 / 60 FPS selector. Press **Apply** to activate changes without restarting; switching may briefly pause rendering. **Discard** restores the active settings. **Defaults** preserves the native global reset, including game options, Graphics and Custom, while retaining language and voice; press Apply to save. Native Terror Zones and offline difficulty scaling also return to defaults; Discard cancels a pending reset.
+Open **Options → Graphics** in game. Enable **MetalFX upscaling (experimental)** to reveal the four-position Auto / Eco / Balanced / Quality slider. Turning the switch off restores the original upscale pass and remembers the selected profile. Frame rate has a separate left/right 30 / 60 FPS selector, plus an experimental 120 FPS stop on 120 Hz screens (see below). Press **Apply** to activate changes without restarting; switching may briefly pause rendering. **Discard** restores the active settings. **Defaults** preserves the native global reset, including game options, Graphics and Custom, while retaining language and voice; press Apply to save. Native Terror Zones and offline difficulty scaling also return to defaults; Discard cancels a pending reset.
 
 ![English Graphics settings on device](docs/images/graphics-settings-five-tabs-en.jpg)
 
@@ -44,6 +44,16 @@ Auto samples system state at most once per second. Reductions take effect at the
 The frame-timing controller retains its 3-second post-change hold, approximately 30-second clean recovery, and approximately 90-second recovery after a failed upward step. Auto cap changes retain any further reduction imposed by frame timing; recovering the cap does not reset actual resolution. The game thread receives one final absolute target, avoiding transient cap/level mismatches. Low Power Mode refers to the system switch, not battery percentage. Local state-sequence and production-controller tests cover these timing rules; device stutter and power measurements for this change remain pending.
 
 Ratios apply separately to width and height, not energy savings. Only 3D color is upscaled, retaining the original mask; subsequent UI composition retains its resolution.
+
+### 120 FPS (experimental)
+
+On screens whose maximum refresh rate is at least 120 Hz (ProMotion iPhone / iPad), the Graphics frame-rate selector gets a third stop, **Frame rate: 120 FPS (experimental)**. On other screens the stop does not appear, and a saved 120 setting runs at 60.
+
+- Game logic still runs at 25 ticks per second; every one of the 120 frames is fully rendered by the game (unit and camera positions are interpolated by time), with no inserted or repeated frames.
+- On iOS, 120 FPS presents from the present thread instead of the display link: with the in-run touch / HUD overlay on screen, the display-link path was composited at 60 Hz and every other frame was dropped.
+- Cost: roughly twice the GPU frames of 60 FPS, more heat. On the iPhone Duo it needs the **Eco** render resolution to hold 120; at higher resolutions the GPU cannot keep up and the 3D ratio controller lowers 3D resolution instead.
+- Status: implemented; device-tested on an iPhone Duo (A20 Pro) inner screen with full effects for about 3 minutes (0 frames dropped by the system, 0.17% late; heavy spawn waves dip to about 100 FPS). Power draw not measured (tested while charging). Not tested on older ProMotion devices, regular iPhones, the Duo outer screen or iPad.
+- The diagnostic log records the effective frame rate and present path on lines starting with 「帧率档：」, which the exported diagnostics summary includes.
 
 ### Render resolution (whole-frame output cap)
 
