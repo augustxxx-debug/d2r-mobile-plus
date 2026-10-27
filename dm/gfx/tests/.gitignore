@@ -51,3 +51,7 @@ t_rt_srgb_view.dSYM/
 
 t_metalfx
 t_metalfx_m3
+t_ltring
+t_ltring.dSYM/
+t_ltring_tsan
+t_ltring_tsan.dSYM/

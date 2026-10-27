@@ -6054,16 +6054,19 @@ double mtl_presented_time(uint64_t n) { pres_ent e = g_pres[n % PRING]; return e
 // 每次显示节拍回调记一条：回调时刻、系统给的目标时刻（targetTimestamp）与目标上屏时刻（targetPresentationTimestamp）、取帧前出图队列深度、取走的票号与合并丢弃数、
 // 上屏调用返回的时刻、上屏命令缓冲的 GPU 完成时刻；真实上屏时刻按票号从 g_pres 取。120 帧档（或设了 DM_LINK_TRACE）时每 300 次回调汇总一行，
 // 取 60 次之前的那 300 条（等呈现回调到齐）。DM_LINK_TRACE=<起始回调号>[,条数]：另把那一段逐条写进日志（缺省 48 条）。
-// 条目只在节拍线程上写；GPU 完成时刻在完成回调里写自己那条的一个字段（诊断用，读到半新半旧也只影响一行统计）
+// 条目只在节拍线程上写；GPU 完成时刻由完成回调（另一个线程）写，单独放在带完整回调序号的原子槽里（nvn_ltring.h，五审 Q5-03）：槽已被后面的回调复用就丢弃，读时序号对不上当缺失
 // ---------- Per-callback display link record (to find why 120 Hz falls back to 60 in a run) ----------
 // Each display link callback records one entry: callback time, the system's target time (targetTimestamp) and target presentation time (targetPresentationTimestamp), present queue depth before taking a frame,
 // the ticket taken and how many were merged away, the time the present call returned, and the GPU completion time of the present command buffer; the actual presentation time is looked up in g_pres by ticket.
 // In 120 fps mode (or with DM_LINK_TRACE set) one summary line per 300 callbacks, over the 300 entries ending 60 callbacks ago (so the presented callbacks have arrived).
 // DM_LINK_TRACE=<first callback>[,count]: also writes that stretch entry by entry to the log (48 by default).
-// Entries are written only on the display link thread; the completion handler writes one field of its own entry (diagnostics only: a torn read affects one line of statistics at most)
+// Entries are written only on the display link thread; the GPU completion time is written by the completion handler (another thread) into a separate atomic slot carrying the full callback number (nvn_ltring.h, fifth review Q5-03): dropped if a later callback already reused the slot, and treated as missing on read when the number does not match
+#include "nvn_ltring.h"
 #define LT 512
-typedef struct { double cb, tgt, ptgt, ret, gpu_end; uint64_t ticket; uint32_t depth, merged; } lt_ent;
+typedef struct { double cb, tgt, ptgt, ret; uint64_t ticket; uint32_t depth, merged; } lt_ent;
 static lt_ent g_lt[LT];
+static ltr_slot g_lt_gpu[LT];      // GPU 完成时刻（节拍线程占槽 / 完成回调写 / 节拍线程读） | GPU completion time (claimed by the link thread / written by the completion handler / read by the link thread)
+static _Atomic uint64_t g_lt_gpu_late, g_lt_gpu_busy;   // 迟到被丢的完成时刻、占槽时上一个主人还在写的次数 | completion times dropped as late, and claims skipped because the previous owner was still writing
 static uint64_t g_lt_n;            // 已记的回调数（节拍线程独占） | Callbacks recorded (display link thread only)
 static int64_t g_lt_cur = -1;      // 正在上屏的那条（present_now 在同一线程上读） | The entry being presented (read by present_now on the same thread)
 static int lt_dcmp(const void *a, const void *b) { double x = *(const double *)a, y = *(const double *)b; return x < y ? -1 : x > y; }
@@ -6074,11 +6077,11 @@ static void lt_tick(void) {
     if (env < 0) { const char *e = getenv("DM_LINK_TRACE"); env = e != NULL; if (e) { unsigned long long a = 0, c = 48; sscanf(e, "%llu,%llu", &a, &c); dump_at = a; dump_n = c > LT - 80 ? LT - 80 : c; MLOG("DM_LINK_TRACE：显示节拍逐回调记录开（逐条写出第 %llu 起 %llu 次回调）", a, (unsigned long long)dump_n); } }
     uint64_t n = g_lt_n;
     if (env && dump_n && n == dump_at + dump_n + 60) {   // 逐条：晚 60 次回调写，呈现回调已到 | Entry by entry: written 60 callbacks late, when the presented callbacks have arrived
-        for (uint64_t k = dump_at; k < dump_at + dump_n; k++) { const lt_ent *e = &g_lt[k % LT], *p = &g_lt[(k + LT - 1) % LT]; double pres = e->ticket ? mtl_presented_time(e->ticket) : 0;
+        for (uint64_t k = dump_at; k < dump_at + dump_n; k++) { const lt_ent *e = &g_lt[k % LT], *p = &g_lt[(k + LT - 1) % LT]; double pres = e->ticket ? mtl_presented_time(e->ticket) : 0, ge = ltr_read(&g_lt_gpu[k % LT], k);
             char tail[96]; if (!e->ticket) snprintf(tail, sizeof tail, "空节拍"); else if (pres < 0) snprintf(tail, sizeof tail, "丢弃"); else if (pres > 0) snprintf(tail, sizeof tail, "上屏距目标 %+.2f", (pres - e->ptgt) * 1e3); else snprintf(tail, sizeof tail, "上屏未回");
             MLOG("显示节拍逐回调 #%llu：间隔 %.2f，晚于目标 %+.2f，目标上屏领先 %.2f，深度 %u，票 %llu（合并 %u），返回距目标上屏 %+.2f，GPU 完成距目标上屏 %+.2f，%s（ms）",
                  (unsigned long long)k, k ? (e->cb - p->cb) * 1e3 : 0, (e->cb - e->tgt) * 1e3, (e->ptgt - e->cb) * 1e3, e->depth, (unsigned long long)e->ticket, e->merged,
-                 e->ret > 0 ? (e->ret - e->ptgt) * 1e3 : 0, e->gpu_end > 0 ? (e->gpu_end - e->ptgt) * 1e3 : 0, tail); } }
+                 e->ret > 0 ? (e->ret - e->ptgt) * 1e3 : 0, ge > 0 ? (ge - e->ptgt) * 1e3 : 0, tail); } }
     if (n < 360 || n % 300 || !(env || mtl_fps_target() == 120)) return;
     double late[300], ahead[300], step[300], gpu[300], pdel[300]; int nl = 0, ng = 0, np = 0, pair = 0, gapbig = 0, dropped = 0, drop_gpu_late = 0, gpu_late = 0, pres_late = 0, frames = 0; unsigned dep[4] = {0};
     for (uint64_t k = n - 360; k < n - 60; k++) { const lt_ent *e = &g_lt[k % LT], *p = &g_lt[(k + LT - 1) % LT];
@@ -6086,13 +6089,13 @@ static void lt_tick(void) {
         double gap = (e->cb - p->cb) * 1e3; if (gap < 4) pair++; else if (gap > 12.5) gapbig++;
         dep[e->depth < 3 ? e->depth : 3]++;
         if (!e->ticket) continue; frames++;
-        int gl = e->gpu_end > 0 && e->gpu_end > e->ptgt; if (e->gpu_end > 0) gpu[ng++] = (e->gpu_end - e->ptgt) * 1e3; gpu_late += gl;
+        double ge = ltr_read(&g_lt_gpu[k % LT], k); int gl = ge > 0 && ge > e->ptgt; if (ge > 0) gpu[ng++] = (ge - e->ptgt) * 1e3; gpu_late += gl;
         double pres = mtl_presented_time(e->ticket);
         if (pres < 0) { dropped++; drop_gpu_late += gl; } else if (pres > 0) { double d = (pres - e->ptgt) * 1e3; pdel[np++] = d; pres_late += d > 4; } }
     MLOG("显示节拍逐回调 至 %llu（取前 360–60 次的 300 次）：回调晚于目标时刻 p50 %+.2f / p95 %+.2f ms，目标上屏领先回调 p50 %.2f ms，目标上屏步长 p50 %.2f ms；回调间隔 <4 ms %d 次、>12.5 ms %d 次；"
-         "取帧前队列深度 0/1/2/3+ = %u/%u/%u/%u；出帧 %d 次：GPU 完成距目标上屏 p50 %+.2f / p95 %+.2f ms（晚于目标 %d 次），实际上屏距目标 p50 %+.2f ms（晚 >4 ms %d 次），系统丢弃 %d 次（其中 GPU 晚于目标 %d 次）",
+         "取帧前队列深度 0/1/2/3+ = %u/%u/%u/%u；出帧 %d 次：GPU 完成距目标上屏 p50 %+.2f / p95 %+.2f ms（晚于目标 %d 次；缺 %d 次，累计迟到丢弃 %llu、占槽让过 %llu），实际上屏距目标 p50 %+.2f ms（晚 >4 ms %d 次），系统丢弃 %d 次（其中 GPU 晚于目标 %d 次）",
          (unsigned long long)n, lt_pct(late, nl, .5), lt_pct(late, nl, .95), lt_pct(ahead, nl, .5), lt_pct(step, nl, .5), pair, gapbig, dep[0], dep[1], dep[2], dep[3], frames,
-         lt_pct(gpu, ng, .5), lt_pct(gpu, ng, .95), gpu_late, lt_pct(pdel, np, .5), pres_late, dropped, drop_gpu_late);
+         lt_pct(gpu, ng, .5), lt_pct(gpu, ng, .95), gpu_late, frames - ng, (unsigned long long)atomic_load(&g_lt_gpu_late), (unsigned long long)atomic_load(&g_lt_gpu_busy), lt_pct(pdel, np, .5), pres_late, dropped, drop_gpu_late);
 }
 static _Atomic uint64_t g_drawable_ns;   // 出图里等 nextDrawable 的累计墙钟（计时埋点） | Accumulated wall clock waiting for nextDrawable in present (timing instrumentation)
 uint64_t mtl_drawable_ns_take(void) { return atomic_exchange(&g_drawable_ns, 0); }
@@ -6376,7 +6379,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 #endif
     int64_t lt_i = target_ts > 0 ? g_lt_cur : -1;   // 显示节拍逐回调记录：这次上屏属于哪条回调 | Per-callback link record: which callback this present belongs to
     [FB_ON(o, cb) FB_SEL:^(FB_ARG f) {
-        if (lt_i >= 0) g_lt[lt_i % LT].gpu_end = f.GPUEndTime;
+        if (lt_i >= 0 && !ltr_publish(&g_lt_gpu[lt_i % LT], (uint64_t)lt_i, f.GPUEndTime)) atomic_fetch_add(&g_lt_gpu_late, 1);   // 槽已被后面的回调复用（或占槽时让过）：丢弃，不写进别人的条目 | the slot was reused by a later callback (or skipped at claim): dropped, never written into another entry
         if (f.error) MLOG("【红】上屏命令缓冲错误：%s", f.error.description.UTF8String);
 #if !DM_NVN_M3
         else mp_check(alloc_i, ticket);
@@ -6481,7 +6484,8 @@ __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
 @implementation NvMetalDisplayLinkDelegate
 - (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update {
     double t_cb = CACurrentMediaTime(); uint64_t ln = g_lt_n; lt_ent *le = &g_lt[ln % LT];   // 逐回调记录（lt_tick） | per-callback record (lt_tick)
-    *le = (lt_ent){t_cb, update.targetTimestamp, update.targetPresentationTimestamp, 0, 0, 0, 0, 0};
+    *le = (lt_ent){t_cb, update.targetTimestamp, update.targetPresentationTimestamp, 0, 0, 0, 0};
+    if (!ltr_claim(&g_lt_gpu[ln % LT], ln)) atomic_fetch_add(&g_lt_gpu_busy, 1);   // 上一个主人的完成回调正在写：这条不等它，GPU 时刻记缺失 | the previous owner's completion handler is mid-write: do not wait, this entry's GPU time counts as missing
     // 诊断（120 Hz 实验）：系统实际给的刷新周期 = targetTimestamp − timestamp；变化超过 5% 就记一行，带温控 / 低电量 / 我们请求的区间 / 延迟设置，查 ProMotion 为何回落 60
     // Diagnostics (120 Hz experiment): the refresh period the system actually grants = targetTimestamp − timestamp; log a line whenever it changes by more than 5%, with thermal state / Low Power Mode / our requested range / latency, to see why ProMotion falls back to 60
     { static double last_ms = 0, last_target = 0; static uint64_t n; double ms = last_target > 0 ? (update.targetTimestamp - last_target) * 1000 : 0; last_target = update.targetTimestamp; n++;   // 相邻两次回调的目标时刻之差 = 系统给的周期 | Difference between consecutive target timestamps = the granted period

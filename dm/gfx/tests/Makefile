@@ -28,6 +28,11 @@ t_pace: t_pace.c ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_pace.c
 t_pqdone: t_pqdone.c ../nvn/nvn_pqdone.h
 	clang -O1 -Wall -o $@ t_pqdone.c
+# 显示节拍诊断环的 GPU 完成时刻（五审 Q5-03）：普通一遍 + ThreadSanitizer 一遍 | GPU completion time of the display link diagnostic ring (fifth review Q5-03): a plain pass + a ThreadSanitizer pass
+t_ltring: t_ltring.c ../nvn/nvn_ltring.h
+	clang -O1 -g -Wall -o $@ t_ltring.c
+t_ltring_tsan: t_ltring.c ../nvn/nvn_ltring.h
+	clang -O1 -g -Wall -fsanitize=thread -o $@ t_ltring.c
 t_adaptive_pace: t_adaptive_pace.c ../nvn/nvn_adaptive_pace.h ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_adaptive_pace.c
 t_completion_wait: t_completion_wait.cpp ../vulkan/engine/xbg_completion_wait.h
@@ -76,6 +81,8 @@ run: \
 	t_dirty_slots \
 	t_fuse_check \
 	t_hmap \
+	t_ltring \
+	t_ltring_tsan \
 	t_mip_extent \
 	t_nvn \
 	t_pace \
@@ -101,6 +108,8 @@ run: \
 	./t_deswz_gpu
 	./t_pace
 	./t_pqdone
+	./t_ltring
+	TSAN_OPTIONS=halt_on_error=1 ./t_ltring_tsan
 	./t_adaptive_pace
 	./t_completion_wait
 	./t_refl
