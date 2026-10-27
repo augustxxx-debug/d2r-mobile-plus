@@ -5,6 +5,7 @@ code changes); iOS (run.sh → Gen/dm.xcconfig → Info.plist) and Mac (mac_app.
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -127,7 +128,7 @@ class Wiring(unittest.TestCase):
         for cell in (c for c in tsv['dmUpdNew'][1:7] if c):
             self.assertEqual(cell.count('%'), 1, cell); self.assertNotIn('·', cell); self.assertLessEqual(len(cell), 12, cell)
         upd = (DM / 'host' / 'dm_update.c').read_text(encoding='utf-8')
-        self.assertIn('else { place(nt, nx, 2046+bottom); place(sm, 99999, 99999); }', upd)   # 触屏普通档不摆小「更新」 | touch ordinary tier never places the small Update
+        self.assertIn('else place(nt, nx, 2046+bottom);', upd)
 
     def test_layout_measures_version_width(self):
         tl = (DM / 'ios' / 'tools' / 'touch_layout.py').read_text(encoding='utf-8')
@@ -135,6 +136,36 @@ class Wiring(unittest.TestCase):
         self.assertIn("_upd_text('TouchBuild', 3161, 60, 600, 30", tl)
         upd = (DM / 'host' / 'dm_update.c').read_text(encoding='utf-8')
         self.assertIn('place(bw, xr - 600 - bx, 60)', upd); self.assertIn('tw = *(int32_t *)(bw + 0x78)', upd)
+
+
+
+class PromptOnly(unittest.TestCase):
+    """四审 Q4-04：更新信息只提示、不提供更新动作——普通 / 紧急、触屏 / 手柄 / Mac 都没有能点或能按的更新入口。
+    Fourth review Q4-04: update information is a notice only - normal / urgent, touch / controller / Mac all lack any tappable or pressable update entry."""
+    def test_layouts_have_no_update_buttons(self):
+        sys.path.insert(0, str(DM / 'ios' / 'tools')); import touch_layout
+        for name in ('_UPDATE', '_UPDATE_PAD'):
+            text = getattr(touch_layout, name)
+            self.assertNotIn('ButtonWidget', text, name); self.assertNotIn('onClickMessage', text, name); self.assertNotIn('TouchUpdate', text, name)
+            self.assertNotIn('@dmUpdButton', text, name)
+
+    def test_host_core_has_no_action_paths(self):
+        upd = (DM / 'host' / 'dm_update.c').read_text(encoding='utf-8')
+        for gone in ('TouchUpdate', 'on_click', 'g_click', 'dm_padmode_page_keys', 'dm_update_click_at', 'TouchUpdBig', 'TouchUpdSmall', 'dmUpdButton'):
+            self.assertNotIn(gone, upd, gone)
+        self.assertIn('void dm_update_init(int own_build, const char *label, void (*on_select)(void))', upd)
+
+    def test_shells_never_open_install_or_download_page(self):
+        ios = (DM / 'ios' / 'Sources' / 'dm_update.m').read_text(encoding='utf-8')
+        self.assertNotIn('openURL', ios); self.assertNotIn('install_url"]', ios); self.assertNotIn('on_click', ios)
+        mac = (DM / 'host' / 'app_mac.m').read_text(encoding='utf-8')
+        i = mac.index('// ---- 更新检查 ----'); j = mac.index('\n}\n', mac.index('static void upd_start(void)')); upd = mac[i:j]
+        self.assertNotIn('openURL', upd); self.assertNotIn('upd_click', upd)
+        self.assertNotIn('dm_update_click_at', (DM / 'host' / 'touch_mac.c').read_text(encoding='utf-8'))
+
+    def test_no_update_button_string(self):
+        tsv = {l.split('\t')[0] for l in (DM / 'i18n' / 'ui_text.tsv').read_text(encoding='utf-8').splitlines()}
+        self.assertNotIn('dmUpdButton', tsv)
 
 
 class UiregPackageCheck(unittest.TestCase):

@@ -1,40 +1,38 @@
 // 显示版本 + 新版本提示的 iOS 侧。
-// 画面上的字和按钮是游戏自己的控件（布局 tools/touch_layout.py，写字与显隐 dm/host/dm_update.c）；这里只管三件：
+// 画面上的字是游戏自己的控件（布局 tools/touch_layout.py，写字与显隐 dm/host/dm_update.c）；这里只管两件（只提示、不提供更新动作，四审 Q4-04）：
 //   ① 把自己的构建号（CFBundleVersion = 提交时间戳，与日志头「构建」同一个数，比新旧用）和显示版本（DMVersionLabel「1.0.0+28 · b346e40」，dm/tools/version.sh）交给宿主，选角页左下角常显显示版本；
 //   ② 每次选角页出现（启动、从局里退回来）都在后台取一次版本文件（这是我们自己加的唯一一处联网，只读一个小文件，单次 10 秒超时、失败隔几秒重试共 3 次，不挡启动与进局；同一时刻只有一个查询在途）；
-//   ③ 玩家点了「更新」→ 把版本文件里的安装链接交给系统打开（系统安装，整包覆盖，存档与资源不动）。
 // 版本文件地址不在仓库里：出包脚本写进 Info.plist 的 SWUpdateURL（tools/adhoc.sh 传 DM_UPDATE_URL）。没有这个键、或构建号不是大于 1 的整数
 // （读不到提交时出的包是 1）→ 不联网、不提示。不比自己新：画面上什么都不出；没网 / 超时 / 地址失效 / 格式不对：选角页构建号右边出一行失败提示（dm_update_fail：没有无线数据许可 → 提示去设置里允许；其余 → 提示去浏览器打开版本文件所在的站点），这次启动取到了就撤掉。
-// 版本文件 latest.json（UTF-8）四个必填字段：{"build": 1793043416, "note": "一句话 ≤ 24 个汉字", "urgent": false, "install_url": "…"}，缺字段或类型不对 = 格式不对；
+// 版本文件 latest.json（UTF-8）三个必填字段：{"build": 1793043416, "note": "一句话 ≤ 24 个汉字", "urgent": false}，缺字段或类型不对 = 格式不对（旧文件里的 "install_url" 不再用、有没有都行）；
 // 可选 "version": "1.1.0"（给人看的版本号，≤ 20 个字符，只许数字字母与 .+-）：有就在提示里写它，没有写 build。build 必须与新包的 CFBundleVersion 一致（提交时间戳）。
 // 每次查完按新结果处理（不限一天一次，进首页就查、有新的就提示）：比自己新 → 显示 / 换成这次的；不比自己新 → 撤掉已有提示；
 // 取不到 / 格式不对 → 已有的提示留着不动（一次网络抖动不该把确实存在的新版本提示抹掉；这次启动还没提示过的话照旧什么都不出）。
-// 测试注入（只影响这三件的输入，不设就是产品行为）：DM_TEST_UPDATE_URL 换版本文件地址（可用 file://），DM_TEST_UPDATE_BUILD 换自己的构建号，
-//   DM_TEST_UPDATE_OPEN=0 点「更新」只记日志不真打开链接；DM_TEST_UPDATE_DENY=1 把取不到当成「无线数据许可被拒」。
+// 测试注入（只影响这两件的输入，不设就是产品行为）：DM_TEST_UPDATE_URL 换版本文件地址（可用 file://），DM_TEST_UPDATE_BUILD 换自己的构建号，
+//   DM_TEST_UPDATE_DENY=1 把取不到当成「无线数据许可被拒」。
 // iOS side of the display version + new-version notice.
-// The text and button on screen are the game's own widgets (layout in tools/touch_layout.py, text writing and show/hide in dm/host/dm_update.c); only three things are handled here:
+// The text on screen is the game's own widgets (layout in tools/touch_layout.py, text writing and show/hide in dm/host/dm_update.c); only two things are handled here (notice only, no update action, fourth review Q4-04):
 //   ① Hand our own build number (CFBundleVersion = commit timestamp, the same number as 「构建」(Build) in the log header, used for comparing) and display version (DMVersionLabel "1.0.0+28 · b346e40", dm/tools/version.sh) to the host; the display version is always shown at the bottom-left of the character select page;
 //   ② Each time the character select page appears (launch, returning from a run), fetch the version file once in the background (this is the only network access we added ourselves; it reads one small file, 10-second timeout per attempt, retries a few seconds after a failure for 3 attempts in total, does not block launch or entering a run; only one query is in flight at any moment);
-//   ③ The player tapped 「更新」(Update) → hand the install link from the version file to the system to open (system install, whole-package overwrite, saves and assets untouched).
 // The version file address is not in the repository: the packaging script writes it into SWUpdateURL in Info.plist (tools/adhoc.sh passes DM_UPDATE_URL). Without this key, or when the build number is not an integer greater than 1
 // (packages built without a readable commit are 1) → no network access, no notice. Not newer than ours: nothing appears on screen; no network / timeout / dead address / bad format: a failure notice line appears to the right of the build number on the character select page (dm_update_fail: no wireless data permission → tell the player to allow it in Settings; otherwise → tell the player to open in a browser the site that serves the version file), removed once a fetch succeeds during this launch.
-// The version file latest.json (UTF-8) has four required fields: {"build": 1793043416, "note": "one sentence, ≤ 24 Chinese characters", "urgent": false, "install_url": "..."}; a missing field or wrong type = bad format;
+// The version file latest.json (UTF-8) has three required fields: {"build": 1793043416, "note": "one sentence, ≤ 24 Chinese characters", "urgent": false}; a missing field or wrong type = bad format (an old file's "install_url" is no longer used and may be present or absent);
 // optional "version": "1.1.0" (the human version, ≤ 20 characters, digits, letters and .+- only): shown in the notice when present, otherwise build. build must equal the new package's CFBundleVersion (commit timestamp).
 // After each query, act on the new result (not limited to once a day; query on entering the home page and show a notice if there is a new one): newer than ours → show / replace with this one; not newer than ours → remove the existing notice;
 // fetch failed / bad format → leave the existing notice untouched (one network glitch should not erase a notice for a new version that really exists; if nothing has been shown yet during this launch, still show nothing as before).
-// Test injection (affects only the inputs of these three things; unset = product behavior): DM_TEST_UPDATE_URL replaces the version file address (file:// is allowed), DM_TEST_UPDATE_BUILD replaces our own build number,
-//   DM_TEST_UPDATE_OPEN=0 makes tapping 「更新」(Update) only log without actually opening the link; DM_TEST_UPDATE_DENY=1 treats a failed fetch as "wireless data permission denied".
+// Test injection (affects only the inputs of these two things; unset = product behavior): DM_TEST_UPDATE_URL replaces the version file address (file:// is allowed), DM_TEST_UPDATE_BUILD replaces our own build number,
+//   DM_TEST_UPDATE_DENY=1 treats a failed fetch as "wireless data permission denied".
 #import <UIKit/UIKit.h>
 #import <Network/Network.h>
 #include <stdatomic.h>
 void plog(const char *fmt, ...);
-void dm_update_init(int own_build, const char *label, void (*on_select)(void), void (*on_click)(void));   // dm/host/dm_update.c
+void dm_update_init(int own_build, const char *label, void (*on_select)(void));   // dm/host/dm_update.c
 void dm_update_offer(int new_build, const char *ver, const char *note, int urgent);
 void dm_update_safe_left(int units);
 void dm_update_fail(int kind);
 void dm_update_site(const char *host);
 
-static NSString *g_url, *g_install; static int g_own; static _Atomic int g_inflight;
+static NSString *g_url; static int g_own; static _Atomic int g_inflight;
 
 // 取不到时补一行系统眼里的网络状态：分清「手机没连网」和「这个 App 没拿到无线数据许可」（两种情况请求报的都是「没有网络」）。只读，不弹框
 // When the fetch fails, add one line with the network state as the system sees it: tell apart "the phone is not connected" and "this App has not been granted wireless data permission" (in both cases the request reports "no network"). Read-only, no alert
@@ -57,19 +55,17 @@ static void upd_net_why(void) {
 
 // 版本文件 → 要不要提示。返回 nil = 提示（out 填好），否则是不提示的原因（进日志）
 // Version file → whether to show a notice. Returns nil = show it (out is filled in); otherwise the reason for not showing it (goes to the log)
-static NSString *upd_parse(NSData *d, int *build, NSString **ver, NSString **note, int *urgent, NSString **install) {
+static NSString *upd_parse(NSData *d, int *build, NSString **ver, NSString **note, int *urgent) {
     NSDictionary *j = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
     if (![j isKindOfClass:NSDictionary.class]) return @"格式不对：不是 JSON 对象";
-    NSNumber *b = j[@"build"], *u = j[@"urgent"]; NSString *n = j[@"note"], *i = j[@"install_url"];
-    if (![b isKindOfClass:NSNumber.class] || ![u isKindOfClass:NSNumber.class] || ![n isKindOfClass:NSString.class] || ![i isKindOfClass:NSString.class]) return @"格式不对：四个字段缺了或类型不对";
+    NSNumber *b = j[@"build"], *u = j[@"urgent"]; NSString *n = j[@"note"];
+    if (![b isKindOfClass:NSNumber.class] || ![u isKindOfClass:NSNumber.class] || ![n isKindOfClass:NSString.class]) return @"格式不对：三个字段缺了或类型不对";
     if (!(b.doubleValue >= 1 && b.doubleValue < 2e9) || b.doubleValue != b.intValue) return @"格式不对：build 不是正整数";
     NSString *v = j[@"version"];   // 可选 | optional
     if (v && (![v isKindOfClass:NSString.class] || !v.length || v.length > 20 || [v rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.+-"].invertedSet].location != NSNotFound)) return @"格式不对：version 不是 ≤ 20 个字符的版本号";
-    NSString *sch = [NSURL URLWithString:i].scheme.lowercaseString;
-    if (![sch isEqualToString:@"https"] && ![sch isEqualToString:@"itms-services"]) return @"格式不对：install_url 不是 https / itms-services 链接";
     n = [[n componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet] componentsJoinedByString:@" "];
     if (n.length > 24) n = [n substringWithRange:[n rangeOfComposedCharacterSequencesForRange:NSMakeRange(0, 24)]];   // 说明只有一行的位置：超过 24 个字截掉 | The note has room for only one line: truncate beyond 24 characters
-    *build = b.intValue; *ver = v ?: @""; *note = n; *urgent = u.boolValue; *install = i; return nil;
+    *build = b.intValue; *ver = v ?: @""; *note = n; *urgent = u.boolValue; return nil;
 }
 static void upd_fetch(int n);
 static void on_select(void) {   // 宿主在游戏主线程调：选角页每出现一次调一次 | Called by the host on the game main thread: once each time the character select page appears
@@ -101,11 +97,11 @@ static void upd_fetch(int n) {
     const char *tf = getenv("DM_TEST_UPDATE_FAIL_FIRST"); NSString *us = tf && n <= atoi(tf) ? @"https://nonexistent-dm.invalid/latest.json" : g_url;
     NSURL *url = [NSURL URLWithString:us]; if (!url) { plog("更新：版本文件地址 %s 不是合法地址，不查", us.UTF8String); g_url = nil; atomic_store(&g_inflight, 0); return; }
     [[ses dataTaskWithURL:url completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
-        int build = 0, urgent = 0; NSString *ver = nil, *note = nil, *install = nil, *why = nil;
+        int build = 0, urgent = 0; NSString *ver = nil, *note = nil, *why = nil;
         if (e) why = [NSString stringWithFormat:@"取不到：%@", e.localizedDescription];
         else if ([r isKindOfClass:NSHTTPURLResponse.class] && [(NSHTTPURLResponse *)r statusCode] != 200) why = [NSString stringWithFormat:@"取不到：HTTP %ld", (long)[(NSHTTPURLResponse *)r statusCode]];
         else if (d.length > 4096) why = @"格式不对：超过 4096 字节";
-        else why = upd_parse(d, &build, &ver, &note, &urgent, &install);
+        else why = upd_parse(d, &build, &ver, &note, &urgent);
         if (!e && d.length && d.length <= 4096) {   // 远程退回画法：版本文件里 "render_safe": true → 本局退回原画法；没有这个字段 = 新画法 | Remote fallback of the drawing method: "render_safe": true in the version file → this run falls back to the old drawing method; without this field = the new drawing method
             NSDictionary *j = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil]; NSNumber *rs = [j isKindOfClass:NSDictionary.class] ? j[@"render_safe"] : nil;
             extern int g_dm_rt_ab; if ([rs isKindOfClass:NSNumber.class] && rs.boolValue) { if (g_dm_rt_ab) { g_dm_rt_ab = 0; plog("画法：版本文件 render_safe = true → 本局退回原画法"); } }
@@ -122,17 +118,8 @@ static void upd_fetch(int n) {
         dm_update_fail(0);   // 这次取到了：撤掉失败提示 | Fetched successfully this time: remove the failure notice
         if (build <= g_own) { plog("更新：查 %s → 最新构建 %d，不比自己（%d）新，不提示（已有的提示撤掉）", us.UTF8String, build, g_own); dm_update_offer(0, "", "", 0); return; }
         plog("更新：查 %s → 有新构建 %d（版本 %s，%s，自己 %d）：%s", us.UTF8String, build, ver.length ? ver.UTF8String : "没给", urgent ? "建议立即更新" : "普通", g_own, note.UTF8String);
-        dispatch_async(dispatch_get_main_queue(), ^{ g_install = install; });
         dm_update_offer(build, ver.UTF8String, note.UTF8String, urgent);
     }] resume];
-}
-static void on_click(void) {   // 宿主在游戏主线程调：玩家点了「更新」 | Called by the host on the game main thread: the player tapped 「更新」(Update)
-    dispatch_async(dispatch_get_main_queue(), ^{
-        NSURL *u = g_install ? [NSURL URLWithString:g_install] : nil; if (!u) { plog("更新：点了「更新」但没有安装链接"); return; }
-        const char *to = getenv("DM_TEST_UPDATE_OPEN"); if (to && !atoi(to)) { plog("更新：点了「更新」→ 安装链接 %s（DM_TEST_UPDATE_OPEN=0，不真打开）", g_install.UTF8String); return; }
-        plog("更新：点了「更新」→ 交系统打开安装链接");
-        [UIApplication.sharedApplication openURL:u options:@{} completionHandler:^(BOOL ok) { plog("更新：系统%s安装链接", ok ? "已接手" : "没能打开"); }];
-    });
 }
 void dm_update_boot(void) {   // main.m 起宿主前调一次 | main.m calls this once before starting the host
     const char *tb = getenv("DM_TEST_UPDATE_BUILD"), *tu = getenv("DM_TEST_UPDATE_URL");
@@ -143,5 +130,5 @@ void dm_update_boot(void) {   // main.m 起宿主前调一次 | main.m calls thi
     if ([url isKindOfClass:NSString.class] && url.length && g_own > 1) g_url = url;
     if (g_url) dm_update_site([NSURL URLWithString:g_url].host.UTF8String);   // 检查失败时提示玩家去浏览器打开的站点 = 版本文件所在的主机 | The site the player is told to open in a browser when the check fails = the host that serves the version file
     plog("更新：自己的构建 %d（显示「%s」），%s", g_own, label.length ? label.UTF8String : "没有", g_url ? "到选角页后查一次新版本" : g_own > 1 ? "包里没有版本文件地址，不查新版本" : "开发包，不查新版本");
-    dm_update_init(g_own, label.UTF8String, on_select, on_click);
+    dm_update_init(g_own, label.UTF8String, on_select);
 }

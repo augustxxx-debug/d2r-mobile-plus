@@ -239,9 +239,6 @@ void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *l
                   else if (dm_ui_minimap_rect(mr)) { float band = (mr[3] - mr[1]) / 4; if (band < 0.042f) band = 0.042f; if (band > (mr[3] - mr[1]) * 0.4f) band = (mr[3] - mr[1]) * 0.4f;
                       if (px >= mr[0] && px <= mr[2] && py >= mr[1] && py <= mr[1] + band) { dm_ui_map_full(1); eat = 1; hold = 0; fprintf(stderr, "[dm] 鼠标：点在小地图顶上那一条 → 切到全屏地图\n"); } } }
               if (eat) { if (op == 2) { eat = 0; if (hold) { hold = 0; g_live_btn_until = touch_cur_tick() + 3; } } atomic_store(&g_live.head, h + 1); continue; } }
-            if (!in) { static int upd_eat; int dm_update_click_at(float, float);   // 主菜单右上角的「有新版本…」那行：点它 = 打开下载页（dm_update.c），这一下从按下到抬起都不再交给界面 | the "New version..." line at the top right of the main menu: clicking it = open the download page (dm_update.c); this click is no longer passed to the interface from press to release
-                if (op == 0 && dm_update_click_at(px, py)) upd_eat = 1;
-                if (upd_eat) { if (op == 2) upd_eat = 0; atomic_store(&g_live.head, h + 1); continue; } }
             if (!in) {   // 前端页：抬起时先问一次命中——落在页签上就走「点页签 = 按对应的手柄键」（页签不认鼠标点击；局内由手势层做同一件事），其余照旧发鼠标点击 | front-end pages: on release, hit-test once first - landing on a tab goes through "clicking a tab = pressing the corresponding gamepad key" (tabs do not take mouse clicks; in game the gesture layer does the same), everything else sends a mouse click as before
                 if (op == 2 && dm_ui_item_at_now(px, py) == 2) { dm_ui_touch(3, px, py); dm_ui_tab_go(); } else dm_ui_touch(op, px, py);
                 atomic_store(&g_live.head, h + 1); continue; }

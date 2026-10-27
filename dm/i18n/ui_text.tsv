@@ -7,7 +7,6 @@ dmUpdFail	检查更新失败	Update check failed	Error al buscar actualizaciones
 dmUpdFailSite	检查更新失败 · 可在浏览器打开 %s 手动更新	Update check failed · Open %s in a browser to update	Error al buscar actualizaciones · Abre %s en un navegador para actualizar		Проверка обновлений не удалась · Откройте %s в браузере, чтобы обновить	업데이트 확인 실패 · 브라우저에서 %s 열어 수동 업데이트	选角页：查更新失败；%s = 下载站地址（读本机配置，不写死）
 dmUpdNewUrgent	新版本 %s · %s	New version %s · %s	Nueva versión %s · %s		Новая версия %s · %s	새 버전 %s · %s	建议立即更新档的说明行
 dmUpdUrgentTitle	建议立即更新	Update Recommended	Actualización recomendada		Рекомендуем обновиться	즉시 업데이트 권장	建议立即更新档的红字标题
-dmUpdButton	更新	Update	Actualizar		Обновить	업데이트	选角页两个「更新」按钮（touch_layout.py）
 dmVaultStored	存着	Stored	Guardado		Сохранено	보관됨	编年史格子下的状态（dm_vault_ui.c）
 dmVaultSeen	收录过 · 没存	Not stored	No guardado		Не сохранено	기록됨 · 미보관	编年史格子状态 / 说明框顶行
 dmVaultNone	还没遇到过	Not found	No hallado		Не найдено	아직 없음	编年史格子状态 / 说明框顶行

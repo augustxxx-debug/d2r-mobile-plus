@@ -224,40 +224,32 @@ SAFE_X = 200   # 两侧面板整体往里收的量（布局单位，≈ 122 像�
 def _sub1(s, old, new):
     if s.count(old) != 1: raise SystemExit('touch_layout：键鼠版前端布局里「%s」不是恰好 1 处（原版布局变了？）' % old[:60])
     return s.replace(old, new)
-# 构建号 + 新版本提示：都是主菜单面板（选角页那一层）的子控件，用原版的字与「进入游戏」那张按钮图。
-# 布局里文字全空、按钮与底板摆在屏幕外：字由宿主写（dm/host/dm_update.c：构建号常显；查到新版本才写提示），按钮与底板由宿主挪回下面 _UPD_POS 的位置。
-# 普通档 = 左下角显示版本右边一行短字「有新版本 1.1.0」（这一行从屏幕左边量、让开左安全区，x 由宿主算）；0.6 倍的小「更新」TouchUpdSmall 留着但宿主不再摆出来（2026-10-27：字太长，窄屏会挤到「进入游戏」）；建议立即更新档 = 「进入游戏」（x -303, y 1865）正上方：半透明底 + 红字标题 + 说明 + 同大的「更新」。
-# 两个「更新」都发 PanelManager:ClosePanel:TouchUpdate（关一个不存在的面板 = 空操作，宿主当信号收）。位置数字宿主那边也用到，改这里要一起改。
-# Build number + new version notice: both are child widgets of the main menu panel (the layer of the character select page), using the original game's text and the 「进入游戏」(Play) button image.
-# In the layout all text is empty and the button and backing are placed off screen: the text is written by the host (dm/host/dm_update.c: build number always shown; the notice is written only when a new version is found), and the button and backing are moved back by the host to the positions in _UPD_POS below.
-# Normal tier = one short line "New version 1.1.0" to the right of the display version at the bottom left (measured from the left edge of the screen, clearing the left safe area; x is computed by the host); the 0.6× small 「更新」(Update) TouchUpdSmall stays in the layout but the host no longer places it (2026-10-27: the text got too long and narrow screens crowded 「进入游戏」(Play)); recommended-immediate-update tier = right above 「进入游戏」(Play) (x -303, y 1865): semi-transparent backing + red title + description + a same-size 「更新」(Update).
-# Both 「更新」(Update) buttons send PanelManager:ClosePanel:TouchUpdate (closing a panel that does not exist = no-op, which the host receives as a signal). The position numbers are also used on the host side, so change them together when changing here.
+# 构建号 + 新版本提示：都是主菜单面板（选角页那一层）的子控件，用原版的字。
+# 布局里文字全空、底板摆在屏幕外：字由宿主写（dm/host/dm_update.c：构建号常显；查到新版本才写提示），底板由宿主挪回原位。
+# 普通档 = 左下角显示版本右边一行短字「新版本 v1.1.0」（这一行从屏幕左边量、让开左安全区，x 由宿主算）；建议立即更新档 = 「进入游戏」（x -303, y 1865）上方：半透明底 + 红字标题 + 说明。
+# 只提示、不提供更新动作（四审 Q4-04）：没有「更新」按钮，任何控件都不发更新消息。位置数字宿主那边也用到，改这里要一起改。
+# Build number + new version notice: both are child widgets of the main menu panel (the layer of the character select page), using the original game's text.
+# In the layout all text is empty and the backing is placed off screen: the text is written by the host (dm/host/dm_update.c: build number always shown; the notice is written only when a new version is found), and the host moves the backing back into place.
+# Normal tier = one short line "New v1.1.0" to the right of the display version at the bottom left (measured from the left edge of the screen, clearing the left safe area; x is computed by the host); recommended-update tier = above 「进入游戏」(Play) (x -303, y 1865): semi-transparent backing + red title + description.
+# Notice only, no update action (fourth review Q4-04): there is no 「更新」(Update) button and no widget sends an update message. The position numbers are also used on the host side, so change them together when changing here.
 _C = '"anchor": { "x": 0.5 }, '
 def _upd_text(name, x, y, w, size, color, h='left', anchor='', fit=''):
     return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { %s"rect": { "x": %d, "y": %d, "width": %d, "height": 60 }, "text": "", %s'
             '"style": { "pointSize": %d, "fontColor": { "r": %d, "g": %d, "b": %d, "a": 255 }, "alignment": { "h": "%s", "v": "center" }, "dropShadow": "$DefaultDropShadow" } } },\n') % ((name, anchor, x, y, w, fit, size) + color + (h,))
-def _upd_btn(name, scale, anchor=_C):
-    return ('        { "type": "ButtonWidget", "name": "%s", "fields": { %s"rect": { "x": 99999, "y": 99999%s }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonLarge", '
-            '"textString": "@dmUpdButton", "onClickMessage": "PanelManager:ClosePanel:TouchUpdate", "text/style": "$StyleFEButtonText", "pointSize": "$ExtraLargeFontSize", "textColor": "$LightButtonTextColor", '
-            '"hoveredFrame": 3, "disabledFrame": 2%s } },\n') % (name, anchor, ', "scale": %s' % scale if scale else '', ', "hitMargin": { "left": 30, "top": 40, "right": 30, "bottom": 40 }' if scale else '')
 _UPDATE = (_upd_text('TouchBuild', 79, 2046, 420, 30, (150, 140, 115), fit='"fitToText": true, ')   # 显示版本长短不一：量出宽度，提示字跟在后面（dm_update.c） | the display version varies in length: measured, and the notice follows it (dm_update.c)
            + _upd_text('TouchUpdNote', 420, 2046, 1500, 30, (199, 179, 119), fit='"fitToText": true, ')
-           + _upd_btn('TouchUpdSmall', 0.6, '')
            + '        { "type": "RectangleWidget", "name": "TouchUpdBg", "fields": { "anchor": { "x": 0.5 }, "rect": { "x": 99999, "y": 99999, "width": 1400, "height": 186 }, "color": [ 0.0, 0.0, 0.0, 0.59 ] } },\n'
            + _upd_text('TouchUpdTitle', -700, 1524, 1400, 46, (214, 74, 58), 'center', _C)
-           + _upd_text('TouchUpdDesc', -700, 1610, 1400, 36, (232, 228, 214), 'center', _C)
-           + _upd_btn('TouchUpdBig', None))
+           + _upd_text('TouchUpdDesc', -700, 1610, 1400, 36, (232, 228, 214), 'center', _C))
 # 手柄版原版主菜单上的同一组控件（pad_mainmenu）：左下角是原版的按钮栏和提示条，构建号与提示字放右上角、靠右对齐。
 # 原版手柄主菜单面板的矩形是 0×0，锚点无从算起：这一组都不带锚点，位置全由宿主按屏宽摆（dm_update.c），这里的坐标只是 16:9 下的初值
 # The same group of widgets on the controller layout's original main menu (pad_mainmenu): the bottom left holds the original button ribbon and legend, so the build number and hint text go to the top right, right-aligned.
 # The original controller main menu panel's rectangle is 0×0, with nothing to compute an anchor from: none of this group carries an anchor, their position is set entirely by the host from the screen width (dm_update.c), and the coordinates here are only initial values for 16:9
 _UPDATE_PAD = (_upd_text('TouchBuild', 3161, 60, 600, 30, (150, 140, 115), 'right')   # 宽 600 放得下「v1.0.0+28 · b346e40*」；宿主按屏宽摆在 xr - 600 - 边距 | 600 wide fits the display version; the host places it at xr - 600 - margin
-               + _upd_text('TouchUpdNote', 1761, 130, 2000, 42, (199, 179, 119), 'right')   # 手柄版没有「更新」按钮可看，这一行字放大（触屏版同色 30 号） | The controller layout has no 「更新」(Update) button to look at, so this line of text is enlarged (the touch version uses the same color at size 30)
-               + _upd_btn('TouchUpdSmall', 0.6, '')
+               + _upd_text('TouchUpdNote', 1761, 130, 2000, 42, (199, 179, 119), 'right')   # 手柄版这一行在右上角、离得远，字放大（触屏版同色 30 号） | The controller line sits far away at the top right, so it is larger at, so this line of text is enlarged (the touch version uses the same color at size 30)
                + '        { "type": "RectangleWidget", "name": "TouchUpdBg", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1400, "height": 186 }, "color": [ 0.0, 0.0, 0.0, 0.59 ] } },\n'
                + _upd_text('TouchUpdTitle', 1220, 1524, 1400, 46, (214, 74, 58), 'center')
-               + _upd_text('TouchUpdDesc', 1220, 1610, 1400, 36, (232, 228, 214), 'center')
-               + _upd_btn('TouchUpdBig', None, ''))
+               + _upd_text('TouchUpdDesc', 1220, 1610, 1400, 36, (232, 228, 214), 'center'))
 def pad_ribbon(s, movies=False):   # 手柄版主菜单左侧按钮栏 = 原版布局。缺省包不播过场（宿主只按时长空播），「电影动画」是个没用的入口，拿掉（同触屏版没有它）；编进过场解码（MOVIE_FFMPEG=1）的包保留原版入口
     if movies:
         return s
@@ -272,7 +264,7 @@ def pad_mainmenu(s):   # 手柄版主菜单 = 原版布局原样 + 上面这组�
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
     return s[:i].rstrip(' ') + _UPDATE_PAD + '    ' + s[i:]
 _UPDATE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchBuild|TouchUpd\w+)"', _UPDATE))
-assert _UPDATE_STUB.count('\n') == 7
+assert _UPDATE_STUB.count('\n') == 5   # 构建号、普通提示、底板、标题、说明（四审 Q4-04 起没有按钮） | build, notice, backing, title, description (no buttons since fourth review Q4-04)
 def _pc_mainmenu(s):
     # 「进入游戏」居中（键鼠版它在左半、右半是联机大厅按钮）；下面的齿轮（联机建局设置）、分隔条、联机大厅按钮挪走
     # 「进入游戏」(Play) is centered (in the keyboard-and-mouse layout it is in the left half and the right half is the online lobby button); the gear below (online game creation settings), the divider bar and the online lobby button are moved away

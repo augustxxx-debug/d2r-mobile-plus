@@ -9,7 +9,6 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmUpdFailSite", "检查更新失败 · 可在浏览器打开 %s 手动更新", "Update check failed · Open %s in a browser to update", "Error al buscar actualizaciones · Abre %s en un navegador para actualizar", "Error al buscar actualizaciones · Abre %s en un navegador para actualizar", "Проверка обновлений не удалась · Откройте %s в браузере, чтобы обновить", "업데이트 확인 실패 · 브라우저에서 %s 열어 수동 업데이트" },
     { "dmUpdNewUrgent", "新版本 %s · %s", "New version %s · %s", "Nueva versión %s · %s", "Nueva versión %s · %s", "Новая версия %s · %s", "새 버전 %s · %s" },
     { "dmUpdUrgentTitle", "建议立即更新", "Update Recommended", "Actualización recomendada", "Actualización recomendada", "Рекомендуем обновиться", "즉시 업데이트 권장" },
-    { "dmUpdButton", "更新", "Update", "Actualizar", "Actualizar", "Обновить", "업데이트" },
     { "dmVaultStored", "存着", "Stored", "Guardado", "Guardado", "Сохранено", "보관됨" },
     { "dmVaultSeen", "收录过 · 没存", "Not stored", "No guardado", "No guardado", "Не сохранено", "기록됨 · 미보관" },
     { "dmVaultNone", "还没遇到过", "Not found", "No hallado", "No hallado", "Не найдено", "아직 없음" },

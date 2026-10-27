@@ -41,7 +41,7 @@ else:
 
 # ---- 2 ----
 # Graphics adds a controller-only focus/input branch; both page pumps keep shared values.
-PADMODE = {'host/dm_cursor.c': 9, 'host/dm_custom.c': 3, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 2, 'host/hle_tact.c': 1}
+PADMODE = {'host/dm_cursor.c': 9, 'host/dm_custom.c': 3, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
 AUTOKEY = {'host/dm_cursor.c': 38, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
 def count(pat, skip_defs):
     out = {}
