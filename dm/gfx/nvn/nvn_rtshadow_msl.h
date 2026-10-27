@@ -55,10 +55,10 @@ static const char *k_rts_msl =
 "  intersection_result<instancing> h = is.intersect(ry, as, 0xffu); dist = h.distance; return h.type != intersection_type::none; }\n"
 "#define RTS_AI\n#define RTS_HIT(ry, as, any, d) rts_hit0(ry, as, any, d)\n"
 "#endif\n"
-// pad > 0.5：半分辨率追踪（size = 遮罩尺寸，按全分辨率深度的 2× 位置取样），之后 rts_pup 按深度上采样回全分辨率 | pad > 0.5: half-resolution trace (size = mask size, sampled at 2× positions of the full-resolution depth), then upsampled back by depth with rts_pup
+// pad = 1：半分辨率追踪（size = 遮罩尺寸，按全分辨率深度的 2× 位置取样）；pad = 4：1/4 分辨率（自动降档最低档）；之后 rts_pup 按深度上采样回全分辨率 | pad = 1: half-resolution trace (size = mask size, sampled at 2× positions of the full-resolution depth); pad = 4: quarter resolution (lowest automatic level); then upsampled back by depth with rts_pup
 "struct K { float4x4 invVP; float4 sun; uint2 size; float bias; float pad; };\n"
 "kernel void rts_trace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant K &k [[buffer(1)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 full = uint2(depth.get_width(), depth.get_height()); uint2 fg = k.pad > 0.5 ? min(g * 2, full - 1) : g; float z = depth.read(fg);\n"
+"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 full = uint2(depth.get_width(), depth.get_height()); uint sc = k.pad > 3.0 ? 4u : k.pad > 0.5 ? 2u : 1u; uint2 fg = min(g * sc, full - 1); float z = depth.read(fg);\n"
 "  if (z >= 1.0) { mask.write(float4(1), g); return; }\n"   // 远平面 = 没画东西（天空） | far plane = nothing drawn (sky)
 "  float2 ndc = float2((float(fg.x) + 0.5) / float(full.x) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(full.y) * 2.0);\n"
 "  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"

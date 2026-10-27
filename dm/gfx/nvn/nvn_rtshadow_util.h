@@ -82,3 +82,46 @@ static inline int rts_sun_from_lvp(const float *L, float sun[3]) {
     double s = (d[1] > 0 ? 1.0 : -1.0) / n; for (int i = 0; i < 3; i++) sun[i] = (float)(d[i] * s);
     return 1;
 }
+// 自动降档（光追 GPU 耗时 × 整帧 GPU 时间）：每帧喂一次「光追计算通道 GPU 起止跨度」与「整帧 GPU 时间」（未知传 < 0），按出图节拍的预算判。
+// 降：整帧 > 92% 预算且光追 > 12% 预算（光追真是负担），或光追单独 > 50% 预算（整帧不知道时），持续 1 秒 → 降一档；两次换档至少隔 1 秒。
+// 升：整帧 < 70% 预算（整帧不知道时光追 < 20%），持续 hold_up 秒（起始 8 秒）→ 升一档；升上去 5 秒内又被迫降回来，hold_up 翻倍（≤ 120 秒），免得来回跳。
+// 返回 +1 = 降了一档（lvl 加一）、−1 = 升了一档、0 = 不变；why 写原因（给日志）
+// Automatic downgrade (ray-tracing GPU cost × whole-frame GPU time): fed once per frame with the span of the ray-tracing compute pass and the frame's GPU time (< 0 when unknown), judged against the present-rate budget.
+// Down: frame > 92% of the budget with ray tracing > 12% (it really is a burden), or ray tracing alone > 50% (when the frame time is unknown), sustained for 1 s → one level down; at least 1 s between changes.
+// Up: frame < 70% of the budget (ray tracing < 20% when the frame time is unknown), sustained for hold_up seconds (8 s at first) → one level up; forced back down within 5 s of a step up doubles hold_up (≤ 120 s) to avoid oscillation.
+// Returns +1 = one level down (lvl + 1), −1 = one level up, 0 = unchanged; why receives the reason (for the log)
+typedef struct { int lvl, max_lvl, n; double rt, fr, t_change, t_over, t_under, hold_up, t_up; } rts_gov;
+static inline void rts_gov_init(rts_gov *g, int max_lvl) { *g = (rts_gov){.max_lvl = max_lvl, .hold_up = 8, .t_over = -1, .t_under = -1, .t_change = -1e9, .t_up = -1e9, .fr = -1}; }
+static inline int rts_gov_step(rts_gov *g, double rt_ms, double fr_ms, double budget_ms, double now, const char **why) {
+    if (!(rt_ms >= 0) || !(budget_ms > 0)) return 0;
+    const double a = 0.1; g->rt = g->n ? g->rt + a * (rt_ms - g->rt) : rt_ms;
+    if (fr_ms > 0) g->fr = g->fr > 0 ? g->fr + a * (fr_ms - g->fr) : fr_ms;
+    if (++g->n < 30) return 0;   // 先攒 30 帧 | warm up over 30 frames first
+    int fk = g->fr > 0;
+    int over = (fk && g->fr > 0.92 * budget_ms && g->rt > 0.12 * budget_ms) || g->rt > 0.5 * budget_ms;
+    int under = fk ? g->fr < 0.70 * budget_ms : g->rt < 0.20 * budget_ms;
+    g->t_over = over ? (g->t_over < 0 ? now : g->t_over) : -1;
+    g->t_under = under && !over ? (g->t_under < 0 ? now : g->t_under) : -1;
+    if (now - g->t_change < 1.0) return 0;
+    if (over && g->lvl < g->max_lvl && now - g->t_over >= 1.0) {
+        if (now - g->t_up < 5.0) g->hold_up = g->hold_up * 2 > 120 ? 120 : g->hold_up * 2;
+        g->lvl++; g->t_change = now; g->t_over = g->t_under = -1;
+        if (why) *why = g->rt > 0.5 * budget_ms ? "光追单独超过半帧预算" : "整帧 GPU 超预算且光追占比高";
+        return 1; }
+    if (under && g->lvl > 0 && now - g->t_under >= g->hold_up) {
+        g->lvl--; g->t_change = g->t_up = now; g->t_over = g->t_under = -1;
+        if (why) *why = fk ? "整帧 GPU 有余量" : "光追耗时降下来了";
+        return -1; }
+    return 0;
+}
+// 档位 → 实际参数：0 = 按设置；1 = 点光最多 1 盏、点光射线 1/4；2 = 再关点光阴影、太阳强制半分辨率硬阴影；3 = 太阳 1/4 分辨率
+// Level → effective parameters: 0 = as configured; 1 = at most 1 point light, quarter-resolution point rays; 2 = point-light shadows off as well, sun forced to half-resolution hard shadows; 3 = sun at quarter resolution
+#define RTS_LVL_MAX 3
+typedef struct { int point_on, point_n, point_div, sun_div, soft; } rts_lvl_params;
+static inline rts_lvl_params rts_lvl_apply(int lvl, int point_on, int point_n, int point_div, int sun_half, int soft) {
+    rts_lvl_params p = {point_on, point_n, point_div, sun_half ? 2 : 1, soft};
+    if (lvl >= 1) { if (p.point_n > 1) p.point_n = 1; p.point_div = 4; }
+    if (lvl >= 2) { p.point_on = 0; p.sun_div = 2; p.soft = 0; }
+    if (lvl >= 3) p.sun_div = 4;
+    return p;
+}

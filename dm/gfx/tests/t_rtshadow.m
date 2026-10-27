@@ -49,6 +49,24 @@ int main(void) { @autoreleasepool {
     { uint16_t strip[] = {0, 1, 2, 2, 3, 4}; uint32_t out[12]; uint32_t t = rts_strip_expand(strip, 2, 6, out);   // 0,1,2 | 1,2,2 退化 | 2,2,3 退化 | 2,3,4 → 2 个 | two triangles, two degenerate ones dropped
       if (t != 2 || out[0] != 0 || out[1] != 1 || out[2] != 2 || out[3] != 2 || out[4] != 3 || out[5] != 4) FAIL("rts_strip_expand indexed: %u tris", t);
       t = rts_strip_expand(NULL, 0, 5, out); if (t != 3 || out[6] != 2 || out[7] != 3 || out[8] != 4) FAIL("rts_strip_expand non-indexed: %u tris", t); }
+    {   // 自动降档：超预算持续 1 秒降一档、到底停住；有余量持续 8 秒升一档；升上去很快又被迫降回来，升档等待翻倍 | automatic downgrade: 1 s over budget → one level down, stops at the bottom; 8 s of headroom → one level up; forced back down soon after a step up doubles the wait
+        rts_gov g; rts_gov_init(&g, RTS_LVL_MAX); const char *why = NULL; double t = 0, B = 1000.0 / 60; int downs = 0, ups = 0, r;
+        for (int i = 0; i < 60; i++, t += 1 / 60.0) if (rts_gov_step(&g, 3.0, 12.0, B, t, &why)) FAIL("gov: changed level within budget");
+        for (int i = 0; i < 600; i++, t += 1 / 60.0) { r = rts_gov_step(&g, 4.0, 18.0, B, t, &why); downs += r > 0; if (r < 0) FAIL("gov: stepped up while over budget"); }
+        if (g.lvl != RTS_LVL_MAX || downs != RTS_LVL_MAX) FAIL("gov: 10 s over budget should reach level %d (lvl %d, %d downs)", RTS_LVL_MAX, g.lvl, downs);
+        double t0 = t; for (int i = 0; i < 60 * 30 && !ups; i++, t += 1 / 60.0) ups += rts_gov_step(&g, 1.0, 9.0, B, t, &why) < 0;
+        if (!ups || g.lvl != RTS_LVL_MAX - 1 || t - t0 < 7.5 || t - t0 > 9.5) FAIL("gov: first step up after %.1f s (want ~8), lvl %d", t - t0, g.lvl);
+        for (int i = 0; i < 180 && g.lvl != RTS_LVL_MAX; i++, t += 1 / 60.0) rts_gov_step(&g, 4.0, 18.0, B, t, &why);
+        if (g.lvl != RTS_LVL_MAX || g.hold_up < 15.9) FAIL("gov: quick relapse should double the wait (lvl %d, hold %.0f)", g.lvl, g.hold_up);
+        for (int i = 0; i < 60 * 5; i++, t += 1 / 60.0) rts_gov_step(&g, 3.0, 13.0, B, t, &why);   // 72–92%：两边都不动 | 72–92%: neither way
+        if (g.lvl != RTS_LVL_MAX) FAIL("gov: moved inside the hysteresis band");
+        rts_gov g2; rts_gov_init(&g2, RTS_LVL_MAX); t = 0;   // 整帧不知道（< 0）时只看光追单独占比 | frame time unknown (< 0): ray tracing share alone
+        for (int i = 0; i < 300; i++, t += 1 / 60.0) rts_gov_step(&g2, 9.0, -1, B, t, &why); if (g2.lvl < 1) FAIL("gov: ray tracing alone over half the budget should step down");
+        rts_gov g3; rts_gov_init(&g3, RTS_LVL_MAX); t = 0;   // 整帧超了但光追不重（< 12%）：不降（降了也没用） | frame over budget but ray tracing light (< 12%): no step down (it would not help)
+        for (int i = 0; i < 300; i++, t += 1 / 60.0) rts_gov_step(&g3, 1.0, 25.0, B, t, &why); if (g3.lvl) FAIL("gov: stepped down although ray tracing is cheap");
+        rts_lvl_params p0 = rts_lvl_apply(0, 1, 2, 2, 0, 1), p1 = rts_lvl_apply(1, 1, 2, 2, 0, 1), p2 = rts_lvl_apply(2, 1, 2, 2, 0, 1), p3 = rts_lvl_apply(3, 1, 2, 2, 0, 1);
+        if (p0.point_n != 2 || p0.point_div != 2 || p0.sun_div != 1 || !p0.soft || p1.point_n != 1 || p1.point_div != 4 || !p1.point_on || p2.point_on || p2.sun_div != 2 || p2.soft || p3.sun_div != 4) FAIL("rts_lvl_apply levels wrong");
+    }
     { rts_player_track t = {.rec = -1}; float torch[3] = {40, 0, 0}, player[3] = {5, 0, 5}; int sure = 0;   // 相机沿 x 走：火把偏移在变、随身光偏移不变 | the camera walks along x: the torch's offset changes, the player light's does not
       for (int f = 0; f < 80; f++) { double p0[3] = {f * 0.5, 0, 0}; float pp[3] = {player[0] + f * 0.5f, player[1], player[2]}; sure = rts_player_feed(&t, 7, pp, p0); if (f < 59 && sure) FAIL("player light recognized too early (frame %d)", f); }
       if (!sure) FAIL("player light not recognized after 80 moving frames");
@@ -164,6 +182,20 @@ int main(void) { @autoreleasepool {
         if (px(mf, gx_of(-10), gy_of(0), 0) > 0.05f || px(mf, gx_of(35), gy_of(0), 0) < 0.95f) FAIL("half-res sun: shadow / lit spots wrong (%g, %g)", px(mf, gx_of(-10), gy_of(0), 0), px(mf, gx_of(35), gy_of(0), 0));
         if (diff > W * H / 50) FAIL("half-res sun: %d of %d pixels differ from the full-resolution mask", diff, W * H);
     }
+    {   // 太阳 1/4 分辨率（自动降档第 3 档，k[23] = 4）：同样上采样回全分辨率，影子 / 亮处位置对，边缘差得多一些 | quarter-resolution sun (automatic level 3, k[23] = 4): upsampled back the same way, shadow / lit spots right, edges differ a bit more
+        float KQ[64]; memcpy(KQ, K, sizeof KQ); KQ[23] = 4; ((uint32_t *)KQ)[20] = W / 4; ((uint32_t *)KQ)[21] = H / 4; id<MTLBuffer> kbq = buf(KQ, sizeof KQ);
+        id<MTLTexture> mh = tex(MTLPixelFormatR8Unorm, W / 4, H / 4, MTLStorageModeShared), mf = tex(MTLPixelFormatR8Unorm, W, H, MTLStorageModeShared); uint32_t pu[4] = {W, H, W / 4, H / 4}; id<MTLBuffer> pub = buf(pu, 16);
+        id<MTLComputePipelineState> ps_pup = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_pup"] error:&e]; [resident commit];
+        if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at];
+                [ce setComputePipelineState:ps_trace]; [at setTexture:depth.gpuResourceID atIndex:0]; [at setTexture:mh.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:kbq.gpuAddress atIndex:1];
+                [ce dispatchThreadgroups:MTLSizeMake((W / 4 + 7) / 8, (H / 4 + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+                [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                [ce setComputePipelineState:ps_pup]; [at setTexture:mh.gpuResourceID atIndex:0]; [at setTexture:mf.gpuResourceID atIndex:1]; [at setTexture:depth.gpuResourceID atIndex:2]; [at setAddress:pub.gpuAddress atIndex:0];
+                [ce dispatchThreadgroups:MTLSizeMake(W / 8, H / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)]; })) return 1;
+        int diff = 0; for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) diff += fabsf(px(mf, x, y, 0) - px(mask, x, y, 0)) > 0.5f;
+        if (px(mf, gx_of(-10), gy_of(0), 0) > 0.05f || px(mf, gx_of(35), gy_of(0), 0) < 0.95f) FAIL("quarter-res sun: shadow / lit spots wrong (%g, %g)", px(mf, gx_of(-10), gy_of(0), 0), px(mf, gx_of(35), gy_of(0), 0));
+        if (diff > W * H / 20) FAIL("quarter-res sun: %d of %d pixels differ from the full-resolution mask", diff, W * H);
+    }
     if (px(mask, gx_of(-30), gy_of(0), 0) < 0.99f) FAIL("sun: ground x=−30 should be lit (ray passes the square's edge)");
     // 2. 反投影 + refit：导出的裁剪坐标 → 世界坐标 → 以绑定姿势 BLAS 为源 refit 到槽；TLAS 换成槽；阴影应移到 x∈(10,30) | 2. unproject + refit: shadow moves to x∈(10,30)
     di[1].accelerationStructureID = as_slot.gpuResourceID;
@@ -275,6 +307,6 @@ int main(void) { @autoreleasepool {
                 if (want ? fabsf(o[i * 2 + 1] - 1.f) > 1e-3f : o[i * 2 + 1] >= 0) FAIL("alpha %s: ray x=%.3f closest %g", pass ? "opaque fallback" : "judge", x, o[i * 2 + 1]); }
         }
     }
-    puts("PASS t_rtshadow: MSL compiles, decode / BLAS / TLAS / sun trace / unproject / refit / GPU light picking / player-light copy / point light / soft blur / alpha-tested judge (RTS_ALPHA) checked on a synthetic scene");
+    puts("PASS t_rtshadow: MSL compiles, decode / BLAS / TLAS / sun trace / unproject / refit / GPU light picking / player-light copy / point light / soft blur / alpha-tested judge (RTS_ALPHA) / automatic downgrade levels / quarter-resolution sun checked on a synthetic scene");
     return 0;
 } }
