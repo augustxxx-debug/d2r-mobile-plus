@@ -21,6 +21,12 @@ int main(void) { printf("SKIP：旧接口版没有光追阴影模块\n"); return
 #ifndef RTS_MAP_CLEARED
 #define RTS_MAP_CLEARED() 0   // 79d571f 从不清阴影图（靠不画） | 79d571f never clears the shadow map (it skips the draws instead)
 #endif
+#ifndef RTS_UNC
+#define RTS_UNC(r) (-1LL)   // 3fc0f41 及更早：没进 TLAS 的绘制不分原因 | 3fc0f41 and earlier: draws outside the TLAS are not split by reason
+#define RTS_UNC_PASS 0
+#define RTS_UNC_QUOTA 0
+#define RTS_UNC_PENDING 0
+#endif
 #ifndef RTS_WHY
 #define RTS_WHY() ""   // 4978d39 及更早：不记跳过追踪的具体原因 | 4978d39 and earlier: the specific reason for skipping the trace is not recorded
 #endif
@@ -171,6 +177,16 @@ int main(void) { @autoreleasepool {
       // 退避中的帧（不是光追帧）不算网格键：真机键摘要每帧上毫秒，退避帧白算 | Frames in backoff (not ray-traced) compute no mesh key: on the device the key digest costs over a millisecond per frame, wasted in backoff
       int b1[2] = {1, 2}; uint64_t k0 = g_rts.key_ns; run_frame(1, b1, 2, &ok);
       EXPECT("测试前提：这帧在退避中", 0, g_rts.rt_frame); EXPECT("退避帧不算网格键", 0, (long long)(g_rts.key_ns - k0)); }
+    // 6. 光追帧里没进 TLAS 的绘制要分原因计数（真机 3fc0f41：走到某处后每帧约 8 次没进 TLAS，日志分不出原因）：
+    //    一帧 14 个新网格 → 12 个排队（待建）、2 个配额满；下一帧阴影绘制所在的通道没登记 → 通道没登记
+    // 6. Draws outside the TLAS in ray-traced frames are counted by reason (device run of 3fc0f41: about 8 per frame after walking somewhere, and the log could not tell why):
+    //    14 new meshes in one frame → 12 queued (pending), 2 over the quota; next frame a shadow draw in an unregistered pass → pass not registered
+    { EXPECT("分原因前光追生效", 1, until_applied(a, 1));
+      long long q0 = RTS_UNC(RTS_UNC_QUOTA), p0 = RTS_UNC(RTS_UNC_PENDING), s0 = RTS_UNC(RTS_UNC_PASS);
+      frame_open(); prepass(); shadow_pass(); for (int i = 10; i < 24; i++) sh(i); main_pass(); hdr_again(); frame_close();
+      EXPECT("新建配额满：记 2 次", 2, RTS_UNC(RTS_UNC_QUOTA) - q0); EXPECT("网格待建：记 12 次", 12, RTS_UNC(RTS_UNC_PENDING) - p0);
+      frame_open(); prepass(); rp_end(); EXPECT("测试前提：这帧是光追帧", 1, (sh(0), g_rts.rt_frame)); main_pass(); hdr_again(); frame_close();
+      EXPECT("阴影通道没登记：记 1 次", 1, RTS_UNC(RTS_UNC_PASS) - s0); }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}
