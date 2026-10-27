@@ -222,8 +222,8 @@ int dm_fps_setting(void) {
 }
 // 光追阴影（键 rt_shadow，实验性，缺省关，图形页）：图形层 nvn_rtshadow.inc rts_on 每帧读；机器不过门槛（mtl_rt_shadow_supported）时按关处理，图形页也不显示这一行
 // Ray-traced shadows (key rt_shadow, experimental, off by default, Graphics tab): read every frame by rts_on in nvn_rtshadow.inc; treated as off on machines that fail the gate (mtl_rt_shadow_supported), and the Graphics tab hides the row
-__attribute__((weak)) int mtl_rt_shadow_supported(void);
-static int rt_shadow_ok(void) { return mtl_rt_shadow_supported && mtl_rt_shadow_supported(); }
+__attribute__((weak)) int mtl_rt_shadow_supported(void) { return 0; }   // 弱定义 = 不支持；图形层 nvn_rtshadow.inc 的强定义覆盖它（只有弱引用时，不链图形层的单测在 macOS 上链接不过） | weak definition = unsupported; the strong definition in nvn_rtshadow.inc overrides it (with only a weak reference, unit tests that do not link the graphics layer fail to link on macOS)
+static int rt_shadow_ok(void) { return mtl_rt_shadow_supported(); }
 // 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义）。生效值、设置或机器判定一变就记一行「光追阴影：生效」（分享诊断日志的摘要按这个前缀取最后一行）
 // Read every frame by rts_on in nvn_rtshadow.inc (strong definition of a weak symbol). One "光追阴影：生效" (ray-traced shadows: effective) line whenever the effective value, the setting or the machine gate changes (the share-diagnostics summary takes the last line with this prefix)
 int dm_rt_shadow_setting(void) {
