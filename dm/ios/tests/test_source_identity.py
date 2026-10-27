@@ -35,7 +35,7 @@ class Fingerprint(unittest.TestCase):
             sc, dirty = run_in(d).split('|')
             self.assertEqual(sc, head)
             n, fp, names = dirty.split(':')
-            self.assertEqual(n, '2'); self.assertRegex(fp, r'^[0-9a-f]{12}$'); self.assertEqual(names, 'a.txt,b.h')
+            self.assertEqual(n, '2'); self.assertRegex(fp, r'^[0-9a-f]{12}$'); self.assertEqual(names, 'a.txt,sub/b.h')   # 仓库相对路径（五审 Q5-04） | repo-relative paths (fifth review Q5-04)
             Path(d, 'a.txt').write_text('3\n')
             self.assertNotEqual(run_in(d).split('|')[1].split(':')[1], fp)   # 内容变了指纹就变 | the fingerprint follows the content
 

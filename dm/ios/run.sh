@@ -58,7 +58,7 @@ if [ "$1" = build ]; then
   # Artifact identity (audit 2026-10-27): written into Gen/dm.xcconfig, so both run.sh builds and the testflight / adhoc archives after DM_GEN_ONLY carry it.
   # Source = full commit + working-tree diff fingerprint; build inputs = shader chain version, optional font content fingerprint (no path) and weight, sampling switch, movie decode, free account, older-API build, device family
   SC=$(git rev-parse HEAD 2>/dev/null || echo unknown); DF=$(git diff --name-only HEAD 2>/dev/null | sort)
-  if [ -z "$DF" ]; then SDIRTY=clean; else SDIRTY="$(echo "$DF" | wc -l | tr -d ' '):$(git diff HEAD 2>/dev/null | shasum -a 256 | cut -c1-12):$(echo "$DF" | sed 's|.*/||' | paste -sd, -)"; fi
+  if [ -z "$DF" ]; then SDIRTY=clean; else SDIRTY="$(echo "$DF" | wc -l | tr -d ' '):$(git diff HEAD 2>/dev/null | shasum -a 256 | cut -c1-12):$(echo "$DF" | paste -sd, -)"; fi   # 文件列表记仓库相对路径（五审 Q5-04：只记文件名分不清是不是那三份元数据） | the list holds repo-relative paths (fifth review Q5-04: basenames alone cannot tell the three metadata files apart)
   CHAIN=$(sed -n 's/^#define DMSH_CHAIN "\(.*\)"/\1/p' ../gfx/nvn/dmsh_chain.h)
   FONTFP=none; [ -n "${DM_UI_FONT:-}" ] && [ -f "$DM_UI_FONT" ] && FONTFP=$(shasum -a 256 "$DM_UI_FONT" | cut -c1-12)
   BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default}"

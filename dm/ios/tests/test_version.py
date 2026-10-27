@@ -243,7 +243,8 @@ class UiregPackageCheck(unittest.TestCase):
             self.assertEqual(lbl, '1.0.0+1 · ' + sha[:7])
             ok = lambda **k: self.assertFalse(self.check(r, self.boot(**dict(dict(build=b, sha=sha, label=lbl), **k)))[0], k)
             bad = lambda why, env={}, **k: self.assertIn(why, self.check(r, self.boot(**dict(dict(build=b, sha=sha, label=lbl), **k)), **env)[1], k)
-            ok(); ok(dirty='3:abcdef012345:c1_full.tsv,dmsh_chain.h,dmsh_chain.lock')   # 只有本机元数据 | local metadata only
+            ok(); ok(dirty='3:abcdef012345:' + ','.join(self.META))   # 只有本机元数据 | local metadata only
+            ok(dirty='1:0123456789ab:dm/gfx/nvn/dmsh_chain.h')
             bad('带 *', label=lbl + '*')
             bad('源码', sha='f' * 40, label='1.0.0+1 · fffffff')
             bad('构建号 1，', build='1')
@@ -251,10 +252,41 @@ class UiregPackageCheck(unittest.TestCase):
             bad('显示版本读不到', label='')                       # 空 | empty
             bad('期望「' + lbl + '」', label='1.0.0+1 · 未知')    # 未知 | unknown
             bad('期望「' + lbl + '」', label='0.9.0 · ' + sha[:7])
-            bad('没提交的代码改动 a.c', dirty='2:abcdef012345:a.c,c1_full.tsv')
+            bad('没提交的代码改动 dm/host/a.c', dirty='2:abcdef012345:dm/host/a.c,dm/gfx/nvn/c1_full.tsv')
             bad('工作区标记读不到', dirty='')
             bad('期望 1800000000', env={'UIREG_EXPECT_BUILD': '1800000000'})
             self.assertFalse(self.check(r, self.boot(build='1800000000', sha=sha, label=lbl), UIREG_EXPECT_BUILD='1800000000')[0])   # 显式覆盖值 | explicit override
+
+    META = ('dm/gfx/nvn/c1_full.tsv', 'dm/gfx/nvn/dmsh_chain.h', 'dm/gfx/tools/dmsh_chain.lock')
+
+    def test_dirty_marker_strict(self):
+        # 五审 Q5-04：工作区标记 = clean 或「条数:12 位小写十六进制指纹:逗号分隔的仓库相对路径」，条数与列表一致、路径只许三份本机元数据；其余一律拒
+        # Fifth review Q5-04: the working-tree marker is clean or "count:12 lowercase hex:comma-separated repo-relative paths", the count must match the list and only the three local metadata paths are allowed; everything else is refused
+        with tempfile.TemporaryDirectory() as d:
+            r = Repo(d); r.git('tag', 'v1.0.0'); r.commit(); v = r.version(); b, lbl = v['build'], v['label']; sha = r.git('rev-parse', 'HEAD')
+            run = lambda dirty: self.check(r, self.boot(b, sha, lbl, dirty))
+            self.assertEqual(run('clean'), (False, self.boot(b, sha, lbl, 'clean')))
+            for dirty, why in [
+                ('1:abcdef012345:', '格式不对'),                              # 空列表 | empty list
+                ('unknown:', '格式不对'),                                     # 未知格式 | unknown format
+                ('unknown', '格式不对'),
+                ('abcdef', '格式不对'),                                       # 无冒号 | no colon
+                ('1:abcdef012345', '格式不对'),                               # 缺列表段 | list field missing
+                ('1:xyz:dm/gfx/nvn/c1_full.tsv', '格式不对'),                 # 错指纹 | bad fingerprint
+                ('1:ABCDEF012345:dm/gfx/nvn/c1_full.tsv', '格式不对'),        # 大写 | uppercase
+                ('1:abcdef0123456:dm/gfx/nvn/c1_full.tsv', '格式不对'),       # 13 位 | 13 digits
+                ('0:abcdef012345:dm/gfx/nvn/c1_full.tsv', '格式不对'),        # 零条 | zero count
+                ('01:abcdef012345:dm/gfx/nvn/c1_full.tsv', '格式不对'),       # 前导零 | leading zero
+                ('2:abcdef012345:dm/gfx/nvn/c1_full.tsv', '条数'),            # 条数不一致 | count mismatch
+                ('1:abcdef012345:dm/gfx/nvn/c1_full.tsv,dm/gfx/nvn/dmsh_chain.h', '条数'),
+                ('2:abcdef012345:dm/gfx/nvn/c1_full.tsv,', '格式不对'),       # 空项 | empty entry
+                ('2:abcdef012345:dm/gfx/nvn/c1_full.tsv,dm/gfx/nvn/c1_full.tsv', '重复'),
+                ('3:abcdef012345:c1_full.tsv,dmsh_chain.h,dmsh_chain.lock', '没提交的代码改动 c1_full.tsv'),   # 旧格式只有文件名 | old basename-only format
+                ('1:abcdef012345:dm/ios/c1_full.tsv', '没提交的代码改动 dm/ios/c1_full.tsv'),                 # 同名不同目录 | same name, other directory
+                ('1:abcdef012345:x/dm/gfx/nvn/c1_full.tsv', '没提交的代码改动 x/dm/gfx/nvn/c1_full.tsv'),
+            ]:
+                rejected, log = run(dirty)
+                self.assertTrue(rejected, dirty); self.assertIn(why, log, dirty)
 
     def test_expect_other_commit(self):
         with tempfile.TemporaryDirectory() as d:
