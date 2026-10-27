@@ -2263,7 +2263,7 @@ static void shmap_load(void) {
     id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; } @end   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
 @implementation NvShader @end
 #include "nvn_pso_skey.h"
-@interface NvProg : NSObject { @public NvShader *sh[6]; __unsafe_unretained NvShader *fl_sh[6]; uint8_t fl_ok, fl_img, fl_img_w; uint32_t fl_cmask; NvShader *fs_base, *fs_rt; int rt_tried; NvShader *vs_base, *vs_pos; int pos_tried; } @end   // fs_base / fs_rt：片元原版与光追阴影 _rt 变体，draw 按开关选（nvn_rtshadow.inc rts_select_fs） | fs_base / fs_rt: original fragment shader and its ray-traced-shadow _rt variant, chosen per draw by the switch   // fl_*：按绘制要用的反射摘要（udc_note_draw），按 sh[] 核对后复用 | fl_*: reflection summary used per draw (udc_note_draw), reused after checking against sh[]
+@interface NvProg : NSObject { @public NvShader *sh[6]; __unsafe_unretained NvShader *fl_sh[6]; uint8_t fl_ok, fl_img, fl_img_w; uint32_t fl_cmask; NvShader *fs_base, *fs_rt; int rt_tried; NvShader *vs_base, *vs_pos; int pos_tried; NvShader *vs_var; int alpha_tried, alpha_fs, var_stride; uint32_t alpha_locs, var_locmask; uint8_t var_slot[16]; } @end   // vs_var / alpha_*：镂空遮挡体进光追（_var 顶点导出变体、判定库序号与插值 locn，nvn_rtshadow.inc rts_alpha_prog） | vs_var / alpha_*: alpha-tested occluders in the ray tracing (_var vertex export variant, judge-library index and interpolant locns, rts_alpha_prog in nvn_rtshadow.inc)   // fs_base / fs_rt：片元原版与光追阴影 _rt 变体，draw 按开关选（nvn_rtshadow.inc rts_select_fs） | fs_base / fs_rt: original fragment shader and its ray-traced-shadow _rt variant, chosen per draw by the switch   // fl_*：按绘制要用的反射摘要（udc_note_draw），按 sh[] 核对后复用 | fl_*: reflection summary used per draw (udc_note_draw), reused after checking against sh[]
 @implementation NvProg @end
 // 预热项：后台建好、等提交线程领用。vs / fs 强引用（pso 里只是裸指针，后台字典随任务结束释放）
 // Warm-up entry: built in the background, waiting to be taken by the submit thread. vs / fs are strong references (in pso they are only raw pointers, and the background dictionary is released when the task ends)
@@ -3047,7 +3047,7 @@ static inline void args_dirty_all(void) { memset(g_args_dirty, 1, sizeof g_args_
 #define RTS_LIGHT_HDR_REG 4   // 主通道片元着色器的簇头存储缓冲 fp_s0 | cluster-header storage buffer fp_s0 of the main-pass fragment shaders
 #define RTS_LIGHT_IDX_REG 5   // 簇槽位 → 光源记录 texel 下标 fp_s1 | cluster slot → light record texel index fp_s1
 static uint64_t rts_mask_rid(void); static id<MTLTexture> rts_mask_tex(void); static uint64_t rts_pos_gpu(void); static id<MTLBuffer> rts_pos_buf(void); static uint64_t rts_pmask_rid(void); static id<MTLTexture> rts_pmask_tex(void);
-static uint64_t rts_plidx_gpu(void); static id<MTLBuffer> rts_plidx_buf(void); static uint64_t rts_lcopy_rid(NvShader *sh, void **tex); static int rts_keep_raster(void); static void rts_export_state(NvProg *pr, int on);   // nvn_rtshadow.inc：光追阴影遮罩（没有时为 1x1 全亮） | nvn_rtshadow.inc: ray-traced shadow mask (1x1 fully lit when absent)
+static uint64_t rts_plidx_gpu(void); static id<MTLBuffer> rts_plidx_buf(void); static uint64_t rts_lcopy_rid(NvShader *sh, void **tex); static int rts_keep_raster(void); static void rts_export_state(NvProg *pr, int on); static void rts_export_done(void);   // nvn_rtshadow.inc：光追阴影遮罩（没有时为 1x1 全亮） | nvn_rtshadow.inc: ray-traced shadow mask (1x1 fully lit when absent)
 static inline void args_sync_dirty(void) {
     uint64_t reg = g_reg_gen, dirty = nvn_dirty_now();
     if (reg != g_args_reg_seen || dirty != g_args_dirty_seen) {
@@ -4970,6 +4970,7 @@ frz_plain:;
         if (di->count) enc_r_draw_indexed(en, mp, di->count, di->itype == 1 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32, gpu, ((__bridge id<MTLBuffer>)mb).length - mo,
                 di->instances ? di->instances : 1, di->base_vertex, di->base_instance);
     }
+    if (g_pso_noraster) rts_export_done();   // 光追阴影：导出绘制真编进去了 | ray-traced shadows: the export draw was actually encoded
     if (g_rt_range_pending) { PD("j rt_level_range pass=%llu vc=%u", g_stat_pass, (unsigned)(dw ? dw->count : di->count)); g_rt_range_pending=0; }
 }
 static nvn_hmap g_cps = {.klen = sizeof(void *)};
@@ -6350,7 +6351,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
         nshot = 0; const char *e = getenv("DM_NVN_SHOT"), *c = e ? strchr(e, ':') : NULL;
         if (c) { shot_path = c + 1; for (const char *q = e; q < c && nshot < 16; q = strchr(q, ',') ? strchr(q, ',') + 1 : c) shots[nshot++] = atol(q); }
     }
-    for (int i = 0; i < nshot; i++) if ((long)g_present_n == shots[i]) { char path[1024]; snprintf(path, sizeof path, shot_path, (int)g_present_n); mtl_finish_gpu(); shot(src, path, 1, crop); }
+    for (int i = 0; i < nshot; i++) if (shots[i] > 0 && (long)g_present_n >= shots[i]) { char path[1024]; snprintf(path, sizeof path, shot_path, (int)shots[i]); shots[i] = -shots[i]; mtl_finish_gpu(); shot(src, path, 1, crop); }   // ≥ 且只拍一次：出图计数被合并跳过时也不漏（文件名用请求的帧号） | ≥ and once only: not missed when the present count skips over it (the file name uses the requested number)
     pthread_mutex_lock(&g_shotq_mu);
     for (int i = 0; i < g_nshotq;) if (g_present_n >= g_shotq[i].frame) { mtl_finish_gpu(); shot(src, g_shotq[i].path, 1, crop); g_shotq[i] = g_shotq[--g_nshotq]; } else i++;
     pthread_mutex_unlock(&g_shotq_mu);

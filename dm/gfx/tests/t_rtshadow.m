@@ -200,6 +200,56 @@ int main(void) { @autoreleasepool {
     if (px(pm, gx_of(19.5) / 2, gy_of(0) / 2, 0) > 0.01f) FAIL("point light: ground x≈19.5 should be shadowed (%g)", px(pm, gx_of(19.5) / 2, gy_of(0) / 2, 0));
     if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 0) < 0.99f) FAIL("point light: ground x=−35 should be lit");
     if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 2) < 0.99f) FAIL("point light: unused channels stay lit");
-    puts("PASS t_rtshadow: MSL compiles, decode / BLAS / TLAS / sun trace / unproject / refit / GPU light picking / player-light copy / point light / soft blur checked on a synthetic scene");
+    // 镂空遮挡体（第四阶段）：判定库公共头 + 一个合成的「游戏片元着色器」（贴图 alpha < 阈值丢弃）+ 带 RTS_ALPHA 的追踪核一起编；方板 y=1、x∈[−1,1]、z∈[0,1]，
+    // 插值 locn 2 = (u, v) = ((x+1)/2, z)，贴图 4×1 左半 alpha 0、右半 1；竖直向上的射线：左半穿过、右半挡住（距离 1）；判定序号 ~0 的记录按不透明处理（全挡）
+    // Alpha-tested occluders (phase 4): the library's common head + a synthetic "game fragment shader" (discard when texture alpha < threshold) + the trace kernels with RTS_ALPHA compiled together; a square at y=1, x∈[−1,1], z∈[0,1],
+    // interpolant locn 2 = (u, v) = ((x+1)/2, z), a 4×1 texture with alpha 0 on the left half and 1 on the right; vertical rays upward: the left half passes, the right half blocks (distance 1); a record with index ~0 counts as opaque (all block)
+    {
+        const char *asrc =
+            "namespace rtsa_t { struct spvDescriptorSetBuffer0 { texture2d<float> tx [[id(0)]]; sampler sm [[id(1)]]; constant float4 *thr [[id(2)]]; }; struct main0_in { float4 m_2; };\n"
+            "static inline bool main0(thread const main0_in& in, constant spvDescriptorSetBuffer0& d, float4 gl_FragCoord) { float a = d.tx.sample(d.sm, in.m_2.xy, level(0.0)).w; if (a < d.thr->x) { return false; } if (!(gl_FragCoord.w > 0.0)) { return false; } return true; } }\n"
+            "static inline bool rts_alpha_eval(constant RtsAI &r, uint3 ix, float2 b, float4 fc) { switch (r.fs) { case 0: { rtsa_t::main0_in in; in.m_2 = rts_vl(r, ix, b, 2); return rtsa_t::main0(in, *(constant rtsa_t::spvDescriptorSetBuffer0 *)r.args, fc); } default: return true; } }\n";
+        const char *tk = "kernel void t_alpha(instance_acceleration_structure as [[buffer(0)]], device float2 *o [[buffer(1)]], constant RtsAI *ai [[buffer(3)]], uint i [[thread_position_in_grid]]) {\n"
+            "  if (i >= 64u) return; ray r; r.origin = float3(-1.0 + (float(i) + 0.5) / 32.0, 0.0, 0.5); r.direction = float3(0, 1, 0); r.min_distance = 0.0; r.max_distance = 10.0;\n"
+            "  float d1, d2; bool h1 = rts_hit(r, as, ai, true, d1), h2 = rts_hit(r, as, ai, false, d2); o[i] = float2(h1 ? 1.0 : 0.0, h2 ? d2 : -1.0); }\n";
+        NSString *src = [NSString stringWithFormat:@"#define RTS_ALPHA 1\n%s%s%s%s", k_rts_alpha_head, asrc, k_rts_msl, tk];
+        id<MTLLibrary> alib = [dev newLibraryWithSource:src options:nil error:&e]; if (!alib) FAIL("RTS_ALPHA library compile: %s", e.localizedDescription.UTF8String);
+        for (NSString *fn in @[@"rts_trace", @"rts_trace_soft", @"rts_ptrace", @"t_alpha"]) if (![dev newComputePipelineStateWithFunction:[alib newFunctionWithName:fn] error:&e]) FAIL("RTS_ALPHA pipeline %s: %s", fn.UTF8String, e.localizedDescription.UTF8String);
+        id<MTLComputePipelineState> ps_ta = [dev newComputePipelineStateWithFunction:[alib newFunctionWithName:@"t_alpha"] error:&e];
+        float qp[4][3] = {{-1, 1, 0}, {1, 1, 0}, {1, 1, 1}, {-1, 1, 1}}; float var[4][2][4];
+        for (int v = 0; v < 4; v++) { var[v][0][0] = qp[v][0]; var[v][0][1] = qp[v][1]; var[v][0][2] = qp[v][2]; var[v][0][3] = 1; var[v][1][0] = (qp[v][0] + 1) / 2; var[v][1][1] = qp[v][2]; var[v][1][2] = var[v][1][3] = 0; }
+        id<MTLBuffer> qpos = buf(qp, sizeof qp), qvar = buf(var, sizeof var), qout = buf(NULL, 64 * 8); float thr[4] = {0.5f, 0, 0, 0}; id<MTLBuffer> qthr = buf(thr, 16);
+        MTLTextureDescriptor *td2 = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:4 height:1 mipmapped:NO]; td2.usage = MTLTextureUsageShaderRead; td2.storageMode = MTLStorageModeShared;
+        id<MTLTexture> qtx = [dev newTextureWithDescriptor:td2]; uint8_t tp[16] = {255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 255, 255, 255, 255, 255}; [qtx replaceRegion:MTLRegionMake2D(0, 0, 4, 1) mipmapLevel:0 withBytes:tp bytesPerRow:16]; [resident addAllocation:qtx];
+        MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new]; sd.supportArgumentBuffers = YES; sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterNearest; id<MTLSamplerState> qs = [dev newSamplerStateWithDescriptor:sd];
+        uint64_t args[3] = {qtx.gpuResourceID._impl, qs.gpuResourceID._impl, qthr.gpuAddress}; id<MTLBuffer> qargs = buf(args, sizeof args);
+        typedef struct { float lvp[16]; float vp[4]; float dr[2]; uint32_t fs, stride; uint64_t args, var, ib; uint32_t isz, locmask; uint8_t slot[16]; } t_ai;   // 与 nvn_rtshadow.inc rts_ai 同布局 | same layout as rts_ai in nvn_rtshadow.inc
+        _Static_assert(sizeof(t_ai) == 144, "t_ai layout");
+        t_ai rec = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, {0, 0, 64, 64}, {0, 1}, 0, 2, qargs.gpuAddress, qvar.gpuAddress, ib.gpuAddress, 2, 1u << 2, {0}}; rec.slot[2] = 1;
+        id<MTLBuffer> qai = buf(&rec, sizeof rec);
+        MTLAccelerationStructureSizes qsz = [dev accelerationStructureSizesWithDescriptor:blas_desc(qpos, ib, 2, 1)]; id<MTLAccelerationStructure> qas = [dev newAccelerationStructureWithSize:qsz.accelerationStructureSize];
+        id<MTLBuffer> qinst = buf(NULL, sizeof(MTLIndirectAccelerationStructureInstanceDescriptor)); MTLIndirectAccelerationStructureInstanceDescriptor *qd = qinst.contents; memset(qd, 0, sizeof *qd);
+        qd->options = MTLAccelerationStructureInstanceOptionNonOpaque; qd->mask = 0xff; qd->userID = 0; qd->accelerationStructureID = qas.gpuResourceID; qd->transformationMatrix.columns[0].x = qd->transformationMatrix.columns[1].y = qd->transformationMatrix.columns[2].z = 1;
+        MTL4InstanceAccelerationStructureDescriptor *qtd = [MTL4InstanceAccelerationStructureDescriptor new]; qtd.instanceDescriptorType = MTLAccelerationStructureInstanceDescriptorTypeIndirect; qtd.instanceCount = 1;
+        qtd.instanceDescriptorStride = sizeof(MTLIndirectAccelerationStructureInstanceDescriptor); qtd.instanceDescriptorBuffer = (MTL4BufferRange){qinst.gpuAddress, qinst.length};
+        id<MTLAccelerationStructure> qtl = [dev newAccelerationStructureWithSize:[dev accelerationStructureSizesWithDescriptor:qtd].accelerationStructureSize];
+        [resident addAllocation:qas]; [resident addAllocation:qtl]; [resident commit];
+        for (int pass = 0; pass < 2; pass++) {
+            if (pass == 1) ((t_ai *)qai.contents)->fs = ~0u;   // 抓不到参数块的记录：当不透明 | a record whose argument block was not captured: opaque
+            if (run(^(id<MTL4ComputeCommandEncoder> ce) {
+                [ce buildAccelerationStructure:qas descriptor:blas_desc(qpos, ib, 2, 1) scratchBuffer:(MTL4BufferRange){scratch.gpuAddress, scr}];
+                [ce barrierAfterEncoderStages:MTLStageAccelerationStructure beforeEncoderStages:MTLStageAccelerationStructure visibilityOptions:MTL4VisibilityOptionDevice];
+                [ce buildAccelerationStructure:qtl descriptor:qtd scratchBuffer:(MTL4BufferRange){scratch.gpuAddress, scr}];
+                [ce barrierAfterEncoderStages:MTLStageAccelerationStructure beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                [ce setArgumentTable:at]; [ce setComputePipelineState:ps_ta]; [at setResource:qtl.gpuResourceID atBufferIndex:0]; [at setAddress:qout.gpuAddress atIndex:1]; [at setAddress:qai.gpuAddress atIndex:3];
+                [ce dispatchThreads:MTLSizeMake(64, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+            })) return 1;
+            const float *o = qout.contents;
+            for (int i = 0; i < 64; i++) { float x = -1.f + (i + 0.5f) / 32.f; int want = pass == 1 || x > 0;
+                if ((o[i * 2] > 0.5f) != want) FAIL("alpha %s: ray x=%.3f any-hit %g (want %d)", pass ? "opaque fallback" : "judge", x, o[i * 2], want);
+                if (want ? fabsf(o[i * 2 + 1] - 1.f) > 1e-3f : o[i * 2 + 1] >= 0) FAIL("alpha %s: ray x=%.3f closest %g", pass ? "opaque fallback" : "judge", x, o[i * 2 + 1]); }
+        }
+    }
+    puts("PASS t_rtshadow: MSL compiles, decode / BLAS / TLAS / sun trace / unproject / refit / GPU light picking / player-light copy / point light / soft blur / alpha-tested judge (RTS_ALPHA) checked on a synthetic scene");
     return 0;
 } }

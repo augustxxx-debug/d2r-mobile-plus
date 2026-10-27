@@ -71,3 +71,14 @@ static inline int rts_player_feed(rts_player_track *t, int rec, const float *pos
     if (!t->sure && t->frames >= 60 && t->moved > 4 * tol) t->sure = 1;   // 一秒以上偏移不变、相机累计走过的路远大于容差 | over a second of constant offset while the camera travelled well beyond the tolerance
     return t->sure;
 }
+// 太阳方向（指向太阳、y 朝上）：光源视投影（行向量，clip = p · L）下光线是「光源 x、y 不变」的方向 = 第 0 列 × 第 1 列（xyz 部分）。
+// 不能用第 2 列（深度梯度 = 等深面法线）：本作的阴影投影带剪切，两者差很多（Mac 实测营地：深度梯度 (0.33, 0.72, −0.61)，阴影整体偏转、栏杆影子落到了墙前）。返回 0 = 矩阵退化
+// Sun direction (toward the sun, y up): with the light view-projection (row vector, clip = p · L) light rays run where light x and y stay constant = column 0 × column 1 (xyz parts).
+// Column 2 (the depth gradient = normal of constant-depth planes) must not be used: this game's shadow projection is sheared and the two differ a lot (measured at the camp on the Mac: depth gradient (0.33, 0.72, −0.61), shadows rotated, rail shadows landing in front of the wall). Returns 0 = degenerate matrix
+static inline int rts_sun_from_lvp(const float *L, float sun[3]) {
+    double a[3] = {L[0], L[4], L[8]}, b[3] = {L[1], L[5], L[9]};
+    double d[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    double n = sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]); if (!(n > 0)) return 0;
+    double s = (d[1] > 0 ? 1.0 : -1.0) / n; for (int i = 0; i < 3; i++) sun[i] = (float)(d[i] * s);
+    return 1;
+}

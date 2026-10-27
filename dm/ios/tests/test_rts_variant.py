@@ -123,3 +123,72 @@ def test_fresh_checks_version_note(tmp_path):
     (tmp_path / 'k_rt.json').write_text(json.dumps({'notes': [rv.VERSION, 'x']}), encoding='utf-8')
     (tmp_path / 'o_rt.json').write_text(json.dumps({'notes': ['rts_variant 1']}), encoding='utf-8')
     assert rv.fresh('k', '_rt') and not rv.fresh('o', '_rt') and not rv.fresh('missing', '_rt')
+
+
+VS_VAR = VS.replace('struct main0_out { float4 gl_Position [[position, invariant]]; };',
+                    'struct main0_out\n{\n    float4 m_39 [[user(locn1)]];\n    float2 m_37 [[user(locn2)]];\n    uint4 m_9 [[user(locn5), flat]];\n    float4 gl_Position [[position, invariant]];\n};')
+
+FS_ALPHA = '''#include <metal_stdlib>
+using namespace metal;
+struct _16 { float4 _m0[4]; };
+struct spvDescriptorSetBuffer0
+{
+    constant _16* fp_c7 [[id(0)]];
+    texture2d<float> fp_t_cb196610_1056806E [[id(1)]];
+    sampler fp_t_cb196610_1056806ESmplr [[id(2)]];
+};
+struct main0_in
+{
+    float4 m_29 [[user(locn2)]];
+};
+fragment void main0(main0_in in [[stage_in]], constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]], float4 gl_FragCoord [[position]])
+{
+    float2 _94 = float2(in.m_29.x * gl_FragCoord.w, in.m_29.y);
+    float _56 = spvDescriptorSet0.fp_t_cb196610_1056806E.sample(spvDescriptorSet0.fp_t_cb196610_1056806ESmplr, select(_94, float2(0.0), isnan(_94))).w;
+    bool _60 = _56 < (*spvDescriptorSet0.fp_c7)._m0[0].x;
+    if (!_60)
+    {
+        return;
+    }
+    discard_fragment();
+}
+'''
+
+
+def test_vertex_var_exports_clip_position_and_float_interpolants():
+    out, aid, locs = rv.transform_var(VS_VAR)
+    assert aid == 2 and 'device float4* rts_var [[id(2)]];' in out
+    assert locs == [1, 2]   # flat / 非浮点的 locn5 不导出 | the flat / non-float locn5 is not exported
+    body = out[out.index('vertex void main0('):]
+    assert 'uint rts_i = (rts_vid - rts_bv) * 3u;' in body   # 步长 = 1 + 2 个插值 | stride = 1 + 2 interpolants
+    assert 'spvDescriptorSet0.rts_var[rts_i] = out.gl_Position;' in body
+    assert 'spvDescriptorSet0.rts_var[rts_i + 1] = out.m_39;' in body and 'spvDescriptorSet0.rts_var[rts_i + 2] = float4(out.m_37, 0.0, 0.0);' in body
+    assert body.rstrip().endswith('return;\n}') and 'return out;' not in body
+
+
+def test_alpha_fragment_becomes_bool_judge():
+    src, locs, fill = rv.alpha_fn('k1', FS_ALPHA)
+    assert locs == [2] and fill == ['in.m_29 = rts_vl(r, ix, b, 2);']
+    assert src.startswith('namespace rtsa_k1 {') and 'static inline bool main0(thread const main0_in& in, constant spvDescriptorSetBuffer0& spvDescriptorSet0, float4 gl_FragCoord)' in src
+    assert 'discard_fragment' not in src and 'return false;' in src and 'return true;' in src and 'return;' not in src
+    assert ', level(0.0)).w' in src   # 计算核没有隐式 LOD | no implicit LOD in a compute kernel
+    assert '[[user(' not in src and '#include' not in src   # 输入结构去掉属性；头只在库开头一次 | input attributes stripped; the include only once at the top of the library
+
+
+def test_alpha_fragment_unsupported_shapes_raise():
+    for bad, why in ((FS_ALPHA.replace('discard_fragment();', 'float q = dfdx(_56);'), 'no discard'), (FS_ALPHA.replace('in.m_29.y);', 'dfdx(in.m_29.y));'), 'derivative'),
+                     (FS_ALPHA.replace('float4 m_29 [[user(locn2)]];', 'uint4 m_29 [[user(locn2), flat]];'), 'flat input')):
+        try: rv.alpha_fn('k2', bad)
+        except ValueError: continue
+        raise AssertionError('alpha_fn accepted a shader with ' + why)
+
+
+def test_alpha_library_compiles_and_dispatches(tmp_path):
+    item = ('k1',) + rv.alpha_fn('k1', FS_ALPHA)
+    lib = rv.alpha_lib([item])
+    assert 'case 0: { rtsa_k1::main0_in in; in.m_29 = rts_vl(r, ix, b, 2); return rtsa_k1::main0(in, *(constant rtsa_k1::spvDescriptorSetBuffer0 *)r.args, fc); }' in lib
+    assert 'struct RtsAI' in rv.ALPHA_HEAD and 'rts_vl' in rv.ALPHA_HEAD   # 公共头从 nvn_rtshadow_msl.h 抽出 | the common head is extracted from nvn_rtshadow_msl.h
+    if os.path.exists('/usr/bin/xcrun'):
+        rv.MAC = True
+        try: assert rv.compile_check(lib) is None
+        finally: rv.MAC = os.environ.get('RTS_TARGET') == 'mac'

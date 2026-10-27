@@ -25,8 +25,8 @@ SRC = OUT = None; WANT = set()   # 命令行在文件末尾赋值；测试直接
 CASCADES = ('fp_t_cb196610_105980A8', 'fp_t_cb196610_105980AA')
 VERSION = 'rts_variant 5'   # 改了变换规则就升版本：旧产物全部重出 | bump when the transformation changes: every old product is regenerated
 SKIN_KEYS = ('0fa4eb7559f1637a', '1d97d33ab66abcba', '3deaf68fd65b5298', '4dffa355f2fbcdaf', '54c93fa22abff9ee', '64dd7d022f3fae39', '67e2ebc28c830f44', 'add86ee8e20f89b9', 'b3ae9be5cc670f35', 'fbf6dc1873a449e9')
-def fresh(key, suffix):   # 产物已有且版本一致 | product present with the same version
-    try: return VERSION in json.load(open(os.path.join(OUT, key + suffix + '.json'))).get('notes', [])
+def fresh(key, suffix, ver=None):   # 产物已有且版本一致 | product present with the same version
+    try: return (ver or VERSION) in json.load(open(os.path.join(OUT, key + suffix + '.json'))).get('notes', [])
     except Exception: return False
 def add_binding(msl):   # 返回 (msl, 新 arg_id)；参数块加一行 | returns (msl, new arg_id); one line added to the argument block
     ids = [int(x) for x in re.findall(r'\[\[id\((\d+)\)\]\]', msl)]; aid = max(ids) + 1
@@ -45,6 +45,145 @@ def transform_pos(msl):   # 顶点：写裁剪坐标到 rts_pos | vertex: write 
     msl = msl[:i] + '    spvDescriptorSet0.rts_pos[rts_vid - rts_bv] = out.gl_Position;\n    return;\n}' + msl[i + len('    return out;\n}'):]
     if msl.count('return out;'): raise ValueError('入口中途还有 return out')
     return msl, aid
+# 镂空遮挡体进光追（第四阶段）：阴影通道的镂空绘制 = 顶点着色器出插值量 + 片元着色器按贴图 alpha / 抖动淡出丢弃。光追里在候选命中处复现它：
+#   顶点侧 <键>_var：入口末尾把裁剪坐标和每个浮点插值输出写到 rts_var[(vertex_id − base_vertex) × 步长 + k]（k = 0 裁剪坐标，k = 1… 按 main0_out 声明顺序），json 记 rts_var_locs（各输出的 locn）；
+#   片元侧：rts_alpha.metal 把每个镂空片元着色器原样放进自己的命名空间，入口改成 bool 函数（discard_fragment → false、return → true、采样补 level(0)），
+#   再出一个按序号分派的 rts_alpha_eval(序号, 按 locn 排的插值量, 参数块快照, gl_FragCoord)；翻译层运行时把它和追踪核一起编译。
+# Alpha-tested occluders in the ray tracing (phase 4): an alpha-tested shadow draw = the vertex shader's interpolants + the fragment shader discarding by texture alpha / dither fade. The ray tracing replays it at each candidate hit:
+#   vertex side <key>_var: at the end of the entry the clip position and every float interpolant are written to rts_var[(vertex_id - base_vertex) * stride + k] (k = 0 clip position, k = 1... in main0_out declaration order); the json records rts_var_locs (the locn of each output);
+#   fragment side: rts_alpha.metal puts every alpha-tested fragment shader verbatim into its own namespace with the entry turned into a bool function (discard_fragment → false, return → true, samples get level(0)),
+#   plus rts_alpha_eval(index, interpolants by locn, argument-block snapshot, gl_FragCoord) dispatching by index; the translation layer compiles it together with the trace kernels at run time.
+VAR_VERSION = 'rts_var 2'
+VAR_MAX_OUT = 4   # 只给插值输出 ≤ 4 个的顶点着色器出 _var（阴影通道的都是这类；主通道的 10+ 个输出不需要） | _var only for vertex shaders with ≤ 4 interpolant outputs (the shadow-pass ones; main-pass shaders with 10+ outputs are not needed)
+FLOATV = {'float': 'float4(%s, 0.0, 0.0, 0.0)', 'float2': 'float4(%s, 0.0, 0.0)', 'float3': 'float4(%s, 0.0)', 'float4': '%s'}
+def entry_params(msl, kind):   # 入口 "<kind> <ret> main0(" 的参数表区间 (左括号, 右括号) | the parameter list span (open, close) of the "<kind> <ret> main0(" entry
+    k = re.search(r'\n%s [\w:<>, ]+ main0\(' % kind, msl)
+    if not k: raise ValueError('没找到 %s 入口' % kind)
+    o = k.end() - 1; return k, o, strip_call(msl, o)
+def var_outputs(msl):   # main0_out 里的浮点插值输出 [(成员名, 类型, locn)]；非浮点 / flat 的不导出 | float interpolant outputs of main0_out [(member, type, locn)]; non-float / flat ones are not exported
+    m = re.search(r'struct main0_out\n\{\n(.*?)\n\};', msl, re.S)
+    if not m: raise ValueError('没找到 main0_out')
+    outs = []
+    for t, nm, loc, rest in re.findall(r'^\s*(\w+) (\w+) \[\[user\(locn(\d+)\)([^\]]*)\]\];', m.group(1), re.M):
+        if t in FLOATV and 'flat' not in rest: outs.append((nm, t, int(loc)))
+    return outs
+def transform_var(msl):   # 顶点：写裁剪坐标 + 浮点插值输出到 rts_var；返回 (msl, arg_id, locs) | vertex: write the clip position + float interpolants into rts_var; returns (msl, arg_id, locs)
+    outs = var_outputs(msl); stride = 1 + len(outs)
+    msl, aid, m = add_binding(msl)
+    msl = msl[:m.end(1)] + '\n    device float4* rts_var [[id(%d)]];' % aid + msl[m.end(1):]
+    k, o, c = entry_params(msl, 'vertex'); params = msl[o + 1:c]
+    vid = re.search(r'uint (\w+) \[\[vertex_id\]\]', params); bv = re.search(r'uint (\w+) \[\[base_vertex\]\]', params)
+    extra = ([] if vid else ['uint rts_vid [[vertex_id]]']) + ([] if bv else ['uint rts_bv [[base_vertex]]'])
+    vid = vid.group(1) if vid else 'rts_vid'; bv = bv.group(1) if bv else 'rts_bv'
+    msl = msl[:k.start()] + '\nvertex void main0(' + params + ''.join(', ' + e for e in extra) + msl[c:]   # 关光栅化要求 void 返回（同 _pos） | rasterization off needs a void return (as _pos)
+    i = msl.rfind('    return out;\n}')
+    if i < 0: raise ValueError('没找到入口末尾的 return out')
+    w = '    uint rts_i = (%s - %s) * %du;\n    spvDescriptorSet0.rts_var[rts_i] = out.gl_Position;\n' % (vid, bv, stride)
+    for n, (nm, t, loc) in enumerate(outs): w += '    spvDescriptorSet0.rts_var[rts_i + %d] = %s;\n' % (n + 1, FLOATV[t] % ('out.' + nm))
+    msl = msl[:i] + w + '    return;\n}' + msl[i + len('    return out;\n}'):]
+    if msl.count('return out;'): raise ValueError('入口中途还有 return out')
+    return msl, aid, [loc for _, _, loc in outs]
+ALPHA_BAN = ('dfdx', 'dfdy', 'fwidth', '[[front_facing]]', '[[sample_id]]', '[[sample_mask]]', '[[depth(', '[[color(', 'simd_', 'quad_', 'threadgroup', '.sample_compare(')
+TEX_COORD_ARGS = {'texture2d': 2, 'texture3d': 2, 'texturecube': 2, 'texture2d_array': 3, 'texturecube_array': 3, 'depth2d': 2, 'depth2d_array': 3}   # sample(采样器, 坐标[, 层]) 之后插 level | level goes after sample(sampler, coord[, layer])
+def split_args(s):   # 顶层逗号切参数 | split arguments at top-level commas
+    out, d, cur = [], 0, ''
+    for ch in s:
+        if ch in '([': d += 1
+        elif ch in ')]': d -= 1
+        if ch == ',' and d == 0: out.append(cur); cur = ''
+        else: cur += ch
+    return out + [cur]
+def alpha_fn(key, msl):   # 镂空片元着色器 → (命名空间源码, 输入 locs)；不支持的抛 ValueError | alpha-tested fragment shader → (namespaced source, input locs); unsupported ones raise ValueError
+    if 'discard_fragment()' not in msl: raise ValueError('不丢弃')
+    for b in ALPHA_BAN:
+        if b in msl: raise ValueError('含 %s' % b.strip())
+    k, o, c = entry_params(msl, 'fragment')
+    if not msl[k.start():o].startswith('\nfragment void main0'): raise ValueError('入口不是 void')
+    params = msl[o + 1:c]
+    for p in split_args(params):
+        p = p.strip()
+        if not (p.startswith('main0_in in [[stage_in]]') or p.startswith('constant spvDescriptorSetBuffer0& spvDescriptorSet0 [[buffer(0)]]') or p == 'float4 gl_FragCoord [[position]]'): raise ValueError('入口参数 %s' % p)
+    u = msl.rfind('using namespace metal;'); pre = msl[u + len('using namespace metal;'):k.start()] if u >= 0 else ''
+    pre = '\n'.join(l for l in pre.split('\n') if not l.startswith(('#include', '#pragma')))
+    locs = []
+    mi = re.search(r'struct main0_in\n\{\n(.*?)\n\};', pre, re.S)
+    fill = []
+    if mi:
+        mem = []
+        for line in mi.group(1).split('\n'):
+            g = re.match(r'\s*(\w+) (\w+) \[\[user\(locn(\d+)\)([^\]]*)\]\];', line)
+            if not g or g.group(1) not in FLOATV or 'flat' in g.group(4): raise ValueError('输入 %s' % line.strip())
+            t, nm, loc = g.group(1), g.group(2), int(g.group(3)); locs.append(loc); mem.append('    %s %s;' % (t, nm))
+            fill.append('in.%s = rts_vl(r, ix, b, %d)%s;' % (nm, loc, {'float': '.x', 'float2': '.xy', 'float3': '.xyz', 'float4': ''}[t]))
+        pre = pre[:mi.start()] + 'struct main0_in\n{\n' + '\n'.join(mem) + '\n};' + pre[mi.end():]
+    else: pre += '\nstruct main0_in { int rts_unused; };\n'
+    texs = dict((nm, t) for t, nm in re.findall(r'(\w+)<\w+> (\w+) \[\[id\(\d+\)\]\];', pre))
+    if 'struct spvDescriptorSetBuffer0' not in pre: pre += '\nstruct spvDescriptorSetBuffer0 { int rts_unused; };\n'
+    body = msl[c + 1:]; bo = body.index('{'); bc = strip_braces(body, bo); body = body[bo + 1:bc]
+    # 采样补 level(0)：计算核里没有隐式 LOD | samples get level(0): there is no implicit LOD in a compute kernel
+    pos = 0
+    while True:
+        g = re.compile(r'spvDescriptorSet0\.(\w+)\.sample\(').search(body, pos)
+        if not g: break
+        o2 = g.end() - 1; c2 = strip_call(body, o2); args = split_args(body[o2 + 1:c2]); t = texs.get(g.group(1))
+        if t not in TEX_COORD_ARGS: raise ValueError('采样 %s 的贴图类型 %s' % (g.group(1), t))
+        if any(a.strip().startswith(('level(', 'gradient')) for a in args): pos = c2; continue
+        args = [a for a in args if not a.strip().startswith('bias(')]
+        n = TEX_COORD_ARGS[t]; args = args[:n] + [' level(0.0)'] + args[n:]
+        rep = ','.join(args); body = body[:o2 + 1] + rep + body[c2:]; pos = o2 + 1 + len(rep)
+    body = body.replace('discard_fragment();', 'return false;').replace('return;', 'return true;')
+    ns = 'rtsa_' + key
+    src = 'namespace %s {\n%s\nstatic inline bool main0(thread const main0_in& in, constant spvDescriptorSetBuffer0& spvDescriptorSet0, float4 gl_FragCoord)\n{%s    return true;\n}\n}\n' % (ns, pre.strip('\n'), body)
+    return src, locs, fill
+def strip_braces(s, start):   # start 指向 "{"；返回配对的 "}" 下标 | start points at "{"; returns the index of the matching "}"
+    d = 0
+    for i in range(start, len(s)):
+        if s[i] == '{': d += 1
+        elif s[i] == '}':
+            d -= 1
+            if d == 0: return i
+    raise ValueError('花括号不配对')
+def alpha_head():   # 判定库公共头：从 nvn_rtshadow_msl.h 的 k_rts_alpha_head 原样抽出（翻译层运行时拼的是同一份） | the library's common head: extracted verbatim from k_rts_alpha_head in nvn_rtshadow_msl.h (the translation layer prepends the very same text at run time)
+    import ast
+    h = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../nvn/nvn_rtshadow_msl.h'), encoding='utf-8').read()
+    i = h.index('static const char *k_rts_alpha_head ='); j = h.index(';\n', i)
+    return ''.join(ast.literal_eval(q) for q in re.findall(r'^"(?:[^"\\]|\\.)*"', h[i:j], re.M))
+ALPHA_HEAD = alpha_head()
+def alpha_lib(items):   # items = [(键, 命名空间源码, locs, 填充语句)] → rts_alpha.metal 源码 | items = [(key, namespaced source, locs, fill statements)] → rts_alpha.metal source
+    out = ['// 光追镂空遮挡体判定库（%s 生成，勿手改）：序号 = rts_alpha.json 的 fs 下标；RtsAI / rts_vl 由翻译层拼在前面（nvn_rtshadow_msl.h k_rts_alpha_head） | ray-traced alpha-tested occluder library (generated by %s, do not edit): index = position in rts_alpha.json fs; RtsAI / rts_vl are prepended by the translation layer (k_rts_alpha_head in nvn_rtshadow_msl.h)\n' % (VAR_VERSION, VAR_VERSION), '#include <metal_stdlib>\nusing namespace metal;\n']
+    out += [s for _, s, _, _ in items]
+    out.append('static inline bool rts_alpha_eval(constant RtsAI &r, uint3 ix, float2 b, float4 fc)\n{\n    switch (r.fs)\n    {\n')
+    for i, (key, _, _, fill) in enumerate(items):
+        out.append('    case %d: { rtsa_%s::main0_in in; %s return rtsa_%s::main0(in, *(constant rtsa_%s::spvDescriptorSetBuffer0 *)r.args, fc); }\n' % (i, key, ' '.join(fill), key, key))
+    out.append('    default: return true;\n    }\n}\n')
+    return ''.join(out)
+ALPHA_PROBE = '\nkernel void rts_alpha_probe(constant RtsAI *r [[buffer(0)]], device uint *o [[buffer(1)]], uint i [[thread_position_in_grid]]) { o[i] = rts_alpha_eval(r[i], uint3(i), float2(0.25), float4(i)); }\n'   # 编译检查用：让每个分支都真正生成代码 | for the compile check: makes every branch actually generate code
+def compile_check(src):   # 编得过返回 None，否则返回错误文本 | None when it compiles, else the error text
+    with tempfile.TemporaryDirectory() as td:
+        mp, ap = os.path.join(td, 'a.metal'), os.path.join(td, 'a.air'); open(mp, 'w').write(ALPHA_HEAD + src + ALPHA_PROBE)
+        cmd = (['xcrun', '-sdk', 'macosx', 'metal', '-c'] if MAC else list(ios_metal.METAL)) + [mp, '-o', ap]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        return None if r.returncode == 0 else (r.stderr or r.stdout)[-600:]
+def build_alpha(keys):   # 全部镂空片元着色器 → rts_alpha.metal / .json（单个编不过的剔除，记进 json） | every alpha-tested fragment shader → rts_alpha.metal / .json (ones that fail to compile alone are dropped and recorded in the json)
+    items, skipped = [], {}
+    for key in keys:
+        try:
+            j = json.load(open(os.path.join(SRC, key + '_b.json')))
+            if j.get('stage') not in ('ps', 'fs'): continue
+            msl = open(os.path.join(SRC, key + '_b.metal')).read()
+            if 'discard_fragment()' not in msl or '[[color(' in msl: continue
+            src, locs, fill = alpha_fn(key, msl)
+            if len(locs) > VAR_MAX_OUT: skipped[key] = '输入 %d 个' % len(locs); continue
+            items.append((key, src, locs, fill))
+        except Exception as e: skipped[key] = str(e)[:80]
+    def ok(it): return it, compile_check(alpha_lib([it]))
+    with cf.ThreadPoolExecutor(8) as ex: res = list(ex.map(ok, items))
+    good = [it for it, err in res if not err]; skipped.update({it[0]: '编不过 ' + err.split('\n')[0][:80] for it, err in res if err})
+    src = alpha_lib(good); err = compile_check(src)
+    if err: raise RuntimeError('rts_alpha.metal 整体编不过：' + err)
+    open(os.path.join(OUT, 'rts_alpha.metal'), 'w').write(src)
+    json.dump({'version': VAR_VERSION, 'fs': [{'key': k, 'locs': l} for k, _, l, _ in good], 'skipped': skipped}, open(os.path.join(OUT, 'rts_alpha.json'), 'w'), indent=1, ensure_ascii=False)
+    return len(good), len(skipped)
 def strip_call(s, start):   # start 指向 "sample_compare(" 的左括号；返回右括号下标 | start points at the "(" of "sample_compare("; returns the index of the matching ")"
     depth = 0
     for i in range(start, len(s)):
@@ -110,10 +249,10 @@ MAC_RECORD = 'xcrun -sdk macosx metal -c; xcrun -sdk macosx metallib'   # 同 dm
 def mac_compile(msl, air, lib):
     subprocess.run(['xcrun', '-sdk', 'macosx', 'metal', '-c', msl, '-o', air], check=True)
     subprocess.run(['xcrun', '-sdk', 'macosx', 'metallib', air, '-o', lib], check=True)
-def emit(key, suffix, out, j, binding, note):
+def emit(key, suffix, out, j, binding, note, ver=None):
     j['key'] = key + suffix
     if binding: j['bindings'].append(binding)
-    j['chain_metal'] = MAC_RECORD if MAC else ios_metal.RECORD; j['notes'] = [n for n in j.get('notes', []) if not n.startswith('rts_variant')] + [VERSION, note]
+    j['chain_metal'] = MAC_RECORD if MAC else ios_metal.RECORD; j['notes'] = [n for n in j.get('notes', []) if not n.startswith(('rts_variant', 'rts_var'))] + [ver or VERSION, note]
     with tempfile.TemporaryDirectory() as td:
         mp, ap = os.path.join(td, key + suffix + '.metal'), os.path.join(td, key + suffix + '.air'); open(mp, 'w').write(out)
         try: (mac_compile if MAC else ios_metal.compile)(mp, ap, os.path.join(OUT, key + suffix + '.metallib'))
@@ -122,11 +261,21 @@ def emit(key, suffix, out, j, binding, note):
     return 'ok'
 def one(key):
     j = json.load(open(os.path.join(SRC, key + '_b.json'))); msl = open(os.path.join(SRC, key + '_b.metal')).read()
-    if j.get('stage') in ('vs', 'vp', 'vertex') and key in SKIN_KEYS:
-        if fresh(key, '_pos'): return key, 'fresh'
-        out, aid = transform_pos(msl)
-        r = emit(key, '_pos', out, j, {'msl_name': 'rts_pos', 'msl_type': 'device float4*', 'arg_id': aid, 'kind': 'rtpos', 'reg': -1}, 'rt skinned position export: clip position → rts_pos')
-        return key, r + (' pos aid %d' % aid if r == 'ok' else '')
+    if j.get('stage') in ('vs', 'vp', 'vertex'):
+        rs = []
+        if key in SKIN_KEYS and not fresh(key, '_pos'):
+            out, aid = transform_pos(msl)
+            r = emit(key, '_pos', out, json.loads(json.dumps(j)), {'msl_name': 'rts_pos', 'msl_type': 'device float4*', 'arg_id': aid, 'kind': 'rtpos', 'reg': -1}, 'rt skinned position export: clip position → rts_pos')
+            rs.append(r + (' pos aid %d' % aid if r == 'ok' else ''))
+        try: nout = len(var_outputs(msl)) if '\nvertex ' in msl else 99
+        except ValueError: nout = 99
+        if nout <= VAR_MAX_OUT and not fresh(key, '_var', VAR_VERSION):
+            try:
+                out, aid, locs = transform_var(msl); jv = json.loads(json.dumps(j)); jv['rts_var_locs'] = locs
+                r = emit(key, '_var', out, jv, {'msl_name': 'rts_var', 'msl_type': 'device float4*', 'arg_id': aid, 'kind': 'rtvar', 'reg': -1}, 'rt alpha occluder export: clip position + interpolants %s → rts_var' % locs, VAR_VERSION)
+                rs.append(r + (' var aid %d locs %s' % (aid, locs) if r == 'ok' else ''))
+            except ValueError as e: rs.append('varskip %s' % e)
+        return key, '; '.join(rs) if rs else 'fresh'
     if j.get('stage') not in ('ps', 'fs'): return key, 'skip'
     if not any('spvDescriptorSet0.' + c + '.sample_compare(' in msl for c in CASCADES): return key, 'skip'
     if fresh(key, '_rt'): return key, 'fresh'
@@ -142,4 +291,6 @@ if __name__ == '__main__':
     res = {}
     with cf.ThreadPoolExecutor(8) as ex:
         for key, r in ex.map(one, keys): res[r.split()[0]] = res.get(r.split()[0], 0) + 1; (print(key, r) if not r.startswith(('skip', 'fresh')) else None)
+    na, ns = build_alpha(sorted(f[:-8] for f in os.listdir(SRC) if f.endswith('_b.metal')))
+    print('镂空判定库 %d 个片元着色器（剔除 %d）' % (na, ns))
     print('汇总', res)

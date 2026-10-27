@@ -1,6 +1,11 @@
 // 光追阴影的 Metal 计算核与合成着色器源（nvn_rtshadow.inc 运行时编译；dm/gfx/tests/t_rtshadow.m 在 Mac 上编译并跑同一份）
 // Metal compute kernels and compositing shaders of the ray-traced shadows (compiled at run time by nvn_rtshadow.inc; dm/gfx/tests/t_rtshadow.m compiles and runs the same source on the Mac)
 #pragma once
+// 镂空判定库的公共头（翻译层拼在 rts_alpha.metal 前面；rts_variant.py 编译检查时从本文件抽出同一份）：判定记录与按 locn 取重心插值量 | Common head of the alpha judge library (prepended to rts_alpha.metal by the translation layer; rts_variant.py extracts this very text for its compile check): the judge record and the barycentric fetch of one interpolant by locn
+static const char *k_rts_alpha_head =
+"#include <metal_stdlib>\nusing namespace metal;\n"
+"struct RtsAI { float4x4 lvp; float4 vp; float2 dr; uint fs; uint stride; constant uchar *args; device const float4 *var; device const uchar *ib; uint isz; uint locmask; uchar slot[16]; };\n"
+"static inline float4 rts_vl(constant RtsAI &r, uint3 ix, float2 b, uint l) { uint s = r.slot[l]; return (1.0 - b.x - b.y) * r.var[ix.x * r.stride + s] + b.x * r.var[ix.y * r.stride + s] + b.y * r.var[ix.z * r.stride + s]; }\n";
 static const char *k_rts_msl =
 "#include <metal_stdlib>\n#include <metal_raytracing>\nusing namespace metal; using namespace metal::raytracing;\n"
 // 位置解码：fmt 0x2b SNORM16x4、0x2e FLOAT4、0x29 HALF4 都是 xyz · exp2(w · 13)；0x22 FLOAT3 原样 | Position decode
@@ -12,30 +17,58 @@ static const char *k_rts_msl =
 "  else { device const float *s = (device const float *)p; dst[i] = packed_float3(s[0], s[1], s[2]); return; }\n"
 "  dst[i] = packed_float3(f.xyz * exp2(f.w * 13.0)); }\n"
 // 蒙皮导出的裁剪坐标 → 世界坐标（光源投影是正交的，逆矩阵精确） | skinned clip positions → world (the light projection is orthographic, the inverse is exact)
-"struct U { float4x4 inv; uint n; };\n"
+// stride：每顶点几个 float4（蒙皮 _pos = 1；镂空 _var = 1 + 插值输出数，裁剪坐标在第 0 个） | stride: float4s per vertex (skinned _pos = 1; alpha-tested _var = 1 + interpolant outputs, the clip position first)
+"struct U { float4x4 inv; uint n; uint stride; };\n"
 "kernel void rts_unproj(device const float4 *src [[buffer(0)]], device packed_float3 *dst [[buffer(1)]], constant U &u [[buffer(2)]], uint i [[thread_position_in_grid]]) {\n"
-"  if (i >= u.n) return; float4 w = u.inv * src[i]; dst[i] = packed_float3(w.xyz / w.w); }\n"
+"  if (i >= u.n) return; float4 w = u.inv * src[i * max(u.stride, 1u)]; float3 p = w.xyz / w.w;\n"
+"  dst[i] = packed_float3(all(isfinite(p)) && all(abs(p) < 1e7) ? p : float3(0)); }\n"   // 防坏数据：非有限 / 离谱的点收成原点（退化三角形），不让 refit 出坏包围盒 | guard against bad data: non-finite / absurd points collapse to the origin (degenerate triangles) so the refit never yields broken bounds
+// 遮挡判定。RTS_ALPHA（翻译层把 rts_alpha.metal 拼在前面一起编）：镂空实例是非不透明的，查询循环在每个候选三角形处按顶点导出的插值量（重心插值）、
+// 阴影图像素坐标（命中点 × 该次绘制的光源视投影 → 视口）复现游戏原片元着色器（rts_alpha_eval），不丢弃才算挡住；不透明实例直接提交。不带 RTS_ALPHA 时全按不透明（原路径）。
+// Occlusion test. RTS_ALPHA (the translation layer prepends rts_alpha.metal and compiles both together): alpha-tested instances are non-opaque; the query loop replays the game's own fragment shader (rts_alpha_eval) at each candidate triangle
+// from the exported interpolants (barycentric) and the shadow-map pixel (hit point × that draw's light view-projection → viewport); it blocks only when not discarded. Opaque instances commit by themselves. Without RTS_ALPHA everything is opaque (the original path).
+"#ifdef RTS_ALPHA\n"
+"#ifndef RTS_ALPHA_DBG\n#define RTS_ALPHA_DBG 0\n#endif\n"
+"static bool rts_ai_pass(constant RtsAI *ai, uint u, uint prim, float2 b, float3 p) {\n"
+"  constant RtsAI &r = ai[u]; uint i0 = prim * 3, i1 = i0 + 1, i2 = i0 + 2;\n"
+"#if RTS_ALPHA_DBG == 1\n  return true;\n#endif\n"
+"  if (r.isz == 2) { device const ushort *x = (device const ushort *)r.ib; i0 = x[i0]; i1 = x[i1]; i2 = x[i2]; } else if (r.isz == 4) { device const uint *x = (device const uint *)r.ib; i0 = x[i0]; i1 = x[i1]; i2 = x[i2]; }\n"
+"  uint3 ix = uint3(i0, i1, i2);\n"
+"  float4 c = r.lvp * float4(p, 1.0); float3 n = c.xyz / c.w;\n"
+"  float4 fc = float4(floor(r.vp.x + (n.x * 0.5 + 0.5) * r.vp.z) + 0.5, floor(r.vp.y + (0.5 - 0.5 * n.y) * r.vp.w) + 0.5, r.dr.x + n.z * (r.dr.y - r.dr.x), 1.0 / c.w);\n"
+"#if RTS_ALPHA_DBG == 2\n  return rts_vl(r, ix, b, 2).x > -1e30 || fc.x > 0.0;\n#endif\n"
+"#ifdef RTS_ALPHA_ONLY\n  if (r.fs >= 32u || !((RTS_ALPHA_ONLY >> r.fs) & 1u)) return true;\n#endif\n"
+"  return rts_alpha_eval(r, ix, b, fc); }\n"
+"static bool rts_hit(ray ry, instance_acceleration_structure as, constant RtsAI *ai, bool any, thread float &dist) {\n"
+"  intersection_params ip; ip.accept_any_intersection(any); ip.assume_geometry_type(geometry_type::triangle);\n"
+"  intersection_query<triangle_data, instancing> q; q.reset(ry, as, 0xffu, ip);\n"
+"  while (q.next()) if (q.get_candidate_intersection_type() == intersection_type::triangle && rts_ai_pass(ai, q.get_candidate_user_instance_id(), q.get_candidate_primitive_id(), q.get_candidate_triangle_barycentric_coord(), ry.origin + ry.direction * q.get_candidate_triangle_distance())) q.commit_triangle_intersection();\n"
+"  bool h = q.get_committed_intersection_type() != intersection_type::none; dist = h ? q.get_committed_distance() : 0.0; return h; }\n"
+"#define RTS_AI , constant RtsAI *ai [[buffer(3)]]\n#define RTS_HIT(ry, as, any, d) rts_hit(ry, as, ai, any, d)\n"
+"#else\n"
+"static bool rts_hit0(ray ry, instance_acceleration_structure as, bool any, thread float &dist) {\n"
+"  intersector<instancing> is; is.accept_any_intersection(any); is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque);\n"
+"  intersection_result<instancing> h = is.intersect(ry, as, 0xffu); dist = h.distance; return h.type != intersection_type::none; }\n"
+"#define RTS_AI\n#define RTS_HIT(ry, as, any, d) rts_hit0(ry, as, any, d)\n"
+"#endif\n"
 "struct K { float4x4 invVP; float4 sun; uint2 size; float bias; float pad; };\n"
-"kernel void rts_trace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant K &k [[buffer(1)]], uint2 g [[thread_position_in_grid]]) {\n"
+"kernel void rts_trace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant K &k [[buffer(1)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
 "  if (g.x >= k.size.x || g.y >= k.size.y) return; float z = depth.read(g);\n"
 "  if (z >= 1.0) { mask.write(float4(1), g); return; }\n"   // 远平面 = 没画东西（天空） | far plane = nothing drawn (sky)
 "  float2 ndc = float2((float(g.x) + 0.5) / float(k.size.x) * 2.0 - 1.0, 1.0 - (float(g.y) + 0.5) / float(k.size.y) * 2.0);\n"
 "  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
 "  ray r; r.origin = p + k.sun.xyz * k.bias; r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
-"  intersector<instancing> is; is.accept_any_intersection(true); is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque);\n"
-"  intersection_result<instancing> h = is.intersect(r, as, 0xffu);\n"
-"  mask.write(float4(h.type == intersection_type::none ? 1.0 : 0.0), g); }\n"
+"  float d; bool hit = RTS_HIT(r, as, true, d);\n"
+"  mask.write(float4(hit ? 0.0 : 1.0), g); }\n"
 // 软阴影：最近命中 + 命中距离（按 maxd 归一）→ RG8；模糊：半径 = 周围 ±2 像素内最远遮挡距离 × 强度（≤ 12 像素），深度差大的邻居权重小 | soft shadows: nearest hit + hit distance (normalized by maxd) → RG8; blur: radius = widest blocker distance within ±2 px × strength (≤ 12 px), neighbours with a large depth difference weigh less
 "struct KS { float4x4 invVP; float4 sun; uint2 size; float bias; float maxd; };\n"
-"kernel void rts_trace_soft(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant KS &k [[buffer(1)]], uint2 g [[thread_position_in_grid]]) {\n"
+"kernel void rts_trace_soft(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant KS &k [[buffer(1)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
 "  if (g.x >= k.size.x || g.y >= k.size.y) return; float z = depth.read(g);\n"
 "  if (z >= 1.0) { mask.write(float4(1, 0, 0, 0), g); return; }\n"
 "  float2 ndc = float2((float(g.x) + 0.5) / float(k.size.x) * 2.0 - 1.0, 1.0 - (float(g.y) + 0.5) / float(k.size.y) * 2.0);\n"
 "  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
 "  ray r; r.origin = p + k.sun.xyz * k.bias; r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
-"  intersector<instancing> is; is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque);\n"
-"  intersection_result<instancing> h = is.intersect(r, as, 0xffu); bool hit = h.type != intersection_type::none;\n"
-"  mask.write(float4(hit ? 0.0 : 1.0, hit ? min(h.distance / k.maxd, 1.0) : 0.0, 0, 0), g); }\n"
+"  float d; bool hit = RTS_HIT(r, as, false, d);\n"
+"  mask.write(float4(hit ? 0.0 : 1.0, hit ? min(d / k.maxd, 1.0) : 0.0, 0, 0), g); }\n"
 "struct B { uint2 size; int2 dir; float soft; float pad; };\n"
 "kernel void rts_blur(texture2d<float, access::read> src [[texture(0)]], texture2d<float, access::write> dst [[texture(1)]], depth2d<float, access::read> depth [[texture(2)]], constant B &b [[buffer(0)]], uint2 g [[thread_position_in_grid]]) {\n"
 "  if (g.x >= b.size.x || g.y >= b.size.y) return; float2 c = src.read(g).xy; float z0 = depth.read(g); float dm = c.y;\n"
@@ -85,16 +118,36 @@ static const char *k_rts_msl =
 
 // 点光追踪：半分辨率（宽高各半），每像素向 GPU 选中的每盏光一条遮挡射线（到光源为止），RGBA 各一盏 | point-light trace: half resolution (half width and height), one occlusion ray per pixel toward each GPU-picked light (up to the light), one per RGBA channel
 "struct P { float4x4 invVP; uint2 size; uint2 full; float bias; float pad0; float pad1; float pad2; };\n"
-"kernel void rts_ptrace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> pm [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant P &k [[buffer(1)]], device const Picks &o [[buffer(2)]], uint2 g [[thread_position_in_grid]]) {\n"
+"kernel void rts_ptrace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> pm [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant P &k [[buffer(1)]], device const Picks &o [[buffer(2)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
 "  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 fg = min(g * 2, k.full - 1); float z = depth.read(fg); float4 r = float4(1);\n"
 "  if (z < 1.0) {\n"
 "    float2 ndc = float2((float(fg.x) + 0.5) / float(k.full.x) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(k.full.y) * 2.0);\n"
 "    float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
-"    intersector<instancing> is; is.accept_any_intersection(true); is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque);\n"
 "    for (int i = 0; i < min(o.n, 4); i++) { float3 d = o.pos[i].xyz - p; float len = length(d); if (len <= k.bias * 2.0) continue; d /= len;\n"
 "      ray ry; ry.origin = p + d * k.bias; ry.direction = d; ry.min_distance = 0.0; ry.max_distance = len - k.bias * 2.0;\n"
-"      intersection_result<instancing> h = is.intersect(ry, as, 0xffu); if (h.type != intersection_type::none) r[i] = 0.0; } }\n"
+"      float dd; if (RTS_HIT(ry, as, true, dd)) r[i] = 0.0; } }\n"
 "  pm.write(r, g); }\n"
+// 几何核对（DM_RT_SHADOW_CHECK，只在调试时用）：ck_light 从光源视角对 TLAS 追一张深度图，与游戏的阴影图逐 texel 对；ck_cam 把主深度重建出的世界点投到光源、查游戏阴影图得「原版应有的阴影」，与光追遮罩对
+// Geometry check (DM_RT_SHADOW_CHECK, debug only): ck_light traces a depth map of the TLAS from the light's view to compare texel by texel with the game's shadow map; ck_cam projects world points rebuilt from the main depth into the light and looks up the game's shadow map ("the shadow the original should have"), to compare with the ray-traced mask
+"struct CK { float4x4 invL; float4x4 L; float4x4 invVP; uint2 lsize; uint2 csize; float rev; float pad[3]; float4x4 VP; };\n"
+"kernel void rts_ck_light(instance_acceleration_structure as [[buffer(0)]], constant CK &k [[buffer(1)]], device float2 *o [[buffer(2)]], depth2d<float, access::read> sm [[texture(0)]], uint2 g [[thread_position_in_grid]]) {\n"
+"  if (g.x >= k.lsize.x || g.y >= k.lsize.y) return; float2 ndc = float2((float(g.x) + 0.5) / float(k.lsize.x) * 2.0 - 1.0, 1.0 - (float(g.y) + 0.5) / float(k.lsize.y) * 2.0);\n"
+"  float4 a = k.invL * float4(ndc, k.rev > 0.5 ? 1.0 : 0.0, 1.0), b = k.invL * float4(ndc, k.rev > 0.5 ? 0.0 : 1.0, 1.0); float3 pa = a.xyz / a.w, pb = b.xyz / b.w; float len = length(pb - pa);\n"
+"  ray r; r.origin = pa; r.direction = (pb - pa) / len; r.min_distance = 0.0; r.max_distance = len;\n"
+"  intersector<instancing> is; is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque); intersection_result<instancing> h = is.intersect(r, as, 0xffu);\n"
+"  float md = sm.read(g); o[g.y * k.lsize.x + g.x] = float2(h.type != intersection_type::none ? h.distance / len : 1.0, k.rev > 0.5 ? 1.0 - md : md); }\n"
+"kernel void rts_ck_cam(depth2d<float, access::read> depth [[texture(0)]], depth2d<float, access::read> sm [[texture(1)]], texture2d<float, access::read> mask [[texture(2)]], constant CK &k [[buffer(1)]], device float2 *o [[buffer(2)]], instance_acceleration_structure as [[buffer(0)]], uint2 g [[thread_position_in_grid]]) {\n"
+"  if (g.x >= k.csize.x || g.y >= k.csize.y) return; uint2 fg = g * 2; float z = depth.read(fg); float2 res = float2(1.0, mask.read(fg).x);\n"
+"  if (z < 1.0) { float2 ndc = float2((float(fg.x) + 0.5) / float(k.csize.x * 2) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(k.csize.y * 2) * 2.0);\n"
+"    float4 w = k.invVP * float4(ndc, z, 1.0); float4 c = k.L * float4(w.xyz / w.w, 1.0); float3 n = c.xyz / c.w; float2 uv = float2(n.x * 0.5 + 0.5, 0.5 - 0.5 * n.y);\n"
+"    if (all(uv >= 0.0) && all(uv < 1.0)) { float md = sm.read(uint2(uv * float2(k.lsize))); res.x = (k.rev > 0.5 ? n.z < md - 0.002 : n.z > md + 0.002) ? 0.0 : 1.0; } else res.x = 0.5; }\n"
+"  o[g.y * k.csize.x + g.x] = res;\n"
+// 相机视角追 TLAS：命中点按视投影算回深度，与深度缓冲比（第 2 组：追出的深度、缓冲深度） | trace the TLAS from the camera: the hit's depth through the view-projection versus the depth buffer (second pair: traced depth, buffer depth)
+"  float2 ndc2 = float2((float(fg.x) + 0.5) / float(k.csize.x * 2) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(k.csize.y * 2) * 2.0);\n"
+"  float4 a = k.invVP * float4(ndc2, 0.0, 1.0), b = k.invVP * float4(ndc2, 1.0, 1.0); float3 pa = a.xyz / a.w, pb = b.xyz / b.w; float len = length(pb - pa);\n"
+"  ray r; r.origin = pa; r.direction = (pb - pa) / len; r.min_distance = 0.0; r.max_distance = len; intersector<instancing> is; is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque);\n"
+"  intersection_result<instancing> h = is.intersect(r, as, 0xffu); float zt = -1.0; if (h.type != intersection_type::none) { float4 c = k.VP * float4(pa + r.direction * h.distance, 1.0); zt = c.z / c.w; }\n"
+"  o[k.csize.x * k.csize.y + g.y * k.csize.x + g.x] = float2(zt, z); }\n"
 "struct VO { float4 p [[position]]; };\n"
 "vertex VO rts_vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); VO o; o.p = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1); return o; }\n"
 "fragment float4 rts_fs(VO in [[stage_in]], texture2d<float> mask [[texture(0)]], constant float4 &a [[buffer(0)]]) {\n"
