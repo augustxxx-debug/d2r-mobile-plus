@@ -2,6 +2,11 @@
 import json
 
 NOTICE_PRIORITY = 2147483645  # Above native tooltips (2147483644), within signed int.
+# 原版滑入滑出从屏幕底边以下起插值（main+0x3d7fbc），途中整框在底部 UIKit 底栏后面、从镂空的药水格里露出来（四审 Q4-05）；
+# 过渡缩到一帧之内，通知直接出现在停靠位、直接消失。写成普通小数：布局文件不用指数写法。
+# The native slide interpolates from below the bottom edge (main+0x3d7fbc), passing behind the UIKit bottom bar and showing through
+# its belt cut-outs (fourth review Q4-05). A transition shorter than one frame shows and hides the notice at its docked place.
+NOTICE_TRANSITION_SECONDS = 0.0001
 MODAL_BACKGROUNDS = ('Modal_No_Title_BG', 'Modal_BG', 'Modal_BG_XL')
 
 
@@ -21,7 +26,7 @@ def notification(width, center_x, controller=False):
         children.append({'type': 'ButtonWidget', 'name': 'Confirm',
                          'fields': {'fitToParent': True}})
     return {'type': 'NotificationPanel', 'name': 'NotificationPanel', 'fields': {
-        'priority': NOTICE_PRIORITY, 'notificationSeconds': 5.0, 'transitionSeconds': 0.8,
+        'priority': NOTICE_PRIORITY, 'notificationSeconds': 5.0, 'transitionSeconds': NOTICE_TRANSITION_SECONDS,
         'rect': {'x': center_x, 'y': -790, 'width': width, 'height': 244},
         'anchor': {'x': 0.5, 'y': 1.0}}, 'children': [
         {'type': 'Widget', 'name': 'NotificationBorder', 'fields': {

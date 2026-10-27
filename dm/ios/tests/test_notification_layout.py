@@ -36,3 +36,23 @@ for fields in ({'priority': 200, 'isDismissable': True}, {'anchor': {'x': .5}}, 
     assert n.modal_priority(json.dumps(result)) == json.dumps(result)
 assert n.modal_priority('{"type":"FatalErrorPanel","name":"FatalErrorPanel"}') == '{"type":"FatalErrorPanel","name":"FatalErrorPanel"}'
 print('PASS shared notification geometry/native dismissal, fitted multilingual text, intact caps, modal layering and callback preservation')
+
+# 四审 Q4-05：原版 NotificationPanel 每帧按 y = 进度 × 目标 插值（main+0x3d7fbc，起点写死 0 = 屏幕底边以下），
+# 滑入 / 滑出途中整框都在底部 UIKit 底栏后面，镂空的药水格里露出通知。过渡时间缩到一帧之内后，第一帧之后就只有「底边以下」和「停靠位」两种位置。
+# Fourth review Q4-05: native NotificationPanel interpolates y = progress * target each frame (main+0x3d7fbc, start fixed at 0 = below the bottom edge);
+# during slide-in / slide-out the box passes behind the bottom UIKit bar and shows through the belt cut-outs. With the transition shorter than a frame only "below the edge" and "docked" remain.
+def native_y(target, elapsed, seconds, showing):
+    t = elapsed / seconds
+    y = int(t * target) if showing else int((1 - t) * target)
+    return max(target, min(y, 0))
+
+for controller in (False, True):
+    fields = n.notification(1680, 0, controller)['fields']
+    target, seconds = fields['rect']['y'], fields['transitionSeconds']
+    assert 'e' not in json.dumps(seconds), 'layout parser gets a plain decimal'
+    for showing in (True, False):
+        for frame in range(1, 61):   # 60 / 120 帧下第 1 帧起（最早一帧离开始至少 8 ms） | from the first frame at 60 / 120 fps (at least 8 ms after the start)
+            for hz in (60, 120):
+                y = native_y(target, frame / hz, seconds, showing)
+                assert y in (0, target), ('notice crosses the bottom bar', controller, showing, frame, hz, y)
+print('PASS notice never slides through the bottom bar (Q4-05)')

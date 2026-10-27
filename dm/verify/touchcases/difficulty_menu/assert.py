@@ -13,7 +13,9 @@ lib.check(len(inv_open) == 1, f"通知开着时点功能键应打开功能页一
 if note_open and inv_open:
     lib.check(note_open[0] < inv_open[0], f"功能页应在通知弹出之后打开（通知拍 {note_open[0]}，功能页拍 {inv_open[0]}）")
     lib.check(not note_close or note_close[0] > inv_open[0], f"通知不应被这次按键关掉（通知关于拍 {note_close[:1]}，功能页开于拍 {inv_open[0]}）")
-    # 停留时长是产品覆盖层设的 5 秒（dm/ios/tools/gen_romfs_overlay.py 的 notificationSeconds；原版 10 秒 ≈ 270 拍）。在覆盖层上实测开到关 146 拍
-    # The dwell time is the 5 seconds set by the product overlay (notificationSeconds in dm/ios/tools/gen_romfs_overlay.py; the original game's 10 seconds ≈ 270 ticks). Measured on the overlay: 146 ticks from open to close
-    lib.check(bool(note_close) and 120 <= note_close[0] - note_open[0] <= 175, f"通知应约 5 秒（实测 146 拍）后自己关，实际开 {note_open} 关 {note_close}")
+    # 停留时长是产品覆盖层设的 5 秒（dm/ios/tools/gen_romfs_overlay.py 的 notificationSeconds；原版 10 秒 ≈ 270 拍）。过渡 0.8 秒时实测开到关 146 拍；
+    # 四审 Q4-05 起过渡缩到一帧之内（notification_layout.NOTICE_TRANSITION_SECONDS），约 125 拍
+    # The dwell time is the 5 seconds set by the product overlay (notificationSeconds in dm/ios/tools/gen_romfs_overlay.py; the original game's 10 seconds ≈ 270 ticks). With the 0.8 s transition 146 ticks were measured from open to close;
+    # since fourth review Q4-05 the transition is under one frame (notification_layout.NOTICE_TRANSITION_SECONDS), about 125 ticks
+    lib.check(bool(note_close) and 110 <= note_close[0] - note_open[0] <= 175, f"通知应约 5 秒（约 125 拍）后自己关，实际开 {note_open} 关 {note_close}")
 sys.exit(lib.main())
