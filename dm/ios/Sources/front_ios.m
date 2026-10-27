@@ -844,10 +844,11 @@ static void touch_ui_message(const char *cat,const char *act,const char *arg) {
 // Called on the main thread: creates the fullscreen Metal view; the graphics backend gets its layer through front_metal_layer to present frames
 // ProMotion frame rate request: on iPhone, when the App calls nextDrawable / present itself, the system by default hands out drawables at 60 Hz (real device: adding only Info.plist's
 // CADisableMinimumFrameDurationOnPhone still gives 60 fps and a 16.6 ms drawable wait). Attach a declaration-only CADisplayLink (empty callback) requesting 80–120 Hz, and only then does the system switch to 120 Hz.
-// 刷新率表态与每帧的触控 / 布局工作分开（复审 F03）：tick: 只在表态链接上调用，先表态再做 work；DM_RATE_HINT=0 时没有表态链接，由主线程 60 Hz 定时器直接调 work，
-// 触点结束、长按、绑定 / 拖放同步、自绘 HUD 与界面矩形变化后的重排照常进行，实验只少了“刷新率表态”这一个变量
+// 刷新率表态与每帧的触控 / 布局工作分开（复审 F03）：tick: 只在表态链接上调用，先表态再做 work；DM_RATE_HINT=0 时没有表态链接，由主队列定时器按目标帧率（30 / 60 / 120）直接调 work，
+// 触点结束、长按、绑定 / 拖放同步、自绘 HUD 与界面矩形变化后的重排照常进行。与缺省路径的差别有两处：没有刷新率表态，定时器不对齐屏幕刷新相位（见下面 DM_RATE_HINT=0 那一支）
 // The refresh-rate declaration is separated from the per-frame touch / layout work (re-audit F03): tick: runs only on the declaration link, declares and then calls work; with DM_RATE_HINT=0 there is no
-// declaration link and a 60 Hz main-thread timer calls work directly, so touch ends, long presses, binding / drag sync, the self-drawn HUD and relayout on UI-rect changes all continue; the experiment drops only the rate declaration
+// declaration link and a main-queue timer at the target frame rate (30 / 60 / 120) calls work directly, so touch ends, long presses, binding / drag sync, the self-drawn HUD and relayout on UI-rect changes all continue.
+// It differs from the default path in two ways: no rate declaration, and the timer is not phase-aligned with the display refresh (see the DM_RATE_HINT=0 branch below)
 @interface DmRateHint : NSObject
 - (void)tick:(CADisplayLink *)l;
 - (void)work;
