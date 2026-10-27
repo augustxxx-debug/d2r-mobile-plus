@@ -171,7 +171,7 @@ def test_alpha_fragment_becomes_bool_judge():
     assert locs == [2] and fill == ['in.m_29 = rts_vl(r, ix, b, 2);']
     assert src.startswith('namespace rtsa_k1 {') and 'static inline bool main0(thread const main0_in& in, constant spvDescriptorSetBuffer0& spvDescriptorSet0, float4 gl_FragCoord)' in src
     assert 'discard_fragment' not in src and 'return false;' in src and 'return true;' in src and 'return;' not in src
-    assert ', level(0.0)).w' in src   # 计算核没有隐式 LOD | no implicit LOD in a compute kernel
+    assert ', level(RTS_ALPHA_LOD)).w' in src   # 计算核没有隐式 LOD；mip 级由公共头的宏给 | no implicit LOD in a compute kernel; the mip level comes from the common head's macro
     assert '[[user(' not in src and '#include' not in src   # 输入结构去掉属性；头只在库开头一次 | input attributes stripped; the include only once at the top of the library
 
 

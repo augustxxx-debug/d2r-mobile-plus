@@ -1829,7 +1829,7 @@ static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回�
             }
         }
         pthread_mutex_unlock(&g_pg_mu);
-        free(ps);
+        free(t); free(ps);   // 时刻数组每次回调都新分配，用完即放（leaks 实测：原先每次提交漏一块，一局 5000 多处） | the timestamp array is allocated per callback and freed after use (measured with leaks: previously one block leaked per submission, 5000+ per run)
     }];
 }
 void ts_after(void);

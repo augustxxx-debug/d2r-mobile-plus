@@ -99,7 +99,7 @@ static NSString *share_logs(NSString *to) {
     // Settings summary (same as perf_block in the iOS share log): the last "custom settings: load", "Graphics", frame-rate-mode (effective value, present path) and ray-traced-shadow (machine gate, effective value) lines of this run's log, so what the player turned on (including the frame-rate display, 120 fps and ray tracing) is visible at a glance; the whole info still goes through scrub below
     NSData *cur = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:@"host.log"] options:NSDataReadingMappedIfSafe error:nil];
     NSMutableString *sum = [NSMutableString stringWithString:@"\n—— 设置摘要 ——\n"];
-    for (NSString *k in @[@"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：第", @"光追点光：记录"]) {
+    for (NSString *k in @[@"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：第", @"光追点光：光源记录", @"光追阴影：建好", @"光追阴影：没进原因", @"光追镂空：第", @"光追镂空：判定库"]) {
         NSRange r = cur.length ? [cur rangeOfData:[k dataUsingEncoding:NSUTF8StringEncoding] options:NSDataSearchBackwards range:NSMakeRange(0, cur.length)] : NSMakeRange(NSNotFound, 0);
         if (r.location == NSNotFound) { [sum appendFormat:@"（没有「%@」行）\n", k]; continue; }
         const char *b = cur.bytes; NSUInteger ls = r.location, le = r.location; while (ls > 0 && b[ls - 1] != '\n') ls--; while (le < cur.length && b[le] != '\n') le++;
@@ -375,7 +375,9 @@ void front_run(void (*guest)(void)) {
                       LOG("DM_TEST_NSMOUSE：%.2f 秒投 %s 内容区 (%.0f,%.0f)（窗口%s是主窗口，App %s在前台，背板缩放 %.1f）", NSProcessInfo.processInfo.systemUptime - t0, ty == NSEventTypeMouseMoved ? "悬停" : ty == NSEventTypeLeftMouseDown ? "按下" : ty == NSEventTypeLeftMouseUp ? "抬起" : "拖动", last.x, v.bounds.size.height - last.y, win.isKeyWindow ? "" : "不", NSApp.isActive ? "" : "不", win.backingScaleFactor);
                       [NSApp postEvent:ev atStart:NO]; }); }
               LOG("DM_TEST_NSMOUSE：%d 条排好", n); }
-          if ((e = getenv("DM_TEST_SHARELOG"))) { NSString *to = @(e); dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ NSString *er = share_logs(to); LOG("DM_TEST_SHARELOG：第 8 秒打包到 %s → %s", to.lastPathComponent.UTF8String, er ? er.UTF8String : "OK"); }); }   // 测试：不弹存储面板，第 8 秒直接把压缩包写到这个路径 | test: no save panel, write the archive directly to this path at second 8
+          if ((e = getenv("DM_TEST_SHARELOG"))) { NSString *to = @(e); double at = 8; NSRange ar = [to rangeOfString:@"@" options:NSBackwardsSearch];   // DM_TEST_SHARELOG=<路径>[@<秒>]：缺省第 8 秒 | DM_TEST_SHARELOG=<path>[@<seconds>]: second 8 by default
+            if (ar.location != NSNotFound && ar.location + 1 < to.length) { at = [to substringFromIndex:ar.location + 1].doubleValue; to = [to substringToIndex:ar.location]; if (at <= 0) at = 8; }
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ NSString *er = share_logs(to); LOG("DM_TEST_SHARELOG：第 %.0f 秒打包到 %s → %s", at, to.lastPathComponent.UTF8String, er ? er.UTF8String : "OK"); }); }   // 测试：不弹存储面板，第 8 秒直接把压缩包写到这个路径 | test: no save panel, write the archive directly to this path at second 8
           if ((e = getenv("DM_TEST_QUIT_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ app_quit("DM_TEST_QUIT_AT"); }); }
         // 生命周期（hle.h / dm.h）：失焦 → 2、拿回焦点 → 1；最小化 → 3 + 音频暂停 + GPU 挂起，还原 → 恢复（随后拿回焦点 → 1）
         // Lifecycle (hle.h / dm.h): focus lost → 2, focus regained → 1; minimized → 3 + audio paused + GPU suspended, restored → resume (followed by focus regained → 1)

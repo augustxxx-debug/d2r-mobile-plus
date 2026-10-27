@@ -4,6 +4,7 @@
 // 镂空判定库的公共头（翻译层拼在 rts_alpha.metal 前面；rts_variant.py 编译检查时从本文件抽出同一份）：判定记录与按 locn 取重心插值量 | Common head of the alpha judge library (prepended to rts_alpha.metal by the translation layer; rts_variant.py extracts this very text for its compile check): the judge record and the barycentric fetch of one interpolant by locn
 static const char *k_rts_alpha_head =
 "#include <metal_stdlib>\nusing namespace metal;\n"
+"#ifndef RTS_ALPHA_LOD\n#define RTS_ALPHA_LOD 0.0\n#endif\n"   // 判定采样的 mip 级（缺省 0 = 最清晰的镂空；Mac 实测改成 3 并不更快：贵的是穿过透明处要多判的候选，不是采样） | mip level of judge samples (0 by default = the sharpest cut-outs; measured on the Mac, 3 is not faster: the cost is the extra candidates behind transparent texels, not the sampling)
 "struct RtsAI { float4x4 lvp; float4 vp; float2 dr; uint fs; uint stride; constant uchar *args; device const float4 *var; device const uchar *ib; uint isz; uint locmask; uchar slot[16]; };\n"
 "static inline float4 rts_vl(constant RtsAI &r, uint3 ix, float2 b, uint l) { uint s = r.slot[l]; return (1.0 - b.x - b.y) * r.var[ix.x * r.stride + s] + b.x * r.var[ix.y * r.stride + s] + b.y * r.var[ix.z * r.stride + s]; }\n";
 static const char *k_rts_msl =
@@ -28,6 +29,7 @@ static const char *k_rts_msl =
 // from the exported interpolants (barycentric) and the shadow-map pixel (hit point × that draw's light view-projection → viewport); it blocks only when not discarded. Opaque instances commit by themselves. Without RTS_ALPHA everything is opaque (the original path).
 "#ifdef RTS_ALPHA\n"
 "#ifndef RTS_ALPHA_DBG\n#define RTS_ALPHA_DBG 0\n#endif\n"
+"#ifndef RTS_ALPHA_MAXREJ\n#define RTS_ALPHA_MAXREJ 8\n#endif\n"
 "static bool rts_ai_pass(constant RtsAI *ai, uint u, uint prim, float2 b, float3 p) {\n"
 "  constant RtsAI &r = ai[u]; uint i0 = prim * 3, i1 = i0 + 1, i2 = i0 + 2;\n"
 "#if RTS_ALPHA_DBG == 1\n  return true;\n#endif\n"
@@ -41,7 +43,10 @@ static const char *k_rts_msl =
 "static bool rts_hit(ray ry, instance_acceleration_structure as, constant RtsAI *ai, bool any, thread float &dist) {\n"
 "  intersection_params ip; ip.accept_any_intersection(any); ip.assume_geometry_type(geometry_type::triangle);\n"
 "  intersection_query<triangle_data, instancing> q; q.reset(ry, as, 0xffu, ip);\n"
-"  while (q.next()) if (q.get_candidate_intersection_type() == intersection_type::triangle && rts_ai_pass(ai, q.get_candidate_user_instance_id(), q.get_candidate_primitive_id(), q.get_candidate_triangle_barycentric_coord(), ry.origin + ry.direction * q.get_candidate_triangle_distance())) q.commit_triangle_intersection();\n"
+"  int nrej = 0;\n"
+"  while (q.next()) if (q.get_candidate_intersection_type() == intersection_type::triangle) {\n"
+"    if (rts_ai_pass(ai, q.get_candidate_user_instance_id(), q.get_candidate_primitive_id(), q.get_candidate_triangle_barycentric_coord(), ry.origin + ry.direction * q.get_candidate_triangle_distance())) q.commit_triangle_intersection();\n"
+"    else if (++nrej >= RTS_ALPHA_MAXREJ) q.commit_triangle_intersection(); }\n"   // 判定上限：连丢这么多层就当挡住（叠这么多层树叶本来也几乎不透光），封住最坏情况的开销 | judge cap: after this many discarded layers count it as blocked (that many stacked leaves let almost no light through anyway), bounding the worst-case cost
 "  bool h = q.get_committed_intersection_type() != intersection_type::none; dist = h ? q.get_committed_distance() : 0.0; return h; }\n"
 "#define RTS_AI , constant RtsAI *ai [[buffer(3)]]\n#define RTS_HIT(ry, as, any, d) rts_hit(ry, as, ai, any, d)\n"
 "#else\n"
@@ -50,11 +55,12 @@ static const char *k_rts_msl =
 "  intersection_result<instancing> h = is.intersect(ry, as, 0xffu); dist = h.distance; return h.type != intersection_type::none; }\n"
 "#define RTS_AI\n#define RTS_HIT(ry, as, any, d) rts_hit0(ry, as, any, d)\n"
 "#endif\n"
+// pad > 0.5：半分辨率追踪（size = 遮罩尺寸，按全分辨率深度的 2× 位置取样），之后 rts_pup 按深度上采样回全分辨率 | pad > 0.5: half-resolution trace (size = mask size, sampled at 2× positions of the full-resolution depth), then upsampled back by depth with rts_pup
 "struct K { float4x4 invVP; float4 sun; uint2 size; float bias; float pad; };\n"
 "kernel void rts_trace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant K &k [[buffer(1)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= k.size.x || g.y >= k.size.y) return; float z = depth.read(g);\n"
+"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 full = uint2(depth.get_width(), depth.get_height()); uint2 fg = k.pad > 0.5 ? min(g * 2, full - 1) : g; float z = depth.read(fg);\n"
 "  if (z >= 1.0) { mask.write(float4(1), g); return; }\n"   // 远平面 = 没画东西（天空） | far plane = nothing drawn (sky)
-"  float2 ndc = float2((float(g.x) + 0.5) / float(k.size.x) * 2.0 - 1.0, 1.0 - (float(g.y) + 0.5) / float(k.size.y) * 2.0);\n"
+"  float2 ndc = float2((float(fg.x) + 0.5) / float(full.x) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(full.y) * 2.0);\n"
 "  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
 "  ray r; r.origin = p + k.sun.xyz * k.bias; r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
 "  float d; bool hit = RTS_HIT(r, as, true, d);\n"
@@ -109,7 +115,7 @@ static const char *k_rts_msl =
 "    if (!(s > 0.0)) continue; int kk = -1; for (uint j = 0; j < mx; j++) if (bi[j] < 0 || s > best[j]) { kk = int(j); break; }\n"
 "    if (kk < 0) continue; for (int j = int(mx) - 1; j > kk; j--) { best[j] = best[j - 1]; bi[j] = bi[j - 1]; } best[kk] = s; bi[kk] = int(r); }\n"
 "  int n = 0; for (uint j = 0; j < mx; j++) n += bi[j] >= 0;\n"
-"  o.n = n; for (int j = 0; j < 4; j++) { bool u = j < n; o.rec[j] = u ? bi[j] : -1; float4 pw = u ? k.invV * float4(L[bi[j]].xyz, 1.0) : float4(0, 0, 0, 1); float4 pp = u ? float4(pw.xyz / pw.w, 1) : float4(0); o.pos[j] = pp; prev[j] = pp; }\n"
+"  o.n = n; for (int j = 0; j < 4; j++) { bool u = j < n; o.rec[j] = u ? bi[j] : -1; float4 pw = u ? k.invV * float4(L[bi[j]].xyz, 1.0) : float4(0, 0, 0, 1); float4 pp = u ? float4(pw.xyz / pw.w, max(L[bi[j] + 1].w, 1e-3)) : float4(0); o.pos[j] = pp; prev[j] = pp; }\n"   // w = 半径（> 0 兼作「有效」） | w = radius (> 0 doubles as "valid")
 "  float4 cw = cr >= 0 ? k.invV * float4(L[cr].xyz, 1.0) : float4(0, 0, 0, 1); o.player = pl; o.cand_rec = cr; o.cand_off = cr >= 0 ? float4(cw.xyz / cw.w - p0, 1) : float4(0); o.p0 = float4(p0, 1); }\n"
 // 派生副本：整份光源记录拷到我们自己的缓冲，玩家光（o.player）的颜色乘倍率；_rt 变体绑这份副本，游戏的原记录不动 | derived copy: the whole light record buffer copied into our own buffer with the player light's (o.player) color scaled; the _rt variants bind this copy and the game's records stay untouched
 "struct LC { uint ntex; float scale; uint2 pad; };\n"
@@ -119,11 +125,11 @@ static const char *k_rts_msl =
 // 点光追踪：半分辨率（宽高各半），每像素向 GPU 选中的每盏光一条遮挡射线（到光源为止），RGBA 各一盏 | point-light trace: half resolution (half width and height), one occlusion ray per pixel toward each GPU-picked light (up to the light), one per RGBA channel
 "struct P { float4x4 invVP; uint2 size; uint2 full; float bias; float pad0; float pad1; float pad2; };\n"
 "kernel void rts_ptrace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> pm [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant P &k [[buffer(1)]], device const Picks &o [[buffer(2)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 fg = min(g * 2, k.full - 1); float z = depth.read(fg); float4 r = float4(1);\n"
+"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 fg = min(uint2((float2(g) + 0.5) * float2(k.full) / float2(k.size)), k.full - 1); float z = depth.read(fg); float4 r = float4(1);\n"   // 低分辨率像素中心对应的全分辨率像素（÷2 或 ÷4） | the full-resolution pixel at the low-resolution pixel centre (÷2 or ÷4)
 "  if (z < 1.0) {\n"
 "    float2 ndc = float2((float(fg.x) + 0.5) / float(k.full.x) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(k.full.y) * 2.0);\n"
 "    float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
-"    for (int i = 0; i < min(o.n, 4); i++) { float3 d = o.pos[i].xyz - p; float len = length(d); if (len <= k.bias * 2.0) continue; d /= len;\n"
+"    for (int i = 0; i < min(o.n, 4); i++) { float3 d = o.pos[i].xyz - p; float len = length(d); if (len <= k.bias * 2.0 || len > o.pos[i].w) continue; d /= len;\n"   // 半径外这盏灯照不到：不追（营地实测点光追踪 4 ms 的大头） | beyond the radius the light does not reach: no ray (measured at the camp: the bulk of the 4 ms point trace)
 "      ray ry; ry.origin = p + d * k.bias; ry.direction = d; ry.min_distance = 0.0; ry.max_distance = len - k.bias * 2.0;\n"
 "      float dd; if (RTS_HIT(ry, as, true, dd)) r[i] = 0.0; } }\n"
 "  pm.write(r, g); }\n"
@@ -148,6 +154,15 @@ static const char *k_rts_msl =
 "  ray r; r.origin = pa; r.direction = (pb - pa) / len; r.min_distance = 0.0; r.max_distance = len; intersector<instancing> is; is.assume_geometry_type(geometry_type::triangle); is.force_opacity(forced_opacity::opaque);\n"
 "  intersection_result<instancing> h = is.intersect(r, as, 0xffu); float zt = -1.0; if (h.type != intersection_type::none) { float4 c = k.VP * float4(pa + r.direction * h.distance, 1.0); zt = c.z / c.w; }\n"
 "  o[k.csize.x * k.csize.y + g.y * k.csize.x + g.x] = float2(zt, z); }\n"
+// 点光遮罩上采样（评审阶段一）：半分辨率 → 全分辨率，2×2 双线性权重再乘深度相近度（与 rts_blur 同一口径），深度差大的邻居几乎不参与——人物边缘不再漏光 / 漏影
+// point-light mask upsampling (review phase 1): half → full resolution, bilinear 2×2 weights times depth similarity (the same measure as rts_blur), neighbours across a depth edge barely count - no more light / shadow leaking at silhouettes
+"struct PU { uint2 full; uint2 half_; };\n"
+"kernel void rts_pup(texture2d<float, access::read> pm [[texture(0)]], texture2d<float, access::write> out [[texture(1)]], depth2d<float, access::read> depth [[texture(2)]], constant PU &u [[buffer(0)]], uint2 g [[thread_position_in_grid]]) {\n"
+"  if (g.x >= u.full.x || g.y >= u.full.y) return; float z0 = depth.read(g); float2 sc = float2(u.half_) / float2(u.full); float2 hp = (float2(g) + 0.5) * sc - 0.5; int2 q0 = int2(floor(hp)); float2 fr = hp - float2(q0);\n"   // sc = 低分辨率 / 全分辨率（1/2 或 1/4） | sc = low / full resolution (1/2 or 1/4)
+"  float4 acc = float4(0); float ws = 0.0;\n"
+"  for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) { int2 q = clamp(q0 + int2(i, j), int2(0), int2(u.half_) - 1); float bw = (i ? fr.x : 1.0 - fr.x) * (j ? fr.y : 1.0 - fr.y);\n"
+"    float zq = depth.read(min(uint2((float2(q) + 0.5) / sc), u.full - 1)); float w = (bw + 1e-3) / (1.0 + 4000.0 * abs(zq - z0)); acc += pm.read(uint2(q)) * w; ws += w; }\n"
+"  out.write(acc / max(ws, 1e-6), g); }\n"
 "struct VO { float4 p [[position]]; };\n"
 "vertex VO rts_vs(uint id [[vertex_id]]) { float2 uv = float2((id << 1) & 2, id & 2); VO o; o.p = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1); return o; }\n"
 "fragment float4 rts_fs(VO in [[stage_in]], texture2d<float> mask [[texture(0)]], constant float4 &a [[buffer(0)]]) {\n"

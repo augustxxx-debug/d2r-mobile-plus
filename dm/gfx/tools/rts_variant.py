@@ -23,7 +23,7 @@ import os, re, sys, json, tempfile, subprocess, concurrent.futures as cf
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../ios/tools')); import ios_metal
 SRC = OUT = None; WANT = set()   # 命令行在文件末尾赋值；测试直接调各变换函数 | assigned at the end of the file from the command line; tests call the transformation functions directly
 CASCADES = ('fp_t_cb196610_105980A8', 'fp_t_cb196610_105980AA')
-VERSION = 'rts_variant 5'   # 改了变换规则就升版本：旧产物全部重出 | bump when the transformation changes: every old product is regenerated
+VERSION = 'rts_variant 6'   # 改了变换规则就升版本：旧产物全部重出 | bump when the transformation changes: every old product is regenerated
 SKIN_KEYS = ('0fa4eb7559f1637a', '1d97d33ab66abcba', '3deaf68fd65b5298', '4dffa355f2fbcdaf', '54c93fa22abff9ee', '64dd7d022f3fae39', '67e2ebc28c830f44', 'add86ee8e20f89b9', 'b3ae9be5cc670f35', 'fbf6dc1873a449e9')
 def fresh(key, suffix, ver=None):   # 产物已有且版本一致 | product present with the same version
     try: return (ver or VERSION) in json.load(open(os.path.join(OUT, key + suffix + '.json'))).get('notes', [])
@@ -47,11 +47,11 @@ def transform_pos(msl):   # 顶点：写裁剪坐标到 rts_pos | vertex: write 
     return msl, aid
 # 镂空遮挡体进光追（第四阶段）：阴影通道的镂空绘制 = 顶点着色器出插值量 + 片元着色器按贴图 alpha / 抖动淡出丢弃。光追里在候选命中处复现它：
 #   顶点侧 <键>_var：入口末尾把裁剪坐标和每个浮点插值输出写到 rts_var[(vertex_id − base_vertex) × 步长 + k]（k = 0 裁剪坐标，k = 1… 按 main0_out 声明顺序），json 记 rts_var_locs（各输出的 locn）；
-#   片元侧：rts_alpha.metal 把每个镂空片元着色器原样放进自己的命名空间，入口改成 bool 函数（discard_fragment → false、return → true、采样补 level(0)），
+#   片元侧：rts_alpha.metal 把每个镂空片元着色器原样放进自己的命名空间，入口改成 bool 函数（discard_fragment → false、return → true、采样补 level(RTS_ALPHA_LOD)），
 #   再出一个按序号分派的 rts_alpha_eval(序号, 按 locn 排的插值量, 参数块快照, gl_FragCoord)；翻译层运行时把它和追踪核一起编译。
 # Alpha-tested occluders in the ray tracing (phase 4): an alpha-tested shadow draw = the vertex shader's interpolants + the fragment shader discarding by texture alpha / dither fade. The ray tracing replays it at each candidate hit:
 #   vertex side <key>_var: at the end of the entry the clip position and every float interpolant are written to rts_var[(vertex_id - base_vertex) * stride + k] (k = 0 clip position, k = 1... in main0_out declaration order); the json records rts_var_locs (the locn of each output);
-#   fragment side: rts_alpha.metal puts every alpha-tested fragment shader verbatim into its own namespace with the entry turned into a bool function (discard_fragment → false, return → true, samples get level(0)),
+#   fragment side: rts_alpha.metal puts every alpha-tested fragment shader verbatim into its own namespace with the entry turned into a bool function (discard_fragment → false, return → true, samples get level(RTS_ALPHA_LOD)),
 #   plus rts_alpha_eval(index, interpolants by locn, argument-block snapshot, gl_FragCoord) dispatching by index; the translation layer compiles it together with the trace kernels at run time.
 VAR_VERSION = 'rts_var 2'
 VAR_MAX_OUT = 4   # 只给插值输出 ≤ 4 个的顶点着色器出 _var（阴影通道的都是这类；主通道的 10+ 个输出不需要） | _var only for vertex shaders with ≤ 4 interpolant outputs (the shadow-pass ones; main-pass shaders with 10+ outputs are not needed)
@@ -120,7 +120,7 @@ def alpha_fn(key, msl):   # 镂空片元着色器 → (命名空间源码, 输�
     texs = dict((nm, t) for t, nm in re.findall(r'(\w+)<\w+> (\w+) \[\[id\(\d+\)\]\];', pre))
     if 'struct spvDescriptorSetBuffer0' not in pre: pre += '\nstruct spvDescriptorSetBuffer0 { int rts_unused; };\n'
     body = msl[c + 1:]; bo = body.index('{'); bc = strip_braces(body, bo); body = body[bo + 1:bc]
-    # 采样补 level(0)：计算核里没有隐式 LOD | samples get level(0): there is no implicit LOD in a compute kernel
+    # 采样补 level(RTS_ALPHA_LOD)：计算核里没有隐式 LOD | samples get level(0): there is no implicit LOD in a compute kernel
     pos = 0
     while True:
         g = re.compile(r'spvDescriptorSet0\.(\w+)\.sample\(').search(body, pos)
@@ -129,7 +129,7 @@ def alpha_fn(key, msl):   # 镂空片元着色器 → (命名空间源码, 输�
         if t not in TEX_COORD_ARGS: raise ValueError('采样 %s 的贴图类型 %s' % (g.group(1), t))
         if any(a.strip().startswith(('level(', 'gradient')) for a in args): pos = c2; continue
         args = [a for a in args if not a.strip().startswith('bias(')]
-        n = TEX_COORD_ARGS[t]; args = args[:n] + [' level(0.0)'] + args[n:]
+        n = TEX_COORD_ARGS[t]; args = args[:n] + [' level(RTS_ALPHA_LOD)'] + args[n:]   # 宏在判定库公共头里（缺省 3，翻译层可按 DM_RT_ALPHA_LOD 改） | the macro lives in the library's common head (3 by default; the translation layer may override it from DM_RT_ALPHA_LOD)
         rep = ','.join(args); body = body[:o2 + 1] + rep + body[c2:]; pos = o2 + 1 + len(rep)
     body = body.replace('discard_fragment();', 'return false;').replace('return;', 'return true;')
     ns = 'rtsa_' + key
@@ -214,9 +214,9 @@ def transform(msl):
         j = strip_call(msl, k + len('main0'))
         msl = msl[:j] + ', float4 gl_FragCoord [[position]]' + msl[j:]
     return msl, n, aid
-RTS_PL_FN = '''static inline float rts_pl(float o, int L, float4 fc, texture2d<float> pm, int4 idx)   // 光追点光遮罩：本盏光在挑中的 4 盏里就用遮罩（半分辨率），否则原值 | ray-traced point-light mask: this light among the chosen 4 uses the mask (half resolution), otherwise the original
+RTS_PL_FN = '''static inline float rts_pl(float o, int L, float4 fc, texture2d<float> pm, int4 idx)   // 光追点光遮罩：本盏光在挑中的 4 盏里就用遮罩（翻译层按深度上采样到全分辨率），否则原值 | ray-traced point-light mask: this light among the chosen 4 uses the mask (upsampled to full resolution by depth in the translation layer), otherwise the original
 {
-    float4 m = pm.read(uint2(fc.xy) >> 1);
+    float4 m = pm.read(uint2(fc.xy));
     return L == idx.x ? m.x : (L == idx.y ? m.y : (L == idx.z ? m.z : (L == idx.w ? m.w : o)));
 }
 '''

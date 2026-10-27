@@ -104,6 +104,7 @@ int main(void) { @autoreleasepool {
     // 常量：K（硬）/ KS（软）/ P（点光）/ B（模糊）/ U（反投影） | constants
     float K[64]; for (int i = 0; i < 16; i++) K[i] = (float)IA[i]; float sun[3] = {(float)M_SQRT1_2, (float)M_SQRT1_2, 0}; K[16] = sun[0]; K[17] = sun[1]; K[18] = sun[2]; K[19] = 0; ((uint32_t *)K)[20] = W; ((uint32_t *)K)[21] = H; K[22] = 0.6f; K[23] = 20.f;   // 软阴影的距离归一取 20：方板离地 14 → 半径 ≈ 0.7·12 = 8 像素（生产缺省 200 下这么近的遮挡体是硬的） | soft-shadow distance scale 20: the square 14 above the ground → radius ≈ 0.7·12 = 8 px (with the production default 200 such a near blocker stays hard)
     id<MTLBuffer> kb = buf(K, sizeof K);
+    float KH[64]; memcpy(KH, K, sizeof KH); KH[23] = 0; id<MTLBuffer> kbh = buf(KH, sizeof KH);   // 硬阴影：第 23 位 = 半分辨率标志（0 = 全分辨率；软阴影的同一位是距离归一） | hard shadows: slot 23 = half-resolution flag (0 = full; the soft trace uses the same slot for its distance normalization)
     // 点光：记录按 texel 下标寻址、不按 4 对齐（游戏实测）。A 在 texel 4：(30,40,0) 颜色 2 半径 60；B 在 texel 9：(−200,5,0) 颜色 0.5 半径 10；texel 0 处颜色 0（不在分簇表里）。
     // 分簇表：簇 0 头 = 2 盏点光、起点 0，槽 0/1 = texel 4 / 9；簇 1 头 = 前三类结束于 3、1 盏点光，槽 256+3 = texel 4（重复，要去重）。期望列表 2 盏、A 排第一；玩家光按偏移认出 A，副本里 A 的颜色 texel 5 × 0.5
     // point lights: records are addressed by texel index, not 4-aligned (measured in the game). A at texel 4: (30,40,0) color 2 radius 60; B at texel 9: (−200,5,0) color 0.5 radius 10; color 0 at texel 0 (not in the cluster tables).
@@ -139,7 +140,7 @@ int main(void) { @autoreleasepool {
         [ce barrierAfterEncoderStages:MTLStageAccelerationStructure beforeEncoderStages:MTLStageAccelerationStructure visibilityOptions:MTL4VisibilityOptionDevice];
         [ce buildAccelerationStructure:tlas descriptor:td scratchBuffer:(MTL4BufferRange){scratch.gpuAddress, scr}];
         [ce barrierAfterEncoderStages:MTLStageAccelerationStructure beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-        [ce setComputePipelineState:ps_trace]; [at setTexture:depth.gpuResourceID atIndex:0]; [at setTexture:mask.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:kb.gpuAddress atIndex:1];
+        [ce setComputePipelineState:ps_trace]; [at setTexture:depth.gpuResourceID atIndex:0]; [at setTexture:mask.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:kbh.gpuAddress atIndex:1];
         [ce dispatchThreadgroups:tg threadsPerThreadgroup:tt];
     })) return 1;
     { const float *p = pos_s.contents; for (int i = 0; i < 4; i++) for (int c = 0; c < 3; c++) if (fabsf(p[i * 3 + c] - sqw[i][c]) > 0.05f) FAIL("decode SNORM16x4 v%d.%d = %g (want %g)", i, c, p[i * 3 + c], sqw[i][c]);
@@ -149,6 +150,20 @@ int main(void) { @autoreleasepool {
     if (px(mask, gx_of(35), gy_of(0), 0) < 0.99f) FAIL("sun: far ground should be lit");
     if (px(mask, gx_of(0.8), gy_of(0.8), 0) < 0.99f) FAIL("sun: square top should be lit");
     if (px(mask, gx_of(-10), gy_of(30), 0) < 0.99f) FAIL("sun: ground beside the square (z=30) should be lit");
+    {   // 太阳半分辨率追踪 + 深度感知上采样（生产缺省）：与全分辨率结果比，只允许影子边缘那一两个像素不同 | half-resolution sun trace + depth-aware upsampling (the production default): compared with the full-resolution result, only the one or two edge pixels may differ
+        float KQ[64]; memcpy(KQ, K, sizeof KQ); KQ[23] = 1; ((uint32_t *)KQ)[20] = W / 2; ((uint32_t *)KQ)[21] = H / 2; id<MTLBuffer> kbq = buf(KQ, sizeof KQ);
+        id<MTLTexture> mh = tex(MTLPixelFormatR8Unorm, W / 2, H / 2, MTLStorageModeShared), mf = tex(MTLPixelFormatR8Unorm, W, H, MTLStorageModeShared); uint32_t pu[4] = {W, H, W / 2, H / 2}; id<MTLBuffer> pub = buf(pu, 16);
+        id<MTLComputePipelineState> ps_pup = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_pup"] error:&e]; [resident commit];
+        if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at];
+                [ce setComputePipelineState:ps_trace]; [at setTexture:depth.gpuResourceID atIndex:0]; [at setTexture:mh.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:kbq.gpuAddress atIndex:1];
+                [ce dispatchThreadgroups:MTLSizeMake(W / 16, H / 16, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+                [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                [ce setComputePipelineState:ps_pup]; [at setTexture:mh.gpuResourceID atIndex:0]; [at setTexture:mf.gpuResourceID atIndex:1]; [at setTexture:depth.gpuResourceID atIndex:2]; [at setAddress:pub.gpuAddress atIndex:0];
+                [ce dispatchThreadgroups:MTLSizeMake(W / 8, H / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)]; })) return 1;
+        int diff = 0; for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) diff += fabsf(px(mf, x, y, 0) - px(mask, x, y, 0)) > 0.5f;
+        if (px(mf, gx_of(-10), gy_of(0), 0) > 0.05f || px(mf, gx_of(35), gy_of(0), 0) < 0.95f) FAIL("half-res sun: shadow / lit spots wrong (%g, %g)", px(mf, gx_of(-10), gy_of(0), 0), px(mf, gx_of(35), gy_of(0), 0));
+        if (diff > W * H / 50) FAIL("half-res sun: %d of %d pixels differ from the full-resolution mask", diff, W * H);
+    }
     if (px(mask, gx_of(-30), gy_of(0), 0) < 0.99f) FAIL("sun: ground x=−30 should be lit (ray passes the square's edge)");
     // 2. 反投影 + refit：导出的裁剪坐标 → 世界坐标 → 以绑定姿势 BLAS 为源 refit 到槽；TLAS 换成槽；阴影应移到 x∈(10,30) | 2. unproject + refit: shadow moves to x∈(10,30)
     di[1].accelerationStructureID = as_slot.gpuResourceID;
@@ -160,7 +175,7 @@ int main(void) { @autoreleasepool {
         [ce barrierAfterEncoderStages:MTLStageAccelerationStructure beforeEncoderStages:MTLStageAccelerationStructure visibilityOptions:MTL4VisibilityOptionDevice];
         [ce buildAccelerationStructure:tlas descriptor:td scratchBuffer:(MTL4BufferRange){scratch.gpuAddress, scr}];
         [ce barrierAfterEncoderStages:MTLStageAccelerationStructure beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-        [ce setComputePipelineState:ps_trace]; [at setTexture:depth.gpuResourceID atIndex:0]; [at setTexture:mask.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:kb.gpuAddress atIndex:1];
+        [ce setComputePipelineState:ps_trace]; [at setTexture:depth.gpuResourceID atIndex:0]; [at setTexture:mask.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:kbh.gpuAddress atIndex:1];
         [ce dispatchThreadgroups:tg threadsPerThreadgroup:tt];
         // 点光 (30,40,0)：地面 x≈19.5 被移位后的方板挡，x=−35 不挡 | point light (30,40,0): ground x≈19.5 is blocked by the shifted square, x=−35 is not
         [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
@@ -200,6 +215,16 @@ int main(void) { @autoreleasepool {
     if (px(pm, gx_of(19.5) / 2, gy_of(0) / 2, 0) > 0.01f) FAIL("point light: ground x≈19.5 should be shadowed (%g)", px(pm, gx_of(19.5) / 2, gy_of(0) / 2, 0));
     if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 0) < 0.99f) FAIL("point light: ground x=−35 should be lit");
     if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 2) < 0.99f) FAIL("point light: unused channels stay lit");
+    {   // 点光遮罩深度感知上采样：平坦地面上全分辨率与半分辨率一致（影子里暗、远处亮） | depth-aware point-mask upsampling: on flat ground the full-resolution result matches the half-resolution one (dark in the shadow, lit far away)
+        id<MTLComputePipelineState> ps_pup = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_pup"] error:&e]; if (!ps_pup) FAIL("rts_pup pipeline");
+        id<MTLTexture> pmf = tex(MTLPixelFormatRGBA8Unorm, W, H, MTLStorageModeShared); uint32_t pu[4] = {W, H, W / 2, H / 2}; id<MTLBuffer> pub = buf(pu, 16); [resident commit];
+        if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at]; [ce setComputePipelineState:ps_pup]; [at setTexture:pm.gpuResourceID atIndex:0]; [at setTexture:pmf.gpuResourceID atIndex:1]; [at setTexture:depth.gpuResourceID atIndex:2];
+                [at setAddress:pub.gpuAddress atIndex:0]; [ce dispatchThreadgroups:MTLSizeMake(W / 8, H / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)]; })) return 1;
+        if (getenv("T_PUP_DUMP")) { for (int x = 0; x < W; x++) printf("%d:%.2f/%.2f ", x, px(pm, x / 2, gy_of(0) / 2, 0), px(pmf, x, gy_of(0), 0)); printf("\n"); }
+        if (px(pmf, gx_of(22), gy_of(0), 0) > 0.05f) FAIL("rts_pup: ground x=22 should stay shadowed (%g)", px(pmf, gx_of(22), gy_of(0), 0));
+        { int mid = 0; for (int x = 0; x < W; x++) { float v = px(pmf, x, gy_of(0), 0); mid += v > 0.1f && v < 0.9f; } if (mid > 4) FAIL("rts_pup: %d soft pixels on a flat row (only the edge texels may blend)", mid); }
+        if (px(pmf, gx_of(-35), gy_of(0), 0) < 0.95f) FAIL("rts_pup: ground x=−35 should stay lit (%g)", px(pmf, gx_of(-35), gy_of(0), 0));
+    }
     // 镂空遮挡体（第四阶段）：判定库公共头 + 一个合成的「游戏片元着色器」（贴图 alpha < 阈值丢弃）+ 带 RTS_ALPHA 的追踪核一起编；方板 y=1、x∈[−1,1]、z∈[0,1]，
     // 插值 locn 2 = (u, v) = ((x+1)/2, z)，贴图 4×1 左半 alpha 0、右半 1；竖直向上的射线：左半穿过、右半挡住（距离 1）；判定序号 ~0 的记录按不透明处理（全挡）
     // Alpha-tested occluders (phase 4): the library's common head + a synthetic "game fragment shader" (discard when texture alpha < threshold) + the trace kernels with RTS_ALPHA compiled together; a square at y=1, x∈[−1,1], z∈[0,1],
