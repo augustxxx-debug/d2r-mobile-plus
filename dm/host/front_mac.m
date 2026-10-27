@@ -95,11 +95,11 @@ static NSString *share_logs(NSString *to) {
     char hw[64] = "?"; size_t hn = sizeof hw; sysctlbyname("hw.model", hw, &hn, NULL, 0); NSProcessInfo *pi = NSProcessInfo.processInfo;
     NSString *info = [NSString stringWithFormat:@"%@\nD2R Mobile (macOS) %@ (%@)\n%@\n%@\nmacOS %@\n%@  %.0f GB\n%@\n", @(ui("dmAppShareInfo")), ver, build, inf[@"CFBundleIdentifier"] ?: @"", [bt stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],
         pi.operatingSystemVersionString, @(hw), pi.physicalMemory / 1073741824.0, [NSLocale.preferredLanguages componentsJoinedByString:@","]];
-    // 设置摘要（同 iOS 分享日志 perf_block）：本次日志里「自定义设置：读盘」「图形设置：」、帧率档（生效值、出图路径）与光追阴影（机器判定、生效值）各最后一行，玩家开了什么（含显示帧数、120 帧、光追）一眼看得到；下面整份 info 照旧过 scrub
-    // Settings summary (same as perf_block in the iOS share log): the last "custom settings: load", "Graphics", frame-rate-mode (effective value, present path) and ray-traced-shadow (machine gate, effective value) lines of this run's log, so what the player turned on (including the frame-rate display, 120 fps and ray tracing) is visible at a glance; the whole info still goes through scrub below
+    // 设置摘要（同 iOS 分享日志 perf_block）：本次日志里「自定义设置：读盘」「图形设置：」、帧率档（生效值、出图路径）与光追阴影（机器判定、生效值、最近一次回退原版阴影图、600 帧统计）各最后一行，玩家开了什么（含显示帧数、120 帧、光追）一眼看得到；下面整份 info 照旧过 scrub
+    // Settings summary (same as perf_block in the iOS share log): the last "custom settings: load", "Graphics", frame-rate-mode (effective value, present path) and ray-traced-shadow (machine gate, effective value, latest fallback to the original shadow map, 600-frame statistics) lines of this run's log, so what the player turned on (including the frame-rate display, 120 fps and ray tracing) is visible at a glance; the whole info still goes through scrub below
     NSData *cur = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:@"host.log"] options:NSDataReadingMappedIfSafe error:nil];
     NSMutableString *sum = [NSMutableString stringWithString:@"\n—— 设置摘要 ——\n"];
-    for (NSString *k in @[@"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效"]) {
+    for (NSString *k in @[@"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：第"]) {
         NSRange r = cur.length ? [cur rangeOfData:[k dataUsingEncoding:NSUTF8StringEncoding] options:NSDataSearchBackwards range:NSMakeRange(0, cur.length)] : NSMakeRange(NSNotFound, 0);
         if (r.location == NSNotFound) { [sum appendFormat:@"（没有「%@」行）\n", k]; continue; }
         const char *b = cur.bytes; NSUInteger ls = r.location, le = r.location; while (ls > 0 && b[ls - 1] != '\n') ls--; while (le < cur.length && b[le] != '\n') le++;

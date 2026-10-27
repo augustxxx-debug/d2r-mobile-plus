@@ -68,6 +68,9 @@ t_rts_span: t_rts_span.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rts_span.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rts_span_asan: t_rts_span.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fsanitize=address -fobjc-arc -o $@ t_rts_span.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+# 光追阴影网格的生命周期与就绪闸门（五审 Q5-02） | Lifecycle of ray-traced shadow meshes and the readiness gate (fifth review Q5-02)
+t_rts_state: t_rts_state.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_rts_state.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pso_skey: t_pso_skey.m ../nvn/nvn_pso_skey.h ../nvn/nvn_obj.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_skey.m -framework Foundation
 t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -99,6 +102,7 @@ run: \
 	t_reorder_chain \
 	t_rts_span \
 	t_rts_span_asan \
+	t_rts_state \
 	t_rt_depth_ro \
 	t_rt_range \
 	t_rt_range_ro \
@@ -142,7 +146,7 @@ run: \
 	./t_pso_skey
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
-	@for t in t_rts_span t_rts_span_asan; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
+	@for t in t_rts_span t_rts_span_asan t_rts_state; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
 	python3 test_tbdr_budget.py
 .PHONY: run
 # 旧接口版那一遍（图形后端编译期开关 DM_NVN_M3=1，目标 macOS 15.0）：在旁边的 tests_m3 目录里用同一份测试源码另编另跑，不动这里的缺省产物。
