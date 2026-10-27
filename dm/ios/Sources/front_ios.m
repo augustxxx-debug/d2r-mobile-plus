@@ -30,6 +30,7 @@ void dm_gamepad_start(void (*on_mode)(int pad)); void dm_gamepad_touched(void); 
 #include "../../host/dm_actions.h"
 #include "../../host/dm_i18n.h"
 static NSString *SWT(const char *k) { return @(dm_ui(k)); }   // 我们自己的界面文字（中英表 dm/i18n/ui_text.tsv，语言跟原版设置走） | our own UI text (Chinese-English string table dm/i18n/ui_text.tsv, language follows the original game's setting)
+static int g_fps_hud;   // 「显示帧数」要画的数（0 = 不画）；主线程写、主线程读（attach_fps_hud 的定时器与 DmMetalView 每拍刷新） | the "Show frame rate" number to draw (0 = none); written and read on the main thread (attach_fps_hud timer and the DmMetalView per-tick refresh)
 static _Atomic int g_touch_frontend=1;   // 不在局内（启动即是）：scene.game 为假 | Not in a run (true right at launch): scene.game is false
 static void hud_stack_watch(void);   // 底部 UI v4 面板栈看门（定义见 touch_ui_message 前） | Bottom UI v4 panel stack watch (defined before touch_ui_message)
 // 旧生命周期实验可省略桥；生产Sources自动包含强实现。
@@ -322,7 +323,8 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
         dm_tc_resize(&_controls,self.bounds.size.width,self.bounds.size.height);[_overlay setNeedsDisplay];
     }
     hud_stack_watch();
-    { dm_hud_info h, o=_overlay.hud; dm_hud_get(&h); h.x=h.y=0; if (memcmp(&h,&o,sizeof h)) { _overlay.hud=h; [_overlay setNeedsDisplay]; } }   // 覆盖层不画玩家坐标：不清掉的话走路时每个逻辑拍都判「变了」、整层全屏重画一遍 | The overlay does not draw player coordinates: without clearing them, every logic tick while walking would be judged "changed" and redraw the whole layer fullscreen
+    { dm_hud_info h, o=_overlay.hud; dm_hud_get(&h); h.x=h.y=0; if (memcmp(&h,&o,sizeof h)) { _overlay.hud=h; [_overlay setNeedsDisplay]; } }
+    if (_overlay.fps!=g_fps_hud) { _overlay.fps=g_fps_hud; [_overlay setNeedsDisplay]; }   // 显示帧数（attach_fps_hud）：数变了才重画 | Show frame rate (attach_fps_hud): redraw only when the number changes   // 覆盖层不画玩家坐标：不清掉的话走路时每个逻辑拍都判「变了」、整层全屏重画一遍 | The overlay does not draw player coordinates: without clearing them, every logic tick while walking would be judged "changed" and redraw the whole layer fullscreen
     dm_tg_snapshot snapshot={0};
     dm_touch_game_snapshot(&snapshot);
     _overlay.nativeMapping=snapshot;
@@ -942,23 +944,21 @@ static UIView *test_fold(UIView *top) {
     }
     return top;
 }
-// 自定义页「显示帧数」（键 fps_hud，缺省关）：画面右上角半透明小标签，每 0.5 秒按实际上屏次数算帧率；UIKit 层，不碰游戏界面。开关每次刷新时读，点「应用」即时显示 / 隐藏
-// Custom page "Show frame rate" (key fps_hud, off by default): a small translucent label at the top right of the picture, frame rate from the actual present count every 0.5 s; UIKit layer, the game UI is untouched. The switch is read on every refresh, so Apply shows / hides it at once
+// 自定义页「显示帧数」（键 fps_hud，缺省关）：每 0.5 秒按系统确认上屏的次数算帧率，交给底栏接在经验行末尾画（「Lv 17 · 23% · 60 FPS」，DmTouchOverlay drawV4）。
+// 同一套游戏字体预渲染字形、同色同字效，不另起 UIKit 标签：原先右上角的 Palatino 标签与游戏字体不一致、灰黑底板突兀，在 iPhone Duo 上还压着小地图下的地名（用户 2026-10-27）。
+// 底栏不画的时候（面板 / 读取画面 / 过场 / 死亡）帧数也不画。开关每次刷新时读，点「应用」即时生效
+// Custom page "Show frame rate" (key fps_hud, off by default): every 0.5 s the frame rate is computed from the system-confirmed presented count and handed to the bottom bar, which draws it at the end of the
+// experience line ("Lv 17 · 23% · 60 FPS", DmTouchOverlay drawV4) with the same pre-rendered game-font glyphs, color and effect, instead of a separate UIKit label: the former top-right Palatino label did not match
+// the game font, its grey-black plate stood out, and on iPhone Duo it covered the area name under the minimap (user, 2026-10-27). When the bar is not drawn (panels / loading / cinematics / death) neither is the
+// frame rate. The switch is read on every refresh, so "Apply" takes effect at once
 static UIView *attach_fps_hud(UIView *top) {
     if (!top) return top;
-    // 字体：游戏的字体不是系统能装的 TTF，取风格最接近其正文字体（Formal 436）的系统衬线体 Palatino Bold，金色字；拿不到就退回系统等宽数字字体。精确跟随游戏字体要改成游戏内文本控件（待做）
-    // Font: the game's font is not an installable TTF; use the system serif closest in style to its body font (Formal 436), Palatino Bold, in gold; fall back to the system monospaced-digit font. Exact game-font rendering needs an in-game text widget (to do)
-    UILabel *l = [UILabel new]; l.font = [UIFont fontWithName:@"Palatino-Bold" size:13] ?: [UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold]; l.textColor = [UIColor colorWithRed:0.92 green:0.82 blue:0.58 alpha:1];
-    l.backgroundColor = [UIColor colorWithWhite:0 alpha:0.45]; l.layer.cornerRadius = 4; l.clipsToBounds = YES; l.textAlignment = NSTextAlignmentCenter; l.hidden = YES; l.userInteractionEnabled = NO;
-    l.translatesAutoresizingMaskIntoConstraints = NO; [top addSubview:l];
-    [NSLayoutConstraint activateConstraints:@[[l.topAnchor constraintEqualToAnchor:top.safeAreaLayoutGuide.topAnchor constant:6], [l.trailingAnchor constraintEqualToAnchor:top.safeAreaLayoutGuide.trailingAnchor constant:-8],
-                                              [l.widthAnchor constraintGreaterThanOrEqualToConstant:64], [l.heightAnchor constraintEqualToConstant:20]]];
-    __block uint64_t lp = 0, lt = 0; __weak UILabel *wl = l;
-    [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *tm) { UILabel *lab = wl; if (!lab) { [tm invalidate]; return; }
+    __block uint64_t lp = 0, lt = 0;
+    [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *tm) {
         int dm_custom_get(const char *); uint64_t mtl_presented_count(void);   // 系统确认真正上屏的帧（复审 F08），不是出图尝试 | frames the system confirms on screen (re-audit F08), not present attempts
-        if (!dm_custom_get("fps_hud")) { lab.hidden = YES; lt = 0; return; }
+        if (!dm_custom_get("fps_hud")) { g_fps_hud = 0; lt = 0; return; }
         uint64_t t = now_ns(), p = mtl_presented_count();
-        if (lt && t > lt) { lab.text = [NSString stringWithFormat:@" %.0f fps ", (double)(p - lp) * 1e9 / (double)(t - lt)]; lab.hidden = NO; }
+        if (lt && t > lt) g_fps_hud = (int)lround((double)(p - lp) * 1e9 / (double)(t - lt));
         lt = t; lp = p; }];
     return top;
 }

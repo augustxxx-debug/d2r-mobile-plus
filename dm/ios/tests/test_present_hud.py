@@ -75,5 +75,34 @@ class PresentedCount(unittest.TestCase):
         self.assertEqual(len(re.findall(r'\bg_present_n\+\+', MTL)), 0)
 
 
+
+class FpsInHud(unittest.TestCase):
+    """用户 2026-10-27：帧数不再是右上角的 UIKit 标签（字体不一致、灰黑底板突兀、在 iPhone Duo 上压着小地图下的地名），改为接在底栏经验行末尾，同字形同色
+    User, 2026-10-27: the frame rate is no longer a top-right UIKit label (wrong font, grey-black plate, covered the minimap area name on iPhone Duo); it is appended to the bottom-bar experience line in the same glyphs and color"""
+    OVERLAY = (ROOT / 'ios' / 'Sources' / 'DmTouchOverlay.m').read_text(encoding='utf-8')
+    GEN = (ROOT / 'ios' / 'tools' / 'gen_hud_v4.py').read_text(encoding='utf-8')
+
+    def test_no_separate_label(self):
+        hud = block(FRONT, 'static UIView *attach_fps_hud(UIView *top) {')
+        for gone in ('UILabel', 'backgroundColor', 'Palatino', 'addSubview', 'trailingAnchor'):
+            self.assertNotIn(gone, hud, gone)
+        self.assertIn('g_fps_hud =', hud)
+
+    def test_drawn_on_experience_line(self):
+        self.assertIn('stringByAppendingFormat:@" · %d FPS",self.fps', self.OVERLAY)
+        self.assertRegex(self.OVERLAY, r'v4text\(lvs,lv\[@"glyphs"\]')
+        self.assertIn('_overlay.fps=g_fps_hud', FRONT)
+
+    def test_glyphs_cover_fps(self):
+        self.assertRegex(self.GEN, r"glyphs\('lv',\(205,185,140,255\),chars='[^']*F[^']*'\)")
+        for ch in 'FPS':
+            self.assertRegex(self.GEN, r"glyphs\('lv',[^)]*\),chars='[^']*" + ch)
+
+    def test_setting_name_has_no_position(self):
+        row = next(l for l in (ROOT / 'i18n' / 'ui_text.tsv').read_text(encoding='utf-8').splitlines() if l.startswith('dmCustomFpsHud\t'))
+        for word in ('右上角', 'top right', 'arriba', 'справа', '오른쪽'):
+            self.assertNotIn(word, row.split('\t')[1:7].__str__(), word)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=1)

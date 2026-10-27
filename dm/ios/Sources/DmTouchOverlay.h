@@ -10,6 +10,7 @@
 @property(nonatomic, assign) BOOL navigationMode;
 @property(nonatomic, assign) dm_tg_snapshot nativeMapping;
 @property(nonatomic, assign) dm_hud_info hud;
+@property(nonatomic, assign) int fps;   // 「显示帧数」开着时的实际上屏帧率，接在经验行末尾画；0 = 不画（front_ios.m attach_fps_hud） | actual presented frame rate when "Show frame rate" is on, drawn at the end of the experience line; 0 = not drawn
 @property(nonatomic, assign) BOOL dialogOnly;   // 只开着 NPC 对话菜单：底栏照常画 | only the NPC dialog menu is open: the bottom bar is drawn as usual
 @property(nonatomic, assign) BOOL hudBlocked;   // 面板栈里有非常驻面板：UIKit 底栏让开（front_ios.m hud_stack_message）   // 宿主每拍发布的 HUD 数字（底部 UI v4：经验条、角标、难度） | the panel stack has a non-persistent panel: the UIKit bottom bar gets out of the way (front_ios.m hud_stack_message)   // HUD numbers published by the host every tick (bottom UI v4: experience bar, badges, difficulty)
 - (NSDictionary *)controlMetadata;

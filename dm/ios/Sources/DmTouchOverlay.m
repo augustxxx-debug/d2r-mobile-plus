@@ -187,7 +187,9 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
     v4text([NSString stringWithFormat:@(dm_ui("dmHudLife")),h.hp,h.hp_max],vt[@"glyphs"],[vt[@"left_x"] doubleValue],[vt[@"baseline"] doubleValue],0,W,u);
     v4text([NSString stringWithFormat:@(dm_ui("dmHudMana")),h.mp,h.mp_max],vt[@"glyphs"],[vt[@"right_x"] doubleValue],[vt[@"baseline"] doubleValue],0,W,u);
     NSDictionary *lv=ui[@"lv"];
-    v4text([NSString stringWithFormat:@"Lv %d · %d%%",h.level,h.exp_permille/10],lv[@"glyphs"],[lv[@"x"] doubleValue],[lv[@"baseline"] doubleValue],0,W,u);
+    NSString *lvs=[NSString stringWithFormat:@"Lv %d · %d%%",h.level,h.exp_permille/10];
+    if(self.fps>0) lvs=[lvs stringByAppendingFormat:@" · %d FPS",self.fps];   // 显示帧数：同一行、同字形，不另起标签（不压小地图地名、不加底板） | Show frame rate: same line and glyphs, no separate label (does not cover the minimap area name, no backing plate)
+    v4text(lvs,lv[@"glyphs"],[lv[@"x"] doubleValue],[lv[@"baseline"] doubleValue],0,W,u);
     // 角标：腰带四列件数（第 1–4 格），右下内角右对齐（回城不要书 / 卷轴、不显示次数，第 5 格是十字）
     // Badges: item counts of the four belt columns (cells 1–4), right-aligned at the inner bottom-right corner (town portal needs no tome / scroll and shows no count; cell 5 is the cross)
     NSArray *slots=ui[@"slots"], *in=ui[@"inner"]; NSDictionary *bd=ui[@"badge"];

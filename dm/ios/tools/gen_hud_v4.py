@@ -144,7 +144,7 @@ def glyphs(tag,fill,font=font,chars='0123456789Lv·% '):     # 与效果图 shad
     return m
 ui={'ref':[W,H],'center_x':W/2,'slots':g['slots'],'inner':[g['IX0'],g['IY0'],g['IX1'],g['IY1']],
     'exp':{'x0':g['EX0'],'x1':g['EX1'],'y':g['EY'],'h':6,'track':[22,18,14],'edge':[70,58,40],'fill':[196,160,70],'ticks':20},
-    'lv':{'x':(g['EX0']+g['EX1'])/2,'baseline':g['EY']-6,'glyphs':glyphs('lv',(205,185,140,255))},
+    'lv':{'x':(g['EX0']+g['EX1'])/2,'baseline':g['EY']-6,'glyphs':glyphs('lv',(205,185,140,255),chars='0123456789Lv·% FPS')},   # 「显示帧数」接在经验行末尾（· 60 FPS），同字同色同字效 | "Show frame rate" is appended to the experience line (· 60 FPS) in the same font, color and effect
     'badge':{'glyphs':glyphs('b',(235,235,235,255)),'dx':-3,'dy':-1},     # 右下内角锚点 = 格左上 + 内框右下 + (dx,dy)，右对齐、基线 | Lower-right inner corner anchor = slot top-left + inner frame bottom-right + (dx,dy), right-aligned, baseline
     'pick':{'center_x':1390,'pitch':120,'y':1051.5},
     'vital':{'left_x':g['LBC'][0],'right_x':g['RBC'][0],'baseline':g['YB']}}
