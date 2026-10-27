@@ -134,3 +134,12 @@ for fixture in (settings_src,no_style):
     assert tab['textStyle']['options']['lineWrap'] is False
     assert layout._settings_tabs(out)[0]==out
 print('PASS inherited console style receives a complete nested tab style')
+
+# 实验性功能要在设置页标出来（用户 2026-10-27）：MetalFX 开关名六套文本都带「实验性」标记，且不比原文长太多（标签宽 1000 单位）
+# Experimental features are marked on the settings page (user, 2026-10-27): the MetalFX switch name carries the experimental marker in all six languages, without growing much past the original (label width 1000 units)
+EXPERIMENTAL = ('实验性', 'experimental', 'experimental', 'experimental', 'эксперимент', '실험적')
+tsv = {l.split('\t')[0]: l.split('\t') for l in (root / 'i18n' / 'ui_text.tsv').read_text(encoding='utf-8').splitlines() if '\t' in l}
+for cell, mark in zip(tsv['dmGraphicsUpscaling'][1:7], EXPERIMENTAL):
+    assert mark in cell, (cell, mark)
+    assert len(cell) <= 40, cell
+print('PASS MetalFX switch is marked experimental in every language')

@@ -102,7 +102,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmTabGraphics", "图形", "Graphics", "Gráficos", "Gráficos", "Графика", "그래픽" },
     { "dmGraphicsTitle", "图形设置", "Graphics", "Gráficos", "Gráficos", "Графика", "그래픽" },
     { "dmGraphicsFrameRate", "帧率：30 FPS 省电（关闭为 60 FPS）", "Frame rate: 30 FPS power saving (off: 60 FPS)", "Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)", "Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)", "Частота: 30 FPS экономия (выкл.: 60 FPS)", "프레임: 30 FPS 절전 (끔: 60 FPS)" },
-    { "dmGraphicsUpscaling", "MetalFX 空间超分", "MetalFX spatial upscaling", "Superresolución espacial MetalFX", "Superresolución espacial MetalFX", "Пространственный апскейлинг MetalFX", "MetalFX 공간 업스케일링" },
+    { "dmGraphicsUpscaling", "MetalFX 空间超分（实验性）", "MetalFX upscaling (experimental)", "Superresolución MetalFX (experimental)", "Superresolución MetalFX (experimental)", "Апскейлинг MetalFX (эксперимент)", "MetalFX 업스케일링 (실험적)" },
     { "dmGraphicsUpscaleProfile", "MetalFX 档位：自动 → 省电 → 均衡 → 高画质", "MetalFX profile: Auto → Eco → Balanced → Quality", "Perfil MetalFX: Auto → Ahorro → Equilibrado → Calidad", "Perfil MetalFX: Auto → Ahorro → Equilibrado → Calidad", "Профиль MetalFX: авто → экономия → баланс → качество", "MetalFX 프로필: 자동 → 절전 → 균형 → 고화질" },
     { "dmGraphicsProfileAuto", "超分档位：自动", "Profile: Auto", "Perfil: Automático", "Perfil: Automático", "Режим: авто", "모드: 자동" },
     { "dmGraphicsProfileEco", "超分档位：省电", "Profile: Eco", "Perfil: Ahorro", "Perfil: Ahorro", "Режим: экономия", "모드: 절전" },

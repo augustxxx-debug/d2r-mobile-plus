@@ -100,7 +100,7 @@ dmTabGameSettings	游戏设定	Settings	Ajustes	Config.	Опции	설정	触屏
 dmTabGraphics	图形	Graphics	Gráficos	Gráficos	Графика	그래픽	图形设置页签
 dmGraphicsTitle	图形设置	Graphics	Gráficos	Gráficos	Графика	그래픽	图形页标题
 dmGraphicsFrameRate	帧率：30 FPS 省电（关闭为 60 FPS）	Frame rate: 30 FPS power saving (off: 60 FPS)	Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)	Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)	Частота: 30 FPS экономия (выкл.: 60 FPS)	프레임: 30 FPS 절전 (끔: 60 FPS)	帧率开关说明
-dmGraphicsUpscaling	MetalFX 空间超分	MetalFX spatial upscaling	Superresolución espacial MetalFX	Superresolución espacial MetalFX	Пространственный апскейлинг MetalFX	MetalFX 공간 업스케일링	MetalFX 独立开关
+dmGraphicsUpscaling	MetalFX 空间超分（实验性）	MetalFX upscaling (experimental)	Superresolución MetalFX (experimental)	Superresolución MetalFX (experimental)	Апскейлинг MetalFX (эксперимент)	MetalFX 업스케일링 (실험적)	MetalFX 独立开关；实验性功能，六套文本都带「实验性」标记（用户 2026-10-27）
 dmGraphicsUpscaleProfile	MetalFX 档位：自动 → 省电 → 均衡 → 高画质	MetalFX profile: Auto → Eco → Balanced → Quality	Perfil MetalFX: Auto → Ahorro → Equilibrado → Calidad	Perfil MetalFX: Auto → Ahorro → Equilibrado → Calidad	Профиль MetalFX: авто → экономия → баланс → качество	MetalFX 프로필: 자동 → 절전 → 균형 → 고화질	四档滑块说明
 dmGraphicsProfileAuto	超分档位：自动	Profile: Auto	Perfil: Automático	Perfil: Automático	Режим: авто	모드: 자동	MetalFX slider current profile
 dmGraphicsProfileEco	超分档位：省电	Profile: Eco	Perfil: Ahorro	Perfil: Ahorro	Режим: экономия	모드: 절전	MetalFX slider current profile
