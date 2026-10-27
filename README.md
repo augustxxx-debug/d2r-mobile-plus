@@ -70,6 +70,10 @@ Auto also has a measured closed loop on top of the table: when the 3D ratio is a
 
 The cap only ever shrinks and keeps the window aspect ratio within 0.5%, so no black bars appear. The startup reserve is not reduced, so the level can be raised again at runtime without restarting. Status: implemented with unit tests for the budget math and the settings plumbing (`dm/host/tests/t_res_cap.c`, `t_render_profile.c`, `dm/ios/tests/test_touch_layout_options.py`); **not yet verified on a device**, and no power or GPU-time measurement for it exists yet. The slider is read by the iOS front end only; the Mac host keeps native output. The frame-rate setting is independent. Auto, Eco and Balanced can reduce 3D resolution further during sustained frame drops. Unsupported devices or initialization failure retain the original upscale pass automatically.
 
+### Ray-traced shadows (experimental)
+
+A separate **Ray-traced shadows (experimental)** checkbox on the Graphics tab, off by default. The row appears only on devices that pass all three checks: `supportsRaytracing`, GPU family Apple9 or later, and a model allowlist (iPhone 15 Pro / A17 Pro and later, iPad Pro M4 and later, Macs with M3 and later); anywhere else the setting is treated as off and the original shadow maps are used. When on, the translation layer stops rasterizing the game's two 1024² cascaded shadow maps and instead builds Metal acceleration structures from the shadow-pass draws (per-mesh cache, static meshes built once), traces one occlusion ray per pixel toward the sun before the main opaque pass, and feeds the resulting screen-space mask to `_rt` variants of the 230 fragment shaders that used to sample the cascades. Point-light cube shadows are unchanged. Known limits of this first version: skinned units cast bind-pose shadows, alpha-tested foliage casts solid shadows, Metal 4 path only, no device performance or power measurement yet. Status: implemented; Mac-hosted and on-device validation pending.
+
 ### Exploratory device power probe
 
 These are historical readings from before the current local audit fixes. No new phone power measurement was performed during the audit.

@@ -40,8 +40,8 @@ for voice in (False, True):
         os.environ['MOVIE_FFMPEG'] = '1'; layout = importlib.reload(layout)
     host = host_variant(voice)
     keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
-    assert [key for key in keys if key not in ('eco_fps', 'q3d', 'upscale', 'render_res')] == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)   # 图形页四键不在自定义页 | the four Graphics-tab keys are not Custom-page rows
-    assert keys[-2:] == ['upscale', 'render_res']
+    assert [key for key in keys if key not in ('eco_fps', 'q3d', 'upscale', 'render_res', 'rt_shadow')] == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)   # 图形页五键不在自定义页 | the five Graphics-tab keys are not Custom-page rows
+    assert keys[-3:] == ['upscale', 'render_res', 'rt_shadow']   # 末三键 = 图形页 K_UPSCALE / K_RES / K_RT | last three keys = Graphics-tab K_UPSCALE / K_RES / K_RT
     assert ('voice' in keys) == voice
     defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
@@ -92,6 +92,9 @@ _rows_y = [_res_y, g_nodes['TouchGraphicsFpsText']['fields']['rect']['y'], g_nod
 assert _rows_y == [180, 360, 540, 720], _rows_y
 assert g_nodes['TouchGraphicsFps']['fields']['rect']['y'] == 360 + 55 and _hint['y'] >= _rows_y[-1] + 180
 assert g_nodes['TouchGraphicsRows']['fields']['rect']['height'] >= _hint['y'] + _hint['height']
+# 光追阴影（实验性）：自成一行，在渲染分辨率行下面；勾选框 + 标签都在行容器里，宿主按 mtl_rt_shadow_supported 藏整行 | Ray-traced shadows (experimental): its own row under render resolution; checkbox + label inside the row container so the host can hide the whole row
+_rt = g_nodes['TouchGraphicsRtRow']['fields']['rect']; assert _rt['y'] == _res_y + 180 and _hint['y'] >= _rt['y'] + 180
+assert g_nodes['TouchGraphicsRtShadow']['type'] == 'ToggleButtonWidget' and g_nodes['TouchGraphicsRtText']['fields']['text'] == '@dmGraphicsRtShadow'
 print('PASS Graphics page: native FPS/profile sliders, independent upscale toggle, localization hooks')
 
 # Regression: adding Graphics must preserve all original destinations and native settings.
