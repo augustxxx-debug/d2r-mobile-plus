@@ -142,15 +142,25 @@ int main(void) { @autoreleasepool {
     float P[32] = {0}; for (int i = 0; i < 16; i++) P[i] = (float)IA[i]; ((uint32_t *)P)[16] = W / 2; ((uint32_t *)P)[17] = H / 2; ((uint32_t *)P)[18] = W; ((uint32_t *)P)[19] = H; P[20] = 0.6f;
     id<MTLBuffer> pb = buf(P, sizeof P);
     uint32_t B0[8] = {W, H, 1, 0, 0, 0, 0, 0}, B1[8] = {W, H, 0, 1, 0, 0, 0, 0}; ((float *)B0)[4] = ((float *)B1)[4] = 12.f; id<MTLBuffer> bb0 = buf(B0, 32), bb1 = buf(B1, 32);
-    float U[20]; for (int i = 0; i < 16; i++) U[i] = (float)IA[i]; ((uint32_t *)U)[16] = 4; id<MTLBuffer> ub = buf(U, sizeof U);
+    float U[20] = {0}; for (int i = 0; i < 16; i++) U[i] = (float)IA[i]; ((uint32_t *)U)[16] = 4; id<MTLBuffer> ub = buf(U, sizeof U);
     // 蒙皮导出的裁剪坐标：方板右移 30 后经 VP | skinned clip positions: the square shifted by +30 in x, through VP
     { float *c = clip.contents; for (int i = 0; i < 4; i++) { double w4[4] = {sqw[i][0] + 30, sqw[i][1], sqw[i][2], 1}; for (int r = 0; r < 4; r++) { double s = 0; for (int k = 0; k < 4; k++) s += VP[k * 4 + r] * w4[k]; c[i * 4 + r] = (float)s; } } }
+    id<MTLBuffer> badb = buf(NULL, 16);   // 坏顶点计数（解码 / 反投影） | bad-vertex counters (decode / unproject)
     [resident commit];
     MTLSize tg = MTLSizeMake(W / 8, H / 8, 1), tt = MTLSizeMake(8, 8, 1);
+    {   // 解码防坏数据：FLOAT4 的 w = 20 → exp2(260) = Inf、FLOAT3 里有 NaN → 收成原点并计数；正常点原样 | decode guard: FLOAT4 with w = 20 → exp2(260) = Inf, a NaN in FLOAT3 → collapsed to the origin and counted; sane points unchanged
+        float bad4[8] = {1, 2, 3, 20, 1, 2, 3, 0}, bad3[6] = {NAN, 0, 0, 4, 5, 6}; uint32_t k4[4] = {2, 16, 0x2e, 0}, k3[4] = {2, 12, 0x22, 0};
+        id<MTLBuffer> vb4 = buf(bad4, sizeof bad4), vb3 = buf(bad3, sizeof bad3), o4 = buf(NULL, 24), o3 = buf(NULL, 24), kb4 = buf(k4, 16), kb3 = buf(k3, 16), bz = buf(NULL, 16);
+        if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at]; [ce setComputePipelineState:ps_decode]; [at setAddress:bz.gpuAddress atIndex:3];
+                [at setAddress:vb4.gpuAddress atIndex:0]; [at setAddress:o4.gpuAddress atIndex:1]; [at setAddress:kb4.gpuAddress atIndex:2]; [ce dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
+                [at setAddress:vb3.gpuAddress atIndex:0]; [at setAddress:o3.gpuAddress atIndex:1]; [at setAddress:kb3.gpuAddress atIndex:2]; [ce dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)]; })) return 1;
+        const float *r4 = o4.contents, *r3 = o3.contents; const uint32_t *bc = bz.contents;
+        if (r4[0] != 0 || r4[1] != 0 || r4[2] != 0 || r4[3] != 1 || r4[5] != 3 || r3[0] != 0 || r3[3] != 4 || r3[5] != 6 || bc[0] != 2) FAIL("decode guard: (%g %g %g) (%g %g %g) / (%g %g %g) (%g %g %g), bad %u", r4[0], r4[1], r4[2], r4[3], r4[4], r4[5], r3[0], r3[1], r3[2], r3[3], r3[4], r3[5], bc[0]);
+    }
     // 1. 深度拷贝、位置解码、BLAS、TLAS、太阳追踪（硬） | 1. depth copy, decode, BLAS, TLAS, sun trace (hard)
     if (run(^(id<MTL4ComputeCommandEncoder> ce) {
         [ce copyFromBuffer:dzb sourceOffset:0 sourceBytesPerRow:W * 4 sourceBytesPerImage:W * H * 4 sourceSize:MTLSizeMake(W, H, 1) toTexture:depth destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
-        [ce setArgumentTable:at]; [ce setComputePipelineState:ps_decode];
+        [ce setArgumentTable:at]; [ce setComputePipelineState:ps_decode]; [at setAddress:badb.gpuAddress atIndex:3];
         [at setAddress:vb_g.gpuAddress atIndex:0]; [at setAddress:pos_g.gpuAddress atIndex:1]; [at setAddress:kb_g.gpuAddress atIndex:2]; [ce dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
         [at setAddress:vb_s.gpuAddress atIndex:0]; [at setAddress:pos_s.gpuAddress atIndex:1]; [at setAddress:kb_s.gpuAddress atIndex:2]; [ce dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
         [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageAccelerationStructure visibilityOptions:MTL4VisibilityOptionDevice];
@@ -225,7 +235,7 @@ int main(void) { @autoreleasepool {
     // 2. 反投影 + refit：导出的裁剪坐标 → 世界坐标 → 以绑定姿势 BLAS 为源 refit 到槽；TLAS 换成槽；阴影应移到 x∈(10,30) | 2. unproject + refit: shadow moves to x∈(10,30)
     di[1].accelerationStructureID = as_slot.gpuResourceID;
     if (run(^(id<MTL4ComputeCommandEncoder> ce) {
-        [ce setArgumentTable:at]; [ce setComputePipelineState:ps_unproj];
+        [ce setArgumentTable:at]; [ce setComputePipelineState:ps_unproj]; [at setAddress:badb.gpuAddress atIndex:3];
         [at setAddress:clip.gpuAddress atIndex:0]; [at setAddress:pos_slot.gpuAddress atIndex:1]; [at setAddress:ub.gpuAddress atIndex:2]; [ce dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(64, 1, 1)];
         [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageAccelerationStructure visibilityOptions:MTL4VisibilityOptionDevice];
         [ce refitAccelerationStructure:as_s descriptor:blas_desc(pos_slot, ib, 2, 1) destination:as_slot scratchBuffer:(MTL4BufferRange){scratch.gpuAddress, scr} options:MTLAccelerationStructureRefitOptionVertexData];

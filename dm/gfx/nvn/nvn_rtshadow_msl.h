@@ -9,20 +9,21 @@ static const char *k_rts_alpha_head =
 "static inline float4 rts_vl(constant RtsAI &r, uint3 ix, float2 b, uint l) { uint s = r.slot[l]; return (1.0 - b.x - b.y) * r.var[ix.x * r.stride + s] + b.x * r.var[ix.y * r.stride + s] + b.y * r.var[ix.z * r.stride + s]; }\n";
 static const char *k_rts_msl =
 "#include <metal_stdlib>\n#include <metal_raytracing>\nusing namespace metal; using namespace metal::raytracing;\n"
-// 位置解码：fmt 0x2b SNORM16x4、0x2e FLOAT4、0x29 HALF4 都是 xyz · exp2(w · 13)；0x22 FLOAT3 原样 | Position decode
-"kernel void rts_decode(device const uchar *src [[buffer(0)]], device packed_float3 *dst [[buffer(1)]], constant uint4 &k [[buffer(2)]], uint i [[thread_position_in_grid]]) {\n"
+// 位置解码：fmt 0x2b SNORM16x4、0x2e FLOAT4、0x29 HALF4 都是 xyz · exp2(w · 13)；0x22 FLOAT3 原样。非有限 / 离谱（≥ 1e7）的点收成原点并计数（bad[0]）：BLAS 里有 NaN / Inf 顶点时求交行为未定义（可能挂起 GPU）| Position decode; non-finite / absurd (≥ 1e7) points collapse to the origin and are counted (bad[0]): NaN / Inf vertices in a BLAS make intersection undefined (may hang the GPU)
+"inline float3 rts_okpos(float3 p, device atomic_uint *bad, uint slot) { if (all(isfinite(p)) && all(abs(p) < 1e7)) return p; atomic_fetch_add_explicit(&bad[slot], 1u, memory_order_relaxed); return float3(0); }\n"
+"kernel void rts_decode(device const uchar *src [[buffer(0)]], device packed_float3 *dst [[buffer(1)]], constant uint4 &k [[buffer(2)]], device atomic_uint *bad [[buffer(3)]], uint i [[thread_position_in_grid]]) {\n"
 "  if (i >= k.x) return; device const uchar *p = src + (ulong)(k.w + i) * k.y; float4 f;\n"
 "  if (k.z == 0x2b) { device const short *s = (device const short *)p; f = float4(s[0], s[1], s[2], s[3]) / 32767.0; }\n"
 "  else if (k.z == 0x2e) { device const float *s = (device const float *)p; f = float4(s[0], s[1], s[2], s[3]); }\n"
 "  else if (k.z == 0x29) { device const half *s = (device const half *)p; f = float4(s[0], s[1], s[2], s[3]); }\n"
-"  else { device const float *s = (device const float *)p; dst[i] = packed_float3(s[0], s[1], s[2]); return; }\n"
-"  dst[i] = packed_float3(f.xyz * exp2(f.w * 13.0)); }\n"
+"  else { device const float *s = (device const float *)p; dst[i] = packed_float3(rts_okpos(float3(s[0], s[1], s[2]), bad, 0)); return; }\n"
+"  dst[i] = packed_float3(rts_okpos(f.xyz * exp2(f.w * 13.0), bad, 0)); }\n"
 // 蒙皮导出的裁剪坐标 → 世界坐标（光源投影是正交的，逆矩阵精确） | skinned clip positions → world (the light projection is orthographic, the inverse is exact)
 // stride：每顶点几个 float4（蒙皮 _pos = 1；镂空 _var = 1 + 插值输出数，裁剪坐标在第 0 个） | stride: float4s per vertex (skinned _pos = 1; alpha-tested _var = 1 + interpolant outputs, the clip position first)
 "struct U { float4x4 inv; uint n; uint stride; };\n"
-"kernel void rts_unproj(device const float4 *src [[buffer(0)]], device packed_float3 *dst [[buffer(1)]], constant U &u [[buffer(2)]], uint i [[thread_position_in_grid]]) {\n"
+"kernel void rts_unproj(device const float4 *src [[buffer(0)]], device packed_float3 *dst [[buffer(1)]], constant U &u [[buffer(2)]], device atomic_uint *bad [[buffer(3)]], uint i [[thread_position_in_grid]]) {\n"
 "  if (i >= u.n) return; float4 w = u.inv * src[i * max(u.stride, 1u)]; float3 p = w.xyz / w.w;\n"
-"  dst[i] = packed_float3(all(isfinite(p)) && all(abs(p) < 1e7) ? p : float3(0)); }\n"   // 防坏数据：非有限 / 离谱的点收成原点（退化三角形），不让 refit 出坏包围盒 | guard against bad data: non-finite / absurd points collapse to the origin (degenerate triangles) so the refit never yields broken bounds
+"  dst[i] = packed_float3(rts_okpos(p, bad, 1)); }\n"   // 防坏数据：非有限 / 离谱的点收成原点（退化三角形），不让 refit 出坏包围盒 | guard against bad data: non-finite / absurd points collapse to the origin (degenerate triangles) so the refit never yields broken bounds
 // 遮挡判定。RTS_ALPHA（翻译层把 rts_alpha.metal 拼在前面一起编）：镂空实例是非不透明的，查询循环在每个候选三角形处按顶点导出的插值量（重心插值）、
 // 阴影图像素坐标（命中点 × 该次绘制的光源视投影 → 视口）复现游戏原片元着色器（rts_alpha_eval），不丢弃才算挡住；不透明实例直接提交。不带 RTS_ALPHA 时全按不透明（原路径）。
 // Occlusion test. RTS_ALPHA (the translation layer prepends rts_alpha.metal and compiles both together): alpha-tested instances are non-opaque; the query loop replays the game's own fragment shader (rts_alpha_eval) at each candidate triangle
