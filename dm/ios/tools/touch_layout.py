@@ -1138,8 +1138,12 @@ def build_present(romfs, outdir):
 # Prefix 3 is unused among the native layout trie siblings; existing paths stay intact.
 GRAPHICS_PANEL = '3PlusGraphicsOptionsPanel'
 GRAPHICS_LAYOUT = '3plusgraphicsoptionspanelhd.json'
-_SETTINGS_LABELS = ('@Audio', '@Gameplay', '@dmTabGameSettings', '@dmTabGraphics', '@dmTabCustom')
-_SETTINGS_PANELS = ('SoundOptionsPanel', 'GameplayOptionsPanel', 'OnlineGameOptionsPanel', GRAPHICS_PANEL, 'VideoOptionsPanel')
+# 页签顺序：音频 / 图形 / 游戏 / 游戏设定 / 自定义。图形紧跟音频（用户 2026-10-27：调画质、帧率是打开选项最常做的事）；第一页仍是原版的音频，
+# 打开选项的落点与焦点不变；自定义（我们加的杂项）放最后。两张表一一对应，宿主按面板名找页，不依赖位置
+# Tab order: Audio / Graphics / Gameplay / Game Settings / Custom. Graphics follows Audio (user, 2026-10-27: adjusting picture and frame rate is the most common reason to open Options);
+# the first tab stays the native Audio, so where Options opens and its focus are unchanged; Custom (our miscellany) stays last. The two tables correspond one to one; the host finds pages by panel name, not position
+_SETTINGS_LABELS = ('@Audio', '@dmTabGraphics', '@Gameplay', '@dmTabGameSettings', '@dmTabCustom')
+_SETTINGS_PANELS = ('SoundOptionsPanel', GRAPHICS_PANEL, 'GameplayOptionsPanel', 'OnlineGameOptionsPanel', 'VideoOptionsPanel')
 
 def _settings_tabs(text):
     """Preserve the native settings destination and add a distinct Graphics panel."""

@@ -143,3 +143,9 @@ for cell, mark in zip(tsv['dmGraphicsUpscaling'][1:7], EXPERIMENTAL):
     assert mark in cell, (cell, mark)
     assert len(cell) <= 40, cell
 print('PASS MetalFX switch is marked experimental in every language')
+
+# 页签顺序（用户 2026-10-27）：音频 / 图形 / 游戏 / 游戏设定 / 自定义，文字与目标面板一一对应
+# Tab order (user, 2026-10-27): Audio / Graphics / Gameplay / Game Settings / Custom, with labels and destination panels paired
+assert layout._SETTINGS_LABELS == ('@Audio', '@dmTabGraphics', '@Gameplay', '@dmTabGameSettings', '@dmTabCustom')
+assert layout._SETTINGS_PANELS == ('SoundOptionsPanel', layout.GRAPHICS_PANEL, 'GameplayOptionsPanel', 'OnlineGameOptionsPanel', 'VideoOptionsPanel')
+print('PASS settings tabs: Graphics right after Audio')

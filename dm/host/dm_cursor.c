@@ -1143,7 +1143,7 @@ static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size
     // The settings page covers the pause menu, yet the pause menu's buttons still receive clicks (the game's dispatch does not look at who is on top): on a pause menu button and not on a clickable widget of the settings page = covered, do not click (same as "on a button covered by an upper panel").
     // Previously, while the settings page was open the whole pause menu layer was set invisible and written back on close - that is writing to the original game's widgets, violating the no-writes-to-original-widgets rule; changed to blocking here only on a hit
     { uint64_t st = ui_panel(root, "SettingsPanel"), xy = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32);
-      static const char *const pages[] = { "SoundOptionsPanel", "GameplayOptionsPanel", "OnlineGameOptionsPanel", "3PlusGraphicsOptionsPanel", "VideoOptionsPanel" };
+      static const char *const pages[] = { "SoundOptionsPanel", "3PlusGraphicsOptionsPanel", "GameplayOptionsPanel", "OnlineGameOptionsPanel", "VideoOptionsPanel" };   // 与页签同序，查找不依赖顺序 | same order as the tabs; lookup does not depend on order
       int page_hit = 0;
       if (st && *(uint8_t *)(st + 0x50)) for (unsigned i = 0; i < sizeof pages / sizeof pages[0] && !page_hit; i++) {
           uint64_t page = ui_panel(root, pages[i]);
