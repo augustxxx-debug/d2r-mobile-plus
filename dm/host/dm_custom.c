@@ -283,18 +283,19 @@ void dm_graphics_ui_pump(unsigned long long root) {
     if (dm_wref_get(&focus_panel) != sp) { dm_wref_set(&focus_panel, sp); selected = 0; }
     int pad = dm_padmode_current() && !dm_ui_modal_active(root);
     uint64_t ev = pad ? dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A | DM_BTN_LEFT | DM_BTN_RIGHT) : 0;
-    // 行：0 帧率 / 1 超分开关 / 2 超分档位（开关开着才有）/ 3 渲染分辨率。selected 是可见行的序号，row_id 是布局里的行号（档位行藏起来时第三行就是分辨率）
-    // Rows: 0 frame rate / 1 upscale switch / 2 upscale profile (only while the switch is on) / 3 render resolution. selected indexes visible rows; row_id is the layout row (with the profile row hidden, the third visible row is resolution)
+    // 行（与 touch_layout.py _graphics_page 同序，用户 2026-10-27）：0 渲染分辨率 / 1 帧率 / 2 超分开关 / 3 超分档位（开关开着才有，在最后，藏起来不留空行）。可见行号就是布局行号
+    // Rows (same order as touch_layout.py _graphics_page, user 2026-10-27): 0 render resolution / 1 frame rate / 2 upscale switch / 3 upscale profile (only while the switch is on; last, so hiding it leaves no gap). The visible row index is the layout row
+    enum { ROW_RES, ROW_FPS, ROW_UPSCALE, ROW_PROFILE };
     int rows = pending_value(K_UPSCALE) ? 4 : 3;
     if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
     if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
-    int row_id = selected >= 2 && !pending_value(K_UPSCALE) ? 3 : selected;
-    if (selected == 0 && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
+    int row_id = selected;
+    if (selected == ROW_FPS && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
         int to = (!pending_value(K_FPS)) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
         if (to>=0 && to<=1) { graphics_select_fps(to);
             ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(fps,to,0,0); }
     }
-    if ((ev & DM_BTN_A) && selected == 1) {
+    if ((ev & DM_BTN_A) && selected == ROW_UPSCALE) {
         int to=!pending_value(K_UPSCALE); atomic_store(&g_pend[K_UPSCALE],to);
         if (upscale) set_toggle(upscale,to);
     }
@@ -313,7 +314,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
             ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, pending_value(K_Q3D), 0, 0);
             dm_wref_set(&seen[2], slider);
         } else if (enabled) graphics_select_profile(*(int32_t *)(slider + 0x5c4));
-        if (enabled && selected == 2 && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
+        if (enabled && selected == ROW_PROFILE && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
             int to = pending_value(K_Q3D) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
             if (to >= 0 && to < 4) { graphics_select_profile(to);
                 ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, to, 0, 0); }
@@ -327,7 +328,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
             ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(res, pending_value(K_RES), 0, 0);
             dm_wref_set(&seen[3], res);
         } else graphics_select_res(*(int32_t *)(res + 0x5c4));
-        if (row_id == 3 && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
+        if (row_id == ROW_RES && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
             int to = pending_value(K_RES) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
             if (to >= 0 && to < DM_RES_LEVELS) { graphics_select_res(to);
                 ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(res, to, 0, 0); }

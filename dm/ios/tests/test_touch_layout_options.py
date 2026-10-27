@@ -82,12 +82,15 @@ assert '@dmGraphicsFrameRate60' in graphics_out and '@dmGraphicsUpscaling' in gr
 assert 'Row Offline' not in g_nodes and 'Row Online' not in g_nodes
 assert not g_nodes['OptionsTable'].get('children')
 assert g_nodes['TouchGraphicsRows']['type'] == 'Widget'
-# 渲染分辨率行：四档滑块与标签在档位行之后、说明之前，不与说明重叠 | Render resolution row: four-position slider and label after the profile row and before the hint, without overlapping it
+# 行序（用户 2026-10-27）：渲染分辨率 / 帧率 / MetalFX 开关 / 超分档位，每行 180 单位，档位行在最后；说明在档位行之后、不重叠
+# Row order (user, 2026-10-27): render resolution / frame rate / MetalFX switch / upscale profile, 180 units each, profile row last; the hint follows it without overlapping
 assert g_nodes['TouchGraphicsRes']['type'] == 'SettingsSliderWidget'
 assert g_nodes['TouchGraphicsRes']['fields']['onUpdateMessage'].endswith('SetD2RRenderResolution')
 assert g_nodes['TouchGraphicsResText']['fields']['text'] == '@dmGraphicsResAuto'
 _res_y = g_nodes['TouchGraphicsResRow']['fields']['rect']['y']; _hint = g_nodes['TouchGraphicsApplyHint']['fields']['rect']
-assert _res_y == g_nodes['TouchGraphicsProfileRow']['fields']['rect']['y'] + 180 and _hint['y'] >= _res_y + 180
+_rows_y = [_res_y, g_nodes['TouchGraphicsFpsText']['fields']['rect']['y'], g_nodes['TouchGraphicsUpscaleText']['fields']['rect']['y'], g_nodes['TouchGraphicsProfileRow']['fields']['rect']['y']]
+assert _rows_y == [180, 360, 540, 720], _rows_y
+assert g_nodes['TouchGraphicsFps']['fields']['rect']['y'] == 360 + 55 and _hint['y'] >= _rows_y[-1] + 180
 assert g_nodes['TouchGraphicsRows']['fields']['rect']['height'] >= _hint['y'] + _hint['height']
 print('PASS Graphics page: native FPS/profile sliders, independent upscale toggle, localization hooks')
 
@@ -149,3 +152,13 @@ print('PASS MetalFX switch is marked experimental in every language')
 assert layout._SETTINGS_LABELS == ('@Audio', '@dmTabGraphics', '@Gameplay', '@dmTabGameSettings', '@dmTabCustom')
 assert layout._SETTINGS_PANELS == ('SoundOptionsPanel', layout.GRAPHICS_PANEL, 'GameplayOptionsPanel', 'OnlineGameOptionsPanel', 'VideoOptionsPanel')
 print('PASS settings tabs: Graphics right after Audio')
+
+# 宿主手柄选行与布局同序：行号 0–3 = 渲染分辨率 / 帧率 / 超分开关 / 超分档位，选中框 y = 170 + 180 × 行号（与上面 _rows_y 对应）
+# The host's controller row selection matches the layout: rows 0–3 = render resolution / frame rate / upscale switch / profile, selection frame y = 170 + 180 × row (matching _rows_y above)
+_custom = (root / 'host' / 'dm_custom.c').read_text(encoding='utf-8')
+assert 'enum { ROW_RES, ROW_FPS, ROW_UPSCALE, ROW_PROFILE };' in _custom
+assert 'y = pad ? 170 + 180 * row_id : 0' in _custom
+for _row, _name in enumerate(('ROW_RES', 'ROW_FPS', 'ROW_UPSCALE', 'ROW_PROFILE')):
+    assert 170 + 180 * _row + 10 == _rows_y[_row], (_name, _rows_y)
+assert 'selected == ROW_FPS' in _custom and 'selected == ROW_UPSCALE' in _custom and 'selected == ROW_PROFILE' in _custom and 'row_id == ROW_RES' in _custom
+print('PASS Graphics rows: render resolution first, host controller rows in the same order')
