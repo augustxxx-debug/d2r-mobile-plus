@@ -995,6 +995,11 @@ UIView *front_ios_view(CGRect frame) {
             CAMetalLayer *ml = [CAMetalLayer layer]; ml.device = g_layer.device; ml.pixelFormat = MTLPixelFormatBGRA8Unorm; ml.contentsScale = g_layer.contentsScale; ml.frame = box.bounds;
             ml.drawableSize = CGSizeMake(full.size.width * ml.contentsScale, full.size.height * ml.contentsScale); [box.layer insertSublayer:ml atIndex:0];
             v.opaque = NO; v.layer.opaque = NO; v.backgroundColor = UIColor.clearColor; g_layer = ml; mtl_set_ui_rect_fn(ui_rect_frac);
+            // 实验开关 DM_TEST_NO_OVERLAY=1：藏起叠在出图层上的游戏视图（触控控件、自绘 HUD 全在它上面），只剩出图层——查 120 Hz 进局回落 60 是不是 UIKit 叠层合成引起的。
+            // 手指点不到东西，只配 DM_KEYS 脚本用；不是真全屏时游戏视图的层就是出图层，不能藏
+            // Experiment switch DM_TEST_NO_OVERLAY=1: hide the game view stacked on the present layer (touch controls and the self-drawn HUD all live on it), leaving only the present layer -- to see whether the 120 Hz fallback to 60 in a run comes from compositing the UIKit overlay.
+            // Fingers reach nothing, so only for DM_KEYS scripts; without true fullscreen the game view's layer is the present layer and cannot be hidden
+            if (getenv("DM_TEST_NO_OVERLAY") && atoi(getenv("DM_TEST_NO_OVERLAY"))) { v.hidden = YES; LOG("DM_TEST_NO_OVERLAY：游戏视图（触控 / HUD 叠层）已藏，只剩出图层"); }
             LOG("画面：窗口 %.0fx%.0f 比 16:9 窄 → 真全屏已开：出图层铺满整窗；游戏视图跟宿主的界面矩形走（局内贴底、局外居中），启动先按居中的 %.0fx%.0f 摆", full.size.width, full.size.height, frame.size.width, frame.size.height); return test_fold(attach_fps_hud(box)); }
         LOG("画面：窗口 %.0fx%.0f 与游戏画面比例不同 → 游戏视图 %.0fx%.0f 居中（左右各留 %.0f 点、上下各留 %.0f 点）", full.size.width, full.size.height, frame.size.width, frame.size.height, frame.origin.x - full.origin.x, frame.origin.y - full.origin.y); return test_fold(attach_fps_hud(box)); }
     return test_fold(attach_fps_hud(v));
