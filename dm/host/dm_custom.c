@@ -35,13 +35,13 @@ static const char *const k_keys[] = { "lang",
 #if VOICE_ROW
     "voice",
 #endif
-    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "fps_hud", "upscale", "render_res" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
+    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "fps_hud", "upscale", "render_res", "rt_shadow" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
 static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0 };   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0 };   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
@@ -50,10 +50,11 @@ static const int k_def[NK] = { 0,
 #define FPS_120 2
 #define K_Q3D (12 + VOICE_ROW)
 #define K_TOUCH_SWAP (15 + VOICE_ROW)
-#define K_UPSCALE (NK - 2)
-#define K_RES (NK - 1)
-#define N_GFX 4   // 图形页的键数：eco_fps / q3d / upscale / render_res（自定义页的行数 = NK - N_GFX） | Number of Graphics-tab keys (Custom-page rows = NK - N_GFX)
-static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_UPSCALE || i == K_RES; }
+#define K_UPSCALE (NK - 3)
+#define K_RES (NK - 2)
+#define K_RT (NK - 1)
+#define N_GFX 5   // 图形页的键数：eco_fps / q3d / upscale / render_res / rt_shadow（自定义页的行数 = NK - N_GFX） | Number of Graphics-tab keys (Custom-page rows = NK - N_GFX)
+static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_UPSCALE || i == K_RES || i == K_RT; }
 static int custom_key_at(int row) {
     for (int i = 0; i < NK; i++) if (!graphics_key(i) && row-- == 0) return i;
     return 0;
@@ -219,6 +220,11 @@ int dm_fps_setting(void) {
         LOG("帧率档：生效 %d 帧（%s%s，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", v == 1 ? "30" : v == FPS_120 ? "120" : "60", hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz, why >= 2 && hz > 0 ? "；屏幕不到 120 Hz，120 档按 60" : why >= 2 ? "；暂按 60" : "");
     return f;
 }
+// 光追阴影（键 rt_shadow，实验性，缺省关，图形页）：图形层 nvn_rtshadow.inc rts_on 每帧读；机器不过门槛（mtl_rt_shadow_supported）时按关处理，图形页也不显示这一行
+// Ray-traced shadows (key rt_shadow, experimental, off by default, Graphics tab): read every frame by rts_on in nvn_rtshadow.inc; treated as off on machines that fail the gate (mtl_rt_shadow_supported), and the Graphics tab hides the row
+__attribute__((weak)) int mtl_rt_shadow_supported(void);
+static int rt_shadow_ok(void) { return mtl_rt_shadow_supported && mtl_rt_shadow_supported(); }
+int dm_rt_shadow_setting(void) { return rt_shadow_ok() && dm_custom_get("rt_shadow"); }   // 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义） | Read every frame by rts_on in nvn_rtshadow.inc (strong definition of a weak symbol)
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
@@ -307,9 +313,17 @@ static void ui_show_ours(uint64_t w, int on) {
     if (!name || strncmp(name, "Touch", 5)) { if (w) LOG("【红】图形设置：拒绝修改原版控件可见性"); return; }
     *(uint8_t *)(w + 0x50) = on != 0; *(uint8_t *)(w + 0x51) = on != 0;
 }
+// 只挪自己加的控件（名字以 Touch 开头）的 y：矩形 y 在 +0x74，改完照原版补一次虚表 +0x10 让它重算（同下面的选中框、dm_update.c place）
+// Moves only our own widgets (names starting with Touch) vertically: rectangle y at +0x74; after the change the vtable +0x10 is called once as the original does, so it recomputes (same as the selection frame below and place in dm_update.c)
+static void move_ours_y(uint64_t w, int y) {
+    const char *name = w ? *(const char **)(w + 8) : NULL;
+    if (!name || strncmp(name, "Touch", 5)) { if (w) LOG("【红】图形设置：拒绝挪动原版控件"); return; }
+    int32_t *r = (int32_t *)(w + 0x70); if (r[1] == y) return;
+    r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x10))(w);
+}
 void dm_graphics_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
-    static dm_wref seen[4]; static int paint;
+    static dm_wref seen[5]; static int paint;
     uint64_t sp = dm_ui_top(root, "3PlusGraphicsOptionsPanel");
     if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); return; }
     load_once(); int repaint = atomic_load(&g_repaint);
@@ -330,30 +344,44 @@ void dm_graphics_ui_pump(unsigned long long root) {
         if (dm_wref_get(&seen[1])!=upscale) { dm_wref_set(&seen[1],upscale); set_toggle(upscale,want); }
         else if (TOGGLED(upscale)!=want) atomic_store(&g_pend[K_UPSCALE],TOGGLED(upscale));
     }
+    // 光追阴影（实验性）：机器不过门槛时整行藏起来；勾选框与超分开关同一套处理 | Ray-traced shadows (experimental): the whole row is hidden on machines that fail the gate; the checkbox is handled like the upscale switch
+    int rt_ok = rt_shadow_ok(); uint64_t rtrow = find_w(sp, "TouchGraphicsRtRow", 0); if (rtrow) ui_show_ours(rtrow, rt_ok);
+    uint64_t rt = rt_ok ? find_w(sp, "TouchGraphicsRtShadow", 0) : 0;
+    if (rt) {
+        int want = pending_value(K_RT);
+        if (dm_wref_get(&seen[4]) != rt) { dm_wref_set(&seen[4], rt); set_toggle(rt, want); }
+        else if (TOGGLED(rt) != want) atomic_store(&g_pend[K_RT], TOGGLED(rt));
+    }
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t);
     static int selected; static dm_wref focus_panel;
     if (dm_wref_get(&focus_panel) != sp) { dm_wref_set(&focus_panel, sp); selected = 0; }
     int pad = dm_padmode_current() && !dm_ui_modal_active(root);
     uint64_t ev = pad ? dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A | DM_BTN_LEFT | DM_BTN_RIGHT) : 0;
-    // 行（与 touch_layout.py _graphics_page 同序，用户 2026-10-27）：0 渲染分辨率 / 1 帧率 / 2 超分开关 / 3 超分档位（开关开着才有，在最后，藏起来不留空行）。可见行号就是布局行号
-    // Rows (same order as touch_layout.py _graphics_page, user 2026-10-27): 0 render resolution / 1 frame rate / 2 upscale switch / 3 upscale profile (only while the switch is on; last, so hiding it leaves no gap). The visible row index is the layout row
-    enum { ROW_RES, ROW_FPS, ROW_UPSCALE, ROW_PROFILE };
-    int rows = pending_value(K_UPSCALE) ? 4 : 3;
+    // 行（与 touch_layout.py _graphics_page 同序，用户 2026-10-27）：0 渲染分辨率 / 1 帧率 / 2 超分开关 / 3 超分档位（开关开着才有）/ 4 光追阴影（实验性，机器过门槛才有）。
+    // 可见行紧挨着排：档位行藏起来时光追行上移一格补位（下面按可见行数挪光追行与说明行），所以选中框按可见序号 selected 放，行为按布局行号 row_id 走
+    // Rows (same order as touch_layout.py _graphics_page, user 2026-10-27): 0 render resolution / 1 frame rate / 2 upscale switch / 3 upscale profile (only while the switch is on) / 4 ray-traced shadows (experimental, only on machines that pass the gate).
+    // Visible rows are packed: with the profile row hidden, the ray-tracing row moves up one slot (the ray-tracing row and the hint are moved below by the visible row count), so the selection frame follows the visible index selected and behaviour follows the layout row row_id
+    enum { ROW_RES, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT };
+    int prof_on = pending_value(K_UPSCALE) != 0, rows = 3 + prof_on + (rt != 0);
     if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
     if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
-    int row_id = selected;
-    if (selected == ROW_FPS && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
+    int row_id = selected == 3 && !prof_on ? ROW_RT : selected;
+    if ((ev & DM_BTN_A) && row_id == ROW_RT && rt) { int to = !pending_value(K_RT); atomic_store(&g_pend[K_RT], to); set_toggle(rt, to); }
+    if (row_id == ROW_FPS && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
         int to = fps_pos(pending_value(K_FPS)) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
         if (to>=0 && to<=fps_max_pos()) { graphics_select_fps(to);
             ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(fps,to,0,0); }
     }
-    if ((ev & DM_BTN_A) && selected == ROW_UPSCALE) {
+    if ((ev & DM_BTN_A) && row_id == ROW_UPSCALE) {
         int to=!pending_value(K_UPSCALE); atomic_store(&g_pend[K_UPSCALE],to);
         if (upscale) set_toggle(upscale,to);
     }
     int enabled = pending_value(K_UPSCALE);
     uint64_t row = find_w(sp, "TouchGraphicsProfileRow", 0);
     if (row) ui_show_ours(row, enabled);
+    // 光追行接在最后一个可见行下面（档位行藏着时上移一格），说明行再往下一格 | the ray-tracing row follows the last visible row (one slot up while the profile row is hidden), the hint one slot below that
+    if (rtrow) move_ours_y(rtrow, enabled ? 900 : 720);
+    move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), 180 + 180 * (3 + (enabled != 0) + (rt_ok != 0)));
     uint64_t slider = find_w(sp, "TouchGraphicsProfile", 0);
     if (slider && DM_WIDGET_OK(main_base(), slider, DM_VT_SLIDER, "图形设置滑块")) {
         // 3.3.94012: render main+aef3cc reads min/max/current here; main+ad7028
@@ -366,7 +394,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
             ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, pending_value(K_Q3D), 0, 0);
             dm_wref_set(&seen[2], slider);
         } else if (enabled) graphics_select_profile(*(int32_t *)(slider + 0x5c4));
-        if (enabled && selected == ROW_PROFILE && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
+        if (enabled && row_id == ROW_PROFILE && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
             int to = pending_value(K_Q3D) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
             if (to >= 0 && to < 4) { graphics_select_profile(to);
                 ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, to, 0, 0); }
@@ -392,7 +420,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
     { static const char *const fps_captions[3] = { "dmGraphicsFrameRate30", "dmGraphicsFrameRate60", "dmGraphicsFrameRate120" };
       graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), dm_str(main_base(), fps_captions[fps_pos(pending_value(K_FPS))])); }
     uint64_t focus = find_w(sp, "TouchGraphicsSel", 0);
-    if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? -20 : 99999, y = pad ? 170 + 180 * row_id : 0;
+    if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? -20 : 99999, y = pad ? 170 + 180 * selected : 0;
         if (r[0] != x || r[1] != y) { r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)focus + 0x10))(focus); } }
     static const char *const captions[] = { "dmGraphicsProfileAuto", "dmGraphicsProfileEco", "dmGraphicsProfileBalanced", "dmGraphicsProfileQuality" };
     int profile = pending_value(K_Q3D); if (profile < 0 || profile > 3) profile = 0;

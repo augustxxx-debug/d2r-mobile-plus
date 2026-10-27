@@ -2257,7 +2257,7 @@ static void shmap_load(void) {
     id<MTLLibrary> bflib; int bflib_tried; NSMutableDictionary<NSString *, id<MTLFunction>> *bffn; } @end   // bflib：可读 tile 版本 <键>_bf（合并 B 第 2 步） | bflib: readable-tile version <key>_bf (merge B step 2)
 @implementation NvShader @end
 #include "nvn_pso_skey.h"
-@interface NvProg : NSObject { @public NvShader *sh[6]; __unsafe_unretained NvShader *fl_sh[6]; uint8_t fl_ok, fl_img, fl_img_w; uint32_t fl_cmask; } @end   // fl_*：按绘制要用的反射摘要（udc_note_draw），按 sh[] 核对后复用 | fl_*: reflection summary used per draw (udc_note_draw), reused after checking against sh[]
+@interface NvProg : NSObject { @public NvShader *sh[6]; __unsafe_unretained NvShader *fl_sh[6]; uint8_t fl_ok, fl_img, fl_img_w; uint32_t fl_cmask; NvShader *fs_base, *fs_rt; int rt_tried; } @end   // fs_base / fs_rt：片元原版与光追阴影 _rt 变体，draw 按开关选（nvn_rtshadow.inc rts_select_fs） | fs_base / fs_rt: original fragment shader and its ray-traced-shadow _rt variant, chosen per draw by the switch   // fl_*：按绘制要用的反射摘要（udc_note_draw），按 sh[] 核对后复用 | fl_*: reflection summary used per draw (udc_note_draw), reused after checking against sh[]
 @implementation NvProg @end
 // 预热项：后台建好、等提交线程领用。vs / fs 强引用（pso 里只是裸指针，后台字典随任务结束释放）
 // Warm-up entry: built in the background, waiting to be taken by the submit thread. vs / fs are strong references (in pso they are only raw pointers, and the background dictionary is released when the task ends)
@@ -3034,6 +3034,7 @@ static uint64_t dummy_buf_gpu(void) { static uint64_t gpu; if (!gpu) gpu = dummy
 static uint8_t g_args_dirty[6] = {1, 1, 1, 1, 1, 1};
 static uint64_t g_args_reg_seen, g_args_dirty_seen;
 static inline void args_dirty_all(void) { memset(g_args_dirty, 1, sizeof g_args_dirty); }
+static uint64_t rts_mask_rid(void); static id<MTLTexture> rts_mask_tex(void);   // nvn_rtshadow.inc：光追阴影遮罩（没有时为 1x1 全亮） | nvn_rtshadow.inc: ray-traced shadow mask (1x1 fully lit when absent)
 static inline void args_sync_dirty(void) {
     uint64_t reg = g_reg_gen, dirty = nvn_dirty_now();
     if (reg != g_args_reg_seen || dirty != g_args_dirty_seen) {
@@ -3190,6 +3191,8 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
             id<MTLBuffer> cb = sh->c1buf ? sh->c1buf : zero_bank();   // c1 长 0（全库 600 份）而着色器仍声明：读 0 | c1 has length 0 (600 of them in the whole library) yet the shader still declares it: reads 0
             slots[aid] = (sh->c1buf ? sh->c1_gpu : zero_bank_gpu()) + (sh->c1buf ? sh->c1off : 0);
             USE(cb, MTLResourceUsageRead);
+        } else if (b->kind == NVN_RB_RTMASK) {   // 光追阴影遮罩（_rt 变体的附加贴图） | ray-traced shadow mask (extra texture of the _rt variants)
+            slots[aid] = rts_mask_rid(); USE(rts_mask_tex(), MTLResourceUsageRead);
         } else if (b->kind == NVN_RB_SUPPORT) {   // support_buffer：缩放 1.0、BGRA 互换 0、视口变换未关闭（视口字段不读） | support_buffer: scale 1.0, BGRA swap 0, viewport transform not disabled (viewport fields are not read)
             slots[aid] = support_gpu();
             USE(support_buf(), MTLResourceUsageRead);
@@ -4678,9 +4681,11 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
 // Upscaling hooks only the original final 3D upscale pass; implementation is separate.
 #include "nvn_metalfx.inc"
 #include "nvn_rtcap.inc"
+#include "nvn_rtshadow.inc"
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); return; }
     __unsafe_unretained NvProg *pr = prog_get(S.prog);
+    rts_select_fs(pr);   // 光追阴影：按开关换片元 _rt 变体 | ray-traced shadows: swap in the _rt fragment variant per the switch
     if (g_ruler_truth == 0) {   // 尺子负对照（DM_NVN_RULER_NEG=<片元键>）：被测模式下丢掉该着色器的绘制，尺子必须报不等价 | Ruler negative control (DM_NVN_RULER_NEG=<fragment key>): in the mode under test drop this shader's draws, and the ruler must report non-equivalence
         static const char *neg; static int ng = -1; if (ng < 0) { neg = getenv("DM_NVN_RULER_NEG"); ng = neg && *neg; }
         if (ng && pr) for (int st = 0; st < 5; st++) { __unsafe_unretained NvShader *sh = pr->sh[st]; if (sh && sh->stage == 1 && !strncmp(sh->key, neg, strlen(neg))) { static int once; if (!once++) MLOG("DM_NVN_RULER_NEG：被测模式丢弃着色器 %s 的绘制", sh->key); return; } }
@@ -4920,6 +4925,7 @@ frz_plain:;
     rr_snap(dw,di);
 #endif
     rtcap_draw(pr, dw, di, prim);   // 光追评估抓帧（DM_NVN_RTCAP，缺省关） | RT evaluation capture (DM_NVN_RTCAP, off by default)
+    if (rts_draw(pr, dw, di, prim)) return;   // 光追阴影：阴影图绘制改进加速结构，不编码 | Ray-traced shadows: shadow-map draws go into the acceleration structure instead of being encoded
     udc_note_draw(pr);
     // 0 个图元的绘制（游戏会发 count=0）不画任何像素，跳过编码；Metal 规定计数必须非零，校验层否则当场中止（营地 / 野外 / 战斗页实测）
     // A draw with 0 primitives (the game does send count=0) draws no pixels, so skip encoding; Metal requires the count to be non-zero, otherwise the validation layer aborts on the spot (measured on the camp / wilderness / combat pages)
@@ -5711,7 +5717,7 @@ void mtl_exec(const uint8_t *p) {
                 // 不续用只为清除开的通道；少挂深度 / 模板的可续用（绘制前核平面）
                 // Do not continue a render pass opened only for a clear; one with fewer depth / stencil attachments can be continued (check the planes before drawing)
                 if (g_enc && g_enc_mode != 1 && !pend && R.has_rt && tbdr_on() && rt_same(&R.rt, r)) { g_rt_merged = 1; if (!g_rt_merge_n++) MLOG("同目标续用：首例 通道 %llu", g_stat_pass); PD("M %llu 同目标续用通道", g_stat_pass); R.rt = *r; break; }
-                rp_flush(); R.rt = *r; R.has_rt = 1; break;
+                rp_flush(); R.rt = *r; R.has_rt = 1; rts_set_rt(r); break;
             }
             case OP_CLEAR_COLOR: {
                 const p_clear_color *c = a;

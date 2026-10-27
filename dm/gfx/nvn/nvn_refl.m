@@ -43,6 +43,7 @@ int nvn_refl_from_json(NSDictionary *j, nvn_refl *o, char *err, int errlen) {
             else if ([k isEqualToString:@"support"]) r->kind = NVN_RB_SUPPORT;
             else if ([k isEqualToString:@"c1"]) r->kind = NVN_RB_C1;
             else if ([k isEqualToString:@"drvcb"]) r->kind = [b[@"bank"] intValue] == 2 ? NVN_RB_DRV2 : NVN_RB_DRV0;
+            else if ([k isEqualToString:@"rtmask"]) r->kind = NVN_RB_RTMASK;   // 光追阴影遮罩（dm/gfx/tools/rts_variant.py 出的 _rt 变体） | ray-traced shadow mask (_rt variants from dm/gfx/tools/rts_variant.py)
             else FAIL("B 绑定种类 %s 未实现（%s）", k.UTF8String, [b[@"msl_name"] UTF8String]);
             if ((r->kind == NVN_RB_CBUF || r->kind == NVN_RB_SAMP || r->kind == NVN_RB_SAMPT || r->kind == NVN_RB_TEX || r->kind == NVN_RB_IMG || r->kind == NVN_RB_TBUF || r->kind == NVN_RB_SBUFP || r->kind == NVN_RB_UBOP) && reg < 0)
                 FAIL("B 绑定 %s 没解出槽号", [b[@"msl_name"] UTF8String]);

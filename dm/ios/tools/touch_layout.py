@@ -1435,8 +1435,13 @@ def _graphics_page(text):
             'onUpdateMessage': 'OptionsPanelMessage:SetD2RRenderResolution',
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}}]}
+    # 光追阴影（实验性，dm/gfx/nvn/nvn_rtshadow.inc）：一行勾选框；机器不过门槛时宿主把整行 TouchGraphicsRtRow 藏起来（dm_graphics_ui_pump 按 mtl_rt_shadow_supported）
+    # Ray-traced shadows (experimental, dm/gfx/nvn/nvn_rtshadow.inc): one checkbox row; on machines that fail the gate the host hides the whole TouchGraphicsRtRow (dm_graphics_ui_pump via mtl_rt_shadow_supported)
+    rt_row = {'type': 'Widget', 'name': 'TouchGraphicsRtRow', 'fields': {
+        'rect': {'x': 0, 'y': 900, 'width': 1730, 'height': 180}}, 'children': [
+        label('TouchGraphicsRtText', 'dmGraphicsRtShadow', 0, 0, 1000, 180), toggle('TouchGraphicsRtShadow', 0)]}
     rows = {'type': 'Widget', 'name': 'TouchGraphicsRows', 'fields': {
-        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1300}}, 'children': [title, res_row,
+        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1400}}, 'children': [title, res_row,
         label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 360, 1000, 180),
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsFps', 'fields': {
             'rect': {'x': 1110, 'y': 415, 'width': 480, 'height': 72},
@@ -1447,7 +1452,7 @@ def _graphics_page(text):
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}},
         label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 540, 1000, 180), toggle('TouchGraphicsUpscale', 540),
-        profile, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 900, 1670, 300),
+        profile, rt_row, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 1080, 1670, 300),
         {'type': 'NineTileImageWidget', 'name': 'TouchGraphicsSel', 'fields': {
             'rect': {'x': 99999, 'y': 0, 'width': 1700, 'height': 180}, 'backgroundColor': [0, 0, 0, 0],
             'filename': 'Controller/PANEL/ControllerSelector/ControllerSelectorBorder', 'tileScale': 0.5}}]}
