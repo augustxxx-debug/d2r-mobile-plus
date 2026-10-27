@@ -6547,7 +6547,11 @@ static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象
         MLOG("显示节拍：抢救期满，换回节拍模式 %d 再试（帧 %llu）", g_dm_present_link, (unsigned long long)atomic_load(&g_cur_frame)); }
     int want = g_dm_present_link;
     if (want < 0 || want > 2) { g_dm_present_link = applied == 3 ? 1 : applied; return; }
-    if (want && mtl_fps_target() == 30) want = 3;   // 省电模式：显示节拍 30 Hz（按屏幕刷新率取整除档） | Power saving mode: display pacing 30 Hz (evenly dividing tier by screen refresh rate)
+    { static int keep = -1; if (keep < 0) { const char *e = getenv("DM_120_LINK"); keep = e && atoi(e); if (keep) MLOG("DM_120_LINK=1：120 帧档也留显示节拍（对照用）"); }
+      int req = want; want = nvn_link_mode(want, mtl_fps_target(), TARGET_OS_IPHONE, keep);
+      static int said = -1; int note = req && !want; if (note != said) { said = note;   // 原因只在变化时记（分享诊断日志的摘要取「帧率档：」最后一行） | the reason is logged only on change (the share-diagnostics summary takes the last "帧率档：" line)
+          if (note) MLOG("帧率档：出图改由出图线程自取 drawable（120 帧档在 iOS 上：显示节拍路径遇局内触控 / HUD 叠层会被系统按 60 Hz 合成、隔张丢）");
+          else if (req) MLOG("帧率档：出图走显示节拍（模式 %d）", want); } }   // 省电 30 → 30 Hz 节拍（3）；iOS 120 帧档 → 自取 drawable（0），见 nvn_pace.h | power saving 30 → 30 Hz link (3); iOS 120 fps mode → take drawables (0), see nvn_pace.h
     if (want == applied && want && want != 2 && g_link) {   // 窗口换了屏 / 屏幕改了刷新率：节拍跟着换到新的整除档 | Window moved to another screen / screen refresh rate changed: pacing switches to the new evenly dividing tier
         double hz = mtl_pace_hz();
         if (hz != applied_hz) { CAMetalDisplayLink *link = g_link; link.preferredFrameRateRange = link_range(want);

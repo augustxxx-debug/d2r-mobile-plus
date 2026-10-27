@@ -70,6 +70,19 @@ int main(void) {
         double got = nvn_pace_hz(f[i].scr, nvn_present_floor_hz(f[i].target)); int ok = got > f[i].want - 1e-9 && got < f[i].want + 1e-9;
         printf("%-52s 期望 %7.3f Hz → 真结果 %7.3f Hz %s\n", f[i].why, f[i].want, got, ok ? "✓" : "✗"); fail += !ok; n++;
     }
+    // 出图节拍模式（nvn_link_mode）：120 帧档在 iOS 上不用 CAMetalDisplayLink，改出图线程自取 drawable（0）——真机：局内 UIKit 叠层一出现，
+    // 显示节拍路径被系统按 60 Hz 合成、隔张丢（每 300 张丢 150）；自取 drawable 同样叠层 9000 帧丢 0。省电 30 照旧 3；60 档与 Mac 不变；DM_120_LINK=1 强留节拍做对照
+    // Present link mode (nvn_link_mode): in 120 fps mode on iOS, no CAMetalDisplayLink, the present thread takes drawables itself (0) -- on device, as soon as the in-run UIKit overlay shows,
+    // the display-link path is composited at 60 Hz and every other frame is dropped (150 of 300); taking drawables directly, with the same overlay, dropped 0 in 9000. Power saving 30 stays 3; 60 fps and Mac unchanged; DM_120_LINK=1 keeps the link for comparison
+    struct { int req, fps, ios, keep, want; const char *why; } lm[] = {
+        {1, 120, 1, 0, 0, "iOS 120 帧档：自取 drawable（0）"}, {1, 120, 1, 1, 1, "iOS 120 帧档 + DM_120_LINK=1：留节拍（1）"}, {1, 120, 0, 0, 1, "Mac 120：留节拍（1）"},
+        {1, 60, 1, 0, 1, "iOS 60：节拍（1，与原先相同）"}, {1, 30, 1, 0, 3, "iOS 省电 30：30 Hz 节拍（3，与原先相同）"}, {0, 120, 1, 0, 0, "DM_PRESENT_LINK=0：0"},
+        {2, 120, 1, 0, 0, "iOS 120 帧档、模式 2：也自取（0）"}, {2, 60, 1, 0, 2, "iOS 60、模式 2：2（与原先相同）"}, {0, 30, 1, 0, 0, "DM_PRESENT_LINK=0 + 省电：0（与原先相同）"},
+    };
+    for (int i = 0; i < (int)(sizeof lm / sizeof *lm); i++) {
+        int got = nvn_link_mode(lm[i].req, lm[i].fps, lm[i].ios, lm[i].keep), ok = got == lm[i].want;
+        printf("%-52s 期望 %d → 真结果 %d %s\n", lm[i].why, lm[i].want, got, ok ? "✓" : "✗"); fail += !ok; n++;
+    }
     printf("== %d 项，失败 %d ==\n", n, fail);
     return fail != 0;
 }

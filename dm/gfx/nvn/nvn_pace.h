@@ -38,6 +38,21 @@ static inline uint64_t nvn_pace_link(nvn_pacer *p, uint64_t now, uint64_t period
 // otherwise 60 -- power saving 30 fps is decided by the display link and the pacer keeps the 60 tier (identical to before on 60 / 120 Hz screens)
 static inline double nvn_present_floor_hz(int fps_target) { return fps_target == 120 ? 120 : 60; }
 
+// 出图节拍模式：requested = DM_PRESENT_LINK（0 自取 drawable / 1 显示节拍 / 2 120 Hz 节拍隔拍出），省电 30 帧改 3（30 Hz 节拍）。
+// 120 帧档在 iOS 上改 0：显示节拍（CAMetalDisplayLink）路径一遇到局内 UIKit 叠层（触控控件 / 自绘 HUD），系统就改走与 UIKit 一起合成、提前量从 2 帧变 3 帧，
+// 并只按 60 Hz 合成，隔一张丢一张（iPhone Duo 真机：回调均匀 8.33 ms、GPU 每张早 21 ms 画完，仍每 300 张丢 150；藏掉叠层即 0 丢）。
+// 出图线程自取 drawable + 最短显示时长同样叠层下 9000 帧丢 0。Mac 没有 UIKit 叠层，照旧；keep_link（DM_120_LINK=1）强留节拍做对照
+// Present link mode: requested = DM_PRESENT_LINK (0 take drawables / 1 display link / 2 120 Hz link presenting every other tick); power saving 30 fps becomes 3 (30 Hz link).
+// 120 fps mode on iOS becomes 0: once the in-run UIKit overlay (touch controls / self-drawn HUD) shows, the system composites the display-link (CAMetalDisplayLink) path with UIKit, the lead grows from 2 to 3 frames,
+// and composition runs at 60 Hz, dropping every other frame (iPhone Duo: callbacks an even 8.33 ms, each frame done 21 ms early on the GPU, still 150 of 300 dropped; hiding the overlay gives 0 drops).
+// The present thread taking drawables with a minimum display duration dropped 0 in 9000 with the same overlay. Mac has no UIKit overlay and is unchanged; keep_link (DM_120_LINK=1) keeps the link for comparison
+static inline int nvn_link_mode(int requested, int fps_target, int is_ios, int keep_link) {
+    if (!requested) return 0;
+    if (fps_target == 30) return 3;
+    if (fps_target == 120 && is_ios && !keep_link) return 0;
+    return requested;
+}
+
 // 出图帧率 = 屏幕刷新率的整数分之一里不低于目标（60，省电模式 30）的最小一档：每帧在屏上停整数个刷新周期，没有交替抖动。
 // 60 / 120 Hz 屏 → 60；144 → 72；165 → 82.5；100 → 100；240 → 60；省电 30：120 → 30、144 → 36。刷新率读不到（0）就按目标。
 // 0.02 的余量让 119.88 / 59.94 这类 NTSC 档按 2 / 1 倍算
