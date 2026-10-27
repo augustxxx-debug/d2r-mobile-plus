@@ -48,6 +48,7 @@
 #define FB_ARG id<MTL4CommitFeedback>
 #endif
 #include "nvn_pace.h"
+#include "nvn_pqdone.h"
 #include "nvn_obj.h"
 #include "../tex/nvn_fmt_mtl.h"
 #include "../tex/nvn_deswizzle.h"
@@ -134,7 +135,8 @@ static uint64_t g_link_dropped;
 static int g_pq_inflight;   // 持 g_pq_mu：已提交给 GPU、完成回调还没来的上屏数 | Under g_pq_mu: number of presents committed to the GPU whose completion callback has not arrived yet
 int g_dm_present_link;   // 出图节拍模式（DM_PRESENT_LINK 的运行时值，同进程交替测量时直接改它）：0 = 自己取 drawable；1 = 显示节拍 60 Hz；2 = 120 Hz 节拍、游戏隔拍出一帧 | Present pacing mode (runtime value of DM_PRESENT_LINK, modified directly during same-process alternating measurement): 0 = acquire the drawable itself; 1 = display link at 60 Hz; 2 = display link at 120 Hz, the game presents a frame every other display-link tick
 static int g_present_latency = 1;
-static uint64_t g_pq_done;
+static uint64_t g_pq_done, g_pq_fin[NVN_PQ_RING];   // 持 g_pq_mu：1..g_pq_done 都已了结（GPU 执行完 / 丢弃 / 没交出去）；只经 pq_finish 前进（nvn_pqdone.h） | Under g_pq_mu: 1..g_pq_done have all ended (GPU finished / dropped / never handed over); advanced only through pq_finish (nvn_pqdone.h)
+static void pq_finish(uint64_t k) { nvn_pq_finish(&g_pq_done, g_pq_fin, k); }
 static uint64_t g_pq_read;
 static id<MTLResidencySet> g_res;
 static int g_res_dirty;
@@ -6322,7 +6324,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 #if !DM_NVN_M3
         else mp_check(alloc_i, ticket);
 #endif
-        pthread_mutex_lock(&g_pq_mu); M4_ONLY(atomic_store(&g_present_slot_busy[alloc_i], 0);) if (ticket > g_pq_done) g_pq_done = ticket; g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
+        pthread_mutex_lock(&g_pq_mu); M4_ONLY(atomic_store(&g_present_slot_busy[alloc_i], 0);) pq_finish(ticket); g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
     }];
 #if !DM_NVN_M3
     CBUF buffers[] = {cb};
@@ -6378,13 +6380,13 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 // ---------- 出图线程 ----------
 // NVN 语义：QueuePresentTexture 只把出图排进队列、立即返回（游戏常持锁调用它；iOS 真机：在里面同步等 nextDrawable
 // 约 30 ms，锁被占约 90%，装载线程饿死）。取 drawable、blit、present 都在这条线程上按入队顺序做。
-// 票号 = 第几次入队（从 1 起）；g_pq_done = 已处理完（blit 已提交到 GPU 队列）的票号。
+// 票号 = 第几次入队（从 1 起）；g_pq_done = 1..它全部已了结（上屏在 GPU 上执行完 / 被丢弃 / 没交出去，见 nvn_pqdone.h）。
 // 交换链贴图归还：AcquireTexture 拿到某张前等它上一次出图的票号处理完（mtl_present_wait），之后游戏再往里画的命令
 // 在 GPU 队列上必排在那次 blit 之后。
 // ---------- Present thread ----------
 // NVN semantics: QueuePresentTexture only queues the present and returns immediately (the game often calls it while holding a lock; iOS real device: synchronously waiting for nextDrawable inside it
 // takes about 30 ms, the lock is held about 90% of the time, and the loading thread starves). Taking the drawable, blit and present are all done on this thread in enqueue order.
-// Ticket number = which enqueue it is (starting from 1); g_pq_done = the ticket number that has been processed (blit committed to the GPU queue).
+// Ticket number = which enqueue it is (starting from 1); g_pq_done = 1..it have all ended (present finished on the GPU / dropped / never handed over, see nvn_pqdone.h).
 // Swapchain texture return: before AcquireTexture gets a texture it waits for the ticket of that texture's previous present to be processed (mtl_present_wait), after which the commands the game draws into it
 // are necessarily ordered after that blit on the GPU queue.
 #define PQ 8
@@ -6441,15 +6443,14 @@ __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
     uint64_t first = g_pq_read + 1, ticket = g_pq_in;
     pq_item it = g_pq[(g_pq_in - 1) % PQ]; g_link_it_tin = it.t_in;
     g_pq_read = g_pq_in;
-    if (ticket > first) { g_link_dropped += ticket - first; for (uint64_t k = first; k < ticket; k++) g_pres[k % PRING] = (pres_ent){k, -1}; }   // 被合并丢弃的旧帧记「未上屏」，上屏统计如实算掉帧 | Old frames merged and dropped are recorded as "not presented", so the present statistics honestly count them as dropped frames
-    if (ticket > 1 && g_pq_done < ticket - 1) g_pq_done = ticket - 1;
+    if (ticket > first) { g_link_dropped += ticket - first; for (uint64_t k = first; k < ticket; k++) { g_pres[k % PRING] = (pres_ent){k, -1}; pq_finish(k); } }   // 被合并丢弃的旧帧记「未上屏」，上屏统计如实算掉帧；只登记这几张丢了，更早那张若还在 GPU 上，水位等它完成再过（nvn_pqdone.h） | Old frames merged and dropped are recorded as "not presented", so the present statistics honestly count them as dropped frames; only these are recorded as dropped, and if an older one is still on the GPU the watermark waits for it to finish (nvn_pqdone.h)
     pthread_cond_broadcast(&g_pq_cv);
     pthread_mutex_unlock(&g_pq_mu);
     int submitted;
     @autoreleasepool { submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, update.drawable, update.targetPresentationTimestamp); }
     if (!submitted) {
         pthread_mutex_lock(&g_pq_mu);
-        if (ticket > g_pq_done) g_pq_done = ticket;
+        pq_finish(ticket);
         pthread_cond_broadcast(&g_pq_cv);
         pthread_mutex_unlock(&g_pq_mu);
     }
@@ -6523,11 +6524,10 @@ static void present_drop_for_suspend(void) {
     pthread_mutex_lock(&g_pq_mu);
     if (g_link_owns_layer) {
         uint64_t n = g_pq_in - g_pq_read;
-        for (uint64_t k = g_pq_read + 1; k <= g_pq_in; k++) g_pres[k % PRING] = (pres_ent){k, -1};
+        for (uint64_t k = g_pq_read + 1; k <= g_pq_in; k++) { g_pres[k % PRING] = (pres_ent){k, -1}; pq_finish(k); }
         g_link_dropped += n; g_pq_read = g_pq_in;
-        while (g_pq_inflight) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
-        if (g_pq_done < g_pq_in) g_pq_done = g_pq_in;
         pthread_cond_broadcast(&g_pq_cv);
+        while (g_pq_done < g_pq_in) pthread_cond_wait(&g_pq_cv, &g_pq_mu);   // 已被节拍取走的那张（可能还没提交，g_pq_inflight 尚未加上）等它真的了结 | The one already taken by the display link (possibly not committed yet, g_pq_inflight not yet incremented) is waited for until it really ends
         if (n) MLOG("进后台：丢弃排队中未上屏的 %llu 帧（显示节拍在后台不回调）", (unsigned long long)n);
     }
     pthread_mutex_unlock(&g_pq_mu);
@@ -6548,7 +6548,7 @@ static void *present_main(void *arg) {
         pthread_mutex_lock(&g_pq_mu); g_classic_busy = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
         if (!submitted) {
             pthread_mutex_lock(&g_pq_mu);
-            if (ticket > g_pq_done) g_pq_done = ticket;
+            pq_finish(ticket);
             pthread_cond_broadcast(&g_pq_cv);
             pthread_mutex_unlock(&g_pq_mu);
         }
@@ -6603,10 +6603,8 @@ void mtl_present_wait(uint64_t tk) {
         if (g_pq_read >= tk) continue;
         if (now - last < STALL_NS) { pthread_cond_timedwait(&g_pq_cv, &g_pq_mu, &ts); continue; }   // 节拍还在走，只是这张还没轮到：接着等（有上限，不空转） | The display link is still running, it is just not this one's turn yet: keep waiting (bounded, no busy spinning)
         uint64_t n = tk - g_pq_read;
-        for (uint64_t k = g_pq_read + 1; k <= tk; k++) g_pres[k % PRING] = (pres_ent){k, -1};
+        for (uint64_t k = g_pq_read + 1; k <= tk; k++) { g_pres[k % PRING] = (pres_ent){k, -1}; pq_finish(k); }   // 只登记丢掉的这几张；已被节拍取走、还没了结的那张由外层循环接着等（原先看 g_pq_inflight 为 0 就直接把水位写到 tk——节拍回调取走票号后、提交前那段空档 inflight 还是 0） | Only the dropped ones are recorded; the one already taken by the display link and not yet ended is waited for by the outer loop (previously the watermark was written straight to tk when g_pq_inflight was 0 -- in the gap after the callback takes the ticket and before it commits, inflight is still 0)
         g_link_dropped += n; g_pq_read = tk;
-        while (g_pq_inflight) pthread_cond_wait(&g_pq_cv, &g_pq_mu);
-        if (g_pq_done < tk) g_pq_done = tk;
         pthread_cond_broadcast(&g_pq_cv);
         if (!g_stall_t0) { g_stall_t0 = last ? last : now; g_stall_drop = 0; g_stall_red = 0; g_stall_logged = 0; g_stall_n++; }
         g_stall_drop += n;

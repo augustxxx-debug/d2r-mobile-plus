@@ -26,6 +26,8 @@ t_cover: t_cover.c ../nvn/nvn_cover.h
 	clang -O1 -Wall -o $@ t_cover.c
 t_pace: t_pace.c ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_pace.c
+t_pqdone: t_pqdone.c ../nvn/nvn_pqdone.h
+	clang -O1 -Wall -o $@ t_pqdone.c
 t_adaptive_pace: t_adaptive_pace.c ../nvn/nvn_adaptive_pace.h ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_adaptive_pace.c
 t_completion_wait: t_completion_wait.cpp ../vulkan/engine/xbg_completion_wait.h
@@ -78,6 +80,7 @@ run: \
 	t_nvn \
 	t_pace \
 	t_pfv \
+	t_pqdone \
 	t_present_crop \
 	t_pso_skey \
 	t_refl \
@@ -97,6 +100,7 @@ run: \
 	./t_builtin
 	./t_deswz_gpu
 	./t_pace
+	./t_pqdone
 	./t_adaptive_pace
 	./t_completion_wait
 	./t_refl
