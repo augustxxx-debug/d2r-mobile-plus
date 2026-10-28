@@ -1561,8 +1561,8 @@ static void res_census(unsigned long long frame, unsigned long long rss_mb) {
         for (id o in g_res_ever.allObjects) { int k = [o conformsToProtocol:@protocol(MTLBuffer)] ? 1 : 0; unsigned long long b = (unsigned long long)[(id<MTLResource>)o allocatedSize];
             if ([g_res_objects containsObject:o]) { nl[k]++; bl[k] += b; } else { nr[k]++; br[k] += b; } }
         pthread_mutex_unlock(&g_res_mu);
-        MLOG("驻留普查 至帧 %llu：常驻 %llu MB，显卡已分配 %llu MB；驻留集里 贴图 %lu 个 %llu MB、缓冲 %lu 个 %llu MB；已退役未销毁 贴图 %lu 个 %llu MB、缓冲 %lu 个 %llu MB", frame, rss_mb, (unsigned long long)(g_dev.currentAllocatedSize >> 20),
-             nl[0], bl[0] >> 20, nl[1], bl[1] >> 20, nr[0], br[0] >> 20, nr[1], br[1] >> 20);
+        MLOG("驻留普查 至帧 %llu：常驻 %llu MB，显卡已分配 %llu MB；驻留集里 贴图 %lu 个 %llu MB、缓冲 %lu 个 %llu MB；已退役未销毁 贴图 %lu 个 %llu MB、缓冲 %lu 个 %llu MB；未登记（显卡已分配 − 以上合计：MetalFX / drawable / 管线 / 命令分配器等框架内部）%lld MB", frame, rss_mb, (unsigned long long)(g_dev.currentAllocatedSize >> 20),
+             nl[0], bl[0] >> 20, nl[1], bl[1] >> 20, nr[0], br[0] >> 20, nr[1], br[1] >> 20, (long long)(g_dev.currentAllocatedSize >> 20) - (long long)((bl[0] + bl[1] + br[0] + br[1]) >> 20));   // 真机光追关长测「显卡已分配」+730 MB 而驻留集个数不变：这一项直接看出增长在不在我们登记过的对象里 | device RT-off long test: GPU allocated +730 MB with a flat residency count; this item shows directly whether the growth is in objects we registered
     }
 }
 unsigned long long mtl_gpu_allocated_mb(void) { id<MTLDevice> d = g_dev; return d ? (unsigned long long)(d.currentAllocatedSize >> 20) : 0; }   // 显卡已分配（图形层还没起时 0）；任何线程可调 | GPU allocated (0 before the graphics layer starts); callable from any thread
