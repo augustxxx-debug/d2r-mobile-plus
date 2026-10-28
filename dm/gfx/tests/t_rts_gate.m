@@ -449,6 +449,27 @@ int main(void) { @autoreleasepool {
         #undef HOLD
         #undef SELECT
         memset(&R, 0, sizeof R); }
+#ifdef RTS_INDOOR_SET
+      // 26. 室内主光（七审三轮第 8 条，「按照暗黑 4 逻辑做」）：太阳图的绘制一律不画（没进 TLAS 的也不画），不追太阳、不用遮罩，不算失败；非太阳图（俯视接触软影）照画；
+      //     第 3 档也留 1 盏点光（室外第 3 档照旧关）；深度预渲染的绘制当点光遮挡体 | 26. indoor key light (seventh review round 3 item 8, "the Diablo IV way"): sun-map draws are never drawn (not even outside the TLAS), the sun is neither traced nor its mask used, not a failure; non-sun maps (top-down contact shadow) are drawn;
+      //     level 3 keeps 1 point light (outdoor level 3 still turns them off); depth-prepass draws serve as point-light occluders
+      { int po0 = g_rts.point_on; g_rts.point_on = 0; RTS_INDOOR_SET(1); run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("点光影关（B022 方案 A，缺省）：室内判定不进室内模式", 0, g_rts.indoor_on); EXPECT("点光影关：太阳照常追", 1, g_rts.have_sun); g_rts.point_on = 1;
+        RTS_INDOOR_SET(1); RTS_HYST_RESET(); int bo0 = g_rts.backoff; long long sw0 = RTS_SWITCHES(); uint64_t d0 = g_rts.n_indoor_drop, lost0 = g_rts.n_skip_lost;
+        run_frame(1, b2, 2, &ok); enc = run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("室内：太阳图两次绘制都不编码", 0, enc); EXPECT("室内：记了不画的太阳图绘制", 1, g_rts.n_indoor_drop - d0 >= 4); EXPECT("室内：太阳遮罩不用（绑全分辨率全亮那张）", 1, rts_mask_tex() == g_rts.mask_lit && g_rts.mask_lit.width == 640 && g_rts.mask_lit.height == 360);
+        { uint8_t px = 0; [g_rts.mask_lit getBytes:&px bytesPerRow:640 fromRegion:MTLRegionMake2D(600, 300, 1, 1) mipmapLevel:0];   // _rt 变体按像素坐标读：远处像素也得是 1.0（原先 1x1 白贴图越界读是 0 = 整屏全影） | the _rt variants read by pixel coordinates: a far pixel must be 1.0 too (the 1x1 white texture read out of bounds gives 0 = full shadow everywhere)
+          EXPECT("全亮遮罩：(600, 300) 处也是 1.0", 255, px); } EXPECT("室内：不追太阳", 0, g_rts.have_sun);
+        frame_open(); prepass(); shadow_pass(); int ep = sdraw(g_idx, 48, NVN_DRAW_PRIMITIVE_POINTS, 0x2b);
+        g_sp = &g_small; shadow_pass(); g_sp = &g_sdepth; g_dt = &g_small; g_lvp = other; int es = sh(2); g_dt = &g_sdepth; g_lvp = tilt; int npp = g_rts.nprepass; main_pass(); hdr_again(); ok13 = frame_close() && ok13;
+        EXPECT("室内：没进 TLAS 的太阳图绘制也不画", 1, ep); EXPECT("室内：非太阳图（俯视软影）照画", 0, es); EXPECT("室内：深度预渲染的绘制进了遮挡体", 1, npp >= 1);
+        run_frame(1, b2, 2, &ok); EXPECT("室内：不算失败（不退避）", bo0, g_rts.backoff); EXPECT("室内：画面没切换", sw0, RTS_SWITCHES()); EXPECT("室内：不记「省画后没追成」", lost0, g_rts.n_skip_lost);
+        int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = 3; run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("室内第 3 档：点光留 1 盏、排除随身光", 1, g_rts.eff.point_on && g_rts.eff.point_n == 1 && g_rts.eff.excl_player);
+        RTS_INDOOR_SET(0); run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("回到室外第 3 档：点光照旧关", 0, g_rts.eff.point_on); EXPECT("回到室外：太阳图照常省画 / 光追", 1, RTS_MAP_CLEARED());
+        g_rts.gov.lvl = lv0; RTS_INDOOR_SET(-1); g_rts.point_on = po0; }
+#endif
       EXPECT("局部回退各节 GPU 无错", 1, ok13);
       #undef UNTIL_PART
       g_lvp = NULL; RTS_PART_SET(0); }

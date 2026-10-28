@@ -38,6 +38,7 @@ __attribute__((weak)) int dm_rt_shadow_setting(void) { return 0; }   // 宿主�
 __attribute__((weak)) float dm_rt_shadow_ambient(void) { return 0.45f; }
 __attribute__((weak)) int dm_ingame_now(void) { return 1; }   // 宿主 diag.c 提供强定义（读到受控玩家 = 局内）；单测里当局内 | the host's diag.c provides the strong definition (controlled player read = in a run); unit tests count as in a run   // 调试叠加的环境项（阴影里保留的亮度比例） | Ambient term of the debug overlay (brightness kept inside shadow)
 static int rt_is_skin(void);
+int dm_bright_indoor(void);   // 宿主 dm_bright.c：当前关卡是不是室内 / 地下（nvn_mtl.m 有弱定义，图形单测里恒 0） | host dm_bright.c: whether the current level is indoor / underground (weak definition in nvn_mtl.m, always 0 in the graphics unit tests)
 #include <sys/sysctl.h>
 #include <sys/time.h>
 #include "nvn_rtshadow_util.h"
@@ -114,6 +115,7 @@ typedef struct { uint64_t key, bytes; id<MTLAccelerationStructure> as; id<MTLBuf
 #define RTS_QUOTAS() ((long long)g_rts.mask_small_log + g_rts.lit_logged + (long long)g_rts.lit_retry_at)   // 单测用：整体释放后应为 0 | for the unit tests: 0 after a full release
 #define RTS_LIT_RETRY 60   // 全亮遮罩建不出后隔多少帧再试；其间不选 _rt 变体（八审 Q8-01） | frames to wait before retrying a lit mask that could not be built; no _rt variant meanwhile (eighth review Q8-01)
 static int g_rts_lit_inject;   // RTS_LIT_FAIL_SET 的开关，生产恒 0 | the RTS_LIT_FAIL_SET switch, always 0 in production
+#define RTS_INDOOR_SET(v) (g_rts.indoor_force = (v))   // 单测用：室内判定钉住（−1 = 跟宿主） | for the unit tests: pin the indoor verdict (−1 = follow the host)
 #define RTS_PART_SET(v) (g_rts.part = (v))   // 单测用：局部回退开关（生产缺省开，DM_RT_SHADOW_PART=0 关） | for the unit tests: the partial-fallback switch (on in production, DM_RT_SHADOW_PART=0 turns it off)
 #define RTS_PAUSE_SET(s) (g_rts.pause_until = (s) > 0 ? rts_now() + (s) : 0, rts_lvl_update())   // 单测用：GPU 挂起保护的暂停（秒；0 = 结束） | for the unit tests: the hang-protection pause (seconds; 0 = end)
 #define RTS_HAS_NOTE_PASS 1
@@ -143,6 +145,13 @@ static struct {
     // 一次绘制没进不再拖整帧回原版；f_skip / f_resid = 本帧省画 / 照原版画进太阳图的绘制数；last_skip = 本次绘制的答案（1 省画、2 镂空省画但补画原版不写深度，供 rts_keep_raster）
     // Partial fallback (seventh review round 3 P1 / P2): part = on (default; DM_RT_SHADOW_PART=0 restores "clear the whole frame" for comparison); skip_on = this frame's sun shadow draws that are in the TLAS are not drawn into the map, the others (mesh pending / quota full / format…) are drawn as original and the _rt variants take the darker of mask and map,
     // so one draw outside the TLAS no longer sends the whole frame back to original; f_skip / f_resid = draws skipped / drawn as original into a sun map this frame; last_skip = this draw's answer (1 skipped, 2 alpha-tested skipped but re-encoded without depth writes, for rts_keep_raster)
+    // 室内主光（七审三轮第 8 条，用户「按照暗黑 4 逻辑做」）：室内 / 地下关卡没有全局太阳，影子由附近点光主导。indoor = 本帧关卡室内（dm_bright_indoor，DM_RT_INDOOR=0/1 钉住）；
+    // indoor_on = 室内且局部回退开、没暂停：太阳图的绘制一律不画（原版那道固定方向的影没了）、不追太阳、第 3 档也留 1 盏点光、深度预渲染的遮挡体进 TLAS；俯视接触软影（非太阳图）照原版。
+    // sun_drop = 本次绘制是室内的太阳图绘制（1；镂空 2：补画原版不写深度，判定照样抓参数块）
+    // Indoor key light (seventh review round 3 item 8, the user: "do it the Diablo IV way"): indoor / underground levels have no global sun, nearby point lights lead the shadows. indoor = this frame's level is indoor (dm_bright_indoor, pinned by DM_RT_INDOOR=0/1);
+    // indoor_on = indoor with partial fallback on and not paused: draws into sun maps are never drawn (the original fixed-direction shadow is gone), the sun is not traced, level 3 keeps 1 point light, depth-prepass occluders enter the TLAS; the top-down contact soft shadow (a non-sun map) stays original.
+    // sun_drop = this draw is an indoor sun-map draw (1; alpha-tested 2: the original re-encode runs without depth writes so the judge still captures its argument block)
+    int indoor, indoor_force, indoor_on, sun_drop; uint64_t n_indoor_drop, n_indoor_frames;
     int part, skip_on, f_skip, f_resid, last_skip; uint64_t n_skip_draws, n_resid_draws, n_resid_frames, n_skip_lost, n_nonsun_draws, n_skip_load, n_nomain;
     // 太阳认图（七审三轮第 6 条）：太阳 = 本帧最大那张方形阴影图（级联 1024²）的光源；原先取本帧第一次阴影绘制的光源，头发 256² / 俯视 512² 先画时方向就错了，级联反被当成「不是太阳」留着 → 两层影、方向不一
     // sun_w = 上一帧最大阴影图宽、sun_w_now = 本帧到目前最大、sun_from_w = 本帧太阳取自多宽的图
@@ -161,7 +170,7 @@ static struct {
     rts_fslot slot[RTS_SLOTS_MAX]; int nslot, cur; uint64_t slot_frame;   // 槽环；cur = 本帧用的槽（slot_frame 那帧取的） | slot ring; cur = this frame's slot (taken in frame slot_frame)
     id<MTLAccelerationStructure> tlas; id<MTLBuffer> scratch; NSUInteger scratch_len;
     uint64_t n_mask_small, n_iquad, n_lit_try, n_lit_fail, lit_retry_at; int mask_small_log, lit_logged;   // n_lit_try / n_lit_fail：全亮遮罩分配尝试 / 失败累计，lit_retry_at：建不出后下次可试的帧，lit_logged：本轮已记过【红】；mask_small_log：「盖不住」日志名额（整体释放时清零，累计数不清；八审 Q8-01、观察 2） | n_lit_try / n_lit_fail: lit-mask allocation attempts / failures, lit_retry_at: the frame a failed build may be retried, lit_logged: the red line was logged this round; mask_small_log: the "does not cover" log quota (reset on release, the cumulative counts are not; eighth review Q8-01, observation 2)   // n_iquad：带索引的四边形当空绘制的次数（七审 Q7-02） | n_iquad: indexed quads treated as empty draws (seventh review Q7-02)   // 遮罩盖不住渲染目标、改用原版着色的次数（七审 Q7-01） | times the mask did not cover the render target and the original shading was used (seventh review Q7-01)
-    id<MTLTexture> mask_lit;   // 全分辨率全亮的太阳遮罩：不用遮罩的帧（迟滞等待、失败）绑它——_rt 变体按像素坐标读遮罩（rts_variant.py：rts_mask.read(gl_FragCoord)），1x1 白贴图越界读是 0 = 整屏太阳全影（6534ef4 起） | a full-resolution fully lit sun mask: bound on frames that do not use the mask (hysteresis hold, failure) - the _rt variants read the mask by pixel coordinates (rts_variant.py: rts_mask.read(gl_FragCoord)), and an out-of-bounds read of the 1x1 white texture is 0 = the whole screen in sun shadow (since 6534ef4)
+    id<MTLTexture> mask_lit;   // 全分辨率全亮的太阳遮罩：不用遮罩的帧（迟滞等待、失败、室内）绑它——_rt 变体按像素坐标读遮罩（rts_variant.py：rts_mask.read(gl_FragCoord)），1x1 白贴图越界读是 0 = 整屏太阳全影（6534ef4 起） | a full-resolution fully lit sun mask: bound on frames that do not use the mask (hysteresis hold, failure, indoors) - the _rt variants read the mask by pixel coordinates (rts_variant.py: rts_mask.read(gl_FragCoord)), and an out-of-bounds read of the 1x1 white texture is 0 = the whole screen in sun shadow (since 6534ef4)
     id<MTLTexture> mask, white, mask_raw, mask_tmp, pmask, pmaskf, mask_half; int sun_half, point_div; id<MTLBuffer> plidx_none, prev, lseen, llist;   // prev：上一次选中的位置（滞后）；lseen / llist：点光收集的位图与列表 | prev: last picked positions (hysteresis); lseen / llist: bitmap and list of the point-light gather
     int n_rt_loaded, n_rt_missing, n_pos_loaded, n_pos_missing;
     int point_on, point_n, point_all; id<MTLBuffer> lbuf; uint64_t lbuf_off; uint32_t lbuf_texels; int lbuf_tid;
@@ -246,6 +255,8 @@ static double rts_now(void);
 static void rts_lvl_update(void) {   // 自动降档换了档，或挂起保护的暂停开始 / 结束：从这一帧起生效 | the automatic downgrade changed level, or the hang-protection pause began / ended: effective from this frame
     if (g_rts.gov.lvl < rts_mem_floor()) g_rts.gov.lvl = rts_mem_floor();
     g_rts.eff = rts_lvl_of(g_rts.gov.lvl);
+    // 室内：点光是主光，哪一档都至少 1 盏（最近最亮、排除随身光，1/4 分辨率）；太阳在室内本来就不追，省下的正好给它 | indoors the point lights are the key light: at least 1 on every level (closest / brightest, the character's own excluded, quarter resolution); the sun is not traced indoors, so its budget goes to them
+    if (g_rts.indoor > 0 && g_rts.part && g_rts.point_on && !g_rts.eff.point_on) { g_rts.eff.point_on = 1; g_rts.eff.point_n = 1; g_rts.eff.point_div = 4; g_rts.eff.excl_player = 1; }
     if (g_rts.pause_until > 0 && rts_now() < g_rts.pause_until) { g_rts.eff.off = 1; g_rts.eff.point_on = 0; g_rts.eff.ao = 0; }
     else if (g_rts.pause_until > 0) { g_rts.pause_until = 0; MLOG("光追阴影：GPU 挂起保护的暂停结束，从第 %d 档恢复光追", g_rts.gov.lvl); }
 }
@@ -274,6 +285,7 @@ static int rts_on(void) {
     if (g_rts.on < 0) {
         const char *e = getenv("DM_RT_SHADOW"); g_rts.gate = mtl_rt_shadow_supported(); g_rts.dbg = getenv("DM_RT_SHADOW_DBG") ? atoi(getenv("DM_RT_SHADOW_DBG")) : 0;
         g_rts.on = e ? atoi(e) != 0 : -2;
+        { const char *ie = getenv("DM_RT_INDOOR"); g_rts.indoor_force = ie ? atoi(ie) != 0 : -1; g_rts.indoor = -1; if (ie) MLOG("光追阴影：室内判定钉成 %s（测试开关 DM_RT_INDOOR=%s）", g_rts.indoor_force ? "室内" : "室外", ie); }
         { const char *pe = getenv("DM_RT_SHADOW_PART"); g_rts.part = !(pe && !strcmp(pe, "0")); if (pe) MLOG("光追阴影：局部回退 %s（测试开关 DM_RT_SHADOW_PART=%s）", g_rts.part ? "开" : "关（整帧清图对照）", pe); }
         const char *h = getenv("DM_RT_SHADOW_HYST"); g_rts.hyst = !(h && !strcmp(h, "0")); g_rts.need = 1;   // 真机对照：DM_RT_SHADOW_HYST=0 回到逐帧切换 | device A/B: DM_RT_SHADOW_HYST=0 restores per-frame switching
         if (h) MLOG("光追阴影：画面迟滞 %s（测试开关 DM_RT_SHADOW_HYST=%s）", g_rts.hyst ? "开" : "关", h);
@@ -648,6 +660,7 @@ static void rts_frame_begin(uint64_t f) {
               o += (size_t)snprintf(mb + o, sizeof mb - o, "%s%lux%lu 层 %lu %s、%s、光源 (%.2f %.2f %.2f) %s", o ? "；" : "", (unsigned long)e->t.width, (unsigned long)e->t.height, (unsigned long)e->slice, e->used ? "画过" : "没画",
                   e->cleared == 1 ? "本帧清过" : e->cleared == 0 ? "读入" : "通道没开", d[0], d[1], d[2], g_rts.part ? (rts_map_sun(i) ? "→ 太阳图（进 TLAS 的省画）" : e->used ? "→ 照原样" : "") : rts_map_clearable(i) ? "→ 清回全亮" : e->used ? "→ 照原样" : ""); }
           MLOG("光追阴影：阴影图 第 %llu 帧 %d 张：%s；太阳 %s (%.2f %.2f %.2f) 取自 %u² 图", (unsigned long long)g_rts.n_frames, g_rts.nsmap, o ? mb : "无", g_rts.have_sun ? "有" : "无", g_rts.sun[0], g_rts.sun[1], g_rts.sun[2], g_rts.sun_from_w); }
+        MLOG("光追阴影：主光 至第 %llu 帧 %s；室内帧 %llu、室内不画的太阳图绘制 %llu 次", (unsigned long long)g_rts.n_frames, g_rts.indoor > 0 ? "点光（室内）" : "太阳（室外）", (unsigned long long)g_rts.n_indoor_frames, (unsigned long long)g_rts.n_indoor_drop);
         if (g_rts.part) MLOG("光追阴影：局部回退 至第 %llu 帧 省画 %llu 次、照原版画进太阳图 %llu 次（%llu 帧有）、非太阳图不进 TLAS %llu 次、省画后没追成 %llu 帧、以读入开的太阳图 %llu 次、没有主通道的帧 %llu", (unsigned long long)g_rts.n_frames,
             (unsigned long long)g_rts.n_skip_draws, (unsigned long long)g_rts.n_resid_draws, (unsigned long long)g_rts.n_resid_frames, (unsigned long long)g_rts.n_nonsun_draws, (unsigned long long)g_rts.n_skip_lost, (unsigned long long)g_rts.n_skip_load, (unsigned long long)g_rts.n_nomain);
         { rts_mem_used_t u = rts_mem_used(); char ub[200], bb[32] = "不限"; uint64_t tot = u.masks + u.point + u.ao + u.mesh + u.fixed; if (g_rts.mem_budget && g_rts.mem_budget != UINT64_MAX) snprintf(bb, sizeof bb, "%llu MB", (unsigned long long)(g_rts.mem_budget >> 20));
@@ -666,7 +679,8 @@ static void rts_frame_begin(uint64_t f) {
             if (++g_rts.n_unc_log <= 8 || g_rts.n_unc_log % 600 == 0) MLOG("光追阴影：局部回退 帧 %llu 有 %d 次阴影绘制没进 TLAS，照原版画进阴影图、其余 %d 次由光追接替（%s；第 %llu 帧）", (unsigned long long)g_rts.frame, g_rts.f_resid, g_rts.f_skip, rts_unc_str(ub, sizeof ub, NULL, g_rts.f_unc), (unsigned long long)g_rts.n_unc_log); }
         else if (g_rts.nuncov && !why && !g_rts.part) { g_rts.n_partial_frames++; char ub[400];
             if (++g_rts.n_unc_log <= 8 || g_rts.n_unc_log % 100 == 0) MLOG("光追阴影：帧 %llu 有 %d 次阴影绘制没进 TLAS，整帧照原版（%s；第 %llu 帧）", (unsigned long long)g_rts.frame, g_rts.nuncov, rts_unc_str(ub, sizeof ub, NULL, g_rts.f_unc), (unsigned long long)g_rts.n_unc_log); }
-        if (g_rts.f_skip && !g_rts.map_cleared && ++g_rts.n_skip_lost <= 8) MLOG("【红】光追阴影：局部回退 帧 %llu 省画了 %d 次太阳阴影绘制却没追成（%s），这一帧这些遮挡体没影子；之后按迟滞先回原版（第 %llu 帧）", (unsigned long long)g_rts.frame, g_rts.f_skip, why ? why : "遮罩没用上", (unsigned long long)g_rts.n_skip_lost);
+        if (g_rts.f_skip && !g_rts.map_cleared && !g_rts.indoor_on && ++g_rts.n_skip_lost <= 8)   // 室内本来就不用太阳遮罩（indoor_on 此时还是上一帧的） | indoors the sun mask is not used by design (indoor_on still holds the previous frame here)
+            MLOG("【红】光追阴影：局部回退 帧 %llu 省画了 %d 次太阳阴影绘制却没追成（%s），这一帧这些遮挡体没影子；之后按迟滞先回原版（第 %llu 帧）", (unsigned long long)g_rts.frame, g_rts.f_skip, why ? why : "遮罩没用上", (unsigned long long)g_rts.n_skip_lost);
         if (why) { g_rts.backoff = g_rts.backoff ? MIN(g_rts.backoff * 2, 512) : 2; g_rts.retry_at = f + (uint64_t)g_rts.backoff; g_rts.n_fail_frames++;
             if (g_rts.n_fail_frames <= 8 || g_rts.n_fail_frames % 100 == 0) MLOG("光追阴影：回退原版阴影图（帧 %llu %s，当帧阴影图未清、原版阴影保留，%d 帧后再试，第 %llu 次）", (unsigned long long)g_rts.frame, why, g_rts.backoff, (unsigned long long)g_rts.n_fail_frames); }
         else if (g_rts.backoff) { MLOG("光追阴影：恢复（帧 %llu 光追完整，此前退避 %d 帧）", (unsigned long long)g_rts.frame, g_rts.backoff); g_rts.backoff = 0; }
@@ -690,11 +704,15 @@ static void rts_frame_begin(uint64_t f) {
     } else { g_rts.streak = 0; g_rts.last_shown = 0; }   // 上一帧没经过模块：从头数 | the previous frame did not go through the module: count from scratch
     g_rts.rt_frame = !why && f >= g_rts.retry_at; g_rts.n_rt_frames += g_rts.rt_frame;
     g_rts.show = g_rts.rt_frame && (!g_rts.hyst || g_rts.need <= 1 || g_rts.streak >= g_rts.need); g_rts.held = 0;   // 没切回过原版（need 1）：与原来一样，上一帧完整就光追 | never switched back (need 1): as before, a complete previous frame means ray tracing
+    { int in = g_rts.point_on && (g_rts.indoor_force >= 0 ? g_rts.indoor_force : dm_bright_indoor() > 0);   // 室内主光：换关时记一行（分享诊断日志摘要取最后一行）。点光影缺省关（B022 方案 A）时不进室内模式：否则太阳图不画也不追、又没有点光，原版那条短影也没了 | indoor key light: one line on change (the share-diagnostics summary takes the last one). With point shadows off (the B022 option A default) indoor mode stays out: sun maps would be neither drawn nor traced and no point light replaces them, losing even the original's short shadow
+      if (in != g_rts.indoor) MLOG("光追阴影：主光 = %s（帧 %llu）", in ? "点光（室内 / 地下：不画固定方向的太阳影，点光主导、第 3 档也留 1 盏，深度预渲染的遮挡体进 TLAS 挡点光；俯视接触软影照原版）" : "太阳（室外：太阳主导、点光辅助）", (unsigned long long)f);
+      g_rts.indoor = in; }
     rts_lvl_update();   // 自动降档换了档：从这一帧起生效 | the automatic downgrade changed level: effective from this frame
     if (g_rts.eff.off) {   // GPU 挂起保护的暂停，本帧不算光追帧（不算网格键、不追踪、不清图，画面原版；不算失败）；整帧 GPU 时间照样喂自动降档，有余量就升回去 | level 3: ray tracing paused, this frame is not ray traced (no mesh key, no trace, no clearing, original picture; not a failure); the frame's GPU time still feeds the automatic downgrade, which steps back up once there is headroom
         if (g_rts.rt_frame) { g_rts.rt_frame = 0; g_rts.n_rt_frames--; } g_rts.n_off_frames++;
         double fr = f > 3 ? mtl_gpu_ms(f - 3) : -1; if (g_rts.auto_on && fr > 0) rts_gov_feed(0, fr, mtl_pace_hz()); }
-    g_rts.skip_on = g_rts.part && g_rts.show && g_rts.rt_frame;   // 局部回退：本帧进了 TLAS 的太阳阴影绘制不画进阴影图（迟滞等待帧、退避帧照原版全画） | partial fallback: this frame's sun shadow draws in the TLAS are not drawn into the map (hysteresis-hold and backoff frames draw everything as original)
+    g_rts.skip_on = g_rts.part && g_rts.show && g_rts.rt_frame;
+    g_rts.indoor_on = g_rts.indoor > 0 && g_rts.part && !g_rts.eff.off; g_rts.n_indoor_frames += g_rts.indoor_on;   // 局部回退：本帧进了 TLAS 的太阳阴影绘制不画进阴影图（迟滞等待帧、退避帧照原版全画） | partial fallback: this frame's sun shadow draws in the TLAS are not drawn into the map (hysteresis-hold and backoff frames draw everything as original)
     if (g_rts.ao_done && !g_rts.ao_applied) g_rts.n_ao_missed++;   // 上一帧算了 AO 却没乘上去（主通道之后没再挂 HDR） | last frame traced AO but never applied it (the HDR was not attached again after the main pass)
     g_rts.ao_done = g_rts.ao_applied = 0;
     if (!g_rts.eff.ao && (g_rts.ao_half || g_rts.ao_tmp || g_rts.ao_full)) {   // 降档关了 AO：三张贴图等在途提交做完放掉，升回来再建 | AO switched off by the downgrade: the three textures are released after in-flight submissions and rebuilt on the way back up
@@ -723,7 +741,9 @@ static void rts_frame_begin(uint64_t f) {
     g_rts.nai = 0; g_rts.ai_cap = -1; g_rts.nalpha_rt = 0;
     if (!g_rts.alpha_logged && atomic_load(&g_rts_alpha_st) == 2) { g_rts.alpha_logged = 1; MLOG("光追镂空：判定库编好（%d 个片元着色器，%.0f ms，后台编译），镂空遮挡体按游戏原片元着色器在命中处判定、进光追", g_rts.alpha_nfs, g_rts.alpha_ms); }
     if (g_rts.alpha_logged == 0 && atomic_load(&g_rts_alpha_st) == -1) { g_rts.alpha_logged = -1; MLOG("【红】光追镂空：判定库编不出或包里没有，镂空遮挡体留原阴影图（带镂空遮挡体的帧阴影图不清）"); }
-    g_rts.prepass_occ = g_rts.n_frames > 1 && g_rts.shadow_draws == 0; g_rts.shadow_draws = 0; g_rts.nprepass = 0;
+    { static int occ = -1; if (occ < 0) { const char *e = getenv("DM_RT_INDOOR_OCC"); occ = !(e && !strcmp(e, "0")); }   // 排查：DM_RT_INDOOR_OCC=0 室内不加深度预渲染遮挡体 | debugging: DM_RT_INDOOR_OCC=0 adds no depth-prepass occluders indoors
+      g_rts.prepass_occ = (g_rts.n_frames > 1 && g_rts.shadow_draws == 0) || (g_rts.indoor_on && occ); }   // 室内（有阴影通道也算）：深度预渲染的绘制也当点光遮挡体——洞壁、石笋、火把架不在游戏阴影通道里 | indoors (even with shadow passes): depth-prepass draws serve as point-light occluders too - cave walls, stalagmites and torch stands are not in the game's shadow passes
+    g_rts.shadow_draws = 0; g_rts.nprepass = 0;
     // 4. 总字节预算：超了从最久没用的开始淘汰（这时本帧还没用任何网格，淘汰的只会在早先的提交里在途，defer 等它们做完） | 4. Total byte budget: over it, evict least recently used first (nothing is used by this frame yet; defer waits for earlier submissions)
     int trig = 0; for (int n = 0; g_rts.cache_bytes > g_rts.budget && g_rts.nmesh && n < 256; n++) {
         rts_mesh *old = NULL; for (uint32_t i = 0; i < g_rts.meshes.cap; i++) { rts_mesh *m = g_rts.meshes.vals[i]; if (m && (!old || m->last_frame < old->last_frame)) old = m; }
@@ -914,7 +934,7 @@ static int rts_skip_ok(int mi) {
     return 1;
 }
 static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, int prim) {
-    g_rts.last_skip = 0;
+    g_rts.last_skip = g_rts.sun_drop = 0;
     if (!rts_on() || !pr || !pr->sh[0]) return 0;
     int alpha = 0, mi = -1;   // mi：这次绘制画进的阴影图在表里第几张 | mi: index of the shadow map this draw renders into
     uint64_t f = atomic_load(&g_cur_frame); if (f != g_rts.frame) rts_frame_begin(f);
@@ -934,6 +954,9 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
         g_rts.shadow_draws++;
         if (!rts_setup()) return 0;
         if ((mi = rts_cur_map()) >= 0) { g_rts.smap[mi].used = 1; if (mi == g_rts.cur_smap) g_rts.cur_drawn = 1; }
+        if (g_rts.indoor_on && mi >= 0) {   // 室内：太阳图的绘制一律不画（进不进 TLAS 都一样，下面照常登记给点光挡光） | indoors: draws into sun maps are never drawn (whether or not they enter the TLAS, which goes on as usual for point-light occlusion)
+            const uint8_t *l0 = has_c3 && c3->addr && c3->size >= 400 ? rts_mem(c3->addr, 400) : NULL;
+            if (l0 && rts_sun_note(mi, (const float *)(l0 + 336))) { g_rts.sun_drop = pr->sh[1] && pr->sh[1]->rf.may_discard ? 2 : 1; g_rts.n_indoor_drop++; } }
         // 镂空遮挡体（第四阶段）：程序能进光追就和蒙皮一样走导出（_var 顶点变体写裁剪坐标 + 插值），实例标非不透明、命中处按原片元着色器判定；不能的只在原阴影图里（本帧不清）
         // alpha-tested occluder (phase 4): a program that can enter the ray tracing goes through the export like skinned units (the _var vertex variant writes clip position + interpolants), the instance is non-opaque and judged by the original fragment shader at each hit; one that cannot stays only in the original shadow map (not cleared this frame)
         if (pr->sh[1] && pr->sh[1]->rf.may_discard) { g_rts.nalpha++; alpha = 1;
@@ -1034,12 +1057,13 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
 static int g_rts_plain;   // draw 在为蒙皮导出补画原版阴影：本次按原版处理 | draw is re-encoding the original shadow for a skinned export: handle as original
 // 导出绘制之外要不要补画原版：1 = 照画（整帧清图模式：阴影图一律照原版画，成功时主通道前再清，六审 5.1）；0 = 局部回退省画（蒙皮）；2 = 补画但不写深度（镂空：判定要抓原片元的参数块）
 // whether the original is re-encoded besides the export draw: 1 = yes (clear-the-frame mode: maps are always drawn as original and cleared before the main pass on success, sixth review 5.1); 0 = skipped by partial fallback (skinned); 2 = re-encoded without depth writes (alpha-tested: the judge needs the original fragment's argument block)
-static int rts_keep_raster(void) { return g_rts.last_skip == 1 ? 0 : g_rts.last_skip == 2 ? 2 : 1; }
+static int rts_keep_raster(void) { if (g_rts.sun_drop) return g_rts.sun_drop == 2 ? 2 : 0; return g_rts.last_skip == 1 ? 0 : g_rts.last_skip == 2 ? 2 : 1; }
 static int rts_draw(NvProg *pr, const p_draw *dw, const p_draw_idx *di, int prim) {
     int r;
     if (g_rts_plain) r = 0;
     else if (g_draw_reentry) r = g_rts.last_r;   // draw 因资源版本变化重来（同一次绘制、状态不变）：同一答案 | draw retried after a resource-version change: same answer
     else g_rts.last_r = r = rts_draw_inner(pr, dw, di, prim);
+    if (!g_rts_plain && g_rts.sun_drop && r == 0) r = 1;   // 室内的太阳图绘制：不编码（没进 TLAS 的也不画） | an indoor sun-map draw: not encoded (not even when outside the TLAS)
     if (pr && pr->sh[0]) {   // 顶点着色器：导出绘制用 _pos 变体，其余用原版 | vertex shader: the export draw uses the _pos variant, everything else the original
         if (!pr->vs_base) pr->vs_base = pr->sh[0];
         NvShader *want = r == 2 && g_rts.exp_vs ? g_rts.exp_vs : pr->vs_base;
@@ -1213,6 +1237,7 @@ static id<MTLTexture> rts_lit_tex(NSUInteger w, NSUInteger h) {   // 全亮遮�
 }
 static void rts_build_and_trace(id<MTLTexture> depth) {
     if (depth) { rts_mem_replan(depth.width, depth.height); rts_lit_tex(depth.width, depth.height); }
+    if (g_rts.indoor_on) g_rts.have_sun = 0;   // 室内不追太阳：遮罩不算、不用，太阳那份恒亮（阴影图里也没画） | indoors the sun is not traced: no mask computed or used, the sun part stays lit (nothing was drawn into its maps either)
     int trace = g_rts.rt_frame && g_rts.ninst && g_rts.have_cam && depth && (g_rts.have_sun || (g_rts.eff.point_on && g_rts.lbuf && g_rts.s0_gpu && g_rts.s1_gpu));
     if (!trace && !g_rts.npend) return;
     if (trace && g_rts.have_sun && !(g_rts.mask = rts_tex(g_rts.mask, MTLPixelFormatR8Unorm, depth.width, depth.height, "遮罩"))) { g_rts.failed = 1; rts_unqueue(); return; }
