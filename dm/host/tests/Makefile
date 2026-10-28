@@ -48,6 +48,7 @@ run: \
 	$(B)/t_res_cap \
 	$(B)/t_update_appear \
 	$(B)/t_custom_scroll \
+	$(B)/t_sel_frame \
 	$(B)/t_hud_mask \
 	$(B)/t_uiscreen_frontend \
 	$(B)/t_padmap \
@@ -104,6 +105,7 @@ run: \
 	$(B)/t_res_cap
 	$(B)/t_update_appear
 	$(B)/t_custom_scroll
+	$(B)/t_sel_frame
 	$(B)/t_hud_mask
 	$(B)/t_res_auto_policy 2>/dev/null
 	$(B)/t_pouch_notice
@@ -258,6 +260,8 @@ $(B)/t_update_appear: t_update_appear.c ../dm_update.c | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_update_appear.c
 $(B)/t_custom_scroll: t_custom_scroll.c ../dm_custom_scroll.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_custom_scroll.c
+$(B)/t_sel_frame: t_sel_frame.c ../dm_sel_frame.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_sel_frame.c
 $(B)/t_hud_mask: t_hud_mask.c ../dm_hud_mask.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_hud_mask.c
 

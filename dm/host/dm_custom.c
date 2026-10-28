@@ -14,6 +14,7 @@
 #include "dm_community.h"
 #include "dm_res_cap.h"
 #include "dm_custom_scroll.h"
+#include "dm_sel_frame.h"
 #include "dm_widget.h"
 #include "dm_cursor.h"
 #include "hle.h"
@@ -385,6 +386,17 @@ static void ui_show_ours(uint64_t w, int on) {
 }
 // 只挪自己加的控件（名字以 Touch 开头）的 y：矩形 y 在 +0x74，改完照原版补一次虚表 +0x10 让它重算（同下面的选中框、dm_update.c place）
 // Moves only our own widgets (names starting with Touch) vertically: rectangle y at +0x74; after the change the vtable +0x10 is called once as the original does, so it recomputes (same as the selection frame below and place in dm_update.c)
+// 行文字运行时右移、选中框左缘不进缺口带（规则与实测见 dm_sel_frame.h）：只动我们的（Touch 开头）、载入时 x = 0 的叶子控件，行容器（Touch…Row）往里找一层
+// Row text moves right at run time and the selection frame's left edge stays out of the gap band (rule and measurements: dm_sel_frame.h): only our (Touch-prefixed)
+// leaf widgets loaded at x = 0 move; row containers (Touch...Row) are searched one level down
+static void indent_rows(uint64_t w, int dep) {
+    if (!w || dep > 2) return; uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return;
+    for (uint64_t i = 0; i < n; i++) { uint64_t c = *(uint64_t *)(ch + 8 * i); const char *nm = c ? *(const char **)(c + 8) : NULL; if (!nm || strncmp(nm, "Touch", 5)) continue;
+        uint64_t kids = *(uint64_t *)(c + 0x58) ? *(uint64_t *)(c + 0x60) : 0; size_t l = strlen(nm);
+        if (kids) { if (l > 3 && !strcmp(nm + l - 3, "Row")) indent_rows(c, dep + 1); continue; }
+        int32_t *r = (int32_t *)(c + 0x70); int x = dm_row_indent_x(r[0], 1);
+        if (x != r[0]) { r[0] = x; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)c + 0x10))(c); } }
+}
 static void move_ours_y(uint64_t w, int y) {
     const char *name = w ? *(const char **)(w + 8) : NULL;
     if (!name || strncmp(name, "Touch", 5)) { if (w) LOG("【红】图形设置：拒绝挪动原版控件"); return; }
@@ -516,8 +528,9 @@ void dm_graphics_ui_pump(unsigned long long root) {
       graphics_text(find_w(sp, "TouchGraphicsResText", 0), dm_str(main_base(), res_captions[lv])); }
     { static const char *const fps_captions[3] = { "dmGraphicsFrameRate30", "dmGraphicsFrameRate60", "dmGraphicsFrameRate120" };
       graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), dm_str(main_base(), fps_captions[fps_pos(pending_value(K_FPS))])); }
+    indent_rows(find_w(sp, "TouchGraphicsRows", 0), 0);
     uint64_t focus = find_w(sp, "TouchGraphicsSel", 0);
-    if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? -20 : 99999, y = pad ? 170 + 180 * selected : 0;
+    if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? dm_sel_frame_x(DM_ROW_INDENT) : 99999, y = pad ? 170 + 180 * selected : 0;
         if (r[0] != x || r[1] != y) { r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)focus + 0x10))(focus); } }
     static const char *const captions[] = { "dmGraphicsProfileAuto", "dmGraphicsProfileEco", "dmGraphicsProfileBalanced", "dmGraphicsProfileQuality" };
     int profile = pending_value(K_Q3D); if (profile < 0 || profile > 3) profile = 0;
@@ -546,6 +559,7 @@ void dm_custom_ui_pump(unsigned long long root) {
     // buttons go to the original as before
     { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); static int sel; static dm_wref sel_sp; int pad = dm_padmode_current() && !dm_ui_modal_active(root) && !dm_community_shown();   // 社区提示框显示着时 A / B 归它（dm_community.c） | while the community box shows, A / B belong to it (dm_community.c)
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
+      indent_rows(find_w(sp, "TouchCustomRows", 0), 0);
       uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64]; int oy = 0, about_bot = -1;   // about_bot：选到「关于」组的社区行时，自动滚动要把整组（含下面的鸣谢子块）滚进框 | about_bot: with the About group's community row selected, auto-scroll brings the whole group (credits sub-block below included) into view. oy：选中行相对 TouchCustomRows 的纵向偏移（「关于」组的社区行套在两层容器里，自己的矩形 y 是 0） | oy: the selected row's vertical offset within TouchCustomRows (the About group's community row sits two containers deep, its own rect y is 0)
       int rows = NK - N_GFX + (dm_community_available() ? 1 : 0); if (sel >= rows) sel = rows - 1;   // 末尾「关于」组的社区行（dm_community.c；布局 touch_layout.py _custom_about）：有可显示的值时多一行可选，A = 打开提示框 | the About group's community row at the end (dm_community.c; layout _custom_about): one more selectable row when there is a value, A = open the box
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
@@ -565,7 +579,7 @@ void dm_custom_ui_pump(unsigned long long root) {
               else set_toggle(cw, !TOGGLED(cw)); } } }
       if (dm) { int32_t *r = (int32_t *)(dm + 0x70), want[4] = { 99999, 0, r[2], r[3] };   /* 不用时只把 x 挪出屏：它在滚动区里，y 放远了会撑大可滚范围 | when unused only x is moved off screen: it is inside the scroll area, and a far-away y would enlarge the scrollable range */
           if (dm_padmode_current() && tw && cw) { int32_t *t = (int32_t *)(tw + 0x70), *c = (int32_t *)(cw + 0x70); int top = (t[1] < c[1] ? t[1] : c[1]) + oy, bot = (t[1] + t[3] > c[1] + c[3] ? t[1] + t[3] : c[1] + c[3]) + oy;   // 框住整行：文字与勾选框两者的上下沿取并，再各放 10 单位（原先只按文字框的高度算，文字框比字矮，框成了横穿文字中线的一条） | Frame the whole row: take the union of the top and bottom edges of the text and the checkbox, then pad 10 units on each side (previously computed from the text box height only; the text box is shorter than the glyphs, so the frame became a strip cutting across the middle of the text)
-              want[0] = t[0] - 30; want[1] = top - 10; want[2] = c[0] + c[2] + 30 - want[0]; want[3] = bot - top + 20;
+              want[0] = dm_sel_frame_x(t[0]); want[1] = top - 10; want[2] = c[0] + c[2] + 30 - want[0]; want[3] = bot - top + 20;
               { static int lg; if (lg++ < 2) LOG("自定义设置：手柄选中框 文字框 %d,%d %dx%d 勾选框 %d,%d %dx%d → 框 %d,%d %dx%d", t[0], t[1], t[2], t[3], c[0], c[1], c[2], c[3], want[0], want[1], want[2], want[3]); } }
           if (memcmp(r, want, sizeof want)) { memcpy(r, want, sizeof want); ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)dm + 0x10))(dm); } }
       // 这页可以滚（各行在原版滚动区里，touch_layout.py _custom_page）：手柄选到列表框外的行时，让原版滚动区自己滚到位——发滚轮，每 4 帧一格，直到这一行整行在框内。
