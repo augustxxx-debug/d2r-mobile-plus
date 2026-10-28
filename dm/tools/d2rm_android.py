@@ -132,7 +132,15 @@ def main():
 
     # 五、放到输出目录：先写在旁边，齐了再换上（中途失败不留半份）
     # 5. Put it in the output directory: write it alongside first and swap it in once complete (a failure halfway leaves no half copy)
-    with open(os.path.join(stage, 'pack_info.txt'), 'w', encoding='utf-8', newline='\n') as f: f.write('PRODUCT=%s\nTARGET=%s\nMADE=%s\n' % (P, T, time.strftime('%Y-%m-%dT%H:%M:%S')))
+    # 构建输入（同 iOS run.sh 的 DM_BUILD_INPUTS 写法）：界面字体指纹（DM_UI_FONT 文件 sha256 前 12 位，没设 = none）与字重档（DM_UI_FONT_WEIGHT）。
+    # 字体本身随覆盖层走（gen_romfs_overlay.py → font_override.py 替换 blizzardglobal 的中日文字形），App 启动日志与分享摘要从这一行看出用的是哪套字
+    # Build inputs (same form as DM_BUILD_INPUTS in the iOS run.sh): the UI font fingerprint (first 12 hex of the DM_UI_FONT file's sha256, none when unset) and the
+    # weight level (DM_UI_FONT_WEIGHT). The font itself travels in the overlay (gen_romfs_overlay.py -> font_override.py replaces blizzardglobal's CJK glyphs); the App's boot log and share summary show from this line which font is in use
+    fp = 'none'; fpath = os.environ.get('DM_UI_FONT', '')
+    if fpath and os.path.isfile(fpath): fp = hashlib.sha256(open(fpath, 'rb').read()).hexdigest()[:12]
+    inputs = 'font=%s;weight=%s' % (fp, os.environ.get('DM_UI_FONT_WEIGHT', '0') if fp != 'none' else '0')
+    say('构建输入：' + inputs)
+    with open(os.path.join(stage, 'pack_info.txt'), 'w', encoding='utf-8', newline='\n') as f: f.write('PRODUCT=%s\nTARGET=%s\nMADE=%s\nINPUTS=%s\n' % (P, T, time.strftime('%Y-%m-%dT%H:%M:%S'), inputs))
     part = final + '.part'
     shutil.rmtree(part, ignore_errors=True); os.makedirs(part)
     for x in ('out', 'shaders', 'overlay') + (('ui-art',) if T == 'ohos' else ()): shutil.copytree(os.path.join(stage, x), os.path.join(part, x))

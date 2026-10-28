@@ -46,10 +46,21 @@ public final class TouchOverlay extends View {
     // Coordinates, visibility, pressed state and skill set all participate in that snapshot.
     private final float[] probe = new float[DRAW_FLOATS], drawn = new float[DRAW_FLOATS];
     private boolean drawnValid;
+    // 重绘对齐游戏上屏：内容变了也要等游戏交换链出了新的一帧才重绘（每个游戏帧最多一次）。Choreographer 跟着屏幕 120 Hz 走、游戏 60 帧时，
+    // 原先触控层在游戏两帧之间的节拍上也重绘，系统按「任一图层更新」多合成一次（奥丁实测：游戏层 59.7 / 窗口层 26.5 → 合成 68.8 次 / 秒，系统帧率监控显示的就是它）。
+    // 游戏卡住（交换链 200 ms 没新帧：读取画面、暂停）时照常按内容变化重绘，触控不受影响。
+    // Redraws follow the game's presents: even when the content changed, wait until the game's swapchain presented a new frame (at most once per game frame). With
+    // Choreographer at the screen's 120 Hz and the game at 60, the overlay used to redraw on ticks between two game frames and the system composed once more for "any
+    // layer updated" (Thor: game layer 59.7 / window layer 26.5 -> 68.8 compositions / s, which is what the system frame-rate monitor shows). When the game is stalled
+    // (no new swapchain frame for 200 ms: loading screen, pause) the overlay redraws on content changes as before, so touch is unaffected.
+    private static native long nativePresentCount();
+    private long lastPresent=-1, seenPresent=-1, seenPresentNs;   // lastPresent：上次重绘时的游戏帧号；seenPresent / seenPresentNs：最近一次看到游戏帧号变化的时刻（判游戏卡住） | lastPresent: the game frame number at the last redraw; seenPresent / seenPresentNs: when the frame number last changed (stall detection)
     private final Choreographer.FrameCallback poll = new Choreographer.FrameCallback() {
         @Override public void doFrame(long frameTimeNanos) {
             if (!running) return;
-            if (inputEnabled && isShown()) { nativeLayout(probe); int f=nativeFpsHud(), hm=nativeHudMask(); if (!drawnValid || f!=fpsHud || hm!=hudMask || !Arrays.equals(probe, drawn)) { fpsHud=f; hudMask=hm; invalidate(); } }
+            long pc=nativePresentCount(); if (pc!=seenPresent) { seenPresent=pc; seenPresentNs=frameTimeNanos; }
+            boolean gameFrame = pc!=lastPresent || frameTimeNanos-seenPresentNs>200_000_000L;
+            if (inputEnabled && isShown() && gameFrame) { nativeLayout(probe); int f=nativeFpsHud(), hm=nativeHudMask(); if (!drawnValid || f!=fpsHud || hm!=hudMask || !Arrays.equals(probe, drawn)) { fpsHud=f; hudMask=hm; lastPresent=pc; invalidate(); } }
             Choreographer.getInstance().postFrameCallback(this);
         }
     };
