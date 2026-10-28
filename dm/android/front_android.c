@@ -21,10 +21,15 @@ void front_android_set_window(void *win, int w, int h) { atomic_store(&g_window,
 
 // UI 线程从当前 Display 读实际刷新率；0 表示未知，不冒充实测 60 Hz。
 // The UI thread reads the current Display refresh rate; 0 means unknown, not a measured 60 Hz.
-static _Atomic int g_refresh_millihz;
-void front_android_set_refresh(float hz) {
-    atomic_store(&g_refresh_millihz, isfinite(hz) && hz > 0 && hz < 1000 ? (int)lroundf(hz * 1000) : 0);
+static _Atomic int g_refresh_millihz, g_refresh_max_millihz;
+static int millihz(float hz) { return isfinite(hz) && hz > 0 && hz < 1000 ? (int)lroundf(hz * 1000) : 0; }
+void front_android_set_refresh(float hz, float max_hz) {
+    atomic_store(&g_refresh_millihz, millihz(hz)); atomic_store(&g_refresh_max_millihz, millihz(max_hz));
 }
+// 屏幕最高刷新率（整数 Hz；给宿主 dm_custom.c：设置页要不要给 120 那一格、120 档生不生效），对应 iOS nvn_mtl.m 的强定义。Java 侧按 Display.getSupportedModes 里与当前模式同尺寸的最高刷新率报
+// Maximum screen refresh rate (integer Hz; for the host's dm_custom.c: whether the settings page offers the 120 stop and whether it takes effect), the counterpart of the strong definition in iOS nvn_mtl.m.
+// The Java side reports the highest refresh rate among Display.getSupportedModes with the current mode's size
+int dm_display_max_hz(void) { int m = atomic_load(&g_refresh_max_millihz), c = atomic_load(&g_refresh_millihz); return ((m > c ? m : c) + 500) / 1000; }
 double front_display_refresh(char *name, size_t n) {
     if (name && n) *name = 0;
     return atomic_load(&g_refresh_millihz) / 1000.0;

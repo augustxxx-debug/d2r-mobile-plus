@@ -47,7 +47,8 @@ import java.util.Locale;
 public class DmActivity extends Activity implements SurfaceHolder.Callback, DisplayManager.DisplayListener {
     static native int nativeStart(String filesDir, String extDir, String romfsSrc, String lang, String versionLabel);
     static native void nativeSurface(Object surface, int w, int h);
-    static native void nativeRefresh(float hz);
+    static native void nativeRefresh(float hz, float maxHz);
+    static native int nativeFpsTarget();                  // 帧率档生效目标 30 / 60 / 120（每秒问一次，决定首选显示模式）| effective frame-rate target 30 / 60 / 120 (asked once a second; picks the preferred display mode)
     static native void nativeTouch(int n, int[] ids, float[] xs, float[] ys);
     static native void nativeFocus(int ev);
     static native void nativeMemoryWarning(int level);   // 崩溃围栏：系统内存告警 | crash fence: system memory warning
@@ -276,6 +277,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         started = true;
         touchOverlay.setInputEnabled(true);
         nativeFocus(3);
+        modeHandler.removeCallbacks(modePoll); modeHandler.post(modePoll);
     }
 
     private void showStartError(String message) {
@@ -391,7 +393,30 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     }
 
     private void updateRefresh() {
-        if (libraryLoaded) nativeRefresh(view.getDisplay() == null ? 0 : view.getDisplay().getRefreshRate());
+        if (!libraryLoaded) return;
+        android.view.Display d = view.getDisplay(); if (d == null) { nativeRefresh(0, 0); return; }
+        nativeRefresh(d.getRefreshRate(), maxRefresh(d));
+    }
+    // 与当前模式同尺寸的最高刷新率（120 档要不要出现、生不生效）| the highest refresh rate among the modes with the current mode's size (whether the 120 stop appears and takes effect)
+    private static float maxRefresh(android.view.Display d) {
+        android.view.Display.Mode cur = d.getMode(); float best = d.getRefreshRate();
+        for (android.view.Display.Mode m : d.getSupportedModes()) if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight() && m.getRefreshRate() > best) best = m.getRefreshRate();
+        return best;
+    }
+    // 帧率档 120 时把窗口的首选显示模式切到同尺寸的最高刷新率（≥ 119 Hz）；其余档回系统默认（0）。每秒问一次宿主，变了才设（设置页「应用」后一秒内生效）
+    // With the 120 stop, switch the window's preferred display mode to the highest refresh rate of the same size (>= 119 Hz); the other stops go back to the system default (0).
+    // The host is asked once a second and the mode is set only on change (takes effect within a second of Apply on the settings page)
+    private int preferredModeId = -1;
+    private final android.os.Handler modeHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable modePoll = new Runnable() { @Override public void run() { applyPreferredMode(); modeHandler.postDelayed(this, 1000); } };
+    private void applyPreferredMode() {
+        if (!started || view.getDisplay() == null) return;
+        android.view.Display d = view.getDisplay(); int want = 0;
+        if (nativeFpsTarget() == 120) { android.view.Display.Mode cur = d.getMode(); float best = 0;
+            for (android.view.Display.Mode m : d.getSupportedModes()) if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight() && m.getRefreshRate() >= 119f && m.getRefreshRate() > best) { best = m.getRefreshRate(); want = m.getModeId(); } }
+        if (want == preferredModeId) return;
+        preferredModeId = want; WindowManager.LayoutParams lp = getWindow().getAttributes(); lp.preferredDisplayModeId = want; getWindow().setAttributes(lp);
+        android.util.Log.i("dm", "display mode: preferredDisplayModeId=" + want + " (fps target " + nativeFpsTarget() + ")");
     }
     @Override public void onDisplayAdded(int id) { updateRefresh(); }
     @Override public void onDisplayRemoved(int id) { updateRefresh(); }
@@ -428,6 +453,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         } catch (Throwable t) { android.util.Log.w("dm", "exit reasons: " + t); }
     }
     @Override protected void onDestroy() {
+        modeHandler.removeCallbacks(modePoll);
         if (started && isFinishing()) nativeShutdown();   /* 不返回：宿主 _exit(0) | does not return: the host _exit(0)s */
         if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
     @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) immersive(); else releaseTouches(); }
