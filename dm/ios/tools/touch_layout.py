@@ -1235,7 +1235,7 @@ def _drop_rows(*rows):
 # Custom reuses the native Video destination; Graphics uses a new layout and
 # leaves the native Game Settings destination intact. The host owns only our controls.
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above', 'fps_hud')
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above')   # fps_hud 显示帧数已搬到图形页第二行（用户 2026-10-28）| fps_hud Show frame rate moved to Graphics row 2 (user 2026-10-28)
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines
@@ -1432,12 +1432,12 @@ def _graphics_page(text):
     title['fields']['style'] = '$StyleSettingsTitle'
     title['children'] = [{'type': 'ImageWidget', 'name': 'Divider', 'fields': {
         'rect': '$OptionsDividerRect', 'filename': 'PauseMenu\\Divider'}}]
-    # 行序（用户 2026-10-27）：渲染分辨率 / 帧率 / MetalFX 开关 / 超分档位。渲染分辨率不再挨着超分，免得两者混为一谈；档位行在最后，开关关掉时藏起来不留空行。
+    # 行序（用户 2026-10-27；2026-10-28 第二行插入「显示帧数」）：渲染分辨率 / 显示帧数 / 帧率 / MetalFX 开关 / 超分档位。渲染分辨率不再挨着超分，免得两者混为一谈；档位行在最后，开关关掉时藏起来不留空行。
     # 行号与宿主 dm_custom.c dm_graphics_ui_pump 的手柄选行、选中框 y（170 + 180 × 行号）一一对应，改这里要一起改
     # Row order (user, 2026-10-27): render resolution / frame rate / MetalFX switch / upscale profile. Render resolution no longer sits next to upscaling, so the two are not confused; the profile row is last and hides without leaving a gap when the switch is off.
     # Row numbers match the controller row selection and the selection frame y (170 + 180 × row) in the host's dm_custom.c dm_graphics_ui_pump; change both together
     profile = {'type': 'Widget', 'name': 'TouchGraphicsProfileRow', 'fields': {
-        'rect': {'x': 0, 'y': 720, 'width': 1730, 'height': 180}}, 'children': [
+        'rect': {'x': 0, 'y': 900, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsProfileText', 'dmGraphicsProfileAuto', 0, 0, 1000, 180),
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsProfile', 'fields': {
             'rect': {'x': 1110, 'y': 55, 'width': 480, 'height': 72},
@@ -1463,21 +1463,26 @@ def _graphics_page(text):
     # 光追阴影（实验性，dm/gfx/nvn/nvn_rtshadow.inc）：一行勾选框；机器不过门槛时宿主把整行 TouchGraphicsRtRow 藏起来（dm_graphics_ui_pump 按 mtl_rt_shadow_supported）
     # Ray-traced shadows (experimental, dm/gfx/nvn/nvn_rtshadow.inc): one checkbox row; on machines that fail the gate the host hides the whole TouchGraphicsRtRow (dm_graphics_ui_pump via mtl_rt_shadow_supported)
     rt_row = {'type': 'Widget', 'name': 'TouchGraphicsRtRow', 'fields': {
-        'rect': {'x': 0, 'y': 900, 'width': 1730, 'height': 180}}, 'children': [
+        'rect': {'x': 0, 'y': 1080, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsRtText', 'dmGraphicsRtShadow', 0, 0, 1000, 180), toggle('TouchGraphicsRtShadow', 0)]}
+    # 显示帧数（fps_hud，缺省开；原在自定义页末行，用户 2026-10-28 要求放图形页第二行）：一行勾选框，宿主 dm_graphics_ui_pump 读写 TouchGraphicsFpsHud
+    # Show frame rate (fps_hud, on by default; was the last Custom row, moved to Graphics row 2 at the user's request on 2026-10-28): one checkbox row, read and written by the host's dm_graphics_ui_pump via TouchGraphicsFpsHud
+    fpshud_row = {'type': 'Widget', 'name': 'TouchGraphicsFpsHudRow', 'fields': {
+        'rect': {'x': 0, 'y': 360, 'width': 1730, 'height': 180}}, 'children': [
+        label('TouchGraphicsFpsHudText', 'dmCustomFpsHud', 0, 0, 1000, 180), toggle('TouchGraphicsFpsHud', 0)]}
     rows = {'type': 'Widget', 'name': 'TouchGraphicsRows', 'fields': {
-        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1400}}, 'children': [title, res_row,
-        label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 360, 1000, 180),
+        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1580}}, 'children': [title, res_row, fpshud_row,
+        label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 540, 1000, 180),
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsFps', 'fields': {
-            'rect': {'x': 1110, 'y': 415, 'width': 480, 'height': 72},
+            'rect': {'x': 1110, 'y': 595, 'width': 480, 'height': 72},
             'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',
             'focusIndicatorFilename': '$OptionsSliderFocusIndicatorFilename', 'isHorizontal': True, 'increment': 1,
             'indicatorFilepath': 'PauseMenu\\HorizontalIndicator', 'background': '$SettingsSliderBackground',
             'onUpdateMessage': 'OptionsPanelMessage:SetD2RFrameRate',
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}},
-        label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 540, 1000, 180), toggle('TouchGraphicsUpscale', 540),
-        profile, rt_row, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 1080, 1670, 300),
+        label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 720, 1000, 180), toggle('TouchGraphicsUpscale', 720),
+        profile, rt_row, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 1260, 1670, 300),
         {'type': 'NineTileImageWidget', 'name': 'TouchGraphicsSel', 'fields': {
             'rect': {'x': 99999, 'y': 0, 'width': 1700, 'height': 180}, 'backgroundColor': [0, 0, 0, 0],
             'filename': 'Controller/PANEL/ControllerSelector/ControllerSelectorBorder', 'tileScale': 0.5}}]}

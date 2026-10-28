@@ -26,12 +26,13 @@ int main(void) {
     // Apple：同一文件给档位 2 | Apple: the same file yields profile 2
     up_ok = 1; CHECK(dm_3d_profile_get() == 2); up_ok = 0;
     // 行打包 | row packing
-    int v[5], n;
-    n = graphics_rows_pack(1, 1, 1, 1, v); CHECK(n == 5 && v[0] == ROW_RES && v[1] == ROW_FPS && v[2] == ROW_UPSCALE && v[3] == ROW_PROFILE && v[4] == ROW_RT);   // Apple 全开：布局原位 | Apple, everything: layout order
-    n = graphics_rows_pack(1, 1, 0, 1, v); CHECK(n == 4 && v[3] == ROW_RT);                   // 档位行藏着：光追上移一格（原行为）| profile hidden: ray tracing one slot up (original behaviour)
-    n = graphics_rows_pack(1, 1, 0, 0, v); CHECK(n == 3 && v[2] == ROW_UPSCALE);
-    n = graphics_rows_pack(0, 0, 0, 0, v); CHECK(n == 1 && v[0] == ROW_FPS);                  // Android：只剩帧率 | Android: only the frame rate
-    n = graphics_rows_pack(0, 0, 1, 1, v); CHECK(n == 2 && v[0] == ROW_FPS && v[1] == ROW_RT);   // 没有超分时档位行不可能出现 | the profile row cannot appear without upscaling
+    int v[6], n;
+    n = graphics_rows_pack(1, 1, 1, 1, v); CHECK(n == 6 && v[0] == ROW_RES && v[1] == ROW_FPSHUD && v[2] == ROW_FPS && v[3] == ROW_UPSCALE && v[4] == ROW_PROFILE && v[5] == ROW_RT);   // Apple 全开：布局原位 | Apple, everything: layout order
+    n = graphics_rows_pack(1, 1, 0, 1, v); CHECK(n == 5 && v[4] == ROW_RT);                   // 档位行藏着：光追上移一格（原行为）| profile hidden: ray tracing one slot up (original behaviour)
+    n = graphics_rows_pack(1, 1, 0, 0, v); CHECK(n == 4 && v[3] == ROW_UPSCALE);
+    n = graphics_rows_pack(0, 0, 0, 0, v); CHECK(n == 2 && v[0] == ROW_FPSHUD && v[1] == ROW_FPS);                  // Android：只剩帧率 | Android: only the frame rate
+    n = graphics_rows_pack(1, 0, 0, 0, v); CHECK(n == 3 && v[0] == ROW_RES && v[1] == ROW_FPSHUD && v[2] == ROW_FPS);   // 显示帧数行永远在第二 | the Show-frame-rate row is always second   // Android（渲染分辨率档由安卓前端实现，无超分）：分辨率 + 帧率 | Android (render-resolution level by the Android front end, no upscaling): resolution + frame rate
+    n = graphics_rows_pack(0, 0, 1, 1, v); CHECK(n == 3 && v[0] == ROW_FPSHUD && v[1] == ROW_FPS && v[2] == ROW_RT);   // 没有超分时档位行不可能出现 | the profile row cannot appear without upscaling
     unlink(path); rmdir(dir);
     printf("PASS t_graphics_gate: %d checks\n", checks); return 0;
 }
