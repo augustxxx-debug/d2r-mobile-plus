@@ -115,9 +115,9 @@ Each profile was run on the same device and test save, with a fixed seed and tim
 
 See [build and verification notes](docs/PLUS.md) for other checks and limitations.
 
-## Community entry
+## Community entry and About
 
-"About → Community" at the end of the Custom options page and "Join the community" in the pause menu open the same in-game notice box: the Chinese UI shows a QQ group number (copyable), every other language the GitHub repository address (copyable). Both come from the `community` field of the remote version file (sample: `docs/community_manifest.sample.json`); without that field the entry is hidden. Only the group and the repository address are shown, never any personal contact.
+"Join the community" in the pause menu, on the front-end main menu and at the end of the Custom options page opens one in-game box: the Chinese UI shows a QQ group number (copyable), every other language the GitHub repository address (copyable), with an About section (display version and credits); "About" on the main menu shows the version and credits only. Both come from the `community` field of the remote version file (sample: `docs/community_manifest.sample.json`); without that field the entry is hidden. Only the group and the repository address are shown, never any personal contact.
 
 ## Notification example
 
