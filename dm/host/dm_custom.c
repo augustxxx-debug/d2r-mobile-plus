@@ -565,7 +565,7 @@ void dm_custom_ui_pump(unsigned long long root) {
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
           if (ev & DM_BTN_DOWN) sel = sel + 1 < rows ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
           int ci = sel < NK - N_GFX ? custom_key_at(sel) : -1;
-          if (ci < 0) { tw = find_w(sp, "TouchAboutCommunityText", 0); cw = find_w(sp, "TouchCommunityOpt", 0); uint64_t ar = find_w(sp, "TouchAboutRow", 0), ac = find_w(sp, "TouchAboutCommunity", 0);
+          if (ci < 0) { tw = find_w(sp, "TouchAboutCommunityText", 0); cw = find_w(sp, "TouchCommunityOpt", 0); uint64_t ar = find_w(sp, "TouchAboutRow", 0), ac = find_w(sp, "TouchAboutCommunityRow", 0);
               oy = (ar ? *(int32_t *)(ar + 0x74) : 0) + (ac ? *(int32_t *)(ac + 0x74) : 0); if (ar) about_bot = *(int32_t *)(ar + 0x74) + *(int32_t *)(ar + 0x7c); if ((ev & DM_BTN_A) && cw && ac) dm_community_open(4); }
           else {
           snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[ci]); cw = find_w(sp, ci == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[ci]); tw = find_w(sp, nm, 0);   // 语言行：框住标签到最右那一格 | Language row: box from the label to the rightmost cell

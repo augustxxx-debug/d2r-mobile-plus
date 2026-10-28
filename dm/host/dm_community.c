@@ -24,6 +24,7 @@
 #include "dm_widget.h"
 #include "dm_notice_geometry.h"
 #include "dm_cursor.h"
+#include "dm_sel_frame.h"
 #include "hle.h"
 #include <ctype.h>
 #include <pthread.h>
@@ -256,8 +257,10 @@ static void credits_render(uint8_t *b, uint64_t sp) {   // 自定义页开着时
         if (k < n) { co_text(b, w, lines[k].text); co_place(w, 620, y0 + 90 * k); if (lines[k].kind == 1) ys = y0 + 90 * k; if (lines[k].kind == 2) yt = y0 + 90 * k; }
         else { co_text(b, w, ""); co_place(w, 99999, y0); } }
     uint64_t l0 = co_find(about, "TouchCreditLabel0", 0), l1 = co_find(about, "TouchCreditLabel1", 0);
-    if (l0) { co_text(b, l0, ys >= 0 ? dm_str(b, "dmCreditsSpecial") : ""); co_place(l0, ys >= 0 ? 0 : 99999, ys >= 0 ? ys : y0); }
-    if (l1) { co_text(b, l1, yt >= 0 ? dm_str(b, "dmCreditsThanks") : ""); co_place(l1, yt >= 0 ? 0 : 99999, yt >= 0 ? yt : y0); }
+    // 标签横坐标 = 行文字缩进后的位置（dm_sel_frame.h DM_ROW_INDENT）：放 0 会被 dm_custom.c indent_rows 当成「载入 x = 0 的叶子」每帧挪到 40、这里再挪回 0，来回拉扯（十二审 Q12-01 顺带）
+    // label x = the indented row-text position (DM_ROW_INDENT): at 0, indent_rows would take it for a leaf loaded at x = 0 and move it to 40 every frame while this moved it back (found with Q12-01)
+    if (l0) { co_text(b, l0, ys >= 0 ? dm_str(b, "dmCreditsSpecial") : ""); co_place(l0, ys >= 0 ? DM_ROW_INDENT : 99999, ys >= 0 ? ys : y0); }
+    if (l1) { co_text(b, l1, yt >= 0 ? dm_str(b, "dmCreditsThanks") : ""); co_place(l1, yt >= 0 ? DM_ROW_INDENT : 99999, yt >= 0 ? yt : y0); }
     int32_t *r = (int32_t *)(about + 0x70), h = y0 + 90 * (n > 0 ? n : 1);   // 容器高度 = 子标题下沿 + 行数 × 行距（滚动区按它算内容高度） | container height = below the sub-title + lines × pitch (the scroll area sizes by it)
     if (r[3] != h) { r[3] = h; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)about + 0x10))(about); }
 }
@@ -335,7 +338,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     // 入口显隐：暂停菜单行、主菜单第二行、自定义页「关于」组的社区行——没有可显示的值就挪出屏幕（行在滚动区里，只挪 x）；主菜单「关于」行总在。自定义页同时写鸣谢块
     // entry show / hide: the pause-menu row, the main menu's second row, the Custom page's community row - without a value they move off screen (the row sits in a scroll area, so only x moves); the main menu's About row stays. The Custom page also gets its credits block written
     for (int i = 0; i < N_HOSTS; i++) { uint64_t p = dm_ui_top(root, k_hosts[i]); if (!p || !*(uint8_t *)(p + 0x50)) continue;
-        if (i == 0) { uint64_t w = co_find(p, "TouchAboutCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 0 : 99999, r[1]); } credits_render(b, p); }
+        if (i == 0) { uint64_t w = co_find(p, "TouchAboutCommunityRow", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 0 : 99999, r[1]); } credits_render(b, p); }
         else if (i < 3) { uint64_t w = co_find(p, "TouchCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 564 : 99999, r[1]); } }
         else { uint64_t w = co_find(p, "TouchCommunityFe", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); int home = i == 3 ? 164 : 20; if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? home : 99999, r[1]); } } }
     int st = atomic_load(&g_show); if (!st) return;

@@ -1347,7 +1347,7 @@ _CUSTOM_ROW_H = [(5 * _CUSTOM_LINE_H if k == 'q3d' else _CUSTOM_Q3D_H if k in ('
 _CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
 _CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
 # 末尾的「关于」组（社区入口 dm_community.c）：分节标题「关于」+ 一行「社区讨论 …… [查看]」（原版前端中号按钮，发空操作消息 ClosePanel:TouchCommunityOpt，宿主当信号收、打开提示框）。
-# 整组包在容器 TouchAboutRow 里，和各行同在滚动区、跟着滚；社区行单独包在子容器 TouchAboutCommunity 里，没有可显示的值时宿主把它的 x 挪出屏幕（y 不动：滚动区按子控件范围算内容高度），标题与鸣谢行照常。手柄模式十字键能选到社区行、A 打开（dm_custom.c）。
+# 整组包在容器 TouchAboutRow 里，和各行同在滚动区、跟着滚；社区行单独包在子容器 TouchAboutCommunityRow 里（名字以 Row 结尾：dm_custom.c indent_rows 只往这种容器里找一层，标签才随各行右移 40、手柄选中框落在 +10，十二审 Q12-01），没有可显示的值时宿主把它的 x 挪出屏幕（y 不动：滚动区按子控件范围算内容高度），标题与鸣谢行照常。手柄模式十字键能选到社区行、A 打开（dm_custom.c）。
 # 鸣谢子块（用户 2026-10-28 定稿，§2.6 三级层级）：子标题「鸣谢」（标题级 GoldYellow）+「特别鸣谢」/「鸣谢」两行：标签 36 号 LightGold、名单 36 号 LightGray，
 # 名单由宿主 dm_community.c 按语言拼（每行 ≤ 4 名、按估算宽折行、封顶 6 行加「…」；「鸣谢」为空整行不显示），名字不翻译。布局里预放 2 个标签框 + 6 个名单行框、字空着、行框在屏外，
 # 宿主每帧摆位并把 TouchAboutRow 的高度按行数改（滚动区按子控件范围算内容高度）。名字放代码缺省常量（RC1：上游作者 jhaizhou-ops），RC2 由清单 credits 字段覆盖
@@ -1360,7 +1360,7 @@ def _custom_about():
     return ('        { "type": "Widget", "name": "TouchAboutRow", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_H, _ABOUT_H)
             + '            { "type": "TextBoxWidget", "name": "TouchAboutTitle", "fields": { "rect": { "x": 0, "y": 0, "width": 1730, "height": %d }, "text": "@dmCommunityAbout", "style": "$StyleSettingsTitle" }, "children": [\n' % _CUSTOM_LINE_H
             + '                { "type": "ImageWidget", "name": "TouchAboutDivider", "fields": { "rect": "$OptionsDividerRect", "filename": "PauseMenu\\\\Divider" } },\n            ] },\n'
-            + '            { "type": "Widget", "name": "TouchAboutCommunity", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_LINE_H, _CUSTOM_LINE_H)
+            + '            { "type": "Widget", "name": "TouchAboutCommunityRow", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_LINE_H, _CUSTOM_LINE_H)
             + '                { "type": "TextBoxWidget", "name": "TouchAboutCommunityText", "fields": { "rect": { "x": 0, "y": 0, "width": 1000, "height": %d }, "text": "@dmCommunityRow", "style": "$StyleSettingsText" } },\n' % _CUSTOM_LINE_H
             + _btn('TouchCommunityOpt', 30, '@dmCommunityOpen', 'PanelManager:ClosePanel:TouchCommunityOpt', x=1110, anchor=False).replace('\n        ', '\n                ')
             + '            ] },\n'
