@@ -1535,11 +1535,13 @@ def _row_height(fn):
         return text.replace(a, '"rowHeight": 180'), n + text.count(a)
     return g
 for _k in ('soundoptionspanelhd.json', 'gameplayoptionspanelhd.json', 'onlinegameoptionspanelhd.json'): PRESENT[_k] = _row_height(PRESENT[_k])
-# 手柄版三页同样用 180：原版分组标题下的分割线（$OptionsDividerRect）在本宿主里要配 180 的行距才落在标题行与下一行之间，100 时横穿下一行文字
-# （用户报：安卓手柄模式音频页「分组金黄色分割线乱了」，iOS 手柄模式同样；原先只改了「游戏设定」，「音频」「游戏」漏了）。回归 tests/test_options_divider_rows.py
-# The controller copies of all three pages use 180 too: the stock section divider under a title ($OptionsDividerRect) only lands between the title row and
-# the next row with a 180 pitch in this host; at 100 it crosses the next row's text (user report: Android controller-mode Audio page, iOS controller mode alike;
-# only Game Settings had been changed, Audio and Gameplay were missed). Regression: tests/test_options_divider_rows.py
+# 手柄版三页同样用 180：我们的大字号档 BIG_FONT 把 $OptionsDividerRect 从原版 y 90 挪到 y 150（配触屏 180 行距，见 build_profile 上方注释），这个档是全局的
+# （两种模式共用），所以凡带分割线的原版表格都必须是 180 行距；仍用原版 100 时，y 150 的分割线落进下一行文字（用户报：安卓手柄模式音频页「分组金黄色分割线乱了」，
+# iOS 手柄模式同样；原先只改了「游戏设定」，「音频」「游戏」漏了）。回归与几何不变量（110 ≤ 分割线 y < 行距）：tests/test_options_divider_rows.py
+# The controller copies of all three pages use 180 too: our large-font profile BIG_FONT moves $OptionsDividerRect from the stock y 90 to y 150 (to suit the touch
+# 180 pitch, see the comment above build_profile), and that profile is global (both modes), so every stock table carrying a divider must use the 180 pitch; at the
+# stock 100 the divider at y 150 falls into the next row's text (user report: Android controller-mode Audio page; iOS controller mode alike; only Game Settings had
+# been changed, Audio and Gameplay were missed). Regression and the geometric invariant (110 <= divider y < row pitch): tests/test_options_divider_rows.py
 for _k in ('soundoptionspanelhd.json', 'gameplayoptionspanelhd.json', 'onlinegameoptionspanelhd.json'): PAD_ROOT[_k] = _row_height(PAD_ROOT[_k])
 
 def _widget_block(s, name):
