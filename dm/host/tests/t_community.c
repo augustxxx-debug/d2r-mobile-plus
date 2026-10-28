@@ -55,8 +55,9 @@ int main(void) {
     restart(); dm_community_load(); CHECK(dm_community_available()); k = dm_community_value(DM_LG_ZH, v, sizeof v); CHECK(k == 1 && !strcmp(v, "1129913678"));
     // 4. 这次没拉到：沿用缓存（内存值不动、文件不动） | 4. Fetch failed this time: keep the cache (memory and file untouched)
     log_reset(); CHECK(dm_community_manifest(NULL, 0) == -1); CHECK(dm_community_available()); CHECK(cache_has("qq_group=")); CHECK(strstr(log_text(), "社区入口：清单拉取失败，沿用缓存"));
-    // 5. 清单不是合法 JSON（截断）：同拉取失败，沿用缓存 | 5. Manifest is not valid JSON (truncated): same as a failed fetch, keep the cache
-    CHECK(dm_community_manifest("{\"build\": 1, \"community\": { \"qq_group\": \"11", 42) == -1); CHECK(dm_community_available());
+    // 5. 清单不是合法 JSON（截断）：十一审 Q11-01 起当格式错 = 无字段（入口不显示、缓存清掉），记「社区入口：清单格式错」 | 5. Manifest is not valid JSON (truncated): since Q11-01 a format error = no field (entry hidden, cache cleared), logged as "manifest malformed"
+    log_reset(); CHECK(dm_community_manifest("{\"build\": 1, \"community\": { \"qq_group\": \"11", 42) == 0); CHECK(!dm_community_available()); CHECK(access(cache, F_OK) != 0); CHECK(strstr(log_text(), "社区入口：清单格式错"));
+    CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1);
     // 6. 清单取到了但没有字段：入口不显示、缓存删掉；重启后仍不显示 | 6. Fetched without the field: entry hidden, cache deleted; still hidden after a restart
     log_reset(); CHECK(dm_community_manifest(M_NONE, strlen(M_NONE)) == 0); CHECK(!dm_community_available()); CHECK(access(cache, F_OK) != 0); CHECK(strstr(log_text(), "社区入口：清单无字段"));
     restart(); dm_community_load(); CHECK(!dm_community_available());
@@ -92,6 +93,33 @@ int main(void) {
       CHECK(dm_community_manifest(M_NONE, strlen(M_NONE)) == 0); t_group = DM_LG_ZH; setenv("DM_TEST_COMMUNITY", mp, 1); restart(); dm_community_load(); CHECK(dm_community_available()); unsetenv("DM_TEST_COMMUNITY"); }
     // 14. 超长 / 越界：群号 13 位、链接 300 字符都当格式坏；缓冲不越界 | 14. Too long: a 13-digit number and a 300-character link are malformed; no buffer overrun
     { char big[512]; snprintf(big, sizeof big, "{\"community\": { \"qq_group\": \"1234567890123\", \"github\": \"https://github.com/%0280d\" } }", 0); CHECK(dm_community_manifest(big, strlen(big)) == 0); CHECK(!dm_community_available()); }
+    // 16. 十一审 Q11-01：严格 JSON 与层级——语法错 / 尾逗号 / 非对象根 / 重复字段 / 嵌套同名键 / 字符串转义 都不算有字段；深层同名键被忽略、无关字段不碍事
+    // 16. Q11-01: strict JSON and nesting - syntax error / trailing comma / non-object root / duplicate field / nested same-name key / string escapes never count as the field; deeper same-name keys are ignored, unrelated fields are fine
+    t_group = DM_LG_ZH;
+    { static const char *const bad[] = {
+        "{\"build\": 1 \"community\": { \"qq_group\": \"123456\" } }",                         // 缺逗号 | missing comma
+        "{\"build\": 1, \"community\": { \"qq_group\": \"123456\", }, }",                      // 尾逗号 | trailing commas
+        "[{\"community\": {\"qq_group\": \"123456\"}}]",                                      // 非对象根 | non-object root
+        "{\"community\": {\"qq_group\": \"123456\"}} {}",                                     // 根后面还有东西 | trailing garbage
+        "{\"build\":1,\"meta\":{\"community\":{\"qq_group\":\"123456\"}}}",                     // 嵌套 community | nested community
+        "{\"community\": {\"qq_group\": \"123456\"}, \"community\": {\"qq_group\": \"654321\"}}",   // 重复 community | duplicate community
+        "{\"community\": {\"qq_group\": \"123456\", \"qq_group\": \"654321\"}}",               // 重复 qq_group | duplicate qq_group
+        "{\"community\": {\"qq_group\": \"1234\\u0035678\"}}",                                // 转义 | escape
+        "{\"community\": {\"github\": \"https://github.com/a\\/b\"}}",                       // 转义的斜杠 | escaped slash
+        "{\"community\": [\"qq_group\", \"123456\"]}",                                        // community 不是对象 | community not an object
+        "{\"community\": {\"qq_group\": 123456}}",                                              // 值不是字符串 | value not a string
+        "{\"community\": {\"qq_group\": \"123456\"}, \"build\": 01}",                           // 数字语法错 | bad number
+        "{\"community\": {\"qq_group\": \"123456\"}, \"note\": \"no end}",                       // 字符串没收尾 | unterminated string
+        "{\"community\": {\"qq_group\": \"123456\"}, \"x\": tru}" };                              // 字面量错 | bad literal
+      for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) { CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1); log_reset();
+          int r = dm_community_manifest(bad[i], strlen(bad[i])); if (r != 0 || dm_community_available() || access(cache, F_OK) == 0 || !strstr(log_text(), "社区入口：清单")) { fails++; checks++; printf("FAIL Q11-01 坏清单 %zu: 返回 %d 可用 %d 缓存在 %d: %s\n", i, r, dm_community_available(), access(cache, F_OK) == 0, bad[i]); } else checks++; } }
+    { static const char *const good[] = {
+        "{\"community\":{\"x\":{\"qq_group\":\"999999\"},\"qq_group\":\"123456\"}}",             // 深层同名键被忽略 | deeper same-name key ignored
+        "{\"community\":{\"github\":\"https://github.com/x/y\",\"extra\":[1,-2.5e3,true,null,{\"a\":\"b\\n\"}],\"qq_group\":\"123456\"},\"build\":7,\"note\":\"\\\"引号\\\"\"}",   // 无关字段任意 | unrelated fields anything
+        " \n{ \"build\" : 1 , \"community\" : { \"qq_group\" : \"123456\" } } \n" };               // 空白 | whitespace
+      for (size_t i = 0; i < sizeof good / sizeof *good; i++) { CHECK(dm_community_manifest(M_NONE, strlen(M_NONE)) == 0);
+          int r = dm_community_manifest(good[i], strlen(good[i])); k = dm_community_value(DM_LG_ZH, v, sizeof v);
+          if (r != 1 || k != 1 || strcmp(v, "123456")) { fails++; checks++; printf("FAIL Q11-01 好清单 %zu: 返回 %d 种类 %d 值 %s\n", i, r, k, v); } else checks++; } }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);

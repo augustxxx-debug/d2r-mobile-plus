@@ -1,7 +1,7 @@
 // 社区入口，接口见 dm_community.h。
 // 清单字段（版本文件里与 build / note / urgent 并列）：  "community": { "qq_group": "1129913678", "github": "https://github.com/<fork>/d2r-mobile-plus" }
 //   qq_group：5–12 位数字；github：以 https://github.com/ 开头、≤ 160 个 URL 字符。两项都可省；一项不合规就当这一项没有并记红；两项都没有 = 当无字段。
-//   解析在这里用 C 做（不依赖外壳的 JSON 库），外壳只把原文交过来；单测 t_community.c 覆盖有 / 无 / 坏 / 缓存回退。
+//   解析在这里用 C 做（严格的最小 JSON 解析器，十一审 Q11-01：整段必须是合法根对象，只认根对象直接子级 community 及其直接子级；语法错 / 重复 / 嵌套同名 / 转义都当格式错），外壳只把原文交过来；单测 t_community.c 覆盖有 / 无 / 坏 / 缓存回退与这些坏形状。
 // 缓存 community.txt（与 sw_custom.txt 同目录）：一行一个「键=值」，先写临时文件再换名；清单明确没有字段时删掉（旧值不留）。
 // 画面（用户：「不要用原生的弹窗，用游戏内弹窗」）：边框 15 片 TouchCommTile（我们通知框同一套美术、自己一套切片 Ztouch_comm）+ 标题 + 三行正文（值 / 提示 / 「已复制」）+ 两颗原版前端按钮（复制群号 或 复制链接 二选一显示、确定），
 //   布局 touch_layout.py _community，挂在暂停菜单面板（两份）和自定义页面板末尾，平时在屏外、字空着；这里每帧在游戏主线程写字、按面板矩形与缩放算出居中位置。
@@ -10,7 +10,7 @@
 // Community entry; the interface is in dm_community.h.
 // Manifest field (next to build / note / urgent in the version file):  "community": { "qq_group": "1129913678", "github": "https://github.com/<fork>/d2r-mobile-plus" }
 //   qq_group: 5-12 digits; github: starts with https://github.com/, at most 160 URL characters. Both are optional; an invalid one counts as absent and is logged red; both absent = no field.
-//   Parsing is done here in C (no dependence on the shells' JSON libraries); the shells only hand over the raw text; the unit test t_community.c covers present / absent / malformed / cache fallback.
+//   Parsing is done here in C (a strict minimal JSON parser, Q11-01: the whole text must be a valid root object; only the root object's direct child community and its direct children count; syntax errors / duplicates / nested same-name keys / escapes are format errors); the shells only hand over the raw text; t_community.c covers present / absent / malformed / cache fallback and these bad shapes.
 // Cache community.txt (next to sw_custom.txt): one "key=value" per line, written to a temporary file then renamed; deleted when the manifest explicitly has no field (no stale value is kept).
 // Picture (user: "do not use a native popup, use an in-game one"): 15 frame tiles TouchCommTile (same art as our notification box, its own slices Ztouch_comm) + title + three body lines (value / hint / "Copied") + two original front-end buttons (Copy number or Copy link, one shown; OK),
 //   layout touch_layout.py _community, hung at the end of the pause menu panel (both) and the Custom page panel, off screen with empty text; here, every frame on the game main thread, the text is written and the centered position computed from the panel's rect and scale.
@@ -62,54 +62,87 @@ static int cache_write(const char *qq, const char *gh) {
 }
 static void cache_delete(void) { char p[1100]; if (cache_path(p, sizeof p)) unlink(p); }
 
-// ---- 最小 JSON 读取：只认「"键" : 值」这一种形状；字符串里带转义（反斜杠）一律当不合规 | minimal JSON reading: only the shape "key" : value; a string with an escape (backslash) counts as invalid ----
-static const char *ws(const char *p, const char *e) { while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) p++; return p; }
-static const char *str_end(const char *p, const char *e) {   // p 指向开头的引号；返回收尾引号的下一位（NULL = 没收尾） | p at the opening quote; returns one past the closing quote (NULL = unterminated)
-    for (p++; p < e; p++) { if (*p == '\\') { p++; continue; } if (*p == '"') return p + 1; }
-    return NULL;
+// ---- 严格的最小 JSON 解析（十一审 Q11-01）：整段输入必须是一个合法的 JSON 根对象（对象 / 数组 / 字符串 / 数字 / true / false / null 全按语法验），
+// 只认根对象的直接子级 "community"（必须是对象）和它的直接子级 "qq_group" / "github"（必须是不带转义的字符串）；嵌套更深的同名键一律忽略；
+// 重复的 community / qq_group / github 当格式错。语法错、尾逗号、非对象根、根后有多余内容 = 格式错。深度上限 16 层，不递归到栈爆
+// Strict minimal JSON parsing (Q11-01): the whole input must be one valid JSON root object (object / array / string / number / true / false / null all validated);
+// only the root object's direct child "community" (must be an object) and its direct children "qq_group" / "github" (must be strings without escapes) are honored; deeper same-name keys are ignored;
+// a duplicate community / qq_group / github is a format error. Syntax error, trailing comma, non-object root, trailing content = format error. Depth capped at 16
+typedef struct { const char *p, *e; char qq[QQ_MAX + 1], gh[GH_MAX + 1]; int n_comm, n_qq, n_gh, bad_type, too_long; } jp_t;
+static void js_ws(jp_t *j) { while (j->p < j->e && (*j->p == ' ' || *j->p == '\t' || *j->p == '\n' || *j->p == '\r')) j->p++; }
+static int js_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+// 字符串：验语法（转义只许 \" \\ \/ \b \f \n \r \t \uXXXX，不许控制字符）；out 非空时原样抄（遇到转义记 *esc，抄不下记 *over） | string: validate (escapes only the JSON set, no control characters); with out, copy raw bytes (an escape sets *esc, overflow sets *over)
+static int js_string(jp_t *j, char *out, size_t n, int *esc, int *over) {
+    if (j->p >= j->e || *j->p != '"') return 0; j->p++; size_t o = 0;
+    while (j->p < j->e) { unsigned char c = (unsigned char)*j->p;
+        if (c == '"') { j->p++; if (out) out[o] = 0; return 1; }
+        if (c < 0x20) return 0;
+        if (c == '\\') { if (esc) *esc = 1; if (j->p + 1 >= j->e) return 0; char x = j->p[1];
+            if (x == 'u') { if (j->p + 5 >= j->e || !js_hex(j->p[2]) || !js_hex(j->p[3]) || !js_hex(j->p[4]) || !js_hex(j->p[5])) return 0; j->p += 6; continue; }
+            if (!strchr("\"\\/bfnrt", x)) return 0; j->p += 2; continue; }
+        if (out) { if (o + 1 < n) out[o++] = (char)c; else if (over) *over = 1; }
+        j->p++; }
+    return 0;
 }
-static int json_sane(const char *p, const char *e) {   // 第一个非空白是 {、花括号配平、最后一个非空白是 } | first non-blank is {, braces balance, last non-blank is }
-    p = ws(p, e); if (p >= e || *p != '{') return 0; int depth = 0; const char *last = NULL;
-    while (p < e) { if (*p == '"') { p = str_end(p, e); if (!p) return 0; continue; } if (*p == '{') depth++; else if (*p == '}') { if (--depth < 0) return 0; last = p; } p++; }
-    if (depth || !last) return 0; return ws(last + 1, e) == e;
+static int js_number(jp_t *j) {
+    const char *p = j->p, *e = j->e; if (p < e && *p == '-') p++;
+    if (p >= e) return 0; if (*p == '0') p++; else if (*p >= '1' && *p <= '9') { while (p < e && *p >= '0' && *p <= '9') p++; } else return 0;
+    if (p < e && *p == '.') { p++; if (p >= e || *p < '0' || *p > '9') return 0; while (p < e && *p >= '0' && *p <= '9') p++; }
+    if (p < e && (*p == 'e' || *p == 'E')) { p++; if (p < e && (*p == '+' || *p == '-')) p++; if (p >= e || *p < '0' || *p > '9') return 0; while (p < e && *p >= '0' && *p <= '9') p++; }
+    j->p = p; return 1;
 }
-static const char *find_key(const char *p, const char *e, const char *key) {   // 本层或更深：找到「"key" :」返回值的起点 | at this level or deeper: find "key" : and return where the value starts
-    size_t kn = strlen(key);
-    while (p < e) {
-        if (*p != '"') { p++; continue; }
-        const char *q = str_end(p, e); if (!q) return NULL;
-        if ((size_t)(q - p) == kn + 2 && !memcmp(p + 1, key, kn)) { const char *v = ws(q, e); if (v < e && *v == ':') return ws(v + 1, e); }
-        p = q;
-    }
-    return NULL;
+static int js_lit(jp_t *j, const char *w) { size_t n = strlen(w); if ((size_t)(j->e - j->p) < n || memcmp(j->p, w, n)) return 0; j->p += n; return 1; }
+static int js_value(jp_t *j, int depth, int ctx);   // ctx：0 别处 / 1 根对象 / 2 community 对象 | ctx: 0 elsewhere / 1 root object / 2 the community object
+static int js_object(jp_t *j, int depth, int ctx) {
+    if (depth > 16 || j->p >= j->e || *j->p != '{') return 0; j->p++; js_ws(j);
+    if (j->p < j->e && *j->p == '}') { j->p++; return 1; }
+    for (;;) { char key[24]; int kesc = 0, kover = 0;
+        if (!js_string(j, key, sizeof key, &kesc, &kover)) return 0; if (kesc || kover) key[0] = 0;   // 带转义 / 超长的键不会是我们认的那三个 | an escaped / long key is never one of ours
+        js_ws(j); if (j->p >= j->e || *j->p != ':') return 0; j->p++; js_ws(j);
+        if (ctx == 1 && !strcmp(key, "community")) { j->n_comm++;
+            if (j->p < j->e && *j->p == '{') { if (!js_object(j, depth + 1, 2)) return 0; } else { j->bad_type = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
+        else if (ctx == 2 && (!strcmp(key, "qq_group") || !strcmp(key, "github"))) { int gh = key[0] == 'g'; if (gh) j->n_gh++; else j->n_qq++;
+            if (j->p < j->e && *j->p == '"') { int esc = 0, over = 0; char *out = gh ? j->gh : j->qq; size_t n = gh ? sizeof j->gh : sizeof j->qq;
+                if (!js_string(j, out, n, &esc, &over)) return 0; if (esc || over) { out[0] = 0; j->too_long |= over; j->bad_type |= esc; } }
+            else { j->bad_type = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
+        else if (!js_value(j, depth + 1, 0)) return 0;
+        js_ws(j); if (j->p >= j->e) return 0;
+        if (*j->p == '}') { j->p++; return 1; }
+        if (*j->p != ',') return 0; j->p++; js_ws(j); }
 }
-static const char *obj_end(const char *p, const char *e) {   // p 指向 {；返回配对的 } | p at {; returns the matching }
-    int depth = 0; while (p < e) { if (*p == '"') { p = str_end(p, e); if (!p) return NULL; continue; } if (*p == '{') depth++; else if (*p == '}' && --depth == 0) return p; p++; }
-    return NULL;
+static int js_array(jp_t *j, int depth) {
+    if (depth > 16 || j->p >= j->e || *j->p != '[') return 0; j->p++; js_ws(j);
+    if (j->p < j->e && *j->p == ']') { j->p++; return 1; }
+    for (;;) { if (!js_value(j, depth + 1, 0)) return 0; js_ws(j); if (j->p >= j->e) return 0;
+        if (*j->p == ']') { j->p++; return 1; } if (*j->p != ',') return 0; j->p++; js_ws(j); }
 }
-static int read_str(const char *p, const char *e, char *out, size_t n) {   // 值必须是不带转义、长度 < n 的字符串 | the value must be a string without escapes and shorter than n
-    if (p >= e || *p != '"') return 0; const char *q = str_end(p, e); if (!q) return 0;
-    size_t len = (size_t)(q - p) - 2; if (len + 1 > n) return 0;
-    for (size_t i = 0; i < len; i++) if (p[1 + i] == '\\' || (unsigned char)p[1 + i] < 0x20) return 0;
-    memcpy(out, p + 1, len); out[len] = 0; return 1;
+static int js_value(jp_t *j, int depth, int ctx) {
+    if (j->p >= j->e) return 0; char c = *j->p;
+    if (c == '{') return js_object(j, depth, ctx); if (c == '[') return js_array(j, depth);
+    if (c == '"') return js_string(j, NULL, 0, NULL, NULL); if (c == '-' || (c >= '0' && c <= '9')) return js_number(j);
+    return js_lit(j, "true") || js_lit(j, "false") || js_lit(j, "null");
 }
+// 解析整份清单：1 合法根对象（结果在 *j）/ 0 语法错（*at = 出错位置） | parse the whole manifest: 1 valid root object (result in *j) / 0 syntax error (*at = where)
+static int js_parse(jp_t *j, const char *json, size_t len, size_t *at) {
+    memset(j, 0, sizeof *j); j->p = json; j->e = json + len; js_ws(j);
+    int ok = j->p < j->e && *j->p == '{' && js_object(j, 1, 1); if (ok) { js_ws(j); ok = j->p == j->e; }
+    *at = (size_t)(j->p - json); return ok;
+}
+static void drop_values(void) { set_values("", ""); cache_delete(); }   // 格式错 / 无字段：清内存与缓存 | malformed / absent: clear memory and cache
 
 int dm_community_manifest(const char *json, size_t len) {
     char qq[QQ_MAX + 1] = "", gh[GH_MAX + 1] = ""; get_values(qq, gh);
     if (!json) { LOG("社区入口：清单拉取失败，沿用缓存（群号 %s，链接 %s）", qq[0] ? "有" : "无", gh[0] ? "有" : "无"); return -1; }
-    if (len > MANIFEST_MAX) { LOG("社区入口：清单超过 %d 字节，沿用缓存", MANIFEST_MAX); return -1; }
-    const char *e = json + len;
-    if (!json_sane(json, e)) { LOG("社区入口：清单不是完整的 JSON 对象，沿用缓存（群号 %s，链接 %s）", qq[0] ? "有" : "无", gh[0] ? "有" : "无"); return -1; }
-    const char *v = find_key(json, e, "community");
-    if (!v) { set_values("", ""); cache_delete(); LOG("社区入口：清单无字段，入口不显示（缓存已清）"); return 0; }
-    const char *oe = v < e && *v == '{' ? obj_end(v, e) : NULL;
-    if (!oe) { set_values("", ""); cache_delete(); LOG("【红】社区入口：清单 community 字段不是对象，入口不显示"); return 0; }
-    char nq[QQ_MAX + 1] = "", ng[GH_MAX + 1] = ""; int bad = 0;
-    const char *q = find_key(v + 1, oe, "qq_group"); if (q && (!read_str(q, oe, nq, sizeof nq) || !qq_ok(nq))) { bad++; nq[0] = 0; }
-    const char *g = find_key(v + 1, oe, "github"); if (g && (!read_str(g, oe, ng, sizeof ng) || !gh_ok(ng))) { bad++; ng[0] = 0; }
-    if (!nq[0] && !ng[0]) { set_values("", ""); cache_delete(); LOG("【红】社区入口：清单 community 字段格式坏（%d 项不合规：群号须 5–12 位数字，链接须 https://github.com/ 开头、不超过 %d 字符），入口不显示", bad, GH_MAX); return 0; }
-    set_values(nq, ng); int wr = cache_write(nq, ng);
-    LOG("社区入口：清单有字段 群号=%s 链接=%s%s%s", nq[0] ? nq : "无", ng[0] ? ng : "无", bad ? "（另一项格式坏，已忽略）" : "", wr ? "" : "【红】缓存写不进设置目录");
+    if (len > MANIFEST_MAX) { drop_values(); LOG("【红】社区入口：清单格式错（超过 %d 字节），入口不显示（缓存已清）", MANIFEST_MAX); return 0; }
+    jp_t j; size_t at; if (!js_parse(&j, json, len, &at)) { drop_values(); LOG("【红】社区入口：清单格式错（JSON 语法：第 %zu 字节附近），入口不显示（缓存已清）", at); return 0; }
+    if (j.n_comm == 0) { drop_values(); LOG("社区入口：清单无字段，入口不显示（缓存已清）"); return 0; }
+    if (j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1) { drop_values(); LOG("【红】社区入口：清单格式错（community / qq_group / github 重复），入口不显示（缓存已清）"); return 0; }
+    if (j.bad_type && !j.qq[0] && !j.gh[0]) { drop_values(); LOG("【红】社区入口：清单格式错（community 不是对象，或值不是字符串 / 带转义），入口不显示（缓存已清）"); return 0; }
+    int bad = 0; if (j.qq[0] && !qq_ok(j.qq)) { bad++; j.qq[0] = 0; } if (j.gh[0] && !gh_ok(j.gh)) { bad++; j.gh[0] = 0; }
+    bad += j.bad_type + j.too_long;
+    if (!j.qq[0] && !j.gh[0]) { drop_values(); LOG("【红】社区入口：清单格式错（%d 项不合规：群号须 5–12 位数字，链接须 https://github.com/ 开头、不超过 %d 字符、不带转义），入口不显示（缓存已清）", bad, GH_MAX); return 0; }
+    set_values(j.qq, j.gh); int wr = cache_write(j.qq, j.gh);
+    LOG("社区入口：清单有字段 群号=%s 链接=%s%s%s", j.qq[0] ? j.qq : "无", j.gh[0] ? j.gh : "无", bad ? "（另一项格式坏，已忽略）" : "", wr ? "" : "【红】缓存写不进设置目录");
     return 1;
 }
 static void cache_read(void) {
