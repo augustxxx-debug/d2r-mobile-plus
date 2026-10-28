@@ -54,6 +54,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_notification_frame.py
 	python3 test_notification_layout.py
 	python3 test_notification_localization.py
+	python3 test_safe_notice.py
 	@if [ "$$(uname -s)" = Darwin ]; then \
 	  clang -fobjc-arc -framework Foundation t_diagnostic_scrub.m -o /tmp/dm-test-diagnostic-scrub && /tmp/dm-test-diagnostic-scrub; \
 	  clang -fobjc-arc -framework Foundation t_crashlog.m -o /tmp/dm-test-crashlog && /tmp/dm-test-crashlog; \

@@ -102,7 +102,7 @@ static NSString *share_logs(NSString *to) {
     // Settings summary (same as perf_block in the iOS share log): the last "custom settings: load", "Graphics", frame-rate-mode (effective value, present path) and ray-traced-shadow (machine gate, effective value, latest fallback, latest picture switch between ray traced and original, 600-frame statistics) lines of this run's log, so what the player turned on (including the frame-rate display, 120 fps and ray tracing) is visible at a glance; the whole info still goes through scrub below
     NSData *cur = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:@"host.log"] options:NSDataReadingMappedIfSafe error:nil];
     NSMutableString *sum = [NSMutableString stringWithFormat:@"\n—— 设置摘要 ——\n%@\n", crash_sum];
-    for (NSString *k in @[@"崩溃围栏：", @"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：画面", @"光追阴影：第", @"光追点光：光源记录", @"光追阴影：建好", @"光追阴影：没进原因", @"光追镂空：第", @"光追镂空：判定库", @"光追降档：", @"光追 AO：", @"光追阴影：GPU"]) {
+    for (NSString *k in @[@"崩溃围栏：", @"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：画面", @"光追阴影：第", @"光追点光：光源记录", @"光追阴影：建好", @"光追阴影：没进原因", @"光追阴影：局部回退 至第", @"光追阴影：阴影图 第", @"光追镂空：第", @"光追镂空：判定库", @"光追降档：", @"光追 AO：", @"光追阴影：GPU"]) {
         NSRange r = cur.length ? [cur rangeOfData:[k dataUsingEncoding:NSUTF8StringEncoding] options:NSDataSearchBackwards range:NSMakeRange(0, cur.length)] : NSMakeRange(NSNotFound, 0);
         if (r.location == NSNotFound) { [sum appendFormat:@"（没有「%@」行）\n", k]; continue; }
         const char *b = cur.bytes; NSUInteger ls = r.location, le = r.location; while (ls > 0 && b[ls - 1] != '\n') ls--; while (le < cur.length && b[le] != '\n') le++;
@@ -121,13 +121,6 @@ static NSString *share_logs(NSString *to) {
     LOG("分享日志：已存（日志 %d 份 + 版本信息，%llu 字节）", n, [[fm attributesOfItemAtPath:dst.path error:nil] fileSize]);
     if (!to) [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[dst]];
     return nil;
-}
-// 原生提示一次（崩溃围栏「已关闭实验性功能」，dm_crashfence.c）：覆盖那边的弱日志实现；任意线程调，切主线程弹（不挡调用方线程）
-// One native notice (crash fence "experimental features turned off", dm_crashfence.c): overrides the weak logging implementation there; callable from any thread, shown on the main thread (the caller's thread is not blocked)
-void front_notice(const char *title, const char *msg) {
-    NSString *t = title ? @(title) : @"", *m = msg ? @(msg) : @"";
-    if (!g_layer) { LOG("前端：提示（无窗口模式不弹）：%s %s", t.UTF8String, m.UTF8String); return; }   // 不开 DM_WINDOW 的无窗口测试 | windowless tests without DM_WINDOW
-    dispatch_async(dispatch_get_main_queue(), ^{ NSAlert *a = [NSAlert new]; a.messageText = t; a.informativeText = m; [a addButtonWithTitle:@(ui("dmAppOK"))]; LOG("前端：提示已显示：%s", t.UTF8String); [a runModal]; });
 }
 static void share_logs_ui(void) { NSString *e = share_logs(nil); if (e) { LOG("【红】分享日志：打包失败 %s", e.UTF8String); NSAlert *a = [NSAlert new]; a.messageText = @(ui("dmAppShareFail")); a.informativeText = e; [a addButtonWithTitle:@(ui("dmAppOK"))]; [a runModal]; } }
 @interface DmWinCtl : NSObject <NSWindowDelegate> @end

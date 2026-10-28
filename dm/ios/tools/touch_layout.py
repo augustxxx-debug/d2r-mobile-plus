@@ -262,8 +262,26 @@ def pad_ribbon(s, movies=False):   # 手柄版主菜单左侧按钮栏 = 原版�
     return s
 def pad_mainmenu(s):   # 手柄版主菜单 = 原版布局原样 + 上面这组控件（加在根 children 末尾） | Controller layout main menu = the original layout as is + the group of widgets above (appended at the end of the root children)
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
-    return s[:i].rstrip(' ') + _UPDATE_PAD + '    ' + s[i:]
+    return s[:i].rstrip(' ') + _UPDATE_PAD + _SAFE_PAD + '    ' + s[i:]
 _UPDATE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchBuild|TouchUpd\w+)"', _UPDATE))
+# 崩溃围栏（发布前闸 1）：连续两次闪退、实验项被自动关掉之后，主菜单上的游戏内提示框（用户：「不要用原生的弹窗，用游戏内弹窗」）。
+# 底板 + 标题 + 三行正文 + 原版前端按钮「确定」（与选角页那三颗同图同字，FrontEnd_ButtonMed）；全部摆在屏幕外、字空着，宿主 dm/host/dm_crashfence.c 要提示时写字、挪回原位。
+# 点「确定」发 PanelManager:ClosePanel:TouchSafeOk（空操作，宿主当信号收）；手柄模式宿主接管 A 键当确定。与更新提示分开放：更新提示按四审 Q4-04 不许有按钮。
+# 触屏版跟着主菜单面板水平锚在屏幕中心；手柄版原版主菜单面板矩形 0×0，不带锚点，位置全由宿主按屏宽算（同 _UPDATE_PAD）
+# Crash fence (release gate 1): after two crashes in a row turned experimental features off, an in-game notice box on the main menu (user: "do not use a native popup, use an in-game one").
+# Backing + title + three-line body + the original front-end "OK" button (same image and font as the three on the character select page, FrontEnd_ButtonMed); all placed off screen with empty text, and the host dm/host/dm_crashfence.c writes the text and moves them back when it notifies.
+# "OK" sends PanelManager:ClosePanel:TouchSafeOk (a no-op the host takes as a signal); in controller mode the host takes over A as OK. Kept apart from the update notice, which may not have buttons (fourth review Q4-04).
+# The touch version follows the main menu panel's horizontal anchor at the screen center; the controller version's original main menu panel rect is 0x0, so no anchor and the host computes positions from the screen width (as _UPDATE_PAD)
+def _safe(anchor):
+    a = _C if anchor else ''
+    return ('        { "type": "RectangleWidget", "name": "TouchSafeBg", "fields": { %s"rect": { "x": 99999, "y": 99999, "width": 1800, "height": 620 }, "color": [ 0.04, 0.04, 0.04, 0.92 ] } },\n' % a
+            + _upd_text('TouchSafeTitle', 99999, 99999, 1700, 48, (230, 200, 120), 'center', a)
+            + ('        { "type": "TextBoxWidget", "name": "TouchSafeDesc", "fields": { %s"rect": { "x": 99999, "y": 99999, "width": 1700, "height": 300 }, "text": "", '
+               '"style": { "pointSize": 36, "fontColor": { "r": 232, "g": 228, "b": 214, "a": 255 }, "alignment": { "h": "center", "v": "top" }, "dropShadow": "$DefaultDropShadow" } } },\n') % a
+            + _btn('TouchSafeOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchSafeOk', x=99999, anchor=anchor))
+_SAFE = _safe(True); _SAFE_PAD = _safe(False)
+_SAFE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchSafe\w+)"', _SAFE))
+assert _SAFE_STUB.count('\n') == 4   # 底板、标题、正文、确定 | backing, title, body, OK
 assert _UPDATE_STUB.count('\n') == 5   # 构建号、普通提示、底板、标题、说明（四审 Q4-04 起没有按钮） | build, notice, backing, title, description (no buttons since fourth review Q4-04)
 def _pc_mainmenu(s):
     # 「进入游戏」居中（键鼠版它在左半、右半是联机大厅按钮）；下面的齿轮（联机建局设置）、分隔条、联机大厅按钮挪走
@@ -273,7 +291,7 @@ def _pc_mainmenu(s):
     s, n = offscreen(s, types=(), names=('OnlinePlaySettingsButton', 'Divider', 'SecondaryContextButton'))
     if n != 3: raise SystemExit('touch_layout：键鼠版主菜单要挪走的控件应为 3 个，找到 %d 个' % n)
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
-    return s[:i].rstrip(' ') + _UPDATE + '    ' + s[i:], n + 2
+    return s[:i].rstrip(' ') + _UPDATE + _SAFE + '    ' + s[i:], n + 2
 def _pc_charselect(s):
     # 右侧存档列表：整块往里收 SAFE_X；「线上 / 离线」页签挪走（只有离线）；列表三行字用回原主机档字号（统一 40 的大字装不下三行）
     # Save list on the right: the whole block is pulled inward by SAFE_X; the 「线上 / 离线」(Online / Offline) tabs are moved away (offline only); the three text lines of the list go back to the original console profile font sizes (the uniform large size of 40 does not fit three lines)
@@ -338,7 +356,7 @@ def build_pcfront(romfs, outdir):
             o = os.path.join(outdir, 'pcfront_base_' + pc); open(o, 'w', encoding='utf-8').write(text); repl[base] = o
             _, mid = read_layout(romfs, 'controller/' + pc); mid, _n = offscreen(mid)
             mid = _sub1(mid, '"basedOn": "%s"' % os.path.basename(ppath), '"basedOn": "1touchbase_lay/%s"' % pc)
-        if pc == 'mainmenupanelhd.json': i = mid.rstrip().rfind(']'); mid = mid[:i] + _UPDATE_STUB + mid[i:]   # 继承层要按名字逐个点到子控件才会建：新加的七个也列上 | The inheriting layer only builds child widgets that are named one by one: the seven newly added ones are listed too
+        if pc == 'mainmenupanelhd.json': i = mid.rstrip().rfind(']'); mid = mid[:i] + _UPDATE_STUB + _SAFE_STUB + mid[i:]   # 继承层要按名字逐个点到子控件才会建：新加的七个也列上 | The inheriting layer only builds child widgets that are named one by one: the seven newly added ones are listed too
         o = os.path.join(outdir, 'pcfront_' + rel.replace('/', '_')); open(o, 'w', encoding='utf-8').write(mid); repl[cpath.lower()] = o
     return repl
 

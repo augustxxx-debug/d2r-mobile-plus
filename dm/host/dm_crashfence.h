@@ -7,5 +7,6 @@ int dm_crashfence_start(void);              // 宿主入口调一次：读残留
 void dm_crashfence_clean(const char *why);  // 正常结束（优雅退出、iOS 进后台）：删标记，连续次数清零 | normal end (graceful exit, iOS going to background): delete the marker, the streak resets to zero
 void dm_crashfence_resume(void);            // iOS 回前台：重写标记（之后再异常退出照样记） | iOS back to the foreground: write the marker again (a later abnormal exit counts as usual)
 int dm_crashfence_notice_take(void);        // 取一次：1 = 本次启动关过实验性功能，该提示玩家 | take once: 1 = this launch turned off experimental features and the player should be told
-void dm_crashfence_main_menu(void);         // 主菜单出来时调（diag.c 的界面消息）：要提示就交前端弹一次 | called when the main menu appears (UI message in diag.c): hand the notice to the front end once if needed
-void front_notice(const char *title, const char *msg);   // 前端弹原生提示（iOS / Mac 强实现，缺省弱实现只记日志）；任意线程调，不阻塞 | the front end shows a native notice (strong iOS / Mac implementations, the weak default only logs); callable from any thread, non-blocking
+void dm_crashfence_main_menu(void);         // 主菜单出来时调（diag.c 的界面消息）：要提示就挂上游戏内提示框 | called when the main menu appears (UI message in diag.c): queue the in-game notice box if needed
+void dm_crashfence_on_uimsg(const char *cat, const char *act, const char *arg);   // 界面消息（diag.c）：提示框「确定」 | UI messages (diag.c): the notice box's OK
+void dm_crashfence_pump(void);              // 取手柄处每帧调（hle_hid.c）：写字、摆位置、接管手柄 A、收起 | every frame at the controller poll (hle_hid.c): text, placement, controller A, dismissal

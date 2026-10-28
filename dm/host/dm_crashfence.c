@@ -15,6 +15,7 @@
 #include "dm_crashfence.h"
 #include "dm_custom.h"
 #include "dm_i18n.h"
+#include "dm_input.h"
 #include "hle.h"
 #include <stdatomic.h>
 #include <stdio.h>
@@ -90,11 +91,52 @@ void dm_crashfence_resume(void) {
     LOG("崩溃围栏：回前台，重写运行标记%s", g_marked ? "" : "【红】失败");
 }
 int dm_crashfence_notice_take(void) { return atomic_exchange(&g_notice, 0); }
+// 主菜单上的游戏内提示框（用户：「不要用原生的弹窗，用游戏内弹窗」）：控件是布局覆盖层在主菜单面板下加的 TouchSafeBg / Title / Desc / Ok
+// （dm/ios/tools/touch_layout.py _SAFE / _SAFE_PAD），平时摆在屏幕外、字空着。要提示时每帧在游戏主线程写字、摆到屏幕中间；
+// 「确定」按钮发 PanelManager:ClosePanel:TouchSafeOk（空操作，宿主当信号收），手柄模式接管 A 键当确定。点了就收回屏幕外，本次启动不再出。
+// 布局里没有这些控件（跑原版布局）：等 600 帧还找不到就只记一行日志作罢。「前端：提示已显示」「玩家点了确定」两行保留（分享诊断日志要看）
+// In-game notice box on the main menu (user: "do not use a native popup, use an in-game one"): the widgets are TouchSafeBg / Title / Desc / Ok added under the main menu panel by the layout overlay
+// (_SAFE / _SAFE_PAD in dm/ios/tools/touch_layout.py), normally off screen with empty text. While notifying, every frame on the game main thread writes the text and moves them to the screen center;
+// "OK" sends PanelManager:ClosePanel:TouchSafeOk (a no-op the host takes as a signal), and controller mode takes over A as OK. Once confirmed they go back off screen and do not return during this launch.
+// Without these widgets (original layout): after 600 frames without finding them only one log line is written. The "shown" / "player tapped OK" lines are kept (share diagnostics read them)
+static _Atomic int g_show, g_ack;   // g_show：0 不提示 / 1 要提示 / 2 显示着 | g_show: 0 none / 1 pending / 2 shown
 void dm_crashfence_main_menu(void) {
     if (!dm_crashfence_notice_take()) return;
-    LOG("崩溃围栏：主菜单提示「已关闭实验性功能」");
-    front_notice(dm_ui("dmSafeModeTitle"), dm_ui("dmSafeModeMsg"));
+    atomic_store(&g_show, 1); LOG("崩溃围栏：主菜单提示「已关闭实验性功能」（游戏内提示框）");
 }
-#ifndef DM_CRASHFENCE_TEST   // 单测直接包含本文件并自带强定义（t_crashfence.c） | unit tests include this file and bring their own strong definition
-__attribute__((weak)) void front_notice(const char *title, const char *msg) { LOG("front_notice：前端未接（缺省弱实现）：%s %s", title, msg); }
-#endif
+void dm_crashfence_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c 转来，游戏主线程） | UI message callback (forwarded from diag.c, game main thread)
+    if (cat && act && arg && !strcmp(cat, "PanelManager") && !strcmp(act, "ClosePanel") && !strcmp(arg, "TouchSafeOk") && atomic_load(&g_show) == 2) atomic_store(&g_ack, 1);
+}
+static uint8_t *cf_base(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
+static uint64_t cf_find(uint64_t w, const char *name, int dep) {   // 按名字找控件：名字 +8、子控件数组 +0x58、个数 +0x60（同 dm_update.c） | find a widget by name (same as dm_update.c)
+    if (!w || dep > 6) return 0; const char *nm = *(const char **)(w + 8); if (nm && !strcmp(nm, name)) return w;
+    uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
+    for (uint64_t i = 0; i < n; i++) { uint64_t r = cf_find(*(uint64_t *)(ch + 8 * i), name, dep + 1); if (r) return r; }
+    return 0;
+}
+static void cf_place(uint64_t w, int x, int y) {   // 矩形 +0x70 / +0x74，改完调虚表 +0x10 重算（同 dm_update.c place） | rect at +0x70 / +0x74, then vtable +0x10 to recompute (same as dm_update.c place)
+    int32_t *r = (int32_t *)(w + 0x70); if (r[0] == x && r[1] == y) return; r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x10))(w);
+}
+static void cf_text(uint8_t *b, uint64_t w, const char *s) {   // 文字框设文本（同 dm_update.c set_text；不是文字框不动） | set a text box's text (same as dm_update.c set_text; not a text box = left alone)
+    if (*(uint64_t *)w - (uint64_t)(uintptr_t)b != 0x20ba4c8) return;
+    size_t n = strlen(s); if (*(uint64_t *)(w + 0x90) == n && !memcmp(*(const char **)(w + 0x88), s, n)) return;
+    ((void *(*)(uint64_t, const char *, uint64_t))(b + 0x136e5c))(w + 0x88, s, n); ((void (*)(uint64_t))(b + 0xadc434))(w);
+}
+void dm_crashfence_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
+    int st = atomic_load(&g_show); if (!st) return;
+    static int wait; uint8_t *b = cf_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, mm = root ? cf_find(root, "MainMenuPanel", 0) : 0;
+    uint64_t bg = mm ? cf_find(mm, "TouchSafeBg", 0) : 0, ti = mm ? cf_find(mm, "TouchSafeTitle", 0) : 0, de = mm ? cf_find(mm, "TouchSafeDesc", 0) : 0, ok = mm ? cf_find(mm, "TouchSafeOk", 0) : 0;
+    if (!bg || !ti || !de || !ok) { if (st == 1 && ++wait == 600) { atomic_store(&g_show, 0); LOG("【红】崩溃围栏：主菜单面板里没有提示框控件（原版布局？），只记日志不显示"); } return; }
+    int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current(), vis = *(uint8_t *)(mm + 0x50);
+    if (pad && vis && st == 2 && (dm_padmode_page_keys(DM_BTN_A) & DM_BTN_A)) atomic_store(&g_ack, 1);   // 手柄：显示着时接管 A 当确定（游戏收不到这一下） | controller: while shown, take over A as OK (the game does not get this press)
+    const char *title = dm_str(b, "dmSafeModeTitle");
+    if (atomic_exchange(&g_ack, 0)) {
+        cf_place(bg, 99999, 99999); cf_place(ti, 99999, 99999); cf_place(de, 99999, 99999); cf_place(ok, 99999, 99999); cf_text(b, ti, ""); cf_text(b, de, "");
+        atomic_store(&g_show, 0); LOG("前端：提示「%s」玩家点了确定（%s，游戏内提示框收起）", title, pad ? "手柄 A" : "点按钮"); return;
+    }
+    // 屏宽（布局单位，2160 = 屏高）：手柄版控件不带锚点，按屏宽居中；触屏版跟主菜单面板锚在屏幕中心，x 相对中心 | screen width in layout units: controller widgets have no anchor and are centered by width; touch widgets are anchored at the center
+    int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), cx = pad ? (vh > 0 ? (int)((long)vw * 2160 / vh) : 3840) / 2 : 0;
+    cf_text(b, ti, title); cf_text(b, de, dm_str(b, "dmSafeModeMsg"));
+    cf_place(bg, cx - 900, 640); cf_place(ti, cx - 850, 680); cf_place(de, cx - 850, 790); cf_place(ok, cx - 235, 1120);
+    if (st == 1) { atomic_store(&g_show, 2); LOG("前端：提示已显示：%s（游戏内提示框，%s）", title, pad ? "手柄模式，A 键确定" : "点「确定」按钮"); }
+}

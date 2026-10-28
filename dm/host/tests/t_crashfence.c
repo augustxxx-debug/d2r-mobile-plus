@@ -3,7 +3,6 @@
 // Crash fence (release gate 1): running marker written / cleared, consecutive abnormal-exit count, on the third start (after two in a row) every experimental feature is off and saved to the settings file, the count resets after a normal end, iOS background / foreground, the test switch DM_TEST_CRASH_MARK,
 // the main menu notice appears only once. Temporary directories only, never real saves. "Restart the process" = reset the static state of both modules to its initial values, then call dm_crashfence_start
 #define DM_DISPLAY_HZ_TEST_HOOK
-#define DM_CRASHFENCE_TEST
 #include "../dm_custom.c"
 #include "../dm_crashfence.c"
 #include <unistd.h>
@@ -15,12 +14,10 @@ int dm_3d_quality_mode_get(void) { return 0; }
 float dm_3d_scale_cur(void) { return .75f; }
 int dm_display_max_hz(void) { return 120; }
 const char *dm_ui(const char *key) { return key; }
-static int notices; static char notice_title[64];
-void front_notice(const char *title, const char *msg) { (void)msg; notices++; snprintf(notice_title, sizeof notice_title, "%s", title); }
 static int checks, fails;
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
 static char dir[64], marker[128], settings[128];
-static void restart(void) { g_started = g_marked = g_streak = g_test = 0; atomic_store(&g_notice, 0); atomic_store(&g_loaded, 0); }
+static void restart(void) { g_started = g_marked = g_streak = g_test = 0; atomic_store(&g_notice, 0); atomic_store(&g_show, 0); atomic_store(&g_loaded, 0); }
 static int marker_streak(void) { FILE *f = fopen(marker, "r"); if (!f) return -1; int k = -2; if (fscanf(f, "streak=%d", &k) != 1) k = -2; fclose(f); return k; }
 static void read_settings(char *out, size_t n) { FILE *f = fopen(settings, "r"); size_t r = f ? fread(out, 1, n - 1, f) : 0; out[r] = 0; if (f) fclose(f); }
 static void write_settings(const char *s) { FILE *f = fopen(settings, "w"); fputs(s, f); fclose(f); }
@@ -42,8 +39,10 @@ int main(void) {
     CHECK(dm_custom_get("eco_fps") == 0); CHECK(dm_custom_get("rt_shadow") == 0); CHECK(dm_custom_get("upscale") == 0);
     read_settings(text, sizeof text); CHECK(strstr(text, "eco_fps=0\n")); CHECK(strstr(text, "rt_shadow=0\n")); CHECK(strstr(text, "upscale=0\n")); CHECK(strstr(text, "auto_mana=1\n"));
     atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_shadow") == 0);   // 重新读盘也是关 | off after re-reading from disk too
-    dm_crashfence_main_menu(); CHECK(notices == 1); CHECK(!strcmp(notice_title, "dmSafeModeTitle"));
-    dm_crashfence_main_menu(); CHECK(notices == 1);   // 只提示一次 | only once
+    dm_crashfence_main_menu(); CHECK(atomic_load(&g_show) == 1);   // 挂上游戏内提示框 | the in-game notice box is queued
+    atomic_store(&g_show, 0); dm_crashfence_main_menu(); CHECK(atomic_load(&g_show) == 0);   // 只提示一次 | only once
+    atomic_store(&g_show, 2); dm_crashfence_on_uimsg("PanelManager", "ClosePanel", "TouchSafeOk"); CHECK(atomic_load(&g_ack) == 1);   // 「确定」消息 | the OK message
+    atomic_store(&g_ack, 0); atomic_store(&g_show, 0); dm_crashfence_on_uimsg("PanelManager", "ClosePanel", "TouchSafeOk"); CHECK(atomic_load(&g_ack) == 0);   // 没在显示时不认 | ignored when not shown
     // 4. 这一局正常结束：标记清掉；下次启动清零 | 4. This run ends normally: marker cleared; the next start is back to zero
     dm_crashfence_clean("优雅退出"); CHECK(access(marker, F_OK) != 0);
     restart(); CHECK(dm_crashfence_start() == 0); CHECK(marker_streak() == 0);
@@ -56,7 +55,7 @@ int main(void) {
     restart(); CHECK(dm_crashfence_start() == 1);
     // 7. 测试开关 DM_TEST_CRASH_MARK=2：不管盘上的标记，按连续 2 次处理 | 7. Test switch DM_TEST_CRASH_MARK=2: regardless of the marker on disk, treated as 2 in a row
     dm_crashfence_clean("优雅退出"); write_settings("eco_fps=2\nrt_shadow=1\nupscale=0\nq3d=0\nq3d_v2=1\n");
-    setenv("DM_TEST_CRASH_MARK", "2", 1); restart(); notices = 0;
+    setenv("DM_TEST_CRASH_MARK", "2", 1); restart();
     CHECK(dm_crashfence_start() == 2); CHECK(dm_custom_get("eco_fps") == 0); CHECK(dm_custom_get("rt_shadow") == 0); CHECK(dm_crashfence_notice_take() == 1);
     unsetenv("DM_TEST_CRASH_MARK");
     // 8. 实验项本来都关着：照样提示，但设置文件不重写 | 8. Experimental features already off: still notify, but the settings file is not rewritten
