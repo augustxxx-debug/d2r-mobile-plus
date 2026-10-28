@@ -221,11 +221,13 @@ void dm_community_on_uimsg(const char *cat, const char *act, const char *arg) { 
 // 「特别鸣谢」名单末尾接括号说明（六套文案），「鸣谢」为空整行不显示；封顶 6 行，超出末行加「…」并记一条日志；续行标签留空；中文用「、」、其他语言用「, 」分隔
 // Credits (sub-block of the About group, user 2026-10-28): names are a default constant in code (RC2: the manifest credits field overrides); the host assembles lines per language: ≤ 4 names per line and estimated width within the name box (36 × 0.7 ≈ 25 units per char, box 1110 → 44 units),
 // the special list ends with a parenthetical note (six texts), an empty thanks list shows no line; capped at 6 lines with "…" on the last and one log line; continuation lines have no label; "、" in Chinese, ", " elsewhere
+// 署名（用户 2026-10-29）：鸣谢区第一行「制作：Augustus」——用户公开署名，只画在游戏画面的鸣谢区，不写日志、不进分享摘要；排在特别鸣谢前 | maker credit: the user's public byline, drawn only in the credits area, never logged; before Special thanks
+static const char *const k_maker_default[] = { "Augustus" };
 static const char *const k_special_default[] = { "jhaizhou-ops" };   // 上游 d2r-mobile 原作者的公开 GitHub 账号名（README 引用的 https://github.com/jhaizhou-ops/d2r-mobile）；不写真名、不写别的信息 | the public GitHub handle of the upstream d2r-mobile author; no real name, nothing else
 #define CR_LINES 6
 #define CR_PER_LINE 4
 #define CR_LINE_UNITS 44
-typedef struct { int kind; char text[192]; } cr_line_t;   // kind：1 特别鸣谢首行 / 2 鸣谢首行 / 0 续行 | kind: 1 first special line / 2 first thanks line / 0 continuation
+typedef struct { int kind; char text[192]; } cr_line_t;   // kind：1 特别鸣谢首行 / 2 鸣谢首行 / 3 制作首行 / 0 续行 | kind: 1 first special line / 2 first thanks line / 3 first maker line / 0 continuation
 static int cr_units(const char *s) { int u = 0; for (; *s; s++) u += ((unsigned char)*s & 0xC0) == 0x80 ? 0 : ((unsigned char)*s >= 0x80 ? 2 : 1); return u; }   // 估算宽：ASCII 1、多字节字符 2 | estimated width: ASCII 1, multibyte 2
 static int cr_list(const char *const *names, int n, int kind, const char *sep, const char *note, cr_line_t *out, int o, int max) {   // sep = 名字间分隔（表 dmCreditsSep：中文「、」、其他「, 」）；返回新的行数 | sep = separator between names (table dmCreditsSep); returns the new line count
     char cur[192] = ""; int cnt = 0, first = 1;
@@ -236,6 +238,12 @@ static int cr_list(const char *const *names, int n, int kind, const char *sep, c
         if (cur[0] && cr_units(cand) > CR_LINE_UNITS) { if (o < max) { out[o].kind = first ? kind : 0; snprintf(out[o].text, sizeof out[o].text, "%s", cur); } o++; first = 0; snprintf(cur, sizeof cur, "%s", note); }
         else snprintf(cur, sizeof cur, "%s", cand); }
     if (cur[0]) { if (o < max) { out[o].kind = first ? kind : 0; snprintf(out[o].text, sizeof out[o].text, "%s", cur); } o++; }
+    return o;
+}
+// 三份名单（制作 kind 3 → 特别鸣谢 kind 1 → 鸣谢 kind 2）→ 行；同一套拼行规则；*truncated = 超过 max 行（末行已加「…」） | three lists (maker → special → thanks) → lines; same rules; *truncated = over max (the last line got "…")
+static int credits_all(const char *const *mk, int nmk, const char *const *sp, int nsp, const char *const *th, int nth, const char *sep, const char *note, cr_line_t *out, int max, int *truncated) {
+    int o = cr_list(mk, nmk, 3, sep, NULL, out, 0, max); o = cr_list(sp, nsp, 1, sep, note, out, o, max); o = cr_list(th, nth, 2, sep, NULL, out, o, max); *truncated = o > max;
+    if (o > max) { o = max; size_t L = strlen(out[o - 1].text); if (L + 4 < sizeof out[o - 1].text) strcpy(out[o - 1].text + L, "…"); }
     return o;
 }
 // 两份名单 → 行；*truncated = 超过 max 行（末行已加「…」） | both lists → lines; *truncated = more than max lines (the last line got "…")
@@ -249,18 +257,20 @@ static void co_place(uint64_t w, int x, int y);
 static uint64_t co_find(uint64_t w, const char *name, int dep);
 static void credits_render(uint8_t *b, uint64_t sp) {   // 自定义页开着时每帧（游戏主线程）：按当前语言拼一次并缓存，摆标签 / 名单行、改「关于」容器高度 | every frame while the Custom page shows: assemble once per language and cache; place labels / lines, set the About container's height
     static int grp = -1, n, trunc; static cr_line_t lines[CR_LINES]; int g = dm_lang_group();
-    if (g != grp) { grp = g; n = credits_lines(k_special_default, (int)(sizeof k_special_default / sizeof *k_special_default), NULL, 0, dm_str(b, "dmCreditsSep"), dm_str(b, "dmCreditsUpstreamNote"), lines, CR_LINES, &trunc);
-        LOG("社区入口：鸣谢 %d 行（特别鸣谢 %d 名，鸣谢 0 名）%s", n, (int)(sizeof k_special_default / sizeof *k_special_default), trunc ? "，超过上限已在末尾加「…」" : ""); }
+    if (g != grp) { grp = g; n = credits_all(k_maker_default, (int)(sizeof k_maker_default / sizeof *k_maker_default), k_special_default, (int)(sizeof k_special_default / sizeof *k_special_default), NULL, 0, dm_str(b, "dmCreditsSep"), dm_str(b, "dmCreditsUpstreamNote"), lines, CR_LINES, &trunc);
+        LOG("社区入口：鸣谢 %d 行（制作 %d 名，特别鸣谢 %d 名，鸣谢 0 名）%s", n, (int)(sizeof k_maker_default / sizeof *k_maker_default), (int)(sizeof k_special_default / sizeof *k_special_default), trunc ? "，超过上限已在末尾加「…」" : ""); }
     uint64_t about = co_find(sp, "TouchAboutRow", 0); if (!about) return;
-    int y0 = 3 * 180, ys = -1, yt = -1;
+    int y0 = 3 * 180, ys = -1, yt = -1, ym = -1;
     for (int k = 0; k < CR_LINES; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCreditLine%d", k); uint64_t w = co_find(about, nm, 0); if (!w) continue;
-        if (k < n) { co_text(b, w, lines[k].text); co_place(w, 620, y0 + 90 * k); if (lines[k].kind == 1) ys = y0 + 90 * k; if (lines[k].kind == 2) yt = y0 + 90 * k; }
+        if (k < n) { co_text(b, w, lines[k].text); co_place(w, 620, y0 + 90 * k); if (lines[k].kind == 1) ys = y0 + 90 * k; if (lines[k].kind == 2) yt = y0 + 90 * k; if (lines[k].kind == 3) ym = y0 + 90 * k; }
         else { co_text(b, w, ""); co_place(w, 99999, y0); } }
     uint64_t l0 = co_find(about, "TouchCreditLabel0", 0), l1 = co_find(about, "TouchCreditLabel1", 0);
     // 标签横坐标 = 行文字缩进后的位置（dm_sel_frame.h DM_ROW_INDENT）：放 0 会被 dm_custom.c indent_rows 当成「载入 x = 0 的叶子」每帧挪到 40、这里再挪回 0，来回拉扯（十二审 Q12-01 顺带）
     // label x = the indented row-text position (DM_ROW_INDENT): at 0, indent_rows would take it for a leaf loaded at x = 0 and move it to 40 every frame while this moved it back (found with Q12-01)
     if (l0) { co_text(b, l0, ys >= 0 ? dm_str(b, "dmCreditsSpecial") : ""); co_place(l0, ys >= 0 ? DM_ROW_INDENT : 99999, ys >= 0 ? ys : y0); }
     if (l1) { co_text(b, l1, yt >= 0 ? dm_str(b, "dmCreditsThanks") : ""); co_place(l1, yt >= 0 ? DM_ROW_INDENT : 99999, yt >= 0 ? yt : y0); }
+    uint64_t l2 = co_find(about, "TouchCreditLabel2", 0);   // 「制作」标签（署名行，第一行） | the maker label (first line)
+    if (l2) { co_text(b, l2, ym >= 0 ? dm_str(b, "dmCreditsMaker") : ""); co_place(l2, ym >= 0 ? DM_ROW_INDENT : 99999, ym >= 0 ? ym : y0); }
     int32_t *r = (int32_t *)(about + 0x70), h = y0 + 90 * (n > 0 ? n : 1);   // 容器高度 = 子标题下沿 + 行数 × 行距（滚动区按它算内容高度） | container height = below the sub-title + lines × pitch (the scroll area sizes by it)
     if (r[3] != h) { r[3] = h; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)about + 0x10))(about); }
 }
@@ -365,9 +375,9 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     char line[GH_MAX + 64], ver[96]; const char *label = dm_update_label(); int cp = atomic_load(&g_copied);
     if (label && *label) snprintf(ver, sizeof ver, dm_str(b, "dmAboutVersion"), label); else ver[0] = 0;
     static int grp = -1, ncr; static cr_line_t cr[2]; int g = dm_lang_group();
-    if (g != grp) { int trunc; grp = g; ncr = credits_lines(k_special_default, (int)(sizeof k_special_default / sizeof *k_special_default), NULL, 0, dm_str(b, "dmCreditsSep"), dm_str(b, "dmCreditsUpstreamNote"), cr, 2, &trunc);
-        LOG("社区入口：提示框鸣谢 %d 行（特别鸣谢 %d 名，鸣谢 0 名）%s", ncr, (int)(sizeof k_special_default / sizeof *k_special_default), trunc ? "，超过两行已在末尾加「…」" : ""); }
-    char crt[2][224]; for (int k = 0; k < 2; k++) { if (k < ncr) snprintf(crt[k], sizeof crt[k], "%s%s%s", cr[k].kind == 1 ? dm_str(b, "dmCreditsSpecial") : cr[k].kind == 2 ? dm_str(b, "dmCreditsThanks") : "", cr[k].kind ? " " : "", cr[k].text); else crt[k][0] = 0; }
+    if (g != grp) { int trunc; grp = g; ncr = credits_all(k_maker_default, (int)(sizeof k_maker_default / sizeof *k_maker_default), k_special_default, (int)(sizeof k_special_default / sizeof *k_special_default), NULL, 0, dm_str(b, "dmCreditsSep"), dm_str(b, "dmCreditsUpstreamNote"), cr, 2, &trunc);
+        LOG("社区入口：提示框鸣谢 %d 行（制作 %d 名，特别鸣谢 %d 名，鸣谢 0 名）%s", ncr, (int)(sizeof k_maker_default / sizeof *k_maker_default), (int)(sizeof k_special_default / sizeof *k_special_default), trunc ? "，超过两行已在末尾加「…」" : ""); }
+    char crt[2][224]; for (int k = 0; k < 2; k++) { if (k < ncr) snprintf(crt[k], sizeof crt[k], "%s%s%s", cr[k].kind == 3 ? dm_str(b, "dmCreditsMaker") : cr[k].kind == 1 ? dm_str(b, "dmCreditsSpecial") : cr[k].kind == 2 ? dm_str(b, "dmCreditsThanks") : "", cr[k].kind ? " " : "", cr[k].text); else crt[k][0] = 0; }
     static const int dy_c[CO_DESC] = { 130, 192, 272, 340, 388, 436 }, dy_a[CO_DESC] = { 130, 200, 248, 0, 0, 0 };   // 社区框 / 纯「关于」框各行的 y（§2.6：36 / 28 / 36 子标题 / 28 × 3；36 / 28 / 28） | line y per box
     const int *dy = mode == 1 ? dy_c : dy_a; int btn_y = mode == 1 ? 600 : 380;
     if (mode == 1) {

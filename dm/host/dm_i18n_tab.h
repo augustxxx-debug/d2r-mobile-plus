@@ -511,6 +511,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCreditsTitle", "鸣谢", "Credits", "Créditos", "Créditos", "Благодарности", "감사의 말" },
     { "dmCreditsSpecial", "特别鸣谢", "Special thanks", "Agradecimiento especial", "Agradecimiento especial", "Особая благодарность", "특별 감사" },
     { "dmCreditsThanks", "鸣谢", "Thanks", "Agradecimientos", "Agradecimientos", "Благодарность", "감사" },
+    { "dmCreditsMaker", "制作", "Made by", "Hecho por", "Hecho por", "Автор", "제작" },
     { "dmCreditsUpstreamNote", "（d2r-mobile 原作者）", " (author of d2r-mobile)", " (autor de d2r-mobile)", " (autor de d2r-mobile)", " (автор d2r-mobile)", " (d2r-mobile 원작자)" },
     { "dmCreditsSep", "、", ", ", ", ", ", ", ", ", ", " },
     { "dmAboutVersion", "版本 %s", "Version %s", "Versión %s", "Versión %s", "Версия %s", "버전 %s" },

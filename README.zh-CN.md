@@ -2,6 +2,8 @@
 
 **基于 [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile) 的 iOS 界面增强分支。**
 
+制作：Augustus
+
 [English](README.md) · [更新日志](CHANGELOG.zh-CN.md) · [构建与验证](docs/PLUS.zh-CN.md) · [上游说明](https://github.com/jhaizhou-ops/d2r-mobile/blob/main/README.zh-CN.md)
 
 D2R Mobile 提供原生兼容层、Metal 渲染、触控与手柄支持，让玩家运行自己持有的 Nintendo Switch 版《暗黑破坏神 II：狱火重生》。**Plus 重点针对 iPhone Duo 内屏深入优化显示，修复前端、角色界面、标签焦点、通知边框和加载标志等多处 UI 问题，并完善触控与手柄操作。** 所有增强均建立在上游项目的基础之上。

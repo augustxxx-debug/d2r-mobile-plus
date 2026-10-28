@@ -1355,7 +1355,7 @@ _CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
 # names assembled by the host dm_community.c per language (≤ 4 per line, wrapped by estimated width, capped at 6 lines with "…"; an empty "Thanks" line is not shown), names untranslated. The layout pre-places 2 label boxes + 6 line boxes, empty, lines off screen;
 # the host places them every frame and sets TouchAboutRow's height by the line count. Names come from a default constant in code (RC1: upstream author jhaizhou-ops); RC2 lets the manifest credits field override
 _CREDIT_LINE_H, _CREDIT_LINES = 90, 6   # 名单行距（只读文字，不是触控行）、最多行数（宿主封顶，同 dm_community.c） | name-line pitch (read-only text, not a touch row), max lines (host cap, as dm_community.c)
-_ABOUT_H = 3 * _CUSTOM_LINE_H + _CREDIT_LINE_H   # 标题 / 社区行 / 鸣谢子标题 + 缺省一行名单；宿主按实际行数改高 | title / community row / credits sub-title + one default name line; the host adjusts by the real line count
+_ABOUT_H = 3 * _CUSTOM_LINE_H + 2 * _CREDIT_LINE_H   # 标题 / 社区行 / 鸣谢子标题 + 缺省两行名单（制作 + 特别鸣谢）；宿主按实际行数改高 | title / community row / credits sub-title + two default lines (maker + special); the host adjusts by the real line count
 def _custom_about():
     return ('        { "type": "Widget", "name": "TouchAboutRow", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_H, _ABOUT_H)
             + '            { "type": "TextBoxWidget", "name": "TouchAboutTitle", "fields": { "rect": { "x": 0, "y": 0, "width": 1730, "height": %d }, "text": "@dmCommunityAbout", "style": "$StyleSettingsTitle" }, "children": [\n' % _CUSTOM_LINE_H
@@ -1365,7 +1365,7 @@ def _custom_about():
             + _btn('TouchCommunityOpt', 30, '@dmCommunityOpen', 'PanelManager:ClosePanel:TouchCommunityOpt', x=1110, anchor=False).replace('\n        ', '\n                ')
             + '            ] },\n'
             + '            { "type": "TextBoxWidget", "name": "TouchCreditsTitle", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d }, "text": "@dmCreditsTitle", "style": "$StyleSettingsTitle" } },\n' % (2 * _CUSTOM_LINE_H, _CUSTOM_LINE_H)
-            + ''.join('            { "type": "TextBoxWidget", "name": "TouchCreditLabel%d", "fields": { "rect": { "x": 99999, "y": %d, "width": 600, "height": %d }, "text": "", "style": { "pointSize": 36, "fontColor": "$FontColorLightGold", "spacing": "$ReducedSpacing", "alignment": { "h": "left", "v": "center" } } } },\n' % (k, 3 * _CUSTOM_LINE_H, _CREDIT_LINE_H) for k in range(2))
+            + ''.join('            { "type": "TextBoxWidget", "name": "TouchCreditLabel%d", "fields": { "rect": { "x": 99999, "y": %d, "width": 600, "height": %d }, "text": "", "style": { "pointSize": 36, "fontColor": "$FontColorLightGold", "spacing": "$ReducedSpacing", "alignment": { "h": "left", "v": "center" } } } },\n' % (k, 3 * _CUSTOM_LINE_H, _CREDIT_LINE_H) for k in range(3))   # 0 特别鸣谢 / 1 鸣谢 / 2 制作（用户 2026-10-29 署名，排第一行） | 0 special / 1 thanks / 2 maker (first line)
             + ''.join('            { "type": "TextBoxWidget", "name": "TouchCreditLine%d", "fields": { "rect": { "x": 99999, "y": %d, "width": 1110, "height": %d }, "text": "", "style": { "pointSize": 36, "fontColor": "$FontColorLightGray", "spacing": "$ReducedSpacing", "alignment": { "h": "left", "v": "center" } } } },\n' % (k, 3 * _CUSTOM_LINE_H, _CREDIT_LINE_H) for k in range(_CREDIT_LINES))
             + '        ] },\n')
 def _custom_toggle_row(i, key, label):
