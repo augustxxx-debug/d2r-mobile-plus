@@ -190,6 +190,54 @@ static void m1_subgroup(void) {
     vkDestroyShaderModule(dev, m, NULL); vkDestroyPipelineLayout(dev, pl, NULL); vkDestroyDescriptorSetLayout(dev, dsl, NULL);
 }
 
+// ---- M7 子组逐项（warp32 改写依赖的每个构造）| subgroup items (each construct the warp32 rewrite relies on) ----
+// 2026-10-28 奥丁二分：cs_fluid_sim_accumulate_c 里读 SubgroupLtMask 第 1 字就挂 GPU；引擎改写器已改为按 lane 算掩码。本场景逐项记录 gl_SubgroupSize 形状、
+// ballot 按 id>>5 选字、LtMask 两个字与选字、本线程束内 shuffle，以及一个照流体着色器形状写的变体（M7.fluid，RISKY 围栏里跑）。
+// The Thor bisection of 2026-10-28: reading word 1 of SubgroupLtMask hangs the GPU in cs_fluid_sim_accumulate_c; the engine rewriter now computes masks from the lane id.
+// This scene records the gl_SubgroupSize shape, the ballot word picked by id>>5, both LtMask words and the picked one, the in-warp shuffle, and a variant shaped like the
+// fluid shader (M7.fluid, inside the RISKY fence).
+static void m7_items(void) {
+    g_test = "M7";
+    VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; VkDescriptorSetLayout dsl = dsl_make(&b, 1); VkPipelineLayout pl = pl_make(dsl);
+    const uint32_t sg = sgp.subgroupSize;
+    for (int which = 0; which < 2; which++) {
+        VkShaderModule m = which ? mod(spv_m7_fluid_comp, spv_m7_fluid_comp_words) : mod(spv_m7_comp, spv_m7_comp_words); const char *nm = which ? "fluid" : "items";
+        if (!m) { FAIL("M7 %s 建模块失败", nm); continue; }
+        VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO}; ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT; ci.stage.module = m; ci.stage.pName = "main"; ci.layout = pl;
+        char stepn[48]; snprintf(stepn, sizeof stepn, "M7.%s", nm); VkPipeline p = VK_NULL_HANDLE; VkResult r = RISKY(stepn, vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, NULL, &p));
+        if (r) { step_end(); if (!skipped(stepn)) FAIL("M7 %s 建计算管线失败 %d", nm, (int)r); vkDestroyShaderModule(dev, m, NULL); continue; }
+        buf_t out; buf_make(&out, 65 * 2 * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); memset(out.p, 0, out.size); VkDescriptorPool dp; VkDescriptorSet s = ds_one(dsl, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &dp);
+        VkDescriptorBufferInfo di = {out.b, 0, out.size}; VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}; w.dstSet = s; w.descriptorCount = 1; w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w.pBufferInfo = &di; vkUpdateDescriptorSets(dev, 1, &w, 0, NULL);
+        cb_begin(); vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, p); vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pl, 0, 1, &s, 0, NULL); vkCmdDispatch(cb, 1, 1, 1); r = cb_run(); step_end();
+        const uint32_t *v = out.p;
+        if (r) FAIL("M7 %s 执行失败 %d（DEVICE_LOST = 这个形状把驱动挂了）", nm, (int)r);
+        else if (!which) {
+            uint32_t size_ok = 0, id_distinct = 0, bw_ok = 0, ltw_ok = 0, lty_ok = 0, ltc_ok = 0, sh_ok = 0, bty_ok = 0; static uint8_t seen[256]; memset(seen, 0, sizeof seen);
+            for (uint32_t i = 0; i < 64; i++) {
+                const uint32_t *a = v + 8 * i, *c = v + 8 * i + 4; uint32_t id = (a[0] >> 8) & 0xFF, l = id;
+                if ((a[0] & 0xFF) == sg) size_ok++; if (!seen[id]) { seen[id] = 1; id_distinct++; }
+                if (a[1] == 0x55555555u) bw_ok++;                                                   // ballot(偶数 lane) 本线程束字 | this warp's word of ballot(even lanes)
+                if (a[2] == ((l & 31u) ? (1u << (l & 31u)) - 1u : 0u)) ltw_ok++;                     // LtMask 本线程束字 | this warp's LtMask word
+                if (c[1] == (l >= 32 ? (l & 31u ? (1u << (l & 31u)) - 1u : 0u) : 0u)) lty_ok++;     // LtMask.y 原样 | raw LtMask.y
+                if (c[2] == l) ltc_ok++;                                                             // bitCount(LtMask) == lane | bitCount(LtMask) == lane id
+                if (a[3] == 1000u + (i & ~31u) + ((i + 16u) & 31u)) sh_ok++;                        // 本线程束内 shuffle | in-warp shuffle
+                if (c[3] == (sg >= 64 ? 0xffffffffu : 0u)) bty_ok++;                                 // ballot(true).y | ballot(true).y
+            }
+            KV("m7.items", "subgroup_size_ok=%u/64 distinct_ids=%u ballot_word_ok=%u/64 ltmask_word_ok=%u/64 ltmask_y_ok=%u/64 ltmask_bitcount_ok=%u/64 shuffle_inwarp_ok=%u/64 ballot_true_y_ok=%u/64 raw0=%#x raw1=%#x raw2=%#x raw3=%#x raw4=%#x raw5=%#x",
+               size_ok, id_distinct, bw_ok, ltw_ok, lty_ok, ltc_ok, sh_ok, bty_ok, v[0], v[1], v[2], v[3], v[4], v[5]);
+            if (size_ok == 64 && id_distinct >= (sg < 64 ? sg : 64) && bw_ok == 64 && ltw_ok == 64 && lty_ok == 64 && ltc_ok == 64 && sh_ok == 64 && bty_ok == 64) OK("M7 items：gl_SubgroupSize、lane 号、ballot 选字、LtMask 两字与选字、本线程束 shuffle 全部正确（%u 道）", sg);
+            else INFO("M7 items：size %u/64 lane 不同值 %u ballot 选字 %u/64 LtMask 选字 %u/64 LtMask.y %u/64 bitCount(LtMask) %u/64 shuffle %u/64 ballot(true).y %u/64 —— 不全对的项就是 warp32 改写不能依赖的构造", size_ok, id_distinct, bw_ok, ltw_ok, lty_ok, ltc_ok, sh_ok, bty_ok);
+        } else {
+            uint32_t slots_ok = 0, dup = 0, count = v[64 * 4]; static uint8_t used[256]; memset(used, 0, sizeof used);
+            for (uint32_t i = 0; i < 64; i++) { uint32_t slot = v[4 * i]; if ((i & 3u) == 3u) continue; if (slot < 256) { if (used[slot]) dup++; used[slot] = 1; if (slot < 48) slots_ok++; } }
+            KV("m7.fluid", "count=%u slots_in_range=%u/48 duplicate_slots=%u raw0=%#x raw1=%#x raw2=%#x raw3=%#x", count, slots_ok, dup, v[0], v[1], v[2], v[3]);
+            if (count == 48 && slots_ok == 48 && !dup) OK("M7 fluid：流体形状（LtMask 经 float、线程束聚合追加、读 LtMask.y 不选）跑通且追加结果正确");
+            else INFO("M7 fluid：计数 %u（应 48）、槽位在范围 %u/48、重复 %u —— 形状跑通但聚合结果不对，与引擎 warp32 改写前的 64 道语义问题一致", count, slots_ok, dup);
+        }
+        vkDestroyDescriptorPool(dev, dp, NULL); buf_free(&out); vkDestroyPipeline(dev, p, NULL); vkDestroyShaderModule(dev, m, NULL);
+    }
+    vkDestroyPipelineLayout(dev, pl, NULL); vkDestroyDescriptorSetLayout(dev, dsl, NULL);
+}
 // ---- M2 片元四邻 | fragment quads ----
 static void m2_quad(void) {
     g_test = "M2";
@@ -399,7 +447,7 @@ int dm_probe_vkmicro(FILE *out, const char *shaders_dir) {
     pfn_fmt = (PFN_vkGetPhysicalDeviceFormatProperties)gipa(inst, "vkGetPhysicalDeviceFormatProperties");
     vkGetDeviceQueue(dev, 0, 0, &q); VkCommandPoolCreateInfo pi = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO}; vkCreateCommandPool(dev, &pi, NULL, &pool); VkCommandBufferAllocateInfo cai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO}; cai.commandPool = pool; cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; cai.commandBufferCount = 1; vkAllocateCommandBuffers(dev, &cai, &cb);
     INFO("vkmicro：设备就绪（验证层 %s，subgroup_size_control %s，子组 %u 道）", has_vvl ? "开" : "无", has_sgsc ? "有" : "无", sgp.subgroupSize);
-    m1_subgroup(); m2_quad(); m3_clip(); m4_depth(VK_FORMAT_D16_UNORM, "D16"); m4_depth(VK_FORMAT_X8_D24_UNORM_PACK32, "X8D24"); m5_store();
+    m1_subgroup(); m2_quad(); m3_clip(); m4_depth(VK_FORMAT_D16_UNORM, "D16"); m4_depth(VK_FORMAT_X8_D24_UNORM_PACK32, "X8D24"); m5_store(); m7_items();
     if (shaders_dir) m6_real(shaders_dir); else { INFO("M6 未指定真实着色器目录，跳过"); KV("m6", "skipped"); }
     vkDeviceWaitIdle(dev); KV("verr", "%d", v_err); KV("vwarn", "%d", v_warn); for (int i = 0; i < v_nfirst; i++) { char k[24]; snprintf(k, sizeof k, "verr_first.%d", i); KV(k, "%s", v_first[i]); }
     if (has_vvl && !v_err) OK("vkmicro：验证层 0 错误（%d 警告）", v_warn); else if (has_vvl) INFO("vkmicro：验证层 %d 错误 %d 警告", v_err, v_warn);
