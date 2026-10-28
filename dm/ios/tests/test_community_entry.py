@@ -99,8 +99,15 @@ class OptionsPage(unittest.TestCase):
 
     def test_about_group_and_box(self):
         out = self.out
-        for w in ('TouchAboutRow', 'TouchAboutTitle', 'TouchAboutCommunityText', 'TouchCommunityOpt') + tuple(BOX): self.assertIn('"name": "%s"' % w, out, w)
+        for w in ('TouchAboutRow', 'TouchAboutTitle', 'TouchAboutCommunity', 'TouchAboutCommunityText', 'TouchCommunityOpt') + tuple(BOX): self.assertIn('"name": "%s"' % w, out, w)
         self.assertIn('"text": "@dmCommunityAbout"', out); self.assertIn('"text": "@dmCommunityRow"', out); self.assertIn('"textString": "@dmCommunityOpen"', out)
+        # 鸣谢子块：子标题（标题级）+ 2 个标签框（36 LightGold）+ 6 个名单行框（36 LightGray），字空着由宿主写，不是按钮、不发消息，在社区行之后 | credits sub-block: sub-title + 2 label boxes + 6 name-line boxes, text written by the host, no buttons / messages, after the community row
+        for w in ('TouchCreditsTitle', 'TouchCreditLabel0', 'TouchCreditLabel1') + tuple('TouchCreditLine%d' % k for k in range(6)): self.assertIn('"name": "%s"' % w, out, w)
+        block = out[out.index('"name": "TouchCreditsTitle"'):out.index('"name": "TouchCommTile00"')]
+        self.assertIn('"text": "@dmCreditsTitle", "style": "$StyleSettingsTitle"', block); self.assertNotIn('onClickMessage', block); self.assertNotIn('ButtonWidget', block)
+        self.assertEqual(block.count('"fontColor": "$FontColorLightGold"'), 2); self.assertEqual(block.count('"fontColor": "$FontColorLightGray"'), 6); self.assertEqual(block.count('"pointSize": 36'), 8)
+        self.assertGreater(out.index('"name": "TouchCreditsTitle"'), out.index('"name": "TouchCommunityOpt"'))
+        self.assertEqual(touch_layout._ABOUT_H, 3 * touch_layout._CUSTOM_LINE_H + touch_layout._CREDIT_LINE_H)
         self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityOpt"', out)
         rows = out.index('"name": "TouchCustomRows"'); about = out.index('"name": "TouchAboutTitle"'); box = out.index('"name": "TouchCommTile00"'); scroll_end = out.index('"name": "TouchCustomSel"')
         self.assertLess(rows, about); self.assertLess(about, scroll_end, 'the About group scrolls with the rows')
@@ -119,7 +126,7 @@ class Text(unittest.TestCase):
         sample = {'dmCommunityQq': '1129913678', 'dmCommunityLink': 'https://github.com/example-owner/d2r-mobile-plus/discussions'}
         for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
                                ('dmCommunityCopied', 28, BOX_W), ('dmCommunityCopyFail', 28, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
-                               ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000)):
+                               ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, 600), ('dmCreditsThanks', 36, 600), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
             texts = rows[key]
             for lang, t in zip(langs, texts):
                 self.assertEqual(t.count('\n'), 0, (key, lang))
@@ -132,14 +139,14 @@ class Host(unittest.TestCase):
     def test_host_wiring(self):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
         for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', '"TouchCommCopy"', 'dm_padmode_page_keys(DM_BTN_A | DM_BTN_B)',
-                  '社区入口：已显示', '社区入口：复制 %s %s', '"群号" : "链接"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', 'TouchAboutRow'):
+                  '社区入口：已显示', '社区入口：复制 %s %s', '"群号" : "链接"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', 'TouchAboutCommunity', 'TouchCreditLine%d', '"dmCreditsSpecial"', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))
         custom = (DM / 'host' / 'dm_custom.c').read_text(encoding='utf-8')
-        self.assertIn('dm_community_available()', custom); self.assertIn('TouchAboutRow', custom)   # 手柄十字键能选到关于行、A 打开 | the D-pad reaches the About row and A opens it
+        self.assertIn('dm_community_available()', custom); self.assertIn('TouchAboutCommunity', custom)   # 手柄十字键能选到关于行、A 打开 | the D-pad reaches the About row and A opens it
 
     def test_shells_hand_over_manifest_and_clipboard(self):
         ios = (DM / 'ios' / 'Sources' / 'dm_update.m').read_text(encoding='utf-8')
