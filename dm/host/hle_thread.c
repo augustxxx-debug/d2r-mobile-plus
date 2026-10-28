@@ -47,6 +47,7 @@ typedef struct thr {
     // 当前等待：kind 0=无 1=锁 2=条件 3=地址 4=同步对象
     // Current wait: kind 0=none 1=lock 2=condition 3=address 4=synchronization object
     int wkind, woke; uint64_t waddr, wkey; uint32_t wtag; int64_t wres;
+    uint64_t woke_ns;          // 被唤醒的时刻（持 G 写）：时间片自查据此判「信号丢了」 | when it was woken (written under G): the time-slice re-check uses it to tell "the signal was lost"
     // 自旋中：block_inner 放开 G 轮询 woke 的那段（持 G 置位、清零）。wake 见到它就不发信号
     // Spinning: the stretch where block_inner polls woke with G released (set and cleared under G). wake sends no signal then
     int spinning;
@@ -113,14 +114,22 @@ static thr_t *pick(int kind, uint64_t a) {
 // (@wakes, @wake_skips)
 static uint64_t g_wakes, g_wake_skips;
 void dm_hle_wake_counts(uint64_t *wakes, uint64_t *skips) { *wakes = __atomic_load_n(&g_wakes, __ATOMIC_RELAXED); *skips = __atomic_load_n(&g_wake_skips, __ATOMIC_RELAXED); }
+#ifdef DM_TEST_HOOKS
+int dm_test_drop_wakes;   // 单测：接下来几次唤醒不发条件变量信号（模拟系统丢信号）| unit test: the next few wake-ups send no condition-variable signal (simulates the OS losing it)
+#endif
 static void wake(thr_t *t, int64_t res) {
-    wait_unlink(t); t->wkind = 0; t->wres = res;
+    wait_unlink(t); t->wkind = 0; t->wres = res; t->woke_ns = now_ns();
     // woke 最后写：block_inner 可能不持 G 轮询它
     // woke last: block_inner may poll it without G
     __atomic_store_n(&t->woke, 1, __ATOMIC_RELEASE);
     __atomic_store_n(&g_wakes, g_wakes + 1, __ATOMIC_RELAXED);
+#ifdef DM_TEST_HOOKS
+    { int d = __atomic_load_n(&dm_test_drop_wakes, __ATOMIC_ACQUIRE);   // 单测：模拟系统把这次条件变量信号弄丢 | unit test: simulate the OS losing this condition-variable signal
+      if (d > 0 && !t->spinning && __atomic_compare_exchange_n(&dm_test_drop_wakes, &d, d - 1, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return; }
+#endif
     if (t->spinning) __atomic_store_n(&g_wake_skips, g_wake_skips + 1, __ATOMIC_RELAXED);
-    else pthread_cond_signal(&t->cv);
+    else { int rc = pthread_cond_signal(&t->cv); static int warned;   // 发信号失败从前没人看：记一次 | a failed signal used to go unnoticed: log it once
+        if (rc && !warned++) LOG("【红】线程同步：唤醒线程 %#x 的条件变量信号失败 rc=%d", t->handle, rc); }
 }
 // 挂起直到被唤醒或超时（ns<0 无限、0 立即超时）；返回 wres 或 R_TIMEOUT
 // Suspend until woken or timed out (ns<0 infinite, 0 immediate timeout); returns wres or R_TIMEOUT
@@ -145,6 +154,9 @@ static int64_t block(thr_t *t, int kind, int64_t ns) {   // 启动时间线：�
 // A/B: with DM_HLE_SPIN_AB=N the thread spins only in even N-second periods, in phase with the engine's gfx-ab-toggle
 // (monotonic seconds / N even = on).
 static uint64_t g_spin_ns; static int g_spin_init; static int64_t g_spin_ab;
+#define WAKE_SLICE_NS 100000000L   // 等待的时间片：100 ms（见 block_inner 循环）| wait time slice: 100 ms (see the block_inner loop)
+static uint64_t g_lost_wake_recov;   // 丢唤醒自愈次数（持 G 加；诊断与单测读）| lost-wakeup recoveries (incremented under G; read by diagnostics and unit tests)
+uint64_t dm_hle_lost_wake_recoveries(void) { return __atomic_load_n(&g_lost_wake_recov, __ATOMIC_RELAXED); }
 static int spin_phase_on(void) {
     if (g_spin_ab <= 0) return 1;
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ((ts.tv_sec / g_spin_ab) & 1) == 0;
@@ -173,6 +185,26 @@ static int64_t block_inner(thr_t *t, int kind, int64_t ns) {
     }
     while (!t->woke) {
         int rc;
+#ifndef DM_TEST_NO_WAKE_SLICE
+        // 按时间片等（RC1 阻塞项，2026-10-29）：每片至多 WAKE_SLICE_NS 就醒来自查 woke。现场（Mac 71b14f0、Duo 6c8d67e「卡在 MonsterHealth:ClearInfo」）：
+        // 锁已交给等待者、woke=1、wkind=0，它却还停在 __psynch_cvwait——宿主这边唤醒都在 G 下、先置 woke 再发信号，是系统那一层把条件变量信号丢了。
+        // 只靠一次信号就会永远睡下去（整局卡死）；按片自查后丢一次只多等至多一片，记一行「线程同步：丢唤醒自愈」（单测 t_lock_stress，负对照 t_lock_stress_old）
+        // Wait in time slices (RC1 blocker, 2026-10-29): wake at least every WAKE_SLICE_NS and re-check woke. Evidence (Mac 71b14f0, Duo 6c8d67e "stuck in MonsterHealth:ClearInfo"):
+        // the lock was handed to the waiter, woke=1, wkind=0, yet it still sat in __psynch_cvwait - the host side wakes under G, setting woke before signalling, so the OS layer lost the condition-variable signal.
+        // Relying on one signal sleeps forever (whole-run hang); with the re-check a lost signal costs at most one slice and logs one "线程同步：丢唤醒自愈" line (unit test t_lock_stress, negative control t_lock_stress_old)
+        struct timespec sl; clock_gettime(CLOCK_REALTIME, &sl); sl.tv_nsec += WAKE_SLICE_NS;
+        if (sl.tv_nsec >= 1000000000) { sl.tv_sec++; sl.tv_nsec -= 1000000000; }
+        int real_dl = ns > 0 && !det_wait && (dl.tv_sec < sl.tv_sec || (dl.tv_sec == sl.tv_sec && dl.tv_nsec <= sl.tv_nsec));   // 真截止早于这一片：等到真截止 | the real deadline comes before this slice ends: wait for it
+        if (det_wait && guest_ns() >= guest_deadline) { wait_unlink(t); t->wkind = 0; return R_TIMEOUT; }
+        rc = pthread_cond_timedwait(&t->cv, &G, real_dl ? &dl : &sl);
+        if (rc != ETIMEDOUT) continue;
+        if (t->woke) {   // 片满醒来时已被唤醒：唤醒超过 20 ms 还没收到信号 = 丢了 | woken by the time the slice expired: woken over 20 ms ago without the signal arriving = it was lost
+            if (now_ns() - t->woke_ns > 20000000ull) { uint64_t n = ++g_lost_wake_recov;
+                if (n <= 8 || !(n & 63)) LOG("【红】线程同步：丢唤醒自愈 第 %llu 次（线程 %#x 已被唤醒 %llu ms 没收到信号，时间片自查醒来；最近 svc %#x）",
+                    (unsigned long long)n, t->handle, (unsigned long long)((now_ns() - t->woke_ns) / 1000000), (unsigned)t->last_svc); }
+            break; }
+        if (real_dl || (det_wait && guest_ns() >= guest_deadline)) { wait_unlink(t); t->wkind = 0; return R_TIMEOUT; }
+#else   // 仅单测 t_lock_stress_old 的负对照：还原修复前「只靠一次信号」的等法 | negative control for t_lock_stress_old only: restores the pre-fix "rely on one signal" wait
         if (det_wait) {
             uint64_t now = guest_ns();
             if (now >= guest_deadline) { wait_unlink(t); t->wkind = 0; return R_TIMEOUT; }
@@ -180,6 +212,7 @@ static int64_t block_inner(thr_t *t, int kind, int64_t ns) {
             rc = pthread_cond_wait(&t->cv, &G);
         } else rc = ns > 0 ? pthread_cond_timedwait(&t->cv, &G, &dl) : pthread_cond_wait(&t->cv, &G);
         if (rc == ETIMEDOUT && !t->woke && (!det_wait || guest_ns() >= guest_deadline)) { wait_unlink(t); t->wkind = 0; return R_TIMEOUT; }
+#endif
     }
     return t->wres;
 }
@@ -251,6 +284,17 @@ void dm_thread_returned(void) { die("客体线程入口函数返回（Horizon �
 
 // 主线程登记，返回其句柄（交给 nnosInitialize 作主线程句柄）
 // Register the main thread and return its handle (passed to nnosInitialize as the main thread handle)
+#ifdef DM_TEST_HOOKS
+// 单测：把当前宿主线程登记成客体线程（同主线程登记，不再建 TSD 键；先调过 svc_thread_main_init）| unit test: register the current host thread as a guest thread (like the main-thread registration, without creating the TSD key again; svc_thread_main_init must have run)
+uint32_t dm_test_thread_attach(int prio) {
+    thr_t *t = calloc(1, sizeof *t);
+    pthread_cond_init(&t->cv, NULL);
+    t->started = 1; t->prio = prio; t->core = 0; t->mask = 7; t->pt = pthread_self(); t->mport = pthread_mach_thread_np(t->pt);
+    pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
+    pthread_setspecific(g_keythr, t);
+    return t->handle;
+}
+#endif
 uint32_t svc_thread_main_init(void) {
     pthread_key_create(&g_keythr, NULL);
     thr_t *t = calloc(1, sizeof *t);
@@ -442,6 +486,8 @@ void svc_thread_dump(void) {
         if (t->wkind == 2 && t->waddr) { uint32_t w = 0, k = 0; vm_size_t g2 = 0;              // 条件等待：关联锁字与条件键的当前值（卡死现场缺这一项） | Condition wait: current values of the associated lock word and the condition key (the deadlock dump lacked this item)
             vm_read_overwrite(mach_task_self(), t->waddr, 4, (vm_address_t)&w, &g2); vm_read_overwrite(mach_task_self(), t->wkey, 4, (vm_address_t)&k, &g2);
             snprintf(own, sizeof own, " 锁字 %#x 条件键 %#llx=%#x", w, t->wkey, k); }
+        // 已被唤醒却还没从宿主等待返回（「运行 / 未在等 + 最近 svc 0x1a」卡死指纹）：写出被唤醒多久了 | woken but not yet back from the host wait (the "running / not waiting + last svc 0x1a" hang fingerprint): print how long ago it was woken
+        if (!t->wkind && t->woke && t->woke_ns && t->last_svc >= 0x18 && t->last_svc <= 0x1c) snprintf(own, sizeof own, " 已被唤醒 %llu ms", (unsigned long long)((now_ns() - t->woke_ns) / 1000000));
         uint8_t raw[64]; vm_size_t g3 = 0;                                                   // 所等对象（读写锁 / 条件变量所在结构）原始 64 字节：看计数与持有者 | Raw 64 bytes of the object being waited on (the structure holding the read-write lock / condition variable): to see the counts and the owner
         int have_raw = (t->wkind == 1 || t->wkind == 2 || t->wkind == 3) && t->waddr && !vm_read_overwrite(mach_task_self(), t->waddr & ~0xfull, 64, (vm_address_t)raw, &g3) && g3 == 64;
         char life[96]; uint64_t nowns = now_ns();

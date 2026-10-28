@@ -30,6 +30,8 @@ class IosSummary(unittest.TestCase):
         # A "输入模式：" (input mode) line on every touch / controller switch; the summary takes the last one (user 2026-10-28: controller-mode reports must show the mode)
         keys = re.search(r'static const char \*keys\[\] = \{([^}]*)\}', block(SHARE, 'static void perf_block(')).group(1)
         self.assertIn('"输入模式："', keys)
+        # 锁交接丢唤醒自愈（RC1 阻塞项，2026-10-29）：「线程同步：」行进摘要，iOS / Mac 两端 | lost-wakeup recovery in the lock handoff (RC1 blocker, 2026-10-29): the "线程同步：" line is in the summary on both iOS and Mac
+        self.assertIn('"线程同步："', keys); self.assertIn('@"线程同步："', MAC)
         front = (ROOT / 'ios' / 'Sources' / 'front_ios.m').read_text(encoding='utf-8')
         pad = block(front, '- (void)padMode:(BOOL)pad {')
         self.assertIn('LOG("输入模式：', pad)
