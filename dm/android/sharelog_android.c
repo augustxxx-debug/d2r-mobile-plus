@@ -56,11 +56,25 @@ static uint32_t cp_at(const char *t, size_t len, size_t i) {   // i 处的码位
     unsigned char c = (unsigned char)t[i]; int n = c < 0x80 ? 0 : c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : 1; uint32_t cp = n == 0 ? c : n == 3 ? c & 7 : n == 2 ? c & 15 : c & 31;
     for (int k = 1; k <= n && i + k < len; k++) cp = (cp << 6) | ((unsigned char)t[i + k] & 63); return cp;
 }
-// 整词替换（前后都不是字母 / 数字 / 下划线）| whole-word replacement
+// 不靠空格分词的文种（汉字、假名、注音、谚文；照 iOS 的 \p{Han}\p{Hiragana}\p{Katakana}\p{Bopomofo}\p{Hangul}）：这些字之间没有词边界可言
+// Scripts not delimited by spaces (Han, kana, Bopomofo, Hangul; as iOS's \p{Han}\p{Hiragana}\p{Katakana}\p{Bopomofo}\p{Hangul}): there is no word boundary between such characters
+static int cp_is_unspaced(uint32_t cp) {
+    return (cp >= 0x1100 && cp <= 0x11FF) || (cp >= 0x2E80 && cp <= 0x2FDF) || cp == 0x3005 || cp == 0x3007 || (cp >= 0x3021 && cp <= 0x3029) || (cp >= 0x3041 && cp <= 0x309F) ||
+           (cp >= 0x30A1 && cp <= 0x30FA) || (cp >= 0x30FD && cp <= 0x30FF) || (cp >= 0x3105 && cp <= 0x318F) || (cp >= 0x31A0 && cp <= 0x31BF) || (cp >= 0x31F0 && cp <= 0x31FF) ||
+           (cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0xA960 && cp <= 0xA97F) || (cp >= 0xAC00 && cp <= 0xD7FF) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+           (cp >= 0xFF66 && cp <= 0xFF6F) || (cp >= 0xFF71 && cp <= 0xFF9D) || (cp >= 0xFFA0 && cp <= 0xFFDC) || (cp >= 0x20000 && cp <= 0x3FFFF);
+}
+// 边界一侧挡不挡替换：名字这一端是汉字 / 假名 / 谚文时从不挡（按字面子串换）；否则只有同为「空格分词的字母 / 数字 / 下划线」的邻字才挡（拉丁名挨着汉字算换文种，是边界）
+// 一审 A1：原先汉字也算字母，「角色张三进入营地」里的张三两边都是字母，不替换
+// Whether one side blocks the replacement: never when the name's own end is Han / kana / Hangul (literal substring); otherwise only a neighbour that is a space-delimited
+// letter / digit / underscore blocks (a Latin name next to Han is a script change, i.e. a boundary). First audit A1: Han used to count as a letter, so 张三 in 「角色张三进入营地」 was not replaced
+static int side_blocks(uint32_t name_end, uint32_t neighbour) { return !cp_is_unspaced(name_end) && cp_is_word(neighbour) && !cp_is_unspaced(neighbour); }
+// 整词替换（边界规则见 side_blocks）| whole-word replacement (boundary rule: side_blocks)
 static char *repl_word(const char *t, size_t len, const char *name, const char *rep, size_t *out_len) {
     size_t nl = strlen(name); sb_t b = {0}; size_t i = 0; if (!nl) { char *c = malloc(len + 1); memcpy(c, t, len); c[len] = 0; *out_len = len; return c; }
+    uint32_t first = cp_at(name, nl, 0), last = cp_before(name, nl);
     while (i < len) {
-        if (i + nl <= len && !memcmp(t + i, name, nl) && (i == 0 || !cp_is_word(cp_before(t, i))) && (i + nl == len || !cp_is_word(cp_at(t, len, i + nl)))) { sb_puts(&b, rep); i += nl; }
+        if (i + nl <= len && !memcmp(t + i, name, nl) && (i == 0 || !side_blocks(first, cp_before(t, i))) && (i + nl == len || !side_blocks(last, cp_at(t, len, i + nl)))) { sb_puts(&b, rep); i += nl; }
         else sb_put(&b, t + i++, 1);
     }
     *out_len = b.n; return b.p ? b.p : calloc(1, 1);
@@ -116,6 +130,8 @@ char *dm_sharelog_scrub(const char *text, size_t len, const char *home, const ch
     if (appid && *appid) { nx = repl_lit(cur, n, appid, "<app-id>", &n); free(cur); cur = nx; }
     char found[64][64]; int nf = 0; for (int i = 0; i < nnames && nf < 64; i++) if (names[i] && *names[i]) { snprintf(found[nf], sizeof found[nf], "%s", names[i]); nf++; }
     nf = dm_sharelog_names_in_text(cur, n, found, nf, 64);
+    // 长名先换：「张三」先换会把「张三丰」变成「<character>丰」| longer names first: replacing 张三 first would turn 张三丰 into "<character>丰"
+    for (int i = 1; i < nf; i++) for (int k = i; k > 0 && strlen(found[k]) > strlen(found[k - 1]); k--) { char tmp[64]; memcpy(tmp, found[k], 64); memcpy(found[k], found[k - 1], 64); memcpy(found[k - 1], tmp, 64); }
     for (int i = 0; i < nf; i++) { nx = repl_word(cur, n, found[i], "<character>", &n); free(cur); cur = nx; }
     nx = scan_ids(cur, n, &n); free(cur); cur = nx;
     *out_len = n; return cur;

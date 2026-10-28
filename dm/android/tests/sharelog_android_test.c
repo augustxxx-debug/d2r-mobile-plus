@@ -17,10 +17,20 @@ int main(void) {
     assert(has(o, "/files/save/<character>/<character>.d2s") && has(o, "<character> said hi") && has(o, "Hannah stays") && has(o, "/save.test.work/<character>/ <character>")); free(o);
     o = scrub("/save/Settings/x /save/ModernSharedStash1/y", NULL, 0); assert(has(o, "/save/Settings/x") && has(o, "ModernSharedStash1")); free(o);
     { const char *kn[] = { "Zed" }; o = scrub("hero Zed logged; Zedd not", kn, 1); assert(has(o, "hero <character> logged; Zedd not")); free(o); }
-    // 中文标点挨着角色名（奥丁真机导出 2026-10-28 漏了 4 处：「角色「X」」「个人仓库：X 还没有」）：中文标点不是字母，照 iOS \p{L}\p{N}_ 规则要替换；挨着汉字（字母）的不替换
-    // Chinese punctuation next to a character name (the Thor export of 2026-10-28 leaked 4: "角色「X」", "个人仓库：X 还没有"): CJK punctuation is not a letter, so per iOS's \p{L}\p{N}_ rule it is replaced; next to a Han character (a letter) it is not
-    { const char *kn[] = { "Galkamir" }; o = scrub("秘境：本局没有资格（难度 0，角色「Galkamir」）\n个人仓库：Galkamir 还没有翻过页\n刷怪积分牌：「Galkamir」还没有记录\n汉Galkamir汉 stays", kn, 1);
-      assert(has(o, "角色「<character>」") && has(o, "个人仓库：<character> 还没有") && has(o, "刷怪积分牌：「<character>」") && has(o, "汉Galkamir汉 stays")); free(o); }
+    // 中文标点挨着角色名（奥丁真机导出 2026-10-28 漏了 4 处：「角色「X」」「个人仓库：X 还没有」）：中文标点不是字母，要替换
+    // Chinese punctuation next to a character name (the Thor export of 2026-10-28 leaked 4: "角色「X」", "个人仓库：X 还没有"): CJK punctuation is not a letter, so the name is replaced
+    { const char *kn[] = { "Galkamir" }; o = scrub("秘境：本局没有资格（难度 0，角色「Galkamir」）\n个人仓库：Galkamir 还没有翻过页\n刷怪积分牌：「Galkamir」还没有记录\n角色Galkamir进入营地", kn, 1);
+      assert(has(o, "角色「<character>」") && has(o, "个人仓库：<character> 还没有") && has(o, "刷怪积分牌：「<character>」") && has(o, "角色<character>进入营地") && !has(o, "Galkamir")); free(o); }
+    // 一审 A1：中文 / 日文 / 韩文名不靠空格分词，紧挨汉字也要替换；拉丁名挨着汉字（换文种）也算词边界；同文种字母相连仍不算（Ann ≠ Anna，Иван ≠ Иванов）；
+    // 名字互为子串时先换长的（张三丰不能变成「<character>丰」）
+    // First audit A1: Chinese / Japanese / Korean names are not space-delimited and are replaced even right next to Han text; a Latin name next to Han (a script change) is at a
+    // word boundary too; letters of the same kind still join (Ann != Anna, Иван != Иванов); when one name contains another the longer one goes first (张三丰 must not become "<character>丰")
+    { const char *kn[] = { "张三" }; o = scrub("角色张三进入营地\n张三abc 与 abc张三\n「张三」，张三：", kn, 1);
+      assert(has(o, "角色<character>进入营地") && has(o, "<character>abc 与 abc<character>") && has(o, "「<character>」，<character>：") && !has(o, "张三")); free(o); }
+    { const char *kn[] = { "张三", "张三丰" }; o = scrub("张三丰来了，张三走了", kn, 2); assert(has(o, "<character>来了，<character>走了") && !has(o, "丰")); free(o); }
+    o = scrub("/save/张三/a.d2s /save/张三丰/b.d2s 张三丰回城", NULL, 0); assert(has(o, "/save/<character>/a.d2s /save/<character>/b.d2s <character>回城") && !has(o, "丰")); free(o);
+    { const char *kn[] = { "갈카미르", "Ann", "Иван", "ガルカ" }; o = scrub("갈카미르가 마을에 / Anna stays, Ann goes / Иванов stays, Иван goes / ガルカミール", kn, 4);
+      assert(has(o, "<character>가 마을에") && has(o, "Anna stays, <character> goes") && has(o, "Иванов stays, <character> goes") && has(o, "<character>ミール")); free(o); }
     o = scrub("home /Users/someone/x mail someone.x@example.com id 12345678-1234-1234-1234-123456789abc dev 0123ABCD-0123456789ABCDEF ok 0123ABCD-0123456789ABCDEF1 keep deadbeef-cafe", NULL, 0);
     assert(has(o, "home <redacted>/x mail <redacted> id <redacted> dev <redacted> ok 0123ABCD-0123456789ABCDEF1 keep deadbeef-cafe")); free(o);
     o = scrub("屏幕：My Monitor 27，x 屏幕 2622x1206，y 屏幕 Living Room，z", NULL, 0);
