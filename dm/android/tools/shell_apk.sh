@@ -1,7 +1,7 @@
 #!/bin/bash
 # 出安卓的发布包：一个不含任何游戏内容的 APK。玩家用自己的游戏文件在电脑上做导入包（dm/tools/d2rm_android.py），拷进手机，App 打开时导入。
 #   shell_apk.sh [release] [gradle 参数…]      例：shell_apk.sh -PdmAppId=org.example.test（换包名并排装）
-#   带手机端生成器：shell_apk.sh -PdmGenRuntime=<gen_runtime.sh 的输出>（玩家不用电脑，App 首次打开自己生成导入包；生成器只是工具，仍不含游戏内容）
+#   主包缺省带手机端生成器（玩家不用电脑，App 首次打开自己生成导入包；生成器只是工具，仍不含游戏内容），见下面 DM_GEN_RUNTIME
 #   缺省出调试包（可调试，测试用：art_compare.sh 要 run-as）；release = 发布用的正式包：release 构建、用正式钥匙签，钥匙与密码在本机
 #   ${DM_ANDROID_SIGN:-~/.config/dm-android/release.env}（DM_ANDROID_KEYSTORE / DM_ANDROID_KEY_ALIAS / DM_ANDROID_KEY_PASS），不进仓库
 # 产物（$DM_ROOT/build/android_shell/）：D2RMobile-android.apk；gen/ = 编进去的替身表；ref/ = 用本机游戏文件生成的真表（只用来核对，不发布）
@@ -13,7 +13,7 @@
 # 环境：JAVA_HOME（JDK 17+）、ANDROID_HOME（SDK 36 + NDK 29.0.14206865 + CMake 3.31.6）；缺省取 Homebrew 的 openjdk@17 与 ~/Library/Android/sdk
 # Build the Android release package: an APK with no game content. Players make the import pack on a computer from their own game files (dm/tools/d2rm_android.py), copy it to the phone, and the App imports it when opened.
 #   shell_apk.sh [release] [gradle arguments...]      e.g. shell_apk.sh -PdmAppId=org.example.test (another application id, to install side by side)
-#   With the on-phone generator: shell_apk.sh -PdmGenRuntime=<output of gen_runtime.sh> (no computer needed: the App makes the import pack itself on first launch; the generator is only tools, still no game content)
+#   The main package carries the on-phone generator by default (no computer needed: the App makes the import pack itself on first launch; the generator is only tools, still no game content), see DM_GEN_RUNTIME below
 #   Default is a debug package (debuggable, for testing: art_compare.sh needs run-as); release = the package for publishing: a release build signed with the release key, whose key and password live on this machine in
 #   ${DM_ANDROID_SIGN:-~/.config/dm-android/release.env} (DM_ANDROID_KEYSTORE / DM_ANDROID_KEY_ALIAS / DM_ANDROID_KEY_PASS), never in the repository
 # Products ($DM_ROOT/build/android_shell/): D2RMobile-android.apk; gen/ = the stand-in tables compiled in; ref/ = the real tables generated from this machine's game files (only for checking, never released)
@@ -52,6 +52,18 @@ cp "$O/ref/native_art/dm_touch_native_art.c" "$G/" && cp "$G/dm_vault_tab.h" "$G
 eval "$(bash "$DM/tools/version.sh")"; [ -z "${DM_VERSION_ERROR:-}" ] || die "version.sh：$DM_VERSION_ERROR"; [ -z "${DM_VERSION_WARN:-}" ] || t "version.sh：$DM_VERSION_WARN"
 t "版本 $DM_VERSION 构建号 $DM_BUILD（$DM_BUILD_SOURCE）显示 $DM_VERSION_LABEL"
 VER=(-PdmVersionName="$DM_VERSION" -PdmBuildNumber="$DM_BUILD" -PdmVersionLabel="$DM_VERSION_LABEL")
+# 手机端生成器缺省编进主包（同一个 App：没有导入包就自己生成）。运行时 = gen_runtime.sh 的输出，脚本与翻译工具源码都没变就复用，否则重编（约 5 分钟，要网）；
+#   DM_GEN_RUNTIME=<目录> 指定输出位置，DM_GEN_RUNTIME=none 出不带生成器的包（只认电脑做的导入包）；工作目录 DM_GEN_WORK 要 ASCII 路径
+# The on-phone generator goes into the main package by default (one App: it makes the import pack itself when there is none). The runtime is the output of gen_runtime.sh,
+#   reused while neither the script nor the translator sources changed, otherwise rebuilt (about 5 minutes, needs the network);
+#   DM_GEN_RUNTIME=<dir> sets where it goes, DM_GEN_RUNTIME=none builds a package without the generator (only computer-made import packs); the work directory DM_GEN_WORK must be an ASCII path
+GR=${DM_GEN_RUNTIME:-$HOME/dm-android/genrt}; GEN=()
+if [ "$GR" != none ]; then
+  XS=$(cat "$DM/gfx/tools/dmsh_xlate/Program.cs" "$DM/gfx/tools/dmsh_xlate/dmsh_xlate.csproj" | shasum -a 256 | cut -c1-16); SS=$(shasum -a 256 "$HERE/gen_runtime.sh" | cut -c1-16)
+  if grep -qx "xlate_source_sha=$XS" "$GR/assets/dmgen/runtime.txt" 2> /dev/null && grep -qx "script_sha=$SS" "$GR/assets/dmgen/runtime.txt"; then t "手机端生成器运行时：复用 $GR"
+  else t "手机端生成器运行时：重编到 $GR"; bash "$HERE/gen_runtime.sh" "${DM_GEN_WORK:-$HOME/dm-android/genrt-work}" "$GR" > "$O/gen_runtime.log" 2>&1 || die "编运行时失败，日志 $O/gen_runtime.log"; fi
+  GEN=(-PdmGenRuntime="$GR")
+fi
 t "构建 APK"
 if [ $KIND = release ]; then
   SIGN=${DM_ANDROID_SIGN:-$HOME/.config/dm-android/release.env}; [ -f "$SIGN" ] || die "没有正式钥匙配置 $SIGN"
@@ -65,7 +77,7 @@ if [ $KIND = release ]; then
   TASK=:app:assembleRelease; OUT=$W/dm/android/app/build/outputs/apk/release/app-release.apk
 else unset DM_ANDROID_KEYSTORE; TASK=:app:assembleDebug; OUT=$W/dm/android/app/build/outputs/apk/debug/app-debug.apk; fi
 rm -f "$OUT"   # 增量打包会在旧 APK 上追加、留下空洞（实测 25 MB 的内容出了 46 MB），整份重写 | incremental packaging appends to the old APK and leaves holes (25 MB of content came out as 46 MB in a test); rewrite it whole
-gradle --no-daemon -q -p "$W/dm/android" $TASK -PdmGenDir="$G" -PdmPython="$PY" "${VER[@]}" "$@" > "$O/build.log" 2>&1 || { grep -E "error|FAIL" "$O/build.log" | head -8; die "构建失败，日志 $O/build.log"; }
+gradle --no-daemon -q -p "$W/dm/android" $TASK -PdmGenDir="$G" -PdmPython="$PY" "${VER[@]}" "${GEN[@]}" "$@" > "$O/build.log" 2>&1 || { grep -E "error|FAIL" "$O/build.log" | head -8; die "构建失败，日志 $O/build.log"; }
 cp "$OUT" "$O/D2RMobile-android.apk" || die "没找到构建出的 APK"
 # 核对：APK 里不许有游戏内容——真表里的字符串（编年史仓库的物品键与图标路径，只取源码里本来没有的：多语表等会带物品名）不能出现在原生库里，
 #   也不许带游戏程序 / 着色器包 / 覆盖层

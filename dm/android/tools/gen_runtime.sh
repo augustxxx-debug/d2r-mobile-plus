@@ -154,6 +154,7 @@ leak=$(LC_ALL=C grep -raoE -- "/Users/[A-Za-z0-9._-]+|$HOME" "$RT" "$J" | head -
 { echo "python=3.13.16-0 numpy=1.26.2 lz4=4.3.3 capstone=5.0.7 pillow=13.0.0 freetype=2.14.3 harfbuzz=14.5.0 zlib-ng=2.3.3 fonttools=4.67.0"
   echo "spirv-tools=$SPVT spirv-headers=$SPVH"
   echo "xlate_source_sha=$XSHA"
+  echo "script_sha=$(shasum -a 256 "$0" | cut -c1-16)"   # shell_apk.sh 据此与 xlate_source_sha 判断能否复用这份运行时 | shell_apk.sh reuses this runtime only when this and xlate_source_sha still match
   (cd "$OUT" && shasum -a 256 assets/dmgen/runtime.zip jniLibs/arm64-v8a/*.so)
 } > "$OUT/assets/dmgen/runtime.txt"
 cat "$OUT/assets/dmgen/runtime.txt"; du -sh "$OUT/assets/dmgen/runtime.zip" "$J"

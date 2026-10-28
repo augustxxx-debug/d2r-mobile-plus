@@ -1,6 +1,6 @@
 # Playing on an Android phone
 
-The Android version works like the iOS shell: the release page has an **APK that contains no game content**, you make an **import pack** on a computer from your own game files, copy it to the phone, and the App imports it when you open it. No adb, no Android Studio, and no need to build the APK yourself.
+The Android version works like the iOS shell: the release page has an **APK that contains no game content**, you make an **import pack** on a computer from your own game files, copy it to the phone, and the App imports it when you open it. No adb, no Android Studio, and no need to build the APK yourself. You can also skip the computer entirely: put the game files on the phone and the App makes the pack itself (see "No computer").
 
 中文：[ANDROID.zh-CN.md](ANDROID.zh-CN.md)
 
@@ -12,6 +12,21 @@ The Android version works like the iOS shell: the release page has an **APK that
 | Shaders in the import pack | The 6,927 game shader bundles are byte-for-byte identical to the set the port's authors tested on their phones |
 | Installing the APK, importing, playing | Works on a vivo X200 Ultra (Android 16): permission, import, character creation, playing, panels, NPC dialogs |
 | Frame rate | Measured by the port's authors: median 60 fps in the camp and in fights on a Redmi K50 Ultra (Snapdragon 8+ Gen 1); playable on a OnePlus 13 |
+
+## No computer: let the App make it on the phone
+
+The APK carries the generator. Put your game files on the phone and skip the import pack:
+
+```
+Download/S2X/D2R Mobile/ExeFS/   the ExeFS folder from your game files (main and sdk at least, about 24 MB)
+Download/S2X/D2R Mobile/data/    the game resources, as in step 2 below
+```
+
+Open the App. When it finds no import pack it says it is building the shader cache and starts by itself: it makes, on the phone and from your game files, the same content a computer would, byte for byte. It takes about 5–15 minutes, only once; stay on that screen. It needs about 3 GB of free space (the intermediate files are deleted afterwards, leaving about 0.7 GB). If files are missing, space runs out or a step fails, the screen says why, and the log is in `Download/S2X/D2R Mobile/gen_log.txt`. After installing a new APK it builds again by itself.
+
+`ExeFS` and `data` come from the same extraction (see [GAME_FILES.md](GAME_FILES.md)). On-phone generation uses the original font; for another UI font, make the import pack on a computer as below.
+
+To make it on a computer instead (faster, or when the phone is short of space), follow the three steps below; when an `android` import pack is on the phone, the App uses it first.
 
 ## Phone requirements
 
