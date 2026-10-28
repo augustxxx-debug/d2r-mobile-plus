@@ -95,6 +95,8 @@ t_pso_skey: t_pso_skey.m ../nvn/nvn_pso_skey.h ../nvn/nvn_obj.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_skey.m -framework Foundation
 t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pfv.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_cmdalloc: t_cmdalloc.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_cmdalloc.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 # 依赖一行一个、按字母序（免得加一个测试就整行冲突）；下面各条命令的先后不变
 # Dependencies one per line in alphabetical order (so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
 run: \
@@ -123,6 +125,7 @@ run: \
 	t_reorder_chain \
 	t_capmem \
 	t_defer_drain \
+	t_cmdalloc \
 	t_mp_grid \
 	t_gcap \
 	t_rts_gate \
@@ -177,6 +180,7 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
 	@./t_capmem; s=$$?; if [ $$s = 77 ]; then echo "SKIP t_capmem"; elif [ $$s != 0 ]; then exit $$s; fi   # 抓帧层与常驻内存（自己起两个子进程，一个带 METAL_CAPTURE_ENABLED）；77 = 机器不支持光追 | capture layer and resident memory (starts two children itself, one with METAL_CAPTURE_ENABLED); 77 = no ray tracing
 	./t_defer_drain   # 延迟释放在客体线程上也真销毁 | deferred release destroys even on the guest thread
+	@for a in "" --off; do ./t_cmdalloc $$a; s=$$?; if [ $$s = 77 ]; then echo "SKIP t_cmdalloc"; break; elif [ $$s != 0 ]; then exit $$s; fi; done   # 命令分配器超阈值换新；--off 证明分得出；77 = 旧接口版 | command allocators replaced above a threshold; --off proves it discriminates; 77 = older-API build
 	./t_gcap   # GPU 抓帧（DM_GPU_CAPTURE）；测试自己设 METAL_CAPTURE_ENABLED | GPU capture (DM_GPU_CAPTURE); the test sets METAL_CAPTURE_ENABLED itself
 	@for t in t_rts_gate t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
 	python3 test_tbdr_budget.py

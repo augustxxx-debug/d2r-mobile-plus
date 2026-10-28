@@ -105,6 +105,27 @@ static int g_alloc_n, g_alloc_cur;   // 主提交的在途槽（Metal 4：每槽
 static id<MTL4CommandAllocator> g_alloc4[ALLOC_MAX];   // 主提交的命令分配器池：开工时挑一个 GPU 已用完的，没有就新建（到上限才等） | Command allocator pool of the main submission: at start pick one the GPU has finished with, create a new one if there is none (wait only at the cap)
 static id<MTL4CommandAllocator> g_up_alloc4[3];
 static id<MTL4CommandAllocator> g_present_alloc4[3];
+// 命令分配器超阈值换新（RC1 资源审查：17 Pro 光追关 30 分钟局 9 个分配器 38 → 76 MB、Mac 五幕轮换 114 → 185 MB——MTL4CommandAllocator 的内存长到编过的最大一帧就不回落，reset 只标记可复用）。
+// 每个分配器每复用 CMDALLOC_EVERY 次查一次 allocatedSize，超过 CMDALLOC_MB 就在它空闲的那一刻（调用方保证 GPU 已用完）换一个新的，旧的随 ARC 放掉；新的只长到之后真用到的大小。
+// 环境 DM_CMDALLOC_MB=<MB>（0 = 关，A/B 用）、DM_CMDALLOC_EVERY=<次>（单测压小）。每次换新记一行「命令分配器换新：」（前 20 次、之后每 50 次），累计次数 / 放掉的字节进内存读数行
+// Command allocators replaced above a threshold (RC1 resource review: 17 Pro RT-off 30-minute run, 9 allocators 38 → 76 MB; Mac five-act rotation 114 → 185 MB - an MTL4CommandAllocator's memory grows to the largest frame ever encoded and never shrinks, reset only marks it reusable).
+// Every CMDALLOC_EVERY reuses of an allocator its allocatedSize is checked; above CMDALLOC_MB it is replaced at the moment it is idle (the caller guarantees the GPU finished with it), the old one released by ARC; the new one only grows to what is used from then on.
+// Environment DM_CMDALLOC_MB=<MB> (0 = off, for A/B), DM_CMDALLOC_EVERY=<count> (made small by the unit test). Each replacement logs a "命令分配器换新：" line (first 20, then every 50); the count / bytes released go into the memory readout line
+#define DM_CMDALLOC_HAVE 1
+#define CMDALLOC_MB 16
+#define CMDALLOC_EVERY 600
+static _Atomic uint64_t g_cmdalloc_recycled, g_cmdalloc_freed;
+static id<MTL4CommandAllocator> cmdalloc_recycle(id<MTL4CommandAllocator> a, uint32_t *uses, const char *what, int slot) {
+    static int every = -1, mb = -1; if (every < 0) { const char *e = getenv("DM_CMDALLOC_EVERY"), *m = getenv("DM_CMDALLOC_MB"); every = e && atoi(e) > 0 ? atoi(e) : CMDALLOC_EVERY; mb = m ? atoi(m) : CMDALLOC_MB; if (mb < 0) mb = CMDALLOC_MB;
+        MLOG("命令分配器换新：%s（每复用 %d 次查一次，超过 %d MB 且空闲就换新）", mb ? "开" : "关（DM_CMDALLOC_MB=0）", every, mb); }
+    if (!mb || !a || ++*uses < (uint32_t)every) return a;
+    *uses = 0; uint64_t sz = a.allocatedSize; if (sz <= ((uint64_t)mb << 20)) return a;
+    MTL4CommandAllocatorDescriptor *ad = [MTL4CommandAllocatorDescriptor new]; ad.label = a.label; NSError *ae = nil;
+    id<MTL4CommandAllocator> n = [g_dev newCommandAllocatorWithDescriptor:ad error:&ae]; if (!n) return a;   // 建不出：留着旧的照用 | cannot create: keep using the old one
+    uint64_t k = atomic_fetch_add(&g_cmdalloc_recycled, 1) + 1; atomic_fetch_add(&g_cmdalloc_freed, sz);
+    if (k <= 20 || k % 50 == 0) MLOG("命令分配器换新：%s槽 %d 已分配 %.1f MB > %d MB，换新（第 %llu 次，累计放掉 %.1f MB）", what, slot, sz / 1048576.0, mb, (unsigned long long)k, atomic_load(&g_cmdalloc_freed) / 1048576.0);
+    return n;
+}
 static CBUF g_present_cb[3];
 static _Atomic int g_present_slot_busy[3];   // 上屏槽：已提交、完成回调还没来 | Present slot: committed, completion callback not yet arrived
 static id<MTL4ArgumentTable> g_vt, g_ft, g_ct, g_up_ct;
@@ -625,6 +646,7 @@ void mtl_sub_begin(void) {
     if (alloc_i < 0) { alloc_i = 0; for (int i = 1; i < g_alloc_n; i++) if (g_alloc_fence[i] < g_alloc_fence[alloc_i]) alloc_i = i; g_alloc_waits++; mtl_wait(g_alloc_fence[alloc_i], UINT64_MAX); }
     g_alloc_cur = alloc_i;
 #if !DM_NVN_M3
+    { static uint32_t uses[ALLOC_MAX]; g_alloc4[alloc_i] = cmdalloc_recycle(g_alloc4[alloc_i], &uses[alloc_i], "主提交", alloc_i); }   // 此刻 GPU 已用完这一槽（栅栏已过或刚等完） | the GPU is done with this slot now (fence passed or just waited)
     [g_alloc4[alloc_i] reset];
     [g_cb beginCommandBufferWithAllocator:g_alloc4[alloc_i]];
 #endif
@@ -1269,6 +1291,7 @@ static void up_begin(void) {
     g_up_cb = [g_q commandBuffer];
     g_up_ce = [g_up_cb computeCommandEncoder];
 #else
+    { static uint32_t uses[3]; g_up_alloc4[slot] = cmdalloc_recycle(g_up_alloc4[slot], &uses[slot], "上传", (int)slot); }   // 占用标志刚等清：上一轮已做完 | the busy flag was just waited clear: the previous round is done
     [g_up_alloc4[slot] reset];
     g_up_cb = [g_dev newCommandBuffer];
     [g_up_cb beginCommandBufferWithAllocator:g_up_alloc4[slot]];
@@ -1506,6 +1529,13 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
 // Memory readout line (always on, low frequency, capped): resident memory, GPU allocated, deferred release queue, residency set object count, registered memory pool count / peak / tracking table capacity, cumulative texture re-uploads, game heap total / free / largest allocatable block (host dm_guest_heap_stat), and how far from the system memory limit (iOS only).
 // Purpose: to pin down "crashes with no log" -- the system gives no notice before killing a process for memory, and only readouts left beforehand can show which number kept climbing.
 // Called by the frame hook every 300 frames; printed when resident or GPU allocated changed by >= 64 MB, or game heap free space or largest allocatable block changed by >= 16 MB (the main heap normally has only about 100 MB left), otherwise one line every 3000 frames; capped at 400 lines per run. All integers (the frame hook runs on the small stack of a guest thread, so no floating-point formatting)
+#if DM_NVN_M3
+#define CMDALLOC_STAT_N 0ull
+#define CMDALLOC_STAT_MB 0.0
+#else
+#define CMDALLOC_STAT_N (unsigned long long)atomic_load(&g_cmdalloc_recycled)
+#define CMDALLOC_STAT_MB (atomic_load(&g_cmdalloc_freed) / 1048576.0)
+#endif
 static void res_census(unsigned long long frame, unsigned long long rss_mb) {
     @autoreleasepool {
         unsigned long nl[2] = {0, 0}, nr[2] = {0, 0}; unsigned long long bl[2] = {0, 0}, br[2] = {0, 0};   // [0] 贴图 [1] 缓冲；l = 在驻留集里，r = 已退役未销毁 | [0] textures [1] buffers; l = in the residency set, r = retired but not destroyed
@@ -1532,8 +1562,8 @@ void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb, int heap_
 #if TARGET_OS_IPHONE
     snprintf(avail, sizeof avail, "%llu MB", (unsigned long long)(os_proc_available_memory() >> 20));
 #endif
-    MLOG("内存 至帧 %llu：常驻 %llu MB，显卡已分配 %llu MB，延迟释放队列 %lu，驻留集 %lu 个，内存池 %d 个（峰值 %d / 跟踪表容量 %d），贴图重传累计 %llu 次；游戏堆 %llu MB，余量 %llu MB，最大可分配块 %llu KB%s；离系统内存上限还有 %s", frame, rss_mb, gpu, nd, nr, live, peak, cap, (unsigned long long)g_pkg_reuploads,
-        heap_mb, heap_free_mb, heap_maxblk_kb, heap_ok ? "" : "（未读到）", avail);
+    MLOG("内存 至帧 %llu：常驻 %llu MB，显卡已分配 %llu MB，延迟释放队列 %lu，驻留集 %lu 个，内存池 %d 个（峰值 %d / 跟踪表容量 %d），贴图重传累计 %llu 次；游戏堆 %llu MB，余量 %llu MB，最大可分配块 %llu KB%s；离系统内存上限还有 %s；命令分配器换新 %llu 次（放掉 %.0f MB）", frame, rss_mb, gpu, nd, nr, live, peak, cap, (unsigned long long)g_pkg_reuploads,
+        heap_mb, heap_free_mb, heap_maxblk_kb, heap_ok ? "" : "（未读到）", avail, CMDALLOC_STAT_N, CMDALLOC_STAT_MB);
 }
 void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads) { *uploads = g_pkg_uploads; *reuploads = g_pkg_reuploads; }
 uint64_t mtl_pkg_miss(void) { return g_pkg_miss; }
@@ -6467,6 +6497,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     // Guard: reusing this slot's command buffer / allocator while its previous round is still on the GPU = the watermark ran ahead of the GPU (what nvn_pqdone.h fixes). Log only, do not block
     if (atomic_load(&g_present_slot_busy[alloc_i])) { static _Atomic uint64_t nb; uint64_t k = atomic_fetch_add(&nb, 1) + 1;
         if (k <= 20 || k % 100 == 0) MLOG("【红】上屏命令分配器槽 %d 复用时上一轮还在 GPU 上（票 %llu，水位 %llu，第 %llu 次）", alloc_i, (unsigned long long)ticket, (unsigned long long)g_pq_done, (unsigned long long)k); }
+    if (!atomic_load(&g_present_slot_busy[alloc_i])) { static uint32_t uses[3]; g_present_alloc4[alloc_i] = cmdalloc_recycle(g_present_alloc4[alloc_i], &uses[alloc_i], "出图", alloc_i); }   // 上一轮的完成回调来过才换（见上面的守卫） | only replaced once the previous round's completion handler has run (see the guard above)
     [g_present_alloc4[alloc_i] reset];
     [g_q4 waitForDrawable:dr];
     CBUF cb = g_present_cb[alloc_i];
