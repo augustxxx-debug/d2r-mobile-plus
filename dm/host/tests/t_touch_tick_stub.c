@@ -12,6 +12,7 @@ void dm_world_walk(float nx, float ny) { (void)nx; (void)ny; } unsigned dm_world
 void dm_textinput_pump(void) {}   // 文本框接法（dm_textinput.c）：同上，给空桩 | text box hookup (dm_textinput.c): same as above, an empty stub
 void dm_update_pump(void) {}      // 选角页构建号与新版本提示（dm_update.c）：同上，给空桩 | build number and new-version notice on the character select page (dm_update.c): same as above, an empty stub
 void dm_crashfence_pump(void) {}   // 崩溃围栏的主菜单游戏内提示框（dm_crashfence.c）：同上，给空桩 | the crash fence's main-menu notice box (dm_crashfence.c): same as above, an empty stub
+void dm_community_pump(void) {}   // 社区入口的入口显隐与提示框（dm_community.c）：同上，给空桩 | the community entry's show / hide and notice box (dm_community.c): likewise an empty stub
 void dm_num_set(int n) { (void)n; }
 void dm_actions_pump(void) {}
 uint64_t dm_swapskill_filter(uint64_t b) { return b; }   // 副手组技能（dm_actions.c）：不压键 | swap-set skill (dm_actions.c): does not suppress keys
