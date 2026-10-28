@@ -1239,20 +1239,36 @@ void front_save_failed(int err) {
     });
 }
 
-// 原生提示一次（崩溃围栏「已关闭实验性功能」，dm/host/dm_crashfence.c）：覆盖 dm_crashfence.c 的弱日志实现；任意线程调，切主线程弹，不阻塞调用方
-// One native notice (crash fence "experimental features turned off", dm/host/dm_crashfence.c): overrides the weak logging implementation in dm_crashfence.c; callable from any thread, presented on the main thread, never blocks the caller
+// 原生提示一次（崩溃围栏「已关闭实验性功能」，dm/host/dm_crashfence.c）：覆盖 dm_crashfence.c 的弱日志实现；任意线程调，切主线程弹，不阻塞调用方。
+// 真机 e28e471：主菜单那一刻（前端启动中）弹出后日志记「已显示」，35 秒后屏幕上却没有了，也没人点确定。所以改成主菜单出来后等 3 秒再弹，
+// 弹出后每 2 秒看一次它还在不在窗口里：没点确定就不见了 → 记一行、重弹（最多 3 次）；点了确定记一行。
+// One native notice (crash fence "experimental features turned off", dm/host/dm_crashfence.c): overrides the weak logging implementation in dm_crashfence.c; callable from any thread, presented on the main thread, never blocks the caller.
+// Device run of e28e471: presented at the moment of the main menu (front end still starting) the log said "shown", yet 35 s later it was gone from the screen and nobody had tapped OK. So it is now presented 3 s after the main menu appears,
+// and checked every 2 s after presenting: gone without OK → log a line and present again (at most 3 times); tapping OK is logged.
+static void notice_present(NSString *t, NSString *m, int attempt) {
+    UIViewController *vc = nil;
+    for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
+        if ([s isKindOfClass:UIWindowScene.class]) for (UIWindow *w in ((UIWindowScene *)s).windows) if (w.isKeyWindow) vc = w.rootViewController;
+    while (vc.presentedViewController) vc = vc.presentedViewController;
+    if (!vc) { LOG("【红】前端：提示没有窗口，没弹：%s", t.UTF8String); return; }
+    __block int tapped = 0;
+    UIAlertController *a = [UIAlertController alertControllerWithTitle:t message:m preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:SWT("dmConfirm") style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { tapped = 1; LOG("前端：提示「%s」玩家点了确定", t.UTF8String); }]];
+    __weak UIAlertController *wa = a;
+    [vc presentViewController:a animated:YES completion:^{ LOG("前端：提示已显示：%s（第 %d 次，挂在 %s 上）", t.UTF8String, attempt, NSStringFromClass(vc.class).UTF8String); }];
+    __block int n = 0;   // 计时器自己持有这个块，看到结论就作废 | the timer holds this block itself and is invalidated once there is an answer
+    [NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer *tm) {
+        n++; UIAlertController *s = wa;
+        if (tapped) { [tm invalidate]; return; }
+        if (s && s.viewIfLoaded.window) { if (n >= 15) [tm invalidate]; return; }   // 还在：看到 30 秒为止 | still there: watch for up to 30 s
+        [tm invalidate];
+        LOG("【红】前端：提示「%s」没点确定就不见了（弹出后约 %d 秒）%s", t.UTF8String, 2 * n, attempt < 3 ? "，重弹" : "，不再重弹");
+        if (attempt < 3) notice_present(t, m, attempt + 1);
+    }];
+}
 void front_notice(const char *title, const char *msg) {
     NSString *t = title ? @(title) : nil, *m = msg ? @(msg) : nil;
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *vc = nil;
-        for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
-            if ([s isKindOfClass:UIWindowScene.class]) for (UIWindow *w in ((UIWindowScene *)s).windows) if (w.isKeyWindow) vc = w.rootViewController;
-        while (vc.presentedViewController) vc = vc.presentedViewController;
-        if (!vc) { LOG("【红】前端：提示没有窗口，没弹：%s", t.UTF8String); return; }
-        UIAlertController *a = [UIAlertController alertControllerWithTitle:t message:m preferredStyle:UIAlertControllerStyleAlert];
-        [a addAction:[UIAlertAction actionWithTitle:SWT("dmConfirm") style:UIAlertActionStyleDefault handler:nil]];
-        [vc presentViewController:a animated:YES completion:^{ LOG("前端：提示已显示：%s", t.UTF8String); }];
-    });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ notice_present(t, m, 1); });
 }
 
 #define THERMAL_RESTORE_SEC 60
