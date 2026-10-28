@@ -26,6 +26,7 @@ int main(void) { printf("SKIP：旧接口版没有光追阴影模块\n"); return
 #define RTS_UNC_PASS 0
 #define RTS_UNC_QUOTA 0
 #define RTS_UNC_PENDING 0
+#define RTS_UNC_PRIM 0
 #endif
 #ifndef RTS_WHY
 #define RTS_WHY() ""   // 4978d39 及更早：不记跳过追踪的具体原因 | 4978d39 and earlier: the specific reason for skipping the trace is not recorded
@@ -187,6 +188,22 @@ int main(void) { @autoreleasepool {
       EXPECT("新建配额满：记 2 次", 2, RTS_UNC(RTS_UNC_QUOTA) - q0); EXPECT("网格待建：记 12 次", 12, RTS_UNC(RTS_UNC_PENDING) - p0);
       frame_open(); prepass(); rp_end(); EXPECT("测试前提：这帧是光追帧", 1, (sh(0), g_rts.rt_frame)); main_pass(); hdr_again(); frame_close();
       EXPECT("阴影通道没登记：记 1 次", 1, RTS_UNC(RTS_UNC_PASS) - s0); }
+    // 7. 真机 d42c8ee 局内每帧 4–8 次「非三角形列表或不足 3 顶点」：不足 3 顶点的绘制画不出东西，算已覆盖；三角形带（含重启）展开成列表进 TLAS；点之类仍记图元不认
+    // 7. Device d42c8ee, 4-8 per frame in game of "not a triangle list or under 3 vertices": a draw with fewer than 3 vertices draws nothing and counts as covered; triangle strips (with restarts) are expanded into lists and enter the TLAS; points and the like still count as unsupported primitives
+    { uint16_t *st = (uint16_t *)(g_pool + 600000); for (int k = 0; k < 48; k++) st[k] = (uint16_t)((k * 37 + 5) % 512);   // 48 个索引的带 = 46 个三角形 | a 48-index strip = 46 triangles
+      uint16_t *rs = (uint16_t *)(g_pool + 600200); uint16_t rsv[8] = {300, 301, 302, 303, 0xFFFF, 304, 305, 306}; memcpy(rs, rsv, sizeof rsv);   // 重启：(300,301,302)、(302,301,303)，再 (304,305,306) | restart: (300,301,302), (302,301,303), then (304,305,306)
+      int applied = 0;
+      for (int i = 0; i < 12 && !applied; i++) {
+          frame_open(); prepass(); shadow_pass(); sh(0); sdraw(g_idx, 2, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x2b);   // 2 个顶点的空绘制 | an empty draw of 2 vertices
+          sdraw((const uint8_t *)st, 48, NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP, 0x2b); sdraw((const uint8_t *)rs, 8, NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP, 0x2b);
+          main_pass(); hdr_again(); frame_close(); applied = map_depth() == 1.0f; }
+      EXPECT("空绘制 + 三角形带的帧：光追生效（阴影图清回 1.0）", 1, applied);
+      rts_mesh *m46 = NULL, *m3 = NULL; for (uint32_t k = 0; k < g_rts.meshes.cap; k++) { rts_mesh *m = g_rts.meshes.vals[k]; if (m && m->tris == 46) m46 = m; if (m && m->tris == 3 && m->ib && m->ib.length == 36) m3 = m; }
+      EXPECT("48 个索引的带建成 46 个三角形", 1, m46 != NULL);
+      const uint32_t *t = m3 ? m3->ib.contents : NULL; uint32_t want[9] = {300, 301, 302, 302, 301, 303, 304, 305, 306};
+      EXPECT("带重启：展开成 3 个三角形，绕序交替、重启后重新起算", 1, t && !memcmp(t, want, sizeof want));
+      long long pr0 = RTS_UNC(RTS_UNC_PRIM); frame_open(); prepass(); shadow_pass(); sh(0); sdraw(g_idx, 48, NVN_DRAW_PRIMITIVE_POINTS, 0x2b); main_pass(); hdr_again(); frame_close();
+      EXPECT("点图元：记图元不认 1 次", 1, RTS_UNC(RTS_UNC_PRIM) - pr0); }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

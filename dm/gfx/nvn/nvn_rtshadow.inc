@@ -50,7 +50,7 @@ typedef struct { uint64_t key, bytes; id<MTLAccelerationStructure> as; id<MTLBuf
 #define RTS_UNC(r) ((long long)g_rts.n_unc[r])   // 单测用：光追帧里没进 TLAS 的绘制按原因累计 | for the unit tests: draws outside the TLAS in ray-traced frames, by reason
 // 光追帧里一次阴影绘制没进 TLAS 的原因（真机 3fc0f41：走到某处后每帧约 8 次，日志分不出是哪种） | Why a shadow draw in a ray-traced frame stayed outside the TLAS (device run of 3fc0f41: about 8 per frame after walking somewhere, and the log could not tell which)
 enum { RTS_UNC_PASS, RTS_UNC_NODEPTH, RTS_UNC_SMAPFULL, RTS_UNC_PRIM, RTS_UNC_FMT, RTS_UNC_MAT, RTS_UNC_IDX, RTS_UNC_VRANGE, RTS_UNC_VPOOL, RTS_UNC_QUOTA, RTS_UNC_ALLOC, RTS_UNC_PENDING, RTS_UNC_INSTFULL, RTS_UNC_N };
-static const char *const k_rts_unc[RTS_UNC_N] = { "通道没登记", "通道没挂深度", "阴影图登记满", "非三角形列表或不足 3 顶点", "顶点属性 / 格式 / 索引类型不认", "缺物体矩阵常量", "索引段不在内存池", "顶点范围越界",
+static const char *const k_rts_unc[RTS_UNC_N] = { "通道没登记", "通道没挂深度", "阴影图登记满", "图元不认（不是三角形列表 / 带）", "顶点属性 / 格式 / 索引类型不认", "缺物体矩阵常量", "索引段不在内存池", "顶点范围越界",
     "顶点不在内存池", "本帧新建配额满", "网格对象建不出", "网格待建 / 刚提交", "实例满" };
 #define RTS_WHY() rts_frame_why()   // 单测用：刚结束这一帧的回退原因（"" = 完整） | for the unit tests: the fallback reason of the frame just finished ("" = complete)
 static struct {
@@ -63,7 +63,7 @@ static struct {
     // 本帧的阴影图附件（rp_begin_ex 登记：贴图、mip、层、本帧第一次挂它时清没清、清成什么）；nuncov = 本帧没被 TLAS 代表的阴影绘制数
     // This frame's shadow-map attachments (registered by rp_begin_ex: texture, mip, slice, whether the first pass on it this frame cleared it and to what); nuncov = shadow draws this frame not represented by the TLAS
     struct { id<MTLTexture> t; NSUInteger level, slice; double cd; int cleared, used; } smap[RTS_MAX_SMAP]; int nsmap, cur_smap, nuncov, map_cleared;
-    int unc_why, pass_why; uint64_t n_unc[RTS_UNC_N]; int f_unc[RTS_UNC_N]; uint64_t n_unc_log;   // 没进 TLAS 的原因：本次绘制 / 本通道、累计、本帧、按原因记过几帧 | outside-the-TLAS reason: this draw / this pass, cumulative, this frame, frames logged
+    int unc_why, pass_why; uint32_t prim_mask; uint64_t n_empty, n_strip; uint64_t n_unc[RTS_UNC_N]; int f_unc[RTS_UNC_N]; uint64_t n_unc_log;   // 没进 TLAS 的原因：本次绘制 / 本通道、累计、本帧、按原因记过几帧 | outside-the-TLAS reason: this draw / this pass, cumulative, this frame, frames logged
     char why[200];   // 本帧光追帧没追踪的具体原因（rts_build_and_trace 写，下一帧开头随回退行记下） | the specific reason this ray-traced frame did not trace (written by rts_build_and_trace, logged with the fallback line at the next frame start)
     struct { uint64_t frame, lay, key; } memo[RTS_MEMO];
     float cam[16], lvp[16]; int have_cam, have_sun; float sun[3];
@@ -244,9 +244,9 @@ static const char *rts_unc_str(char *b, size_t n, const uint64_t *c64, const int
 static const char *rts_frame_why(void) { const char *w = rts_frame_fail(); return w ? w : ""; }
 static void rts_frame_begin(uint64_t f) {
     char ubuf[512];
-    if (g_rts.n_frames && g_rts.n_frames % 600 == 0) MLOG("光追阴影：第 %llu 帧 实例 %d（重复 %d、蒙皮 %d、格式不认 %d）、网格缓存 %d（%.1f / %llu MB，预算淘汰 %llu）、累计建 %llu 个 BLAS（%.1f 万三角形）、追踪 %llu 帧、进 TLAS 的阴影绘制 %llu 次、_rt 变体 %d 个（缺 %d）；光追帧 %llu、失败退回 %llu 帧、有绘制没进 TLAS 整帧照原版 %llu 帧、光追帧里没进 TLAS 的绘制 %llu 次、槽 %d（全忙 %llu 次）、键摘要 %.0f µs / %.0f KB 每光追帧；没进 TLAS 分原因：%s",
+    if (g_rts.n_frames && g_rts.n_frames % 600 == 0) MLOG("光追阴影：第 %llu 帧 实例 %d（重复 %d、蒙皮 %d、格式不认 %d）、网格缓存 %d（%.1f / %llu MB，预算淘汰 %llu）、累计建 %llu 个 BLAS（%.1f 万三角形）、追踪 %llu 帧、进 TLAS 的阴影绘制 %llu 次、_rt 变体 %d 个（缺 %d）；光追帧 %llu、失败退回 %llu 帧、有绘制没进 TLAS 整帧照原版 %llu 帧、光追帧里没进 TLAS 的绘制 %llu 次、槽 %d（全忙 %llu 次）、键摘要 %.0f µs / %.0f KB 每光追帧；没进 TLAS 分原因：%s；空绘制（不足 3 顶点，算已覆盖）%llu 次、三角形带 %llu 次、不认的图元类型掩码 %#x",
         (unsigned long long)g_rts.n_frames, g_rts.ninst, g_rts.ndup, g_rts.nskin, g_rts.nskip_fmt, g_rts.nmesh, g_rts.cache_bytes / 1048576.0, (unsigned long long)(g_rts.budget >> 20), (unsigned long long)g_rts.n_evict_budget, (unsigned long long)g_rts.n_builds, g_rts.build_tris / 1e4, (unsigned long long)g_rts.n_traced, (unsigned long long)g_rts.n_skipped_draws, g_rts.n_rt_loaded, g_rts.n_rt_missing,
-        (unsigned long long)g_rts.n_rt_frames, (unsigned long long)g_rts.n_fail_frames, (unsigned long long)g_rts.n_partial_frames, (unsigned long long)g_rts.n_orig_draws, g_rts.nslot, (unsigned long long)g_rts.n_slot_busy, g_rts.key_ns / 1e3 / MAX(g_rts.n_rt_frames, 1), g_rts.key_bytes / 1024.0 / MAX(g_rts.n_rt_frames, 1), rts_unc_str(ubuf, sizeof ubuf, g_rts.n_unc, NULL));
+        (unsigned long long)g_rts.n_rt_frames, (unsigned long long)g_rts.n_fail_frames, (unsigned long long)g_rts.n_partial_frames, (unsigned long long)g_rts.n_orig_draws, g_rts.nslot, (unsigned long long)g_rts.n_slot_busy, g_rts.key_ns / 1e3 / MAX(g_rts.n_rt_frames, 1), g_rts.key_bytes / 1024.0 / MAX(g_rts.n_rt_frames, 1), rts_unc_str(ubuf, sizeof ubuf, g_rts.n_unc, NULL), (unsigned long long)g_rts.n_empty, (unsigned long long)g_rts.n_strip, g_rts.prim_mask);
     // 1. 就绪闸门：上一帧（必须紧挨着）完整才走光追；光追帧失败 → 后面几帧不追踪，退避 2、4 … 512 帧再试。失败的那一帧本身阴影图没被清，原版阴影还在（六审 5.1）
     // 1. Readiness gate: ray trace only if the previous (adjacent) frame was complete; a failed ray-traced frame → no tracing for a while, retry after 2, 4 … 512 frames. The failing frame itself keeps its uncleared original shadow map (sixth review 5.1)
     const char *why = g_rts.n_frames && g_rts.frame + 1 == f ? rts_frame_fail() : "上一帧没经过光追模块";
@@ -306,11 +306,24 @@ static void rts_note_clear(id<MTLTexture> t, NSUInteger level, NSUInteger slice,
 }
 // 阴影通道的一次绘制 → 网格（新的或待建的：排队构建）+ 实例。返回 1 = 这次绘制由本帧 TLAS 里的可用 BLAS 代表 | One shadow-pass draw → mesh (new or pending: queued for a build) + instance. Returns 1 = the draw is represented by a usable BLAS in this frame's TLAS
 // 算本次绘制的网格键并取缓存项：新网格建对象、待建的排队（新网格的顶点范围在这里校验）；返回 NULL = 这次绘制没有可用的网格 | Compute this draw's mesh key and fetch the cache entry: create objects for a new mesh, queue a pending one (the vertex range is validated here); NULL = no usable mesh for this draw
-static rts_mesh *rts_mesh_get(const p_draw *dw, const p_draw_idx *di, int n, va_st at, vs_st sm, NVNbufferRange vb, uint64_t *pkey, uint64_t t0) {
+// 三角形带 → 三角形列表（32 位索引，相对 vbase）：第 k 个三角形偶数为 (k, k+1, k+2)、奇数为 (k+1, k, k+2)；带索引的遇到重启值（16 位 0xFFFF、32 位 0xFFFFFFFF，Metal 带图元恒开重启）从下一个索引起新带。返回三角形数；out 为 NULL 只数
+// Triangle strip → triangle list (32-bit indices relative to vbase): triangle k is (k, k+1, k+2) when even, (k+1, k, k+2) when odd; an indexed strip restarts after the restart value (16-bit 0xFFFF, 32-bit 0xFFFFFFFF; Metal strips always restart). Returns the triangle count; out NULL only counts
+static uint32_t rts_strip_expand(const uint8_t *ib, int isz, int n, uint32_t *out) {
+    uint32_t nt = 0, w[3] = {0}; int run = 0, par = 0; uint32_t rs = isz == 2 ? 0xFFFFu : 0xFFFFFFFFu;
+    for (int k = 0; k < n; k++) {
+        uint32_t v = !ib ? (uint32_t)k : isz == 2 ? ((const uint16_t *)ib)[k] : ((const uint32_t *)ib)[k];
+        if (ib && v == rs) { run = 0; par = 0; continue; }
+        w[0] = w[1]; w[1] = w[2]; w[2] = v;
+        if (++run >= 3) { if (out) { uint32_t *t = out + nt * 3; if (par) { t[0] = w[1]; t[1] = w[0]; } else { t[0] = w[0]; t[1] = w[1]; } t[2] = w[2]; } nt++; par ^= 1; }
+    }
+    return nt;
+}
+static rts_mesh *rts_mesh_get(const p_draw *dw, const p_draw_idx *di, int n, int strip, va_st at, vs_st sm, NVNbufferRange vb, uint64_t *pkey, uint64_t t0) {
     uint64_t key = *pkey;
     int isz = di ? (di->itype == 1 ? 2 : 4) : 0; uint64_t ibytes = 0; const uint8_t *ib = NULL; uint64_t nv = (uint64_t)n; int64_t vbase = dw ? dw->first : di->base_vertex;
     if (di) { if (__builtin_mul_overflow((uint64_t)n, (uint64_t)isz, &ibytes) || !(ib = rts_mem(di->ibuf, ibytes))) { g_rts.unc_why = RTS_UNC_IDX; return NULL; }
-        uint32_t mx = 0; if (isz == 2) { for (int k = 0; k < n; k++) { uint32_t v = ((const uint16_t *)ib)[k]; if (v > mx) mx = v; } } else { for (int k = 0; k < n; k++) { uint32_t v = ((const uint32_t *)ib)[k]; if (v > mx) mx = v; } }
+        uint32_t mx = 0, rs = strip ? (isz == 2 ? 0xFFFFu : 0xFFFFFFFFu) : 0;   // 带的重启值不算顶点 | a strip's restart value is not a vertex
+        if (isz == 2) { for (int k = 0; k < n; k++) { uint32_t v = ((const uint16_t *)ib)[k]; if (v > mx && (!rs || v != rs)) mx = v; } } else { for (int k = 0; k < n; k++) { uint32_t v = ((const uint32_t *)ib)[k]; if (v > mx && (!rs || v != rs)) mx = v; } }
         nv = (uint64_t)mx + 1; key = rts_digest(key, ib, ibytes); }
     // 解码核读第 vbase … vbase+nv−1 个顶点的属性 0：这段要在顶点缓冲声明的范围内，整段也要落在内存池里；乘加都查溢出 | The decode kernel reads attribute 0 of vertices vbase … vbase+nv−1: that range must lie within the declared vertex buffer and entirely inside a memory pool; every multiply / add is overflow-checked
     uint64_t asz = rts_attr_bytes(at.fmt), vlast, vend;
@@ -323,16 +336,19 @@ static rts_mesh *rts_mesh_get(const p_draw *dw, const p_draw_idx *di, int n, va_
     if (!m || (m->state == RTS_PENDING && !m->queued)) {   // 新网格，或待建而本帧还没排队（缺相机 / 深度、构建失败、配额满、关了再开之后都会落到这里） | new mesh, or pending and not queued this frame (after a missing camera / depth, a failed build, a full quota, off then on)
         if (g_rts.npend >= RTS_BUILDS_PER_FRAME) { g_rts.unc_why = RTS_UNC_QUOTA; return NULL; }   // 本帧配额用完：下一帧再建 | quota for this frame used up: build next frame
         if (!m) {
-            m = calloc(1, sizeof *m); m->key = key; m->nverts = (uint32_t)nv; m->tris = (uint32_t)(n / 3); m->isz = (uint32_t)isz;
+            uint32_t stri = strip ? rts_strip_expand(ib, isz, n, NULL) : 0;
+            if (strip && !stri) { g_rts.unc_why = RTS_UNC_N; return NULL; }   // 带里没有完整三角形（全是重启）：画不出东西，算已覆盖 | no complete triangle in the strip (all restarts): draws nothing, counts as covered
+            m = calloc(1, sizeof *m); m->key = key; m->nverts = (uint32_t)nv; m->tris = strip ? stri : (uint32_t)(n / 3); m->isz = strip ? 4 : (uint32_t)isz;
             m->pos = [g_dev newBufferWithLength:(NSUInteger)nv * 12 options:MTLResourceStorageModePrivate];
-            if (ib) { m->ib = [g_dev newBufferWithBytes:ib length:(NSUInteger)ibytes options:MTLResourceStorageModeShared]; }   // 索引拷一份：游戏的索引内存会被复用 | copy the indices: the game's index memory gets reused
+            if (strip) { m->ib = [g_dev newBufferWithLength:(NSUInteger)stri * 12 options:MTLResourceStorageModeShared]; if (m->ib) rts_strip_expand(ib, isz, n, m->ib.contents); }   // 带展开成列表（32 位） | strip expanded into a list (32-bit)
+            else if (ib) { m->ib = [g_dev newBufferWithBytes:ib length:(NSUInteger)ibytes options:MTLResourceStorageModeShared]; }   // 索引拷一份：游戏的索引内存会被复用 | copy the indices: the game's index memory gets reused
             MTL4PrimitiveAccelerationStructureDescriptor *pd = [MTL4PrimitiveAccelerationStructureDescriptor new]; MTL4AccelerationStructureTriangleGeometryDescriptor *gd = [MTL4AccelerationStructureTriangleGeometryDescriptor new];
             gd.vertexBuffer = (MTL4BufferRange){m->pos.gpuAddress, m->pos.length}; gd.vertexFormat = MTLAttributeFormatFloat3; gd.vertexStride = 12; gd.triangleCount = m->tris; gd.opaque = YES;
-            if (m->ib) { gd.indexBuffer = (MTL4BufferRange){m->ib.gpuAddress, m->ib.length}; gd.indexType = isz == 2 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32; }
+            if (m->ib) { gd.indexBuffer = (MTL4BufferRange){m->ib.gpuAddress, m->ib.length}; gd.indexType = m->isz == 2 ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32; }
             pd.geometryDescriptors = @[gd]; pd.usage = MTLAccelerationStructureUsageNone;
             MTLAccelerationStructureSizes sz = [g_dev accelerationStructureSizesWithDescriptor:pd];
             m->as = [g_dev newAccelerationStructureWithSize:sz.accelerationStructureSize];
-            if (!m->pos || !m->as || (ib && !m->ib)) { defer_obj_release(m->pos); defer_obj_release(m->as); defer_obj_release(m->ib); m->as = nil; m->pos = m->ib = nil; free(m); g_rts.unc_why = RTS_UNC_ALLOC; return NULL; }
+            if (!m->pos || !m->as || ((ib || strip) && !m->ib)) { defer_obj_release(m->pos); defer_obj_release(m->as); defer_obj_release(m->ib); m->as = nil; m->pos = m->ib = nil; free(m); g_rts.unc_why = RTS_UNC_ALLOC; return NULL; }
             if (sz.buildScratchBufferSize > g_rts.scratch_len) { defer_obj_release(g_rts.scratch); g_rts.scratch_len = sz.buildScratchBufferSize * 2; g_rts.scratch = [g_dev newBufferWithLength:g_rts.scratch_len options:MTLResourceStorageModePrivate];
                 if (!g_rts.scratch) { g_rts.failed = 1; MLOG("【红】光追阴影：暂存缓冲 %lu KiB 建不出（退回原版阴影图）", (unsigned long)(g_rts.scratch_len >> 10)); } else res_add(g_rts.scratch); }
             res_add(m->pos); res_add(m->as); if (m->ib) res_add(m->ib);
@@ -347,8 +363,10 @@ static rts_mesh *rts_mesh_get(const p_draw *dw, const p_draw_idx *di, int n, va_
 }
 static int rts_instance(const p_draw *dw, const p_draw_idx *di, int prim, uint64_t f) {
     if (!g_rts.rt_frame) return 0;   // 不是光追帧（退避中）：不算键、不查缓存（真机键摘要每帧上毫秒，退避帧白算）；新网格在下一个光追帧排队 | not a ray-traced frame (backing off): no key, no cache lookup (on the device the key digest costs over a millisecond per frame, wasted in backoff frames); new meshes queue in the next ray-traced frame
-    if (prim != 4) { g_rts.unc_why = RTS_UNC_PRIM; return 0; }   // 只认三角形列表（抓帧里阴影通道全是） | triangle lists only (all shadow-pass draws in the capture)
-    int n = dw ? dw->count : di->count; if (n < 3) { g_rts.unc_why = RTS_UNC_PRIM; return 0; }
+    int strip = prim == 5;   // 5 三角形带：建网格时展开成列表；7 四边形与生产光栅化一样按三角形列表画 | 5 triangle strip: expanded into a list when the mesh is built; 7 quads are drawn as a triangle list, as production rasterization does
+    if (prim != 4 && prim != 7 && !strip) { g_rts.unc_why = RTS_UNC_PRIM; if (prim >= 0 && prim < 32) g_rts.prim_mask |= 1u << prim; return 0; }   // 只认三角形列表（抓帧里阴影通道全是） | triangle lists only (all shadow-pass draws in the capture)
+    int n = dw ? dw->count : di->count; if (n < 3) { g_rts.n_empty++; return 1; }   // 不足 3 顶点画不出三角形：不留影子，算已覆盖（真机 d42c8ee 局内每帧 4–8 次「非三角形列表或不足 3 顶点」） | fewer than 3 vertices draw no triangle and leave no shadow: covered (device d42c8ee: 4-8 per frame in game of "not a triangle list or under 3 vertices")
+    g_rts.n_strip += strip;
     if (S.nattr < 1 || S.attr[0].stream >= 16) { g_rts.unc_why = RTS_UNC_FMT; return 0; }
     va_st at = S.attr[0]; vs_st sm = S.stream[at.stream]; NVNbufferRange vb = S.vbuf[at.stream];
     if (!sm.stride || sm.divisor || !vb.address || (at.fmt != 0x2b && at.fmt != 0x2e && at.fmt != 0x29 && at.fmt != 0x22)) { g_rts.nskip_fmt++; g_rts.unc_why = RTS_UNC_FMT; return 0; }
@@ -357,12 +375,12 @@ static int rts_instance(const p_draw *dw, const p_draw_idx *di, int prim, uint64
     // 网格键：布局 + 全部已校验索引字节的摘要 + 所用顶点范围内属性 0 的摘要（池内存会被别的网格复用；同地址的后段变了，键也要变：六审 5.2）。只读校验过的字节（五审 Q5-01）
     // Mesh key: layout + digest of every validated index byte + digest of attribute 0 over the vertex range used (pool memory gets reused by other meshes; a later change at the same address must change the key: sixth review 5.2). Validated bytes only (fifth review Q5-01)
     uint64_t t0 = bp_now();
-    uint64_t key = 1469598103934665603ull; uint64_t lay[6] = {vb.address + at.offset, sm.stride, at.fmt, dw ? 0 : di->ibuf, (uint64_t)n, dw ? (uint64_t)dw->first : (uint64_t)(int64_t)di->base_vertex};
+    uint64_t key = 1469598103934665603ull; uint64_t lay[7] = {vb.address + at.offset, sm.stride, at.fmt, dw ? 0 : di->ibuf, (uint64_t)n, dw ? (uint64_t)dw->first : (uint64_t)(int64_t)di->base_vertex, (uint64_t)strip};
     key = rts_fnv(key, lay, sizeof lay);
     // 本帧里布局完全相同的重复绘制（两级级联画同一实例）沿用这一帧已算出的键：摘要每帧每份几何只算一次 | A repeated draw with an identical layout in this frame (both cascades draw the same instance) reuses the key computed this frame: each piece of geometry is digested once per frame
     uint64_t lk = key; typeof(g_rts.memo[0]) *mo_ = &g_rts.memo[lk & (RTS_MEMO - 1)]; rts_mesh *m = NULL;
     if (mo_->frame == f && mo_->lay == lk && (m = nvn_hm_get(&g_rts.meshes, &mo_->key)) && (m->state != RTS_PENDING || m->queued)) key = mo_->key;
-    else { if (!(m = rts_mesh_get(dw, di, n, at, sm, vb, &key, t0))) return 0; *mo_ = (typeof(*mo_)){f, lk, key}; }
+    else { if (!(m = rts_mesh_get(dw, di, n, strip, at, sm, vb, &key, t0))) { if (g_rts.unc_why == RTS_UNC_N) { g_rts.n_empty++; return 1; } return 0; } *mo_ = (typeof(*mo_)){f, lk, key}; }
     m->last_frame = f;
     if (m->state != RTS_READY || g_rts.ninst >= RTS_MAX_INST) { g_rts.unc_why = m->state != RTS_READY ? RTS_UNC_PENDING : RTS_UNC_INSTFULL; return 0; }   // 网格还没可用 / 实例满 | mesh not usable yet / instances full
     const float *M = (const float *)m0; uint64_t tag = key ^ rts_fnv(1469598103934665603ull, m0, 48);
