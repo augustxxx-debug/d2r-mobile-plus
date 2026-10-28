@@ -33,7 +33,9 @@ t() { echo "[$(date +%T)] $*"; }; die() { t "🔴 $*"; exit 1; }
 [ -f "$ROMFS/data/build_manifest.psv" ] || die "没找到游戏文件 ${ROMFS}（DM_ROMFS_SRC）"
 W=$O/tree
 rm -rf "$G" "$O/ref" "$O/D2RMobile-android.apk" && mkdir -p "$G" "$O/ref" "$W" || die "建不了 $O"
-(cd "$DM/.." && git ls-files -z -co --exclude-standard dm | rsync -a -0 --ignore-missing-args --files-from=- . "$W/") || die "拷源码副本失败"
+# 用 tar 拷（不用 rsync：macOS 自带的 openrsync 没有 --files-from=- 配 -0 / --ignore-missing-args 这几项，Linux 的 rsync 才有；bsdtar 与 GNU tar 都认 --null -T -）
+# Copy with tar (not rsync: the openrsync that ships with macOS lacks --files-from=- with -0 / --ignore-missing-args, only Linux's rsync has them; bsdtar and GNU tar both accept --null -T -)
+(cd "$DM/.." && git ls-files -z -co --exclude-standard dm | tar -c --null -T - -f - | tar -x -f - -C "$W") || die "拷源码副本失败"
 for f in host/dm_vault_tab.h host/dm_hud_exp.h host/dm_bright_levels.inc ios/Sources/dm_touch_native_art.c; do [ ! -e "$W/dm/$f" ] || die "副本里有生成文件 $f"; done
 t "用本机游戏文件生成真表"
 "$PY" "$DM/ios/tools/gen_vault_table.py" "$ROMFS" > "$G/dm_vault_tab.h" || die "生成 dm_vault_tab.h 失败"
