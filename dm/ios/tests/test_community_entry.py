@@ -106,11 +106,10 @@ class PauseMenu(unittest.TestCase):
         for garden, rel in ((False, 'controller/pauselayouthd.json'), (True, 'controller/pauselayoutgardenhd.json')):
             touch, _ = touch_layout.PRESENT[rel](fake_pause(garden)); pad = touch_layout.pad_pause(fake_pause(garden), garden, share=True)
             self.assertEqual(touch, pad, rel)
-            rows = {'TouchPadDiff': 299, 'Exit': 417, 'TouchRestart': 535, 'Settings': 653, 'TouchPadStore': 771, 'Chronicle': 889, 'MessageLog': 1007, 'TouchCommunity': 1125} if garden else \
-                   {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'MessageLog': 903, 'TouchCommunity': 1028}
+            rows = {'Exit': 278, 'TouchRestart': 403, 'TouchPadStore': 528, 'Settings': 653, 'Chronicle': 778, 'MessageLog': 903, 'TouchCommunity': 1028} if garden else \
+                   {'Exit': 278, 'TouchRestart': 403, 'TouchPadStore': 528, 'Settings': 653, 'MessageLog': 778, 'TouchCommunity': 903}
             for name, y in rows.items(): self.assertEqual(rect_y(touch, name), y, (rel, name))   # 可达：每行都在屏内、位置一致 | reachable: every row on screen at the same position
-            self.assertEqual(rect_y(touch, 'Help'), None); self.assertIn('"name": "TouchPadDiffTxt"', touch)
-        self.assertNotIn('!g_cur ||', (DM / 'host' / 'dm_padmode.c').read_text(encoding='utf-8').split('static void diff_text')[1].split('\n')[1])   # 「游戏难度：N」触屏也写 | the difficulty text is written under touch too
+            self.assertEqual(rect_y(touch, 'Help'), None); self.assertNotIn('TouchPadDiff', touch)   # 难度行挪去「选项 → 游戏」页（test_difficulty_row） | difficulty moved to Options → Gameplay (test_difficulty_row)
 
     def check_rows(self, text, want):   # want：{按钮名: y}；相邻行中心距 ≥ 118（按钮图高 120 的手柄版最密排法），每行都在底图范围内 | want: {name: y}; adjacent centres >= 118 apart, every row within the background
         ys = {}
@@ -118,7 +117,7 @@ class PauseMenu(unittest.TestCase):
             self.assertEqual(rect_y(text, name), y, name); ys[name] = y
         order = sorted(ys.values())
         for a, b in zip(order, order[1:]): self.assertGreaterEqual(b - a, 118, (a, b))
-        self.assertGreaterEqual(order[0], 278); self.assertLessEqual(order[-1], 1125)
+        self.assertGreaterEqual(order[0], 278); self.assertLessEqual(order[-1], 1028)
 
     def test_touch_pause_has_community_row_and_box(self):
         for garden, rel in ((False, 'controller/pauselayouthd.json'), (True, 'controller/pauselayoutgardenhd.json')):
@@ -127,22 +126,22 @@ class PauseMenu(unittest.TestCase):
             self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunity"', out)
             self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchShareLog"', out)   # 分享诊断日志仍在 | Share Diagnostics still there
             box_ok(self, out, rel)
-            if garden: self.check_rows(out, {'TouchPadDiff': 299, 'Exit': 417, 'TouchRestart': 535, 'Settings': 653, 'TouchPadStore': 771, 'Chronicle': 889, 'MessageLog': 1007, 'TouchCommunity': 1125})
-            else: self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'MessageLog': 903, 'TouchCommunity': 1028})
+            if garden: self.check_rows(out, {'Exit': 278, 'TouchRestart': 403, 'TouchPadStore': 528, 'Settings': 653, 'Chronicle': 778, 'MessageLog': 903, 'TouchCommunity': 1028})
+            else: self.check_rows(out, {'Exit': 278, 'TouchRestart': 403, 'TouchPadStore': 528, 'Settings': 653, 'MessageLog': 778, 'TouchCommunity': 903})
             self.assertEqual(rect_y(out, 'Help'), None)   # 帮助挪走 | Help moved away
 
     def test_pad_pause_rows(self):
-        # 手柄版：难度 / 退出 / 重开 / 选项（固定 y 653，屏幕正中那行只许是按了没后果的）/ 存放 / [编年史] / 分享诊断日志 / 加入社区讨论
-        # Controller: difficulty / exit / restart / options (fixed at y 653: the row at the screen centre must be one whose press has no consequence) / deposit / [chronicle] / share diagnostics / join the community
+        # 两种模式同一份：退出 / 重开 / 存放 / 选项（固定 y 653，屏幕正中那行只许是按了没后果的）/ [编年史] / 分享诊断日志 / 加入社区讨论；难度行挪去「选项 → 游戏」页（用户 2026-10-28）
+        # Both modes: exit / restart / deposit / options (fixed at y 653: the row at the screen centre must be one whose press has no consequence) / [chronicle] / share diagnostics / join the community; difficulty moved to Options → Gameplay (user, 2026-10-28)
         out = touch_layout.pad_pause(fake_pause(False), False, share=True)
-        self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'MessageLog': 903, 'TouchCommunity': 1028})
+        self.check_rows(out, {'Exit': 278, 'TouchRestart': 403, 'TouchPadStore': 528, 'Settings': 653, 'MessageLog': 778, 'TouchCommunity': 903})
         out = touch_layout.pad_pause(fake_pause(True), True, share=True)
-        self.check_rows(out, {'TouchPadDiff': 299, 'Exit': 417, 'TouchRestart': 535, 'Settings': 653, 'TouchPadStore': 771, 'Chronicle': 889, 'MessageLog': 1007, 'TouchCommunity': 1125})
+        self.check_rows(out, {'Exit': 278, 'TouchRestart': 403, 'TouchPadStore': 528, 'Settings': 653, 'Chronicle': 778, 'MessageLog': 903, 'TouchCommunity': 1028})
         # Mac App（没有系统分享面板）：少「分享诊断日志」，社区行接在它的位置上 | Mac App (no system share sheet): no Share Diagnostics; the community row takes its place
         out = touch_layout.pad_pause(fake_pause(False), False, share=False)
-        self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'TouchCommunity': 903}); self.assertIsNone(rect_y(out, 'MessageLog'))   # 分享诊断日志那颗在屏外 | the Share Diagnostics button is off screen
+        self.check_rows(out, {'Exit': 278, 'TouchRestart': 403, 'TouchPadStore': 528, 'Settings': 653, 'TouchCommunity': 778}); self.assertIsNone(rect_y(out, 'MessageLog'))   # 分享诊断日志那颗在屏外 | the Share Diagnostics button is off screen
         out = touch_layout.pad_pause(fake_pause(True), True, share=False)
-        self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'Chronicle': 903, 'TouchCommunity': 1028})
+        self.check_rows(out, {'Exit': 278, 'TouchRestart': 403, 'TouchPadStore': 528, 'Settings': 653, 'Chronicle': 778, 'TouchCommunity': 903})
         box_ok(self, out, 'mac garden')
 
 
