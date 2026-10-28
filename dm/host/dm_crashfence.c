@@ -155,16 +155,22 @@ void dm_crashfence_pump(void) {   // 取手柄处每帧调（游戏主线程，h
         for (int k = 0; k < 3; k++) { cf_place(de[k], 99999, 99999); cf_text(b, de[k], ""); }
         atomic_store(&g_show, 0); LOG("前端：提示「%s」玩家点了确定（%s，游戏内提示框收起）", title, pad ? "手柄 A" : "点按钮"); return;
     }
-    // 屏宽（布局单位，2160 = 屏高）：手柄版控件不带锚点，按屏宽居中；触屏版跟主菜单面板锚在屏幕中心，x 相对中心 | screen width in layout units: controller widgets have no anchor and are centered by width; touch widgets are anchored at the center
-    int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), cx = pad ? (vh > 0 ? (int)((long)vw * 2160 / vh) : 3840) / 2 : 0;
+    // 位置（布局单位，2160 = 屏高）。触屏版跟主菜单面板锚在屏幕中心（x 相对中心），框在 y 640–1260，正好在「进入游戏」上方。
+    // 手柄版原版主菜单左边是一整条按钮栏（右沿约 800 单位）、右上是角色列表（约 y 860–1140）：Mac 原生宿主实测居中摆会被按钮栏盖住左边框、右边挤着列表，
+    // 所以手柄版放在按钮栏右边那块的中间、列表下面（y 1180–1800，底部提示条之上）；控件不带锚点，x 按屏宽算
+    // Position in layout units (2160 = screen height). Touch widgets are anchored at the screen center (x relative to it), box at y 640-1260, just above "Play".
+    // The original controller main menu has a full-height button column on the left (right edge about 800 units) and the character list at the top right (about y 860-1140): on the Mac native host a centered box had its left frame covered by the column and its right side crowding the list,
+    // so the controller version sits centered in the area right of the column, below the list (y 1180-1800, above the bottom hint bar); the widgets carry no anchor, so x comes from the screen width
+    int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
+    int cx = pad ? (820 + xr) / 2 : 0, y0 = pad ? 1180 : 640;
     cf_text(b, ti, title);
     { const char *m = dm_str(b, "dmSafeModeMsg"); for (int k = 0; k < 3; k++) { const char *e = m ? strchr(m, '\n') : NULL; char ln[256];   // 按 \n 拆三行 | split into three lines at \n
         snprintf(ln, sizeof ln, "%.*s", m ? (int)(e ? (size_t)(e - m) : strlen(m)) : 0, m ? m : ""); cf_text(b, de[k], ln); m = e ? e + 1 : NULL; } }
-    // 边框：宽 1800、高 620，左上角 (cx − 900, 640)；几何同我们的通知框（dm_notice_geometry：四角与宝石定长、边条拉伸），它以 244 高为基准上下居中，这里换算到 640 起
-    // Frame: 1800 wide, 620 high, top left at (cx - 900, 640); geometry as our notification box (dm_notice_geometry: fixed corners and gems, stretched edge strips), which centers around a 244-high baseline, converted here to start at 640
+    // 边框：宽 1800、高 620，左上角 (cx − 900, y0)；几何同我们的通知框（dm_notice_geometry：四角与宝石定长、边条拉伸），它以 244 高为基准上下居中，这里换算到 y0 起
+    // Frame: 1800 wide, 620 high, top left at (cx - 900, y0); geometry as our notification box (dm_notice_geometry: fixed corners and gems, stretched edge strips), which centers around a 244-high baseline, converted here to start at y0
     { int g[15][4], h = dm_notice_geometry(1800 - 128, 620 - 24, 1800, g), top = (244 - h) / 2;
-      for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + g[k][0], 640 + g[k][1] - top, g[k][2], g[k][3] }; cf_tile(b, tl[k], r); } }
-    cf_place(ti, cx - 850, 680); cf_place(ok, cx - 235, 1120);
-    for (int k = 0; k < 3; k++) cf_place(de[k], cx - 850, 800 + 66 * k);
+      for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + g[k][0], y0 + g[k][1] - top, g[k][2], g[k][3] }; cf_tile(b, tl[k], r); } }
+    cf_place(ti, cx - 850, y0 + 40); cf_place(ok, cx - 235, y0 + 480);
+    for (int k = 0; k < 3; k++) cf_place(de[k], cx - 850, y0 + 160 + 66 * k);
     if (st == 1) { atomic_store(&g_show, 2); LOG("前端：提示已显示：%s（游戏内提示框，%s）", title, pad ? "手柄模式，A 键确定" : "点「确定」按钮"); }
 }
