@@ -24,6 +24,7 @@
 #include "hle.h"
 #include "dm_hud.h"
 #include "dm_uiscreen.h"
+#include "dm_bright_cap.h"
 #include <math.h>
 #include <mach/mach.h>
 #include <stdint.h>
@@ -65,6 +66,9 @@ float dm_bright_k(void) {   // 图形层每帧调（单线程：出图 / 回放�
     uint64_t t = now_ns();
     { int dm_loadscreen_up(void); if (dm_loadscreen_up()) { last = t; static int tr = -1; static unsigned n; if (tr < 0) tr = getenv("DM_BRIGHT_TRACE") != NULL; if (tr && n++ % 6 == 0) LOG("3D 画面加亮：k %.3f（读取画面中，保持）", exp(logk)); return (float)exp(logk); } }   // 读取画面（进出局、走进洞口）：保持当前 k，撤掉后从原值平滑走到新目标，不先掉回 1 | loading screen (entering/leaving a run, walking into a cave entrance): keep the current k, and after it is taken down move smoothly from the old value to the new target without dropping back to 1 first
     int why, area, I; double ang; double tgt = target_logk(&why, &area, &I, &ang);
+    // 上限 DM_BRIGHT_MAX（dm_bright_cap.h；安卓 App 缺省 2）：目标超过就按上限算，再平滑 | cap DM_BRIGHT_MAX (dm_bright_cap.h; the Android app defaults to 2): a target above it is replaced by it, then smoothed
+    { static double maxk = -1; if (maxk < 0) { int bad; const char *e = getenv("DM_BRIGHT_MAX"); maxk = dm_bright_max_parse(e, &bad); if (bad) LOG("【红】DM_BRIGHT_MAX 非法：%s（要求 1–4），按 4", e); else if (e) LOG("DM_BRIGHT_MAX=%g：3D 画面加亮上限", maxk); }
+      tgt = dm_bright_cap_logk(tgt, maxk); }
     double dt = last ? (t - last) / 1e9 : 0; last = t; if (dt > 0.034) dt = 0.034;   // 读取画面期间不调用（不派发调色表计算）：每次最多按一帧（30 帧档的帧长）推进，撤屏后从原来的 k 起步，不一步跳 | not called during the loading screen (no palette table computation is dispatched): advances by at most one frame each time (the frame length of the 30 fps tier), and after the screen is taken down it starts from the previous k instead of jumping in one step
     logk += (tgt - logk) * (1 - exp(-dt / 0.33));
     if (why != lwhy || area != larea || fabs(tgt - ltgt) > 0.05 || t - llog > 10000000000ull) {   // 规则 / 区域 / 目标变了，或每 10 秒：打一行原版值与 k | when the rule / area / target changed, or every 10 seconds: print one line with the original values and k

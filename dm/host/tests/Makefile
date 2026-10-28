@@ -45,6 +45,7 @@ run: \
 	$(B)/t_graphics_gate \
 	$(B)/t_res_auto_policy \
 	$(B)/t_res_cap \
+	$(B)/t_bright_cap \
 	$(B)/t_uiscreen_frontend \
 	$(B)/t_padmap \
 	$(B)/t_pouch_notice \
@@ -96,6 +97,7 @@ run: \
 	$(B)/t_custom_readlog
 	$(B)/t_crashfence 2>/dev/null
 	$(B)/t_res_cap
+	$(B)/t_bright_cap
 	$(B)/t_res_auto_policy 2>/dev/null
 	$(B)/t_pouch_notice
 	$(B)/t_modal_input_gate
@@ -243,6 +245,8 @@ $(B)/t_res_auto_policy: t_res_auto_policy.c t_metalfx_handoff_backend.c ../hle_o
 
 $(B)/t_res_cap: t_res_cap.c ../dm_res_cap.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_res_cap.c -lm
+$(B)/t_bright_cap: t_bright_cap.c ../dm_bright_cap.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_bright_cap.c -lm
 
 $(B)/t_pouch_notice: t_pouch_notice.c ../dm_pouch.c ../dm_widget.h ../hle.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_pouch_notice.c
