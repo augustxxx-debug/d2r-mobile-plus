@@ -695,31 +695,26 @@ def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=(), tail=''):   # t
 #   "Options" is fixed on the fourth row (y 653): when the original gamepad UI opens the pause menu the free cursor is at the centre of the screen and highlights whichever row it rests on, and pressing confirm straight away activates it -- the centre row may only be one whose press has no consequence.
 #   "Game Difficulty: N" = one press raises the player-count setting by 1 (back to 1 after 8), with the current setting shown on this row; "Deposit" = the same thing as the "Deposit" button of the inventory (the gamepad focus cannot reach that button), using the original string @strGoldDeposit.
 # Button image height is 120 units: in the version with the Chronicle, seven rows are spaced evenly by 125 between the original first and last rows (278–1028); the classic version's own background only fits four rows, so the background of the Chronicle version (same size) is used and the first six rows are laid out with the same spacing (without the Chronicle row, the following row moves up)
-# 「加入社区讨论」接在「分享诊断日志」后面（社区入口 dm_community.c）：带编年史且带分享那版成了八行，278–1028 之间放不下八行 125 距，改 118 距（按钮图高 120，相邻不叠）、
-# 整组仍以 653 为中心（选项仍在正中那行），上下各外扩一行的一半（299–1125）；其余各版七行以内照旧 125 距、末行接在 1028
-# "Join the community" follows "Share Diagnostics" (community entry dm_community.c): the Chronicle + share version becomes eight rows, which do not fit at a 125 spacing between 278 and 1028, so 118 (button image 120 high, no overlap),
-# still centered on 653 (Options stays on the centre row), extended half a row at the top and bottom (299-1125); every other version has at most seven rows at the usual 125 spacing with the last row at 1028
-# 两种模式共用这一份（用户 2026-10-28 统一）：「选项」固定在 y 653（手柄打开暂停菜单时自由光标在屏幕正中，正中那行只许是按了没后果的）；「游戏难度」「存放」在触屏下与底栏难度格、物品栏「存放」钮各多一个入口
-# One layout for both modes (user, 2026-10-28): Options is fixed at y 653 (the controller's free cursor sits at the screen centre when the pause menu opens; that row must be harmless); under touch, difficulty and deposit are extra entries next to the bottom-bar cell and the inventory button
+# 行表（用户 2026-10-28 定）：保存并退出 / 一键重开 / 存放 / 选项 / [编年史] / [分享诊断日志] / 加入社区讨论——原版 125 距、从原版首行 278 起，至多 7 行到 1028；
+# 「游戏难度」挪去「选项 → 游戏」页（_diff_row，两种模式都在那里改），暂停菜单不再有它。
+# 「选项」固定在 y 653 = 第四行：用户给的顺序是「… 一键重开 / 选项 / 存放 …」，但 7 行里第三行是 528，「选项」要在第三行就得整组下移一行、顶上空一行，
+# 所以「存放」与「选项」对调、其余顺序照用户的；编年史 / 分享诊断日志各缺一行时后面的行上提，不留空。
+# Row table (user, 2026-10-28): Save and Exit / Quick Restart / Deposit / Options / [Chronicle] / [Share Diagnostics] / Join the community -- the original 125 spacing from the original first row 278, at most 7 rows down to 1028;
+# "Game Difficulty" moved to the Options → Gameplay page (_diff_row, where both modes change it); the pause menu no longer has it.
+# Options is fixed at y 653 = the fourth row: the user's order was "… Quick Restart / Options / Deposit …", but among 7 rows the third row is 528, and Options on the third row would push the whole group down a row with a blank row at the top,
+# so Deposit and Options swap places and the rest follows the user's order; when Chronicle / Share Diagnostics is absent the rows below move up, leaving no gap.
+# 两种模式共用这一份（用户 2026-10-28 统一）：「选项」固定在 y 653（手柄打开暂停菜单时自由光标在屏幕正中，正中那行只许是按了没后果的）；「存放」在触屏下与物品栏的「存放」并存，都是同一个入口。
+# One layout for both modes (user, 2026-10-28): Options is fixed at y 653 (the controller's free cursor sits at the screen centre when the pause menu opens; that row must be harmless); under touch, Deposit coexists with the inventory's Deposit button, the same entry.
 def pad_pause(s, garden, share=True):   # share=False（Mac App）：没有系统分享面板，「分享诊断日志」行不放 | share=False (Mac App): there is no system share sheet, so the "Share Diagnostics" row is left out
     hs = () if share else ('MessageLog',)
-    if garden and share:
-        ys, rows = {'Settings': (428, 653), 'Exit': (728, 417), 'Chronicle': (1028, 889), 'MessageLog': (278, 1007)}, (299, 771, 535, 1125)
-    elif garden: ys, rows = {'Settings': (428, 653), 'Exit': (728, 403), 'Chronicle': (1028, 903)}, (278, 778, 528, 1028)
-    elif share: ys, rows = {'Settings': (578, 653), 'Exit': (878, 403), 'MessageLog': (428, 903)}, (278, 778, 528, 1028)
-    else: ys, rows = {'Settings': (578, 653), 'Exit': (878, 403)}, (278, 778, 528, 903)
-    y = rows[0]; ex = (('TouchPadDiff', '', rows[0]), ('TouchPadStore', '@strGoldDeposit', rows[1]), ('TouchCommunity', '@dmCommunityJoin', rows[3]))
-    if garden: s = _pause_no_help(ys, hide=('Help', 'LootFilter') + hs, restart_y=rows[2], extra=ex, tail=_COMM)(s)[0]
-    else:
-        s = _sub1(s, '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBGClassic"', '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBG"')
-        s = _pause_no_help(ys, hide=('Help',) + hs, restart_y=rows[2], extra=ex, tail=_COMM)(s)[0]
-    # 「游戏难度：N」的字：菜单开着时游戏停拍、原版系统通知要关了菜单才出，所以当前档位直接写在这一行上——按钮自己不带字，上面叠一个同字体的文字控件，宿主写（dm_padmode.c）
-    # Text of "Game Difficulty: N": while the menu is open the game stops ticking and the original system notification only appears once the menu is closed,
-    # so the current setting is written directly on this row. The button itself carries no text; a text widget with the same font is stacked on top and
-    # written by the host (dm_padmode.c)
-    i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
-    return (s[:i].rstrip(' ') + '        { "type": "TextBoxWidget", "name": "TouchPadDiffTxt", "fields": { "rect": { "x": 564, "y": %d, "width": 664, "height": 120 }, "text": "@OptionsMenuGameDifficulty", '
-            '"style": { "fontColor": "$LightButtonTextColor", "pointSize": "$MediumLargeFontSize", "alignment": { "h": "center", "v": "center" } } } },\n    ' % y + s[i:])
+    if garden and share: ys, comm = {'Settings': (428, 653), 'Exit': (728, 278), 'Chronicle': (1028, 778), 'MessageLog': (278, 903)}, 1028
+    elif garden: ys, comm = {'Settings': (428, 653), 'Exit': (728, 278), 'Chronicle': (1028, 778)}, 903
+    elif share: ys, comm = {'Settings': (578, 653), 'Exit': (878, 278), 'MessageLog': (428, 778)}, 903
+    else: ys, comm = {'Settings': (578, 653), 'Exit': (878, 278)}, 778
+    ex = (('TouchPadStore', '@strGoldDeposit', 528), ('TouchCommunity', '@dmCommunityJoin', comm))
+    if garden: return _pause_no_help(ys, hide=('Help', 'LootFilter') + hs, restart_y=403, extra=ex, tail=_COMM)(s)[0]
+    s = _sub1(s, '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBGClassic"', '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBG"')
+    return _pause_no_help(ys, hide=('Help',) + hs, restart_y=403, extra=ex, tail=_COMM)(s)[0]
 # 编年史保留。只有键鼠版布局，套在手柄外框里；列表行 / 分类筛选 / 查看奖励 / 下拉都认点击。页内的关闭按钮被外框盖住：在外框右上角凹槽放关闭按钮，
 # 发原 CloseButton 的消息，关掉后回到暂停菜单；单放一个加宽的容器，2868×1320 下金色包围盒 (2413,40)–(2438,77)。
 # 页签不在这里处理：点页签由触摸层翻成 ZL / ZR（一件事只留一个执行者；先前盖在页签上的透明按钮与它并存、一次点击切两回，已撤）
@@ -1468,9 +1463,9 @@ def _modal_prompt(old, new):
 PRESENT['confirmationmodalhd.json'] = _modal_prompt('"rect": { "x": 78, "y": 85, "width": 1076, "height": 170 },', '"rect": { "x": 78, "y": 28, "width": 1076, "height": 264 },')
 PRESENT['dismissablemodalhd.json'] = _modal_prompt('"rect": { "x": 140, "y": 70, "width": 966, "height": 212 },', '"rect": { "x": 140, "y": 28, "width": 966, "height": 264 },')
 PRESENT['controller/settingspanelhd.json'] = _settings_no_legend
-# 去掉的项：语言只留简中、手柄专用、联网、离线人数（只留底栏难度格一个入口）
+# 去掉的项：语言只留简中、手柄专用、联网、联机页的离线人数（游戏页那份本版原版自己藏着；「游戏难度」行是我们自己加的：_diff_row）
 # 英文版：r34 起原版切语言不再剪；「语言」分节与「文字语言」一行仍藏，等我们自己的文字进中英表（第二阶段）一起放出（切到英文看到一半中文不行）
-# Removed items: language keeps only Simplified Chinese, controller-only items, online, offline player count (only the difficulty cell in the bottom bar remains as the single entry)
+# Removed items: language keeps only Simplified Chinese, controller-only items, online, the offline player count on the online page (the Gameplay page's copy is hidden by the original game itself in this build; the 'Game Difficulty' row is our own: _diff_row)
 # English version: since r34 the original game's language switch is no longer cut; the 「语言」(Language) section and the 「文字语言」(Text Language) row stay hidden until our own text enters the Chinese-English table (phase two) and are released together (switching to English and seeing half Chinese is not acceptable)
 PRESENT['soundoptionspanelhd.json'] = _drop_rows('LanguageOptions', 'VoiceLanguage', 'TextLanguage', 'Controller Feedback')
 PRESENT['gameplayoptionspanelhd.json'] = _drop_rows('AutoPartyInvite', 'ItemHotkeyTooltipAppender', 'ChatFontSize', 'ChatBackground', 'Controller Options', 'ControllerCursorSpeed',
@@ -1597,6 +1592,44 @@ PAD_ROOT = {
                                               'ControllerCursorSpeed', 'ControllerWeaponSwapSeparateBindings', 'ControllerRumbleEnabled'),
     'onlinegameoptionspanelhd.json': _drop_rows('OfflineDifficultyScaling', 'OfflineSettingsEffectNote'),
 }
+# 「选项 → 游戏」页的「游戏难度」行（用户 2026-10-28：从暂停菜单挪来，两种模式都在这里改难度）。
+# 原版这一页其实带「离线 / 离线难度」三行（OfflineDifficultyScaling 滑块），但本版的面板代码（main+0xbb6d9c 一带）建页时按行名把它们无条件藏起来，滑块的刻度也从不设——
+# 要用就得改写原版控件的可见位，违反「不写原版控件」的守卫（native_write_scan.py），所以原版那三行原样不动，放我们自己的一块：
+# 滚动区里、原版表格之前放 TouchDiffRows（分节标题「难度」+ 分隔线、行名「游戏难度」+ 滑块 TouchDiffSlider、说明一行），原版表格整体下移 DIFF_H。
+# 同图形页的做法：原版面板只登记自己表格里的行，新加进表格的行不显示，所以我们的控件放表格旁边；触屏直接点滑块两端箭头，
+# 手柄的焦点导航够不着我们的控件——宿主 dm_padmode.c diff_pump 在这一页接管 Y（每按一次 +1 档，8 后回 1），行名写「游戏难度：N」、说明行写「按 Y 键调整…」。
+# 文字层级照 §2.6：分节标题 = 原版设置页标题样式，行名 = 设置页文字样式，说明 = 副文 28 号 $FontColorLightGray + $ReducedSpacing；手柄 / 触屏两份页同样处理
+# The "Game Difficulty" row on the Options → Gameplay page (user, 2026-10-28: moved from the pause menu; both modes change difficulty here).
+# The original page does carry three "Offline / offline difficulty" rows (the OfflineDifficultyScaling slider), but in this build the panel code (around main+0xbb6d9c) hides them
+# unconditionally by row name when building the page and never sets the slider's scale -- using them would mean writing the visible flags of original widgets, which breaks the
+# "never write original widgets" guard (native_write_scan.py), so those three rows stay untouched and we add a block of our own:
+# inside the scroll view, before the original table, TouchDiffRows (section title "Difficulty" + divider, row label "Game Difficulty" + slider TouchDiffSlider, one note line); the original table moves down by DIFF_H.
+# Same as the Graphics page: the original panel registers only the rows of its own table and rows added to the table are not shown, so our widgets sit beside the table; touch taps the slider's end arrows,
+# and the controller's focus navigation cannot reach our widgets -- the host's dm_padmode.c diff_pump takes over Y on this page (+1 level per press, back to 1 after 8), writes "Game Difficulty: N" into the label and "Press Y to change…" into the note.
+# Text levels per §2.6: section title = the original settings title style, row label = settings text style, note = secondary text 28 pt $FontColorLightGray + $ReducedSpacing; controller / touch pages alike
+DIFF_H = 480
+def _diff_row(fn):
+    def g(text):
+        text, n = fn(text)
+        m = re.search(r'\{\s*"type": "TableWidget", "name": "OptionsTable",\s*"fields": \{', text)
+        sv = text.find('"name": "ScrollView"')
+        if not m or sv < 0 or m.start() < sv or text.count('"name": "OptionsTable"') != 1: raise SystemExit('touch_layout：游戏页的滚动区 / 表格不是原样（原版布局变了？）')
+        block = ('{ "type": "Widget", "name": "TouchDiffRows", "fields": { "rect": { "x": 0, "y": 0, "width": 1730, "height": %d } }, "children": [\n'
+                 '    { "type": "TextBoxWidget", "name": "TouchDiffTitle", "fields": { "rect": { "x": 0, "y": 0, "width": 1730, "height": 180 }, "text": "@dmDiffSection", "style": "$StyleSettingsTitle" }, "children": [\n'
+                 '        { "type": "ImageWidget", "name": "Divider", "fields": { "rect": "$OptionsDividerRect", "filename": "PauseMenu\\\\Divider" } } ] },\n'
+                 '    { "type": "TextBoxWidget", "name": "TouchDiffText", "fields": { "rect": { "x": 0, "y": 180, "width": 1000, "height": 180 }, "text": "@dmDiffRow", "style": "$StyleSettingsText" } },\n'
+                 '    { "type": "SettingsSliderWidget", "name": "TouchDiffSlider", "fields": { "rect": { "x": 1110, "y": 235, "width": 480, "height": 72 }, '
+                 '"focusIndicatorPadding": "$OptionsSliderFocusIndicatorPadding", "focusIndicatorFilename": "$OptionsSliderFocusIndicatorFilename", "isHorizontal": true, "increment": 1, '
+                 '"indicatorFilepath": "PauseMenu\\\\HorizontalIndicator", "background": "$SettingsSliderBackground", "onUpdateMessage": "OptionsPanelMessage:SetD2RDifficulty", '
+                 '"leftButton": "$SettingsSliderLeftButtonFields", "rightButton": "$SettingsSliderRightButtonFields", "valueText": "$SettingsSliderValueFields" } },\n'
+                 '    { "type": "TextBoxWidget", "name": "TouchDiffNote", "fields": { "rect": { "x": 0, "y": 360, "width": 1670, "height": 100 }, "text": "@dmDiffRowNote", '
+                 '"style": { "fontColor": "$FontColorLightGray", "pointSize": 28, "spacing": "$ReducedSpacing", "alignment": { "v": "center" }, "options": { "lineWrap": true, "newlineHandling": "standard" } } } },\n'
+                 '] },\n') % DIFF_H
+        text = text[:m.start()] + block + text[m.start():m.end()] + ' "rect": { "x": 0, "y": %d },' % DIFF_H + text[m.end():]
+        return text, n + 2
+    return g
+PRESENT['gameplayoptionspanelhd.json'] = _diff_row(PRESENT['gameplayoptionspanelhd.json'])
+PAD_ROOT['gameplayoptionspanelhd.json'] = _diff_row(PAD_ROOT['gameplayoptionspanelhd.json'])
 def build_pad_root(romfs, outdir):
     repl = {}
     for rel, fn in PAD_ROOT.items():

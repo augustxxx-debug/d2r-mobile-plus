@@ -359,7 +359,12 @@ dmPadLegPrev	上一页	Previous Page	Página anterior		Предыдущая	이�
 dmPadLegNext	下一页	Next Page	Página siguiente		Следующая	다음	同上；英文 = 原版 ui[NPCNextPage]
 dmPadHintDeposit	存入	Deposit	Depositar		Внести	보관	编年史页「按住 Y」那半句（dm_padmode.c）；英文 = 原版 ui[strGoldDeposit]
 dmPadLegIdentify	捡起（按住鉴定）	Pick Up (Hold to Identify)	Recoger (mantén: identificar)	Recolectar (mantén: identificar)	Взять (держать — опознать)	감정	手柄模式光标在未鉴定物品上时，原版提示条 A 那条的「捡起」换成这句（dm_padmode.c 换串小表）；写法照原版「捡起(按住使用)」；英文：拟
-dmPadDiffLine	游戏难度：%d	Game Difficulty: %d	Dificultad de la partida: %d	Dificultad de partida: %d	Сложность игры: %d	게임 난이도: %d	手柄版暂停菜单的难度行（dm_padmode.c）；英文 = 原版 ui[OptionsMenuGameDifficulty]「Game Difficulty」
+dmDiffSection	难度	Difficulty	Dificultad	Dificultad	Сложность	난이도	「选项 → 游戏」页难度行的分节标题（touch_layout.py _diff_row，换掉原版「离线」）
+dmDiffRow	游戏难度	Game Difficulty	Dificultad de la partida	Dificultad de partida	Сложность игры	게임 난이도	「选项 → 游戏」页难度行的行名（touch_layout.py _diff_row）；英文 = 原版 ui[OptionsMenuGameDifficulty]「Game Difficulty」
+dmDiffRowNote	相当于同局人数 1–8 档，改了立刻生效	Same as 1–8 players in the game; takes effect at once	Equivale a 1–8 jugadores en la partida; surte efecto al instante	Equivale a 1–8 jugadores en la partida; surte efecto al instante	Как при 1–8 игроках в игре; действует сразу	같은 게임에 1–8명이 있는 것과 같으며 바로 적용됩니다	「选项 → 游戏」页难度行下的说明（touch_layout.py _diff_row，副文 28 号灰；宿主 dm_padmode.c 局内写这一句）
+dmDiffOutOfRun	进入游戏后可调整	Available once you are in a game	Disponible al entrar en una partida	Disponible al entrar en una partida	Доступно после входа в игру	게임에 들어간 뒤 조절할 수 있습니다	「选项 → 游戏」页难度行的说明（不在局内时；宿主 dm_padmode.c 写）
+dmDiffRowValue	游戏难度：%d	Game Difficulty: %d	Dificultad de la partida: %d	Dificultad de partida: %d	Сложность игры: %d	게임 난이도: %d	「选项 → 游戏」页难度行的行名带当前档（dm_padmode.c 局内写；滑块本身不显示数字）
+dmDiffRowNotePad	按 Y 键调整，相当于同局人数 1–8 档，改了立刻生效	Press Y to change; same as 1–8 players in the game, takes effect at once	Pulsa Y para cambiar; equivale a 1–8 jugadores, surte efecto al instante	Presiona Y para cambiar; equivale a 1–8 jugadores, surte efecto al instante	Y — изменить; как при 1–8 игроках в игре, действует сразу	Y 버튼으로 조절하며 같은 게임에 1–8명이 있는 것과 같고 바로 적용됩니다	「选项 → 游戏」页难度行下的说明（手柄模式；宿主 dm_padmode.c 写：原版选项页的提示条是它自己的，我们加不进去）
 dmRiftGamAfterEn	通关本层后	After This Level	Tras este nivel		После уровня	이 층 이후	大秘境面板赌博区英文版的小标题行（中文界面不用：中文是「通关后暗金 / 通关后套装」两行）
 dmRiftMsNEn	每档另得 符文 · 赦免之证 · 打孔	+ Rune, Token of Absolution, Sockets	+ Runa, Muestra de absolución, Huecos	+Runa, Insignia de absolución, Engarce	+ руна, Талисман очищения, гнездо	단계마다 룬 · 사면 증표 · 소켓 추가	大秘境面板右上那句的英文版控件（物品名 = 暗黑 2 原版 item-modifiers[toa]「Token of Absolution」、ui[Addsocketsui]「Add sockets」）
 dmAppQuit	退出 D2R Mobile	Quit D2R Mobile	Salir de D2R Mobile		Выйти из D2R Mobile	종료	Mac App 菜单栏（host/front_mac.m）

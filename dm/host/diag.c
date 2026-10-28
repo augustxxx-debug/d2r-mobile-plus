@@ -862,6 +862,7 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     }
     module_t *main = main_mod(); uint32_t pl = 0;
     if (main) { void *obj = players_obj(main); if (obj && tk_rd((uint64_t)obj + 0xc, &pl, 4)) h.players = (int)pl; }
+    { static int last; if (h.players && h.players != last) { last = h.players; LOG("游戏难度：当前 %d 档", h.players); } }   // 档位落地 / 开局读到那一拍记一行（分享日志摘要取最后一行「游戏难度：」） | one line when the level lands / is first read in a run (the share-log summary takes the last 「游戏难度：」 line)
     static int logged;
     g_player_unit = player; { uint8_t gv; extern _Atomic int g_dm_game_ver; if (tk_rd(G + 0x106, &gv, 1)) atomic_store(&g_dm_game_ver, gv); }   // 房间初始化要的数据版本参数（dm_world.c 小地图标出小站与出入口用） | Data version parameter needed for room initialization (used by dm_world.c to mark waypoints and entrances/exits on the minimap)
     { uint32_t tq = 0; static int once; const char *tg = getenv("DM_TEST_GOLD"); if (tg && main && player && tk_rd(G + 0x170, &tq, 4) && tq >= 30 && !once++) ((void (*)(uint64_t, int, int, int))(main->base + 0x5bc1f0))(player, 14, atoi(tg), 0); }   // 测试开关 DM_TEST_GOLD=<数>：进局第 30 拍把身上金币设成该数（验金币数量框用；标准存档金币为 0，数量弹窗开不出来） | Test switch DM_TEST_GOLD=<amount>: at tick 30 after joining the run set the gold on person to that amount (for verifying the gold amount box; the standard save has 0 gold, so the amount popup cannot be opened)
@@ -1858,7 +1859,6 @@ static void loadscreen_on_uimsg(const char *cat, const char *act, const char *ar
     { void dm_community_on_uimsg(const char *, const char *, const char *); dm_community_on_uimsg(cat, act, arg); }   // 社区入口的两个按钮与提示框的复制 / 确定（dm_community.c） | the community entry's two buttons and the box's Copy / OK (dm_community.c)   // 崩溃围栏提示框的「确定」 | OK of the crash-fence notice box
     { void dm_kills_on_uimsg(const char *, const char *, const char *); dm_kills_on_uimsg(cat, act, arg); } { void dm_rift_ui_on_uimsg(const char *, const char *, const char *); dm_rift_ui_on_uimsg(cat, act, arg); }   // 编年史「首领」页签（dm_kills.c） | The chronicle's 「首领」(Bosses) tab (dm_kills.c)
     { void dm_vault_on_uimsg(const char *, const char *, const char *); dm_vault_on_uimsg(cat, act, arg); }
-    { void dm_padmode_on_uimsg(const char *, const char *, const char *); dm_padmode_on_uimsg(cat, act, arg); }   // 手柄版暂停菜单「游戏难度」行（dm_padmode.c） | "Game Difficulty" row of the controller pause menu (dm_padmode.c)
     { void dm_pouch_on_uimsg(const char *, const char *, const char *); dm_pouch_on_uimsg(cat, act, arg); }   // 百宝囊框 / 存放按钮（dm_pouch.c）   // 储藏箱第六页「编年史」（dm_vault_ui.c） | Pouch frame / deposit button (dm_pouch.c)   // stash page six 「编年史」(Chronicle) (dm_vault_ui.c)
     { void dm_shoprefresh_on_uimsg(const char *, const char *, const char *, uint8_t *); module_t *sm = main_mod(); dm_shoprefresh_on_uimsg(cat, act, arg, sm ? (uint8_t *)sm->base : NULL); }   // 商人交易页「刷新货架」按钮（dm_shoprefresh.c） | The 「刷新货架」(Refresh Stock) button on the vendor trade page (dm_shoprefresh.c)
     { void dm_runeword_on_uimsg(const char *, const char *, const char *); dm_runeword_on_uimsg(cat, act, arg); }   // 符文之语助手（dm_runeword.c） | Runeword helper (dm_runeword.c)

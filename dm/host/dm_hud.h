@@ -35,6 +35,10 @@ void dm_hud_get(dm_hud_info *out);
 uint32_t dm_hud_held(void);
 void dm_hud_set_held(uint32_t id);   // 游戏主线程：客户端手上物品 id（0 = 空），dm_hud_get 的 holding 取它 | Game main thread: id of the item in the client's hand (0 = empty); the holding field of dm_hud_get takes it
 void dm_hud_request_players(int n);   // 1..8；任意线程调用 | 1..8; callable from any thread
+// 「选项 → 游戏」页难度行（dm_padmode.c 借原版滑块 OfflineDifficultyScaling）：滑块刻度 lo..hi（原版 1..8；0 起的刻度也认）↔ 人数档 1..8，越界夹住；刻度坏（lo >= hi）当没读到：档 1 / 值 lo
+// Difficulty row on the Options → Gameplay page (dm_padmode.c borrows the original slider OfflineDifficultyScaling): slider scale lo..hi (original 1..8; a zero-based scale is accepted too) <-> players level 1..8, clamped; a broken scale (lo >= hi) counts as unread: level 1 / value lo
+int dm_hud_slider_players(int lo, int hi, int v);
+int dm_hud_slider_value(int lo, int hi, int n);
 // 宿主内部（diag.c 拍入口）：取最新请求、发布本拍读数
 // Host internal (diag.c tick entry): take the latest request, publish this tick's readings
 int dm_hud_requested_players(void);

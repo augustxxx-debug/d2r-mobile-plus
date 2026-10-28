@@ -8,6 +8,8 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static dm_hud_info g_info;
 void dm_hud_request_players(int n) { atomic_store(&g_req, n < 1 ? 1 : n > 8 ? 8 : n); }
 int dm_hud_requested_players(void) { return atomic_load(&g_req); }
+int dm_hud_slider_players(int lo, int hi, int v) { if (lo >= hi) return 1; int n = v - lo + 1; return n < 1 ? 1 : n > 8 ? 8 : n; }
+int dm_hud_slider_value(int lo, int hi, int n) { if (lo >= hi) return lo; int v = lo + (n < 1 ? 1 : n > 8 ? 8 : n) - 1; return v > hi ? hi : v; }
 // 手上物品只有一个真值来源：游戏主线程每帧从客户端玩家的光标物品发布（dm_actions.c dm_held_publish：真是物品、按 id 查得回同一个对象才算），
 // 拍线程读的是服务端玩家——两端能不一致（卡死：服务端光标还挂着放进仓库的魔盒，客户端手上早空了，收尾链反复按返回关面板）
 // The held item has a single source of truth: the game main thread publishes it every frame from the client player's cursor item (dm_actions.c dm_held_publish: counts only if it is really an item and looking it up by id returns the same object),
