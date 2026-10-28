@@ -146,6 +146,8 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_cv = PTHREAD_COND_INITIALIZER;
 static uint64_t g_done;                         // 已完成的最大栅栏值（完成回调写） | Highest completed fence value (written by the completion callback)
 static _Atomic int g_last_commit_error;
+static _Atomic uint32_t g_mem_warn_n;   // 系统内存告警次数（iOS 主线程 mtl_note_memory_warning 加；光追模块在渲染线程的帧开头看到变了就放缓存、降档，nvn_rtshadow.inc rts_mem_frame） | system memory warnings (bumped by mtl_note_memory_warning on the iOS main thread; the ray-tracing module sees the change at the frame start on the render thread, releases caches and steps down, nvn_rtshadow.inc rts_mem_frame)
+void mtl_note_memory_warning(void) { atomic_fetch_add(&g_mem_warn_n, 1); }
 static _Atomic int g_gpu_hang_n;   // 命令缓冲报「Caused GPU Hang」（不算 InnocentVictim）的次数：光追模块据此降档 / 关掉（nvn_rtshadow.inc rts_hang_check） | command buffers reporting "Caused GPU Hang" (InnocentVictim excluded): the ray-tracing module steps down / switches off on it (nvn_rtshadow.inc rts_hang_check)
 static _Atomic int g_up_pending;
 
@@ -410,6 +412,15 @@ void mtl_init(void) {
     dm_res_report_register(mtl_res_counts);
     if (!g_nvn_deswz_gpu) MLOG("【红】显卡解排布初始化失败，预排布贴图回退 CPU");
     MLOG("Metal 设备 %s", g_dev.name.UTF8String);
+    // Metal 抓帧层（iOS Info.plist MetalCaptureEnabled / Mac METAL_CAPTURE_ENABLED=1）：开着时抓帧层逐帧记命令，常驻内存一直涨、不回落（真机 a8161cb：关光追也每 300 帧涨约 190 MB，几分钟被系统按内存结束），
+    // 只给 DM_GPU_CAPTURE 抓帧包用；日志写明，玩家发来的日志一眼看出是不是抓帧包（分享诊断日志摘要键「Metal 抓帧层：」）
+    // Metal capture layer (iOS Info.plist MetalCaptureEnabled / Mac METAL_CAPTURE_ENABLED=1): while on it records commands every frame and resident memory keeps growing and never comes back (device a8161cb: about 190 MB per 300 frames even with ray tracing off, ended by the system for memory within minutes),
+    // only for DM_GPU_CAPTURE capture packages; logged so a player's log shows at a glance whether it is a capture package (share-log summary key "Metal 抓帧层：")
+    // 按开关本身判（iOS Info.plist 的 MetalCaptureEnabled、Mac 的 METAL_CAPTURE_ENABLED），启动时不取 MTLCaptureManager（读个开关就够，不为写一行日志多建抓帧对象）
+    // judged by the switch itself (iOS Info.plist MetalCaptureEnabled, Mac METAL_CAPTURE_ENABLED), without fetching MTLCaptureManager at start-up (reading the switch is enough; no capture object is created just to write one log line)
+    int cap_on = [NSBundle.mainBundle.infoDictionary[@"MetalCaptureEnabled"] boolValue]; { const char *ce = getenv("METAL_CAPTURE_ENABLED"); if (ce && atoi(ce)) cap_on = 1; }
+    if (cap_on) MLOG("【红】Metal 抓帧层：开（抓帧包：常驻内存逐帧上涨，不能用于内存 / 长测，只给 DM_GPU_CAPTURE 用）");
+    else MLOG("Metal 抓帧层：关");
     udc_selftest();
 }
 
@@ -5900,10 +5911,10 @@ void dm_gfx_shot_at(long k, const char *path) {
 }
 // GPU 抓帧（DM_GPU_CAPTURE，diag.c 按界面消息触发；图形验收链用）：dm_gfx_capture_at(k, 路径) = 当前出图帧之后第 k 次出图时开始抓（MTLCaptureManager，
 // 目的地 .gputrace 文件、抓整台设备），下一次出图时停，正好一帧的命令；开始前 GCAP_RT_LEAD 次出图起光追阴影关掉并整个释放（Metal 抓帧层碰到光追对象会崩），抓完再开；日志一行「GPU 抓帧：帧 N → 路径」或失败原因。没有请求时 gcap_present 第一句就返回：0 分配、0 副作用
-// Mac 原生宿主要带 METAL_CAPTURE_ENABLED=1 启动；iOS 只有 dev 包（run.sh build）Info.plist 带 MetalCaptureEnabled，正式包没有，supportsDestination 为否、只记原因
+// Mac 原生宿主要带 METAL_CAPTURE_ENABLED=1 启动；iOS 只有抓帧包（DM_METAL_CAPTURE=1 run.sh build）Info.plist 带 MetalCaptureEnabled，普通 dev 包和正式包没有，supportsDestination 为否、只记原因
 // GPU capture (DM_GPU_CAPTURE, triggered by a UI message in diag.c; for the graphics acceptance chain): dm_gfx_capture_at(k, path) = start capturing at the kth present after the current one (MTLCaptureManager,
 // destination a .gputrace document, the whole device), stop at the next present: exactly one frame of commands; one log line "GPU 抓帧：帧 N → path" or the reason it failed. Without a request gcap_present returns at its first statement: no allocation, no side effect
-// The native Mac host must be launched with METAL_CAPTURE_ENABLED=1; on iOS only dev packages (run.sh build) carry MetalCaptureEnabled in Info.plist, release packages do not, so supportsDestination is false and only the reason is logged
+// The native Mac host must be launched with METAL_CAPTURE_ENABLED=1; on iOS only capture packages (DM_METAL_CAPTURE=1 run.sh build) carry MetalCaptureEnabled in Info.plist, plain dev and release packages do not, so supportsDestination is false and only the reason is logged
 #define GCAP_MAX 4
 #define GCAP_RT_LEAD 30   // 提前这么多次出图关掉光追：它的对象等在途提交做完才真放（defer），抓帧开始时设备上已没有 | ray tracing goes off this many presents ahead: its objects are only really released after in-flight submissions (defer), so none is left on the device when capturing starts
 static struct { uint64_t frame, off_at; char path[1024]; int state; } g_gcap[GCAP_MAX]; static int g_ngcap;   // state 0 = 等开始、1 = 正在抓（frame = 开始时的出图次数）；g_shotq_mu 保护 | state 0 = waiting to start, 1 = capturing (frame = present count at the start); guarded by g_shotq_mu
@@ -5923,7 +5934,7 @@ static void gcap_present(void) {   // 出图线程每次出图后调 | called by
         if (c->state == 0 && c->off_at && g_present_n >= c->frame && g_present_n >= c->off_at + GCAP_RT_LEAD) {
             NSString *path = @(c->path); NSError *err = nil;
             if (cm.isCapturing) { MLOG("【红】GPU 抓帧：帧 %llu 没抓（上一次抓帧还没停）→ %s", (unsigned long long)g_present_n + 1, c->path); drop = 1; }
-            else if (![cm supportsDestination:MTLCaptureDestinationGPUTraceDocument]) { MLOG("【红】GPU 抓帧：帧 %llu 没抓（supportsDestination(.gputrace) 为否：Mac 要带 METAL_CAPTURE_ENABLED=1 启动，iOS 只有 dev 包有 MetalCaptureEnabled）→ %s", (unsigned long long)g_present_n + 1, c->path); drop = 1; }
+            else if (![cm supportsDestination:MTLCaptureDestinationGPUTraceDocument]) { MLOG("【红】GPU 抓帧：帧 %llu 没抓（supportsDestination(.gputrace) 为否：Mac 要带 METAL_CAPTURE_ENABLED=1 启动，iOS 要 DM_METAL_CAPTURE=1 出的抓帧包）→ %s", (unsigned long long)g_present_n + 1, c->path); drop = 1; }
             else if ([NSFileManager.defaultManager fileExistsAtPath:path]) { MLOG("【红】GPU 抓帧：帧 %llu 没抓（目标已存在，不覆盖）→ %s", (unsigned long long)g_present_n + 1, c->path); drop = 1; }
             else {
                 [NSFileManager.defaultManager createDirectoryAtPath:path.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];

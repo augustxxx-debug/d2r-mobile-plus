@@ -46,6 +46,28 @@ int main(void) { @autoreleasepool {
     { double m[16] = {2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 1, 2, 3, 1}, inv[16], id[16]; rts_inv4(m, inv);
       for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) { double s = 0; for (int k = 0; k < 4; k++) s += m[k * 4 + r] * inv[c * 4 + k]; id[c * 4 + r] = s; }
       for (int i = 0; i < 16; i++) if (fabs(id[i] - (i % 5 == 0 ? 1 : 0)) > 1e-9) FAIL("rts_inv4 [%d] = %g", i, id[i]); }
+    {   // 光追内存（2026-10-28 真机内存 P1 之后）：各档字节估算、启动预算夹值、按预算的方案、系统内存告警状态机与迟滞 | ray-tracing memory (after the 2026-10-28 device memory P1): per-level byte estimates, start-up budget clamps, the budget plan, the memory-warning state machine and hysteresis
+      rts_lvl_params p0 = rts_lvl_apply(0, 1, 2, 4, 0, 0, 1), p1 = rts_lvl_apply(1, 1, 2, 4, 0, 0, 1), p2 = rts_lvl_apply(2, 1, 2, 4, 0, 0, 1), p3 = rts_lvl_apply(3, 1, 2, 4, 0, 0, 1);
+      rts_mem_est e = rts_mem_estimate(1996, 1404, p0, 64ull << 20, 10ull << 20);
+      if (e.masks != 2ull * 1996 * 1404 || e.point != 499ull * 351 * 4 + 1996ull * 1404 * 4 || e.ao != 2ull * 998 * 702 + 1996ull * 1404 || e.mesh != 64ull << 20) FAIL("rts_mem_estimate 0 档 1996x1404：遮罩 %llu 点光 %llu AO %llu", (unsigned long long)e.masks, (unsigned long long)e.point, (unsigned long long)e.ao);
+      e = rts_mem_estimate(1996, 1404, p2, 64ull << 20, 0); if (e.masks != 2ull * 1996 * 1404 + 998ull * 702 || e.ao) FAIL("rts_mem_estimate 2 档：半分辨率太阳遮罩另算、没有 AO");
+      e = rts_mem_estimate(1996, 1404, p3, 64ull << 20, 0); if (e.point || e.ao) FAIL("rts_mem_estimate 3 档：没有点光遮罩、没有 AO");
+      { uint32_t sz[3][2] = {{1595, 1122}, {1996, 1404}, {2852, 2006}}; rts_lvl_params pl[4] = {p0, p1, p2, p3};   // 交接表用：真机见过的渲染尺寸（档位 0 营地 / 原生档 + MetalFX / 原生不缩放）各档总量 | for the handover table: per-level totals at render sizes seen on the device
+        for (int i = 0; i < 3; i++) { printf("光追内存估算 %ux%u：", sz[i][0], sz[i][1]); for (int l = 0; l < 4; l++) { rts_mem_est x = rts_mem_estimate(sz[i][0], sz[i][1], pl[l], 64ull << 20, 10ull << 20);
+            printf("%s第 %d 档 %.1f MB（遮罩 %.1f、点光 %.1f、AO %.1f、网格 64、固定 10）", l ? "；" : "", l, rts_mem_est_total(&x) / 1048576.0, x.masks / 1048576.0, x.point / 1048576.0, x.ao / 1048576.0); } printf("\n"); } }
+      if (rts_mem_budget(0) != UINT64_MAX || rts_mem_budget(100ull << 20) != RTS_MEM_BUDGET_MIN || rts_mem_budget(1000ull << 20) != 125ull << 20 || rts_mem_budget(4000ull << 20) != RTS_MEM_BUDGET_MAX) FAIL("rts_mem_budget 夹值");
+      rts_mem_plan pn = rts_mem_plan_for(125ull << 20, 1996, 1404, p0, p3, 64ull << 20, 10ull << 20); if (pn.ao_off || pn.lvl_floor || pn.mesh_cap != 64ull << 20) FAIL("预算 125 MB、1996x1404：缺省放得下不该动");
+      pn = rts_mem_plan_for(110ull << 20, 2852, 2006, p0, p3, 64ull << 20, 10ull << 20); if (!pn.ao_off || pn.lvl_floor || pn.mesh_cap != 64ull << 20 || pn.est > 110ull << 20) FAIL("预算 110 MB、原生：先只关 AO（%d %d %llu）", pn.ao_off, pn.lvl_floor, (unsigned long long)(pn.mesh_cap >> 20));
+      pn = rts_mem_plan_for(80ull << 20, 2852, 2006, p0, p3, 64ull << 20, 10ull << 20); if (!pn.ao_off || pn.lvl_floor || pn.mesh_cap >= 64ull << 20 || pn.mesh_cap < RTS_MESH_CAP_MIN || pn.est > 80ull << 20) FAIL("预算 80 MB、原生：关 AO + 缩网格缓存");
+      pn = rts_mem_plan_for(48ull << 20, 2852, 2006, p0, p3, 64ull << 20, 10ull << 20); if (!pn.ao_off || pn.lvl_floor != 3 || pn.mesh_cap != RTS_MESH_CAP_MIN) FAIL("预算 48 MB、原生：关 AO + 网格缓存 16 MB + 最低第 3 档");
+      rts_memw m = {0}; if (rts_memw_warn(&m, 0, 3, 100) != 1 || m.ao_off || m.mesh_half) FAIL("第一次告警：最低第 1 档");
+      if (rts_memw_tick(&m, 159) || !rts_memw_tick(&m, 160.5) || m.floor != 0 || m.ao_off) FAIL("单次告警 60 秒后放宽到 0");
+      if (rts_memw_warn(&m, 2, 3, 200) != 3 || m.streak != 1) FAIL("现档 2 时告警：最低第 3 档（现档 + 1）");
+      m = (rts_memw){0}; rts_memw_warn(&m, 0, 3, 100); if (rts_memw_warn(&m, 1, 3, 105) != 3 || !m.ao_off || !m.mesh_half || m.streak != 2) FAIL("10 秒内第二次：连续告警到最低档、关 AO、网格缓存减半");
+      if (rts_memw_tick(&m, 164) || !rts_memw_tick(&m, 165.5) || m.floor != 2 || rts_memw_tick(&m, 190) || !rts_memw_tick(&m, 195.6) || m.floor != 1 || !m.ao_off || !rts_memw_tick(&m, 225.7) || m.floor != 0 || m.ao_off || m.mesh_half) FAIL("连续告警的迟滞：60 秒后一档、之后每 30 秒一档，到 0 才恢复 AO / 网格缓存");
+      m = (rts_memw){0}; rts_memw_warn(&m, 0, 3, 100); if (rts_memw_warn(&m, 1, 3, 111) != 2 || m.ao_off) FAIL("隔 11 秒的第二次不算连续：只再降一档");
+      rts_memw_warn(&m, 2, 3, 112); rts_memw_warn(&m, 3, 3, 113); if (m.floor != 3) FAIL("最低档不超过最高档");
+    }
     { uint32_t o[24]; uint32_t t = rts_quad_expand(4, o);   // 七审 Q7-02：非索引四边形与原版光栅化同一拓扑 | seventh review Q7-02: non-indexed quads use the original rasterizer's topology
       if (t != 2 || o[0] != 0 || o[1] != 1 || o[2] != 2 || o[3] != 0 || o[4] != 2 || o[5] != 3) FAIL("rts_quad_expand 4: %u tris", t);
       t = rts_quad_expand(10, o); if (t != 4 || o[6] != 4 || o[7] != 5 || o[8] != 6 || o[9] != 4 || o[10] != 6 || o[11] != 7) FAIL("rts_quad_expand 10 (tail of 2 dropped): %u tris", t);

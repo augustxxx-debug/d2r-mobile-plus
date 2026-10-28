@@ -150,3 +150,59 @@ static inline rts_lvl_params rts_lvl_apply(int lvl, int point_on, int point_n, i
     if (lvl >= 3) { p.point_on = 0; p.no_alpha = 1; }
     return p;
 }
+
+// ---- 光追内存（2026-10-28 真机内存 P1 之后） | ray-tracing memory (after the 2026-10-28 device memory P1) ----
+// 按渲染尺寸 w×h 与某档参数估各项常驻字节（R8 / RGBA8 贴图按像素算，不含驱动对齐）：全亮遮罩 + 太阳遮罩（R8 全分辨率，_rt 变体按像素坐标读，必须盖住目标，不能缩）、
+// 降分辨率太阳遮罩（sun_div > 1）、软阴影两张 RG8、点光遮罩（RGBA8 1/point_div）及其全分辨率上采样版（RGBA8）、AO 三张（半分辨率 R8 两张 + 全分辨率 R8）、网格缓存上限、
+// 固定部分（TLAS + 暂存 + 每帧槽，调用方给）
+// Estimated resident bytes per item for render size w×h and one level's parameters (R8 / RGBA8 textures by pixel count, without driver alignment): lit mask + sun mask (full-resolution R8; the _rt variants read them by pixel coordinates, so they must cover the target and cannot shrink),
+// reduced-resolution sun mask (sun_div > 1), the two RG8 soft-shadow textures, the point mask (RGBA8 at 1/point_div) and its full-resolution upsampled copy (RGBA8), the three AO textures (two half-resolution R8 + one full-resolution R8), the mesh cache cap,
+// and the fixed part (TLAS + scratch + per-frame slots, given by the caller)
+typedef struct { uint64_t masks, point, ao, mesh, fixed; } rts_mem_est;
+static inline uint64_t rts_mem_est_total(const rts_mem_est *e) { return e->masks + e->point + e->ao + e->mesh + e->fixed; }
+static inline rts_mem_est rts_mem_estimate(uint64_t w, uint64_t h, rts_lvl_params p, uint64_t mesh_cap, uint64_t fixed) {
+    rts_mem_est e = {0, 0, 0, mesh_cap, fixed}; uint64_t full = w * h;
+    e.masks = 2 * full;   // 全亮遮罩 + 太阳遮罩 | lit mask + sun mask
+    if (!p.soft && p.sun_div > 1) e.masks += ((w + p.sun_div - 1) / p.sun_div) * ((h + p.sun_div - 1) / p.sun_div);
+    if (p.soft) e.masks += 2 * 2 * full;
+    if (p.point_on) { uint64_t d = (uint64_t)(p.point_div ? p.point_div : 2); e.point = ((w + d - 1) / d) * ((h + d - 1) / d) * 4 + full * 4; }
+    if (p.ao) e.ao = 2 * ((w + 1) / 2) * ((h + 1) / 2) + full;
+    return e;
+}
+// 启动预算：离系统内存上限（os_proc_available_memory）的 1/8，夹在 [48, 192] MB；不知道（Mac、读不到）= 不限
+// Start-up budget: 1/8 of the distance to the system memory limit (os_proc_available_memory), clamped to [48, 192] MB; unknown (Mac, unreadable) = unlimited
+#define RTS_MEM_BUDGET_MIN (48ull << 20)
+#define RTS_MEM_BUDGET_MAX (192ull << 20)
+#define RTS_MESH_CAP_MIN (16ull << 20)
+static inline uint64_t rts_mem_budget(uint64_t avail) { if (!avail) return UINT64_MAX; uint64_t b = avail / 8; return b < RTS_MEM_BUDGET_MIN ? RTS_MEM_BUDGET_MIN : b > RTS_MEM_BUDGET_MAX ? RTS_MEM_BUDGET_MAX : b; }
+// 按预算定方案：缺省档（lvl 0）估算放得下就什么都不动（不降缺省画质）；放不下依次：不建 AO → 网格缓存上限缩（到 16 MB 为止）→ 最低档抬到 3（关点光，放掉两张点光遮罩）
+// The plan for a budget: if the default level (lvl 0) estimate fits, nothing changes (default quality is not lowered); otherwise in order: no AO → shrink the mesh cache cap (down to 16 MB) → raise the floor level to 3 (point lights off, both point masks released)
+typedef struct { int ao_off, lvl_floor; uint64_t mesh_cap, est; } rts_mem_plan;
+static inline rts_mem_plan rts_mem_plan_for(uint64_t budget, uint64_t w, uint64_t h, rts_lvl_params p0, rts_lvl_params p3, uint64_t mesh_cap, uint64_t fixed) {
+    rts_mem_plan r = {0, 0, mesh_cap, 0}; rts_mem_est e = rts_mem_estimate(w, h, p0, mesh_cap, fixed); r.est = rts_mem_est_total(&e);
+    if (r.est <= budget) return r;
+    if (e.ao) { r.ao_off = 1; r.est -= e.ao; e.ao = 0; if (r.est <= budget) return r; }
+    uint64_t over = r.est - budget, room = mesh_cap > RTS_MESH_CAP_MIN ? mesh_cap - RTS_MESH_CAP_MIN : 0, cut = over < room ? over : room;
+    r.mesh_cap = mesh_cap - cut; r.est -= cut; if (r.est <= budget) return r;
+    rts_mem_est e3 = rts_mem_estimate(w, h, p3, r.mesh_cap, fixed); e3.ao = 0; r.lvl_floor = 3; r.est = rts_mem_est_total(&e3);
+    return r;
+}
+// 系统内存告警降档（状态机，时间由调用方给）：每次告警最低档 = max(现档, 最低档) + 1；10 秒内连着第 2 次起 = 连续告警：关 AO、网格缓存上限减半、直接到最低档（第 3 档）。
+// 恢复要迟滞：最后一次告警 60 秒后才放宽一档，之后每 30 秒再放一档，放到 0 时 AO / 网格缓存上限也恢复；放宽只是允许，升不升档仍由自动降档按 GPU 余量定
+// System memory-warning downgrade (a state machine, the caller gives the time): each warning sets the floor = max(current level, floor) + 1; from the 2nd warning within 10 s = consecutive warnings: AO off, mesh cache cap halved, straight to the lowest level (3).
+// Recovery has hysteresis: one level is loosened only 60 s after the last warning, then one more every 30 s; at 0 AO / the mesh cache cap come back too. Loosening only allows it: whether to step up is still decided by the automatic downgrade from GPU headroom
+#define RTS_MEMW_STREAK_S 10.0
+#define RTS_MEMW_HOLD_S 60.0
+#define RTS_MEMW_STEP_S 30.0
+typedef struct { int floor, streak, ao_off, mesh_half; uint64_t n; double t_last, t_step; } rts_memw;
+static inline int rts_memw_warn(rts_memw *m, int cur_lvl, int max_lvl, double now) {   // 返回新的最低档 | returns the new floor
+    m->streak = m->n && now - m->t_last < RTS_MEMW_STREAK_S ? m->streak + 1 : 1; m->n++; m->t_last = m->t_step = now;
+    int base = cur_lvl > m->floor ? cur_lvl : m->floor; m->floor = base + 1 > max_lvl ? max_lvl : base + 1;
+    if (m->streak >= 2) { m->floor = max_lvl; m->ao_off = 1; m->mesh_half = 1; }
+    return m->floor;
+}
+static inline int rts_memw_tick(rts_memw *m, double now) {   // 放宽了一档返回 1 | returns 1 when one level was loosened
+    if (m->floor <= 0 || now - m->t_last < RTS_MEMW_HOLD_S || now - m->t_step < (m->t_step > m->t_last ? RTS_MEMW_STEP_S : RTS_MEMW_HOLD_S)) return 0;
+    m->floor--; m->t_step = now; if (!m->floor) { m->ao_off = 0; m->mesh_half = 0; m->streak = 0; }
+    return 1;
+}

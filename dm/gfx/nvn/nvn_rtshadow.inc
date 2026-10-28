@@ -35,7 +35,8 @@
 // Gate: supportsRaytracing and GPU family ≥ Apple9 and a model allowlist (iOS app on a Mac recognized by isiOSAppOnMac); switch: DM_RT_SHADOW=0/1 pins it, otherwise dm_rt_shadow_setting(); DM_RT_POINT=0 turns off point lights only.
 // Timing: the ray-tracing compute encoder goes through pg_compute (DM_NVN_PASSGPU); Metal 4 path only, the module is empty under DM_NVN_M3.
 __attribute__((weak)) int dm_rt_shadow_setting(void) { return 0; }   // 宿主设置页提供强定义；缺省关 | The host settings page provides the strong definition; off by default
-__attribute__((weak)) float dm_rt_shadow_ambient(void) { return 0.45f; }   // 调试叠加的环境项（阴影里保留的亮度比例） | Ambient term of the debug overlay (brightness kept inside shadow)
+__attribute__((weak)) float dm_rt_shadow_ambient(void) { return 0.45f; }
+__attribute__((weak)) int dm_ingame_now(void) { return 1; }   // 宿主 diag.c 提供强定义（读到受控玩家 = 局内）；单测里当局内 | the host's diag.c provides the strong definition (controlled player read = in a run); unit tests count as in a run   // 调试叠加的环境项（阴影里保留的亮度比例） | Ambient term of the debug overlay (brightness kept inside shadow)
 static int rt_is_skin(void);
 #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -82,9 +83,9 @@ typedef struct { float lvp[16]; float vp[4]; float dr[2]; uint32_t fs, stride; u
 _Static_assert(sizeof(rts_ai) == 144, "rts_ai layout");
 enum { RA_OK, RA_NOLIB, RA_COMPILING, RA_NOFS, RA_NOVAR, RA_LOC, RA_ARGS, RA_NONIDX, RA_SLOT, RA_CAP, RA_QUOTA, RA_FSLOT, RA_MSLOT, RA_LEVEL, RA_N };
 static const char *const k_ra_why[RA_N] = {"", "无判定库", "判定库在编", "片元不在库", "顶点无_var", "插值对不上", "参数块过长", "非索引绘制", "网格未就绪", "参数块没抓到", "导出配额满", "每帧槽忙", "网格槽满", "降档照原版"};
-enum { RM_PASS, RM_NODEPTH, RM_SMAPFULL, RM_PRIM, RM_SMALL, RM_ATTR, RM_FMT, RM_ITYPE, RM_INSTANCED, RM_CB0, RM_IDX, RM_VRANGE, RM_VPOOL, RM_QUOTA, RM_ALLOC, RM_MESH, RM_NOTRT, RM_NOTREADY, RM_FULL, RM_POSE, RM_ALPHA, RM_N };   // 阴影绘制没进 TLAS 的原因（本帧阴影图因此不清） | why a shadow draw stayed out of the TLAS (so this frame's maps are not cleared)
+enum { RM_PASS, RM_NODEPTH, RM_SMAPFULL, RM_PRIM, RM_SMALL, RM_ATTR, RM_FMT, RM_ITYPE, RM_INSTANCED, RM_CB0, RM_IDX, RM_VRANGE, RM_VPOOL, RM_QUOTA, RM_ALLOC, RM_MESH, RM_NOTRT, RM_NOTREADY, RM_FULL, RM_POSE, RM_ALPHA, RM_CACHE, RM_N };   // 阴影绘制没进 TLAS 的原因（本帧阴影图因此不清） | why a shadow draw stayed out of the TLAS (so this frame's maps are not cleared)
 static const char *const k_rm_why[RM_N] = {"通道没登记", "通道没挂深度", "阴影图登记满", "图元不认（不是三角形列表 / 带 / 四边形）", "顶点不足 3（不画，不挡清图）", "无位置属性", "位置格式不认", "索引宽度不认", "实例化", "无 cb0",
-    "索引段不在内存池", "顶点范围越界", "顶点不在内存池", "本帧新建配额满", "网格对象建不出", "网格取不到", "非光追帧", "网格待建 / 刚提交", "实例满", "蒙皮只有绑定姿势", "镂空"};
+    "索引段不在内存池", "顶点范围越界", "顶点不在内存池", "本帧新建配额满", "网格对象建不出", "网格取不到", "非光追帧", "网格待建 / 刚提交", "实例满", "蒙皮只有绑定姿势", "镂空", "网格缓存满（工作集比上限大，不新建，免得每帧淘汰重建）"};
 // 单测用（审计分支 d42c8ee / 2fec943 的口径）：光追帧里没进 TLAS 的绘制按原因累计 | for the unit tests (the audit branch's d42c8ee / 2fec943 convention): draws outside the TLAS in ray-traced frames, by reason
 #define RTS_UNC(r) ((long long)g_rts.n_unc[r])
 #define RTS_UNC_PASS RM_PASS
@@ -180,6 +181,10 @@ static struct {
     rts_gov gov; rts_lvl_params eff; int auto_on, lvl_pin; double pause_until;   // pause_until：GPU 挂起保护的暂停到这个时刻（0 = 没暂停） | pause_until: the hang-protection pause lasts until this time (0 = not paused)
     double ts_tick, rt_sum, fr_sum; uint64_t rt_n, fr_n, n_lvl_down, n_lvl_up, n_gov_skip;   // 自动降档：档位状态、本档实际参数、时间戳每拍毫秒、600 帧统计 | automatic downgrade: level state, effective parameters, ms per timestamp tick, 600-frame counters
     int ao_on, ao_rays, ao_done, ao_applied; float ao_radius, ao_strength; id<MTLComputePipelineState> ps_ao, ps_aoblur, ps_ao_a; id<MTLTexture> ao_half, ao_tmp, ao_full; uint64_t n_ao_traced, n_ao_applied, n_ao_missed;   // 光追 AO（实验性）：设置、管线、半分辨率 / 模糊 / 全分辨率贴图、统计 | ray-traced AO (experimental): settings, pipelines, half-res / blur / full-res textures, counters
+    // 光追内存（2026-10-28 真机内存 P1 之后）：budget0 = 网格缓存上限的设置值（DM_RT_SHADOW_CACHE_MB，缺省 64 MB），budget = 按预算 / 告警收紧后的生效值；mem_avail = 光追建好时离系统内存上限（0 = 不知道）
+    // ray-tracing memory (after the 2026-10-28 device memory P1): budget0 = the configured mesh cache cap (DM_RT_SHADOW_CACHE_MB, 64 MB by default), budget = the effective one after the budget / warnings tighten it; mem_avail = distance to the system memory limit when ray tracing was set up (0 = unknown)
+    uint64_t cache_hold_until, n_evict_hot, n_cache_refuse;   // 网格缓存防抖：帧开头淘汰到上一帧刚用过的网格（工作集比上限大）后 600 帧内，缓存到上限就不新建 | mesh cache anti-thrash: for 600 frames after the frame-start eviction hit a mesh used in the previous frame (working set larger than the cap), no new mesh is created while the cache is at the cap
+    rts_memw memw; uint32_t memw_seen; uint64_t budget0, mem_avail, mem_budget, n_mem_floor_held; rts_mem_plan mplan; NSUInteger plan_w, plan_h;
     int last_r;   // 上一次绘制的答案：draw 重入（g_draw_reentry）时原样复用，不重复登记实例 / 槽 | the previous draw's answer: reused on draw re-entry (g_draw_reentry), so instances / slots are not registered twice
 } g_rts = { .on = -1, .meshes = {.klen = 8}, .cur_smap = -1, .cur = -1, .ai_cap = -1 };
 int mtl_rt_shadow_supported(void) {   // 宿主设置页用：这台机器能不能显示「光追阴影」 | For the host settings page: whether this machine may show "ray-traced shadows"
@@ -218,9 +223,12 @@ static int rts_flip(int v) {
     return r;
 }
 static void rts_release_all(const char *why);
-static rts_lvl_params rts_lvl_of(int lvl) { return rts_lvl_apply(lvl, g_rts.point_on, g_rts.point_n, g_rts.point_div, g_rts.sun_half, g_rts.soft > 0, g_rts.ao_on); }
+static uint64_t rts_avail_bytes(void);
+static rts_lvl_params rts_lvl_of(int lvl) { return rts_lvl_apply(lvl, g_rts.point_on, g_rts.point_n, g_rts.point_div, g_rts.sun_half, g_rts.soft > 0, g_rts.ao_on && !g_rts.mplan.ao_off && !g_rts.memw.ao_off); }   // 内存预算 / 连续告警关 AO | the memory budget / consecutive warnings turn AO off
+static int rts_mem_floor(void) { return MAX(g_rts.memw.floor, g_rts.mplan.lvl_floor); }   // 内存定的最低档：自动降档与 DM_RT_LEVEL 都不低于它 | the lowest level memory allows: neither the automatic downgrade nor DM_RT_LEVEL goes below it
 static double rts_now(void);
 static void rts_lvl_update(void) {   // 自动降档换了档，或挂起保护的暂停开始 / 结束：从这一帧起生效 | the automatic downgrade changed level, or the hang-protection pause began / ended: effective from this frame
+    if (g_rts.gov.lvl < rts_mem_floor()) g_rts.gov.lvl = rts_mem_floor();
     g_rts.eff = rts_lvl_of(g_rts.gov.lvl);
     if (g_rts.pause_until > 0 && rts_now() < g_rts.pause_until) { g_rts.eff.off = 1; g_rts.eff.point_on = 0; g_rts.eff.ao = 0; }
     else if (g_rts.pause_until > 0) { g_rts.pause_until = 0; MLOG("光追阴影：GPU 挂起保护的暂停结束，从第 %d 档恢复光追", g_rts.gov.lvl); }
@@ -233,6 +241,19 @@ static const char *rts_lvl_desc_p(const rts_lvl_params *e, char *b, size_t n) { 
     return b;
 }
 static const char *rts_lvl_desc(char *b, size_t n) { return rts_lvl_desc_p(&g_rts.eff, b, n); }
+static int g_rts_fe_inject = -1;   // 单测：≥ 0 时代替 dm_ingame_now（RTS_FE_SET） | unit tests: when ≥ 0 it replaces dm_ingame_now (RTS_FE_SET)
+#define RTS_FE_SET(v) (g_rts_fe_inject = (v))
+// 局内才光追（RC1 阻塞项，2026-10-28 真机：设置里开着光追进选角页，角色脸一整块黑）：前端（主菜单 / 选角，没读到受控玩家）的布景是近景特写，光追太阳遮罩把兜帽 / 头发对脸的自遮挡算得比原版级联深得多，
+// 而前端不是玩法画面，照原版最稳——前端整个关光追（整体释放），进局再建。DM_RT_FRONTEND=1 恢复前端也光追（对照）。每帧只问一次宿主（取锁读 HUD 快照）
+// ray tracing only in a run (RC1 blocker, device 2026-10-28: entering character select with ray tracing on in settings, the character's face was a solid black block): the front end (main menu / character select, no controlled player read) is a close-up set, where the ray-traced sun mask makes the hood / hair self-shadow the face far darker than the original cascades,
+// and the front end is not gameplay, so the original look is the safe choice: ray tracing is off in the front end (everything released) and rebuilt on entering a run. DM_RT_FRONTEND=1 keeps it on in the front end (comparison). The host is asked once per frame (a locked read of the HUD snapshot)
+static int rts_ingame(void) {
+    static int fe = -1; if (fe < 0) { const char *e = getenv("DM_RT_FRONTEND"); fe = e && atoi(e) != 0; }
+    if (fe) return 1;
+    if (g_rts_fe_inject >= 0) return g_rts_fe_inject;
+    static uint64_t f0 = UINT64_MAX; static int ig = 1; uint64_t f = atomic_load(&g_cur_frame); if (f != f0) { f0 = f; ig = dm_ingame_now() != 0; }
+    return ig;
+}
 static int rts_on(void) {
     if (g_rts.on < 0) {
         const char *e = getenv("DM_RT_SHADOW"); g_rts.gate = mtl_rt_shadow_supported(); g_rts.dbg = getenv("DM_RT_SHADOW_DBG") ? atoi(getenv("DM_RT_SHADOW_DBG")) : 0;
@@ -240,7 +261,7 @@ static int rts_on(void) {
         { const char *pe = getenv("DM_RT_SHADOW_PART"); g_rts.part = !(pe && !strcmp(pe, "0")); if (pe) MLOG("光追阴影：局部回退 %s（测试开关 DM_RT_SHADOW_PART=%s）", g_rts.part ? "开" : "关（整帧清图对照）", pe); }
         const char *h = getenv("DM_RT_SHADOW_HYST"); g_rts.hyst = !(h && !strcmp(h, "0")); g_rts.need = 1;   // 真机对照：DM_RT_SHADOW_HYST=0 回到逐帧切换 | device A/B: DM_RT_SHADOW_HYST=0 restores per-frame switching
         if (h) MLOG("光追阴影：画面迟滞 %s（测试开关 DM_RT_SHADOW_HYST=%s）", g_rts.hyst ? "开" : "关", h);
-        const char *b = getenv("DM_RT_SHADOW_CACHE_MB"); g_rts.budget = (uint64_t)(b && atoi(b) > 0 ? atoi(b) : 64) << 20;
+        const char *b = getenv("DM_RT_SHADOW_CACHE_MB"); g_rts.budget = g_rts.budget0 = (uint64_t)(b && atoi(b) > 0 ? atoi(b) : 64) << 20;
         const char *se = getenv("DM_RT_SOFT"), *sd = getenv("DM_RT_SOFT_MAXD"); g_rts.soft = se ? (float)atof(se) : 0.f; g_rts.soft_maxd = sd ? (float)atof(sd) : 200.f; if (g_rts.soft < 0) g_rts.soft = 0;
         const char *pl = getenv("DM_RT_PLAYER_LIGHT"); g_rts.player_scale = pl ? (float)atof(pl) : 0.8f; if (!(g_rts.player_scale >= 0 && g_rts.player_scale <= 1)) g_rts.player_scale = 1; g_rts.ptrack.rec = -1;   // 玩家随身光颜色倍率（1 = 不动） | player-light color factor (1 = untouched)
         { const char *pd = getenv("DM_RT_POINT_DIV"); g_rts.point_div = pd && (atoi(pd) == 2 || atoi(pd) == 4) ? atoi(pd) : 4; }   // 点光遮罩追踪分辨率：全分辨率的 1/4（缺省）或 1/2，之后深度感知上采样 | point-mask trace resolution: 1/4 (default) or 1/2 of full, then depth-aware upsampling
@@ -256,9 +277,10 @@ static int rts_on(void) {
         // 前缀与宿主 dm_rt_shadow_setting 的「光追阴影：生效」同一个：钉住时不走宿主那条，分享诊断日志的摘要照样取得到 | same prefix as "光追阴影：生效" in the host dm_rt_shadow_setting: when pinned that path is skipped, and the share-diagnostics summary still finds the line
         if (e) MLOG("光追阴影：生效 %s（测试开关 DM_RT_SHADOW=%s 钉住%s）", atoi(e) && g_rts.gate ? "开" : "关", e, g_rts.gate ? "" : "，机器不可用，仍不生效");
     }
-    int v = !g_rts.gate || g_rts.failed || g_gcap_on ? 0 : rts_flip(g_rts.on == -2 ? dm_rt_shadow_setting() != 0 : g_rts.on);   // GPU 抓帧前后关掉（g_gcap_on，见 nvn_mtl.m gcap_present）：Metal 抓帧层碰到光追对象就崩，只能整个释放 | off around a GPU capture (g_gcap_on, see gcap_present in nvn_mtl.m): the Metal capture layer crashes on ray-tracing objects, so everything is released
+    int v = !g_rts.gate || g_rts.failed || g_gcap_on ? 0 : rts_flip(g_rts.on == -2 ? dm_rt_shadow_setting() != 0 : g_rts.on); int fe_off = v && !rts_ingame(); if (fe_off) v = 0;   // GPU 抓帧前后关掉（g_gcap_on，见 nvn_mtl.m gcap_present）：Metal 抓帧层碰到光追对象就崩，只能整个释放 | off around a GPU capture (g_gcap_on, see gcap_present in nvn_mtl.m): the Metal capture layer crashes on ray-tracing objects, so everything is released
     if (!v) g_rts.hang_seen = atomic_load(&g_gpu_hang_n);   // 光追关着时的挂起不算光追的 | hangs while ray tracing is off do not count against it
-    if (!v && g_rts.was_on) rts_release_all(g_rts.failed ? "模块失败" : g_gcap_on ? "GPU 抓帧（Metal 抓帧层碰到光追对象会崩，抓完再开）" : "开关关了");   // 关掉 / 失败：整个缓存等 GPU 在途工作做完后释放（六审 5.1） | off / failed: the whole cache is released once in-flight GPU work is done (sixth review 5.1)
+    if (!v) g_rts.memw_seen = atomic_load(&g_mem_warn_n);   // 光追关着时的内存告警与光追无关（没东西可放），再开时不按旧告警降档 | memory warnings while ray tracing is off have nothing to release and do not lower the level on the next switch-on
+    if (!v && g_rts.was_on) rts_release_all(g_rts.failed ? "模块失败" : fe_off ? "不在局内（主菜单 / 选角照原版，进局再建）" : g_gcap_on ? "GPU 抓帧（Metal 抓帧层碰到光追对象会崩，抓完再开）" : "开关关了");   // 关掉 / 失败：整个缓存等 GPU 在途工作做完后释放（六审 5.1） | off / failed: the whole cache is released once in-flight GPU work is done (sixth review 5.1)
     g_rts.was_on = v;
     return v;
 }
@@ -305,6 +327,7 @@ static double rts_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, 
 static void rts_gov_feed(double rt, double fr, double hz) {
     double budget = 1000.0 / (hz > 0 ? hz : 60);
     const char *why = ""; int old = g_rts.gov.lvl, r = rts_gov_step(&g_rts.gov, rt, fr, budget, rts_now(), &why); if (!r) return;
+    if (r < 0 && g_rts.gov.lvl < rts_mem_floor()) { g_rts.gov.lvl = old; g_rts.n_mem_floor_held++; return; }   // GPU 有余量也不升过内存定的最低档 | GPU headroom does not step above the floor memory set
     if (r > 0) g_rts.n_lvl_down++; else g_rts.n_lvl_up++;
     char b[160]; rts_lvl_params nx = rts_lvl_of(g_rts.gov.lvl);   // 下一帧开头才换（rts_frame_begin）：本帧前后用同一套参数 | applied at the next frame start (rts_frame_begin): the whole of this frame keeps one set of parameters
     MLOG("光追降档：第 %d 档 → 第 %d 档（%s：光追 GPU 约 %.2f ms、整帧 GPU 约 %.2f ms，预算 %.2f ms / %.0f Hz；再升档要先有余量 %.0f 秒）→ %s", old, g_rts.gov.lvl, why, g_rts.gov.rt, g_rts.gov.fr, budget, hz > 0 ? hz : 60, g_rts.gov.hold_up, rts_lvl_desc_p(&nx, b, sizeof b));
@@ -405,6 +428,7 @@ static int rts_setup(void) {
     { char b[160]; MLOG("光追降档：自动 %s，当前第 %d 档（%s；0 = 全开、1 = 太阳全分辨率 + 点光 2 盏 + 关 AO、2 = 太阳半分辨率 + 点光 1 盏（排除随身光）、3 = 太阳半分辨率 + 关点光 + 镂空照原版；暂停只给 GPU 挂起保护；按光追通道与整帧 GPU 时间对出图节拍预算判）", g_rts.auto_on ? "开" : g_rts.lvl_pin >= 0 ? "关（DM_RT_LEVEL 钉住）" : "关（DM_RT_AUTO=0）", g_rts.gov.lvl, rts_lvl_desc(b, sizeof b)); }
     if (g_rts.ao_on) MLOG("光追 AO：开（实验性，DM_RT_AO=1）：半分辨率每像素 %d 条半球射线、半径 %.1f、强度 %.2f、5×5 深度感知模糊后上采样，主通道之后乘到画面上；自动降档 1 档起关", g_rts.ao_rays, g_rts.ao_radius, g_rts.ao_strength);
     else MLOG("光追 AO：关（实验性，DM_RT_AO=1 打开）");
+    g_rts.mem_avail = rts_avail_bytes(); g_rts.plan_w = g_rts.plan_h = 0;   // 预算在第一次知道渲染尺寸时定（rts_mem_replan） | the budget plan is made the first time the render size is known (rts_mem_replan)
     rts_alpha_start();
     return 1;
 }
@@ -458,6 +482,80 @@ static void rts_release_all(const char *why) {
     for (int i = 0; i < g_rts.nsmap; i++) g_rts.smap[i].t = nil;
     g_rts.nsmap = 0; g_rts.cur_smap = -1; g_rts.main_hdr = nil; g_rts.lbuf = nil; g_rts.lbuf_tid = 0; g_rts.s0_cpu = g_rts.s1_cpu = NULL; g_rts.s0_gpu = g_rts.s1_gpu = 0;
 }
+// ---- 光追内存：预算、已用、系统内存告警降档（2026-10-28 真机内存 P1 之后；日志前缀「光追内存：」进分享诊断日志摘要） ----
+// ---- ray-tracing memory: budget, usage, system memory-warning downgrade (after the 2026-10-28 device memory P1; log prefix "光追内存：" is in the share-log summary) ----
+static uint64_t rts_avail_bytes(void) {   // 光追建好时离系统内存上限还有多少（iOS os_proc_available_memory；Mac 不知道 = 0） | distance to the system memory limit when ray tracing is set up (iOS os_proc_available_memory; unknown on the Mac = 0)
+    const char *e = getenv("DM_TEST_RT_MEM_AVAIL_MB"); if (e && atoll(e) > 0) return (uint64_t)atoll(e) << 20;   // 测试开关：假装离上限这么多（Mac / 单测验预算） | test switch: pretend to be this far from the limit (budget checks on the Mac / in unit tests)
+#if TARGET_OS_IPHONE
+    return (uint64_t)os_proc_available_memory();
+#else
+    return 0;
+#endif
+}
+static uint64_t rts_res_bytes(id<MTLResource> r) { return r ? (uint64_t)r.allocatedSize : 0; }
+typedef struct { uint64_t masks, point, ao, mesh, fixed; } rts_mem_used_t;   // 已用：按真对象的 allocatedSize 分项 | usage: per item from the real objects' allocatedSize
+static rts_mem_used_t rts_mem_used(void) {
+    rts_mem_used_t u = {0};
+    u.masks = rts_res_bytes(g_rts.mask_lit) + rts_res_bytes(g_rts.mask) + rts_res_bytes(g_rts.mask_half) + rts_res_bytes(g_rts.mask_raw) + rts_res_bytes(g_rts.mask_tmp);
+    u.point = rts_res_bytes(g_rts.pmask) + rts_res_bytes(g_rts.pmaskf);
+    u.ao = rts_res_bytes(g_rts.ao_half) + rts_res_bytes(g_rts.ao_tmp) + rts_res_bytes(g_rts.ao_full);
+    u.mesh = g_rts.cache_bytes;
+    u.fixed = rts_res_bytes(g_rts.tlas) + rts_res_bytes(g_rts.scratch) + rts_res_bytes(g_rts.lseen) + rts_res_bytes(g_rts.llist) + rts_res_bytes(g_rts.prev);
+    for (int i = 0; i < g_rts.nslot; i++) { rts_fslot *f = &g_rts.slot[i]; id<MTLResource> o[9] = {f->inst, f->k, f->d, f->pk, f->picks, f->bb, f->ai, f->aargs, f->lcopy}; for (int j = 0; j < 9; j++) u.fixed += rts_res_bytes(o[j]); }
+    return u;
+}
+static uint64_t rts_mem_fixed_est(void) {   // 估算用的固定部分：真对象的（还没建就按 TLAS 1 MB + 暂存 4 MB + 3 个槽各 1.7 MB 算） | the fixed part for estimates: from the real objects (before they exist: TLAS 1 MB + scratch 4 MB + 3 slots of 1.7 MB each)
+    rts_mem_used_t u = rts_mem_used(); return u.fixed > (6ull << 20) ? u.fixed : (10ull << 20);
+}
+static void rts_mem_apply(void) {   // 网格缓存生效上限 = min(设置值, 预算方案) ÷（连续告警时 2） | effective mesh cache cap = min(configured, budget plan) ÷ (2 under consecutive warnings)
+    uint64_t c = MIN(g_rts.budget0, g_rts.mplan.mesh_cap ? g_rts.mplan.mesh_cap : g_rts.budget0); if (g_rts.memw.mesh_half) c = MAX(c / 2, RTS_MESH_CAP_MIN);
+    g_rts.budget = MIN(c, g_rts.budget0);
+}
+static const char *rts_mem_str(char *b, size_t n, const rts_mem_used_t *u) {
+    snprintf(b, n, "遮罩 %.1f、点光 %.1f、AO %.1f、网格缓存 %.1f / 上限 %llu、TLAS + 暂存 + 每帧槽 %.1f", u->masks / 1048576.0, u->point / 1048576.0, u->ao / 1048576.0, u->mesh / 1048576.0, (unsigned long long)(g_rts.budget >> 20), u->fixed / 1048576.0); return b;
+}
+// 渲染尺寸定下来 / 变了时按预算定方案（缺省档放得下就不动） | the plan for the budget whenever the render size is set / changes (nothing changes if the default level fits)
+static void rts_mem_replan(NSUInteger w, NSUInteger h) {
+    if (w == g_rts.plan_w && h == g_rts.plan_h) return;
+    g_rts.plan_w = w; g_rts.plan_h = h; g_rts.mem_budget = rts_mem_budget(g_rts.mem_avail);
+    rts_lvl_params p0 = rts_lvl_apply(0, g_rts.point_on, g_rts.point_n, g_rts.point_div, g_rts.sun_half, g_rts.soft > 0, g_rts.ao_on), p3 = rts_lvl_apply(3, g_rts.point_on, g_rts.point_n, g_rts.point_div, g_rts.sun_half, g_rts.soft > 0, 0);
+    rts_mem_plan old = g_rts.mplan; uint64_t fixed = rts_mem_fixed_est(); g_rts.mplan = rts_mem_plan_for(g_rts.mem_budget, w, h, p0, p3, g_rts.budget0, fixed); rts_mem_apply();
+    rts_mem_est e = rts_mem_estimate(w, h, p0, g_rts.budget0, fixed); char ab[160], ob[200];
+    if (g_rts.mem_avail) snprintf(ab, sizeof ab, "%llu MB（光追建好时离系统上限 %llu MB 的 1/8，夹在 48–192）", (unsigned long long)(g_rts.mem_budget >> 20), (unsigned long long)(g_rts.mem_avail >> 20));
+    else snprintf(ab, sizeof ab, "不限（读不到离系统上限）");
+    if (!g_rts.mplan.ao_off && !g_rts.mplan.lvl_floor && g_rts.mplan.mesh_cap == g_rts.budget0) snprintf(ob, sizeof ob, "放得下，照缺省");
+    else snprintf(ob, sizeof ob, "超预算：%s、网格缓存上限 %llu MB、最低第 %d 档（收紧后估算 %.1f MB）", g_rts.mplan.ao_off ? "不建 AO" : "AO 照旧", (unsigned long long)(g_rts.mplan.mesh_cap >> 20), g_rts.mplan.lvl_floor, g_rts.mplan.est / 1048576.0);
+    static int nl; int changed = old.lvl_floor != g_rts.mplan.lvl_floor || old.ao_off != g_rts.mplan.ao_off || old.mesh_cap != g_rts.mplan.mesh_cap;
+    if (changed || nl++ < 3) MLOG("光追内存：预算 %s；渲染 %lux%lu 缺省档估算 %.1f MB（遮罩 %.1f、点光 %.1f、AO %.1f、网格缓存上限 %.1f、TLAS + 暂存 + 每帧槽 %.1f）→ %s", ab, (unsigned long)w, (unsigned long)h, rts_mem_est_total(&e) / 1048576.0,
+         e.masks / 1048576.0, e.point / 1048576.0, e.ao / 1048576.0, e.mesh / 1048576.0, e.fixed / 1048576.0, ob);
+    if (changed) rts_lvl_update();   // 渲染尺寸常变（3D 比例控制），日志只记前 3 次与方案变了的 | the render size changes often (3D ratio control): the log keeps the first 3 and the ones where the plan changed
+}
+static void rts_point_release(void) {   // 两张点光遮罩等在途提交做完放掉；返回前的字节数由调用方取 | both point masks are released after in-flight submissions; the caller takes the byte count before
+    defer_obj_release(g_rts.pmask); defer_obj_release(g_rts.pmaskf); g_rts.pmask = g_rts.pmaskf = nil; g_rts.pl_done = 0;
+}
+// 系统内存告警（iOS applicationDidReceiveMemoryWarning → mtl_note_memory_warning，主线程只加计数；这里在渲染线程的帧开头处理）：
+// 立刻放掉网格缓存整体、AO 三张、（新档不用点光时）两张点光遮罩，最低档抬一档；10 秒内连着再来 = 连续告警：关 AO、网格缓存上限减半、到最低档。放掉的都走 defer（等在途提交做完）
+// System memory warning (iOS applicationDidReceiveMemoryWarning → mtl_note_memory_warning, the main thread only bumps a counter; handled here at the frame start on the render thread):
+// release the whole mesh cache, the three AO textures and (when the new level uses no point lights) both point masks right away, and raise the floor by one level; another within 10 s = consecutive warnings: AO off, mesh cache cap halved, the lowest level. Everything released goes through defer (after in-flight submissions)
+static void rts_mem_warned(void) {
+    rts_mem_used_t u = rts_mem_used(); int nm = g_rts.nmesh, old = g_rts.gov.lvl; char b[160], ub[200];
+    while (g_rts.nmesh) { rts_mesh *m = NULL; for (uint32_t i = 0; i < g_rts.meshes.cap && !m; i++) m = g_rts.meshes.vals[i]; if (!m) break; rts_mesh_drop(m); }
+    g_rts.npend = g_rts.nsub = g_rts.nexp = 0; g_rts.pend_tris = 0; g_rts.nkeep = 0; g_rts.cur_pos4 = nil;   // 排队 / 刚提交 / 上一帧导出的都指着已放掉的网格：清掉（帧开头先于用它们的那几行，本帧还没登记任何实例） | queued / just submitted / last frame's exported entries point at released meshes: cleared (at the frame start, before the lines that use them; no instance registered yet this frame)
+    defer_obj_release(g_rts.ao_half); defer_obj_release(g_rts.ao_tmp); defer_obj_release(g_rts.ao_full); g_rts.ao_half = g_rts.ao_tmp = g_rts.ao_full = nil; g_rts.ao_done = 0;
+    int fl = rts_memw_warn(&g_rts.memw, g_rts.gov.lvl, RTS_LVL_MAX, rts_now()); rts_mem_apply(); rts_lvl_update();
+    uint64_t pt = 0; if (!g_rts.eff.point_on && (g_rts.pmask || g_rts.pmaskf)) { pt = u.point; rts_point_release(); }
+    MLOG("光追内存：告警降档 第 %llu 次（%s）：放掉 网格缓存 %d 个 %.1f MB、AO %.1f MB、点光遮罩 %.1f MB；第 %d 档 → 第 %d 档（%s），最低第 %d 档、网格缓存上限 %llu MB；最后一次告警 %.0f 秒后才放宽一档、之后每 %.0f 秒一档（放宽前：%s）",
+         (unsigned long long)g_rts.memw.n, g_rts.memw.streak >= 2 ? "连续告警：关 AO、网格缓存上限减半、到最低档" : "降一档", nm, u.mesh / 1048576.0, u.ao / 1048576.0, pt / 1048576.0, old, g_rts.gov.lvl, rts_lvl_desc(b, sizeof b), fl,
+         (unsigned long long)(g_rts.budget >> 20), RTS_MEMW_HOLD_S, RTS_MEMW_STEP_S, rts_mem_str(ub, sizeof ub, &u));
+}
+static void rts_mem_frame(uint64_t f) {   // 帧开头：新告警、迟滞放宽、测试开关 | frame start: new warnings, hysteresis loosening, test switch
+    { static int nt = -1; static unsigned long long tf[4]; if (nt < 0) { const char *e = getenv("DM_TEST_RT_MEMWARN"); nt = e ? sscanf(e, "%llu,%llu,%llu,%llu", &tf[0], &tf[1], &tf[2], &tf[3]) : 0; if (nt < 0) nt = 0; }   // 测试开关 DM_TEST_RT_MEMWARN=<帧>[,…]：这几帧假装收到系统内存告警（Mac 没有系统告警） | test switch DM_TEST_RT_MEMWARN=<frame>[,…]: pretend a system memory warning at these frames (the Mac has none)
+      for (int i = 0; i < nt; i++) if (tf[i] && f == tf[i]) { atomic_fetch_add(&g_mem_warn_n, 1); MLOG("DM_TEST_RT_MEMWARN：第 %llu 帧假装收到系统内存告警", (unsigned long long)f); } }
+    uint32_t w = atomic_load(&g_mem_warn_n); if (w != g_rts.memw_seen) { g_rts.memw_seen = w; rts_mem_warned(); }
+    if (rts_memw_tick(&g_rts.memw, rts_now())) { char b[160]; rts_mem_apply();
+        MLOG("光追内存：告警解除一档（最后一次告警 %.0f 秒前）：最低第 %d 档、网格缓存上限 %llu MB、AO %s；升不升档仍由自动降档按 GPU 余量定（当前第 %d 档：%s）", rts_now() - g_rts.memw.t_last, rts_mem_floor(), (unsigned long long)(g_rts.budget >> 20),
+             g_rts.ao_on ? (g_rts.memw.ao_off || g_rts.mplan.ao_off ? "仍关" : "可开") : "没开", g_rts.gov.lvl, rts_lvl_desc(b, sizeof b)); }
+}
 // 上一帧的光追完不完整：NULL = 完整（或本帧不需要），否则是原因 | Was the previous frame's ray tracing complete: NULL = complete (or not needed), else the reason
 static const char *rts_frame_fail(void) {
     if (!g_rts.main_seen) return "没有主通道";
@@ -492,7 +590,7 @@ static void rts_hang_check(uint64_t f) {
     else { g_rts.failed = 1; MLOG("【红】光追阴影：GPU 又挂起（第 %d 次事件）→ 本次运行关掉光追，退回原版阴影图", g_rts.hang_events); }
 }
 static void rts_frame_begin(uint64_t f) {
-    rts_check_dump(); rts_hang_check(f);
+    rts_check_dump(); rts_hang_check(f); rts_mem_frame(f);
     if (g_rts.badv) { const uint32_t *bv = g_rts.badv.contents; uint32_t b0 = bv[0], b1 = bv[1]; static int nl;   // 坏顶点：数一涨就记（前 8 次），每 600 帧统计行里也有 | bad vertices: logged when the count rises (first 8 times), also in the 600-frame stats
       if ((b0 != g_rts.bad_seen[0] || b1 != g_rts.bad_seen[1]) && nl++ < 8) MLOG("光追阴影：坏顶点（非有限 / 超过 1e7）已收成原点：解码累计 %u 个、反投影累计 %u 个（帧 %llu；反投影的多为该次绘制没用到的顶点——同一顶点缓冲分几次画时各次只写自己引用的，没写的不进三角形，无害）", b0, b1, (unsigned long long)f);
       g_rts.bad_seen[0] = b0; g_rts.bad_seen[1] = b1; }
@@ -525,6 +623,9 @@ static void rts_frame_begin(uint64_t f) {
           MLOG("光追阴影：阴影图 第 %llu 帧 %d 张：%s；太阳 %s (%.2f %.2f %.2f) 取自 %u² 图", (unsigned long long)g_rts.n_frames, g_rts.nsmap, o ? mb : "无", g_rts.have_sun ? "有" : "无", g_rts.sun[0], g_rts.sun[1], g_rts.sun[2], g_rts.sun_from_w); }
         if (g_rts.part) MLOG("光追阴影：局部回退 至第 %llu 帧 省画 %llu 次、照原版画进太阳图 %llu 次（%llu 帧有）、非太阳图不进 TLAS %llu 次、省画后没追成 %llu 帧、以读入开的太阳图 %llu 次、没有主通道的帧 %llu", (unsigned long long)g_rts.n_frames,
             (unsigned long long)g_rts.n_skip_draws, (unsigned long long)g_rts.n_resid_draws, (unsigned long long)g_rts.n_resid_frames, (unsigned long long)g_rts.n_nonsun_draws, (unsigned long long)g_rts.n_skip_lost, (unsigned long long)g_rts.n_skip_load, (unsigned long long)g_rts.n_nomain);
+        { rts_mem_used_t u = rts_mem_used(); char ub[200], bb[32] = "不限"; uint64_t tot = u.masks + u.point + u.ao + u.mesh + u.fixed; if (g_rts.mem_budget && g_rts.mem_budget != UINT64_MAX) snprintf(bb, sizeof bb, "%llu MB", (unsigned long long)(g_rts.mem_budget >> 20));
+          MLOG("光追内存：第 %llu 帧 已用 %.1f MB（%s）；预算 %s；系统内存告警 %llu 次、内存定的最低第 %d 档（按预算 %d、告警 %d）、挡住的升档 %llu 次；网格缓存淘汰到刚用过的 %llu 次、缓存满不新建 %llu 次", (unsigned long long)g_rts.n_frames, tot / 1048576.0, rts_mem_str(ub, sizeof ub, &u),
+               bb, (unsigned long long)g_rts.memw.n, rts_mem_floor(), g_rts.mplan.lvl_floor, g_rts.memw.floor, (unsigned long long)g_rts.n_mem_floor_held, (unsigned long long)g_rts.n_evict_hot, (unsigned long long)g_rts.n_cache_refuse); }
         if (g_rts.ao_on) MLOG("光追 AO：第 %llu 帧 当前%s；累计追 %llu 帧、乘到画面 %llu 帧、算了没乘上 %llu 帧（主通道之后没再挂 HDR）", (unsigned long long)g_rts.n_frames, g_rts.eff.ao ? "开" : "关（自动降档）",
             (unsigned long long)g_rts.n_ao_traced, (unsigned long long)g_rts.n_ao_applied, (unsigned long long)g_rts.n_ao_missed);
         g_rts.n_rt_draws = g_rts.n_recv_skip = 0; }
@@ -571,6 +672,7 @@ static void rts_frame_begin(uint64_t f) {
     g_rts.ao_done = g_rts.ao_applied = 0;
     if (!g_rts.eff.ao && (g_rts.ao_half || g_rts.ao_tmp || g_rts.ao_full)) {   // 降档关了 AO：三张贴图等在途提交做完放掉，升回来再建 | AO switched off by the downgrade: the three textures are released after in-flight submissions and rebuilt on the way back up
         defer_obj_release(g_rts.ao_half); defer_obj_release(g_rts.ao_tmp); defer_obj_release(g_rts.ao_full); g_rts.ao_half = g_rts.ao_tmp = g_rts.ao_full = nil; MLOG("光追 AO：降档关掉，贴图放掉（升回 0 档再建）"); }
+    if (!g_rts.eff.point_on && (g_rts.pmask || g_rts.pmaskf)) { rts_point_release(); MLOG("光追点光：本档关点光，两张点光遮罩放掉（升回有点光的档再建）"); }   // 第 3 档 / 内存最低档：点光遮罩不用就放（原先一直留着，原生档约 24 MB） | level 3 / the memory floor: point masks are released when unused (they used to stay, about 24 MB at native resolution)
     // 2. 上一帧编进构建的网格转可用；3. 没建的排队作废（源地址只在当帧有效） | 2. Meshes built last frame become usable; 3. unbuilt queue entries are dropped (source addresses are per frame)
     for (int i = 0; i < g_rts.nsub; i++) g_rts.submitted[i]->state = RTS_READY;
     g_rts.nsub = 0;
@@ -593,9 +695,12 @@ static void rts_frame_begin(uint64_t f) {
     if (g_rts.alpha_logged == 0 && atomic_load(&g_rts_alpha_st) == -1) { g_rts.alpha_logged = -1; MLOG("【红】光追镂空：判定库编不出或包里没有，镂空遮挡体留原阴影图（带镂空遮挡体的帧阴影图不清）"); }
     g_rts.prepass_occ = g_rts.n_frames > 1 && g_rts.shadow_draws == 0; g_rts.shadow_draws = 0; g_rts.nprepass = 0;
     // 4. 总字节预算：超了从最久没用的开始淘汰（这时本帧还没用任何网格，淘汰的只会在早先的提交里在途，defer 等它们做完） | 4. Total byte budget: over it, evict least recently used first (nothing is used by this frame yet; defer waits for earlier submissions)
-    for (int n = 0; g_rts.cache_bytes > g_rts.budget && g_rts.nmesh && n < 256; n++) {
+    int trig = 0; for (int n = 0; g_rts.cache_bytes > g_rts.budget && g_rts.nmesh && n < 256; n++) {
         rts_mesh *old = NULL; for (uint32_t i = 0; i < g_rts.meshes.cap; i++) { rts_mesh *m = g_rts.meshes.vals[i]; if (m && (!old || m->last_frame < old->last_frame)) old = m; }
-        if (!old) break; rts_mesh_drop(old); g_rts.n_evict_budget++;
+        if (!old) break;
+        if (old->last_frame + 1 >= f) { if (f < g_rts.cache_hold_until && !trig) { g_rts.cache_hold_until = f + 600; break; }   // 防抖期内：刚用过的不淘汰（还有压力就续期）；缓存满由下面「不新建」挡住 | within the anti-thrash period: recently used meshes are not evicted (the period is renewed while the pressure lasts); a full cache is held by "no new builds" instead
+            if (!trig) { trig = 1; g_rts.n_evict_hot++; g_rts.cache_hold_until = f + 600; } }   // 第一次：这一帧照样淘汰到预算以下，之后进防抖期 | the first time: this frame still evicts down to the budget, then the anti-thrash period begins   // 淘汰到上一帧刚用过的：工作集比上限大，本帧再建就是每帧淘汰重建（Mac 营地上限 32 MB、工作集 39 MB：每帧建 32 个） | evicting one used in the previous frame: the working set exceeds the cap, and rebuilding it this frame means evict-and-rebuild every frame (Mac camp with a 32 MB cap and a 39 MB working set: 32 builds per frame)
+        rts_mesh_drop(old); g_rts.n_evict_budget++;
     }
     // 600 帧没用过的释放（待建的也算） | release meshes unused for 600 frames (pending ones too)
     if (g_rts.n_frames % 120 == 0 && g_rts.nmesh) { rts_mesh *dead[64]; int nd = 0;
@@ -691,6 +796,7 @@ static rts_mesh *rts_mesh_get(const p_draw *dw, const p_draw_idx *di, int n, int
     if (!m || (m->state == RTS_PENDING && !m->queued)) {   // 新网格，或待建而本帧还没排队 | new mesh, or pending and not queued this frame
         if (g_rts.npend >= RTS_BUILDS_PER_FRAME) { g_rts.unc_why = RM_QUOTA; return NULL; }   // 本帧配额用完：下一帧再建 | quota for this frame used up: build next frame
         if (!m) {
+            if (g_rts.cache_bytes >= g_rts.budget && g_rts.frame < g_rts.cache_hold_until) { g_rts.n_cache_refuse++; g_rts.unc_why = RM_CACHE; return NULL; }   // 防抖：缓存满就不建，这次照原版画进阴影图（局部回退） | anti-thrash: no build while the cache is full; this draw goes into the shadow map as original (partial fallback)
             m = calloc(1, sizeof *m); if (!m) { g_rts.unc_why = RM_ALLOC; return NULL; } m->key = key; m->nverts = (uint32_t)nv; m->isz = (uint32_t)isz; m->skin = skin;
             if (prim == 5) { m->ib = rts_strip_ib(ib, isz, n, &m->tris); m->isz = 4; if (!m->ib) { free(m); g_rts.unc_why = RM_ALLOC; return NULL; } }
             else if (prim == 7) { m->ib = rts_quad_ib(n, &m->tris); m->isz = 4; if (!m->ib) { free(m); g_rts.unc_why = RM_ALLOC; return NULL; } }   // 非索引四边形（带索引的在 rts_draw_inner 前面就当空绘制） | non-indexed quads (indexed ones are treated as empty draws earlier in rts_draw_inner)
@@ -1070,7 +1176,7 @@ static id<MTLTexture> rts_lit_tex(NSUInteger w, NSUInteger h) {   // 全亮遮�
     g_rts.lit_logged = 0; return t;
 }
 static void rts_build_and_trace(id<MTLTexture> depth) {
-    if (depth) rts_lit_tex(depth.width, depth.height);
+    if (depth) { rts_mem_replan(depth.width, depth.height); rts_lit_tex(depth.width, depth.height); }
     int trace = g_rts.rt_frame && g_rts.ninst && g_rts.have_cam && depth && (g_rts.have_sun || (g_rts.eff.point_on && g_rts.lbuf && g_rts.s0_gpu && g_rts.s1_gpu));
     if (!trace && !g_rts.npend) return;
     if (trace && g_rts.have_sun && !(g_rts.mask = rts_tex(g_rts.mask, MTLPixelFormatR8Unorm, depth.width, depth.height, "遮罩"))) { g_rts.failed = 1; rts_unqueue(); return; }
