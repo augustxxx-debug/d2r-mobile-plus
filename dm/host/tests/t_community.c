@@ -19,6 +19,12 @@ int dm_padmode_current(void) { return 0; }
 uint64_t dm_padmode_page_keys(uint64_t m) { (void)m; return 0; }
 const char *dm_str(uint8_t *b, const char *k) { (void)b; return k; }
 int dm_ui_top_chk_on(void) { return 0; }
+// RC1 合并后 dm_custom.c 引用的界面 / 控件接口（手柄 HUD 分支的选中框与滚动），本测试不走那些路径，给空桩 | Stubs for the UI / widget calls dm_custom.c gained from the controller-HUD branch; this test never reaches them
+uint64_t dm_guest_frame(void) { return 0; }
+uint32_t dm_ui_gen(void) { return 1; }
+int dm_ui_modal_active(uint64_t root) { (void)root; return 0; }
+void dm_ui_wheel_on(uint64_t w, int notches) { (void)w; (void)notches; }
+uint64_t dm_wref_get(dm_wref *r) { return r ? r->w : 0; }
 void dm_ui_top_chk(uint64_t r, const char *n, uint64_t g) { (void)r; (void)n; (void)g; }
 static int checks, fails;
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
