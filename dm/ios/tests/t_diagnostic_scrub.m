@@ -15,6 +15,9 @@ int main(void) { @autoreleasepool {
     if ([result containsString:@"TestPerson"] || ![result containsString:@"active=1"]) return 10;
     result=[[NSString alloc] initWithData:dm_diagnostic_scrub([@"1 屏幕：Sample Monitor G8，2560x1440\n出图节拍（1 屏幕 Sample Monitor G8，刷新率 120）\n屏幕 2622x1206：签名工具开了，" dataUsingEncoding:NSUTF8StringEncoding],@"",@"") encoding:NSUTF8StringEncoding];
     if ([result containsString:@"Sample Monitor"] || ![result containsString:@"屏幕：<display>，2560x1440"] || ![result containsString:@"刷新率 120"] || ![result containsString:@"屏幕 2622x1206：签名工具开了，"]) return 11;
+    // 社区入口的日志行：群号（10 位数字）与仓库地址都是给玩家看的公开值，脱敏不得抹掉；同一行里的邮箱 / 主目录照抹 | community entry log line: the group number (10 digits) and the repository address are public values shown to players and must survive redaction; an email / home directory on the same line is still redacted
+    result=[[NSString alloc] initWithData:dm_diagnostic_scrub([@"[dm] 社区入口：清单有字段 群号=1129913678 链接=https://github.com/example-owner/d2r-mobile-plus/discussions\n[dm] 社区入口：复制 群号 1129913678（/Users/SamplePerson person@example.invalid）" dataUsingEncoding:NSUTF8StringEncoding],@"/Users/SamplePerson",@"") encoding:NSUTF8StringEncoding];
+    if (![result containsString:@"社区入口：清单有字段 群号=1129913678 链接=https://github.com/example-owner/d2r-mobile-plus/discussions"] || ![result containsString:@"社区入口：复制 群号 1129913678"] || [result containsString:@"SamplePerson"] || [result containsString:@"person@example.invalid"]) return 12;
     NSString *dir=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *path=[dir stringByAppendingPathComponent:@"log.txt"];

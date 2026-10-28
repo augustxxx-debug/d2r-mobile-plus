@@ -287,6 +287,31 @@ def _safe(anchor):
             + ''.join(_upd_text('TouchSafeDesc%d' % k, 99999, 99999, 1700, 36, (232, 228, 214), 'center', a) for k in range(3))
             + _btn('TouchSafeOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchSafeOk', x=99999, anchor=anchor))
 _SAFE = _safe(True); _SAFE_PAD = _safe(False)
+# 社区入口的游戏内提示框（dm/host/dm_community.c）：与崩溃围栏提示框同一套做法——边框 15 片（自己一套切片 Ztouch_comm）+ 标题 + 三行正文（值 / 提示 / 「已复制」）
+# + 「复制群号」「复制链接」（同一条消息，宿主按语言只露出一颗）+ 「确定」。全部屏外起步、字空着，不带锚点：挂在暂停菜单面板（两份）与自定义页面板末尾，
+# 这两个面板都按屏宽一半锚定且带主机档缩放，宿主按面板矩形与缩放算出整屏居中的位置。点「确定」/ 手柄 B 收起；复制走外壳剪贴板回调
+# In-game notice box of the community entry (dm/host/dm_community.c): same approach as the crash-fence box - 15 frame tiles (its own slices Ztouch_comm) + title + three body lines (value / hint / "Copied")
+# + "Copy number" / "Copy link" (one message; the host shows one by language) + "OK". All start off screen with empty text and carry no anchor: hung at the end of the pause menu panel (both) and of the Custom page panel,
+# which are anchored at half the screen width and carry the console-profile scale; the host computes the screen-centered position from the panel's rect and scale. OK / controller B dismisses; copy goes through the shell's clipboard callback
+def _co_text(name, size, color):   # 提示框文字行：原版色票 + ReducedSpacing（同 _upd_text 的其余字段） | a text line of the box: original colour token + ReducedSpacing (otherwise as _upd_text)
+    return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1700, "height": 60 }, "text": "", '
+            '"style": { "pointSize": %d, "fontColor": "%s", "alignment": { "h": "center", "v": "center" }, "spacing": "$ReducedSpacing", "dropShadow": "$DefaultDropShadow" } } },\n') % (name, size, color)
+def _community():
+    return (''.join('        { "type": "ImageWidget", "name": "TouchCommTile%d%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 52, "height": 24 }, "filename": "Ztouch_comm/tile%d%d" } },\n' % (r, c, r, c) for r in range(5) for c in range(3))
+            + _co_text('TouchCommTitle', 48, '$FontColorGoldYellow')
+            # 正文 / 副文分字号（用户：「都一个字体丑死了」）：第一行群号 / 链接 36 号；第二行提示句、第三行「已复制」28 号。颜色与字距照原版样式表（_profileHD.json）：
+            # 标题 = 面板标题色 GoldYellow，正文 = 原版弹窗正文 / 按钮字色 LightGold，副文 = 图形页说明小字同款 LightGray；字距 ReducedSpacing（原版弹窗正文、设置页文字都带）
+            # main / secondary text in different sizes (user): line 1 number / link at 36; line 2 hint and line 3 "Copied" at 28. Colours and spacing follow the original style sheet (_profileHD.json):
+            # title = panel title GoldYellow, body = the original modal body / button text LightGold, secondary = the Graphics tab hint's LightGray; ReducedSpacing as the original modal body and settings text
+            + _co_text('TouchCommDesc0', 36, '$FontColorLightGold')
+            + ''.join(_co_text('TouchCommDesc%d' % k, 28, '$FontColorLightGray') for k in (1, 2))
+            + _btn('TouchCommCopyQq', 99999, '@dmCommunityCopyQq', 'PanelManager:ClosePanel:TouchCommCopy', x=99999, anchor=False)
+            + _btn('TouchCommCopyLink', 99999, '@dmCommunityCopyLink', 'PanelManager:ClosePanel:TouchCommCopy', x=99999, anchor=False)
+            + _btn('TouchCommOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchCommOk', x=99999, anchor=False))
+_COMM = _community()
+_COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchComm\w+)"', _COMM))
+assert _COMM_STUB.count('\n') == 22   # 边框 15 片、标题、正文三行、复制群号、复制链接、确定 | 15 tiles, title, three body lines, Copy number, Copy link, OK
+_COMM_ROW = (('TouchCommunity', '@dmCommunityJoin', 1028),)   # 暂停菜单「加入社区讨论」行（借「保存并退出」按钮的图和字，消息空操作，宿主当信号收）；没有可显示的值时宿主把它挪出屏幕 | the pause menu's "Join the community" row (Save-and-Exit's image and font, a no-op message the host takes as a signal); without a value the host moves it off screen
 _SAFE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchSafe\w+)"', _SAFE))
 assert _SAFE_STUB.count('\n') == 20   # 边框 15 片、标题、正文三行、确定 | 15 frame tiles, title, three body lines, OK
 assert _UPDATE_STUB.count('\n') == 5   # 构建号、普通提示、底板、标题、说明（四审 Q4-04 起没有按钮） | build, notice, backing, title, description (no buttons since fourth review Q4-04)
@@ -605,7 +630,7 @@ def _bind_touch(s):
     return s, n
 # 帮助页整页切掉（帮助页不留）：去掉的是入口——暂停菜单里的「帮助」按钮（两份布局）与 HUD 的帮助按钮面板；剩下的按钮按原间距 150 重新排匀、整组仍以 y 653 为中心，不留空洞。
 # The help page is cut out entirely (the help page is not kept): what is removed is the entries -- the 「帮助」(Help) button in the pause menu (two layouts) and the HUD's help button panel; the remaining buttons are re-spaced evenly at the original spacing of 150 and the whole group is still centered on y 653, leaving no hole.
-def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=()):
+def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=(), tail=''):   # tail：追加在根 children 末尾的控件（社区入口提示框 _COMM，画在最上层） | tail: widgets appended at the end of the root children (the community box _COMM, drawn topmost)
     # 不换原版按钮的图和字（换成前端按钮图 + 放大白字的做法观感差，已撤）；「消息记录」入口不要。
     # 手指尺寸不靠改外观：条目少了以后把间距拉开（中心距 240 单位 ≈ 9.4 毫米），命中外扩交给输入层的就近吸附
     # 「分享诊断日志」：借原版「消息记录」按钮（同一张按钮图、同一种字），换字、
@@ -640,6 +665,9 @@ def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=()):
             r = _sub1(_sub1(_sub1(b, '"name": "Exit"', '"name": "%s"' % name), '"textString": "@SaveAndExit"', '"textString": "%s"' % text), '"onClickMessage": "PausePanelMessage:ExitGame"', '"onClickMessage": "PanelManager:ClosePanel:%s"' % name)
             r = re.sub(r'"rect":\s*\{ "x": 564, "y": \d+ \}', '"rect": { "x": 564, "y": %d }' % y, r, count=1)
             s = s[:e] + ',\n        ' + r + s[e:]; n += 1
+        if tail:
+            i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
+            s = s[:i].rstrip(' ') + tail + '    ' + s[i:]; n += 1
         return s, n
     return fn
 # 手柄版暂停菜单（「难度、百宝囊存放挂暂停菜单」）：原版布局 + 我们的功能行，放原版路径（gen_romfs_overlay.py 手柄版布局）；触屏插回的关闭钮不带。
@@ -652,13 +680,22 @@ def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=()):
 #   "Options" is fixed on the fourth row (y 653): when the original gamepad UI opens the pause menu the free cursor is at the centre of the screen and highlights whichever row it rests on, and pressing confirm straight away activates it -- the centre row may only be one whose press has no consequence.
 #   "Game Difficulty: N" = one press raises the player-count setting by 1 (back to 1 after 8), with the current setting shown on this row; "Deposit" = the same thing as the "Deposit" button of the inventory (the gamepad focus cannot reach that button), using the original string @strGoldDeposit.
 # Button image height is 120 units: in the version with the Chronicle, seven rows are spaced evenly by 125 between the original first and last rows (278–1028); the classic version's own background only fits four rows, so the background of the Chronicle version (same size) is used and the first six rows are laid out with the same spacing (without the Chronicle row, the following row moves up)
+# 「加入社区讨论」接在「分享诊断日志」后面（社区入口 dm_community.c）：带编年史且带分享那版成了八行，278–1028 之间放不下八行 125 距，改 118 距（按钮图高 120，相邻不叠）、
+# 整组仍以 653 为中心（选项仍在正中那行），上下各外扩一行的一半（299–1125）；其余各版七行以内照旧 125 距、末行接在 1028
+# "Join the community" follows "Share Diagnostics" (community entry dm_community.c): the Chronicle + share version becomes eight rows, which do not fit at a 125 spacing between 278 and 1028, so 118 (button image 120 high, no overlap),
+# still centered on 653 (Options stays on the centre row), extended half a row at the top and bottom (299-1125); every other version has at most seven rows at the usual 125 spacing with the last row at 1028
 def pad_pause(s, garden, share=True):   # share=False（Mac App）：没有系统分享面板，「分享诊断日志」行不放 | share=False (Mac App): there is no system share sheet, so the "Share Diagnostics" row is left out
-    ex = (('TouchPadDiff', '', 278), ('TouchPadStore', '@strGoldDeposit', 778)); y = 278
-    sh = lambda y0, y1: {'MessageLog': (y0, y1)} if share else {}; hs = () if share else ('MessageLog',)
-    if garden: s = _pause_no_help({'Settings': (428, 653), 'Exit': (728, 403), 'Chronicle': (1028, 903), **sh(278, 1028)}, hide=('Help', 'LootFilter') + hs, restart_y=528, extra=ex)(s)[0]
+    hs = () if share else ('MessageLog',)
+    if garden and share:
+        ys, rows = {'Settings': (428, 653), 'Exit': (728, 417), 'Chronicle': (1028, 889), 'MessageLog': (278, 1007)}, (299, 771, 535, 1125)
+    elif garden: ys, rows = {'Settings': (428, 653), 'Exit': (728, 403), 'Chronicle': (1028, 903)}, (278, 778, 528, 1028)
+    elif share: ys, rows = {'Settings': (578, 653), 'Exit': (878, 403), 'MessageLog': (428, 903)}, (278, 778, 528, 1028)
+    else: ys, rows = {'Settings': (578, 653), 'Exit': (878, 403)}, (278, 778, 528, 903)
+    y = rows[0]; ex = (('TouchPadDiff', '', rows[0]), ('TouchPadStore', '@strGoldDeposit', rows[1]), ('TouchCommunity', '@dmCommunityJoin', rows[3]))
+    if garden: s = _pause_no_help(ys, hide=('Help', 'LootFilter') + hs, restart_y=rows[2], extra=ex, tail=_COMM)(s)[0]
     else:
         s = _sub1(s, '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBGClassic"', '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBG"')
-        s = _pause_no_help({'Settings': (578, 653), 'Exit': (878, 403), **sh(428, 903)}, hide=('Help',) + hs, restart_y=528, extra=ex)(s)[0]
+        s = _pause_no_help(ys, hide=('Help',) + hs, restart_y=rows[2], extra=ex, tail=_COMM)(s)[0]
     # 「游戏难度：N」的字：菜单开着时游戏停拍、原版系统通知要关了菜单才出，所以当前档位直接写在这一行上——按钮自己不带字，上面叠一个同字体的文字控件，宿主写（dm_padmode.c）
     # Text of "Game Difficulty: N": while the menu is open the game stops ticking and the original system notification only appears once the menu is closed,
     # so the current setting is written directly on this row. The button itself carries no text; a text widget with the same font is stacked on top and
@@ -1052,8 +1089,10 @@ PRESENT = {
     # Pause menu = Options / Save and Exit / Chronicle / Share Diagnostics (center spacing still 240; the four fall within the top and bottom ends of the original six);
     # the classic version used by characters with a mercenary tab has no chronicle = Options / Save and Exit / Share Diagnostics (the background image only fits the span of the original four; center spacing 225, exactly filling the positions of the original first and last)
     # After adding 「一键重开」(Quick Restart) the five / four buttons are spaced evenly between the original first and last: center spacing 180 for the version with chronicle, 150 for the classic version
-    'controller/pauselayoutgardenhd.json': _pause_no_help({'Settings': (428, 293), 'Exit': (728, 473), 'Chronicle': (1028, 833), 'MessageLog': (278, 1013)}, hide=('Help', 'LootFilter'), restart_y=653),
-    'controller/pauselayouthd.json': _pause_no_help({'Settings': (578, 428), 'Exit': (878, 578), 'MessageLog': (428, 878)}, hide=('Help',), restart_y=728),
+    # 触屏版：选项 / 保存并退出 / 一键重开 / [编年史] / 分享诊断日志 / 加入社区讨论（社区入口 dm_community.c），带编年史那版六行改 150 距（278–1028，同原版首末两行），不带的五行 150 距
+    # Touch: Options / Save and Exit / Quick Restart / [Chronicle] / Share Diagnostics / Join the community (community entry dm_community.c); the Chronicle version's six rows go to a 150 spacing (278-1028, the original first and last rows), the other version's five rows at 150
+    'controller/pauselayoutgardenhd.json': _pause_no_help({'Settings': (428, 278), 'Exit': (728, 428), 'Chronicle': (1028, 728), 'MessageLog': (278, 878)}, hide=('Help', 'LootFilter'), restart_y=578, extra=_COMM_ROW, tail=_COMM),
+    'controller/pauselayouthd.json': _pause_no_help({'Settings': (578, 428), 'Exit': (878, 578), 'MessageLog': (428, 878)}, hide=('Help',), restart_y=728, extra=_COMM_ROW, tail=_COMM),
     'helpbuttonpanelhd.json': lambda s: offscreen(s, types=(), names=('Help',)),
     'controller/buttonbindingmodalhd.json': _bind_touch,
     'youdiedmodalhd.json': lambda s: offscreen(s, types=(), names=('SubText',)),   # 死亡画面第二行「按 ＋ 继续。」（＋ = 手柄键图标）：下面就有「继续」按钮，这句不要（点一下能完成的提示直接去掉） | Second line of the death screen 「按 ＋ 继续。」(Press + to continue.) (+ = controller key icon): there is a 「继续」(Continue) button right below, so this sentence is dropped (hints for something done with one tap are removed outright)
@@ -1265,6 +1304,18 @@ _CUSTOM_Q3D_H = 2 * _CUSTOM_LINE_H
 _CUSTOM_ROW_H = [(5 * _CUSTOM_LINE_H if k == 'q3d' else _CUSTOM_Q3D_H if k in ('voice', 'touch_swap_above') else _CUSTOM_LINE_H) for k, _ in _CUSTOM_ALL] + [_CUSTOM_LINE_H] * _CUSTOM_TEST_ROWS
 _CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
 _CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
+# 末尾的「关于」组（社区入口 dm_community.c）：分节标题「关于」+ 一行「社区讨论 …… [查看]」（原版前端中号按钮，发空操作消息 ClosePanel:TouchCommunityOpt，宿主当信号收、打开提示框）。
+# 整组包在容器 TouchAboutRow 里，和各行同在滚动区、跟着滚；没有可显示的值时宿主把容器的 x 挪出屏幕（y 不动：滚动区按子控件范围算内容高度）。手柄模式十字键能选到这一行、A 打开（dm_custom.c）
+# The About group at the end (community entry dm_community.c): a section title "About" + one row "Community ... [View]" (the original medium front-end button sending the no-op ClosePanel:TouchCommunityOpt, which the host takes as a signal to open the box).
+# The whole group sits in the container TouchAboutRow, in the scroll area with the rows and scrolling with them; without a value the host moves the container's x off screen (y stays: the scroll area sizes its content by the children). In controller mode the D-pad reaches this row and A opens it (dm_custom.c)
+_ABOUT_H = 2 * _CUSTOM_LINE_H
+def _custom_about():
+    return ('        { "type": "Widget", "name": "TouchAboutRow", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_H, _ABOUT_H)
+            + '            { "type": "TextBoxWidget", "name": "TouchAboutTitle", "fields": { "rect": { "x": 0, "y": 0, "width": 1730, "height": %d }, "text": "@dmCommunityAbout", "style": "$StyleSettingsTitle" }, "children": [\n' % _CUSTOM_LINE_H
+            + '                { "type": "ImageWidget", "name": "TouchAboutDivider", "fields": { "rect": "$OptionsDividerRect", "filename": "PauseMenu\\\\Divider" } },\n            ] },\n'
+            + '            { "type": "TextBoxWidget", "name": "TouchAboutCommunityText", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "@dmCommunityRow", "style": "$StyleSettingsText" } },\n' % (_CUSTOM_LINE_H, _CUSTOM_LINE_H)
+            + _btn('TouchCommunityOpt', _CUSTOM_LINE_H + 30, '@dmCommunityOpen', 'PanelManager:ClosePanel:TouchCommunityOpt', x=1110, anchor=False).replace('\n        ', '\n            ')
+            + '        ] },\n')
 def _custom_toggle_row(i, key, label):
     y, h = _CUSTOM_Y[i], _CUSTOM_LINE_H
     return ('        { "type": "TextBoxWidget", "name": "TouchCustom_%s_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "%s", "style": "$StyleSettingsText", "style/options/newlineHandling": "standard" } },\n'
@@ -1336,17 +1387,18 @@ def _custom_page(text):
            '        { "type": "ScrollViewWidget", "name": "ScrollView", "children": [\n'
            '            { "type": "TableWidget", "name": "OptionsTable", "fields": { "columns": [ "$OptionsTableColumn1", "$OptionsTableColumn2" ], "rowHeight": %d }, "children": [\n' % _CUSTOM_TITLE_H
            + title + '            ] },\n'
-           + '            { "type": "Widget", "name": "TouchCustomRows", "fields": { "rect": { "x": 0, "y": 0, "width": 1500, "height": %d } }, "children": [\n' % _CUSTOM_H
+           + '            { "type": "Widget", "name": "TouchCustomRows", "fields": { "rect": { "x": 0, "y": 0, "width": 1500, "height": %d } }, "children": [\n' % (_CUSTOM_H + _ABOUT_H)
            + _custom_lang_row() + ''.join((_custom_q3d_row(i, k) if k in ('voice', 'q3d', 'touch_swap_above') else _custom_toggle_row(i, k, l)) for i, (k, l) in enumerate(_CUSTOM_ALL) if i) + _CUSTOM_LANG_HINT
            + ''.join('        { "type": "TextBoxWidget", "name": "TouchCustomTest%d_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "@KeyBindingTypeCustom", "style": "$StyleSettingsText" } },\n'
-                     % (n, _CUSTOM_Y[len(_CUSTOM_ALL) + n], _CUSTOM_LINE_H) for n in range(_CUSTOM_TEST_ROWS)) +
+                     % (n, _CUSTOM_Y[len(_CUSTOM_ALL) + n], _CUSTOM_LINE_H) for n in range(_CUSTOM_TEST_ROWS)) + _custom_about() +
            # 手柄模式的选中框（同符文之语清单 TouchRwSel）：框住十字键选中的那一行，宿主摆（dm_custom.c）；触屏模式一直在屏外（只把 x 挪出去、y 留在内容范围内：滚动区按子控件的范围算内容高度，y 放到 99999 会把可滚范围撑到十万）。和各行在同一个容器里，跟着滚
            # Selection frame in controller mode (same as TouchRwSel of the runeword list): frames the row selected with the D-pad, positioned by the host (dm_custom.c); always off-screen in touch mode (only x is moved out while y stays within the content range: the scroll area computes the content height from the extent of its child widgets, and a y of 99999 would stretch the scrollable range to a hundred thousand). It is in the same container as the rows and scrolls with them
            '        { "type": "NineTileImageWidget", "name": "TouchCustomSel", "fields": { "rect": { "x": 99999, "y": 0, "width": 1000, "height": 100 }, "backgroundColor": [ 0, 0, 0, 0 ], '
            '"filename": "Controller/PANEL/ControllerSelector/ControllerSelectorBorder", "tileScale": 0.5 } },\n'
            '            ] },\n        ] },\n'
-           '    ]\n}\n')
-    return out, len(_CUSTOM_ALL) + 2
+           + _COMM   # 社区入口提示框：面板的直接子控件、在滚动区之后（画在列表之上，不被滚动区裁剪） | the community box: a direct child of the panel after the scroll view (drawn above the list, not clipped by it)
+           + '    ]\n}\n')
+    return out, len(_CUSTOM_ALL) + 3
 PRESENT['controller/console/videooptionspanelhd.json'] = _custom_page
 # Touch and controller expose the same five distinct destinations.
 def pad_settings(s): return _settings_tabs(s)[0]

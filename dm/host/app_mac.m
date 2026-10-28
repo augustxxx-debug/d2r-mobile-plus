@@ -91,7 +91,15 @@ static NSString *res_item(NSString *name) {
 static void upd_start(void);   // 更新检查（在文件后面） | update check (later in this file)
 // main() 最前面调。是 App 形态就把环境与参数备好并返回 1；不是返回 0、什么都不动
 // Called at the very start of main(). In App form it prepares the environment and arguments and returns 1; otherwise it returns 0 and touches nothing
+// 社区入口的剪贴板回调（dm_community.c）：游戏主线程调；AppKit 的剪贴板在主线程写（开窗口时客体在大栈线程上跑；无窗口的命令行宿主客体就在主线程） | clipboard callback of the community entry (dm_community.c): called on the game thread; AppKit's pasteboard is written on the main thread (with a window the guest runs on a big-stack thread; the windowless command-line host runs the guest on the main thread)
+static int mac_copy(const char *s) {
+    NSString *t = @(s ?: ""); __block BOOL ok = NO;
+    void (^w)(void) = ^{ NSPasteboard *pb = NSPasteboard.generalPasteboard; [pb clearContents]; ok = [pb setString:t forType:NSPasteboardTypeString]; };
+    if (NSThread.isMainThread) w(); else dispatch_sync(dispatch_get_main_queue(), w);
+    return ok ? 1 : 0;
+}
 int dm_app_bootstrap(int *argc, char ***argv) {
+    { void dm_community_copy_init(int (*)(const char *)); dm_community_copy_init(mac_copy); }   // App 形态与命令行宿主都登记（Mac 上复制走 NSPasteboard） | registered for both the App form and the command-line host (copy on Mac goes through NSPasteboard)
     @autoreleasepool {
         NSString *bp = NSBundle.mainBundle.bundlePath;
         if (*argc > 1 || ![bp.pathExtension isEqualToString:@"app"]) return 0;
@@ -176,6 +184,7 @@ static void upd_check(void) {
     NSURLSessionConfiguration *cf = NSURLSessionConfiguration.ephemeralSessionConfiguration; cf.timeoutIntervalForRequest = 2; cf.timeoutIntervalForResource = 2; cf.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
     [[[NSURLSession sessionWithConfiguration:cf] dataTaskWithURL:u completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
         NSInteger code = [r isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)r).statusCode : 0;
+        { int dm_community_manifest(const char *, size_t); if (!e && code == 200 && d.length && d.length <= 4096) dm_community_manifest(d.bytes, d.length); else dm_community_manifest(NULL, 0); }   // 社区入口：同一份清单的 community 字段（dm_community.c；取不到 = 沿用缓存） | community entry: the community field of the same manifest (dm_community.c; not fetched = keep the cache)
         NSDictionary *j = (!e && code == 200 && d) ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
         NSNumber *b = [j isKindOfClass:NSDictionary.class] ? j[@"build"] : nil;
         if (![b isKindOfClass:NSNumber.class] || b.intValue < 1) { LOG("更新：读版本文件没成（%s，HTTP %ld），本次不提示", e ? e.localizedDescription.UTF8String : "格式不对", (long)code); return; }

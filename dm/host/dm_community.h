@@ -1,0 +1,18 @@
+// 游戏内「社区入口」：中文界面给 QQ 群号、其他语言给 GitHub 仓库地址，一键复制到剪贴板。入口在选项「自定义」页末尾的「关于」组和暂停菜单「分享诊断日志」旁，两处点开同一个游戏内提示框。
+// 群号与链接不写在代码里：来自外壳每次拉的远端版本文件（iOS latest.json / Mac latest_mac.json）里的 community 字段，缓存在设置目录的 community.txt；
+// 清单没有这个字段 = 入口整体不显示（旧清单、旧包兼容）；这次拉不到 = 沿用缓存；没有缓存 = 不显示。只放群号和仓库地址，不放任何个人联系方式。
+// In-game community entry: the Chinese UI shows a QQ group number, other languages a GitHub repository address, with one-tap copy to the clipboard. Entries: the About group at the end of the Custom options page and the pause menu next to Share Diagnostics; both open the same in-game notice box.
+// The number and link are not in the code: they come from the community field of the remote version file the shell already fetches (iOS latest.json / Mac latest_mac.json), cached as community.txt in the settings directory;
+// no such field in the manifest = the entry is hidden altogether (old manifests and old packages stay compatible); fetch failed this time = keep the cache; no cache = hidden. Only the group and the repository address, never any personal contact.
+#pragma once
+#include <stddef.h>
+int dm_community_manifest(const char *json, size_t len);   // 外壳每次拉完清单调（任意线程）：json / len = 原文（NULL = 这次没拉到）。返回 1 有字段（已写缓存）/ 0 无字段或格式坏（入口不显示，缓存已删）/ -1 没拉到或不是完整 JSON（沿用缓存） | called by the shell after every fetch (any thread): json / len = raw text (NULL = fetch failed). Returns 1 field present (cache written) / 0 absent or malformed (entry hidden, cache deleted) / -1 not fetched or not complete JSON (cache kept)
+void dm_community_load(void);                              // 宿主入口调一次（可重入）：读缓存；测试局另认 DM_TEST_COMMUNITY=<清单文件> | called once at host entry (idempotent): read the cache; test runs also honor DM_TEST_COMMUNITY=<manifest file>
+int dm_community_value(int lang_group, char *out, size_t n);   // 按语言组（DM_LG_*）选要显示 / 复制的值：0 没有 / 1 群号 / 2 链接。中文：群号，没有群号才给链接；其他语言只给链接 | the value to show / copy for a language group (DM_LG_*): 0 none / 1 group number / 2 link. Chinese: the number, the link only without one; other languages: the link only
+int dm_community_available(void);                          // 当前语言下入口该不该显示 | whether the entry shows in the current language
+void dm_community_open(int from);                          // 玩家点了入口（from 只进日志：1 暂停菜单按钮 / 2 选项页按钮 / 3 选项页手柄 A）：有值就挂上提示框 | the player used an entry (from goes to the log only: 1 pause-menu button / 2 options-page button / 3 options-page controller A): queue the box when there is a value
+void dm_community_copy_init(int (*cb)(const char *text));  // 外壳登记剪贴板回调（iOS UIPasteboard / Mac NSPasteboard）；在游戏主线程被调，返回 1 成功 | the shell registers its clipboard callback (iOS UIPasteboard / Mac NSPasteboard); called on the game main thread, returns 1 on success
+unsigned dm_community_copy_count(void);                    // 复制成功次数（单测核对） | successful copies (unit tests)
+int dm_community_shown(void);                              // 提示框正显示着（手柄模式下自定义页此时不再接管十字键 / A，免得一下 A 既复制又翻勾选） | the box is showing (in controller mode the Custom page then stops taking over the D-pad / A, so one A does not both copy and toggle)
+void dm_community_on_uimsg(const char *cat, const char *act, const char *arg);   // 界面消息（diag.c）：两个入口按钮、提示框的复制 / 确定 | UI messages (diag.c): the two entry buttons, the box's Copy / OK
+void dm_community_pump(void);                              // 取手柄处每帧调（hle_hid.c）：入口显隐、写字、摆位置、手柄 A 复制 / B 收起 | every frame at the controller poll (hle_hid.c): entry show / hide, text, placement, controller A copies / B dismisses

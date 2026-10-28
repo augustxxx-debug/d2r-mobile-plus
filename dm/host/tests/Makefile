@@ -25,6 +25,7 @@ run: \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
 	$(B)/t_custom_readlog \
+	$(B)/t_community \
 	$(B)/t_crashfence \
 	$(B)/t_doorspot \
 	$(B)/t_fs \
@@ -98,6 +99,7 @@ run: \
 	$(B)/t_graphics_gate
 	$(B)/t_custom_readlog
 	$(B)/t_crashfence 2>/dev/null
+	$(B)/t_community 2>/dev/null
 	$(B)/t_res_cap
 	$(B)/t_custom_scroll
 	$(B)/t_hud_mask
@@ -242,6 +244,8 @@ $(B)/t_custom_readlog: t_custom_readlog.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_custom_readlog.c
 $(B)/t_crashfence: t_crashfence.c ../dm_crashfence.c ../dm_crashfence.h ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_crashfence.c
+$(B)/t_community: t_community.c ../dm_community.c ../dm_community.h ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_community.c
 
 $(B)/t_res_auto_policy: t_res_auto_policy.c t_metalfx_handoff_backend.c ../hle_oe.c ../dm_res_cap.h ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_res_auto_policy.c t_metalfx_handoff_backend.c
