@@ -86,6 +86,19 @@ public class PackGeneratorTest {
         equal("/data/user/0/p/files/dmgen/queries", env.get("DM_PREBUILT_QUERIES"));
         equal("1", env.get("DM_GEN_PROGRESS")); equal("8", env.get("J"));
         equal(false, env.containsKey("DM_UI_FONT"));
+        // 字体（APK 自带开源楷体时 DmActivity 解到 dmgen/font/）：font.txt 记文件名与加粗档 → DM_UI_FONT / DM_UI_FONT_WEIGHT；
+        // 文件名只认同目录里的 .ttf、加粗档只认 0..8，不合规就不给（原版字）
+        // Font (DmActivity unpacks the bundled open-licence Kai font to dmgen/font/): font.txt names the file and stroke level -> DM_UI_FONT / DM_UI_FONT_WEIGHT;
+        // only a .ttf in the same folder and levels 0..8 are accepted, anything else gives no font (the original typeface)
+        File genF = Files.createTempDirectory("dmgen-font").toFile();
+        write(new File(genF, "font/font.txt"), "file=LXGWWenKai-Medium.ttf\nweight=0\nsha256=f4b8\n");
+        Map<String, String> envF = PackGenerator.environment(lib, genF, 8);
+        equal(new File(genF, "font/LXGWWenKai-Medium.ttf").getPath(), envF.get("DM_UI_FONT")); equal("0", envF.get("DM_UI_FONT_WEIGHT"));
+        write(new File(genF, "font/font.txt"), "file=../outside.ttf\nweight=0\n");
+        equal(false, PackGenerator.environment(lib, genF, 8).containsKey("DM_UI_FONT"));
+        write(new File(genF, "font/font.txt"), "file=LXGWWenKai-Medium.ttf\nweight=9\n");
+        equal(false, PackGenerator.environment(lib, genF, 8).containsKey("DM_UI_FONT"));
+        PackGenerator.deleteTree(genF);
         System.out.println("PackGenerator OK (" + cases + " cases)");
     }
 }

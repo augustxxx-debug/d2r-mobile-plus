@@ -140,3 +140,5 @@ Physical folding transitions, complete controller navigation, all achievement/no
 ## Credits and license
 
 Based on [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile), with thanks to its author and contributors. Existing copyright notices and the [MIT license](LICENSE) are retained. Diablo II: Resurrected and its assets belong to their respective rights holders. This is an independent community project.
+
+The Android package bundles the LXGW WenKai font (霞鹜文楷) Medium v1.530 by LXGW, licensed under the [SIL Open Font License 1.1](https://openfontlicense.org) (the licence travels in the APK as `assets/dmgen/font/OFL.txt`; source: https://github.com/lxgw/LxgwWenKai). The on-phone generator uses it for the Chinese / Japanese glyphs of the UI font; the font is not modified in the package.

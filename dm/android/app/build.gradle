@@ -101,7 +101,10 @@ def generateGenAssets = tasks.register('generateGenAssets', Exec) {
     inputs.files(fileTree('../..') { include 'tools/**', 'ios/tools/**', 'gfx/**', 'host/**', 'i18n/**', 'data/**', 'verify/**', 'android/tools/**', 'PRODUCT'; exclude '**/__pycache__/**' })
     outputs.dir(genAssets)
     commandLine(project.findProperty('dmPython') ?: 'python3', '../tools/pack_gen_assets.py', '--output', genAssets.get().asFile,
-                '--glslc', "${androidComponents.sdkComponents.ndkDirectory.get().asFile}/shader-tools/${org.gradle.internal.os.OperatingSystem.current().isMacOsX() ? 'darwin-x86_64' : (org.gradle.internal.os.OperatingSystem.current().isWindows() ? 'windows-x86_64' : 'linux-x86_64')}/glslc")
+                '--glslc', "${androidComponents.sdkComponents.ndkDirectory.get().asFile}/shader-tools/${org.gradle.internal.os.OperatingSystem.current().isMacOsX() ? 'darwin-x86_64' : (org.gradle.internal.os.OperatingSystem.current().isWindows() ? 'windows-x86_64' : 'linux-x86_64')}/glslc",
+                // 开源楷体（-PdmFont=<.ttf> -PdmFontLicense=<OFL.txt> [-PdmFontWeight=0..8]）随包，手机端生成覆盖层时用 | the open-licence Kai font goes into the package for the on-phone overlay step
+                *(project.findProperty('dmFont') ? ['--font', project.findProperty('dmFont'), '--font-license', project.findProperty('dmFontLicense') ?: '', '--font-weight', project.findProperty('dmFontWeight') ?: '0'] : []))
+    if (project.findProperty('dmFont')) inputs.files(project.findProperty('dmFont'), project.findProperty('dmFontLicense') ?: [])
 }
 if (genRuntime) {
     android.sourceSets.main.jniLibs.srcDir("${genRuntime}/jniLibs")

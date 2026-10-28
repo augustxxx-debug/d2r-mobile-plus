@@ -254,6 +254,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
                 unpackIfChanged(assets, "dmgen/src.zip", "dmgen/src.sha256", new File(gen, "src"));
                 File queries = new File(gen, "queries"); PackGenerator.deleteTree(queries); queries.mkdirs();
                 for (String q : assets.list("dmgen/queries")) try (InputStream in = assets.open("dmgen/queries/" + q)) { Files.copy(in, new File(queries, q).toPath()); }
+                // 开源楷体（有就带，见 PackGenerator.environment）：字体、OFL 许可证、font.txt | the bundled open-licence Kai font when present (see PackGenerator.environment): font, OFL licence, font.txt
+                File font = new File(gen, "font"); PackGenerator.deleteTree(font); String[] fonts = assets.list("dmgen/font");
+                if (fonts != null && fonts.length > 0) { font.mkdirs(); for (String q : fonts) try (InputStream in = assets.open("dmgen/font/" + q)) { Files.copy(in, new File(font, q).toPath()); } }
                 // 脚本要的目录形状：<游戏>/ExeFS、<游戏>/RomFS/data，用符号链接指到玩家放的地方（只读，清理时不跟链接） | the layout the script wants: <game>/ExeFS, <game>/RomFS/data, as symlinks to where the player put them (read only; cleaning never follows links)
                 File game = new File(gen, "game"); PackGenerator.deleteTree(game); new File(game, "RomFS").mkdirs();
                 Os.symlink(new File(base, "ExeFS").getPath(), new File(game, "ExeFS").getPath());

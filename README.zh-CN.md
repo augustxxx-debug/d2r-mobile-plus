@@ -140,3 +140,5 @@ Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gf
 ## 致谢与许可
 
 基于 [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile)，感谢原作者及贡献者。保留既有版权声明及 [MIT 许可证](LICENSE)。《暗黑破坏神 II：狱火重生》及其资源的权利归相应权利人所有。本项目为独立社区项目。
+
+安卓安装包随附霞鹜文楷（LXGW WenKai）Medium v1.530，作者 LXGW，按 [SIL Open Font License 1.1](https://openfontlicense.org) 授权（许可证随包在 `assets/dmgen/font/OFL.txt`；来源 https://github.com/lxgw/LxgwWenKai）。手机端生成导入包时用它替换界面字体里的中日文字形；包里的字体文件未作改动。
