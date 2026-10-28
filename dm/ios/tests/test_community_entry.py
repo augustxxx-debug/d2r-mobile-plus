@@ -47,7 +47,58 @@ def rect_y(text, name):
     return int(m.group(1)) if m else None
 
 
-BOX = ['TouchCommTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchCommTitle', 'TouchCommDesc0', 'TouchCommDesc1', 'TouchCommDesc2', 'TouchCommCopyQq', 'TouchCommCopyLink', 'TouchCommOk']
+BOX = ['TouchCommTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchCommTitle'] + ['TouchCommDesc%d' % k for k in range(6)] + ['TouchCommCopyQq', 'TouchCommCopyLink', 'TouchCommOk']
+
+
+def box_ok(tc, out, where):   # 提示框：22 + 3 个控件屏外起步、不带锚点；正文六行按 §2.6 三级：群号 / 链接 36 LightGold、提示 28 LightGray、子标题「关于」36 GoldYellow、版本与鸣谢两行 28 LightGray
+    for w in BOX: tc.assertIn('"name": "%s"' % w, out, (where, w))
+    tc.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommCopy"', out); tc.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommOk"', out)
+    body = out[out.index('TouchCommTile00'):]
+    tc.assertNotIn('"x": 9', re.sub(r'"x": 99999', '', body), 'the box starts off screen: ' + where)
+    tc.assertNotIn('"anchor"', body, 'the box carries no anchor: the host places it from the panel rect: ' + where)
+    for k, pt, col in ((0, 36, 'LightGold'), (1, 28, 'LightGray'), (2, 36, 'GoldYellow'), (3, 28, 'LightGray'), (4, 28, 'LightGray'), (5, 28, 'LightGray')):
+        tc.assertIn('"name": "TouchCommDesc%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1700, "height": 60 }, "text": "", "style": { "pointSize": %d, "fontColor": "$FontColor%s"' % (k, pt, col), out, (where, k))
+
+
+def fake_ribbon():   # 手柄版主菜单左列骨架：选项 / 电影动画 / 制作人员（原版位置与焦点链） | skeleton of the controller main-menu column: Options / Cinematics / Credits (original positions and focus links)
+    return ('{\n    "basedOn": "Controller/MainMenuButtonRibbonHD.json",\n    "type": "MainMenuButtonRibbon", "name": "MainMenuButtonRibbon",\n    "children": [\n'
+            '        { "type": "ButtonWidget", "name": "Settings", "fields": { "rect": { "x": 164, "y": 1025 }, "navigation": { "up": { "name": "QuickPlayButton" }, "down": { "name": "Cinematics" }, "right": { "panelBoundary": true }, } } },\n'
+            '        { "type": "ButtonWidget", "name": "Cinematics", "fields": { "rect": { "x": 164, "y": 1175 }, "navigation": { "up": { "name": "Settings" }, "down": { "name": "Credits" }, "right": { "panelBoundary": true }, } } },\n'
+            '        { "type": "ButtonWidget", "name": "Credits", "fields": { "rect": { "x": 164, "y": 1325 }, "navigation": { "up": { "name": "Cinematics" }, "down": { "name": "MotDScrollBar" }, "right": { "panelBoundary": true }, } } },\n'
+            '    ]\n}\n')
+
+
+class FrontEnd(unittest.TestCase):
+    """前端主菜单（用户定稿）：「选项」下面、「制作人员」上面加「关于」与「加入社区讨论」两行，制作人员保留；手柄焦点链串起来、触屏首页两颗钮都可点；框挂在同一面板下。
+    Front-end main menu (user): "About" and "Join the community" between Options and Credits, Credits kept; controller focus chain linked, touch buttons tappable; the box hangs under the same panel."""
+    def test_pad_ribbon_two_rows(self):
+        out = touch_layout.pad_ribbon(fake_ribbon())
+        self.assertIn('"name": "TouchAboutFe", "fields": { "rect": { "x": 164, "y": 1150 }', out); self.assertIn('"textString": "@dmCommunityAbout"', out)
+        self.assertIn('"name": "TouchCommunityFe", "fields": { "rect": { "x": 164, "y": 1275 }', out); self.assertIn('"textString": "@dmCommunityJoin"', out)
+        self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchAbout"', out); self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityFe"', out)
+        self.assertIn('"name": "Cinematics", "fields": { "rect": { "x": 99999, "y": 99999 }', out)   # 电影动画挪走 | Cinematics moved away
+        self.assertIn('"name": "Credits", "fields": { "rect": { "x": 164, "y": 1400 }', out)       # 制作人员保留，往下让两行 | Credits kept, moved down two rows
+        self.assertIn('"name": "Settings", "fields": { "rect": { "x": 164, "y": 1025 }, "navigation": { "up": { "name": "QuickPlayButton" }, "down": { "name": "TouchAboutFe" }', out)
+        self.assertIn('"navigation": { "up": { "name": "Settings" }, "down": { "name": "TouchCommunityFe" }', out)
+        self.assertIn('"navigation": { "up": { "name": "TouchAboutFe" }, "down": { "name": "Credits" }', out)
+        self.assertIn('"name": "Credits", "fields": { "rect": { "x": 164, "y": 1400 }, "navigation": { "up": { "name": "TouchCommunityFe" }', out)
+        self.assertIn('"name": "TouchSafeOk"', out)   # 崩溃围栏那框还在 | the crash-fence box is still there
+        box_ok(self, out, 'pad ribbon')
+        movies = touch_layout.pad_ribbon(fake_ribbon(), movies=True)   # 编进过场的包：列已满，两行不放，框照放 | movie builds: the column is full, no rows, the box still hangs
+        self.assertNotIn('TouchAboutFe', movies); box_ok(self, movies, 'pad ribbon movies')
+
+    def test_touch_main_menu_two_buttons_under_play(self):
+        fake = ('{\n    "type": "MainMenuPanel", "name": "MainMenuPanel",\n    "children": [\n'
+                '        { "type": "ButtonWidget", "name": "PlayTab", "fields": { "rect": { "x": -1010, "y": 1865 }, "textString": "@PlayTab", } },\n'
+                '        { "type": "ButtonWidget", "name": "OnlinePlaySettingsButton", "fields": { "rect": { "x": 1, "y": 1 } } },\n'
+                '        { "type": "ImageWidget", "name": "Divider", "fields": { "rect": { "x": 1, "y": 1 } } },\n'
+                '        { "type": "ButtonWidget", "name": "SecondaryContextButton", "fields": { "rect": { "x": 1, "y": 1 } } },\n    ]\n}\n')
+        out, n = touch_layout._pc_mainmenu(fake)
+        self.assertIn('"name": "TouchAboutFe"', out); self.assertIn('"rect": { "x": -490, "y": 1995 }', out); self.assertIn('"textString": "@dmCommunityAbout"', out)
+        self.assertIn('"name": "TouchCommunityFe"', out); self.assertIn('"rect": { "x": 20, "y": 1995 }', out); self.assertIn('"textString": "@dmCommunityJoin"', out)
+        self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchAbout"', out); self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityFe"', out)
+        self.assertIn('"name": "TouchSafeOk"', out); self.assertIn('"name": "TouchBuild"', out)
+        box_ok(self, out, 'touch main menu')
 
 
 class PauseMenu(unittest.TestCase):
@@ -65,13 +116,10 @@ class PauseMenu(unittest.TestCase):
             self.assertIn('"name": "TouchCommunity"', out, rel); self.assertIn('"textString": "@dmCommunityJoin"', out)
             self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunity"', out)
             self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchShareLog"', out)   # 分享诊断日志仍在 | Share Diagnostics still there
-            for w in BOX: self.assertIn('"name": "%s"' % w, out, (rel, w))
-            self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommCopy"', out); self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommOk"', out)
+            box_ok(self, out, rel)
             if garden: self.check_rows(out, {'Settings': 278, 'Exit': 428, 'TouchRestart': 578, 'Chronicle': 728, 'MessageLog': 878, 'TouchCommunity': 1028})
             else: self.check_rows(out, {'Settings': 428, 'Exit': 578, 'TouchRestart': 728, 'MessageLog': 878, 'TouchCommunity': 1028})
             self.assertEqual(rect_y(out, 'Help'), None)   # 帮助挪走 | Help moved away
-            body = out[out.index('TouchCommTile00'):]
-            self.assertNotIn('"x": 9', re.sub(r'"x": 99999', '', body), 'the box starts off screen')
 
     def test_pad_pause_rows(self):
         # 手柄版：难度 / 退出 / 重开 / 选项（固定 y 653，屏幕正中那行只许是按了没后果的）/ 存放 / [编年史] / 分享诊断日志 / 加入社区讨论
@@ -85,11 +133,7 @@ class PauseMenu(unittest.TestCase):
         self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'TouchCommunity': 903}); self.assertIsNone(rect_y(out, 'MessageLog'))   # 分享诊断日志那颗在屏外 | the Share Diagnostics button is off screen
         out = touch_layout.pad_pause(fake_pause(True), True, share=False)
         self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'Chronicle': 903, 'TouchCommunity': 1028})
-        for w in BOX: self.assertIn('"name": "%s"' % w, out, w)
-        self.assertNotIn('"anchor"', out[out.index('TouchCommTile00'):], 'controller / Mac box carries no anchor: the host places it from the panel rect')
-        # 正文 / 副文分字号：第一行 36，提示句与「已复制」28 | main / secondary sizes: line 1 at 36, hint and Copied at 28
-        self.assertIn('"name": "TouchCommDesc0", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1700, "height": 60 }, "text": "", "style": { "pointSize": 36', out)
-        for k in (1, 2): self.assertIn('"name": "TouchCommDesc%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1700, "height": 60 }, "text": "", "style": { "pointSize": 28' % k, out)
+        box_ok(self, out, 'mac garden')
 
 
 class OptionsPage(unittest.TestCase):
@@ -124,7 +168,8 @@ class Text(unittest.TestCase):
         rows = {r[0]: r[1:] for r in dm_i18n.rows()}
         langs = ('中文', 'English', 'Español', 'Español MX', 'Русский', '한국어')
         sample = {'dmCommunityQq': '1129913678', 'dmCommunityLink': 'https://github.com/example-owner/d2r-mobile-plus/discussions'}
-        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
+        sample['dmAboutVersion'] = '1.0.0+123 · 0123456'
+        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityJoin', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
                                ('dmCommunityCopied', 28, BOX_W), ('dmCommunityCopyFail', 28, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
                                ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, 600), ('dmCreditsThanks', 36, 600), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
             texts = rows[key]
@@ -132,14 +177,15 @@ class Text(unittest.TestCase):
                 self.assertEqual(t.count('\n'), 0, (key, lang))
                 line = t.replace('%s', sample.get(key, ''))
                 self.assertLessEqual(est_width(line, pt), limit, (key, lang, line, est_width(line, pt)))
-        self.assertEqual(rows['dmCommunityQq'][1].count('%s'), 1); self.assertEqual(rows['dmCommunityLink'][1].count('%s'), 1)
+        self.assertEqual(rows['dmCommunityQq'][1].count('%s'), 1); self.assertEqual(rows['dmCommunityLink'][1].count('%s'), 1); self.assertEqual(rows['dmAboutVersion'][1].count('%s'), 1)
 
 
 class Host(unittest.TestCase):
     def test_host_wiring(self):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
-        for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', '"TouchCommCopy"', 'dm_padmode_page_keys(DM_BTN_A | DM_BTN_B)',
-                  '社区入口：已显示', '社区入口：复制 %s %s', '"群号" : "链接"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', 'TouchAboutCommunity', 'TouchCreditLine%d', '"dmCreditsSpecial"', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
+        for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_padmode_page_keys(DM_BTN_A | DM_BTN_B)', 'dm_update_label()', '"dmAboutVersion"',
+                  '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : "链接"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
+                  'TouchAboutCommunity', 'TouchCreditLine%d', '"dmCreditsSpecial"', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
@@ -147,6 +193,7 @@ class Host(unittest.TestCase):
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))
         custom = (DM / 'host' / 'dm_custom.c').read_text(encoding='utf-8')
         self.assertIn('dm_community_available()', custom); self.assertIn('TouchAboutCommunity', custom)   # 手柄十字键能选到关于行、A 打开 | the D-pad reaches the About row and A opens it
+        self.assertIn('const char *dm_update_label(void) { return g_label; }', (DM / 'host' / 'dm_update.c').read_text(encoding='utf-8'))
 
     def test_shells_hand_over_manifest_and_clipboard(self):
         ios = (DM / 'ios' / 'Sources' / 'dm_update.m').read_text(encoding='utf-8')

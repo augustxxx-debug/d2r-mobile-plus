@@ -13,6 +13,7 @@ int dm_3d_quality_mode_get(void) { return 0; }
 float dm_3d_scale_cur(void) { return .75f; }
 const char *dm_ui(const char *key) { return key; }
 const char *dm_crashfence_test_env(void) { return "DM_TEST_X"; }
+const char *dm_update_label(void) { return "1.0.0+1 · test"; }
 // 泵用到的游戏侧符号：单测里没有游戏模块（g_nmod = 0 → 泵立刻返回） | game-side symbols the pump references: no game module in the unit test (g_nmod = 0 → the pump returns at once)
 module_t g_mod[MAX_MOD]; int g_nmod;
 int dm_padmode_current(void) { return 0; }
@@ -80,8 +81,12 @@ int main(void) {
     CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1);
     dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommunity"); CHECK(atomic_load(&g_show) == 1); atomic_store(&g_show, 0);
     dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommunityOpt"); CHECK(atomic_load(&g_show) == 1); atomic_store(&g_show, 0);
+    dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommunityFe"); CHECK(atomic_load(&g_show) == 1); CHECK(atomic_load(&g_mode) == 1); atomic_store(&g_show, 0);   // 主菜单「加入社区讨论」 | main-menu Join the community
+    log_reset(); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchAbout"); CHECK(atomic_load(&g_show) == 1); CHECK(atomic_load(&g_mode) == 2); CHECK(strstr(log_text(), "社区入口：点了「关于」")); atomic_store(&g_show, 0);   // 主菜单「关于」：只有版本 + 鸣谢的框 | main-menu About: the version + credits box
     dm_community_on_uimsg("PanelManager", "OpenPanel", "TouchCommunity"); CHECK(atomic_load(&g_show) == 0);
     CHECK(dm_community_manifest(M_NONE, strlen(M_NONE)) == 0); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommunity"); CHECK(atomic_load(&g_show) == 0);
+    dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommunityFe"); CHECK(atomic_load(&g_show) == 0);   // 没有社区值：社区框不开 | no community value: the community box does not open
+    dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchAbout"); CHECK(atomic_load(&g_show) == 1); CHECK(atomic_load(&g_mode) == 2); atomic_store(&g_show, 0);   // 「关于」框照开 | the About box still opens
     // 10. 复制：显示着时「复制」消息 → 回调一次、拿到的是当前语言的值、记日志；没显示时不认 | 10. Copy: the copy message while shown → one callback with the current language's value, logged; ignored when not shown
     CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1); dm_community_copy_init(copy_ok);
     log_reset(); atomic_store(&g_show, 2); t_group = DM_LG_ZH; dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy");
