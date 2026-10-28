@@ -199,9 +199,9 @@ class OptionsPage(unittest.TestCase):
         for w in ('TouchCreditsTitle', 'TouchCreditLabel0', 'TouchCreditLabel1') + tuple('TouchCreditLine%d' % k for k in range(6)): self.assertIn('"name": "%s"' % w, out, w)
         block = out[out.index('"name": "TouchCreditsTitle"'):out.index('"name": "TouchCommTile00"')]
         self.assertIn('"text": "@dmCreditsTitle", "style": "$StyleSettingsTitle"', block); self.assertNotIn('onClickMessage', block); self.assertNotIn('ButtonWidget', block)
-        self.assertEqual(block.count('"fontColor": "$FontColorLightGold"'), 2); self.assertEqual(block.count('"fontColor": "$FontColorLightGray"'), 6); self.assertEqual(block.count('"pointSize": 36'), 8)
+        self.assertEqual(block.count('"fontColor": "$FontColorLightGold"'), 3); self.assertEqual(block.count('"fontColor": "$FontColorLightGray"'), 6); self.assertEqual(block.count('"pointSize": 36'), 9); self.assertIn('"name": "TouchCreditLabel2"', block)   # 「制作」标签（用户 2026-10-29） | the maker label
         self.assertGreater(out.index('"name": "TouchCreditsTitle"'), out.index('"name": "TouchCommunityOpt"'))
-        self.assertEqual(touch_layout._ABOUT_H, 3 * touch_layout._CUSTOM_LINE_H + touch_layout._CREDIT_LINE_H)
+        self.assertEqual(touch_layout._ABOUT_H, 3 * touch_layout._CUSTOM_LINE_H + 2 * touch_layout._CREDIT_LINE_H)   # 缺省两行：制作 + 特别鸣谢 | two default lines: maker + special
         self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityOpt"', out)
         rows = out.index('"name": "TouchCustomRows"'); about = out.index('"name": "TouchAboutTitle"'); box = out.index('"name": "TouchCommTile00"'); scroll_end = out.index('"name": "TouchCustomSel"')
         self.assertLess(rows, about); self.assertLess(about, scroll_end, 'the About group scrolls with the rows')
@@ -221,7 +221,7 @@ class Text(unittest.TestCase):
         sample['dmAboutVersion'] = '1.0.0+123 · 0123456'
         for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityAbout', 40, BTN_W), ('dmCommunityFe', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
                                ('dmCommunityCopied', 28, BOX_W), ('dmCommunityCopyFail', 28, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
-                               ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, 620 - 40), ('dmCreditsThanks', 36, 620 - 40), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
+                               ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, 620 - 40), ('dmCreditsMaker', 36, 620 - 40), ('dmCreditsThanks', 36, 620 - 40), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
             texts = rows[key]
             for lang, t in zip(langs, texts):
                 self.assertEqual(t.count('\n'), 0, (key, lang))
@@ -230,12 +230,34 @@ class Text(unittest.TestCase):
         self.assertEqual(rows['dmCommunityQq'][1].count('%s'), 1); self.assertEqual(rows['dmCommunityLink'][1].count('%s'), 1); self.assertEqual(rows['dmAboutVersion'][1].count('%s'), 1)
 
 
+class Maker(unittest.TestCase):
+    """署名「制作：Augustus」（用户 2026-10-29）：只在鸣谢区（提示框「关于」段与自定义页鸣谢子块），排在「特别鸣谢」前、同排版同字号；六套语言只翻标签，名字不翻；
+    暂停菜单 / 主菜单 / 加载页 / 分享日志摘要都不加；fork README 作者行。
+    Maker credit (user, 2026-10-29): only in the credits area, before Special thanks, same layout and size; only the label is translated; nowhere else; the fork README's author line."""
+    def test_label_six_languages(self):
+        rows = {r[0]: r[1:] for r in dm_i18n.rows()}
+        self.assertEqual(rows['dmCreditsMaker'], ('制作', 'Made by', 'Hecho por', 'Hecho por', 'Автор', '제작'))
+        for t in rows['dmCreditsMaker']: self.assertNotIn('Augustus', t)   # 名字不进文案表 | the name is not in the text table
+
+    def test_only_in_credits(self):
+        c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
+        self.assertEqual(c.count('credits_all(k_maker_default'), 2)   # 提示框与自定义页两处 | the box and the Custom page
+        self.assertEqual(c.count('"Augustus"'), 1)
+        for f in ('ios/tools/touch_layout.py', 'i18n/ui_text.tsv', 'ios/Sources/dm_sharelog.m', 'host/front_mac.m', 'host/dm_update.c', 'host/diag.c'):
+            self.assertNotIn('Augustus', (DM / f).read_text(encoding='utf-8'), f)   # 别处不加 | nowhere else
+
+    def test_readme_author_line(self):
+        root = DM.parent
+        self.assertIn('Maintained by Augustus', (root / 'README.md').read_text(encoding='utf-8'))
+        self.assertIn('制作：Augustus', (root / 'README.zh-CN.md').read_text(encoding='utf-8'))
+
+
 class Host(unittest.TestCase):
     def test_host_wiring(self):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
         for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_padmode_page_keys(DM_BTN_A | DM_BTN_B)', 'dm_update_label()', '"dmAboutVersion"',
                   '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : "链接"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
-                  '"TouchAboutCommunityRow"', 'TouchCreditLine%d', '"dmCreditsSpecial"', 'co_place(l0, ys >= 0 ? DM_ROW_INDENT : 99999', 'dm_sel_frame.h', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
+                  '"TouchAboutCommunityRow"', 'TouchCreditLine%d', '"dmCreditsSpecial"', '"dmCreditsMaker"', 'k_maker_default[] = { "Augustus" }', 'TouchCreditLabel2', 'co_place(l0, ys >= 0 ? DM_ROW_INDENT : 99999', 'dm_sel_frame.h', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss

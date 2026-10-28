@@ -169,8 +169,8 @@ int main(void) {
           *(uint64_t *)((parent) + 0x58) = (uint64_t)(uintptr_t)kids[i_]; *(uint64_t *)((parent) + 0x60) = sizeof ks_ / sizeof *ks_; } while (0)
       MKW(rows, "TouchCustomRows", 0, 0); MKW(toggle_text, "TouchCustom_x_Text", 0, 0); MKW(about, "TouchAboutRow", 0, 1800); MKW(title, "TouchAboutTitle", 0, 0); MKW(div, "TouchAboutDivider", 0, 90);
       MKW(comm, "TouchAboutCommunityRow", 0, 180); MKW(ctext, "TouchAboutCommunityText", 0, 0); MKW(opt, "TouchCommunityOpt", 1110, 30);
-      MKW(ctitle, "TouchCreditsTitle", 0, 360); MKW(l0, "TouchCreditLabel0", 99999, 540); MKW(l1, "TouchCreditLabel1", 99999, 540); MKW(ln0, "TouchCreditLine0", 99999, 540);
-      KIDS(rows, toggle_text, about); KIDS(about, title, comm, ctitle, l0, l1, ln0); KIDS(title, div); KIDS(comm, ctext, opt);
+      MKW(ctitle, "TouchCreditsTitle", 0, 360); MKW(l0, "TouchCreditLabel0", 99999, 540); MKW(l1, "TouchCreditLabel1", 99999, 540); MKW(l2, "TouchCreditLabel2", 99999, 540); MKW(ln0, "TouchCreditLine0", 99999, 540); MKW(ln1, "TouchCreditLine1", 99999, 540);
+      KIDS(rows, toggle_text, about); KIDS(about, title, comm, ctitle, l0, l1, l2, ln0, ln1); KIDS(title, div); KIDS(comm, ctext, opt);
       #undef MKW
       #undef KIDS
       uint8_t fake_base[16]; t_group = DM_LG_ZH;
@@ -182,11 +182,26 @@ int main(void) {
       CHECK(dm_sel_frame_x(tr[0]) == DM_SEL_FRAME_MIN_X && dm_sel_frame_x(tr[0]) == 10);   // 选中框左缘 +10（dm_custom.c 用 dm_sel_frame_x(标签 x)） | frame left edge +10
       CHECK(dm_sel_frame_x(tr[0]) + DM_SEL_FRAME_PAD <= tr[0]);          // 框线在字左边 30，不压字 | the frame line is 30 left of the text, clear of it
       CHECK(((int32_t *)(l0 + 0x70))[0] == DM_ROW_INDENT);              // 「特别鸣谢」标签与各行文字对齐 | the Special-thanks label lines up with the row text
+      // 署名「制作：Augustus」（用户 2026-10-29）：鸣谢区第一行，标签 TouchCreditLabel2 同样缩进；「特别鸣谢」挪到第二行 | the maker credit is the first line with its own label, Special thanks moves to the second
+      CHECK(((int32_t *)(l2 + 0x70))[0] == DM_ROW_INDENT && ((int32_t *)(l2 + 0x70))[1] == 540);
+      CHECK(((int32_t *)(l0 + 0x70))[1] == 630 && ((int32_t *)(ln1 + 0x70))[0] == 620 && ((int32_t *)(ln1 + 0x70))[1] == 630);
+      CHECK(((int32_t *)(l1 + 0x70))[0] == 99999);                      // 「鸣谢」名单空：整行不显示 | empty thanks list: no line
       CHECK(((int32_t *)(ln0 + 0x70))[0] == 620);                        // 名单列不动 | the names column stays
       CHECK(((int32_t *)(ctitle + 0x70))[0] == DM_ROW_INDENT);
       CHECK(((int32_t *)(title + 0x70))[0] == 0);                        // 分节标题（带分隔线）不缩进，同原版分节 | the section title (with divider) is not indented, like the original sections
       CHECK(t_recalcs == 0);                                             // 稳定：不来回拉扯 | stable: no tug-of-war
     }
+    // 20. 署名（用户 2026-10-29）：「制作：Augustus」排在「特别鸣谢」前，同一套拼行规则（kind 3，每行 ≤ 4 名、≤ 44 单位）；名字代码常量、不翻译；空名单不出行；提示框只有两行时超出加「…」
+    // 20. Maker credit (user, 2026-10-29): "Made by Augustus" before Special thanks, same line rules (kind 3); the name is a code constant, untranslated; an empty list gives no line; the two-line box truncates with "…"
+    { cr_line_t ln[CR_LINES]; int tr = 0;
+      int n = credits_all(k_maker_default, 1, k_special_default, 1, NULL, 0, ", ", " (note)", ln, CR_LINES, &tr);
+      CHECK(n == 2); CHECK(!tr); CHECK(ln[0].kind == 3 && !strcmp(ln[0].text, "Augustus")); CHECK(ln[1].kind == 1 && !strcmp(ln[1].text, "jhaizhou-ops (note)"));
+      CHECK(sizeof k_maker_default / sizeof *k_maker_default == 1 && !strcmp(k_maker_default[0], "Augustus")); CHECK(cr_units(ln[0].text) <= CR_LINE_UNITS);
+      n = credits_all(k_maker_default, 1, k_special_default, 1, NULL, 0, ", ", "", ln, 2, &tr); CHECK(n == 2 && !tr);   // 提示框两行刚好放下 | the box's two lines fit exactly
+      static const char *const th[] = { "x" };
+      n = credits_all(k_maker_default, 1, k_special_default, 1, th, 1, ", ", "", ln, 2, &tr); CHECK(n == 2 && tr && strstr(ln[1].text, "…"));
+      n = credits_all(NULL, 0, k_special_default, 1, NULL, 0, ", ", "", ln, CR_LINES, &tr); CHECK(n == 1 && ln[0].kind == 1);   // 没有制作名单：不出那一行 | no maker list: no line
+      CHECK(!strstr(log_text(), "Augustus")); }   // 名字不进日志（日志只记行数 / 人数） | the name never goes to the log (counts only)
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);

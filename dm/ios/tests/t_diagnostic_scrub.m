@@ -18,6 +18,9 @@ int main(void) { @autoreleasepool {
     // 社区入口的日志行：群号（10 位数字）与仓库地址都是给玩家看的公开值，脱敏不得抹掉；同一行里的邮箱 / 主目录照抹 | community entry log line: the group number (10 digits) and the repository address are public values shown to players and must survive redaction; an email / home directory on the same line is still redacted
     result=[[NSString alloc] initWithData:dm_diagnostic_scrub([@"[dm] 社区入口：清单有字段 群号=1129913678 链接=https://github.com/example-owner/d2r-mobile-plus/discussions\n[dm] 社区入口：复制 群号 1129913678（/Users/SamplePerson person@example.invalid）" dataUsingEncoding:NSUTF8StringEncoding],@"/Users/SamplePerson",@"") encoding:NSUTF8StringEncoding];
     if (![result containsString:@"社区入口：清单有字段 群号=1129913678 链接=https://github.com/example-owner/d2r-mobile-plus/discussions"] || ![result containsString:@"社区入口：复制 群号 1129913678"] || [result containsString:@"SamplePerson"] || [result containsString:@"person@example.invalid"]) return 12;
+    // 鸣谢里的「Augustus」是公开署名（只在游戏画面里画，不写日志）；设备 / 显示器名「Augustus' iPhone」照擦（用户 2026-10-29：脱敏规则不变） | the credits name is public and never logged; a device / display name is still erased
+    result=[[NSString alloc] initWithData:dm_diagnostic_scrub([@"[dm] 屏幕：Augustus' iPhone，120 Hz\n" dataUsingEncoding:NSUTF8StringEncoding],@"/Users/SamplePerson",@"org.example.privategame") encoding:NSUTF8StringEncoding];
+    if ([result containsString:@"Augustus"] || ![result containsString:@"屏幕：<display>，"]) return 13;
     NSString *dir=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *path=[dir stringByAppendingPathComponent:@"log.txt"];
