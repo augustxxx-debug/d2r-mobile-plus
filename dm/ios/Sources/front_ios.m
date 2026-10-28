@@ -1013,6 +1013,12 @@ void *front_metal_layer(void) { return (__bridge void *)g_layer; }
 // 窗口会变尺寸的设备（iPhone Duo 内外屏切换、展开 / 折叠时窗口当场改尺寸）：真全屏下出图尺寸跟着窗口走（window_px），
 // 推一次性能模式通知（31）让游戏重读。游戏只接受不超过启动时窗口尺寸的新值（dm_uiscreen.c 的说明），所以比 16:9 窄的手机屏
 // （只有折叠屏是这个形状）启动时按短边 2160 预留：外屏启动也装得下内屏。iPad、普通 iPhone 的窗口不变尺寸，启动值 = 屏幕原生，与原来相同。
+static int g_cls_gen, g_cls_pro, g_cls_m;   // 自动档预算按 GPU 代际（dm_res_cap.h），设备名只读一次 | Auto budget by GPU generation (dm_res_cap.h); the device name is read once
+static void res_gpu_class(void) {
+    static int done; if (done) return; done = 1;
+    id<MTLDevice> dev = MTLCreateSystemDefaultDevice(); const char *nm = dev.name.UTF8String; dm_res_gpu_class(nm, &g_cls_gen, &g_cls_pro, &g_cls_m);
+    LOG("画面：显卡「%s」→ 代际 A%d%s M%d，自动档像素预算 %u", nm ?: "?", g_cls_gen, g_cls_pro ? " Pro" : "", g_cls_m, dm_res_cap_budget_auto(g_cls_gen, g_cls_pro, g_cls_m));
+}
 uint64_t front_game_res(int docked) {
     static double aspect; static unsigned fw, fh;
     if (!aspect) {
@@ -1035,7 +1041,18 @@ uint64_t front_game_res(int docked) {
         if (g_full && !e && phone && fh < 2160) {
             unsigned cw = (unsigned)llround(2160.0 * fw / fh / 2) * 2; g_res_cap = (uint64_t)2160 << 32 | cw;
             LOG("画面：比 16:9 窄的手机屏 %ux%u（折叠屏）→ 窗口按 %ux2160 预留，内外屏切换时出图尺寸在这以内跟着窗口变", fw, fh, cw); }
-        atomic_store(&g_res_now, (uint64_t)fh << 32 | fw);
+        // 内存档位 1 / 0（dm_custom.c dm_mem_tier，用户 2026-10-29）：游戏按启动预留建渲染目标，局中调低不还内存（10-27 bench footprint 不回落），所以低内存档在这里、游戏建窗口之前
+        // 就把预留按当时「渲染分辨率」档的像素预算等比缩小；之后调高要下次启动才生效（图形页分辨率行副文）。窗口换尺寸时 window_px 照旧按预留等比缩进去。2 档不缩（0 副作用）
+        // Memory tiers 1 / 0 (dm_custom.c dm_mem_tier, user 2026-10-29): the game builds render targets from the startup reserve and lowering mid-run returns no memory, so on low-memory tiers the reserve is shrunk here,
+        // before the game creates its window, to the pixel budget of the render-resolution level at that moment; raising it later needs a restart (Graphics resolution-row subtext). window_px still fits new window sizes into the reserve. Tier 2 is not shrunk (no side effect)
+        { int dm_mem_tier(void), dm_render_res_level(void); int tier = dm_mem_tier();
+          if (tier < 2 && !e) { int lv = dm_render_res_level(); res_gpu_class();
+              uint32_t bud = dm_res_cap_budget_screen(lv, g_cls_gen, g_cls_pro, g_cls_m, fw, fh); uint64_t was = g_res_cap;
+              if (bud) g_res_cap = dm_res_cap_apply((uint32_t)g_res_cap, (uint32_t)(g_res_cap >> 32), bud);
+              LOG("内存档位预留：档位 %d、启动时渲染分辨率档 %d（像素预算 %u）→ 启动预留 %ux%u → %ux%u；调高分辨率要下次启动生效", tier, lv, bud,
+                  (unsigned)was, (unsigned)(was >> 32), (unsigned)g_res_cap, (unsigned)(g_res_cap >> 32)); } }
+        { unsigned cw = (unsigned)g_res_cap, ch = (unsigned)(g_res_cap >> 32); double f = fmin(1, fmin((double)cw / fw, (double)ch / fh));   // 起始出图尺寸不超过预留 | the initial output size stays within the reserve
+          atomic_store(&g_res_now, f < 1 ? (uint64_t)((unsigned)(fh * f) & ~1u) << 32 | ((unsigned)(fw * f) & ~1u) : (uint64_t)fh << 32 | fw); }
     }
     if (fw && docked) {
         // 启动预留不缩：游戏只接受不超过启动尺寸的新值，档位要能在运行中改回原生。实际出图尺寸按「渲染分辨率」档位（dm_custom.c render_res）的像素预算等比缩小，
@@ -1043,9 +1060,7 @@ uint64_t front_game_res(int docked) {
         // The startup reserve is never shrunk: the game only accepts new values no larger than the startup size, and the level must be able to go back to Native at runtime. The actual output size is shrunk proportionally
         // to the pixel budget of the render-resolution level (dm_custom.c render_res); the present thread's existing full-screen upscale fills the window again (same aspect, no bars); UI rect and touch are relative and unaffected. A level change pushes 31 from dm_custom.c
         int dm_render_res_level(void); int lv = dm_render_res_level();
-        static int cls_gen, cls_pro, cls_m, cls_done;   // 自动档预算按 GPU 代际（dm_res_cap.h），设备名只读一次 | Auto budget by GPU generation (dm_res_cap.h); the device name is read once
-        if (!cls_done) { cls_done = 1; id<MTLDevice> dev = MTLCreateSystemDefaultDevice(); const char *nm = dev.name.UTF8String; dm_res_gpu_class(nm, &cls_gen, &cls_pro, &cls_m);
-            LOG("画面：显卡「%s」→ 代际 A%d%s M%d，自动档像素预算 %u", nm ?: "?", cls_gen, cls_pro ? " Pro" : "", cls_m, dm_res_cap_budget_auto(cls_gen, cls_pro, cls_m)); }
+        res_gpu_class(); int cls_gen = g_cls_gen, cls_pro = g_cls_pro, cls_m = g_cls_m;
         uint64_t now = atomic_load(&g_res_now);
         // 光追开时启动即降一档（dm_custom.c dm_render_res_rt_drop、dm_res_cap.h）：第一次到这里时定光追预留，游戏窗口建好之前报它，之后的输出都按它封顶
         // One tier down when RT is on at startup (dm_custom.c dm_render_res_rt_drop, dm_res_cap.h): the RT reserve is decided the first time here, reported until the game window is built, and caps every later output

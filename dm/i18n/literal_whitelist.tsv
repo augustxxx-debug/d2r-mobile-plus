@@ -134,3 +134,5 @@ host/dm_custom.c	省电	超分档位名（dm_3d_profile_get 的「超分档位�
 host/dm_custom.c	均衡	超分档位名（dm_3d_profile_get 的「超分档位：」日志行），只拼进日志
 host/dm_custom.c	高画质	超分档位名（dm_3d_profile_get 的「超分档位：」日志行），只拼进日志
 host/dm_custom.c	原版	超分档位名（dm_3d_profile_get 的「超分档位：」日志行），只拼进日志
+host/dm_custom.c	缺省不变	内存档位的说明（load_once 的「内存档位：」日志行），只拼进日志
+host/dm_custom.c	玩家改过的保留，缺省没动	同上，只进日志

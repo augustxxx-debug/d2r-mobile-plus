@@ -1544,6 +1544,10 @@ def _graphics_page(text):
     # 120 fps gets no Quality (user 2026-10-29): one subtext line under the profile caption (CLAUDE.md §2.6: 28 pt, description grey, $ReducedSpacing); the host's dm_graphics_ui_pump shows it only while the 120 fps stop is selected
     profile_note = label('TouchGraphicsProfileNote', 'dmGraphicsQuality120Note', 0, 116, 1000, 60)
     profile_note['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
+    # 内存档位（用户 2026-10-29）：屏幕撑得住 120、只因本机内存上限不开放 120 帧时，帧率文字下方一行同款副文；宿主跟着帧率行挪（y + 116）、按 fps_mem_capped 显示
+    # Memory tier (user 2026-10-29): when the screen could do 120 but this device's memory limit forbids it, the same subtext style under the frame-rate caption; the host moves it with the frame-rate row (y + 116) and shows it via fps_mem_capped
+    fps_note = label('TouchGraphicsFpsNote', 'dmGraphicsFps120MemNote', 0, 540 + 116, 1000, 60)
+    fps_note['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
     profile = {'type': 'Widget', 'name': 'TouchGraphicsProfileRow', 'fields': {
         'rect': {'x': 0, 'y': 900, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsProfileText', 'dmGraphicsProfileAuto', 0, 0, 1000, 180), profile_note,
@@ -1557,9 +1561,13 @@ def _graphics_page(text):
             'valueText': '$SettingsSliderValueFields'}}]}
     # 渲染分辨率（整帧输出尺寸的像素预算，dm/host/dm_res_cap.h）：四档滑块 自动 / 省电 / 均衡 / 原生，宿主 dm_graphics_ui_pump 读写 TouchGraphicsRes
     # Render resolution (pixel budget of the whole-frame output size, dm/host/dm_res_cap.h): four-position slider Auto / Eco / Balanced / Native, read and written by the host's dm_graphics_ui_pump via TouchGraphicsRes
+    # 内存档位 1 / 0（用户 2026-10-29）：启动预留按启动时的分辨率档缩小，调高要重启才生效——分辨率文字下方一行同款副文，宿主按 res_raise_needs_restart 显示
+    # Memory tiers 1 / 0 (user 2026-10-29): the startup reserve is shrunk to the launch resolution level, so raising it needs a restart - the same subtext under the resolution caption, shown by the host via res_raise_needs_restart
+    res_note = label('TouchGraphicsResNote', 'dmGraphicsResRestartNote', 0, 116, 1000, 60)
+    res_note['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
     res_row = {'type': 'Widget', 'name': 'TouchGraphicsResRow', 'fields': {
         'rect': {'x': 0, 'y': 180, 'width': 1730, 'height': 180}}, 'children': [
-        label('TouchGraphicsResText', 'dmGraphicsResAuto', 0, 0, 1000, 180),
+        label('TouchGraphicsResText', 'dmGraphicsResAuto', 0, 0, 1000, 180), res_note,
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsRes', 'fields': {
             'rect': {'x': 1110, 'y': 55, 'width': 480, 'height': 72},
             'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',
@@ -1580,7 +1588,7 @@ def _graphics_page(text):
         label('TouchGraphicsFpsHudText', 'dmCustomFpsHud', 0, 0, 1000, 180), toggle('TouchGraphicsFpsHud', 0)]}
     rows = {'type': 'Widget', 'name': 'TouchGraphicsRows', 'fields': {
         'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1580}}, 'children': [title, res_row, fpshud_row,
-        label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 540, 1000, 180),
+        label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 540, 1000, 180), fps_note,
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsFps', 'fields': {
             'rect': {'x': 1110, 'y': 595, 'width': 480, 'height': 72},
             'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',

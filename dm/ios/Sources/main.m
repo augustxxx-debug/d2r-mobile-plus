@@ -48,6 +48,7 @@ static int g_log_stderr = -1;
 static int g_log_pipe[2] = {-1, -1};
 static pthread_t g_log_thread;
 void plog(const char *fmt, ...);
+static int g_mem_limit_mb = -1, g_mem_phys_mb = -1; static char g_mem_model[32] = "?";   // 内存档位：启动最早量的本进程上限 / 物理内存 / 机型（mem_measure_early，交给宿主 dm_mem_measure_set） | memory tier: limit / physical RAM / model measured first thing (mem_measure_early, handed to the host)
 
 static void metal_cache_stats(NSString *directory, unsigned long *file_count, unsigned long long *byte_count) {
     *file_count = 0; *byte_count = 0;
@@ -679,6 +680,7 @@ static void boot_prepare(void) {
     }
     for (NSString *d in @[@"save", @"temp"])
         [fm createDirectoryAtPath:[doc stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
+    { void dm_mem_measure_set(int, int, const char *); dm_mem_measure_set(g_mem_limit_mb, g_mem_phys_mb, g_mem_model); }   // 内存档位：启动最早量的那一次（mem_measure_early） | memory tier: the measurement taken first thing at launch
     { void dm_custom_init(const char *dir); dm_custom_init(doc.fileSystemRepresentation); }
     { int dm_crashfence_start(void); dm_crashfence_start(); }
     { void dm_community_load(void); dm_community_load(); }   // 社区入口：读缓存的群号 / 链接（dm_community.c；清单在选角页出现时随更新检查一起拉，dm_update.m） | community entry: read the cached group number / link (dm_community.c; the manifest is fetched with the update check when the character select page appears, dm_update.m)   // 崩溃围栏：设置目录定了就读残留运行标记、连续两次异常退出关实验项（要赶在宿主装载读设置之前；dm_crashfence.c） | crash fence: once the settings directory is known, read the leftover running marker; two abnormal exits in a row turn experimental features off (must run before host loading reads settings)
@@ -1302,8 +1304,20 @@ static void crash_subscribe(void) {
 }
 @end
 
+// 内存档位（dm/host/dm_custom.c，用户 2026-10-29）：本进程内存上限 = phys_footprint + os_proc_available_memory，在游戏堆分配之前量一次（之后 footprint 涨、avail 跌，两者之和不变）；
+// 物理内存、机型一起在 dm_custom_init 之前交给宿主，宿主读盘时记「内存档位：」行（boot.txt、分享摘要）。Mac 上跑 iOS 包 avail 为 0 → 记 -1 = 没量到，按最高档
+// Memory tier (dm/host/dm_custom.c, user 2026-10-29): this process's memory limit = phys_footprint + os_proc_available_memory, measured once before the game heap is allocated (afterwards footprint rises and avail falls, the sum stays);
+// physical RAM and the model go to the host before dm_custom_init, and the host logs the "内存档位：" line on load (boot.txt, share summary). The iOS build on a Mac reads avail 0 -> -1 = not measured, top tier
+static void mem_measure_early(void) {
+    task_vm_info_data_t vi; mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+    uint64_t fp = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &n) == KERN_SUCCESS ? vi.phys_footprint : 0; size_t av = os_proc_available_memory();
+    if (fp && av) g_mem_limit_mb = (int)((fp + av) >> 20);
+    g_mem_phys_mb = (int)(NSProcessInfo.processInfo.physicalMemory >> 20);
+    size_t mn = sizeof g_mem_model; if (sysctlbyname("hw.machine", g_mem_model, &mn, NULL, 0)) strlcpy(g_mem_model, "?", sizeof g_mem_model);
+}
 int main(int argc, char *argv[]) {
     g_T[2] = since_start();
+    mem_measure_early();
     // 文件描述符上限：iOS 进程缺省软上限 256，而游戏进局后常开约 255 个（数据文件、存档、日志、Metal 缓存…），差一个就满——
     // 满了以后任何 open 都失败：存档读不出（首页变成建角页）、Documents 里的文件读不到（NSPOSIXErrorDomain 24 Too many open files）。
     // 之前没撞上是因为从 devicectl 启动时系统有时给 2560。启动第一件事把软上限提到 4096（不超过硬上限）

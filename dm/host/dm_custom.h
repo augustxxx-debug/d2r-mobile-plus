@@ -21,6 +21,12 @@ int dm_3d_profile_get(void);
 int dm_render_res_level(void);   // 渲染分辨率档位（键 render_res，缺省 0）：0 自动 / 1 省电 / 2 均衡 / 3 原生；iOS 前端 front_game_res 按 dm_res_cap.h 的像素预算缩小整帧输出尺寸 | Render resolution level (key render_res, default 0): 0 Auto / 1 Eco / 2 Balanced / 3 Native; the iOS front end's front_game_res shrinks the whole-frame output size to the pixel budget in dm_res_cap.h
 int dm_render_res_rt_drop(void);   // 光追开时启动即降一档（启动第一次被问时定，整局不变）：1 = 降 | one tier down when RT is on at startup (decided on the first call, fixed for the run): 1 = drop
 int dm_fps_setting(void);   // 帧率档（键 eco_fps：0 = 60 缺省 / 1 = 30 省电 / 2 = 120，120 只在屏幕最高刷新率 ≥ 120 时生效，否则按 60）；nvn_mtl.m mtl_fps_target 读 | Frame rate mode (key eco_fps: 0 = 60 default / 1 = 30 power saving / 2 = 120, 120 only when the screen's maximum refresh rate is >= 120, otherwise 60); read by mtl_fps_target in nvn_mtl.m
+int dm_mem_tier(void);   // 内存档位 0 / 1 / 2（按本进程内存上限：< 2600 / 2600–3199 / ≥ 3200 MB；没量到 = 2；DM_MEM_TIER 覆盖）| memory tier 0 / 1 / 2 by this process's memory limit; not measured = 2; DM_MEM_TIER overrides
+void dm_mem_measure_set(int limit_mb, int phys_mb, const char *model);   // iOS main.m 在游戏堆分配之前量一次交进来（上限 = phys_footprint + os_proc_available_memory）| measured once by iOS main.m before the game heap
+void dm_mem_boot_info(int *tier, int *limit_mb, int *phys_mb, int *res0, int *q3d0);   // 分享摘要：档位、上限、物理内存、启动时生效的渲染分辨率档 / 超分档（4 = 原版）| share summary: tier, limit, RAM, launch render level / profile (4 = Original)
+const char *dm_mem_model(void);
+int dm_custom_mem_notice_due(void);    // 内存 0 档、低内存提示还没确认过 | memory tier 0 and the low-memory notice not yet confirmed
+void dm_custom_mem_notice_done(void);  // 玩家点了确定：记进设置文件，以后不再提示 | the player tapped OK: saved, never shown again
 
 int dm_custom_dir(char *p, size_t n);   // 设置文件所在目录（iOS Documents；Mac 存档已提交目录的上一级，没挂上时按 $DM_SAVE）；0 = 还不知道 | directory of the settings file (iOS Documents; on Mac the parent of the committed save directory, $DM_SAVE before mounting); 0 = not known yet
 int dm_custom_safe_mode(char *what, size_t n);   // 崩溃围栏：实验性功能全关并写回（120 帧 → 60、光追阴影、MetalFX）；返回改了几项 | crash fence: turn every experimental feature off and save (120 fps -> 60, ray-traced shadows, MetalFX); returns how many items changed

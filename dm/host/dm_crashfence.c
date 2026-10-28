@@ -167,9 +167,15 @@ int dm_crashfence_notice_take(void) { return atomic_exchange(&g_notice, 0); }
 // "OK" sends PanelManager:ClosePanel:TouchSafeOk (a no-op the host takes as a signal), and controller mode takes over A as OK. Once confirmed they go back off screen and do not return during this launch.
 // Without these widgets (original layout): after 600 frames without finding them only one log line is written. The "shown" / "player tapped OK" lines are kept (share diagnostics read them)
 static _Atomic int g_show, g_ack;   // g_show：0 不提示 / 1 要提示 / 2 显示着 | g_show: 0 none / 1 pending / 2 shown
+// 同一个提示框还给内存 0 档的一次性提示用（dm_custom.c 内存档位，用户 2026-10-29）：崩溃围栏的优先，内存提示留到下次启动 | the same box also carries the memory-tier-0 one-time notice (dm_custom.c memory tier, user 2026-10-29): the crash fence wins, the memory notice waits for the next launch
+enum { NOTICE_CRASH, NOTICE_LOWMEM };
+static int g_kind;
+static void notice_dismissed(void) { if (g_kind == NOTICE_LOWMEM) dm_custom_mem_notice_done(); }
 void dm_crashfence_main_menu(void) {
-    if (!dm_crashfence_notice_take()) return;
-    atomic_store(&g_show, 1); LOG("崩溃围栏：主菜单提示「已关闭实验性功能」（游戏内提示框）");
+    if (atomic_load(&g_show)) return;
+    if (dm_crashfence_notice_take()) { g_kind = NOTICE_CRASH; atomic_store(&g_show, 1); LOG("崩溃围栏：主菜单提示「已关闭实验性功能」（游戏内提示框）"); return; }
+    static int lowmem_once; if (lowmem_once || !dm_custom_mem_notice_due()) return;
+    lowmem_once = 1; g_kind = NOTICE_LOWMEM; atomic_store(&g_show, 1); LOG("内存档位：主菜单提示「本机内存偏小，已自动降低画质」（游戏内提示框，只提示一次）");
 }
 void dm_crashfence_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c 转来，游戏主线程） | UI message callback (forwarded from diag.c, game main thread)
     if (cat && act && arg && !strcmp(cat, "PanelManager") && !strcmp(act, "ClosePanel") && !strcmp(arg, "TouchSafeOk") && atomic_load(&g_show) == 2) atomic_store(&g_ack, 1);
@@ -216,12 +222,12 @@ void dm_crashfence_pump(void) {   // 取手柄处每帧调（游戏主线程，h
     if (!tiles || !ti || !de[0] || !de[1] || !de[2] || !ok) { if (st == 1 && ++wait == 600) { atomic_store(&g_show, 0); LOG("【红】崩溃围栏：主菜单面板里没有提示框控件（原版布局？），只记日志不显示"); } return; }
     int vis = *(uint8_t *)(mm + 0x50);
     if (pad && vis && st == 2 && (dm_padmode_page_keys(DM_BTN_A) & DM_BTN_A)) atomic_store(&g_ack, 1);   // 手柄：显示着时接管 A 当确定（游戏收不到这一下） | controller: while shown, take over A as OK (the game does not get this press)
-    const char *title = dm_str(b, "dmSafeModeTitle");   // 正文按原因选（k_cf_msg[g_msg]） | the body is picked by cause (k_cf_msg[g_msg])
+    const char *title = dm_str(b, g_kind == NOTICE_LOWMEM ? "dmLowMemTitle" : "dmSafeModeTitle");   // 正文按原因选（k_cf_msg[g_msg]）；内存提示用自己的两条 | the body is picked by cause (k_cf_msg[g_msg])
     if (atomic_exchange(&g_ack, 0)) {
         for (int k = 0; k < 15; k++) { int32_t *r = (int32_t *)(tl[k] + 0x70); r[0] = r[1] = 99999; }   // 边框片挪出屏幕（尺寸不动） | frame tiles off screen (size unchanged)
         cf_place(ti, 99999, 99999); cf_place(ok, 99999, 99999); cf_text(b, ti, "");
         for (int k = 0; k < 3; k++) { cf_place(de[k], 99999, 99999); cf_text(b, de[k], ""); }
-        atomic_store(&g_show, 0); LOG("前端：提示「%s」玩家点了确定（%s，游戏内提示框收起）", title, pad ? "手柄 A" : "点按钮"); return;
+        atomic_store(&g_show, 0); LOG("前端：提示「%s」玩家点了确定（%s，游戏内提示框收起）", title, pad ? "手柄 A" : "点按钮"); notice_dismissed(); return;
     }
     // 位置（布局单位，2160 = 屏高）。触屏版跟主菜单面板锚在屏幕中心（x 相对中心），框在 y 640–1260，正好在「进入游戏」上方。
     // 手柄版控件不带锚点，x 按屏宽算：整屏正中（x、y 都居中），盖住左侧按钮栏与右上角色列表（用户：「弹窗没居中，可以遮挡菜单」）
@@ -230,7 +236,7 @@ void dm_crashfence_pump(void) {   // 取手柄处每帧调（游戏主线程，h
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
     int cx = pad ? xr / 2 : 0, y0 = pad ? (2160 - 620) / 2 : 640;
     cf_text(b, ti, title);
-    { const char *m = dm_str(b, k_cf_msg[g_msg]); for (int k = 0; k < 3; k++) { const char *e = m ? strchr(m, '\n') : NULL; char ln[256];   // 按 \n 拆三行 | split into three lines at \n
+    { const char *m = dm_str(b, g_kind == NOTICE_LOWMEM ? "dmLowMemMsg" : k_cf_msg[g_msg]); for (int k = 0; k < 3; k++) { const char *e = m ? strchr(m, '\n') : NULL; char ln[256];   // 按 \n 拆三行 | split into three lines at \n
         snprintf(ln, sizeof ln, "%.*s", m ? (int)(e ? (size_t)(e - m) : strlen(m)) : 0, m ? m : ""); cf_text(b, de[k], ln); m = e ? e + 1 : NULL; } }
     // 边框：宽 1800、高 620，左上角 (cx − 900, y0)；几何同我们的通知框（dm_notice_geometry：四角与宝石定长、边条拉伸），它以 244 高为基准上下居中，这里换算到 y0 起
     // Frame: 1800 wide, 620 high, top left at (cx - 900, y0); geometry as our notification box (dm_notice_geometry: fixed corners and gems, stretched edge strips), which centers around a 244-high baseline, converted here to start at y0

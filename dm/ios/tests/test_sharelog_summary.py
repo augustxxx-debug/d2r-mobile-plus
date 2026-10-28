@@ -21,7 +21,7 @@ def block(src, start):
 class IosSummary(unittest.TestCase):
     def test_perf_block_has_settings_line(self):
         keys = re.search(r'static const char \*keys\[\] = \{([^}]*)\}', block(SHARE, 'static void perf_block(')).group(1)
-        for k in ('"自定义设置：读盘"', '"图形设置："', '"帧率档：生效"', '"帧率档：出图"', '"光追阴影：机器判定"', '"光追阴影：生效"', '"光追阴影：回退"', '"光追阴影：画面"', '"光追阴影：第"', '"Metal 抓帧层："', '"光追内存：预算"', '"光追内存：第"', '"光追内存：告警"', '"内存 至帧"', '"超分档位："', '"光追质量："', '"光追降分辨率："'):
+        for k in ('"自定义设置：读盘"', '"图形设置："', '"帧率档：生效"', '"帧率档：出图"', '"光追阴影：机器判定"', '"光追阴影：生效"', '"光追阴影：回退"', '"光追阴影：画面"', '"光追阴影：第"', '"Metal 抓帧层："', '"光追内存：预算"', '"光追内存：第"', '"光追内存：告警"', '"内存 至帧"', '"超分档位："', '"内存档位："', '"光追质量："', '"光追降分辨率："'):
             self.assertIn(k, keys)
 
 
@@ -41,11 +41,20 @@ class IosSummary(unittest.TestCase):
         line = next(l for l in build.splitlines() if 'FPS target=' in l)
         self.assertIn('profileSelected=', line); self.assertIn('profileEffective=', line); self.assertIn('qualityCapped120=', line)
 
+    def test_memory_tier_launch_and_now(self):
+        # 内存档位：启动时生效的值与当前设置并列（用户 2026-10-29：局中调低不还内存，渲染档在启动时定预留）；预留行进摘要键
+        # Memory tier: launch values next to the current settings (user 2026-10-29: lowering mid-run returns no memory, the render level fixes the reserve at launch); the reserve line is a summary key
+        build = block(SHARE, 'static NSURL *build_file(void) {')
+        line = next(l for l in build.splitlines() if 'Memory tier=' in l)
+        self.assertIn('atLaunch', line); self.assertIn('now renderRes', line)
+        keys = re.search(r'static const char \*keys\[\] = \{([^}]*)\}', block(SHARE, 'static void perf_block(')).group(1)
+        self.assertIn('"内存档位预留："', keys)
+
 
 class MacSummary(unittest.TestCase):
     def test_info_has_settings_lines(self):
         share = block(MAC, 'static NSString *share_logs(NSString *to) {')
-        for k in ('自定义设置：读盘', '图形设置：', '帧率档：生效', '帧率档：出图', '光追阴影：机器判定', '光追阴影：生效', '光追阴影：回退', '光追阴影：画面', '光追阴影：第', 'Metal 抓帧层：', '光追内存：预算', '光追内存：第', '光追内存：告警', '内存 至帧', '超分档位：', '光追质量：'):
+        for k in ('自定义设置：读盘', '图形设置：', '帧率档：生效', '帧率档：出图', '光追阴影：机器判定', '光追阴影：生效', '光追阴影：回退', '光追阴影：画面', '光追阴影：第', 'Metal 抓帧层：', '光追内存：预算', '光追内存：第', '光追内存：告警', '内存 至帧', '超分档位：', '内存档位：', '光追质量：'):
             self.assertIn(k, share)
 
     def test_summary_goes_through_scrub(self):

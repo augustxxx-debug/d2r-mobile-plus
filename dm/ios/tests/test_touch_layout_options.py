@@ -104,6 +104,13 @@ assert _note['text'] == '@dmGraphicsQuality120Note' and _note['style/pointSize']
 assert _note['style/spacing'] == '$ReducedSpacing', _note
 assert _note['rect']['x'] == 0 and _note['rect']['y'] >= 100 and _note['rect']['y'] + _note['rect']['height'] <= 180, _note['rect']
 assert 'TouchGraphicsProfileNote' in [c['name'] for c in g_nodes['TouchGraphicsProfileRow']['children']]
+# 内存档位（用户 2026-10-29）：帧率行下同款副文，紧挨帧率文字、在下一行（720）之上 | memory tier (user 2026-10-29): same subtext under the frame-rate caption, above the next row (720)
+_fn = g_nodes['TouchGraphicsFpsNote']['fields']
+assert _fn['text'] == '@dmGraphicsFps120MemNote' and _fn['style/pointSize'] == 28 and _fn['style/fontColor'] == '$FontColorLightGray' and _fn['style/spacing'] == '$ReducedSpacing', _fn
+assert _fn['rect']['y'] == 540 + 116 and _fn['rect']['y'] + _fn['rect']['height'] <= 720, _fn['rect']
+_rn = g_nodes['TouchGraphicsResNote']['fields']
+assert _rn['text'] == '@dmGraphicsResRestartNote' and _rn['style/pointSize'] == 28 and _rn['style/fontColor'] == '$FontColorLightGray', _rn
+assert _rn['rect']['y'] + _rn['rect']['height'] <= 180 and 'TouchGraphicsResNote' in [c['name'] for c in g_nodes['TouchGraphicsResRow']['children']], _rn['rect']
 print('PASS Graphics page: native FPS/profile sliders, independent upscale toggle, localization hooks')
 
 # Regression: adding Graphics must preserve all original destinations and native settings.

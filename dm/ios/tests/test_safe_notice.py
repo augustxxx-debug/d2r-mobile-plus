@@ -71,7 +71,9 @@ class Host(unittest.TestCase):
         self.assertIn('"TouchSafeOk"', c); self.assertIn('dm_padmode_page_keys(DM_BTN_A)', c)
         self.assertIn('前端：提示已显示：', c); self.assertIn('玩家点了确定', c)
         # 显示前要写标题和按原因选的正文（曾在挪位置时误删，Mac 截图只剩空框） | title and the cause-picked body must be written before showing (once lost while moving the box: the Mac shot showed an empty frame)
-        self.assertIn('cf_text(b, ti, title);', c); self.assertIn('dm_str(b, k_cf_msg[g_msg])', c); self.assertIn('cf_text(b, de[k], ln)', c)
+        # 同一个框还给内存 0 档的一次性提示用（dm_custom.c 内存档位，2026-10-29）：正文按种类选，崩溃围栏仍按原因选 | the same box also carries the memory-tier-0 notice (2026-10-29): the body is picked by kind, the crash fence still by cause
+        self.assertIn('cf_text(b, ti, title);', c); self.assertIn('dm_str(b, g_kind == NOTICE_LOWMEM ? "dmLowMemMsg" : k_cf_msg[g_msg])', c); self.assertIn('cf_text(b, de[k], ln)', c)
+        self.assertIn('notice_dismissed();', c)
         self.assertIn('dm_crashfence_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('dm_crashfence_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
 

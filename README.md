@@ -154,6 +154,30 @@ Follow the upstream [game-file preparation guide](docs/GAME_FILES.md), [workspac
 
 The font override is **off by default**. See [optional font configuration](docs/PLUS.md#optional-font) for its dependencies, scope and limitations. No font file is in the repository. Public packages built by this project use **LXGW WenKai** (霞鹜文楷, Medium weight, the same face and darkening level as the Android package), released under the SIL Open Font License 1.1 (see Credits); any other font, such as the commercial AR ZhongkaiGBK used in earlier local tests, is for the owner's private builds only and must never be redistributed.
 
+## Memory tiers (support matrix)
+
+Devices differ in RAM and in the memory limit the system grants one app, and Apple does not publish per-model numbers. Graphics defaults are therefore chosen **by this device's actual memory limit, not by a model list**.
+
+- The limit is `phys_footprint + os_proc_available_memory()`, read at launch before the game allocates its heap.
+- Thresholds use that limit, not physical RAM.
+- A build with the `increased-memory-limit` entitlement gets about 6 GB and lands in the top tier.
+
+| Tier | Process memory limit | 120 FPS | Default MetalFX profile | Default render resolution | Notice |
+|---|---|---|---|---|---|
+| 2 | ≥ 3200 MB | Available (experimental; no Quality at 120) | Auto (unchanged) | Auto (unchanged) | None |
+| 1 | 2600–3199 MB | Hidden; the Graphics frame-rate row says why | Eco | Balanced | None |
+| 0 | < 2600 MB | Hidden; the Graphics frame-rate row says why | Eco | Eco | One-time main-menu notice "Graphics lowered automatically" |
+
+- Tier defaults apply only on first run or when the tier changes, and only to settings still at the previous default. Values the player changed are kept, and Graphics stays adjustable as usual.
+- **Only two devices are measured**: iPhone 17 Pro (iPhone18,1) and iPhone Duo (iPhone19,4). Both have a 3375 MB limit without the entitlement, so both are tier 2.
+- Every other device falls into a tier by the limit it reads at launch:
+  - 4 GB models are estimated at tier 0;
+  - 6 / 8 GB models are still to be measured.
+- The launch log and the shared diagnostics summary carry one line, "内存档位：上限 X MB / 物理 Y GB / 机型 Z → 档位 N", which shows the tier of a reported device.
+- Tiers 1 / 0 shrink the render reserve at launch, before the game builds its render targets, to the render-resolution level in effect then. The game sizes its targets at launch, and lowering resolution mid-run returns no memory. So on these tiers a higher resolution applies only after a restart, and the Graphics resolution row says so.
+- The diagnostics summary records both the launch values and the current settings (`Memory tier=… atLaunch … now …`).
+- For debugging, `DM_MEM_TIER=0/1/2` forces a tier.
+
 ## Verification and limitations
 
 The preview has passed focused host geometry/classification tests, the iOS touch suite, notification generator checks and a signed device build. The quest narration issue was reproduced before the change and retested after it. See [verification details](docs/PLUS.md#verification) for the checks actually performed and those still pending.

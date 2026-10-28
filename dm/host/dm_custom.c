@@ -99,7 +99,39 @@ static _Atomic int g_merc_explicit = -1;   // 文件里写着的 merc_pot_v2：-
 // the next time the player opens the Graphics tab they are pre-selected (checkboxes back as they were); Apply makes them effective and clears the backup, Discard keeps the backup and pre-selects again next time
 static const char *const k_bak_name[3] = { "eco_fps", "rt_shadow", "upscale" };
 static _Atomic int g_bak[3] = { -1, -1, -1 };
-static _Atomic int g_repaint;        // 默认 / 放弃之后：页上的勾选框按待定值 / 生效值重摆一遍 | After default / discard: lay out the checkboxes on the page again according to pending values / effective values
+static _Atomic int g_repaint;
+// 内存档位（用户 2026-10-29：「要按机型考虑，不同机型运存不一样」）：按本进程内存上限（phys_footprint + os_proc_available_memory，iOS main.m 在游戏堆分配之前量一次交进来）分三档，
+// 阈值按上限、不按物理内存或机型清单（只有两台机实测，见共享笔记《iOS机型内存上限参考》：17 Pro / Duo 无权益都是 3375 MB；带 increased-memory-limit 权益约 6 GB，自然落最高档）：
+//   2 档 ≥ 3200 MB：与之前一致（0 副作用）；1 档 2600–3199 MB：不开放 120 帧（图形页帧率行说明）、缺省 MetalFX 省电、渲染分辨率均衡；0 档 < 2600 MB：渲染分辨率也降到省电，主菜单提示一次。
+// 档位缺省只在首次（文件里没有 mem_tier）/ 档位变化时套，而且只改还停在旧档缺省上的值——玩家改过的不动；没量到（Mac、单测）= 2 档。DM_MEM_TIER=0/1/2 覆盖实测（Mac 上截图 / 验证用）
+// Memory tier (user 2026-10-29: "consider the model, devices have different RAM"): three tiers by this process's memory limit (phys_footprint + os_proc_available_memory, measured once by iOS main.m before the game heap is allocated),
+// thresholds on the limit, not physical RAM or a model list (only two devices measured; 17 Pro / Duo are both 3375 MB without the entitlement; with increased-memory-limit about 6 GB, which lands on the top tier):
+//   tier 2 >= 3200 MB: as before (no side effect); tier 1 2600-3199 MB: no 120 fps (note on the Graphics frame-rate row), default MetalFX Eco and render resolution Balanced; tier 0 < 2600 MB: render resolution Eco too, one-time main-menu notice.
+// Tier defaults apply only on first run (no mem_tier in the file) / tier change, and only to values still at the old tier's default - values the player changed stay; not measured (Mac, unit tests) = tier 2. DM_MEM_TIER=0/1/2 overrides (Mac screenshots / checks)
+static _Atomic int g_mem_limit_mb = -1, g_mem_phys_mb = -1;
+static char g_mem_model[32];
+static _Atomic int g_mem_tier_file = -1, g_mem_notice;
+// 启动时生效的渲染分辨率 / 超分档位（本进程第一次读盘、套完档位缺省之后）：游戏按启动预留建渲染目标，局中调低不还内存（10-27 bench footprint 不回落），
+// 所以内存 1 / 0 档的启动预留按这时的渲染分辨率档缩小（front_ios.m front_game_res），之后调高要下次启动才生效；分享摘要同时记启动值与当前值
+// Render resolution / upscale profile in effect at launch (first load of this process, after tier defaults): the game builds render targets from the startup reserve and lowering mid-run returns no memory,
+// so memory tiers 1 / 0 shrink the startup reserve to this render-resolution level (front_ios.m front_game_res) and raising it only takes effect on the next launch; the share summary records both launch and current values
+static _Atomic int g_boot_res = -1, g_boot_q3d = -1;   // 文件里记的档位（-1 没有）、低内存提示已确认过 | tier recorded in the file (-1 none), low-memory notice already confirmed
+static int mem_tier_of(int limit_mb) { return limit_mb < 0 || limit_mb >= 3200 ? 2 : limit_mb >= 2600 ? 1 : 0; }
+static int mem_tier_env(void) { const char *e = getenv("DM_MEM_TIER"); return e && e[0] >= '0' && e[0] <= '2' && !e[1] ? e[0] - '0' : -1; }
+int dm_mem_tier(void) { int t = mem_tier_env(); return t >= 0 ? t : mem_tier_of(atomic_load(&g_mem_limit_mb)); }
+void dm_mem_boot_info(int *tier, int *limit_mb, int *phys_mb, int *res0, int *q3d0) {
+    if (tier) *tier = dm_mem_tier(); if (limit_mb) *limit_mb = atomic_load(&g_mem_limit_mb); if (phys_mb) *phys_mb = atomic_load(&g_mem_phys_mb);
+    if (res0) *res0 = atomic_load(&g_boot_res); if (q3d0) *q3d0 = atomic_load(&g_boot_q3d); }
+const char *dm_mem_model(void) { return g_mem_model[0] ? g_mem_model : "?"; }
+// 渲染分辨率档的高低（像素预算从小到大：省电 < 均衡 < 自动 ≤ 原生）| render-resolution levels by pixel budget, low to high: Eco < Balanced < Auto <= Native
+static int res_rank(int lv) { static const int r[4] = { 2, 0, 1, 3 }; return lv >= 0 && lv < 4 ? r[lv] : 2; }
+void dm_mem_measure_set(int limit_mb, int phys_mb, const char *model) {
+    atomic_store(&g_mem_limit_mb, limit_mb); atomic_store(&g_mem_phys_mb, phys_mb); strlcpy(g_mem_model, model ? model : "?", sizeof g_mem_model); }
+static int tier_def(int i, int tier) {   // 本档缺省：只有 q3d（MetalFX 档位）与 render_res（渲染分辨率）随档位变 | this tier's default: only q3d and render_res follow the tier
+    if (tier < 2 && i == K_Q3D) return 1;               // 省电 | Eco
+    if (tier < 2 && i == K_RES) return tier ? 2 : 1;    // 1 档均衡、0 档省电 | tier 1 Balanced, tier 0 Eco
+    return k_def[i];
+}        // 默认 / 放弃之后：页上的勾选框按待定值 / 生效值重摆一遍 | After default / discard: lay out the checkboxes on the page again according to pending values / effective values
 
 const char *dm_save_commitdir(void);
 static int key_index(const char *k) { if (k) for (int i = 0; i < NK; i++) if (!strcmp(k, k_keys[i])) return i; return -1; }
@@ -120,19 +152,22 @@ static int file_path(char *p, size_t n) {
 // 120 fps gets no MetalFX Quality (user 2026-10-29, RC1: trade a little image quality for memory headroom): a saved Quality (q3d=3) runs as Balanced (2) while 120 fps is in effect; the file keeps 3 and 60 / 30 fps get Quality back;
 // at 120 fps the Graphics tab's profile slider stops at Balanced and a grey subtext line appears under the profile row (dm_graphics_ui_pump). Pure function for unit tests (t_render_profile)
 static int q3d_for_fps(int q3d, int fps) { return fps == 120 && q3d == 3 ? 2 : q3d; }
+static void save(void);
 static int fps_effective(int saved);   // 下面帧率档那里（测试开关 + 屏幕刷新率）；读盘时用它，不能走 dm_custom_get（会再进 load_once） | defined with the frame rate mode below (test switch + screen refresh); used while loading, where dm_custom_get would re-enter load_once
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
     char p[1100]; if (!file_path(p, sizeof p)) return;   // 存档还没挂上：先按缺省开答，挂上后再读 | The save is not mounted yet: answer with the default (on) for now, and read again after it is mounted
     int v[NK]; for (int i = 0; i < NK; i++) v[i] = k_def[i];
     FILE *f = fopen(p, "r"); char ln[128];
-    int lang = -1, voice = -1, merc = -1, qv2 = 0;
+    int lang = -1, voice = -1, merc = -1, qv2 = 0, mem_was = -1, mem_ack = 0;
     for (int b = 0; b < 3; b++) atomic_store(&g_bak[b], -1);   // 备份以文件为准 | the backup follows the file
     while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0';
         if (i == K_Q3D) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 4) v[i] = (int)q; else v[i] = 0; }
         if (i == K_RES) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q < DM_RES_LEVELS) v[i] = (int)q; else v[i] = 0; }
         if (i == K_FPS && eq[1] == '2' && (eq[2] == '\n' || eq[2] == '\r' || eq[2] == 0)) v[i] = FPS_120;   // 其余照旧：0 = 60、非 0 = 30 | Otherwise as before: 0 = 60, non-zero = 30
         if (!strcmp(ln, "q3d_v2")) qv2 = eq[1] == '1';
+        if (!strcmp(ln, "mem_tier") && eq[1] >= '0' && eq[1] <= '2' && (eq[2] == '\n' || eq[2] == '\r' || eq[2] == 0)) mem_was = eq[1] - '0';
+        if (!strcmp(ln, "mem_notice")) mem_ack = eq[1] == '1';
         if (i == 0) { int l = atoi(eq + 1); if (l >= 0 && l < LANG_N) lang = v[0] = l; }
 #if VOICE_ROW
         if (i == K_VOICE) { int x = atoi(eq + 1); if (x == 0 || x == 1) voice = v[K_VOICE] = x; }
@@ -157,17 +192,34 @@ static void load_once(void) {
     atomic_store(&g_lang_explicit, lang);
     atomic_store(&g_voice_explicit, voice);
     v[K_MERC] = merc < 0 ? k_def[K_MERC] : merc; atomic_store(&g_merc_explicit, merc);
+    // 内存档位缺省：首次（文件里没 mem_tier，按「之前是 2 档」算）/ 档位变了，只改还停在旧档缺省上的值；2 档又是首次 = 什么都不变，也不写文件（0 副作用）
+    // Memory-tier defaults: on first run (no mem_tier in the file, counted as "was tier 2") / tier change, only values still at the old tier's default move; tier 2 on first run = nothing changes and the file is not written (no side effect)
+    int tier = dm_mem_tier(), mem_save = 0; char mem_what[96] = "缺省不变";
+    if (mem_was != tier && (tier != 2 || mem_was >= 0)) {
+        int prev = mem_was < 0 ? 2 : mem_was; size_t o = 0; mem_what[0] = 0; mem_save = 1;
+        static const int mk[2] = { K_Q3D, K_RES };
+        for (int k = 0; k < 2; k++) { int i = mk[k]; if (v[i] == tier_def(i, prev) && v[i] != tier_def(i, tier)) {
+            v[i] = tier_def(i, tier); o += (size_t)snprintf(mem_what + o, o < sizeof mem_what ? sizeof mem_what - o : 0, "%s%s=%d", o ? "、" : "", k_keys[i], v[i]); } }
+        if (!o) snprintf(mem_what, sizeof mem_what, "玩家改过的保留，缺省没动");
+        mem_was = tier; }
+    atomic_store(&g_mem_tier_file, mem_was); atomic_store(&g_mem_notice, mem_ack);
+    if (atomic_load(&g_boot_res) < 0) { atomic_store(&g_boot_res, v[K_RES]); atomic_store(&g_boot_q3d, v[K_UPSCALE] ? v[K_Q3D] : 4); }
     for (int i = 0; i < NK; i++) { atomic_store(&g_val[i], v[i]); atomic_store(&g_pend[i], -1); }
     dm_3d_quality_mode_set(v[K_UPSCALE] && q3d_for_fps(v[K_Q3D], fps_effective(v[K_FPS])) == 3); LOG("3D profile loaded: %d", v[K_UPSCALE] ? v[K_Q3D] : 4);
     // 读盘行按键表写全每个键（分享诊断日志的摘要靠它看出玩家开了什么；原先写死到 eco_fps，后加的 fps_hud / upscale / render_res 等都不在）
     // The load line lists every key from the key table (the diagnostic share summary relies on it; it used to stop at eco_fps, so later keys such as fps_hud / upscale / render_res were missing)
     char kv[512]; size_t o = 0; kv[0] = 0;
     for (int i = 1 + VOICE_ROW; i < NK && o < sizeof kv; i++) o += (size_t)snprintf(kv + o, sizeof kv - o, " %s=%d", k_keys[i], v[i]);
-    if (!atomic_exchange(&g_loaded, 1)) LOG("自定义设置：读盘 %s%s lang=%d%s%s%s", p, f ? "" : "（没有文件，全按缺省）", v[0], lang < 0 ? "（没写，按当前语言）" : "", vlog, kv);
+    if (!atomic_exchange(&g_loaded, 1)) {
+        LOG("自定义设置：读盘 %s%s lang=%d%s%s%s", p, f ? "" : "（没有文件，全按缺省）", v[0], lang < 0 ? "（没写，按当前语言）" : "", vlog, kv);
+        int lim = atomic_load(&g_mem_limit_mb), phys = atomic_load(&g_mem_phys_mb); char pg[16] = "?"; if (phys >= 0) snprintf(pg, sizeof pg, "%.1f", phys / 1024.0);
+        LOG("内存档位：上限 %d MB / 物理 %s GB / 机型 %s → 档位 %d（%s；≥ 3200 MB 为 2 档、2600–3199 为 1 档、< 2600 为 0 档）%s%s", lim, pg, g_mem_model[0] ? g_mem_model : "?", tier,
+            mem_tier_env() >= 0 ? "DM_MEM_TIER 覆盖" : lim < 0 ? "没量到，按最高档" : "实测", mem_save ? "；套用本档缺省：" : "；", mem_save ? mem_what : "缺省不变");
+        if (mem_save) save(); }
 }
 int dm_custom_get(const char *key) {
     load_once(); int i = key_index(key); if (i < 0) return 1;
-    return atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : k_def[i];
+    return atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : tier_def(i, dm_mem_tier());
 }
 int mtl_upscale_supported(void);   // 弱定义在下面（光追门旁）| weak definition below (next to the ray-tracing gate)
 // 生效档：不支持超分的平台固定原版档；120 帧生效时高画质按均衡（q3d_for_fps）。设置档、生效档或帧率一变就记一行「超分档位：」（分享诊断日志摘要取最后一条，dm_sharelog.m perf_block / front_mac.m）
@@ -244,7 +296,8 @@ __attribute__((weak)) int dm_display_max_hz(void) { return 0; }
 #else
 int dm_display_max_hz(void);
 #endif
-static int fps120_ok(void) { return dm_display_max_hz() >= 119; }   // 119：容 119.88 这类档 | 119: tolerates rates like 119.88
+static int fps120_ok(void) { return dm_display_max_hz() >= 119 && dm_mem_tier() >= 2; }   // 119：容 119.88 这类档；内存 1 / 0 档不开放 120 | 119: tolerates rates like 119.88; memory tiers 1 / 0 get no 120
+static int fps_mem_capped(void) { return dm_display_max_hz() >= 119 && dm_mem_tier() < 2; }   // 屏幕撑得住 120、只因内存档位不开放：图形页帧率行出说明 | the screen could do 120 and only the memory tier forbids it: note on the Graphics frame-rate row
 // 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义）：eco_fps 0 = 60 / 1 = 30（省电）/ 2 = 120 | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol): eco_fps 0 = 60 / 1 = 30 (power saving) / 2 = 120
 // 生效值或原因一变就记一行「帧率档：」（分享诊断日志的摘要按这个前缀取最后一行，dm_sharelog.m perf_block）。屏幕刷新率要等有窗口才读得到，所以「按 60」在建窗前后各可能记一次
 // One "帧率档：" (frame rate mode) line whenever the effective value or its reason changes (the share-diagnostics summary takes the last line with this prefix, dm_sharelog.m perf_block). The screen refresh rate is readable only once there is a window, so "runs at 60" may be logged once before and once after
@@ -255,11 +308,11 @@ static int fps_effective(int saved) {   // 设置值（eco_fps）+ 测试开关 
 int dm_fps_setting(void) {
     int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t == 120 ? FPS_120 : 0) : dm_custom_get("eco_fps"), hz = dm_display_max_hz();
     int f = v == 1 ? 30 : v == FPS_120 && fps120_ok() ? 120 : 60, why = (v == FPS_120 && f == 60) * 2 + (t > 0);
-    static _Atomic int last = -1; int key = f * 16 + why * 4 + (hz > 0);
+    static _Atomic int last = -1; int key = f * 16 + why * 4 + (hz > 0) + (hz >= 119) * 2;
     if (atomic_exchange(&last, key) != key) {
         // 生效帧率变了（应用、测试开关、建窗后才读到 120 Hz）：3D 比例控制的高画质模式跟着 120 帧的上限走 | the effective rate changed (Apply, test switch, 120 Hz known only once the window exists): the 3D scale controller's Quality mode follows the 120 fps cap
         if (atomic_load(&g_loaded)) dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && q3d_for_fps(atomic_load(&g_val[K_Q3D]), f) == 3);
-        LOG("帧率档：生效 %d 帧（%s%s，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", v == 1 ? "30" : v == FPS_120 ? "120" : "60", hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz, why >= 2 && hz > 0 ? "；屏幕不到 120 Hz，120 档按 60" : why >= 2 ? "；暂按 60" : "");
+        LOG("帧率档：生效 %d 帧（%s%s，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", v == 1 ? "30" : v == FPS_120 ? "120" : "60", hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz, why >= 2 && hz >= 119 ? "；内存档位不开放 120 帧（见「内存档位：」行），120 档按 60" : why >= 2 && hz > 0 ? "；屏幕不到 120 Hz，120 档按 60" : why >= 2 ? "；暂按 60" : "");
     }
     return f;
 }
@@ -314,11 +367,19 @@ static void save(void) {
     for (int i = 0; ok && i < NK; i++) { if (i == 0 && (atomic_load(&g_lang_explicit) < 0 || g_lang_test)) continue; if (i == K_VOICE && (atomic_load(&g_voice_explicit) < 0 || g_voice_test)) continue; ok = fprintf(f, "%s=%d\n", k_keys[i], atomic_load(&g_val[i])) > 0; }   // lang / voice 只在玩家真改过之后才写进文件
     if (ok) ok = fprintf(f, "q3d_v2=1\n") > 0;
     if (ok && atomic_load(&g_merc_explicit) >= 0) ok = fprintf(f, "merc_pot_v2=%d\n", atomic_load(&g_merc_explicit)) > 0;
+    if (ok && atomic_load(&g_mem_tier_file) >= 0) ok = fprintf(f, "mem_tier=%d\n", atomic_load(&g_mem_tier_file)) > 0;   // 内存档位（首次 / 档位变化才套缺省） | memory tier (defaults apply only on first run / tier change)
+    if (ok && atomic_load(&g_mem_notice)) ok = fprintf(f, "mem_notice=1\n") > 0;
     { char bk[96]; size_t o = 0; bk[0] = 0; for (int b = 0; b < 3; b++) if (atomic_load(&g_bak[b]) >= 0) o += (size_t)snprintf(bk + o, sizeof bk - o, "%s%s:%d", o ? "," : "", k_bak_name[b], atomic_load(&g_bak[b]));
       if (ok && o) ok = fprintf(f, "exp_off_backup=%s\n", bk) > 0; }
     if (f) ok = fclose(f) == 0 && ok;
     if (ok) ok = rename(t, p) == 0;   // 先写临时文件再换名：写到一半被杀也不会留下半个文件 | Write a temporary file first and then rename: being killed halfway through the write does not leave half a file behind
     LOG("自定义设置：存盘%s", ok ? "" : "【红】失败");
+}
+// 内存 0 档的主菜单提示（dm_crashfence.c 借崩溃围栏的游戏内提示框）：还没确认过才提示；玩家点了确定记 mem_notice=1，以后不再提示 | tier-0 main-menu notice (dm_crashfence.c reuses the crash-fence box): only while not yet confirmed; OK saves mem_notice=1 and it never shows again
+int dm_custom_mem_notice_due(void) { load_once(); return atomic_load(&g_loaded) && dm_mem_tier() == 0 && !atomic_load(&g_mem_notice); }
+void dm_custom_mem_notice_done(void) {
+    if (atomic_exchange(&g_mem_notice, 1)) return;
+    save(); LOG("内存档位：低内存提示玩家已确认，记进设置文件，以后不再提示");
 }
 // 崩溃围栏连续两次异常退出时调（dm_crashfence.c）：实验性功能全关并写回设置文件——120 帧档回 60、光追阴影关、MetalFX 空间超分关（光追 AO 只在光追里跑，随它关）。
 // 玩家没开的项不动；改了才存盘。what 写「改了什么」给日志；返回改了几项
@@ -360,7 +421,7 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); atomic_fetch_add(&g_repaint, 1); }
     else if (!strcmp(act, "ResetToDefaults")) {
         // Preserve upstream global defaults across the two enhanced tabs. Language/voice stay unchanged.
-        for (int i = 1 + VOICE_ROW; i < NK; i++) atomic_store(&g_pend[i], k_def[i]);
+        for (int i = 1 + VOICE_ROW; i < NK; i++) atomic_store(&g_pend[i], tier_def(i, dm_mem_tier()));   // 本内存档位的缺省 | this memory tier's defaults
         atomic_fetch_add(&g_repaint, 1); }
 
 }
@@ -388,6 +449,9 @@ static void set_toggle(uint64_t w, int on) {
     *(uint8_t *)(w + 0xa88) = on != 0; memcpy((void *)(w + 0x6e8), fr[on != 0], sizeof fr[0]); *(int32_t *)(w + 0x610) = fr[on != 0][0];
 }
 static int pending_value(int i) { int p = atomic_load(&g_pend[i]); return p >= 0 ? p : atomic_load(&g_val[i]); }
+// 内存 1 / 0 档：图形页把渲染分辨率调到比启动时高的档 = 启动预留已按启动档缩小，要下次启动才生效（分辨率行副文 TouchGraphicsResNote）
+// memory tiers 1 / 0: a render-resolution level above the launch level on the Graphics tab only takes effect on the next launch, because the startup reserve was shrunk (subtext TouchGraphicsResNote)
+static int res_raise_needs_restart(void) { int b = atomic_load(&g_boot_res); return dm_mem_tier() < 2 && b >= 0 && res_rank(pending_value(K_RES)) > res_rank(b); }
 static int enhanced_settings_dirty(void) {
     for (int i=0;i<NK;i++) if (pending_value(i)!=atomic_load(&g_val[i])) return 1;
     return 0;
@@ -531,7 +595,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
         switch (all_vis[i]) {
         case ROW_RES: move_ours_y(find_w(sp, "TouchGraphicsResRow", 0), y); break;
         case ROW_FPSHUD: move_ours_y(find_w(sp, "TouchGraphicsFpsHudRow", 0), y); break;
-        case ROW_FPS: move_ours_y(find_w(sp, "TouchGraphicsFpsText", 0), y); if (fps) move_ours_y(fps, y + 55); break;
+        case ROW_FPS: move_ours_y(find_w(sp, "TouchGraphicsFpsText", 0), y); if (fps) move_ours_y(fps, y + 55); move_ours_y(find_w(sp, "TouchGraphicsFpsNote", 0), y + 116); break;
         case ROW_UPSCALE: move_ours_y(find_w(sp, "TouchGraphicsUpscaleText", 0), y); if (upscale) move_ours_y(upscale, y + 55); break;
         case ROW_PROFILE: if (row) move_ours_y(row, y); break;
         case ROW_RT: if (rtrow) move_ours_y(rtrow, y); break; } }
@@ -587,6 +651,9 @@ void dm_graphics_ui_pump(unsigned long long root) {
     graphics_text(find_w(sp, "TouchGraphicsProfileText", 0), dm_str(main_base(), captions[profile]));
     // 120 帧格选着时档位行下的灰色副文「120 帧下不提供高画质」（布局 touch_layout.py TouchGraphicsProfileNote，缺省藏着）| at the 120 fps stop, the grey subtext under the profile row (layout TouchGraphicsProfileNote, hidden by default)
     { uint64_t note = find_w(sp, "TouchGraphicsProfileNote", 0); if (note) ui_show_ours(note, enabled && profile_max() < 3); }
+    // 内存 1 / 0 档：屏幕撑得住 120 却不开放时，帧率行下一行灰色副文说明（布局 TouchGraphicsFpsNote，缺省藏着）| memory tiers 1 / 0: when the screen could do 120 but it is not offered, a grey subtext line under the frame-rate row (layout TouchGraphicsFpsNote, hidden by default)
+    { uint64_t note = find_w(sp, "TouchGraphicsFpsNote", 0); if (note) ui_show_ours(note, fps_ok && fps_mem_capped()); }
+    { uint64_t note = find_w(sp, "TouchGraphicsResNote", 0); if (note) ui_show_ours(note, res_ok && res_raise_needs_restart()); }
     uint64_t vt = *(uint64_t *)sp; int valid = 0;
     for (int k = 0; k < 96 && !valid; k++) valid = *(uint64_t *)(vt + 8 * k) == (uint64_t)main_base() + 0xae5f28;
     if (valid) { int dirty = enhanced_settings_dirty();
