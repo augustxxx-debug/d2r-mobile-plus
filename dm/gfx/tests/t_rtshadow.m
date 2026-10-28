@@ -69,7 +69,7 @@ int main(void) { @autoreleasepool {
         rts_gov g4; rts_gov_init(&g4, RTS_LVL_MAX); t = 0;   // 光追很贵（> 50%）但整帧有余量（78%）：不降（Mac 实测：AO 开时光追 9 ms、整帧 13 ms，原先误降） | ray tracing costly (> 50%) but the frame has headroom (78%): no step down (measured on the Mac: 9 ms ray tracing with AO, 13 ms frame, which used to step down)
         for (int i = 0; i < 300; i++, t += 1 / 60.0) rts_gov_step(&g4, 9.2, 13.1, B, t, &why); if (g4.lvl) FAIL("gov: stepped down although the frame has headroom");
         rts_lvl_params p0 = rts_lvl_apply(0, 1, 2, 2, 0, 1, 1), p1 = rts_lvl_apply(1, 1, 2, 2, 0, 1, 1), p2 = rts_lvl_apply(2, 1, 2, 2, 0, 1, 1), p3 = rts_lvl_apply(3, 1, 2, 2, 0, 1, 1);
-        if (p0.point_n != 2 || p0.point_div != 2 || p0.sun_div != 1 || !p0.soft || p1.point_n != 1 || p1.point_div != 4 || !p1.point_on || p2.point_on || p2.sun_div != 2 || p2.soft || p3.sun_div != 4 || !p0.ao || p1.ao) FAIL("rts_lvl_apply levels wrong");
+        if (p0.point_n != 2 || p0.point_div != 2 || p0.sun_div != 1 || !p0.soft || p1.point_n != 1 || p1.point_div != 4 || !p1.point_on || p2.point_on || p2.sun_div != 2 || p2.soft || !p3.off || p2.off || !p0.ao || p1.ao) FAIL("rts_lvl_apply levels wrong");
     }
     { rts_player_track t = {.rec = -1}; float torch[3] = {40, 0, 0}, player[3] = {5, 0, 5}; int sure = 0;   // 相机沿 x 走：火把偏移在变、随身光偏移不变 | the camera walks along x: the torch's offset changes, the player light's does not
       for (int f = 0; f < 80; f++) { double p0[3] = {f * 0.5, 0, 0}; float pp[3] = {player[0] + f * 0.5f, player[1], player[2]}; sure = rts_player_feed(&t, 7, pp, p0); if (f < 59 && sure) FAIL("player light recognized too early (frame %d)", f); }

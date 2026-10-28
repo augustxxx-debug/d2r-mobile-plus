@@ -57,16 +57,24 @@ static void sh(int i) {
     p_draw_idx di = {NVN_DRAW_PRIMITIVE_TRIANGLES, 1, 48, 0, 0, 1, (uint64_t)(g_idx + (size_t)i * 96)};
     rts_draw(g_pr, NULL, &di, NVN_DRAW_PRIMITIVE_TRIANGLES);
 }
+// 一次进不了 TLAS 的阴影绘制（点图元，「图元不认」）：新网格现在当帧就进 TLAS，打断光追画面改用它 | one shadow draw that cannot enter the TLAS (points, "unknown primitive"): new meshes now enter the TLAS in the same frame, so this is what breaks the ray-traced picture
+static void pt(void) {
+    memset(&R, 0, sizeof R); R.rt.depth = &g_sdepth; R.has_rt = 1;
+    S.nattr = 1; S.attr[0] = (va_st){.fmt = 0x2b, .offset = 0, .stream = 0}; S.stream[0] = (vs_st){8, 0}; S.vbuf[0] = (NVNbufferRange){(uint64_t)g_vtx, 4096 * 8};
+    S.ubo[0][0] = (p_bind_buf){0, 0, (uint64_t)g_mat, 64}; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)g_cb3, 400};
+    p_draw_idx di = {NVN_DRAW_PRIMITIVE_POINTS, 1, 48, 0, 0, 1, (uint64_t)g_idx};
+    rts_draw(g_pr, NULL, &di, NVN_DRAW_PRIMITIVE_POINTS);
+}
 static float map_depth(void) {   // 回读阴影图中心的深度 | Read back the shadow map's centre depth
     id<MTLBuffer> b = [g_dev newBufferWithLength:256 * 256 * 4 options:MTLResourceStorageModeShared]; res_add(b);
     mtl_sub_begin(); [blit() copyFromTexture:tex_mtl(&g_sdepth) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(256, 256, 1) toBuffer:b destinationOffset:0 destinationBytesPerRow:256 * 4 destinationBytesPerImage:256 * 256 * 4];
     uint64_t f = mtl_sub_commit(); mtl_wait(f, 5000000000ull); float v = ((float *)b.contents)[128 * 256 + 128]; res_remove(b); return v;
 }
-// 一整帧：营地常驻的遮挡体 0–3，nw 个新出现的网格（本帧待建 → 整帧照原版）；返回本帧画面是不是光追（阴影图清回 1.0） | One whole frame: the camp's resident occluders 0-3 plus nw newly appearing meshes (pending this frame → whole frame original); returns whether this frame showed ray tracing (map cleared back to 1.0)
+// 一整帧：营地常驻的遮挡体 0–3，nw 个新出现的网格（当帧建好进 TLAS）各带一次进不了 TLAS 的绘制（→ 整帧照原版）；返回本帧画面是不是光追（阴影图清回 1.0） | One whole frame: the camp's resident occluders 0-3 plus nw newly appearing meshes (pending this frame → whole frame original); returns whether this frame showed ray tracing (map cleared back to 1.0)
 static void set_rt(int n, const tex_t *c, const tex_t *d) { p_set_rt r = {0}; r.n = n; r.color[0] = c; r.depth = d; R.rt = r; R.has_rt = 1; rts_set_rt(&r); }
 static int g_new = 100;
 static int frame(int nw) {
-    @autoreleasepool { mtl_set_frame(++g_frame); mtl_sub_begin(); prepass(); shadow_pass(); for (int i = 0; i < 4; i++) sh(i); for (int k = 0; k < nw; k++) sh(g_new++);
+    @autoreleasepool { mtl_set_frame(++g_frame); mtl_sub_begin(); prepass(); shadow_pass(); for (int i = 0; i < 4; i++) sh(i); for (int k = 0; k < nw; k++) { sh(g_new++); pt(); }
       set_rt(1, &g_hdr, &g_mdepth); set_rt(1, &g_hdr, NULL); uint64_t f = mtl_sub_commit(); mtl_wait(f, 10000000000ull); }
     return map_depth() == 1.0f;
 }
@@ -90,6 +98,7 @@ int main(void) { @autoreleasepool {
       printf("交替 40 帧：画面切换 %d 次，其中光追帧 %d（切回原版后要连续完整 %d 帧）\n", sw, nrt, RTS_NEED());
       EXPECT("交替 40 帧：画面最多切换 1 次（光追 → 原版后不再来回切）", 1, sw <= 1);
       EXPECT("交替 40 帧：模块记下的画面切换次数与回读一致", sw, RTS_SWITCHES() - s0);
+      EXPECT("等待期（阴影图没清）不绑遮罩：画面就是原版，不叠两层影（真机 79eaa3f 角色双影）", 1, ({ frame(1); !g_rts.map_cleared && rts_mask_tex() == g_rts.white; }));
       EXPECT("交替那几帧新网格照常建好（等待期不停建 BLAS）", 1, ({ int r = 0; for (uint32_t k = 0; k < g_rts.meshes.cap; k++) { rts_mesh *m = g_rts.meshes.vals[k]; if (m && m->state == RTS_READY) r++; } r >= 4 + 18; })); }
     // 3. 稳定之后回到光追：至少等满要求的连续完整帧数，但不会一直不回 | 3. After it settles, ray tracing comes back: not before the required streak of complete frames, but not never
     { int need = RTS_NEED(); int n = until_rt(200);

@@ -64,7 +64,8 @@ static uint64_t rts_lcopy_rid(NvShader *sh, void **tex) { (void)sh; (void)tex; r
 int mtl_rt_shadow_supported(void) { return 0; }
 #else
 #define RTS_MAX_INST 4096
-#define RTS_BUILDS_PER_FRAME 12   // 每帧最多新建这么多 BLAS（新网格首次出现时），其余下一帧再建，避免一次卡顿 | At most this many new BLAS builds per frame (first appearance of new meshes); the rest wait for the next frame to avoid a hitch
+#define RTS_BUILDS_PER_FRAME 32   // 每帧最多新建这么多 BLAS（新网格首次出现时），其余下一帧再建 | At most this many new BLAS per frame (when new meshes first appear), the rest next frame
+#define RTS_BUILD_TRIS 200000     // 每帧新建 BLAS 的三角形上限（第一个不受限）：走进营地一次冒出两百多个网格，12 个 / 帧要二十来帧，每帧都整帧回原版，用户看到的是光追与原版来回跳 | triangle cap for the BLAS built per frame (the first is not capped): walking into the camp brings 200+ meshes at once, at 12 per frame that took about twenty frames each falling back to the original picture, which the user saw as switching back and forth
 #define RTS_MAX_EXPORT 1024       // 每帧最多这么多蒙皮 / 镂空实例走导出 + refit（Mac 地牢实测 256 不够：镂空 245 + 蒙皮） | At most this many skinned / alpha-tested instances per frame go through export + refit (measured in a Mac dungeon: 256 is not enough, 245 alpha-tested + skinned)
 #define RTS_MAX_SLOTS 128         // 每个蒙皮网格最多这么多实例槽（同屏同模型的单位数） | At most this many instance slots per skinned mesh (units of the same model on screen)
 #define RTS_SLOTS_MAX 8           // 每帧槽环上限（分配器上限也是 8：最多 8 次提交在途） | Cap of the per-frame slot ring (the allocator cap is 8 too: at most 8 submissions in flight)
@@ -115,7 +116,7 @@ static struct {
     int on, gate, dbg, failed, was_on; uint64_t frame;
     nvn_hmap meshes; int nmesh; uint64_t cache_bytes, budget;   // 网格缓存与总字节预算 | mesh cache and its total byte budget
     MTLIndirectAccelerationStructureInstanceDescriptor inst[RTS_MAX_INST]; uint64_t inst_tag[RTS_MAX_INST]; rts_mesh *inst_mesh[RTS_MAX_INST]; int ninst, ndup, nskip_fmt, nskip_prim, nskin, nskin_pose, nalpha;
-    rts_mesh *pending[RTS_BUILDS_PER_FRAME]; struct { uint64_t gpu; uint32_t n, stride, fmt, base; } pend_src[RTS_BUILDS_PER_FRAME]; int npend;   // 源地址只在当帧有效：帧开始时作废 | source addresses are valid for the current frame only: dropped at frame start
+    rts_mesh *pending[RTS_BUILDS_PER_FRAME]; struct { uint64_t gpu; uint32_t n, stride, fmt, base; } pend_src[RTS_BUILDS_PER_FRAME]; int npend; uint64_t pend_tris;   // 源地址只在当帧有效：帧开始时作废 | source addresses are valid for the current frame only: dropped at frame start
     rts_mesh *submitted[RTS_BUILDS_PER_FRAME]; int nsub;   // 本帧编进构建的网格：下一帧开始时转可用 | meshes whose build was encoded this frame: usable from the next frame start
     int rt_frame, backoff; uint64_t retry_at, n_rt_frames, n_fail_frames, n_orig_draws, n_partial_frames;   // 就绪闸门与统计 | readiness gate and counters
     // 画面迟滞（真机 d42c8ee 营地静态物件影子闪烁）：show = 本帧允许切到光追画面；held = 本帧完整、能清回全亮，但还在等连续完整帧数（照常追踪、变体取 min，只是不清阴影图）；
@@ -144,7 +145,7 @@ static struct {
     uint64_t n_frames, n_builds, n_traced, n_skipped_draws, n_refit, n_evict_budget, n_slot_busy, key_ns; double build_tris;
     id<MTLComputePipelineState> ps_trace_a, ps_trace_soft_a, ps_ptrace_a; NSDictionary *alpha_idx; int alpha_nfs, alpha_logged; double alpha_ms;   // 判定库版追踪管线（异步编好后置上）；键 → @[序号, locn 位图] | judge-library trace pipelines (set when the async compile lands); key → @[index, locn bitmap]
     uint64_t miss[RM_N];   // 累计 | cumulative
-    uint64_t n_unc[RM_N]; int f_unc[RM_N]; uint64_t n_unc_log, n_kept_frames, n_carry; int unc_why, pass_why; uint32_t prim_mask; uint64_t n_empty, key_bytes; char why[220];   // 光追帧里没进 TLAS 的：按原因累计 / 本帧、记过几帧；本次绘制 / 本通道的原因；不认的图元掩码；空绘制数；键摘要字节；本帧没做完整（或保留了哪张图）的原因 | outside the TLAS in ray-traced frames: cumulative / this frame by reason, frames logged; this draw's / pass's reason; unknown primitive mask; empty draws; key digest bytes; why this frame was not complete (or which map it kept)
+    uint64_t n_unc[RM_N]; int f_unc[RM_N]; uint64_t n_unc_log, n_kept_frames, n_carry, n_off_frames; int unc_why, pass_why; uint32_t prim_mask; uint64_t n_empty, key_bytes; char why[220];   // 光追帧里没进 TLAS 的：按原因累计 / 本帧、记过几帧；本次绘制 / 本通道的原因；不认的图元掩码；空绘制数；键摘要字节；本帧没做完整（或保留了哪张图）的原因 | outside the TLAS in ray-traced frames: cumulative / this frame by reason, frames logged; this draw's / pass's reason; unknown primitive mask; empty draws; key digest bytes; why this frame was not complete (or which map it kept)
     int cur_drawn, cur_pass_clear; double cur_pass_cd;   // 当前通道开了以后画过没有、这个通道自己清没清（帧号前进时带通道用） | whether the current pass has been drawn since it opened, and whether this pass itself cleared (for carrying a pass across a frame-number advance)
     struct { uint64_t tag, last, seen; rts_mesh *m; MTLIndirectAccelerationStructureInstanceDescriptor d; } keep[RTS_KEEP]; int nkeep, nkeep_used;   // 邻近遮挡体保留（评审阶段一） | neighbourhood occluder retention (review phase 1)
     uint8_t exp_ok[RTS_MAX_EXPORT]; float exp_tr[RTS_MAX_EXPORT][3]; int16_t inst_exp[RTS_MAX_INST]; uint64_t n_exp_lost, n_instanced;   // 导出绘制真编进去了没有（draw 中途返回的不算）；实例 → 导出序号（−1 = 不是导出的） | whether the export draw was actually encoded (a draw that returns early does not count); instance → export index (−1 = not exported)
@@ -194,7 +195,8 @@ static void rts_release_all(const char *why);
 static rts_lvl_params rts_lvl_of(int lvl) { return rts_lvl_apply(lvl, g_rts.point_on, g_rts.point_n, g_rts.point_div, g_rts.sun_half, g_rts.soft > 0, g_rts.ao_on); }
 static void rts_lvl_update(void) { g_rts.eff = rts_lvl_of(g_rts.gov.lvl); }
 static const char *rts_lvl_desc_p(const rts_lvl_params *e, char *b, size_t n) {   // 某档的实际参数（日志用） | effective parameters of a level (for the log)
-    if (e->point_on) snprintf(b, n, "太阳 %s、点光 ≤ %d 盏 1/%d 分辨率", e->soft ? "全分辨率软阴影" : e->sun_div == 1 ? "全分辨率" : e->sun_div == 2 ? "1/2 分辨率" : "1/4 分辨率", e->point_n, e->point_div);
+    if (e->off) snprintf(b, n, "光追暂停（原版阴影）");
+    else if (e->point_on) snprintf(b, n, "太阳 %s、点光 ≤ %d 盏 1/%d 分辨率", e->soft ? "全分辨率软阴影" : e->sun_div == 1 ? "全分辨率" : e->sun_div == 2 ? "1/2 分辨率" : "1/4 分辨率", e->point_n, e->point_div);
     else snprintf(b, n, "太阳 %s、点光阴影关", e->soft ? "全分辨率软阴影" : e->sun_div == 1 ? "全分辨率" : e->sun_div == 2 ? "1/2 分辨率" : "1/4 分辨率");
     if (g_rts.ao_on) { size_t l = strlen(b); snprintf(b + l, n > l ? n - l : 0, "、光追 AO %s", e->ao ? "开" : "关"); }
     return b;
@@ -267,18 +269,23 @@ static int rts_slot_new(void) {   // 新加一个每帧槽；失败返回 -1 | A
 // This frame's slot: on first need take one the GPU has finished with (g_done >= its last submission), all in use → add one, at the cap return -1 (no trace, no export this frame); the fence is stamped with this submission (same convention as defer_obj_release)
 static double rts_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (double)t.tv_sec + t.tv_nsec * 1e-9; }
 // 槽上次那一帧的光追计算通道 GPU 耗时（起止时间戳，GPU 已做完才读，不等待）→ 统计、喂自动降档；换档写「光追降档：」 | GPU time of the ray-tracing compute pass of the slot's previous frame (start / end timestamps, read only once the GPU is done, never waits) → counters and the automatic downgrade; level changes log 「光追降档：」
-static void rts_ts_take(rts_fslot *s) {
-    int st = s->ts_state; s->ts_state = 0; if (st != 2 || !s->ts) return;
-    NSData *d = [s->ts resolveCounterRange:NSMakeRange(0, 2)]; if (!d || d.length < 2 * sizeof(MTL4TimestampHeapEntry)) return;
-    const MTL4TimestampHeapEntry *e = d.bytes; if (!e[0].timestamp || e[1].timestamp < e[0].timestamp) return;
-    double rt = (double)(e[1].timestamp - e[0].timestamp) * g_rts.ts_tick, fr = mtl_gpu_ms(s->frame), hz = mtl_pace_hz(), budget = 1000.0 / (hz > 0 ? hz : 60);
-    if (!(rt < 1000)) return;   // 读数坏了（GPU 时钟回绕之类）不算 | a broken reading (GPU clock wrap and the like) is ignored
-    g_rts.rt_sum += rt; g_rts.rt_n++; if (fr > 0) { g_rts.fr_sum += fr; g_rts.fr_n++; }
-    if (!g_rts.auto_on) return;
+// 喂一帧给自动降档；换了档写「光追降档：」 | feed one frame to the automatic downgrade; a level change logs 「光追降档：」
+static void rts_gov_feed(double rt, double fr, double hz) {
+    double budget = 1000.0 / (hz > 0 ? hz : 60);
     const char *why = ""; int old = g_rts.gov.lvl, r = rts_gov_step(&g_rts.gov, rt, fr, budget, rts_now(), &why); if (!r) return;
     if (r > 0) g_rts.n_lvl_down++; else g_rts.n_lvl_up++;
     char b[160]; rts_lvl_params nx = rts_lvl_of(g_rts.gov.lvl);   // 下一帧开头才换（rts_frame_begin）：本帧前后用同一套参数 | applied at the next frame start (rts_frame_begin): the whole of this frame keeps one set of parameters
     MLOG("光追降档：第 %d 档 → 第 %d 档（%s：光追 GPU 约 %.2f ms、整帧 GPU 约 %.2f ms，预算 %.2f ms / %.0f Hz；再升档要先有余量 %.0f 秒）→ %s", old, g_rts.gov.lvl, why, g_rts.gov.rt, g_rts.gov.fr, budget, hz > 0 ? hz : 60, g_rts.gov.hold_up, rts_lvl_desc_p(&nx, b, sizeof b));
+}
+static void rts_ts_take(rts_fslot *s) {
+    int st = s->ts_state; s->ts_state = 0; if (st != 2 || !s->ts) return;
+    NSData *d = [s->ts resolveCounterRange:NSMakeRange(0, 2)]; if (!d || d.length < 2 * sizeof(MTL4TimestampHeapEntry)) return;
+    const MTL4TimestampHeapEntry *e = d.bytes; if (!e[0].timestamp || e[1].timestamp < e[0].timestamp) return;
+    double rt = (double)(e[1].timestamp - e[0].timestamp) * g_rts.ts_tick, fr = mtl_gpu_ms(s->frame), hz = mtl_pace_hz();
+    if (!(rt < 1000)) return;   // 读数坏了（GPU 时钟回绕之类）不算 | a broken reading (GPU clock wrap and the like) is ignored
+    g_rts.rt_sum += rt; g_rts.rt_n++; if (fr > 0) { g_rts.fr_sum += fr; g_rts.fr_n++; }
+    if (!g_rts.auto_on) return;
+    rts_gov_feed(rt, fr, hz);
 }
 static int rts_frame_slot(void) {
     if (g_rts.slot_frame == g_rts.frame && g_rts.cur >= 0) return g_rts.cur;
@@ -361,7 +368,7 @@ static int rts_setup(void) {
       if (!nrt && !g_rts.dbg) { g_rts.failed = 1; MLOG("【红】光追阴影：包里没有 _rt 片元变体（着色器库 %s），不生效，保持原版阴影", g_msl_dir.lastPathComponent.UTF8String ?: "?"); return 0; }
       MLOG("光追阴影：建好（TLAS %lu KiB、暂存 %lu KiB、最多 %d 实例、网格缓存预算 %llu MB、蒙皮导出每帧 ≤ %d、点光 %s ≤ %d 盏（GPU 分簇收集）、软阴影 %s、太阳射线 %s、点光射线 1/%d 分辨率、玩家光 × %.2f、包里 _rt 变体 %d 个）",
           (unsigned long)(sz.accelerationStructureSize >> 10), (unsigned long)(g_rts.scratch_len >> 10), RTS_MAX_INST, (unsigned long long)(g_rts.budget >> 20), RTS_MAX_EXPORT, g_rts.point_on ? "开" : "关", g_rts.point_n, g_rts.soft > 0 ? "开" : "关（DM_RT_SOFT）", g_rts.soft > 0 ? "全分辨率（软阴影）" : g_rts.sun_half ? "半分辨率 + 上采样" : "全分辨率", g_rts.point_div ? g_rts.point_div : 2, g_rts.player_scale, nrt); }
-    { char b[160]; MLOG("光追降档：自动 %s，当前第 %d 档（%s；0 = 按设置、1 = 点光 1 盏、2 = 关点光阴影 + 太阳 1/2、3 = 太阳 1/4；按光追通道与整帧 GPU 时间对出图节拍预算判）", g_rts.auto_on ? "开" : g_rts.lvl_pin >= 0 ? "关（DM_RT_LEVEL 钉住）" : "关（DM_RT_AUTO=0）", g_rts.gov.lvl, rts_lvl_desc(b, sizeof b)); }
+    { char b[160]; MLOG("光追降档：自动 %s，当前第 %d 档（%s；0 = 按设置、1 = 点光 1 盏、2 = 关点光阴影 + 太阳 1/2、3 = 光追暂停（原版阴影）；按光追通道与整帧 GPU 时间对出图节拍预算判）", g_rts.auto_on ? "开" : g_rts.lvl_pin >= 0 ? "关（DM_RT_LEVEL 钉住）" : "关（DM_RT_AUTO=0）", g_rts.gov.lvl, rts_lvl_desc(b, sizeof b)); }
     if (g_rts.ao_on) MLOG("光追 AO：开（实验性，DM_RT_AO=1）：半分辨率每像素 %d 条半球射线、半径 %.1f、强度 %.2f、5×5 深度感知模糊后上采样，主通道之后乘到画面上；自动降档 1 档起关", g_rts.ao_rays, g_rts.ao_radius, g_rts.ao_strength);
     else MLOG("光追 AO：关（实验性，DM_RT_AO=1 打开）");
     rts_alpha_start();
@@ -426,6 +433,7 @@ static const char *rts_frame_fail(void) {
     if (g_rts.dbg && g_rts.map_cleared && !g_rts.overlay_done) return "调试叠加没合成进画面";
     return NULL;
 }
+static int rts_map_clearable(int i);
 static void rts_check_dump(void);
 static const char *rts_frame_why(void) { const char *w = rts_frame_fail(); return w ? w : g_rts.why; }
 static const char *rts_unc_str(char *b, size_t n, const uint64_t *c64, const int *c32) {   // 「原因 × 次数」列表 | "reason × count" list
@@ -471,6 +479,11 @@ static void rts_frame_begin(uint64_t f) {
         { char b[160]; MLOG("光追降档：第 %llu 帧 当前第 %d 档（%s）%s；光追 GPU 均值 %.2f ms（%llu 帧）、整帧 GPU 均值 %.2f ms；累计降 %llu 次、升 %llu 次", (unsigned long long)g_rts.n_frames, g_rts.gov.lvl,
               g_rts.auto_on ? "自动" : g_rts.lvl_pin >= 0 ? "DM_RT_LEVEL 钉住" : "自动关（DM_RT_AUTO=0）", rts_lvl_desc(b, sizeof b), g_rts.rt_n ? g_rts.rt_sum / g_rts.rt_n : 0, (unsigned long long)g_rts.rt_n, g_rts.fr_n ? g_rts.fr_sum / g_rts.fr_n : 0,
               (unsigned long long)g_rts.n_lvl_down, (unsigned long long)g_rts.n_lvl_up); g_rts.rt_sum = g_rts.fr_sum = 0; g_rts.rt_n = g_rts.fr_n = 0; }
+        { char mb[480] = ""; size_t o = 0;   // 上一帧的阴影图各是什么、怎么处理（这时表还是上一帧的） | what each of the previous frame's shadow maps was and how it was handled (the table still belongs to the previous frame here)
+          for (int i = 0; i < g_rts.nsmap && o + 1 < sizeof mb; i++) { typeof(g_rts.smap[0]) *e = &g_rts.smap[i]; float d[3] = {0, 0, 0}; if (e->has_l) rts_sun_from_lvp(e->l, d);
+              o += (size_t)snprintf(mb + o, sizeof mb - o, "%s%lux%lu 层 %lu %s、%s、光源 (%.2f %.2f %.2f) %s", o ? "；" : "", (unsigned long)e->t.width, (unsigned long)e->t.height, (unsigned long)e->slice, e->used ? "画过" : "没画",
+                  e->cleared == 1 ? "本帧清过" : e->cleared == 0 ? "读入" : "通道没开", d[0], d[1], d[2], rts_map_clearable(i) ? "→ 清回全亮" : e->used ? "→ 照原样" : ""); }
+          MLOG("光追阴影：阴影图 第 %llu 帧 %d 张：%s", (unsigned long long)g_rts.n_frames, g_rts.nsmap, o ? mb : "无"); }
         if (g_rts.ao_on) MLOG("光追 AO：第 %llu 帧 当前%s；累计追 %llu 帧、乘到画面 %llu 帧、算了没乘上 %llu 帧（主通道之后没再挂 HDR）", (unsigned long long)g_rts.n_frames, g_rts.eff.ao ? "开" : "关（自动降档）",
             (unsigned long long)g_rts.n_ao_traced, (unsigned long long)g_rts.n_ao_applied, (unsigned long long)g_rts.n_ao_missed);
         g_rts_gpu_sum = 0; g_rts_gpu_n = 0; g_rts.n_rt_draws = g_rts.n_recv_skip = 0; }
@@ -501,6 +514,9 @@ static void rts_frame_begin(uint64_t f) {
     g_rts.rt_frame = !why && f >= g_rts.retry_at; g_rts.n_rt_frames += g_rts.rt_frame;
     g_rts.show = g_rts.rt_frame && (!g_rts.hyst || g_rts.need <= 1 || g_rts.streak >= g_rts.need); g_rts.held = 0;   // 没切回过原版（need 1）：与原来一样，上一帧完整就光追 | never switched back (need 1): as before, a complete previous frame means ray tracing
     rts_lvl_update();   // 自动降档换了档：从这一帧起生效 | the automatic downgrade changed level: effective from this frame
+    if (g_rts.eff.off) {   // 第 3 档：光追暂停，本帧不算光追帧（不算网格键、不追踪、不清图，画面原版；不算失败）；整帧 GPU 时间照样喂自动降档，有余量就升回去 | level 3: ray tracing paused, this frame is not ray traced (no mesh key, no trace, no clearing, original picture; not a failure); the frame's GPU time still feeds the automatic downgrade, which steps back up once there is headroom
+        if (g_rts.rt_frame) { g_rts.rt_frame = 0; g_rts.n_rt_frames--; } g_rts.n_off_frames++;
+        double fr = f > 3 ? mtl_gpu_ms(f - 3) : -1; if (g_rts.auto_on && fr > 0) rts_gov_feed(0, fr, mtl_pace_hz()); }
     if (g_rts.ao_done && !g_rts.ao_applied) g_rts.n_ao_missed++;   // 上一帧算了 AO 却没乘上去（主通道之后没再挂 HDR） | last frame traced AO but never applied it (the HDR was not attached again after the main pass)
     g_rts.ao_done = g_rts.ao_applied = 0;
     if (!g_rts.eff.ao && (g_rts.ao_half || g_rts.ao_tmp || g_rts.ao_full)) {   // 降档关了 AO：三张贴图等在途提交做完放掉，升回来再建 | AO switched off by the downgrade: the three textures are released after in-flight submissions and rebuilt on the way back up
@@ -509,7 +525,7 @@ static void rts_frame_begin(uint64_t f) {
     for (int i = 0; i < g_rts.nsub; i++) g_rts.submitted[i]->state = RTS_READY;
     g_rts.nsub = 0;
     for (int i = 0; i < g_rts.npend; i++) g_rts.pending[i]->queued = 0;
-    g_rts.npend = 0;
+    g_rts.npend = 0; g_rts.pend_tris = 0;
     // 帧号在一个已登记的阴影通道开着的时候前进（Mac 实测：每帧第一个阴影通道——1024² 级联第 0 层——在上一帧号下开、登记，第一次绘制时才进新帧）：
     // 这个通道的清除发生在它开头，之后画的都属新帧，把它带进新帧的表；否则这些绘制都算「通道没登记」，整帧清不了图（合并审计分支 d42c8ee 后 Mac 营地 3600 帧里 3487 帧）
     // The frame number advances while a registered shadow pass is open (measured on the Mac: the first shadow pass of each frame - layer 0 of the 1024² cascade - opens and registers under the previous frame number, and the new frame starts at its first draw):
@@ -632,7 +648,8 @@ static rts_mesh *rts_mesh_get(const p_draw *dw, const p_draw_idx *di, int n, int
             m->bytes = m->as.allocatedSize + m->pos.length + (m->ib ? m->ib.length : 0);
             nvn_hm_put(&g_rts.meshes, &key, m); g_rts.nmesh++; g_rts.cache_bytes += m->bytes;
         }
-        g_rts.pending[g_rts.npend] = m; g_rts.pend_src[g_rts.npend] = (typeof(g_rts.pend_src[0])){vgpu, (uint32_t)nv, sm.stride, at.fmt, (uint32_t)vbase}; g_rts.npend++; m->queued = 1;
+        if (g_rts.npend && g_rts.pend_tris + m->tris > RTS_BUILD_TRIS) { g_rts.unc_why = RM_QUOTA; return NULL; }   // 本帧三角形配额用完：网格已建对象、留待下一帧排队 | triangle quota used up this frame: the mesh objects exist, it queues next frame
+        g_rts.pending[g_rts.npend] = m; g_rts.pend_src[g_rts.npend] = (typeof(g_rts.pend_src[0])){vgpu, (uint32_t)nv, sm.stride, at.fmt, (uint32_t)vbase}; g_rts.npend++; g_rts.pend_tris += m->tris; m->queued = 1;
     }
     *pkey = key;
     return m;
@@ -736,7 +753,11 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
     if (mo_->frame == f && mo_->lay == lk && (m = nvn_hm_get(&g_rts.meshes, &mo_->key)) && (m->state != RTS_PENDING || m->queued)) key = mo_->key;
     else { g_rts.unc_why = RM_MESH; if (!(m = rts_mesh_get(dw, di, n, prim, at, sm, vb, &key, t0, skin))) { if (g_rts.unc_why < 0) { g_rts.n_empty++; return 0; } RTS_MISS(g_rts.unc_why); } *mo_ = (typeof(*mo_)){f, lk, key}; }
     m->last_frame = f;
-    if (m->state != RTS_READY) RTS_MISS(RM_NOTREADY);
+    // 本帧排队待建的网格当帧就用：它的 BLAS 在本帧光追计算编码器里先建（每次建后 AS→AS 屏障），TLAS 在同一编码器里之后才建，GPU 次序有保证；
+    // 建不成（编码器建不出）时 TLAS 那步会发现网格不可用、整帧回退（五审 Q5-02 的「建好前不进 TLAS」由同一编码器内的次序保证，不再多等一帧）
+    // a mesh queued for building this frame is used in the same frame: its BLAS is built first in this frame's ray-tracing compute encoder (an AS→AS barrier after each build) and the TLAS is built later in the same encoder, so the GPU order is guaranteed;
+    // if the build does not happen (no encoder) the TLAS step finds the mesh unusable and the frame falls back (fifth review Q5-02's "not in the TLAS before it is built" is kept by the order within one encoder instead of waiting a frame)
+    if (m->state != RTS_READY && !(m->state == RTS_PENDING && m->queued)) RTS_MISS(RM_NOTREADY);
     if (g_rts.ninst >= RTS_MAX_INST) RTS_MISS(RM_FULL);   // 不是光追帧 / 网格还没可用 / 实例满 | not a ray-traced frame / mesh not usable yet / instances full
     const float *M = (const float *)m0; uint64_t tag = key ^ rts_fnv(1469598103934665603ull, m0, 48);
     for (int i = 0; i < g_rts.ninst; i++) if (g_rts.inst_tag[i] == tag) { g_rts.ndup++; if (shadow) g_rts.n_skipped_draws++; return 0; }   // 两级级联画同一实例：只进一次 | both cascades draw the same instance: enter once
@@ -861,17 +882,26 @@ static uint64_t rts_plidx_gpu(void) { id<MTLBuffer> b = rts_plidx_buf(); return 
 // Per map (device 3fc0f41 / d42c8ee: the 3rd / 4th 256x256 map is first attached with a load and not cleared this frame, content the game keeps across frames, and whole frames fell back for about 2000 frames after entering the game):
 // a map cleared this frame (clearing pass / ClearTexture) and drawn can be cleared back to the game's own fully-lit value; a map not cleared this frame is left as it is - clearing it would destroy what the game keeps -
 // its shadows still come from the original map and the _rt variants take the darker of mask and original sample, so both are right. Returns how many maps can be cleared; kept maps are described in why (log / unit test RTS_WHY)
-static int rts_maps_kept(void) { int k = 0; for (int i = 0; i < g_rts.nsmap; i++) k += g_rts.smap[i].used && g_rts.smap[i].cleared != 1; return k; }   // cleared：1 本帧清过、0 以读入开、2 画了但本帧通道没开 | cleared: 1 cleared this frame, 0 opened with a load, 2 drawn but no pass opened this frame
+// 这张阴影图的光源是不是太阳（第一次绘制的光源视投影推出的方向与本帧太阳同向）：光追的太阳遮罩只替太阳的阴影。营地实测另有一张 512² 二维图光源竖直向下（角色脚下的俯视软影）、
+// 一张 256² 头发阴影图，光追不替它们；原先也按张清回全亮，NPC 脚下的软影就没了（真机 79eaa3f 用户录屏）
+// Whether this map's light is the sun (the direction from its first draw's light view-projection matches this frame's sun): the ray-traced sun mask replaces sun shadows only. Measured at the camp there is also a 512² 2D map lit straight down (the soft top-down shadow under characters)
+// and a 256² hair shadow map, which ray tracing does not replace; they used to be cleared per map too and the soft shadows under NPCs disappeared (user recording on the device with 79eaa3f)
+static int rts_map_sun(int i) {
+    if (!g_rts.have_sun || !g_rts.smap[i].has_l) return 0; float d[3]; if (!rts_sun_from_lvp(g_rts.smap[i].l, d)) return 0;
+    return d[0] * g_rts.sun[0] + d[1] * g_rts.sun[1] + d[2] * g_rts.sun[2] > 0.98f;
+}
+static int rts_map_clearable(int i) { return g_rts.smap[i].used && g_rts.smap[i].cleared == 1 && rts_map_sun(i); }
+static int rts_maps_kept(void) { int k = 0; for (int i = 0; i < g_rts.nsmap; i++) k += g_rts.smap[i].used && !rts_map_clearable(i); return k; }   // cleared：1 本帧清过、0 以读入开、2 画了但本帧通道没开 | cleared: 1 cleared this frame, 0 opened with a load, 2 drawn but no pass opened this frame
 static int rts_maps_restorable(void) {
-    int any = 0, kept = -1; for (int i = 0; i < g_rts.nsmap; i++) if (g_rts.smap[i].used) { if (g_rts.smap[i].cleared == 1) any++; else if (kept < 0) kept = i; }
-    if (kept >= 0) snprintf(g_rts.why, sizeof g_rts.why, "阴影图第 %d / %d 张 %lux%lu 第 %lu 级第 %lu 层%s（游戏跨帧保留的内容，照原样留着%s）", kept + 1, g_rts.nsmap,
-                          (unsigned long)g_rts.smap[kept].t.width, (unsigned long)g_rts.smap[kept].t.height, (unsigned long)g_rts.smap[kept].level, (unsigned long)g_rts.smap[kept].slice, g_rts.smap[kept].cleared == 2 ? "本帧画过、通道却没开过" : "本帧第一次挂上是读入、本帧没清过", any ? "，其余清回全亮" : "");
+    int any = 0, kept = -1; for (int i = 0; i < g_rts.nsmap; i++) if (g_rts.smap[i].used) { if (rts_map_clearable(i)) any++; else if (kept < 0) kept = i; }
+    if (kept >= 0) snprintf(g_rts.why, sizeof g_rts.why, "阴影图第 %d / %d 张 %lux%lu 第 %lu 级第 %lu 层%s，照原样留着%s", kept + 1, g_rts.nsmap,
+                          (unsigned long)g_rts.smap[kept].t.width, (unsigned long)g_rts.smap[kept].t.height, (unsigned long)g_rts.smap[kept].level, (unsigned long)g_rts.smap[kept].slice, g_rts.smap[kept].cleared == 2 ? "本帧画过、通道却没开过" : g_rts.smap[kept].cleared == 0 ? "本帧第一次挂上是读入、本帧没清过" : "光源不是太阳（俯视软影 / 头发等，光追不替它）", any ? "，其余清回全亮" : "");
     else if (!any) snprintf(g_rts.why, sizeof g_rts.why, "本帧没登记到画过的阴影图（登记 %d 张）", g_rts.nsmap);
     return any;
 }
 static int rts_clear_maps(void) {   // 光追成功：主通道前把本帧画过的阴影图清回全亮（原版阴影由遮罩接替） | Ray tracing succeeded: clear the shadow maps drawn this frame back to fully lit before the main pass (the mask takes over)
     int n = 0;
-    for (int i = 0; i < g_rts.nsmap; i++) { typeof(g_rts.smap[0]) *e = &g_rts.smap[i]; if (!e->used || e->cleared != 1) continue;   // 本帧没清过的（跨帧保留）照原样留着 | maps not cleared this frame (kept across frames) stay as they are
+    for (int i = 0; i < g_rts.nsmap; i++) { typeof(g_rts.smap[0]) *e = &g_rts.smap[i]; if (!rts_map_clearable(i)) continue;   // 本帧没清过的（跨帧保留）、光源不是太阳的照原样留着 | maps not cleared this frame (kept across frames) or not lit by the sun stay as they are
         RPD *rp = [RPD new]; rp.depthAttachment.texture = e->t; rp.depthAttachment.level = e->level; rp.depthAttachment.slice = e->slice;
         rp.depthAttachment.loadAction = MTLLoadActionClear; rp.depthAttachment.clearDepth = e->cd; rp.depthAttachment.storeAction = MTLStoreActionStore;
         if (e->t.pixelFormat == MTLPixelFormatDepth32Float_Stencil8) { rp.stencilAttachment.texture = e->t; rp.stencilAttachment.level = e->level; rp.stencilAttachment.slice = e->slice; rp.stencilAttachment.loadAction = MTLLoadActionLoad; rp.stencilAttachment.storeAction = MTLStoreActionStore; }
@@ -880,7 +910,7 @@ static int rts_clear_maps(void) {   // 光追成功：主通道前把本帧画�
         [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; m4_end(en); n++; }
     return n;
 }
-static void rts_unqueue(void) { for (int i = 0; i < g_rts.npend; i++) g_rts.pending[i]->queued = 0; g_rts.npend = 0; }
+static void rts_unqueue(void) { for (int i = 0; i < g_rts.npend; i++) g_rts.pending[i]->queued = 0; g_rts.npend = 0; g_rts.pend_tris = 0; }
 static id<MTLTexture> rts_tex(id<MTLTexture> cur, MTLPixelFormat f, NSUInteger w, NSUInteger h, const char *what) {   // 按尺寸（重）建私有可读写贴图；旧的等在途提交做完再放 | (re)create a private read/write texture of this size; the old one is released after in-flight submissions
     if (cur && cur.width == w && cur.height == h && cur.pixelFormat == f) return cur;
     defer_obj_release(cur); MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:f width:w height:h mipmapped:NO]; d.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite; d.storageMode = MTLStorageModePrivate;
@@ -958,7 +988,7 @@ static void rts_build_and_trace(id<MTLTexture> depth) {
             [ce buildAccelerationStructure:m->as descriptor:rts_blas_desc(m, m->pos) scratchBuffer:scratch];
             [ce barrierAfterEncoderStages:MTLStageAccelerationStructure beforeEncoderStages:MTLStageAccelerationStructure visibilityOptions:MTL4VisibilityOptionDevice];
             m->state = RTS_SUBMITTED; m->queued = 0; if (g_rts.nsub < RTS_BUILDS_PER_FRAME) g_rts.submitted[g_rts.nsub++] = m; g_rts.n_builds++; g_rts.build_tris += m->tris; }
-        g_rts.npend = 0;
+        g_rts.npend = 0; g_rts.pend_tris = 0;
     }
     #define RTS_END() do { if (si >= 0 && g_rts.slot[si].ts_state == 1) { [ce writeTimestampWithGranularity:MTL4TimestampGranularityRelaxed intoHeap:g_rts.slot[si].ts atIndex:1]; g_rts.slot[si].ts_state = 2; } pg_compute_end(ce); enc_c_end(ce); args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; } while (0)
     static int split = -1; if (split < 0) split = getenv("DM_RT_SPLIT") != NULL;   // 排查：各步各自一个计算通道，逐通道计时分得开 | debugging: one compute pass per step so the per-pass timer separates them
@@ -995,7 +1025,7 @@ static void rts_build_and_trace(id<MTLTexture> depth) {
     MTLIndirectAccelerationStructureInstanceDescriptor *dst = fs->inst.contents; int n = 0;
     int nlost = 0;
     for (int i = 0; i < g_rts.ninst; i++) { if (g_rts.inst_exp[i] >= 0 && !g_rts.exp_ok[g_rts.inst_exp[i]]) { nlost++; continue; }   // 导出绘制没编进去：槽里是旧 / 未定义的数据，不进 TLAS，本帧不清 | export draw never encoded: the slot holds stale / undefined data, kept out of the TLAS, map not cleared this frame
-        if (g_rts.inst_mesh[i]->state == RTS_READY) dst[n++] = g_rts.inst[i]; }
+        if (g_rts.inst_mesh[i]->state == RTS_READY || g_rts.inst_mesh[i]->state == RTS_SUBMITTED) dst[n++] = g_rts.inst[i]; }   // SUBMITTED = 本帧刚在这个编码器里建好 | SUBMITTED = built just now in this encoder
     if (nlost) { g_rts.nuncov += nlost; g_rts.n_exp_lost += (uint64_t)nlost; }
     if (n + nlost != g_rts.ninst || !n) { snprintf(g_rts.why, sizeof g_rts.why, "TLAS 实例里有网格不可用（可用 %d / %d，导出没编进去 %d）", n, g_rts.ninst, nlost); RTS_END(); return; }
     MTL4InstanceAccelerationStructureDescriptor *td = [MTL4InstanceAccelerationStructureDescriptor new];
@@ -1128,10 +1158,10 @@ static void rts_build_and_trace(id<MTLTexture> depth) {
     for (int i = 0; i < g_rts.nsmap; i++) if (g_rts.smap[i].used && g_rts.smap[i].cleared == 2) { g_rts.nuncov++; g_rts.miss[RM_PASS]++; if (g_rts.rt_frame) { g_rts.n_unc[RM_PASS]++; g_rts.f_unc[RM_PASS]++; } g_rts.smap[i].used = 0; }
     if (g_rts.mask_done && !g_rts.nuncov && rts_maps_restorable() && (!g_rts.dbg || (g_rts.main_hdr && g_rts.main_hdr.width == depth.width && g_rts.main_hdr.height == depth.height && rts_overlay_setup(g_rts.main_hdr.pixelFormat)))) {
         if (g_rts.show) { g_rts.clear_tried = 1; g_rts.map_cleared = rts_clear_maps();
-            int kept = rts_maps_kept(); if (kept && g_rts.map_cleared) { g_rts.n_kept_frames++; if (g_rts.n_kept_frames <= 8 || g_rts.n_kept_frames % 600 == 0) MLOG("光追阴影：帧 %llu 清回全亮 %d 张、跨帧保留 %d 张（%s；第 %llu 帧）", (unsigned long long)g_rts.frame, g_rts.map_cleared, kept, g_rts.why, (unsigned long long)g_rts.n_kept_frames); } }
+            int kept = rts_maps_kept(); if (kept && g_rts.map_cleared) { g_rts.n_kept_frames++; if (g_rts.n_kept_frames <= 8 || g_rts.n_kept_frames % 600 == 0) MLOG("光追阴影：帧 %llu 清回全亮 %d 张、照原样留着 %d 张（%s；第 %llu 帧）", (unsigned long long)g_rts.frame, g_rts.map_cleared, kept, g_rts.why, (unsigned long long)g_rts.n_kept_frames); } }
         else { g_rts.held = 1; g_rts.n_held++; } }   // 完整，但刚从光追切回原版不久：本帧阴影图不清、变体取 min（画面迟滞） | complete, but shortly after switching back to original: the maps stay uncleared and the variants take min (picture hysteresis)
     { static int nl; if (nl++ < 3) MLOG("光追阴影：帧 %llu 实例 %d（蒙皮 %d、其中导出 refit %d）、遮罩 %lux%lu、太阳 %s (%.2f, %.2f, %.2f)、点光遮罩 %s、阴影图 %s", (unsigned long long)g_rts.frame, g_rts.ninst, g_rts.nskin, g_rts.nexp,
-        (unsigned long)depth.width, (unsigned long)depth.height, g_rts.have_sun ? "有" : "无", g_rts.sun[0], g_rts.sun[1], g_rts.sun[2], g_rts.pl_done ? "算了" : "没算", g_rts.map_cleared ? (rts_maps_kept() ? "部分清回全亮（跨帧保留的照原样，变体取 min）" : "清回全亮（遮罩接替）") : "原版保留（变体取 min）"); }
+        (unsigned long)depth.width, (unsigned long)depth.height, g_rts.have_sun ? "有" : "无", g_rts.sun[0], g_rts.sun[1], g_rts.sun[2], g_rts.pl_done ? "算了" : "没算", g_rts.map_cleared ? (rts_maps_kept() ? "部分清回全亮（跨帧保留 / 非太阳的照原样）" : "清回全亮（遮罩接替）") : "原版保留（变体取 min）"); }
 }
 static void rts_overlay(id<MTLTexture> hdr) {   // 调试叠加：HDR × (amb + (1 − amb) · 遮罩)；只在阴影图已清回全亮时做（否则两层影） | debug overlay: HDR × (amb + (1 − amb) · mask); only once the shadow maps were cleared back (else shadows double up)
     if (!g_rts.mask_done || !g_rts.map_cleared || g_rts.cur < 0 || !hdr || hdr.width != g_rts.mask.width || hdr.height != g_rts.mask.height || !rts_overlay_setup(hdr.pixelFormat)) return;
@@ -1160,7 +1190,7 @@ static void rts_ao_apply(id<MTLTexture> hdr) {
     args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; g_rts.ao_applied = 1; g_rts.n_ao_applied++;
 }
 // _rt 变体的遮罩绑定：本帧太阳遮罩算了就给遮罩（阴影图清没清都对：清了 = min(遮罩, 1)，没清 = min(遮罩, 原采样)），否则 1x1 全亮 | Mask binding of the _rt variants: the mask when the sun mask was traced this frame (correct whether or not the maps were cleared: min(mask, 1) or min(mask, original)), else a 1x1 fully lit texel
-static id<MTLTexture> rts_mask_tex(void) { static int lit = -1; if (lit < 0) lit = getenv("DM_RT_MASK_LIT") != NULL; return g_rts.mask_done && g_rts.mask && !lit ? g_rts.mask : g_rts.white; }   // DM_RT_MASK_LIT（对照用）：遮罩恒亮，配合清图得「无阴影」画面 | DM_RT_MASK_LIT (for comparison): the mask is always lit; with the maps cleared this gives the "no shadow" picture
+static id<MTLTexture> rts_mask_tex(void) { static int lit = -1; if (lit < 0) lit = getenv("DM_RT_MASK_LIT") != NULL; return g_rts.mask_done && g_rts.mask && !lit && g_rts.map_cleared ? g_rts.mask : g_rts.white; }   // 太阳阴影图本帧清了才用遮罩：没清的帧（迟滞等待、有绘制没进 TLAS）画面就是原版，不叠两层影 | the mask only when the sun maps were cleared this frame: otherwise (hysteresis hold, draws outside the TLAS) the picture is the original one, no doubled shadows   // DM_RT_MASK_LIT（对照用）：遮罩恒亮，配合清图得「无阴影」画面 | DM_RT_MASK_LIT (for comparison): the mask is always lit; with the maps cleared this gives the "no shadow" picture
 static uint64_t rts_mask_rid(void) { id<MTLTexture> t = rts_mask_tex(); return t ? t.gpuResourceID._impl : 0; }
 static int rts_in_main(void) { return R.rt.n >= 1 && R.rt.color[0] && R.rt.color[0]->serial == g_rts.hdr_ser && R.rt.depth && R.rt.depth->serial == g_rts.ds_ser; }
 // 片元 _rt 变体：主通道里做深度测试、不混合的绘制，且本帧太阳或点光遮罩算了，用 <键>_rt（首次按需加载）；否则用原版 | Fragment _rt variant: depth-tested, unblended main-pass draws with a sun or point mask this frame use <key>_rt (loaded on demand); otherwise the original

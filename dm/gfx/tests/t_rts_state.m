@@ -90,7 +90,7 @@ int main(void) { @autoreleasepool {
     mtl_set_frame(++g_frame); prepass(); sh(3); main_pass();
     { rts_mesh *m = mesh_of(3); EXPECT("构建失败：网格 3 留在缓存", 1, m != NULL); EXPECT("构建失败：网格 3 不得标成可用", 0, m && RTS_MESH_READY(m)); }
     int d4[4] = {0, 1, 2, 3}; for (int i = 0; i < 3; i++) r = full_frame(1, d4, 4, &ok);
-    { rts_mesh *m = mesh_of(3); EXPECT("构建失败后：网格 3 重新排队并建成", 1, m && RTS_MESH_READY(m)); } EXPECT("构建失败后：四次绘制都走光追", 4, r); EXPECT("构建失败后：GPU 无错", 1, ok);
+    { rts_mesh *m = mesh_of(3); EXPECT("构建失败后：网格 3 重新排队并建成（可用，或本帧刚在编码器里建好）", 1, m && (RTS_MESH_READY(m) || m->state == RTS_SUBMITTED)); } EXPECT("构建失败后：四次绘制都走光追", 4, r); EXPECT("构建失败后：GPU 无错", 1, ok);
     // 5. 关了再开：网格 4 排队后（本帧没到主通道）关掉，几帧后再开，那帧只画网格 5 | 5. Off then on: mesh 4 is queued (no main pass this frame), switched off, on again a few frames later drawing only mesh 5
     frame_open(); prepass(); sh(4); g_rts.on = 0; ok = frame_close();
     for (int i = 0; i < 5; i++) { frame_open(); EXPECT("关着：绘制照原版", 0, sh(4)); frame_close(); }
@@ -101,7 +101,7 @@ int main(void) { @autoreleasepool {
     EXPECT("再开后：六次绘制都走光追", 6, r); EXPECT("再开后：GPU 无错", 1, ok);
     // 6. 不支持的图元 / 格式：照原版画（不能只丢掉） | 6. Unsupported primitive / format: drawn as original (not just dropped)
     frame_open(); prepass(); sdraw(0, 48, NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP, 0x2b); sdraw(6, 48, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x30); sdraw(7, 2, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x2b);
-    EXPECT("三角带 / 格式不认 / 不足 3 个索引：都不进 TLAS", 0, g_rts.ninst); EXPECT("三角带 / 格式不认 / 不足 3 个索引：本帧阴影图不清（照原版）", 0, RTS_MAP_CLEARED_T()); main_pass(); hdr_again(); frame_close();
+    EXPECT("三角带进 TLAS（展开成列表、当帧建好）；格式不认 / 不足 3 个索引不进", 1, g_rts.ninst); EXPECT("三角带 / 格式不认 / 不足 3 个索引：本帧阴影图不清（照原版）", 0, RTS_MAP_CLEARED_T()); main_pass(); hdr_again(); frame_close();
     // 7. 光追帧失败（本帧缺相机，遮罩算不出）→ 下一帧退回原版阴影图 → 原版帧条件齐全后恢复光追 | 7. A ray-traced frame fails (no camera, no mask) → the next frame uses the original shadow map → ray tracing resumes once a frame has everything
     r = full_frame(1, a, 1, &ok); EXPECT("失败前：光追帧", 1, r);
     r = full_frame(0, a, 1, &ok); EXPECT("缺相机的光追帧：遮罩没算", 0, g_rts.mask_done);

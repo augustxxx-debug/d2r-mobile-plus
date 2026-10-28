@@ -56,20 +56,22 @@ static void frame_open(void) { mtl_set_frame(++g_frame); mtl_sub_begin(); }
 static int frame_close(void) { uint64_t f = mtl_sub_commit(); int ok = mtl_wait(f, 10000000000ull); return ok && !mtl_last_commit_error(); }
 static void prepass(void) { memset(&R, 0, sizeof R); R.rt.depth = &g_mdepth; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)g_cam, 400}; p_draw d = {NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3}; rts_draw(g_pr, &d, NULL, NVN_DRAW_PRIMITIVE_TRIANGLES); }
 // 游戏的阴影通道开头：阴影图内容写成 0.25；生产里 rp_begin_ex 登记通道（清除值 1.0）。没有命令缓冲时只登记 | Start of the game's shadow pass: the map's content becomes 0.25; production rp_begin_ex registers the pass (clear value 1.0). Without a command buffer it only registers
+static const tex_t *g_sp = &g_sdepth;   // shadow_pass 开哪张图（缺省主阴影图） | which map shadow_pass opens (the main shadow map by default)
 static void shadow_pass(void) {
-    rp_end(); id<MTLTexture> t = tex_mtl(&g_sdepth);
+    rp_end(); id<MTLTexture> t = tex_mtl(g_sp);
     RPD *rp = [RPD new]; rp.depthAttachment.texture = t; rp.depthAttachment.loadAction = MTLLoadActionClear; rp.depthAttachment.clearDepth = 0.25; rp.depthAttachment.storeAction = MTLStoreActionStore;
     if (g_cb) { RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; m4_end(en); }
-    memset(&R, 0, sizeof R); R.rt.depth = &g_sdepth; R.has_rt = 1;
+    memset(&R, 0, sizeof R); R.rt.depth = g_sp; R.has_rt = 1;
 #ifdef RTS_HAS_NOTE_PASS
     rp.depthAttachment.clearDepth = 1.0; rts_note_pass(rp);   // 游戏的清除值 1.0 = 全亮 | the game's clear value 1.0 = fully lit
 #endif
 }
 static const tex_t *g_dt = &g_sdepth;   // sdraw 画进哪张图（缺省主阴影图） | which map sdraw draws into (the main shadow map by default)
+static uint8_t *g_lvp;   // sdraw 用的光源常量（cb3；缺省 g_cb3 = 太阳） | the light constants sdraw uses (cb3; g_cb3 = the sun by default)
 static int sdraw(const uint8_t *ib, int n, int prim, uint32_t fmt) {
     memset(&R, 0, sizeof R); R.rt.depth = g_dt; R.has_rt = 1;
     S.nattr = 1; S.attr[0] = (va_st){.fmt = fmt, .offset = 0, .stream = 0}; S.stream[0] = (vs_st){8, 0}; S.vbuf[0] = (NVNbufferRange){(uint64_t)g_vtx, 4096 * 8};
-    S.ubo[0][0] = (p_bind_buf){0, 0, (uint64_t)g_mat, 64}; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)g_cb3, 400};
+    S.ubo[0][0] = (p_bind_buf){0, 0, (uint64_t)g_mat, 64}; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)(g_lvp ? g_lvp : g_cb3), 400};
     p_draw_idx di = {prim, 1, n, 0, 0, 1, (uint64_t)ib};
     return rts_draw(g_pr, NULL, &di, prim);
 }
@@ -132,8 +134,8 @@ int main(void) { @autoreleasepool {
     mtl_set_frame(++g_frame); prepass(); shadow_pass(); enc = sh(0) == 0; main_pass();   // 没有命令缓冲：建不出计算编码器 | no command buffer: no compute encoder
     EXPECT("编码失败的当帧：原版阴影绘制数 > 0", 1, enc > 0); EXPECT("编码失败的当帧：阴影图没被清", 0, RTS_MAP_CLEARED());
     EXPECT("编码失败后恢复光追", 1, until_applied(a, 1));
-    { int b2[2] = {0, 1}; enc = run_frame(1, b2, 2, &ok);   // 网格 1 第一次出现、还没建成：本帧有阴影绘制进不了 TLAS | mesh 1 appears for the first time, not built: a shadow draw this frame cannot enter the TLAS
-      EXPECT("有新网格的当帧：两次阴影绘制都照原版编码", 2, enc); EXPECT("有新网格的当帧：阴影图保持原版（不清，免得新网格没影）", 1, map_depth() == 0.25f); EXPECT("有新网格的当帧：没有合成遮罩（不叠两层影）", 0, g_rts.overlay_done);
+    { int b2[2] = {0, 1}; enc = run_frame(1, b2, 2, &ok);   // 网格 1 第一次出现：本帧排队、在本帧光追编码器里先建再进 TLAS（同一编码器内有序，不再多等一帧） | mesh 1 appears for the first time: queued this frame, built first in this frame's ray-tracing encoder and then in the TLAS (ordered within one encoder, no extra frame)
+      EXPECT("有新网格的当帧：两次阴影绘制照常光栅化（兜底）", 2, enc); EXPECT("有新网格的当帧：新网格当帧进 TLAS，阴影图清回全亮", 1, map_depth() == 1.0f); EXPECT("有新网格的当帧：合成了遮罩", 1, g_rts.overlay_done);
       EXPECT("新网格建成后两者都进光追", 1, until_applied(b2, 2)); EXPECT("新网格建成后：两次绘制都进了 TLAS", 2, covered()); }
     // 2. 每帧常量 / 实例槽：GPU 还在跑第 N 帧时，之后几帧不得复写第 N 帧用的槽 | 2. Per-frame constant / instance slots: while the GPU is still on frame N, later frames must not overwrite frame N's slot
     { EXPECT("槽测试前光追生效", 1, until_applied(a, 1)); float *M = (float *)g_mat; uint64_t fN = 0, last = 0; uint8_t snap[64]; __unsafe_unretained id<MTLBuffer> slotN = nil;
@@ -190,13 +192,13 @@ int main(void) { @autoreleasepool {
       int b1[2] = {1, 2}; run_frame(0, b1, 2, &ok); uint64_t k0 = g_rts.key_ns; run_frame(1, b1, 2, &ok);
       EXPECT("测试前提：这帧在退避中", 0, g_rts.rt_frame); EXPECT("退避帧不算网格键", 0, (long long)(g_rts.key_ns - k0)); }
     // 6. 光追帧里没进 TLAS 的绘制要分原因计数（真机 3fc0f41：走到某处后每帧约 8 次没进 TLAS，日志分不出原因）：
-    //    一帧 14 个新网格 → 12 个排队（待建）、2 个配额满；下一帧阴影绘制所在的通道没登记 → 通道没登记
+    //    一帧 RTS_BUILDS_PER_FRAME + 2 个新网格 → 前 RTS_BUILDS_PER_FRAME 个当帧建好进 TLAS（不记待建）、2 个配额满；下一帧阴影绘制所在的通道没登记 → 通道没登记
     // 6. Draws outside the TLAS in ray-traced frames are counted by reason (device run of 3fc0f41: about 8 per frame after walking somewhere, and the log could not tell why):
-    //    14 new meshes in one frame → 12 queued (pending), 2 over the quota; next frame a shadow draw in an unregistered pass → pass not registered
+    //    RTS_BUILDS_PER_FRAME + 2 new meshes in one frame → the first RTS_BUILDS_PER_FRAME are built and enter the TLAS that frame (no "pending"), 2 over the quota; next frame a shadow draw in an unregistered pass → pass not registered
     { EXPECT("分原因前光追生效", 1, until_applied(a, 1));
       long long q0 = RTS_UNC(RTS_UNC_QUOTA), p0 = RTS_UNC(RTS_UNC_PENDING), s0 = RTS_UNC(RTS_UNC_PASS);
-      frame_open(); prepass(); shadow_pass(); for (int i = 10; i < 24; i++) sh(i); main_pass(); hdr_again(); frame_close();
-      EXPECT("新建配额满：记 2 次", 2, RTS_UNC(RTS_UNC_QUOTA) - q0); EXPECT("网格待建：记 12 次", 12, RTS_UNC(RTS_UNC_PENDING) - p0);
+      frame_open(); prepass(); shadow_pass(); for (int i = 10; i < 10 + RTS_BUILDS_PER_FRAME + 2; i++) sh(i); main_pass(); hdr_again(); frame_close();
+      EXPECT("新建配额满：记 2 次", 2, RTS_UNC(RTS_UNC_QUOTA) - q0); EXPECT("新网格当帧进 TLAS：不记待建", 0, RTS_UNC(RTS_UNC_PENDING) - p0);
       frame_open(); prepass(); rp_end(); EXPECT("测试前提：这帧是光追帧", 1, (sh(0), g_rts.rt_frame)); main_pass(); hdr_again(); frame_close();
       EXPECT("阴影通道没登记：记 1 次", 1, RTS_UNC(RTS_UNC_PASS) - s0); }
     // 7. 真机 d42c8ee 局内每帧 4–8 次「非三角形列表或不足 3 顶点」：不足 3 顶点的绘制画不出东西，算已覆盖；三角形带（含重启）展开成列表进 TLAS；点之类仍记图元不认
@@ -252,6 +254,28 @@ int main(void) { @autoreleasepool {
           frame_open(); prepass(); rp_end(); memset(&R, 0, sizeof R); R.rt.depth = &g_sdepth; R.has_rt = 1; sh(0);   // 先画（通道还没开） | draw first (pass not open yet)
           shadow_pass(); sh(1); main_pass(); hdr_again(); ok10 = frame_close() && ok10; cleared = map_depth() == 1.0f; }
       EXPECT("绘制先于通道登记：这张图照样清回全亮", 1, cleared); EXPECT("不记「通道没登记」（绘制先于登记）", 0, RTS_UNC(RTS_UNC_PASS) - s0); EXPECT("这几帧 GPU 无错", 1, ok10); }
+    // 11. 光源不是太阳的阴影图（营地实测：512² 二维图光源竖直向下、角色脚下的俯视软影；256² 头发图）：光追的太阳遮罩不替它，本帧清过也照原样留着，
+    //     不然 NPC 脚下的影子就没了（真机 79eaa3f 用户录屏）；太阳那张照常清回全亮
+    // 11. A shadow map whose light is not the sun (measured in camp: a 512² 2D map lit straight down, the soft top-down shadow under characters; the 256² hair map): the ray-traced sun mask does not replace it, so it stays as drawn even though cleared this frame,
+    //     otherwise the shadows under NPCs disappear (user recording on the device with 79eaa3f); the sun map is cleared back as usual
+    { static tex_t g_top; static uint8_t *down; g_top = g_sdepth; g_top.serial = 79005;
+      if (!down) { down = g_pool + 12288; float l[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; memcpy(down + 336, l, 64); }   // 第 0、1 列叉积 = z：与太阳 (0, 1, 0) 垂直 | cross of columns 0 and 1 = z: perpendicular to the sun (0, 1, 0)
+      RTS_HYST_RESET(); EXPECT("第 11 节前光追生效", 1, until_applied(a, 1));
+      int cleared = 0, ok11 = 1; char why[256] = "";
+      for (int i = 0; i < 12 && !cleared; i++) { RTS_HYST_RESET();
+          frame_open(); prepass(); shadow_pass(); sh(0);
+          g_sp = &g_top; shadow_pass(); g_sp = &g_sdepth; g_dt = &g_top; g_lvp = down; sh(1); g_dt = &g_sdepth; g_lvp = NULL;   // 第二张：本帧清过、画过，光源竖直 | the second map: cleared and drawn this frame, light straight down
+          main_pass(); hdr_again(); ok11 = frame_close() && ok11; const char *w = RTS_WHY(); if (w && *w) snprintf(why, sizeof why, "%s", w); cleared = map_depth() == 1.0f; }
+      printf("非太阳那张：原因「%s」\n", why);
+      EXPECT("有非太阳的图：太阳那张照常清回全亮", 1, cleared); EXPECT("非太阳那张原样不动（0.25）", 1, tex_depth(&g_top) == 0.25f); EXPECT("清回的只有太阳那 1 张", 1, RTS_MAP_CLEARED());
+      EXPECT("原因写明光源不是太阳", 1, strstr(why, "光源不是太阳") != NULL); EXPECT("这几帧 GPU 无错", 1, ok11); }
+    // 12. 自动降档第 3 档 = 光追暂停（原先是太阳 1/4 分辨率，石墙脚下的影子成锯齿、镜头一动就闪）：画面原版、不算网格键、不算失败；回第 0 档后照常光追
+    // 12. Automatic level 3 = ray tracing paused (it used to be the sun at quarter resolution, whose stone-wall shadow edges turned into crawling stair steps): original picture, no mesh key, not a failure; back at level 0 ray tracing resumes
+    { RTS_HYST_RESET(); EXPECT("第 12 节前光追生效", 1, until_applied(a, 1));
+      int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = 3; int ok12 = 1, applied = 0; uint64_t k0 = g_rts.key_ns; int bo0 = g_rts.backoff;
+      for (int i = 0; i < 4; i++) { ok12 = run_frame(1, a, 1, &ok12) >= 0 && ok12; applied += map_depth() == 1.0f; }
+      EXPECT("第 3 档：阴影图一帧都没清（原版画面）", 0, applied); EXPECT("第 3 档：不算网格键", 0, (long long)(g_rts.key_ns - k0)); EXPECT("第 3 档：不算失败（不退避）", bo0, g_rts.backoff);
+      g_rts.gov.lvl = lv0; RTS_HYST_RESET(); EXPECT("回第 0 档后光追照常", 1, until_applied(a, 1)); }
 #endif
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;

@@ -122,14 +122,16 @@ static inline int rts_gov_step(rts_gov *g, double rt_ms, double fr_ms, double bu
         return -1; }
     return 0;
 }
-// 档位 → 实际参数：0 = 按设置；1 = 点光最多 1 盏、点光射线 1/4、关光追 AO（实验性）；2 = 再关点光阴影、太阳强制半分辨率硬阴影；3 = 太阳 1/4 分辨率
-// Level → effective parameters: 0 = as configured; 1 = at most 1 point light, quarter-resolution point rays, ray-traced AO (experimental) off; 2 = point-light shadows off as well, sun forced to half-resolution hard shadows; 3 = sun at quarter resolution
+// 档位 → 实际参数：0 = 按设置；1 = 点光最多 1 盏、点光射线 1/4、关光追 AO（实验性）；2 = 再关点光阴影、太阳强制半分辨率硬阴影；3 = 光追暂停（原版阴影）。
+// 第 3 档原先是太阳 1/4 分辨率：营地石墙脚下的影子成锯齿、镜头一动就爬动闪烁（真机 79eaa3f 用户录屏），省下的又不多（Mac 约 0.5 ms），不如直接回原版
+// Level → effective parameters: 0 = as configured; 1 = at most 1 point light, quarter-resolution point rays, ray-traced AO (experimental) off; 2 = point-light shadows off as well, sun forced to half-resolution hard shadows; 3 = ray tracing paused (original shadows).
+// Level 3 used to be the sun at quarter resolution: the shadow along the camp's stone wall turned into stair steps that crawled and flickered whenever the camera moved (user recording on the device with 79eaa3f), for little saving (about 0.5 ms on the Mac), so the original picture is the better fallback
 #define RTS_LVL_MAX 3
-typedef struct { int point_on, point_n, point_div, sun_div, soft, ao; } rts_lvl_params;
+typedef struct { int point_on, point_n, point_div, sun_div, soft, ao, off; } rts_lvl_params;
 static inline rts_lvl_params rts_lvl_apply(int lvl, int point_on, int point_n, int point_div, int sun_half, int soft, int ao) {
-    rts_lvl_params p = {point_on, point_n, point_div, sun_half ? 2 : 1, soft, ao};
+    rts_lvl_params p = {point_on, point_n, point_div, sun_half ? 2 : 1, soft, ao, 0};
     if (lvl >= 1) { if (p.point_n > 1) p.point_n = 1; p.point_div = 4; p.ao = 0; }
     if (lvl >= 2) { p.point_on = 0; p.sun_div = 2; p.soft = 0; }
-    if (lvl >= 3) p.sun_div = 4;
+    if (lvl >= 3) { p.off = 1; p.point_on = 0; p.ao = 0; }
     return p;
 }
