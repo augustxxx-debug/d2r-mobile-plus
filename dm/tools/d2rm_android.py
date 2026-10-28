@@ -101,7 +101,7 @@ def main():
     # 三、覆盖层（触屏布局、界面底图）+ 技能图集与 HUD 小图，最后写清单（App 启动时逐文件核对）
     # 3. Overlay (touch layout, UI base art) + skill atlases and small HUD images, then write the manifest (the App checks it file by file at startup)
     say('生成覆盖层')
-    run([PY, os.path.join(IOS, 'tools', 'gen_romfs_overlay.py'), romfs, os.path.join(stage, 'overlay')], cwd=IOS, env={'DM_ROMFS_SRC': romfs}, log=os.path.join(stage, 'gen_overlay.log'), what='生成覆盖层')
+    run([PY, os.path.join(IOS, 'tools', 'gen_romfs_overlay.py'), romfs, os.path.join(stage, 'overlay')], cwd=IOS, env={'DM_ROMFS_SRC': romfs, 'DM_TARGET': T}, log=os.path.join(stage, 'gen_overlay.log'), what='生成覆盖层')   # DM_TARGET：布局按平台限制配置项（touch_layout.py，安卓不出 iCloud 行） | DM_TARGET: per-platform settings rows in the layout (touch_layout.py, no iCloud row on Android)
     sys.path.insert(0, os.path.join(DM, 'android', 'tools')); import stage_touch_assets
     hud = os.path.join(IOS, 'Gen', 'assets', 'NativeHUD', 'v4', 'hud_v4_ui')
     stage_touch_assets.stage(os.path.join(gen, 'TouchArt'), hud, os.path.join(stage, 'overlay'))

@@ -94,6 +94,7 @@ int mtl_fps_target(void){int f=dm_fps_setting();return f==30?30:f==120?120:60;} 
 // Plus 的超分（MetalFX）在 Android 没有实现：告诉设置页藏「超分」行、3D 画质档固定原版（dm_custom.c 的弱定义缺省为支持）；整帧输出分辨率档已由安卓前端实现（下一行）
 // Plus's upscaling (MetalFX) is not implemented on Android: the Graphics tab hides the upscale row and the 3D profile stays Original (dm_custom.c's weak definitions default to supported); the whole-frame output resolution level is implemented by the Android front end (next line)
 int mtl_upscale_supported(void){return 0;}
+int dm_icloud_supported(void){return 0;}   // 安卓没有 iCloud：自定义页不出「iCloud 存档同步」行（dm_custom.c custom_row） | no iCloud on Android: the Custom page has no iCloud save-sync row (dm_custom.c custom_row)
 int dm_render_res_supported(void){return 1;}   // 渲染分辨率档在安卓前端实现（front_android.c front_game_res 按像素预算缩出图尺寸），图形页那行照 iOS 显示 | the render-resolution level is implemented by the Android front end (front_android.c front_game_res shrinks the output size to the pixel budget); the Graphics row shows as on iOS
 int mtl_link_active(void){return 0;}
 int mtl_link_wait_tick(uint64_t timeout){(void)timeout;return 0;}

@@ -47,6 +47,7 @@ static const int k_def[NK] = { 0,
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
 #define K_MERC (2 + VOICE_ROW)
+#define K_ICLOUD (6 + VOICE_ROW)   // iCloud 存档同步：只有 Apple 平台有（dm_icloud_supported），Android 的自定义页不出这一行 | iCloud save sync: Apple platforms only (dm_icloud_supported); the Android Custom page has no such row
 #define K_FPS (11 + VOICE_ROW)   // eco_fps：0 = 60、1 = 30（省电）、FPS_120 = 120 帧档；旧文件只有 0 / 1，旧包读到 2 当省电 30 | eco_fps: 0 = 60, 1 = 30 (power saving), FPS_120 = 120 fps mode; old files only hold 0 / 1, and old builds read 2 as power saving 30
 #define FPS_120 2
 #define K_Q3D (12 + VOICE_ROW)
@@ -57,8 +58,19 @@ static const int k_def[NK] = { 0,
 #define K_RT (NK - 1)
 #define N_GFX 6   // 图形页的键数：eco_fps / q3d / fps_hud / upscale / render_res / rt_shadow（自定义页的行数 = NK - N_GFX） | Number of Graphics-tab keys (Custom-page rows = NK - N_GFX)
 static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_FPSHUD || i == K_UPSCALE || i == K_RES || i == K_RT; }
+// 配置项的平台限制：没有 iCloud 的平台（Android：nvn_vk.c 强定义 0）自定义页不出 icloud 行，布局生成器按 DM_TARGET=android 同样不出（touch_layout.py _CUSTOM_KEYS），
+// 行号两边对齐；键仍在设置文件里（分享摘要照写），只是没人读。弱定义 = 支持（Apple 不变）
+// Per-platform settings: platforms without iCloud (Android: strong 0 in nvn_vk.c) get no icloud row on the Custom page, and the layout generator omits it likewise under
+// DM_TARGET=android (touch_layout.py _CUSTOM_KEYS) so row numbers agree on both sides; the key stays in the settings file (the share summary still lists it), nobody reads it. Weak = supported (Apple unchanged)
+#ifndef DM_GFX_GATE_TEST_HOOK
+__attribute__((weak)) int dm_icloud_supported(void) { return 1; }
+#else
+int dm_icloud_supported(void);
+#endif
+static int custom_row(int i) { return !graphics_key(i) && !(i == K_ICLOUD && !dm_icloud_supported()); }   // 自定义页上有这一行 | this key has a Custom-page row
+static int custom_rows(void) { int n = 0; for (int i = 0; i < NK; i++) n += custom_row(i); return n; }
 static int custom_key_at(int row) {
-    for (int i = 0; i < NK; i++) if (!graphics_key(i) && row-- == 0) return i;
+    for (int i = 0; i < NK; i++) if (custom_row(i) && row-- == 0) return i;
     return 0;
 }
 void dm_3d_quality_mode_set(int mode);
@@ -547,7 +559,7 @@ void dm_custom_ui_pump(unsigned long long root) {
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
       uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64];
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
-          if (ev & DM_BTN_DOWN) sel = sel + 1 < NK - N_GFX ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
+          if (ev & DM_BTN_DOWN) sel = sel + 1 < custom_rows() ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
           int ci = custom_key_at(sel);
           snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[ci]); cw = find_w(sp, ci == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[ci]); tw = find_w(sp, nm, 0);   // 语言行：框住标签到最右那一格 | Language row: box from the label to the rightmost cell
           if ((ev & DM_BTN_A) && cw && dm_wref_get(&seen[ci]) == cw) {
@@ -589,7 +601,7 @@ void dm_custom_ui_pump(unsigned long long root) {
           if (to != shown) atomic_store(&g_pend[K_Q3D], to);
           for (int k = 0; k < 5; k++) if (TOGGLED(boxes[k]) != (k == to)) set_toggle(boxes[k], k == to);
       } }
-    for (int i = 1; i < NK; i++) { if (graphics_key(i)) continue; char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
+    for (int i = 1; i < NK; i++) { if (!custom_row(i)) continue; char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
         uint64_t w = find_w(sp, nm, 0); if (!w || !*(uint8_t *)(w + 0x50)) continue;
         int pd0 = atomic_load(&g_pend[i]), want = pd0 >= 0 ? pd0 : atomic_load(&g_val[i]);
         uint64_t z = rev_box(i) ? find_w(sp, rev_box(i), 0) : 0;   // 两项单选行（3D 画质：上下的「流畅优先」「画质优先」；换组位置）：存的仍是一个键，反面那一项是它的反面 | Two-option radio rows (3D quality: "Smoothness first" / "Quality first" stacked; swap-group position): still stores one key, the other option is its negation
