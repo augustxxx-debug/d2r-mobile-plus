@@ -129,6 +129,8 @@ Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gf
 
 本轮 Android 适配（相对上游 Android 后端）：崩溃围栏接入后台 / 前台 / 内存告警；暂停菜单「分享诊断日志」（脱敏、系统分享面板）；显示版本与构建号同源；原生出图尺寸 + 图形页「渲染分辨率」档；120 帧档（屏幕 ≥ 120 Hz 时出现，自动切高刷模式）；「显示帧数」；实体手柄（Xbox 键位、B / BACK 不退出、手柄 / 触屏模式切换）；3D 画面加亮上限 2；Adreno 740 驱动绕法（warp32 掩码按车道号算、lane 号自检）。
 
+**已知问题（安卓）：长时间游戏内存缓慢上涨。** 在 Adreno 740 掌机上每 90 秒换一关、五幕轮流跑了 31.5 分钟（60 帧），内存一直在缓涨（后半程约每分钟 8 MB），App 没有被系统关掉、也没收到内存告警；一小时以上的表现还没验证。连续玩 1–2 小时后建议重启一次 App。
+
 ## 验证与限制
 
 当前预览已通过重点宿主几何／分类测试、iOS 触控测试、通知生成器检查及签名实机构建。任务语音问题经过修改前复现与修改后复测。实际执行与尚未执行的检查见[验证说明](docs/PLUS.zh-CN.md#验证)。
@@ -142,3 +144,5 @@ Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gf
 基于 [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile)，感谢原作者及贡献者。保留既有版权声明及 [MIT 许可证](LICENSE)。《暗黑破坏神 II：狱火重生》及其资源的权利归相应权利人所有。本项目为独立社区项目。
 
 安卓安装包随附霞鹜文楷（LXGW WenKai）Medium v1.530，作者 LXGW，按 [SIL Open Font License 1.1](https://openfontlicense.org) 授权（许可证随包在 `assets/dmgen/font/OFL.txt`；来源 https://github.com/lxgw/LxgwWenKai）。手机端生成导入包时用它替换界面字体里的中日文字形；包里的字体文件未作改动。
+
+安卓安装包还随附在手机上生成导入包用的工具：CPython 3.13（Chaquopy 的安卓构建，含 OpenSSL、SQLite 及 CPython 内含的各库）、NumPy、OpenBLAS、python-lz4、fontTools、Capstone、Pillow（含 FreeType、HarfBuzz、zlib-ng）、zlib、SPIRV-Tools，以及用 .NET NativeAOT 从 Ryujinx 着色器翻译器编出的翻译工具，感谢各位作者。版本与许可证见 [docs/DEPENDENCIES.zh-CN.md](docs/DEPENDENCIES.zh-CN.md#安卓安装包随附的组件)；许可证原文随包在 `assets/dmgen/THIRD_PARTY_NOTICES.txt`（与 [dm/android/THIRD_PARTY_NOTICES.txt](dm/android/THIRD_PARTY_NOTICES.txt) 同一份）。

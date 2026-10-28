@@ -119,7 +119,7 @@ fi
 # With the on-phone generator (-PdmGenRuntime), assets/dmgen/ may hold only these: the runtime (tools, gen_runtime.sh), this repo's generator scripts, and the 4 query kernels
 #   (written by the project, keys from nvn_builtin.h); both zips are unpacked and checked for local paths again, and the runtime may hold only lib/ and py/
 QK=$(sed -n 's/.*{"\([0-9a-f]\{16\}\)", "q_[a-z0-9]*"}.*/\1/p' "$DM/gfx/nvn/nvn_builtin.h" | sort)
-GEN=$(unzip -l "$A" | awk '{print $4}' | grep '^assets/dmgen/' | grep -vxE 'assets/dmgen/(runtime\.zip|runtime\.txt|src\.zip|src\.sha256)' | grep -vxE "assets/dmgen/queries/($(echo $QK | tr ' ' '|'))\.xgs" \
+GEN=$(unzip -l "$A" | awk '{print $4}' | grep '^assets/dmgen/' | grep -vxE 'assets/dmgen/(runtime\.zip|runtime\.txt|src\.zip|src\.sha256|THIRD_PARTY_NOTICES\.txt)' | grep -vxE "assets/dmgen/queries/($(echo $QK | tr ' ' '|'))\.xgs" \
   | grep -vxE 'assets/dmgen/font/([A-Za-z0-9._-]+\.ttf|OFL\.txt|font\.txt)' | head -3)
 [ -z "$GEN" ] || die "assets/dmgen/ 里有不认识的文件：$GEN"
 # 带字体就必须带许可证（OFL 要求随字体分发许可证）| a bundled font must ship with its licence (OFL requires it)
@@ -128,7 +128,13 @@ if unzip -l "$A" | grep -q 'assets/dmgen/runtime.zip'; then
   Z=$O/dmgen_x; rm -rf "$Z" && mkdir -p "$Z/rt" "$Z/src" && unzip -q -o -d "$Z" "$A" 'assets/dmgen/*' && unzip -q "$Z/assets/dmgen/runtime.zip" -d "$Z/rt" && unzip -q "$Z/assets/dmgen/src.zip" -d "$Z/src" || die "解不开 assets/dmgen"
   [ -z "$(ls "$Z/rt" | grep -vxE 'lib|py')" ] || die "运行时里有 lib/ py/ 之外的东西：$(ls "$Z/rt")"
   leak=$(LC_ALL=C grep -raoE -- "/Users/[A-Za-z0-9._-]+|$HOME" "$Z" | head -3); [ -z "$leak" ] || die "assets/dmgen 里带着本机路径：$leak"
-  t "带手机端生成器：assets/dmgen 核过（查询核 $(echo $QK | wc -w | tr -d ' ') 个、运行时只有 lib/ py/、无本机路径）"
+  # 随包的第三方运行时、翻译工具、字体都要有许可证随包（四审 A4-01）：清单必须在、与仓库那份相同，runtime.txt 里每个组件版本都写在清单里
+  # The bundled third-party runtime, translator and font must ship with their licences (fourth audit A4-01): the notices must be there, equal the repository copy,
+  #   and name every component version in runtime.txt
+  N=$Z/assets/dmgen/THIRD_PARTY_NOTICES.txt; [ -f "$N" ] || die "带了手机端生成器却没有 THIRD_PARTY_NOTICES.txt（第三方许可证）"
+  cmp -s "$N" "$DM/android/THIRD_PARTY_NOTICES.txt" || die "APK 里的 THIRD_PARTY_NOTICES.txt 与 dm/android/ 的不同"
+  for kv in $(sed -n '1,2p' "$Z/assets/dmgen/runtime.txt"); do grep -qF "version: $kv" "$N" || die "THIRD_PARTY_NOTICES.txt 没写 $kv（改了运行时组件就重跑 dm/android/tools/third_party_notices.py）"; done
+  t "带手机端生成器：assets/dmgen 核过（查询核 $(echo $QK | wc -w | tr -d ' ') 个、运行时只有 lib/ py/、无本机路径；第三方许可证清单在、$(sed -n '1,2p' "$Z/assets/dmgen/runtime.txt" | wc -w | tr -d ' ') 个组件版本对得上）"
 fi
 bad=$(unzip -l "$A" | awk '{print $4}' | grep -v '^assets/dmgen/' | grep -E '\.(xgs|patched\.bin|data)$|^assets/|overlay|derived\.tsv' | head -3)
 [ -z "$bad" ] || die "APK 里带了不该有的文件：$bad"
