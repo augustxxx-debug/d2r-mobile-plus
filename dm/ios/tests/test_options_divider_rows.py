@@ -32,13 +32,17 @@ def drop_calls(text):   # 按括号深度取每个 _drop_rows(...) 的实参，�
         yield code[m.end():i - 1]
 dropped = sorted({n for call in drop_calls(src) for n in re.findall(r"'([^']+)'", call)})
 extra = [{'type': 'TableRowWidget', 'name': 'Row ' + n} for n in dropped]
-stock = {'type': 'Panel', 'name': 'Panel', 'children': [{'type': 'TableWidget', 'name': 'OptionsTable', 'fields': {'rowHeight': '$OptionsTableRowHeight'}, 'children': [title, row] + extra}]}
+# 照原版结构：滚动区 ScrollView 里放原版表格 OptionsTable（生成器可能在表格前插我们自己的分节，如游戏页的难度块 TouchDiffRows）
+# Stock structure: the native table OptionsTable inside the ScrollView (the generator may insert our own sections before it, e.g. the Gameplay page's TouchDiffRows)
+stock = {'type': 'Panel', 'name': 'Panel', 'children': [{'type': 'ScrollViewWidget', 'name': 'ScrollView', 'fields': {'fitToParent': True}, 'children': [
+    {'type': 'TableWidget', 'name': 'OptionsTable', 'fields': {'rowHeight': '$OptionsTableRowHeight'}, 'children': [title, row] + extra}]}]}
 
-def tables(node, out):
+def walk(node, out):
     if isinstance(node, dict):
-        if node.get('type') == 'TableWidget': out.append(node)
-        for c in node.get('children', []): tables(c, out)
+        out.append(node)
+        for c in node.get('children', []): walk(c, out)
     return out
+def has_divider(node): return any(c.get('name') == 'Divider' for c in walk(node, [])[1:])
 
 fails = []
 for mode, table in (('touch', layout.PRESENT), ('controller', layout.PAD_ROOT)):
@@ -46,9 +50,17 @@ for mode, table in (('touch', layout.PRESENT), ('controller', layout.PAD_ROOT)):
         if page not in table: fails.append('%s %s: page not generated' % (mode, page)); continue
         text, _ = table[page](json.dumps(stock))
         doc = json.loads(re.sub(r',\s*([}\]])', r'\1', text))
-        for t in tables(doc, []):
-            if 'Divider' in json.dumps(t) and t['fields'].get('rowHeight') != 180:
-                fails.append('%s %s: rowHeight %r with a section divider' % (mode, page, t['fields'].get('rowHeight')))
+        nodes = walk(doc, [])
+        native = [n for n in nodes if n.get('name') == 'OptionsTable']   # 按名字认原版表格，前面有我们的分节也照认 | the native table by name, our sections before it are fine
+        if len(native) != 1: fails.append('%s %s: %d native OptionsTable' % (mode, page, len(native))); continue
+        if has_divider(native[0]) and native[0]['fields'].get('rowHeight') != 180:
+            fails.append('%s %s: native table rowHeight %r with a section divider' % (mode, page, native[0]['fields'].get('rowHeight')))
+        # 我们自己插的分节（Touch 开头）若带分割线，它的标题框高度也得是 180，分割线才落在标题与下一行之间 | our own Touch* sections with a divider need a 180-tall title box too
+        for n in nodes:
+            kids = n.get('children', [])
+            if str(n.get('name', '')).startswith('Touch') and any(c.get('name') == 'Divider' for c in kids):
+                h = n.get('fields', {}).get('rect', {}).get('height')
+                if h != 180: fails.append('%s %s: our section title %s height %r with a divider' % (mode, page, n['name'], h))
 for f in fails: print('FAIL', f)
 assert not fails, '%d page(s) keep a row pitch that misplaces the section divider' % len(fails)
-print('PASS options dividers: Audio / Gameplay / Game Settings use row pitch 180 in touch and controller mode')
+print('PASS options dividers: Audio / Gameplay / Game Settings native tables use row pitch 180 in touch and controller mode; our own divider sections are 180 tall')
