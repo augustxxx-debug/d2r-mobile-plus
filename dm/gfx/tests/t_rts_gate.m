@@ -65,8 +65,9 @@ static void shadow_pass(void) {
     rp.depthAttachment.clearDepth = 1.0; rts_note_pass(rp);   // 游戏的清除值 1.0 = 全亮 | the game's clear value 1.0 = fully lit
 #endif
 }
+static const tex_t *g_dt = &g_sdepth;   // sdraw 画进哪张图（缺省主阴影图） | which map sdraw draws into (the main shadow map by default)
 static int sdraw(const uint8_t *ib, int n, int prim, uint32_t fmt) {
-    memset(&R, 0, sizeof R); R.rt.depth = &g_sdepth; R.has_rt = 1;
+    memset(&R, 0, sizeof R); R.rt.depth = g_dt; R.has_rt = 1;
     S.nattr = 1; S.attr[0] = (va_st){.fmt = fmt, .offset = 0, .stream = 0}; S.stream[0] = (vs_st){8, 0}; S.vbuf[0] = (NVNbufferRange){(uint64_t)g_vtx, 4096 * 8};
     S.ubo[0][0] = (p_bind_buf){0, 0, (uint64_t)g_mat, 64}; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)g_cb3, 400};
     p_draw_idx di = {prim, 1, n, 0, 0, 1, (uint64_t)ib};
@@ -225,13 +226,32 @@ int main(void) { @autoreleasepool {
       int applied = 0, ok8 = 1; char why[256] = "";
       for (int i = 0; i < 12 && !applied; i++) { RTS_HYST_RESET();   // 画面迟滞另测（t_rts_flicker） | picture hysteresis is tested separately (t_rts_flicker)
           frame_open(); prepass(); shadow_pass(); sh(0);
-          memset(&R, 0, sizeof R); R.rt.depth = &g_keep; R.has_rt = 1; rp_begin_ex(0); sh(1);   // 生产开通道：读入 | production pass begin: load
+          memset(&R, 0, sizeof R); R.rt.depth = &g_keep; R.has_rt = 1; rp_begin_ex(0); g_dt = &g_keep; sh(1); g_dt = &g_sdepth;   // 生产开通道：读入；这次画进跨帧保留的那张 | production pass begin: load; this draw goes into the kept map
           main_pass(); hdr_again(); ok8 = frame_close() && ok8;
           const char *w = RTS_WHY(); if (w && *w) snprintf(why, sizeof why, "%s", w);
           applied = map_depth() == 1.0f; }
       printf("跨帧保留的那张：原因「%s」\n", why);
       EXPECT("一张跨帧保留：能清的那张照样清回全亮（光追生效）", 1, applied); EXPECT("跨帧保留的那张原样不动（0.5）", 1, tex_depth(&g_keep) == 0.5f);
       EXPECT("清回的只有 1 张", 1, RTS_MAP_CLEARED()); EXPECT("原因写明是读入", 1, strstr(why, "读入") != NULL); EXPECT("这几帧 GPU 无错", 1, ok8); }
+    // 9. 帧号在已登记的阴影通道开着时前进（Mac 实测：每帧第一个阴影通道在上一帧号下开、登记，第一次绘制时才进新帧）：这张图要带进新帧，
+    //    不能算「通道没登记」（合并 d42c8ee 之后 Mac 营地 3600 帧里 3487 帧因此整帧清不了图）
+    // 9. The frame number advances while a registered shadow pass is open (measured on the Mac: the first shadow pass of each frame opens and registers under the previous frame number, the new frame starts at its first draw):
+    //    the map must be carried into the new frame, not counted as "pass not registered" (after merging d42c8ee, 3487 of 3600 camp frames on the Mac could not clear their maps because of this)
+    { long long s0 = RTS_UNC(RTS_UNC_PASS); int cleared = 0, ok9 = 1;
+      frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); shadow_pass(); ok9 = frame_close() && ok9;   // 帧尾开下一帧的阴影通道 | the next frame's shadow pass opens at the end of this frame
+      for (int i = 0; i < 12 && !cleared; i++) { RTS_HYST_RESET();
+          frame_open(); sh(0); prepass(); main_pass(); hdr_again(); cleared = RTS_MAP_CLEARED() > 0; shadow_pass(); ok9 = frame_close() && ok9; }
+      EXPECT("帧号在阴影通道开着时前进：这张图照样清回全亮", 1, cleared); EXPECT("不记「通道没登记」", 0, RTS_UNC(RTS_UNC_PASS) - s0); EXPECT("这几帧 GPU 无错", 1, ok9); }
+    // 10. 绘制赶在通道登记之前（Mac 实测：rts_draw 在编码前调，每帧第一个阴影通道的第一次绘制时通道还没开、没登记）：按渲染目标找到这张图，
+    //     通道开时补上「清过」，不能算「通道没登记」
+    // 10. A draw before its pass is registered (measured on the Mac: rts_draw runs before encoding, so the first draw of each frame's first shadow pass comes before the pass is opened and registered): the map is found by the render target,
+    //     the pass fills in "cleared" when it opens, and the draw must not count as "pass not registered"
+    { RTS_HYST_RESET(); EXPECT("第 10 节前光追生效（帧尾的通道已画过，不会带进下一帧）", 1, until_applied(a, 1));   // 隔开第 9 节帧尾开的通道 | isolates the pass section 9 opened at a frame end
+      long long s0 = RTS_UNC(RTS_UNC_PASS); int cleared = 0, ok10 = 1;
+      for (int i = 0; i < 12 && !cleared; i++) { RTS_HYST_RESET();
+          frame_open(); prepass(); rp_end(); memset(&R, 0, sizeof R); R.rt.depth = &g_sdepth; R.has_rt = 1; sh(0);   // 先画（通道还没开） | draw first (pass not open yet)
+          shadow_pass(); sh(1); main_pass(); hdr_again(); ok10 = frame_close() && ok10; cleared = map_depth() == 1.0f; }
+      EXPECT("绘制先于通道登记：这张图照样清回全亮", 1, cleared); EXPECT("不记「通道没登记」（绘制先于登记）", 0, RTS_UNC(RTS_UNC_PASS) - s0); EXPECT("这几帧 GPU 无错", 1, ok10); }
 #endif
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;

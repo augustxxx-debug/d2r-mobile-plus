@@ -144,7 +144,8 @@ static struct {
     uint64_t n_frames, n_builds, n_traced, n_skipped_draws, n_refit, n_evict_budget, n_slot_busy, key_ns; double build_tris;
     id<MTLComputePipelineState> ps_trace_a, ps_trace_soft_a, ps_ptrace_a; NSDictionary *alpha_idx; int alpha_nfs, alpha_logged; double alpha_ms;   // 判定库版追踪管线（异步编好后置上）；键 → @[序号, locn 位图] | judge-library trace pipelines (set when the async compile lands); key → @[index, locn bitmap]
     uint64_t miss[RM_N];   // 累计 | cumulative
-    uint64_t n_unc[RM_N]; int f_unc[RM_N]; uint64_t n_unc_log, n_kept_frames; int unc_why, pass_why; uint32_t prim_mask; uint64_t n_empty, key_bytes; char why[220];   // 光追帧里没进 TLAS 的：按原因累计 / 本帧、记过几帧；本次绘制 / 本通道的原因；不认的图元掩码；空绘制数；键摘要字节；本帧没做完整（或保留了哪张图）的原因 | outside the TLAS in ray-traced frames: cumulative / this frame by reason, frames logged; this draw's / pass's reason; unknown primitive mask; empty draws; key digest bytes; why this frame was not complete (or which map it kept)
+    uint64_t n_unc[RM_N]; int f_unc[RM_N]; uint64_t n_unc_log, n_kept_frames, n_carry; int unc_why, pass_why; uint32_t prim_mask; uint64_t n_empty, key_bytes; char why[220];   // 光追帧里没进 TLAS 的：按原因累计 / 本帧、记过几帧；本次绘制 / 本通道的原因；不认的图元掩码；空绘制数；键摘要字节；本帧没做完整（或保留了哪张图）的原因 | outside the TLAS in ray-traced frames: cumulative / this frame by reason, frames logged; this draw's / pass's reason; unknown primitive mask; empty draws; key digest bytes; why this frame was not complete (or which map it kept)
+    int cur_drawn, cur_pass_clear; double cur_pass_cd;   // 当前通道开了以后画过没有、这个通道自己清没清（帧号前进时带通道用） | whether the current pass has been drawn since it opened, and whether this pass itself cleared (for carrying a pass across a frame-number advance)
     struct { uint64_t tag, last, seen; rts_mesh *m; MTLIndirectAccelerationStructureInstanceDescriptor d; } keep[RTS_KEEP]; int nkeep, nkeep_used;   // 邻近遮挡体保留（评审阶段一） | neighbourhood occluder retention (review phase 1)
     uint8_t exp_ok[RTS_MAX_EXPORT]; float exp_tr[RTS_MAX_EXPORT][3]; int16_t inst_exp[RTS_MAX_INST]; uint64_t n_exp_lost, n_instanced;   // 导出绘制真编进去了没有（draw 中途返回的不算）；实例 → 导出序号（−1 = 不是导出的） | whether the export draw was actually encoded (a draw that returns early does not count); instance → export index (−1 = not exported)
     int nai, ai_cap, ai_cap_fs, nalpha_rt, n_var_loaded, n_var_missing, n_alpha_logs; NvShader *exp_vs; uint64_t na_why[RA_N], n_alpha_rt_draws;   // 本帧镂空实例数 / 待抓参数块的记录；exp_vs = 本次导出绘制用的顶点变体（_pos / _var） | alpha instances this frame / the record awaiting its argument capture; exp_vs = the vertex variant of the export draw (_pos / _var)
@@ -509,8 +510,15 @@ static void rts_frame_begin(uint64_t f) {
     g_rts.nsub = 0;
     for (int i = 0; i < g_rts.npend; i++) g_rts.pending[i]->queued = 0;
     g_rts.npend = 0;
+    // 帧号在一个已登记的阴影通道开着的时候前进（Mac 实测：每帧第一个阴影通道——1024² 级联第 0 层——在上一帧号下开、登记，第一次绘制时才进新帧）：
+    // 这个通道的清除发生在它开头，之后画的都属新帧，把它带进新帧的表；否则这些绘制都算「通道没登记」，整帧清不了图（合并审计分支 d42c8ee 后 Mac 营地 3600 帧里 3487 帧）
+    // The frame number advances while a registered shadow pass is open (measured on the Mac: the first shadow pass of each frame - layer 0 of the 1024² cascade - opens and registers under the previous frame number, and the new frame starts at its first draw):
+    // the pass's clear happened at its start and everything drawn since belongs to the new frame, so carry it into the new frame's table; otherwise those draws count as "pass not registered" and no frame can clear its maps (after merging the audit branch's d42c8ee, 3487 of 3600 camp frames on the Mac)
+    // 只带上一帧里开了还没画过的那个通道（帧尾刚开的）；画过的属于上一帧 | only a pass opened but not yet drawn in the previous frame (just opened at its end); a drawn one belongs to the previous frame
+    int carry = g_rts.cur_smap >= 0 && g_rts.cur_smap < g_rts.nsmap && !g_rts.cur_drawn; typeof(g_rts.smap[0]) cs = {0};
+    if (carry) { cs = g_rts.smap[g_rts.cur_smap]; cs.used = 0; cs.has_l = 0; cs.cleared = g_rts.cur_pass_clear; cs.cd = g_rts.cur_pass_cd; }   // 清没清按这个通道自己的读入方式 | cleared or not by this pass's own load action
     for (int i = 0; i < g_rts.nsmap; i++) g_rts.smap[i].t = nil;
-    g_rts.nsmap = 0; g_rts.cur_smap = -1; g_rts.nuncov = 0; g_rts.clear_tried = g_rts.map_cleared = 0; g_rts.main_hdr = nil; g_rts.why[0] = 0; memset(g_rts.f_unc, 0, sizeof g_rts.f_unc); g_rts.pass_why = RM_PASS;
+    g_rts.nsmap = 0; g_rts.cur_smap = -1; if (carry) { g_rts.smap[0] = cs; g_rts.nsmap = 1; g_rts.cur_smap = 0; if (++g_rts.n_carry <= 3) MLOG("光追阴影：帧号在阴影通道开着时前进（帧 %llu，%lux%lu 第 %lu 层），这张图带进新帧（第 %llu 次）", (unsigned long long)f, (unsigned long)cs.t.width, (unsigned long)cs.t.height, (unsigned long)cs.slice, (unsigned long long)g_rts.n_carry); } cs.t = nil; g_rts.nuncov = 0; g_rts.clear_tried = g_rts.map_cleared = 0; g_rts.main_hdr = nil; g_rts.why[0] = 0; memset(g_rts.f_unc, 0, sizeof g_rts.f_unc); g_rts.pass_why = RM_PASS;
     g_rts.frame = f; g_rts.n_frames++; g_rts.ninst = g_rts.ndup = g_rts.nskin = g_rts.nskin_pose = g_rts.nskip_fmt = g_rts.nskip_prim = g_rts.nalpha = 0; g_rts.have_cam = g_rts.have_sun = 0; g_rts.main_seen = g_rts.mask_done = g_rts.overlay_done = 0;
     for (int i = 0; i < g_rts.nexp; i++) g_rts.exp_mesh[i]->used = 0;   // 上一帧的蒙皮槽放回 | release the previous frame's skinned slots
     g_rts.nexp = 0; g_rts.cur_pos4 = nil; g_rts.pl_done = g_rts.lc_done = 0; g_rts.trace_pending = 0; g_rts.trace_depth = nil;
@@ -541,7 +549,9 @@ static void rts_note_pass(RPD *pd) {
     int i = 0; for (; i < g_rts.nsmap; i++) if (g_rts.smap[i].t == t && g_rts.smap[i].level == pd.depthAttachment.level && g_rts.smap[i].slice == pd.depthAttachment.slice) break;
     if (i == g_rts.nsmap) { if (i >= RTS_MAX_SMAP) { g_rts.pass_why = RM_SMAPFULL; return; } g_rts.nsmap++;
         g_rts.smap[i] = (typeof(g_rts.smap[0])){t, pd.depthAttachment.level, pd.depthAttachment.slice, pd.depthAttachment.clearDepth, pd.depthAttachment.loadAction == MTLLoadActionClear, 0, 0, {0}}; }
-    else if (pd.depthAttachment.loadAction == MTLLoadActionClear) { g_rts.smap[i].cleared = 1; g_rts.smap[i].cd = pd.depthAttachment.clearDepth; }   // 本帧后来又整张清过：之前画的都没了，按这次的清除值算 | cleared again later this frame: what was drawn before is gone, use this clear value
+    else if (g_rts.smap[i].cleared == 2) { g_rts.smap[i].cleared = pd.depthAttachment.loadAction == MTLLoadActionClear; g_rts.smap[i].cd = pd.depthAttachment.clearDepth; }   // 绘制先登记的（通道这才开）：按这个通道的读入方式 | registered by a draw first (the pass opens only now): this pass's load action decides
+    else if (pd.depthAttachment.loadAction == MTLLoadActionClear) { g_rts.smap[i].cleared = 1; g_rts.smap[i].cd = pd.depthAttachment.clearDepth; }
+    g_rts.cur_drawn = 0; g_rts.cur_pass_clear = pd.depthAttachment.loadAction == MTLLoadActionClear; g_rts.cur_pass_cd = pd.depthAttachment.clearDepth;   // 本帧后来又整张清过：之前画的都没了，按这次的清除值算 | cleared again later this frame: what was drawn before is gone, use this clear value
     g_rts.cur_smap = i;
 }
 // clear_tex（游戏的 ClearTexture，自己开只清除的通道、不经 rp_begin_ex）清深度时调：方形 2D / 2D 数组深度登记为本帧清过、清成 cd（审计分支 3fc0f41）。
@@ -660,9 +670,22 @@ static void rts_alpha_capture(NvProg *pr) {
 }
 // 一次阴影通道 / 预渲染遮挡体绘制 → 实例。返回 0 = 照原版编码；2 = 蒙皮导出（先由 draw 照原版补画，再换 _pos 顶点变体、关光栅化编一次）。阴影绘制没进 TLAS 就记 nuncov（本帧阴影图不清）
 // One shadow-pass / prepass occluder draw → instance. Returns 0 = encode as original; 2 = skinned export (draw re-encodes the original first, then once more with the _pos vertex variant and rasterization off). A shadow draw outside the TLAS bumps nuncov (the shadow map is not cleared this frame)
+// 这次绘制画进的阴影图（与 rp_begin_ex 的 attach 同一算法：视图的起始 mip 级与起始层）。rts_draw 在编码之前调，通道往往还没开（rp_begin_ex 在编码时才开、才登记）：
+// Mac 实测每帧第一个阴影通道的第一次绘制都赶在登记之前，按「上一个登记的通道」记就成了「通道没登记」，整帧清不了图。所以按渲染目标本身找表项，没有就先记成
+// 「通道还没开」（cleared = 2），通道开时由 rts_note_pass / ClearTexture 填上读入方式；直到帧末都没开过的按跨帧保留处理（不清）
+// The shadow map this draw renders into (the same rule as attach in rp_begin_ex: the view's base mip level and first layer). rts_draw runs before encoding, often before the pass is open (rp_begin_ex opens and registers it while encoding):
+// measured on the Mac, the first draw of every frame's first shadow pass comes before the registration, and attributing it to "the last registered pass" made it "pass not registered" and no frame could clear its maps. So the entry is found by the render target itself;
+// a missing one is first recorded as "pass not open yet" (cleared = 2) and rts_note_pass / ClearTexture fill in the load action when the pass opens; one never opened by the end of the frame is treated as kept (not cleared)
+static int rts_cur_map(void) {
+    id<MTLTexture> t = R.rt.depth ? tex_mtl(R.rt.depth) : nil; if (!t) return -1;
+    NSUInteger lv = R.rt.has_dview && R.rt.dview.set_levels ? R.rt.dview.base_level : 0, sl = R.rt.has_dview && R.rt.dview.set_layers && R.rt.depth->d.target != 2 ? R.rt.dview.min_layer : 0;
+    int i = 0; for (; i < g_rts.nsmap; i++) if (g_rts.smap[i].t == t && g_rts.smap[i].level == lv && g_rts.smap[i].slice == sl) return i;
+    if (i >= RTS_MAX_SMAP) { g_rts.pass_why = RM_SMAPFULL; return -1; }
+    g_rts.nsmap++; g_rts.smap[i] = (typeof(g_rts.smap[0])){t, lv, sl, 1.0, 2, 0, 0, {0}}; return i;
+}
 static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, int prim) {
     if (!rts_on() || !pr || !pr->sh[0]) return 0;
-    int alpha = 0;
+    int alpha = 0, mi = -1;   // mi：这次绘制画进的阴影图在表里第几张 | mi: index of the shadow map this draw renders into
     uint64_t f = atomic_load(&g_cur_frame); if (f != g_rts.frame) rts_frame_begin(f);
     int shadow = !R.rt.n && R.rt.depth && R.rt.depth->d.width == R.rt.depth->d.height;
     if (shadow) { id<MTLTexture> dt = tex_mtl(R.rt.depth); if (!dt || dt.textureType == MTLTextureTypeCube || dt.textureType == MTLTextureTypeCubeArray) return 0; }   // 点光立方体阴影照旧 | point-light cube shadows unchanged
@@ -679,7 +702,7 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
     } else {
         g_rts.shadow_draws++;
         if (!rts_setup()) return 0;
-        if (g_rts.cur_smap >= 0) g_rts.smap[g_rts.cur_smap].used = 1;
+        if ((mi = rts_cur_map()) >= 0) { g_rts.smap[mi].used = 1; if (mi == g_rts.cur_smap) g_rts.cur_drawn = 1; }
         // 镂空遮挡体（第四阶段）：程序能进光追就和蒙皮一样走导出（_var 顶点变体写裁剪坐标 + 插值），实例标非不透明、命中处按原片元着色器判定；不能的只在原阴影图里（本帧不清）
         // alpha-tested occluder (phase 4): a program that can enter the ray tracing goes through the export like skinned units (the _var vertex variant writes clip position + interpolants), the instance is non-opaque and judged by the original fragment shader at each hit; one that cannot stays only in the original shadow map (not cleared this frame)
         if (pr->sh[1] && pr->sh[1]->rf.may_discard) { g_rts.nalpha++; alpha = 1;
@@ -693,7 +716,7 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
     if (shadow && lvp && R.rt.depth->d.width < 1024 && getenv("DM_RT_SHADOW_CHECK")) { static int nl; float sd[3]; if (nl < 4 && rts_sun_from_lvp((const float *)lvp, sd)) { nl++;   // 核对：小阴影图（如加载时烘焙的 256² 静态阴影）的光源方向 | check: light direction of small shadow maps (e.g. the 256² static map baked at load)
         MLOG("光追阴影：核对 小阴影图 %dx%d 帧 %llu 光源方向 (%.3f %.3f %.3f) 第 4 行 (%.1f %.1f %.3f)", (int)R.rt.depth->d.width, (int)R.rt.depth->d.height, (unsigned long long)f, sd[0], sd[1], sd[2], ((const float *)lvp)[12], ((const float *)lvp)[13], ((const float *)lvp)[14]); } }
     if (shadow && !g_rts.have_sun && lvp && rts_sun_from_lvp((const float *)lvp, g_rts.sun)) g_rts.have_sun = 1;   // 光线方向 = 光源 x、y 不变的方向（见 nvn_rtshadow_util.h） | ray direction = where light x and y stay constant (see nvn_rtshadow_util.h)   // 光线方向 = 光源 x、y 不变的方向（见 nvn_rtshadow_util.h） | ray direction = where light x and y stay constant (see nvn_rtshadow_util.h)
-    if (shadow && lvp && g_rts.cur_smap >= 0 && !g_rts.smap[g_rts.cur_smap].has_l) { g_rts.smap[g_rts.cur_smap].has_l = 1; memcpy(g_rts.smap[g_rts.cur_smap].l, lvp, 64); }   // 核对用：这张阴影图第一次绘制的光源视投影 | for the check: the light VP of the first draw into this map
+    if (shadow && lvp && mi >= 0 && !g_rts.smap[mi].has_l) { g_rts.smap[mi].has_l = 1; memcpy(g_rts.smap[mi].l, lvp, 64); }   // 核对用：这张阴影图第一次绘制的光源视投影 | for the check: the light VP of the first draw into this map
     // 4 三角形列表、5 三角形带（建网格时展开）、7 四边形（与生产光栅化一样按三角形列表画，审计分支 2fec943）；其余记图元不认并记类型 | 4 triangle list, 5 strip (expanded when the mesh is built), 7 quads (drawn as a triangle list like the production rasterizer, audit branch 2fec943); others count as unknown primitive with the type recorded
     if (prim != 4 && prim != 5 && prim != 7) { g_rts.nskip_prim++; if (prim >= 0 && prim < 32) g_rts.prim_mask |= 1u << prim; RTS_MISS(RM_PRIM); }
     int n = dw ? dw->count : di->count; if (n < 3) { g_rts.miss[RM_SMALL]++; g_rts.n_empty++; return 0; }   // 不足 3 个顶点的三角绘制什么也不画：不算没进（不挡清图） | a triangle draw with fewer than 3 vertices draws nothing: not counted as uncovered (does not block the clear)
@@ -757,7 +780,7 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
         int k = 0; for (; k < g_rts.nkeep; k++) if (g_rts.keep[k].tag == tag) break;
         if (k == g_rts.nkeep) { if (g_rts.nkeep < RTS_KEEP) g_rts.nkeep++; else { k = 0; for (int j = 1; j < RTS_KEEP; j++) if (g_rts.keep[j].last < g_rts.keep[k].last) k = j; } }
         g_rts.keep[k].tag = tag; g_rts.keep[k].m = m; g_rts.keep[k].d = *d; g_rts.keep[k].last = g_rts.keep[k].seen = f; }
-    if (shadow && g_rts.cur_smap < 0) {   // 进了 TLAS 但阴影通道没登记（没挂深度 / 登记满 / 没经 rp_begin_ex）：这张图清不回去，按通道的原因记、本帧照原版（审计分支 d42c8ee） | in the TLAS but the shadow pass was not registered (no depth / table full / not through rp_begin_ex): that map cannot be restored; counted under the pass's reason, the frame stays original (audit branch d42c8ee)
+    if (shadow && mi < 0) {   // 进了 TLAS 但阴影通道没登记（没挂深度 / 登记满 / 没经 rp_begin_ex）：这张图清不回去，按通道的原因记、本帧照原版（审计分支 d42c8ee） | in the TLAS but the shadow pass was not registered (no depth / table full / not through rp_begin_ex): that map cannot be restored; counted under the pass's reason, the frame stays original (audit branch d42c8ee)
         g_rts.nuncov++; g_rts.n_orig_draws += g_rts.rt_frame; g_rts.miss[g_rts.pass_why]++; if (g_rts.rt_frame) { g_rts.n_unc[g_rts.pass_why]++; g_rts.f_unc[g_rts.pass_why]++; } }
     else if (shadow) g_rts.n_skipped_draws++; else g_rts.nprepass++;
     return r;
@@ -838,17 +861,17 @@ static uint64_t rts_plidx_gpu(void) { id<MTLBuffer> b = rts_plidx_buf(); return 
 // Per map (device 3fc0f41 / d42c8ee: the 3rd / 4th 256x256 map is first attached with a load and not cleared this frame, content the game keeps across frames, and whole frames fell back for about 2000 frames after entering the game):
 // a map cleared this frame (clearing pass / ClearTexture) and drawn can be cleared back to the game's own fully-lit value; a map not cleared this frame is left as it is - clearing it would destroy what the game keeps -
 // its shadows still come from the original map and the _rt variants take the darker of mask and original sample, so both are right. Returns how many maps can be cleared; kept maps are described in why (log / unit test RTS_WHY)
-static int rts_maps_kept(void) { int k = 0; for (int i = 0; i < g_rts.nsmap; i++) k += g_rts.smap[i].used && !g_rts.smap[i].cleared; return k; }
+static int rts_maps_kept(void) { int k = 0; for (int i = 0; i < g_rts.nsmap; i++) k += g_rts.smap[i].used && g_rts.smap[i].cleared != 1; return k; }   // cleared：1 本帧清过、0 以读入开、2 画了但本帧通道没开 | cleared: 1 cleared this frame, 0 opened with a load, 2 drawn but no pass opened this frame
 static int rts_maps_restorable(void) {
-    int any = 0, kept = -1; for (int i = 0; i < g_rts.nsmap; i++) if (g_rts.smap[i].used) { if (g_rts.smap[i].cleared) any++; else if (kept < 0) kept = i; }
-    if (kept >= 0) snprintf(g_rts.why, sizeof g_rts.why, "阴影图第 %d / %d 张 %lux%lu 第 %lu 级第 %lu 层本帧第一次挂上是读入、本帧没清过（游戏跨帧保留的内容，照原样留着%s）", kept + 1, g_rts.nsmap,
-                          (unsigned long)g_rts.smap[kept].t.width, (unsigned long)g_rts.smap[kept].t.height, (unsigned long)g_rts.smap[kept].level, (unsigned long)g_rts.smap[kept].slice, any ? "，其余清回全亮" : "");
+    int any = 0, kept = -1; for (int i = 0; i < g_rts.nsmap; i++) if (g_rts.smap[i].used) { if (g_rts.smap[i].cleared == 1) any++; else if (kept < 0) kept = i; }
+    if (kept >= 0) snprintf(g_rts.why, sizeof g_rts.why, "阴影图第 %d / %d 张 %lux%lu 第 %lu 级第 %lu 层%s（游戏跨帧保留的内容，照原样留着%s）", kept + 1, g_rts.nsmap,
+                          (unsigned long)g_rts.smap[kept].t.width, (unsigned long)g_rts.smap[kept].t.height, (unsigned long)g_rts.smap[kept].level, (unsigned long)g_rts.smap[kept].slice, g_rts.smap[kept].cleared == 2 ? "本帧画过、通道却没开过" : "本帧第一次挂上是读入、本帧没清过", any ? "，其余清回全亮" : "");
     else if (!any) snprintf(g_rts.why, sizeof g_rts.why, "本帧没登记到画过的阴影图（登记 %d 张）", g_rts.nsmap);
     return any;
 }
 static int rts_clear_maps(void) {   // 光追成功：主通道前把本帧画过的阴影图清回全亮（原版阴影由遮罩接替） | Ray tracing succeeded: clear the shadow maps drawn this frame back to fully lit before the main pass (the mask takes over)
     int n = 0;
-    for (int i = 0; i < g_rts.nsmap; i++) { typeof(g_rts.smap[0]) *e = &g_rts.smap[i]; if (!e->used || !e->cleared) continue;   // 本帧没清过的（跨帧保留）照原样留着 | maps not cleared this frame (kept across frames) stay as they are
+    for (int i = 0; i < g_rts.nsmap; i++) { typeof(g_rts.smap[0]) *e = &g_rts.smap[i]; if (!e->used || e->cleared != 1) continue;   // 本帧没清过的（跨帧保留）照原样留着 | maps not cleared this frame (kept across frames) stay as they are
         RPD *rp = [RPD new]; rp.depthAttachment.texture = e->t; rp.depthAttachment.level = e->level; rp.depthAttachment.slice = e->slice;
         rp.depthAttachment.loadAction = MTLLoadActionClear; rp.depthAttachment.clearDepth = e->cd; rp.depthAttachment.storeAction = MTLStoreActionStore;
         if (e->t.pixelFormat == MTLPixelFormatDepth32Float_Stencil8) { rp.stencilAttachment.texture = e->t; rp.stencilAttachment.level = e->level; rp.stencilAttachment.slice = e->slice; rp.stencilAttachment.loadAction = MTLLoadActionLoad; rp.stencilAttachment.storeAction = MTLStoreActionStore; }
@@ -1101,6 +1124,8 @@ static void rts_build_and_trace(id<MTLTexture> depth) {
     #undef RTS_END
     g_rts.n_traced++;
     // 6. 阴影图清回全亮：太阳遮罩算了、本帧每次阴影绘制都在 TLAS 里、阴影图都能清回原值（调试叠加还要合成做得成） | 6. Clear the shadow maps back to fully lit: sun mask traced, every shadow draw of the frame in the TLAS, every map restorable (and, for the debug overlay, compositing possible)
+    // 画过、本帧却一直没开过通道的阴影图（没经 rp_begin_ex / ClearTexture）：游戏这张图的内容不归我们管，按审计分支 d42c8ee 记「通道没登记」、本帧照原版 | maps drawn but never opened by a pass this frame (neither rp_begin_ex nor ClearTexture): their content is not ours to manage; as in the audit branch's d42c8ee, counted as "pass not registered" and the frame stays original
+    for (int i = 0; i < g_rts.nsmap; i++) if (g_rts.smap[i].used && g_rts.smap[i].cleared == 2) { g_rts.nuncov++; g_rts.miss[RM_PASS]++; if (g_rts.rt_frame) { g_rts.n_unc[RM_PASS]++; g_rts.f_unc[RM_PASS]++; } g_rts.smap[i].used = 0; }
     if (g_rts.mask_done && !g_rts.nuncov && rts_maps_restorable() && (!g_rts.dbg || (g_rts.main_hdr && g_rts.main_hdr.width == depth.width && g_rts.main_hdr.height == depth.height && rts_overlay_setup(g_rts.main_hdr.pixelFormat)))) {
         if (g_rts.show) { g_rts.clear_tried = 1; g_rts.map_cleared = rts_clear_maps();
             int kept = rts_maps_kept(); if (kept && g_rts.map_cleared) { g_rts.n_kept_frames++; if (g_rts.n_kept_frames <= 8 || g_rts.n_kept_frames % 600 == 0) MLOG("光追阴影：帧 %llu 清回全亮 %d 张、跨帧保留 %d 张（%s；第 %llu 帧）", (unsigned long long)g_rts.frame, g_rts.map_cleared, kept, g_rts.why, (unsigned long long)g_rts.n_kept_frames); } }
