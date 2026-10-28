@@ -17,7 +17,7 @@ int main(void) {
     assert(has(o, "/files/save/<character>/<character>.d2s") && has(o, "<character> said hi") && has(o, "Hannah stays") && has(o, "/save.test.work/<character>/ <character>")); free(o);
     o = scrub("/save/Settings/x /save/ModernSharedStash1/y", NULL, 0); assert(has(o, "/save/Settings/x") && has(o, "ModernSharedStash1")); free(o);
     { const char *kn[] = { "Zed" }; o = scrub("hero Zed logged; Zedd not", kn, 1); assert(has(o, "hero <character> logged; Zedd not")); free(o); }
-    o = scrub("home /Users/augustwang/x mail someone.x@example.com id 12345678-1234-1234-1234-123456789abc dev 0123ABCD-0123456789ABCDEF ok 0123ABCD-0123456789ABCDEF1 keep deadbeef-cafe", NULL, 0);
+    o = scrub("home /Users/someone/x mail someone.x@example.com id 12345678-1234-1234-1234-123456789abc dev 0123ABCD-0123456789ABCDEF ok 0123ABCD-0123456789ABCDEF1 keep deadbeef-cafe", NULL, 0);
     assert(has(o, "home <redacted>/x mail <redacted> id <redacted> dev <redacted> ok 0123ABCD-0123456789ABCDEF1 keep deadbeef-cafe")); free(o);
     o = scrub("屏幕：My Monitor 27，x 屏幕 2622x1206，y 屏幕 Living Room，z", NULL, 0);
     assert(has(o, "屏幕：<display>，x 屏幕 2622x1206，y 屏幕 <display>，z")); free(o);
