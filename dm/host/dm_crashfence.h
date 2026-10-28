@@ -11,4 +11,5 @@ void dm_crashfence_resume(void);            // iOS 回前台：重写标记（�
 int dm_crashfence_notice_take(void);        // 取一次：1 = 本次启动关过实验性功能，该提示玩家 | take once: 1 = this launch turned off experimental features and the player should be told
 void dm_crashfence_main_menu(void);         // 主菜单出来时调（diag.c 的界面消息）：要提示就挂上游戏内提示框 | called when the main menu appears (UI message in diag.c): queue the in-game notice box if needed
 void dm_crashfence_on_uimsg(const char *cat, const char *act, const char *arg);   // 界面消息（diag.c）：提示框「确定」 | UI messages (diag.c): the notice box's OK
+const char *dm_crashfence_test_env(void);   // 本局是不是测试局：认出的那个变量名（只进日志），不是返回 NULL；测试开关据此只在测试局读 | is this a test run: the variable name that identified it (log only), NULL if not; test switches use it to be read only in test runs
 void dm_crashfence_pump(void);              // 取手柄处每帧调（hle_hid.c）：写字、摆位置、接管手柄 A、收起 | every frame at the controller poll (hle_hid.c): text, placement, controller A, dismissal

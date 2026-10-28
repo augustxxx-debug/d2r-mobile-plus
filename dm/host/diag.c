@@ -2,6 +2,7 @@
 // Diagnostics: probes DM_PROBE, UI message bus DM_UIMSG, main-thread sampling DM_SAMPLE. Split out of crash.c (crash.c only handles signals).
 #include "dm_prof.h"
 #include "dm.h"
+#include "dm_crashfence.h"
 #include "dm_uctx.h"
 #include "dm_hud.h"
 #include "dm_cursor.h"
@@ -1814,8 +1815,11 @@ static void soak_install(void) {
 // 触发 = 消息串「类别:动作:参数」的子串（与 DM_KEYS 同规则，如 OpenPanel:CharacterCreatePanel、UnloadPanel:LoadScreenPanel）；每条只触发一次
 // ---------- DM_NVN_SHOT_UI=<trigger>+<frame offset>:<path>[,...]: take a screenshot on the Nth frame after a UI message hits (used by the screenshot gate) ----------
 // Trigger = a substring of the message string "category:action:argument" (same rule as DM_KEYS, e.g. OpenPanel:CharacterCreatePanel, UnloadPanel:LoadScreenPanel); each one triggers only once
+// DM_GPU_CAPTURE=<触发>+<帧偏移>:<路径.gputrace>[,…]（图形验收链用）：同一张表、同一套前置（读取画面撤了才算），到期改成 GPU 抓一帧（nvn_mtl.m dm_gfx_capture_at）；只在测试局读
+// DM_GPU_CAPTURE=<trigger>+<frame offset>:<path.gputrace>[,...] (for the graphics acceptance chain): the same table and the same precondition (only once the loading screen is down), but at the due frame one GPU frame is captured (nvn_mtl.m dm_gfx_capture_at); read in test runs only
 #define SHOTUI_MAX 8
-static struct { char trig[96], path[512]; long off; int done; } g_shotui[SHOTUI_MAX]; static int g_nshotui;
+static struct { char trig[96], path[512]; long off; int done, cap; } g_shotui[SHOTUI_MAX]; static int g_nshotui;
+static void shotui_fire(int i) { if (g_shotui[i].cap) dm_gfx_capture_at(g_shotui[i].off, g_shotui[i].path); else dm_gfx_shot_at(g_shotui[i].off, g_shotui[i].path); }
 static pthread_mutex_t g_shotgate_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_loadscreen_open, g_loadscreen_unload_pending;   // g_loadscreen_seen 的定义在上面（长帧日志也读它） | g_loadscreen_seen is defined above (the long-frame log reads it too)
 static unsigned g_loadscreen_generation;
@@ -1907,7 +1911,7 @@ static void *shotui_wait_loadscreen(void *arg) {
         if (closed && now_ns() >= not_before) {
             LOG("SHOT 前置：读取画面已撤 拍 %s 等待 %llu ms", a->label, (unsigned long long)((now_ns() - start) / 1000000));
             { module_t *mm = main_mod(); if (mm) LOG("SHOT 时原版手柄光标 (%d,%d)（0,0 = 该界面没有自由光标，走焦点导航）", *(int32_t *)(mm->base + 0x2d128f8), *(int32_t *)(mm->base + 0x2d128fc)); }
-            dm_gfx_shot_at(g_shotui[a->index].off, g_shotui[a->index].path); free(a); return NULL;
+            shotui_fire(a->index); free(a); return NULL;
         }
         if (now_ns() - start >= 15ull * 1000000000ull) { LOG("读取画面未撤（等待 15 秒）"); free(a); return NULL; }
         usleep(10000);
@@ -1916,8 +1920,8 @@ static void *shotui_wait_loadscreen(void *arg) {
 static void shotui_on_uimsg(const char *cat, const char *act, const char *arg) {
     char m[256]; snprintf(m, sizeof m, "%s:%s:%s", cat, act, arg);
     for (int i = 0; i < g_nshotui; i++) if (!g_shotui[i].done && strstr(m, g_shotui[i].trig)) {
-        g_shotui[i].done = 1; LOG("DM_NVN_SHOT_UI：「%s」命中 → 第 +%ld 帧截图 %s", m, g_shotui[i].off, g_shotui[i].path);
-        if (!shotui_wait_needed(g_shotui[i].trig)) dm_gfx_shot_at(g_shotui[i].off, g_shotui[i].path);
+        g_shotui[i].done = 1; LOG("%s：「%s」命中 → 第 +%ld 帧%s %s", g_shotui[i].cap ? "DM_GPU_CAPTURE" : "DM_NVN_SHOT_UI", m, g_shotui[i].off, g_shotui[i].cap ? "起 GPU 抓一帧" : "截图", g_shotui[i].path);
+        if (!shotui_wait_needed(g_shotui[i].trig)) shotui_fire(i);
         else {
             struct shotui_wait_arg *w = calloc(1, sizeof *w); w->index = i; strlcpy(w->label, g_shotui[i].trig, sizeof w->label);
             pthread_t th; if (!pthread_create(&th, NULL, shotui_wait_loadscreen, w)) pthread_detach(th); else free(w);
@@ -1925,7 +1929,7 @@ static void shotui_on_uimsg(const char *cat, const char *act, const char *arg) {
     }
 }
 static void shotui_cancel_all(void) {
-    for (int i = 0; i < g_nshotui; i++) if (!g_shotui[i].done) { g_shotui[i].done = 1; LOG("DM_NVN_SHOT_UI：坐标核对不一致，撤掉截图 %s", g_shotui[i].path); }
+    for (int i = 0; i < g_nshotui; i++) if (!g_shotui[i].done) { g_shotui[i].done = 1; LOG("%s：坐标核对不一致，撤掉%s %s", g_shotui[i].cap ? "DM_GPU_CAPTURE" : "DM_NVN_SHOT_UI", g_shotui[i].cap ? "抓帧" : "截图", g_shotui[i].path); }
 }
 static void shotui_install(void) {
     // 读取画面状态始终跟踪（截图前置与触点起局共用这一个来源，dm_loadscreen_down）；测试开关 DM_TEST_LOADSCREEN_DELAY_MS 推迟它的「已撤」
@@ -1935,17 +1939,23 @@ static void shotui_install(void) {
     uimsg_subscribe(loadscreen_on_uimsg);
     { extern uint32_t (*dm_thread_tick_fn)(void); dm_thread_tick_fn = dm_cur_tick; }   // 线程建 / 退记拍号（hle_thread.c 现场导出用） | Thread creation / exit records the tick number (used by the hle_thread.c state dump)
     { extern int (*g_nvn_loadscreen_up)(void); g_nvn_loadscreen_up = dm_loadscreen_up; }   // 出图处「进局读取画面等管线预热」用 | Used at present for "the run-entry loading screen waits for pipeline warm-up"
-    const char *e = getenv("DM_NVN_SHOT_UI"); if (!e) return;
-    char buf[4096]; strlcpy(buf, e, sizeof buf);
-    for (char *sv, *tok = strtok_r(buf, ",", &sv); tok; tok = strtok_r(NULL, ",", &sv)) {
-        char *plus = strchr(tok, '+'), *colon = plus ? strchr(plus, ':') : NULL;
-        if (!plus || !colon || plus == tok || !colon[1]) die("DM_NVN_SHOT_UI 项「%s」格式：<触发>+<帧偏移>:<路径>", tok);
-        if (g_nshotui == SHOTUI_MAX) die("DM_NVN_SHOT_UI 超过 %d 项", SHOTUI_MAX);
-        typeof(g_shotui[0]) *x = &g_shotui[g_nshotui++];
-        snprintf(x->trig, sizeof x->trig, "%.*s", (int)(plus - tok), tok); x->off = atol(plus + 1); strlcpy(x->path, colon + 1, sizeof x->path);
+    // DM_GPU_CAPTURE 只在测试局读（dm_crashfence_test_env：带 DM_TEST_* / DM_KEYS / DM_SAVE_TEST 等启动）；产品局连环境变量都不看 | DM_GPU_CAPTURE is read only in test runs (dm_crashfence_test_env: launched with DM_TEST_* / DM_KEYS / DM_SAVE_TEST and the like); a product run does not even look at the variable
+    const char *names[2] = {"DM_NVN_SHOT_UI", "DM_GPU_CAPTURE"}; int nn[2] = {0, 0};
+    for (int cap = 0; cap < 2; cap++) {
+        const char *e = cap && !dm_crashfence_test_env() ? NULL : getenv(names[cap]); if (!e) continue;
+        char buf[4096]; strlcpy(buf, e, sizeof buf);
+        for (char *sv, *tok = strtok_r(buf, ",", &sv); tok; tok = strtok_r(NULL, ",", &sv)) {
+            char *plus = strchr(tok, '+'), *colon = plus ? strchr(plus, ':') : NULL;
+            if (!plus || !colon || plus == tok || !colon[1]) die("%s 项「%s」格式：<触发>+<帧偏移>:<路径>", names[cap], tok);
+            if (g_nshotui == SHOTUI_MAX) die("DM_NVN_SHOT_UI 与 DM_GPU_CAPTURE 合计超过 %d 项", SHOTUI_MAX);
+            typeof(g_shotui[0]) *x = &g_shotui[g_nshotui++]; x->cap = cap; nn[cap]++;
+            snprintf(x->trig, sizeof x->trig, "%.*s", (int)(plus - tok), tok); x->off = atol(plus + 1); strlcpy(x->path, colon + 1, sizeof x->path);
+        }
     }
+    if (!g_nshotui) return;
     uimsg_subscribe(shotui_on_uimsg);
-    LOG("DM_NVN_SHOT_UI：%d 项", g_nshotui);
+    if (nn[0]) LOG("DM_NVN_SHOT_UI：%d 项", nn[0]);
+    if (nn[1]) LOG("DM_GPU_CAPTURE：%d 项（测试局）", nn[1]);
 }
 // 资源计数的「读取画面撤下」触发：与每 250 拍取样同条件（挂了拍观测门才订阅，产品无回放时不加 UI 消息回调）
 // The "loading screen taken down" trigger for resource counting: same condition as the every-250-ticks sampling (subscribed only when the tick observation gate is attached; the product without replay adds no UI message callback)

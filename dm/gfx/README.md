@@ -158,7 +158,8 @@ Logging and capture:
 | `DM_NVN_SHOT_OUT=WxH` | Makes the screenshot above capture the picture after upscaling to this resolution instead |
 | `DM_NVN_TEXDUMP=frame:path` | Saves each color render target used in that frame as an image |
 | `DM_NVN_PASSDUMP=frame` or `start-end` | Writes each render pass's attachments, samples and presentation for these frames to standard error entry by entry, for analysis by `tools/tbdr_*.py`; additionally setting `DM_NVN_PASSDUMP_ALL` logs every draw |
-| `DM_NVN_PASSGPU=file` | Per-pass GPU time (requires device support for counter sampling at stage boundaries) |
+| `DM_NVN_PASSGPU=file` | Per-pass GPU time (requires device support for counter sampling at stage boundaries); the last column `rt` = 1 marks passes the ray-traced shadow module opens itself (compute, map clears, debug overlay, AO) |
+| `DM_GPU_CAPTURE=<trigger>+<frame offset>:<path.gputrace>[,...]` | Read in test runs only: after a UI message hits (same rule as `DM_NVN_SHOT_UI`), captures one GPU frame at the Nth frame into a `.gputrace`, logging "GPU 抓帧：帧 N → path" or why it failed. The native Mac host needs `METAL_CAPTURE_ENABLED=1`; on iOS only dev packages from `run.sh build` carry `MetalCaptureEnabled`, release packages do not. Ray-traced shadows are switched off and fully released 30 presents before the capture (the Metal capture layer crashes on ray-tracing objects) and come back afterwards; the file holds the whole device's memory (about 3.3 GB at the camp) |
 | `DM_NVN_PROF=1` | Wraps the implemented NVN functions in a timing wrapper and collects the time each function takes during recording |
 
 Comparison and testing:

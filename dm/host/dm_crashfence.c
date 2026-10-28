@@ -63,6 +63,7 @@ static const char *test_env(void) {
     }
     return NULL;
 }
+const char *dm_crashfence_test_env(void) { return test_env(); }
 static int marker_write(void) {   // 先写临时文件再换名：写到一半被杀不会留下半个标记 | write a temporary file first, then rename: being killed halfway leaves no half marker
     char p[1100], t[1120]; if (!marker_path(p, sizeof p)) return 0;
     g_sig_len = snprintf(g_sig_body, sizeof g_sig_body, "streak=%d\n%shist=%s\n", g_streak, g_test ? "test=1\n" : "", g_hist); snprintf(g_sig_path, sizeof g_sig_path, "%s", p);

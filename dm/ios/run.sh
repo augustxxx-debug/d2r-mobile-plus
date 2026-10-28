@@ -61,8 +61,12 @@ if [ "$1" = build ]; then
   if [ -z "$DF" ]; then SDIRTY=clean; else SDIRTY="$(echo "$DF" | wc -l | tr -d ' '):$(git diff HEAD 2>/dev/null | shasum -a 256 | cut -c1-12):$(echo "$DF" | paste -sd, -)"; fi   # 文件列表记仓库相对路径（五审 Q5-04：只记文件名分不清是不是那三份元数据） | the list holds repo-relative paths (fifth review Q5-04: basenames alone cannot tell the three metadata files apart)
   CHAIN=$(sed -n 's/^#define DMSH_CHAIN "\(.*\)"/\1/p' ../gfx/nvn/dmsh_chain.h)
   FONTFP=none; [ -n "${DM_UI_FONT:-}" ] && [ -f "$DM_UI_FONT" ] && FONTFP=$(shasum -a 256 "$DM_UI_FONT" | cut -c1-12)
-  BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default}"
+  # GPU 抓帧（DM_GPU_CAPTURE，图形验收链）：只有 run.sh 自己出的 dev 包在 Info.plist 带 MetalCaptureEnabled；DM_GEN_ONLY 之后由 testflight / adhoc 归档的正式包不带（project.yml 的「Metal 抓帧开关」构建步骤按 DM_METAL_CAPTURE 写 / 删）
+  # GPU capture (DM_GPU_CAPTURE, graphics acceptance chain): only the dev package run.sh builds itself carries MetalCaptureEnabled in Info.plist; release packages archived by testflight / adhoc after DM_GEN_ONLY do not (the "Metal capture switch" build step in project.yml writes / removes it by DM_METAL_CAPTURE)
+  MCAP=NO; [ "${DM_GEN_ONLY:-}" = 1 ] || MCAP=YES
+  BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default};capture=${MCAP}"
   printf 'DM_SOURCE_COMMIT = %s\nDM_SOURCE_DIRTY = %s\nDM_BUILD_INPUTS = %s\n' "$SC" "$SDIRTY" "$BINPUTS" >> Gen/dm.xcconfig
+  printf 'DM_METAL_CAPTURE = %s\n' "$MCAP" >> Gen/dm.xcconfig
   t "产物身份：源码 ${SC}，工作区 ${SDIRTY}，构建输入 ${BINPUTS}"
   # 版本号（dm/tools/version.sh，与 Mac 包同一来源）：版本 = 最高的 vX.Y.Z 标签，构建号 = 沿提交历史递增的序号（通常就是提交时间戳），显示版本 =「1.0.0+28 · b346e40」（有未提交代码改动加 *）。
   # 也写在项目层 Gen/dm.xcconfig：project.yml 的 target 层不许再给缺省值（会盖住这里）；出包脚本在命令行传 DM_BUILD_NUMBER 仍然优先。

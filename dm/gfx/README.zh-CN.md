@@ -158,7 +158,8 @@ make -C dm/gfx/metal run        # 离屏示例自测，见 metal/README.zh-CN.md
 | `DM_NVN_SHOT_OUT=宽x高` | 上面的截图改截放大到该分辨率后的画面 |
 | `DM_NVN_TEXDUMP=帧号:路径` | 把该帧用过的颜色渲染目标逐张存图 |
 | `DM_NVN_PASSDUMP=帧号` 或 `起-止` | 把这些帧每个渲染通道的附件、采样、出图逐条写到标准错误，供 `tools/tbdr_*.py` 分析；再设 `DM_NVN_PASSDUMP_ALL` 则每次绘制都记 |
-| `DM_NVN_PASSGPU=文件` | 逐通道 GPU 时间（需要设备支持阶段边界的计数采样） |
+| `DM_NVN_PASSGPU=文件` | 逐通道 GPU 时间（需要设备支持阶段边界的计数采样）；末列 `rt` = 1 是光追阴影模块自己开的通道（计算、清图、调试叠加、AO） |
+| `DM_GPU_CAPTURE=<触发>+<帧偏移>:<路径.gputrace>[,…]` | 只在测试局读：界面消息命中（规则同 `DM_NVN_SHOT_UI`）后第 N 帧 GPU 抓一帧，存成 `.gputrace`，日志一行「GPU 抓帧：帧 N → 路径」或失败原因。Mac 原生宿主要带 `METAL_CAPTURE_ENABLED=1`；iOS 只有 `run.sh build` 出的 dev 包带 `MetalCaptureEnabled`，正式包不带。抓前 30 次出图起光追阴影关掉并整个释放（Metal 抓帧层碰到光追对象会崩），抓完再开；文件含整台设备的内存（营地约 3.3 GB） |
 | `DM_NVN_PROF=1` | 给已实现的 NVN 函数套计时包装，统计录制期各函数耗时 |
 
 对照与测试：

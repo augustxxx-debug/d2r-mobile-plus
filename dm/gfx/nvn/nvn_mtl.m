@@ -1700,7 +1700,7 @@ static int pg_on(void) {
     { uint64_t fq = [g_dev queryTimestampFrequency]; g_pg_ns_tick = fq ? 1e9 / (double)fq : 1; }
 #endif
     if (!(g_pg_f = fopen(e, "w"))) { MLOG("【红】DM_NVN_PASSGPU 打不开 %s", e); return 0; }
-    fprintf(g_pg_f, "frame\tidx\tkind\tgpu_ms\tinc_ms\tw\th\tfmt0\tdfmt\tload\tdraws\tt0_ns\tt1_ns\tpass\n");
+    fprintf(g_pg_f, "frame\tidx\tkind\tgpu_ms\tinc_ms\tw\th\tfmt0\tdfmt\tload\tdraws\tt0_ns\tt1_ns\tpass\trt\n");   // rt：光追阴影模块自己开的通道（计算 / 清图 / 叠加 / AO），1 = 是 | rt: a pass the ray-traced shadow module opened itself (compute / map clear / overlay / AO), 1 = yes
     MLOG("[passgpu] 逐通道 GPU 计时 → %s", e);
     return g_pg = 1;
 }
@@ -1814,8 +1814,8 @@ static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回�
             double ms = (b - a) / 1e6;   // 时间戳与 CPU 同为 ns（本机 sampleTimestamps 实测 1:1） | Timestamps are in ns, same as the CPU (measured 1:1 via sampleTimestamps on this machine)
             double inc = b > prev_end ? (b - (a > prev_end ? a : prev_end)) / 1e6 : 0;
             if (b > prev_end) prev_end = b;
-            fprintf(g_pg_f, "%llu\t%d\t%c\t%.4f\t%.4f\t%d\t%d\t%u\t%u\t%s\t%d\t%llu\t%llu\t%llu\n", (unsigned long long)p->frame, p->idx, p->kind ? 'C' : 'R', ms, inc,
-                    p->w, p->h, p->cfmt0, p->dfmt, p->load, p->draws, (unsigned long long)a, (unsigned long long)b, (unsigned long long)p->pass);
+            fprintf(g_pg_f, "%llu\t%d\t%c\t%.4f\t%.4f\t%d\t%d\t%u\t%u\t%s\t%d\t%llu\t%llu\t%llu\t%d\n", (unsigned long long)p->frame, p->idx, p->kind ? 'C' : 'R', ms, inc,
+                    p->w, p->h, p->cfmt0, p->dfmt, p->load, p->draws, (unsigned long long)a, (unsigned long long)b, (unsigned long long)p->pass, (int)p->rt);
             if (p->idx < 256 && p->frame > 300) { pg_stat *st = &g_pg_st[p->idx]; st->sum += inc; st->n++; st->last = inc; st->meta = *p; }
             if (p->rt) { g_rts_gpu_sum += ms; g_rts_gpu_n++; }
             if (p->frame >= g_pg_rep_frame + 300 && p->frame > 300) {   // 每 300 帧报一次前五（第 300 帧起累计） | Report the top five every 300 frames (accumulated from frame 300)
@@ -2802,6 +2802,7 @@ static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvS
 // Pipeline key: current state S + pass formats (normal pass; a merged pass additionally carries lmap / specialized function, filled in by pso_get)
 static int g_draw_reentry;   // draw 正在为同一次绘制重来（资源版本变了）：nvn_rtshadow.inc 复用上一答案 | draw is retrying the same draw (resource version changed): nvn_rtshadow.inc reuses the previous answer
 static uint8_t g_pso_noraster;   // 本次绘制关光栅化（nvn_rtshadow.inc 的蒙皮位置导出） | this draw rasterizes nothing (skinned position export in nvn_rtshadow.inc)
+static _Atomic int g_gcap_on;   // GPU 抓帧前后（出图线程写、渲染线程读，原子）（DM_GPU_CAPTURE，gcap_present 置 / 清）：光追阴影关掉、整个释放——Metal 抓帧层碰到光追对象就崩（Mac 实测：抓光追帧崩在 GTMTLSMCommandEncoder_processTraceFunc，判定库关了也一样；只暂停那一帧，存文件时又崩在 prepareForSerialization） | around a GPU capture (DM_GPU_CAPTURE, set / cleared by gcap_present): ray-traced shadows are switched off and fully released - the Metal capture layer crashes on ray-tracing objects (measured on the Mac: capturing a ray-traced frame crashes in GTMTLSMCommandEncoder_processTraceFunc, also with the judge library off; pausing just that frame crashes in prepareForSerialization when saving)
 static uint8_t g_rts_nowrite;    // 本次绘制不写深度（nvn_rtshadow.inc 局部回退：镂空遮挡体补画原版只为抓片元参数块，影子由光追接替） | this draw writes no depth (nvn_rtshadow.inc partial fallback: an alpha-tested occluder's original re-encode only captures the fragment argument block, ray tracing casts its shadow)
 static void pso_key_fill(pso_key *k, NvShader *vs, NvShader *fs, const uint32_t cfmt[8], uint32_t dfmt, uint32_t sfmt, uint32_t samples, int lmap) {
     memset(k, 0, sizeof *k);
@@ -5897,6 +5898,49 @@ void dm_gfx_shot_at(long k, const char *path) {
     else MLOG("【红】截图请求超过 %d 个，丢弃 %s", SHOTQ_MAX, path);
     pthread_mutex_unlock(&g_shotq_mu);
 }
+// GPU 抓帧（DM_GPU_CAPTURE，diag.c 按界面消息触发；图形验收链用）：dm_gfx_capture_at(k, 路径) = 当前出图帧之后第 k 次出图时开始抓（MTLCaptureManager，
+// 目的地 .gputrace 文件、抓整台设备），下一次出图时停，正好一帧的命令；开始前 GCAP_RT_LEAD 次出图起光追阴影关掉并整个释放（Metal 抓帧层碰到光追对象会崩），抓完再开；日志一行「GPU 抓帧：帧 N → 路径」或失败原因。没有请求时 gcap_present 第一句就返回：0 分配、0 副作用
+// Mac 原生宿主要带 METAL_CAPTURE_ENABLED=1 启动；iOS 只有 dev 包（run.sh build）Info.plist 带 MetalCaptureEnabled，正式包没有，supportsDestination 为否、只记原因
+// GPU capture (DM_GPU_CAPTURE, triggered by a UI message in diag.c; for the graphics acceptance chain): dm_gfx_capture_at(k, path) = start capturing at the kth present after the current one (MTLCaptureManager,
+// destination a .gputrace document, the whole device), stop at the next present: exactly one frame of commands; one log line "GPU 抓帧：帧 N → path" or the reason it failed. Without a request gcap_present returns at its first statement: no allocation, no side effect
+// The native Mac host must be launched with METAL_CAPTURE_ENABLED=1; on iOS only dev packages (run.sh build) carry MetalCaptureEnabled in Info.plist, release packages do not, so supportsDestination is false and only the reason is logged
+#define GCAP_MAX 4
+#define GCAP_RT_LEAD 30   // 提前这么多次出图关掉光追：它的对象等在途提交做完才真放（defer），抓帧开始时设备上已没有 | ray tracing goes off this many presents ahead: its objects are only really released after in-flight submissions (defer), so none is left on the device when capturing starts
+static struct { uint64_t frame, off_at; char path[1024]; int state; } g_gcap[GCAP_MAX]; static int g_ngcap;   // state 0 = 等开始、1 = 正在抓（frame = 开始时的出图次数）；g_shotq_mu 保护 | state 0 = waiting to start, 1 = capturing (frame = present count at the start); guarded by g_shotq_mu
+void dm_gfx_capture_at(long k, const char *path) {
+    pthread_mutex_lock(&g_shotq_mu);
+    if (g_ngcap < GCAP_MAX) { g_gcap[g_ngcap].frame = mtl_present_count() + (uint64_t)(k > 0 ? k : 0); g_gcap[g_ngcap].state = 0; g_gcap[g_ngcap].off_at = 0; strlcpy(g_gcap[g_ngcap].path, path, sizeof g_gcap[0].path); g_ngcap++; }
+    else MLOG("【红】GPU 抓帧：请求超过 %d 个，丢弃 %s", GCAP_MAX, path);
+    pthread_mutex_unlock(&g_shotq_mu);
+}
+static void gcap_present(void) {   // 出图线程每次出图后调 | called by the present thread after every present
+    if (!g_ngcap) return;
+    pthread_mutex_lock(&g_shotq_mu);
+    MTLCaptureManager *cm = [MTLCaptureManager sharedCaptureManager];
+    for (int i = 0; i < g_ngcap;) {
+        typeof(g_gcap[0]) *c = &g_gcap[i]; int drop = 0;
+        if (c->state == 0 && !c->off_at && g_present_n + GCAP_RT_LEAD >= c->frame) { c->off_at = g_present_n; g_gcap_on = 1; }   // 先关光追 | ray tracing off first
+        if (c->state == 0 && c->off_at && g_present_n >= c->frame && g_present_n >= c->off_at + GCAP_RT_LEAD) {
+            NSString *path = @(c->path); NSError *err = nil;
+            if (cm.isCapturing) { MLOG("【红】GPU 抓帧：帧 %llu 没抓（上一次抓帧还没停）→ %s", (unsigned long long)g_present_n + 1, c->path); drop = 1; }
+            else if (![cm supportsDestination:MTLCaptureDestinationGPUTraceDocument]) { MLOG("【红】GPU 抓帧：帧 %llu 没抓（supportsDestination(.gputrace) 为否：Mac 要带 METAL_CAPTURE_ENABLED=1 启动，iOS 只有 dev 包有 MetalCaptureEnabled）→ %s", (unsigned long long)g_present_n + 1, c->path); drop = 1; }
+            else if ([NSFileManager.defaultManager fileExistsAtPath:path]) { MLOG("【红】GPU 抓帧：帧 %llu 没抓（目标已存在，不覆盖）→ %s", (unsigned long long)g_present_n + 1, c->path); drop = 1; }
+            else {
+                [NSFileManager.defaultManager createDirectoryAtPath:path.stringByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:nil];
+                MTLCaptureDescriptor *d = [MTLCaptureDescriptor new]; d.captureObject = g_dev; d.destination = MTLCaptureDestinationGPUTraceDocument; d.outputURL = [NSURL fileURLWithPath:path];
+                if ([cm startCaptureWithDescriptor:d error:&err]) { c->state = 1; c->frame = g_present_n; g_gcap_on = 1; }
+                else { MLOG("【红】GPU 抓帧：帧 %llu 没抓（startCapture 失败：%s）→ %s", (unsigned long long)g_present_n + 1, err.localizedDescription.UTF8String ?: "?", c->path); drop = 1; }
+            }
+        } else if (c->state == 1 && g_present_n > c->frame) {
+            [cm stopCapture];
+            BOOL ok = [NSFileManager.defaultManager fileExistsAtPath:@(c->path)];
+            MLOG("%sGPU 抓帧：帧 %llu → %s%s", ok ? "" : "【红】", (unsigned long long)c->frame + 1, c->path, ok ? "" : "（停了，但文件没写出来）"); drop = 1;
+        }
+        if (drop) g_gcap[i] = g_gcap[--g_ngcap]; else i++;
+    }
+    { int any = 0; for (int i = 0; i < g_ngcap; i++) any |= g_gcap[i].off_at != 0; if (!any) g_gcap_on = 0; }   // 没有在等 / 在抓的了：光追照常 | nothing waiting or capturing: ray tracing as usual
+    pthread_mutex_unlock(&g_shotq_mu);
+}
 // DM_NVN_SHOT_OUT=宽x高（画质度量用）：出图帧截图改截「经 present_encode 放大到该分辨率」的结果，即玩家在屏幕上看到的画面；screen=0（贴图转储）不受影响
 // DM_NVN_SHOT_OUT=WIDTHxHEIGHT (for picture quality metrics): the present-frame screenshot instead captures the result "upscaled to this resolution by present_encode", i.e. the picture the player sees on screen; screen=0 (texture dump) is unaffected
 static void shot(id<MTLTexture> src, const char *path, int screen, const int crop[4]) {
@@ -6363,6 +6407,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     pthread_mutex_lock(&g_shotq_mu);
     for (int i = 0; i < g_nshotq;) if (g_present_n >= g_shotq[i].frame) { mtl_finish_gpu(); shot(src, g_shotq[i].path, 1, crop); g_shotq[i] = g_shotq[--g_nshotq]; } else i++;
     pthread_mutex_unlock(&g_shotq_mu);
+    gcap_present();   // GPU 抓帧（DM_GPU_CAPTURE）：没有请求时立即返回 | GPU capture (DM_GPU_CAPTURE): returns at once without a request
 
     if (g_burst_left > 0) burst_grab(src);   // 测试：连拍 | test: burst capture
     CAMetalLayer *layer = (__bridge CAMetalLayer *)front_metal_layer();

@@ -15,6 +15,14 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           [ -f "$SRCROOT/Gen/assets/NativeHUD/v4/hud.json" ] && [ -f "$SRCROOT/Sources/dm_touch_native_art.c" ] || python3 "$SRCROOT/tools/gen_assets.py"
+    postCompileScripts:              # Metal 抓帧开关：dev 包（run.sh build，DM_METAL_CAPTURE = YES）在处理好的 Info.plist 里写布尔 MetalCaptureEnabled（DM_GPU_CAPTURE 才能存 .gputrace）；正式包（DM_GEN_ONLY 后归档）删掉；在签名之前 | Metal capture switch: dev packages (run.sh build, DM_METAL_CAPTURE = YES) get the Boolean MetalCaptureEnabled in the processed Info.plist (so DM_GPU_CAPTURE can save .gputrace); release packages (archived after DM_GEN_ONLY) have it removed; before signing
+      - name: Metal 抓帧开关
+        basedOnDependencyAnalysis: false
+        inputFiles:                  # 处理好的 Info.plist 是输入：排在 Info.plist 处理之后 | the processed Info.plist is an input: ordered after Info.plist processing
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        script: |
+          P="$TARGET_BUILD_DIR/$INFOPLIST_PATH"; /usr/libexec/PlistBuddy -c "Delete :MetalCaptureEnabled" "$P" 2>/dev/null || true
+          if [ "${DM_METAL_CAPTURE:-NO}" = YES ]; then /usr/libexec/PlistBuddy -c "Add :MetalCaptureEnabled bool true" "$P"; fi
     sources:
       - Sources
       - Assets.xcassets               # App 图标（1024²、不透明；TestFlight 上传必需） | App icon (1024², opaque; required for TestFlight upload)

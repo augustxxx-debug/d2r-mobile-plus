@@ -116,5 +116,6 @@ void dm_guest_write_prepare(void *addr, size_t len);
 // Graphics lifecycle (hle_nvn.c): on=1 suspends (afterwards submit / present block, and in-flight GPU work is drained before returning), on=0 resumes; called by the iOS front end when entering and leaving the background
 void dm_gfx_suspend(int on);
 void dm_gfx_shot_at(long k, const char *path);
+void dm_gfx_capture_at(long k, const char *path);   // GPU 抓帧（DM_GPU_CAPTURE）：当前出图帧之后第 k 帧出图起抓一帧，存成 .gputrace | GPU capture (DM_GPU_CAPTURE): capture one frame starting at the kth present after the current one, saved as .gputrace
 void dm_shot_written(const char *path, int ok);   // 图形侧截图写盘完成（diag.c：DM_TICK_HOLD=E:SHOT 据此解冻） | The graphics side finished writing a screenshot to disk (diag.c: DM_TICK_HOLD=E:SHOT unfreezes on this)
 void dm_host_shutdown(const char *why);   // 优雅退出（crash.c）：停后台线程、音频、图形清空后 _exit(0)；SIGTERM 与 iOS App 终止回调用   // 图形侧：当前出图帧之后第 k 帧截图（nvn_mtl.m） | Graceful exit (crash.c): stop background threads and audio, drain graphics, then _exit(0); used by SIGTERM and the iOS App termination callback   // graphics side: screenshot of the k-th frame after the current presented frame (nvn_mtl.m)

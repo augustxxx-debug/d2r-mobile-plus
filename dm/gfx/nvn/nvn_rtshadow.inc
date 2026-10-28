@@ -247,9 +247,9 @@ static int rts_on(void) {
         // 前缀与宿主 dm_rt_shadow_setting 的「光追阴影：生效」同一个：钉住时不走宿主那条，分享诊断日志的摘要照样取得到 | same prefix as "光追阴影：生效" in the host dm_rt_shadow_setting: when pinned that path is skipped, and the share-diagnostics summary still finds the line
         if (e) MLOG("光追阴影：生效 %s（测试开关 DM_RT_SHADOW=%s 钉住%s）", atoi(e) && g_rts.gate ? "开" : "关", e, g_rts.gate ? "" : "，机器不可用，仍不生效");
     }
-    int v = !g_rts.gate || g_rts.failed ? 0 : rts_flip(g_rts.on == -2 ? dm_rt_shadow_setting() != 0 : g_rts.on);
+    int v = !g_rts.gate || g_rts.failed || g_gcap_on ? 0 : rts_flip(g_rts.on == -2 ? dm_rt_shadow_setting() != 0 : g_rts.on);   // GPU 抓帧前后关掉（g_gcap_on，见 nvn_mtl.m gcap_present）：Metal 抓帧层碰到光追对象就崩，只能整个释放 | off around a GPU capture (g_gcap_on, see gcap_present in nvn_mtl.m): the Metal capture layer crashes on ray-tracing objects, so everything is released
     if (!v) g_rts.hang_seen = atomic_load(&g_gpu_hang_n);   // 光追关着时的挂起不算光追的 | hangs while ray tracing is off do not count against it
-    if (!v && g_rts.was_on) rts_release_all(g_rts.failed ? "模块失败" : "开关关了");   // 关掉 / 失败：整个缓存等 GPU 在途工作做完后释放（六审 5.1） | off / failed: the whole cache is released once in-flight GPU work is done (sixth review 5.1)
+    if (!v && g_rts.was_on) rts_release_all(g_rts.failed ? "模块失败" : g_gcap_on ? "GPU 抓帧（Metal 抓帧层碰到光追对象会崩，抓完再开）" : "开关关了");   // 关掉 / 失败：整个缓存等 GPU 在途工作做完后释放（六审 5.1） | off / failed: the whole cache is released once in-flight GPU work is done (sixth review 5.1)
     g_rts.was_on = v;
     return v;
 }
@@ -963,15 +963,18 @@ static int rts_maps_restorable(void) {
     else if (!any) snprintf(g_rts.why, sizeof g_rts.why, "本帧没登记到画过的阴影图（登记 %d 张）", g_rts.nsmap);
     return any;
 }
+// 模块自己开的渲染通道（清图、调试叠加、AO 乘到画面）也进逐通道计时（DM_NVN_PASSGPU）：耗时、附件、读入方式都在 passgpu.tsv 里，标成光追的 | render passes the module opens itself (map clears, debug overlay, AO onto the picture) go through the per-pass timer as well (DM_NVN_PASSGPU): cost, attachments and load actions appear in passgpu.tsv, tagged as ray tracing
+static RENC rts_render_begin(RPD *rp, NSUInteger nc) { pg_render(rp, nc); RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; if (en) { pg_tag_rt(); pg_render_begin(en); } else g_pg_open = -1; return en; }
+static void rts_render_end(RENC en, int draws) { pg_render_finish(en); m4_end(en); if (g_pg_open >= 0) { g_pg_pass[g_pg_open].draws += (int)g_stat_draw + draws; g_pg_open = -1; } }   // pg_new 记的是 −g_stat_draw（同 pg_end_render）；这里的绘制不计进 g_stat_draw，另加 | pg_new stores −g_stat_draw (as pg_end_render expects); these draws are not counted in g_stat_draw, so they are added
 static int rts_clear_maps(void) {   // 光追成功：主通道前把本帧画过的阴影图清回全亮（原版阴影由遮罩接替） | Ray tracing succeeded: clear the shadow maps drawn this frame back to fully lit before the main pass (the mask takes over)
     int n = 0;
     for (int i = 0; i < g_rts.nsmap; i++) { typeof(g_rts.smap[0]) *e = &g_rts.smap[i]; if (!rts_map_clearable(i)) continue;   // 本帧没清过的（跨帧保留）、光源不是太阳的照原样留着 | maps not cleared this frame (kept across frames) or not lit by the sun stay as they are
         RPD *rp = [RPD new]; rp.depthAttachment.texture = e->t; rp.depthAttachment.level = e->level; rp.depthAttachment.slice = e->slice;
         rp.depthAttachment.loadAction = MTLLoadActionClear; rp.depthAttachment.clearDepth = e->cd; rp.depthAttachment.storeAction = MTLStoreActionStore;
         if (e->t.pixelFormat == MTLPixelFormatDepth32Float_Stencil8) { rp.stencilAttachment.texture = e->t; rp.stencilAttachment.level = e->level; rp.stencilAttachment.slice = e->slice; rp.stencilAttachment.loadAction = MTLLoadActionLoad; rp.stencilAttachment.storeAction = MTLStoreActionStore; }
-        RENC en = [g_cb renderCommandEncoderWithDescriptor:rp];
+        RENC en = rts_render_begin(rp, 0);
         if (!en) { MLOG("【红】光追阴影：清阴影图的编码器建不出（第 %d 张），本帧原版阴影保留", i); return 0; }
-        [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; m4_end(en); n++; }
+        [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; rts_render_end(en, 0); n++; }
     return n;
 }
 static void rts_unqueue(void) { for (int i = 0; i < g_rts.npend; i++) g_rts.pending[i]->queued = 0; g_rts.npend = 0; g_rts.pend_tris = 0; }
@@ -1234,11 +1237,11 @@ static void rts_overlay(id<MTLTexture> hdr) {   // 调试叠加：HDR × (amb + 
     rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     id<MTLBuffer> dbuf = g_rts.slot[g_rts.cur].d; float *a = dbuf.contents; a[0] = g_rts.dbg == 2 ? 0.f : dm_rt_shadow_ambient(); a[1] = a[2] = a[3] = 0;   // 与本帧追踪同一槽 | the same slot as this frame's trace
     RPD *rp = [RPD new]; rp.colorAttachments[0].texture = hdr; rp.colorAttachments[0].loadAction = MTLLoadActionLoad; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; if (!en) return;
+    RENC en = rts_render_begin(rp, 1); if (!en) return;
     [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
     [en setArgumentTable:g_rts.at_overlay atStages:MTLRenderStageFragment]; [g_rts.at_overlay setTexture:g_rts.mask.gpuResourceID atIndex:0]; [g_rts.at_overlay setAddress:dbuf.gpuAddress atIndex:0];
     [en setViewport:(MTLViewport){0, 0, (double)hdr.width, (double)hdr.height, 0, 1}]; [en setRenderPipelineState:g_rts.ps_overlay];
-    [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; m4_end(en);
+    [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; rts_render_end(en, 1);
     args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; g_rts.overlay_done = 1;
 }
 // 光追 AO 乘到 HDR 上：HDR × (1 − 强度 + 强度 · AO)，与调试叠加同一条管线（混合：目标 × 源）；主通道之后第一次再挂 HDR 时做（rts_set_rt），先于半透明 / 水面
@@ -1248,11 +1251,11 @@ static void rts_ao_apply(id<MTLTexture> hdr) {
     rp_end(); if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     id<MTLBuffer> dbuf = g_rts.slot[g_rts.cur].d; float *a = (float *)dbuf.contents + 4; a[0] = 1.f - g_rts.ao_strength; a[1] = a[2] = a[3] = 0;   // 本帧槽的 d 缓冲第 16 字节起（0–15 是调试叠加的） | from byte 16 of this frame slot's d buffer (0–15 belong to the debug overlay)
     RPD *rp = [RPD new]; rp.colorAttachments[0].texture = hdr; rp.colorAttachments[0].loadAction = MTLLoadActionLoad; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; if (!en) return;
+    RENC en = rts_render_begin(rp, 1); if (!en) return;
     [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
     [en setArgumentTable:g_rts.at_overlay atStages:MTLRenderStageFragment]; [g_rts.at_overlay setTexture:g_rts.ao_full.gpuResourceID atIndex:0]; [g_rts.at_overlay setAddress:dbuf.gpuAddress + 16 atIndex:0];
     [en setViewport:(MTLViewport){0, 0, (double)hdr.width, (double)hdr.height, 0, 1}]; [en setRenderPipelineState:g_rts.ps_overlay];
-    [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; m4_end(en);
+    [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; rts_render_end(en, 1);
     args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; g_rts.ao_applied = 1; g_rts.n_ao_applied++;
 }
 // _rt 变体的遮罩绑定：本帧太阳遮罩算了就给遮罩（阴影图清没清都对：清了 = min(遮罩, 1)，没清 = min(遮罩, 原采样)），否则 1x1 全亮 | Mask binding of the _rt variants: the mask when the sun mask was traced this frame (correct whether or not the maps were cleared: min(mask, 1) or min(mask, original)), else a 1x1 fully lit texel
