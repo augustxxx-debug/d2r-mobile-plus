@@ -50,7 +50,9 @@ int dm_android_pad_overlay_hidden(void);   // 宿主切换事务完成后的当�
 // What the touch overlay draws in each mode (Java TouchOverlay asks nativeHudMask every frame): touch mode draws everything; controller mode hides the touch controls and the touch
 // bottom bar as iOS does (the original controller UI has its own bar) but keeps the experience line text (Lv · % · FPS), which the original controller bar lacks (it has its own life / mana numbers, so those are not redrawn)
 // (user 2026-10-28: the XP digits and the frame rate vanished in controller mode)
-enum { DM_PAD_HUD_CONTROLS = 1, DM_PAD_HUD_BAR = 2, DM_PAD_HUD_TEXT = 4 };
+// 决策表在公共 dm/host/dm_hud_mask.h（iOS 同一份） | the decision table is the shared dm/host/dm_hud_mask.h (the same one iOS uses)
+#include "../host/dm_hud_mask.h"
+enum { DM_PAD_HUD_CONTROLS = DM_HUD_CONTROLS, DM_PAD_HUD_BAR = DM_HUD_BAR, DM_PAD_HUD_TEXT = DM_HUD_EXPLINE };
 int dm_android_pad_hud_mask(int pad_mode);
 #ifdef __cplusplus
 }
