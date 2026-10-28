@@ -2,8 +2,10 @@
 #include "touch_android.h"
 
 /* 使用命名JNI入口，与宿主已有JNI_OnLoad兼容。 | Named JNI entry points coexist with the host's JNI_OnLoad. */
+#include "pad_android.h"
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeEvent(JNIEnv *env, jclass cls, jint phase, jint slot, jfloat x, jfloat y) {
     (void)env; (void)cls;
+    if (phase == 0) dm_android_pad_touched();   /* 碰了屏幕 → 触屏模式（同 iOS dm_gamepad_touched）| the screen was touched -> touch mode (as iOS dm_gamepad_touched) */
     dm_android_touch_event(phase,slot,x,y);
 }
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeResize(JNIEnv *env, jclass cls, jfloat width, jfloat height, jfloat left, jfloat right, jfloat bottom, jboolean tablet) {

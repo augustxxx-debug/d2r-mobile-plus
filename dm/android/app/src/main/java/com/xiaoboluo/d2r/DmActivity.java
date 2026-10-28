@@ -44,7 +44,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Locale;
 
-public class DmActivity extends Activity implements SurfaceHolder.Callback, DisplayManager.DisplayListener {
+public class DmActivity extends Activity implements SurfaceHolder.Callback, DisplayManager.DisplayListener, android.hardware.input.InputManager.InputDeviceListener {
     static native int nativeStart(String filesDir, String extDir, String romfsSrc, String lang, String versionLabel);
     static native void nativeSurface(Object surface, int w, int h);
     static native void nativeRefresh(float hz, float maxHz);
@@ -54,6 +54,10 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     static native void nativeMemoryWarning(int level);   // 崩溃围栏：系统内存告警 | crash fence: system memory warning
     static native void nativeShutdown();                  // 宿主优雅退出（Activity 结束时）| graceful host exit (when the Activity finishes)
     static native void nativeTextResult(long id, boolean accepted, String text);
+    // 实体手柄（pad_android.c）：按键 / 轴事件交给原生，true = 归手柄（不再交给系统，B 发的 BACK 不退出）| physical controllers (pad_android.c): key / axis events go native, true = the controller's (not passed on; BACK from B does not exit)
+    static native boolean nativePadKey(int device, int vendor, int product, int source, int keycode, boolean down);
+    static native boolean nativePadMotion(int device, int vendor, int product, int source, float lx, float ly, float rx, float ry, float lt, float rt, float hx, float hy);
+    static native void nativePadDrop(int device);
 
     private static WeakReference<DmActivity> current = new WeakReference<>(null);
     private static volatile int bootFailure;
@@ -79,6 +83,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         current = new WeakReference<>(this);
         displays = getSystemService(DisplayManager.class);
         if (displays != null) displays.registerDisplayListener(this, null);
+        { android.hardware.input.InputManager im = getSystemService(android.hardware.input.InputManager.class); if (im != null) im.registerInputDeviceListener(this, null); }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         view = new SurfaceView(this);
@@ -418,6 +423,28 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         preferredModeId = want; WindowManager.LayoutParams lp = getWindow().getAttributes(); lp.preferredDisplayModeId = want; getWindow().setAttributes(lp);
         android.util.Log.i("dm", "display mode: preferredDisplayModeId=" + want + " (fps target " + nativeFpsTarget() + ")");
     }
+    // 实体手柄：按键与轴都先交原生（pad_android.c 判断来源与键位；手柄来源的 BACK 当 B 吃掉）；不归手柄的照常交给系统
+    // Physical controllers: keys and axes go native first (pad_android.c decides source and mapping; BACK from a controller counts as B and is swallowed); anything else goes to the system as usual
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) {
+        if (started && (e.getAction() == android.view.KeyEvent.ACTION_DOWN || e.getAction() == android.view.KeyEvent.ACTION_UP)) {
+            android.view.InputDevice d = e.getDevice(); int vendor = d != null ? d.getVendorId() : 0, product = d != null ? d.getProductId() : 0;
+            if (nativePadKey(e.getDeviceId(), vendor, product, e.getSource(), e.getKeyCode(), e.getAction() == android.view.KeyEvent.ACTION_DOWN)) return true;
+        }
+        return super.dispatchKeyEvent(e);
+    }
+    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) {
+        if (started && (e.getSource() & android.view.InputDevice.SOURCE_JOYSTICK) == android.view.InputDevice.SOURCE_JOYSTICK && e.getAction() == android.view.MotionEvent.ACTION_MOVE) {
+            android.view.InputDevice d = e.getDevice(); int vendor = d != null ? d.getVendorId() : 0, product = d != null ? d.getProductId() : 0;
+            boolean zrz = d != null && d.getMotionRange(android.view.MotionEvent.AXIS_Z, e.getSource()) != null;   // 右摇杆：有 Z/RZ 用 Z/RZ，否则 RX/RY | right stick: Z/RZ when present, else RX/RY
+            float rx = e.getAxisValue(zrz ? android.view.MotionEvent.AXIS_Z : android.view.MotionEvent.AXIS_RX), ry = e.getAxisValue(zrz ? android.view.MotionEvent.AXIS_RZ : android.view.MotionEvent.AXIS_RY);
+            float lt = Math.max(e.getAxisValue(android.view.MotionEvent.AXIS_LTRIGGER), e.getAxisValue(android.view.MotionEvent.AXIS_BRAKE)), rt = Math.max(e.getAxisValue(android.view.MotionEvent.AXIS_RTRIGGER), e.getAxisValue(android.view.MotionEvent.AXIS_GAS));
+            if (nativePadMotion(e.getDeviceId(), vendor, product, e.getSource(), e.getAxisValue(android.view.MotionEvent.AXIS_X), e.getAxisValue(android.view.MotionEvent.AXIS_Y), rx, ry, lt, rt, e.getAxisValue(android.view.MotionEvent.AXIS_HAT_X), e.getAxisValue(android.view.MotionEvent.AXIS_HAT_Y))) return true;
+        }
+        return super.dispatchGenericMotionEvent(e);
+    }
+    @Override public void onInputDeviceAdded(int id) {}
+    @Override public void onInputDeviceRemoved(int id) { if (started) nativePadDrop(id); }
+    @Override public void onInputDeviceChanged(int id) {}
     @Override public void onDisplayAdded(int id) { updateRefresh(); }
     @Override public void onDisplayRemoved(int id) { updateRefresh(); }
     @Override public void onDisplayChanged(int id) { updateRefresh(); }
@@ -455,7 +482,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     @Override protected void onDestroy() {
         modeHandler.removeCallbacks(modePoll);
         if (started && isFinishing()) nativeShutdown();   /* 不返回：宿主 _exit(0) | does not return: the host _exit(0)s */
-        if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
+        if (displays != null) displays.unregisterDisplayListener(this); { android.hardware.input.InputManager im = getSystemService(android.hardware.input.InputManager.class); if (im != null) im.unregisterInputDeviceListener(this); } if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
     @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) immersive(); else releaseTouches(); }
 
     @Override public void surfaceCreated(SurfaceHolder h) {}

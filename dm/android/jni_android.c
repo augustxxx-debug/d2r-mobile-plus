@@ -395,11 +395,23 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeTouch(JNIEnv *env
     dm_touch_set(t, n);
 }
 
+// 实体手柄（pad_android.c）：Java 的 dispatchKeyEvent / dispatchGenericMotionEvent 交来；返回 true = 事件归手柄（BACK 不再退出）
+// Physical controllers (pad_android.c): handed over by Java's dispatchKeyEvent / dispatchGenericMotionEvent; true = the event belongs to the controller (BACK no longer exits)
+#include "pad_android.h"
+JNIEXPORT jboolean JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativePadKey(JNIEnv *env, jclass cls, jint device, jint vendor, jint product, jint source, jint keycode, jboolean down) {
+    (void)env; (void)cls; return dm_android_pad_key(device, vendor, product, source, keycode, down ? 1 : 0) ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT jboolean JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativePadMotion(JNIEnv *env, jclass cls, jint device, jint vendor, jint product, jint source, jfloat lx, jfloat ly, jfloat rx, jfloat ry, jfloat lt, jfloat rt, jfloat hx, jfloat hy) {
+    (void)env; (void)cls; return dm_android_pad_motion(device, vendor, product, source, lx, ly, rx, ry, lt, rt, hx, hy) ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativePadDrop(JNIEnv *env, jclass cls, jint device) { (void)env; (void)cls; dm_android_pad_drop(device); }
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativePadMode(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_android_pad_overlay_hidden(); }
 // UI只入队：0失焦，1后台，2前台，3激活；激活也声明前台，合并2/3时不会漏恢复。
 // UI posts only: 0 unfocused, 1 background, 2 foreground, 3 active; active also declares foreground so merging 2/3 cannot lose resume.
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeFocus(JNIEnv *env, jclass cls, jint ev) {
     (void)env; (void)cls;
     dm_android_touch_focus(ev == 2 || ev == 3);
+    if (ev == 0 || ev == 1) dm_android_pad_reset();   // 失活 / 进后台：手柄的键和摇杆清零（同 iOS）| resign / background: the controller's buttons and sticks are cleared (as iOS)
     // 崩溃围栏（闸 1，fence_glue.h）：进后台清运行标记（画面 5 秒没动 = 卡死，标记留着）、回前台重写；与 iOS main.m 的场景回调同一套。UI 线程直接调，只做文件操作
     // Crash fence (gate 1, fence_glue.h): background clears the running marker (no present for 5 s = frozen, marker kept), foreground writes it again; the same as iOS main.m's scene callbacks. Called on the UI thread, file operations only
     { void dm_crashfence_background(void), dm_crashfence_resume(void); static const dm_fence_hooks fence = { dm_crashfence_background, dm_crashfence_resume }; dm_android_fence_event(ev, &fence); }
