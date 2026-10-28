@@ -18,7 +18,7 @@ Plus allows a longer stationary release only on quest icons, the replay control 
 
 ## Optional font
 
-This feature is experimental and disabled unless `DM_UI_FONT` is set. Supply a static TrueType font that you are entitled to use. ARKai_T is not included. A local AR ZhongkaiGBK Medium font was identified and its Chinese settings appearance inspected on device; this does not validate every string or layout. Font replacement happens at build time, with no in-game font selector.
+This feature is experimental and disabled unless `DM_UI_FONT` is set. Supply a static TrueType font that you are entitled to use. No font is included. Public packages use LXGW WenKai (SIL OFL 1.1; credits and licence note in the README), fetched from <https://github.com/lxgw/LxgwWenKai/releases> at packaging time; the commercial AR ZhongkaiGBK used in the local checks below is for private builds only. A local AR ZhongkaiGBK Medium font was identified and its Chinese settings appearance inspected on device; this does not validate every string or layout. Font replacement happens at build time, with no in-game font selector.
 
 Install the optional build dependency into the same Python environment used for asset generation:
 
