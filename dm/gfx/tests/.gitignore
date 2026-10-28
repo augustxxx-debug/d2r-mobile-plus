@@ -73,6 +73,8 @@ t_gcap
 t_gcap.dSYM/
 t_defer_drain
 t_defer_drain.dSYM/
+t_view_retire
+t_view_retire.dSYM/
 t_cmdalloc
 t_cmdalloc.dSYM/
 t_mp_grid

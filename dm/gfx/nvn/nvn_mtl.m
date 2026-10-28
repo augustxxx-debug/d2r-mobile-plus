@@ -613,12 +613,14 @@ static int tbdr_on(void);
 static uint64_t g_sub_serial;   // 第几次提交（并行预编「每次提交只预测一次」用） | Submission index (used by the parallel precompile's 'predict only once per submission')
 static void tbdr_latch(void);
 static void (*g_sub_begin_probe)(void);   // 单测钩子（十三审 Q13-01）：mtl_sub_begin 开头那段里调，生产恒为空——t_defer_drain 第 2 节在这里自动释放一个对象，验证它随本次提交排空 | unit-test hook (thirteenth review Q13-01): called in the head of mtl_sub_begin, always null in production - t_defer_drain section 2 autoreleases an object here to verify it drains with this submission
+static void views_drop_retired(void);
 void mtl_sub_begin(void) {
     if (g_cb) MDIE("提交重入");
     g_sub_pool = objc_autoreleasePoolPush();   // 先压提交池：下面的 defer_drain / warm_claim 在客体线程上产生的自动释放对象也随本次提交排空（客体线程最外层池整局不排空） | push the submission pool first: autoreleased objects from defer_drain / warm_claim below on the guest thread drain with this submission too (the guest thread's outermost pool never drains during a game)
     mtl_init(); g_sub_serial++;
     tbdr_latch();
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
+    views_drop_retired();   // 先放掉基于退役基贴图的缓存视图，紧接着的 defer_drain 才能真销毁它们 | drop cached views on retired bases first, so the defer_drain right after can really destroy them
     defer_drain();
     defer_reset();
     warm_claim();
@@ -1048,8 +1050,21 @@ static pthread_mutex_t g_smu = PTHREAD_MUTEX_INITIALIZER;
 // Serial table generation: +1 when entries are added / removed or a packaged texture is replaced. Downstream caches (texture views, programs) record the generation at fetch time; if it is unchanged they can be used directly without another table lookup
 static _Atomic uint64_t g_ser_gen = 1;
 static __unsafe_unretained id serial_get(uint64_t k) { pthread_mutex_lock(&g_smu); __unsafe_unretained id o = hm_get_id(&g_by_serial, &k); pthread_mutex_unlock(&g_smu); return o; }
-static void serial_put(uint64_t k, id o) { pthread_mutex_lock(&g_smu); id old = hm_get_id(&g_by_serial, &k); if (old) defer_obj_release(old); hm_put_id(&g_by_serial, &k, o); g_ser_gen++; pthread_mutex_unlock(&g_smu); }
-static void serial_del(uint64_t k) { pthread_mutex_lock(&g_smu); id old = hm_get_id(&g_by_serial, &k); if (old) defer_obj_release(old); hm_del_id(&g_by_serial, &k); g_ser_gen++; pthread_mutex_unlock(&g_smu); }
+// 退役基贴图名单（贴图号视图缓存即时作废，RC1 资源审查：17 Pro 光追关 30 分钟局「已退役未销毁 贴图」0 → 514 个 34 MB）：序号表换掉 / 删掉的旧对象、包里换掉的旧贴图记在这里，
+// 下一次开工（mtl_sub_begin）时 views_drop_retired 扫一遍贴图号表，把基于它们的缓存视图当场放掉——原先要等下次查这个贴图号才发现，离开关卡后不再被查的号一直攥着旧基贴图。
+// 名单里临时持有一份强引用（退役对象可能在别的线程上、在下次开工前就被延迟释放放掉，解析包对象的 tex 时不能悬空），开工时放掉；名单满了就整表丢视图（下次查号时重建）
+// Retired-base list (immediate invalidation of the texture-ID view cache, RC1 resource review: 17 Pro RT-off 30-minute run "retired but not destroyed" textures 0 → 514, 34 MB): old objects replaced / deleted in the serial table and old textures replaced inside packages are noted here;
+// at the next submission start (mtl_sub_begin) views_drop_retired scans the texture-ID table and drops the cached views based on them on the spot - they used to wait for the next lookup of that ID, so IDs no longer looked up after leaving a level kept the old bases alive.
+// The list holds a temporary strong reference (a retired object may be released by deferred release on another thread before the next submission start, and resolving a package's tex must not dangle), released at the submission start; when full the whole table drops its views (rebuilt on the next lookup)
+#define VRET_MAX 1024
+static void *g_vret[VRET_MAX]; static int g_vret_n, g_vret_over; static pthread_mutex_t g_vret_mu = PTHREAD_MUTEX_INITIALIZER;   // 叶子锁：持它时不拿别的锁 | leaf lock: no other lock is taken while holding it
+static void vret_note(id o) {
+    if (!o) return; pthread_mutex_lock(&g_vret_mu);
+    if (g_vret_n < VRET_MAX) g_vret[g_vret_n++] = (void *)CFBridgingRetain(o); else g_vret_over = 1;
+    pthread_mutex_unlock(&g_vret_mu);
+}
+static void serial_put(uint64_t k, id o) { pthread_mutex_lock(&g_smu); id old = hm_get_id(&g_by_serial, &k); if (old) { vret_note(old); defer_obj_release(old); } hm_put_id(&g_by_serial, &k, o); g_ser_gen++; pthread_mutex_unlock(&g_smu); }
+static void serial_del(uint64_t k) { pthread_mutex_lock(&g_smu); id old = hm_get_id(&g_by_serial, &k); if (old) { vret_note(old); defer_obj_release(old); } hm_del_id(&g_by_serial, &k); g_ser_gen++; pthread_mutex_unlock(&g_smu); }
 // 预排布贴图的宿主记录：当前 MTLTexture、上传戳、上次检查时的全局写代号
 // Host record of a packaged texture: the current MTLTexture, the upload stamp, and the global write generation at the last check
 @interface NvPkg : NSObject { @public id<MTLTexture> tex; uint64_t stamp, seen, hash; } @end   // hash：DM_NVN_DIRTYCHECK 时上传内容的全量哈希 | hash: full hash of the uploaded content under DM_NVN_DIRTYCHECK
@@ -1122,7 +1137,7 @@ static id<MTLTexture> tex_upgrade_pfv(const tex_t *t, id<MTLTexture> base, MTLPi
             enc_b_copy_texture(b, base, s, l, MTLOriginMake(0, 0, 0), MTLSizeMake(w, h, 1), upgraded, s, l, MTLOriginMake(0, 0, 0));
     }
     id holder = serial_get(t->serial);
-    if ([holder isKindOfClass:[NvPkg class]]) { id<MTLTexture> old = ((NvPkg *)holder)->tex; ((NvPkg *)holder)->tex = upgraded; defer_obj_release(old); g_ser_gen++; }
+    if ([holder isKindOfClass:[NvPkg class]]) { id<MTLTexture> old = ((NvPkg *)holder)->tex; ((NvPkg *)holder)->tex = upgraded; vret_note(old); defer_obj_release(old); g_ser_gen++; }
     else serial_put(t->serial, upgraded);
     MLOG("贴图升级为可换格式视图 ser=%llu 基格式 %lu → 视图格式 %lu（升级次数=%llu）", t->serial, (unsigned long)base.pixelFormat, (unsigned long)view_pf, ++g_pfv_upgrades);
     return upgraded;
@@ -1487,7 +1502,7 @@ static id<MTLTexture> tex_mtl(const tex_t *ct) {
                 return pk->tex;
             }
             uint64_t st; id<MTLTexture> nt = pkg_upload(t, &st);   // 池内容变了（流式素材写进同一存储）：换新贴图，在途绘制仍读旧的 | Pool content changed (streamed assets written into the same storage): switch to a new texture; in-flight draws still read the old one
-            if (nt) { id<MTLTexture> old = pk->tex; pk->tex = nt; defer_obj_release(old); res_add(nt); g_ser_gen++; pk->stamp = st; pk->seen = nvn_dirty_now(); g_pkg_reuploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->L.size); }
+            if (nt) { id<MTLTexture> old = pk->tex; pk->tex = nt; vret_note(old); defer_obj_release(old); res_add(nt); g_ser_gen++; pk->stamp = st; pk->seen = nvn_dirty_now(); g_pkg_reuploads++; if (dirtycheck()) pk->hash = full_hash(t->mem, t->L.size); }
             return pk->tex;
         }
         pk = [NvPkg new];
@@ -2558,7 +2573,7 @@ void mtl_prog_release(prog_t *p) { if (p->serial) serial_del(p->serial); }
 // 登记时快照整个贴图对象（NVN 语义：描述符已写进池）；view：该号对应的 MTLTexture（视图或基贴图，CFBridgingRetain 持有）及取得时的序号表 / 客体写代号
 // ---------- Descriptor pool: texture ID / sampler ID → object ----------
 // At registration the whole texture object is snapshotted (NVN semantics: the descriptor has been written into the pool); view: the MTLTexture for that ID (a view or the base texture, held via CFBridgingRetain) and the serial-table / guest-write generations at the time it was obtained
-typedef struct { tex_t t; int ok; view_t v; int has_v; void *view; uint64_t view_id, view_rid, view_ser, view_dirty; } treg_t;
+typedef struct { tex_t t; int ok; view_t v; int has_v; void *view; void *view_base; uint64_t view_id, view_rid, view_ser, view_dirty; } treg_t;   // view_base：视图所基于的基贴图（只比指针，不持有；视图本身持有它） | view_base: the base texture the view is built on (pointer compare only, not retained; the view holds it)
 static treg_t *g_treg; static int g_ntreg;
 // 贴图号 → 序号的无锁副本（回放热路径只要序号：写回前瞻索引、纯清除前提的绑定集合）：贴图号 20 位，固定 1M 项（BSS，只占碰过的页），
 // 登记时 release 写、读端 relaxed 原子读，不进 g_rmu（原 h_ser 每次查表加解锁，营地每帧数千次）
@@ -2571,7 +2586,7 @@ void mtl_reg_tex(int tid, const tex_t *t, const view_t *v) {
     pthread_mutex_lock(&g_rmu);
     if (id_ >= g_ntreg) { int n = id_ + 1024; g_treg = realloc(g_treg, n * sizeof *g_treg); memset(g_treg + g_ntreg, 0, (n - g_ntreg) * sizeof *g_treg); g_ntreg = n; }
     g_reg_gen++;
-    if (g_treg[id_].view) { defer_obj_unref((__bridge id)g_treg[id_].view); CFRelease(g_treg[id_].view); g_treg[id_].view = NULL; g_treg[id_].view_id = g_treg[id_].view_rid = 0; }
+    if (g_treg[id_].view) { defer_obj_unref((__bridge id)g_treg[id_].view); CFRelease(g_treg[id_].view); g_treg[id_].view = g_treg[id_].view_base = NULL; g_treg[id_].view_id = g_treg[id_].view_rid = 0; }
     g_treg[id_].ok = t != NULL; if (t) g_treg[id_].t = *t; g_treg[id_].has_v = v != NULL; if (v) g_treg[id_].v = *v;
     if (id_ < (1 << 20)) atomic_store_explicit(&g_tser[id_], t ? t->serial : 0, memory_order_release);
     pthread_mutex_unlock(&g_rmu);
@@ -2607,8 +2622,8 @@ static id<MTLTexture> tex_by_id(int tid) {   // 调用方持 g_rmu | Caller hold
     id<MTLTexture> v = (__bridge id<MTLTexture>)rp->view;
     if (v) {   // 序号表或客体内存有过变动：核基贴图是否被重传换新，换了则视图作废 | The serial table or guest memory has changed: check whether the base texture was re-uploaded and replaced; if so the view is invalidated
         id<MTLTexture> cur = tex_mtl(&rp->t);
-        if (cur == v || v.parentTexture == cur) { rp->view_ser = sg; rp->view_dirty = dg; return v; }
-        defer_obj_unref(v); CFRelease(rp->view); rp->view = NULL; rp->view_rid = 0; v = nil;
+        if (cur == v || v.parentTexture == cur) { rp->view_ser = sg; rp->view_dirty = dg; rp->view_base = (__bridge void *)cur; return v; }
+        defer_obj_unref(v); CFRelease(rp->view); rp->view = rp->view_base = NULL; rp->view_rid = 0; v = nil;
     }
     treg_t r = *rp;
     id<MTLTexture> base = tex_mtl(&rp->t);
@@ -2630,8 +2645,30 @@ static id<MTLTexture> tex_by_id(int tid) {   // 调用方持 g_rmu | Caller hold
         v = [base newTextureViewWithPixelFormat:(MTLPixelFormat)pf textureType:tt levels:NSMakeRange(l0, nl) slices:NSMakeRange(s0, ns)];
         if (!v) { RED_ONCE(11, "贴图视图建不出 id %d", tid); v = base; }
     }
-    rp->view = (void *)CFBridgingRetain(v); rp->view_rid = v.gpuResourceID._impl; rp->view_ser = sg; rp->view_dirty = dg;
+    rp->view = (void *)CFBridgingRetain(v); rp->view_base = (__bridge void *)base; rp->view_rid = v.gpuResourceID._impl; rp->view_ser = sg; rp->view_dirty = dg;
     return v;
+}
+static int vret_cmp(const void *a, const void *b) { uintptr_t x = *(const uintptr_t *)a, y = *(const uintptr_t *)b; return x < y ? -1 : x > y; }
+// 开工时调（mtl_sub_begin，客体提交线程，不持 g_rmu / g_smu）：取走退役名单，包对象解析成它的贴图，排序后对贴图号表逐项二分查 view_base，命中就放掉缓存视图（与 tex_by_id 惰性作废同一做法）
+// Called at the submission start (mtl_sub_begin, guest submit thread, holding neither g_rmu nor g_smu): take the retired list, resolve packages to their texture, sort, binary-search each texture-ID entry's view_base, and drop matching cached views (the same way tex_by_id invalidates lazily)
+static _Atomic uint64_t g_vret_dropped;
+static void views_drop_retired(void) {
+    void *list[VRET_MAX]; int n, over;
+    pthread_mutex_lock(&g_vret_mu); n = g_vret_n; over = g_vret_over; memcpy(list, g_vret, n * sizeof *list); g_vret_n = 0; g_vret_over = 0; pthread_mutex_unlock(&g_vret_mu);
+    if (!n && !over) return;
+    static int on = -1; if (on < 0) { const char *e = getenv("DM_VIEW_RETIRE"); on = !(e && !atoi(e)); MLOG("贴图视图缓存：退役基贴图即时作废 %s", on ? "开" : "关（DM_VIEW_RETIRE=0，回到惰性作废，A/B 用）"); }
+    if (!on) { for (int i = 0; i < n; i++) CFRelease(list[i]); return; }   // 关：照旧惰性作废，只放名单里那份临时引用 | off: lazy invalidation as before, only the list's temporary reference is released
+    uintptr_t keys[2 * VRET_MAX]; int nk = 0;
+    for (int i = 0; i < n; i++) { id o = (__bridge id)list[i]; keys[nk++] = (uintptr_t)list[i]; if ([o isKindOfClass:[NvPkg class]] && ((NvPkg *)o)->tex) keys[nk++] = (uintptr_t)(__bridge void *)((NvPkg *)o)->tex; }
+    qsort(keys, nk, sizeof *keys, vret_cmp);
+    int dropped = 0;
+    pthread_mutex_lock(&g_rmu);
+    for (int t = 0; t < g_ntreg; t++) { treg_t *rp = &g_treg[t]; if (!rp->view) continue;
+        uintptr_t b = (uintptr_t)rp->view_base;
+        if (over || (b && bsearch(&b, keys, nk, sizeof *keys, vret_cmp))) { defer_obj_unref((__bridge id)rp->view); CFRelease(rp->view); rp->view = rp->view_base = NULL; rp->view_rid = 0; dropped++; } }
+    pthread_mutex_unlock(&g_rmu);
+    for (int i = 0; i < n; i++) CFRelease(list[i]);   // 名单里那份临时引用 | the list's temporary reference
+    if (dropped) { uint64_t tot = atomic_fetch_add(&g_vret_dropped, dropped) + dropped; static int nl; if (nl < 10 || over) { nl++; MLOG("贴图视图缓存：退役基贴图 %d 个 → 即时放掉缓存视图 %d 个（累计 %llu）%s", n, dropped, (unsigned long long)tot, over ? "；退役名单满，整表丢视图（下次查号重建）" : ""); } }
 }
 // 热路径取对象：表里有效就直接返回表持有的指针（不经 ARC 的 retain / autorelease），否则走慢路建 / 校验。调用方持 g_rmu。
 // Hot-path object fetch: if the table entry is valid, return the table-held pointer directly (without ARC retain / autorelease), otherwise take the slow path to build / validate. Caller holds g_rmu.
