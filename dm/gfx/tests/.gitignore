@@ -77,4 +77,6 @@ t_view_retire
 t_view_retire.dSYM/
 t_cmdalloc
 t_cmdalloc.dSYM/
+t_memwarn
+t_memwarn.dSYM/
 t_mp_grid

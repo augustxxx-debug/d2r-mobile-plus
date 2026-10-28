@@ -168,7 +168,10 @@ static pthread_cond_t g_cv = PTHREAD_COND_INITIALIZER;
 static uint64_t g_done;                         // 已完成的最大栅栏值（完成回调写） | Highest completed fence value (written by the completion callback)
 static _Atomic int g_last_commit_error;
 static _Atomic uint32_t g_mem_warn_n;   // 系统内存告警次数（iOS 主线程 mtl_note_memory_warning 加；光追模块在渲染线程的帧开头看到变了就放缓存、降档，nvn_rtshadow.inc rts_mem_frame） | system memory warnings (bumped by mtl_note_memory_warning on the iOS main thread; the ray-tracing module sees the change at the frame start on the render thread, releases caches and steps down, nvn_rtshadow.inc rts_mem_frame)
-void mtl_note_memory_warning(void) { atomic_fetch_add(&g_mem_warn_n, 1); }
+// g_mem_warn_sys：只数系统真告警（测试开关 DM_TEST_RT_MEMWARN 不加），不封顶，挂在每 300 帧「内存 至帧」行末尾——iOS 壳的【内存告警】逐条日志一局封顶 50 条，闸 2 判据「后 10 分钟 0 次」靠这个累计判
+// g_mem_warn_sys: counts only real system warnings (the DM_TEST_RT_MEMWARN test switch does not add), uncapped, appended to the every-300-frames memory line - the iOS shell's per-warning lines stop at 50 per run, so gate 2's "0 in the last 10 minutes" is judged from this total
+static _Atomic uint32_t g_mem_warn_sys;
+void mtl_note_memory_warning(void) { atomic_fetch_add(&g_mem_warn_n, 1); atomic_fetch_add(&g_mem_warn_sys, 1); }
 static _Atomic int g_gpu_hang_n;   // 命令缓冲报「Caused GPU Hang」（不算 InnocentVictim）的次数：光追模块据此降档 / 关掉（nvn_rtshadow.inc rts_hang_check） | command buffers reporting "Caused GPU Hang" (InnocentVictim excluded): the ray-tracing module steps down / switches off on it (nvn_rtshadow.inc rts_hang_check)
 static _Atomic int g_up_pending;
 
@@ -1577,8 +1580,8 @@ void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb, int heap_
 #if TARGET_OS_IPHONE
     snprintf(avail, sizeof avail, "%llu MB", (unsigned long long)(os_proc_available_memory() >> 20));
 #endif
-    MLOG("内存 至帧 %llu：常驻 %llu MB，显卡已分配 %llu MB，延迟释放队列 %lu，驻留集 %lu 个，内存池 %d 个（峰值 %d / 跟踪表容量 %d），贴图重传累计 %llu 次；游戏堆 %llu MB，余量 %llu MB，最大可分配块 %llu KB%s；离系统内存上限还有 %s；命令分配器换新 %llu 次（放掉 %.0f MB）", frame, rss_mb, gpu, nd, nr, live, peak, cap, (unsigned long long)g_pkg_reuploads,
-        heap_mb, heap_free_mb, heap_maxblk_kb, heap_ok ? "" : "（未读到）", avail, CMDALLOC_STAT_N, CMDALLOC_STAT_MB);
+    MLOG("内存 至帧 %llu：常驻 %llu MB，显卡已分配 %llu MB，延迟释放队列 %lu，驻留集 %lu 个，内存池 %d 个（峰值 %d / 跟踪表容量 %d），贴图重传累计 %llu 次；游戏堆 %llu MB，余量 %llu MB，最大可分配块 %llu KB%s；离系统内存上限还有 %s；命令分配器换新 %llu 次（放掉 %.0f MB）；内存告警累计 %u", frame, rss_mb, gpu, nd, nr, live, peak, cap, (unsigned long long)g_pkg_reuploads,
+        heap_mb, heap_free_mb, heap_maxblk_kb, heap_ok ? "" : "（未读到）", avail, CMDALLOC_STAT_N, CMDALLOC_STAT_MB, (unsigned)atomic_load(&g_mem_warn_sys));
 }
 void mtl_pkg_stats(uint64_t *uploads, uint64_t *reuploads) { *uploads = g_pkg_uploads; *reuploads = g_pkg_reuploads; }
 uint64_t mtl_pkg_miss(void) { return g_pkg_miss; }

@@ -1265,7 +1265,7 @@ static void crash_subscribe(void) {
 - (void)applicationDidReceiveMemoryWarning:(UIApplication *)a {
     { void dm_crashfence_note_memory(void); dm_crashfence_note_memory(); }   // 崩溃围栏：之后在前台没了算内存不足 | crash fence: vanishing in the foreground afterwards counts as out of memory
     if (g_host_up) { void mtl_note_memory_warning(void); mtl_note_memory_warning(); }   // 光追：下一帧开头放掉网格缓存 / AO / 点光遮罩并降档（只加计数，不在主线程碰 Metal 对象） | ray tracing: at the next frame start release the mesh cache / AO / point masks and step down (only a counter bump, no Metal objects touched on the main thread)
-    static int n; if (++n > 50) return;
+    static int n; if (++n > 50) return;   // 逐条日志封顶 50；不封顶的累计（宿主起来之后）挂在每 300 帧「内存 至帧」行末尾「内存告警累计 N」（nvn_mtl.m g_mem_warn_sys） | per-warning lines capped at 50; the uncapped total (after the host is up) is on the every-300-frames memory line
     task_vm_info_data_t vi; mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT; unsigned long long fp = 0;
     if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS) fp = vi.phys_footprint >> 20;
     unsigned long long h[3] = {0, 0, 0}, gpu = 0; void dm_guest_heap_last(unsigned long long *); unsigned long long mtl_gpu_allocated_mb(void);

@@ -99,6 +99,8 @@ t_view_retire: t_view_retire.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_view_retire.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_cmdalloc: t_cmdalloc.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_cmdalloc.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_memwarn: t_memwarn.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_memwarn.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 # 依赖一行一个、按字母序（免得加一个测试就整行冲突）；下面各条命令的先后不变
 # Dependencies one per line in alphabetical order (so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
 run: \
@@ -129,6 +131,7 @@ run: \
 	t_defer_drain \
 	t_view_retire \
 	t_cmdalloc \
+	t_memwarn \
 	t_mp_grid \
 	t_gcap \
 	t_rts_gate \
@@ -184,6 +187,7 @@ run: \
 	@./t_capmem; s=$$?; if [ $$s = 77 ]; then echo "SKIP t_capmem"; elif [ $$s != 0 ]; then exit $$s; fi   # 抓帧层与常驻内存（自己起两个子进程，一个带 METAL_CAPTURE_ENABLED）；77 = 机器不支持光追 | capture layer and resident memory (starts two children itself, one with METAL_CAPTURE_ENABLED); 77 = no ray tracing
 	./t_defer_drain   # 延迟释放在客体线程上也真销毁 | deferred release destroys even on the guest thread
 	./t_view_retire   # 贴图号视图缓存在基贴图退役时即时作废 | the texture-ID view cache is invalidated as soon as its base texture retires
+	./t_memwarn   # 系统内存告警累计不封顶，进每 300 帧内存行 | uncapped system memory-warning total on the every-300-frames memory line
 	@for a in "" --off; do ./t_cmdalloc $$a; s=$$?; if [ $$s = 77 ]; then echo "SKIP t_cmdalloc"; break; elif [ $$s != 0 ]; then exit $$s; fi; done   # 命令分配器超阈值换新；--off 证明分得出；77 = 旧接口版 | command allocators replaced above a threshold; --off proves it discriminates; 77 = older-API build
 	./t_gcap   # GPU 抓帧（DM_GPU_CAPTURE）；测试自己设 METAL_CAPTURE_ENABLED | GPU capture (DM_GPU_CAPTURE); the test sets METAL_CAPTURE_ENABLED itself
 	@for t in t_rts_gate t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
