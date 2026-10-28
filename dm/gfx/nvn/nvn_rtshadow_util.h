@@ -98,6 +98,10 @@ static inline int rts_player_feed(rts_player_track *t, int rec, const float *pos
 // Whether the near plane is at depth 0 or 1 (for the fallback "facing the camera" rule; rts_nrm orients by it under an orthographic projection): ia = inverse view-projection (column-major, used as float4x4 columns, as in the trace kernels).
 // The game camera is orthographic with reversed depth (measured on the Mac: third column of the inverse view-projection has w = 0; depth 0 unprojects below the ground at y ≈ −4558, depth 1 above at y ≈ 437). An orthographic matrix alone cannot tell near from far,
 // so this relies on "the camera looks down": of the two screen-centre points at depth 0 / 1, the one with the larger world y is the near plane. Returns 0 or 1
+// 前提（十四审 Q14-05）：相机在场景上方往下看（世界 +y 朝上）。RC1 所有关卡都是这种俯视正交相机，不触发；若将来有平视 / 仰视相机（或世界不是 +y 朝上），这里会判反：
+// 地面法线翻到地下，背光面阈值把整片阴影跳过（症状：光追开时影子全没）。到时改按深度比较约定（主通道的深度比较函数 / 清除值）判，或先用 DM_RT_SHADOW_NL=-2 关掉背光面跳过
+// Premise (14th review Q14-05): the camera is above the scene looking down (world +y up). Every RC1 level uses such a top-down orthographic camera, so it does not trigger; with a level / upward camera (or a world that is not +y up)
+// this would decide wrongly: the ground normal flips underground and the back-face threshold skips every shadow (symptom: no shadows at all with RT on). Then decide from the depth-compare convention (the main pass's compare function / clear value), or turn the back-face skip off with DM_RT_SHADOW_NL=-2 first
 static inline int rts_near_depth(const double ia[16]) {
     double w0 = ia[15], w1 = ia[11] + ia[15];
     if (!(fabs(w0) > 1e-12) || !(fabs(w1) > 1e-12)) return 0;
