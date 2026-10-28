@@ -42,8 +42,11 @@ run: \
 	$(B)/t_notice_geometry \
 	$(B)/t_oe \
 	$(B)/t_render_profile \
+	$(B)/t_graphics_gate \
 	$(B)/t_res_auto_policy \
 	$(B)/t_res_cap \
+	$(B)/t_custom_scroll \
+	$(B)/t_hud_mask \
 	$(B)/t_uiscreen_frontend \
 	$(B)/t_padmap \
 	$(B)/t_pouch_notice \
@@ -92,9 +95,12 @@ run: \
 	$(B)/t_metalfx_handoff
 	$(B)/t_metalfx_handoff --disabled
 	$(B)/t_render_profile
+	$(B)/t_graphics_gate
 	$(B)/t_custom_readlog
 	$(B)/t_crashfence 2>/dev/null
 	$(B)/t_res_cap
+	$(B)/t_custom_scroll
+	$(B)/t_hud_mask
 	$(B)/t_res_auto_policy 2>/dev/null
 	$(B)/t_pouch_notice
 	$(B)/t_modal_input_gate
@@ -230,6 +236,8 @@ $(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
 
 $(B)/t_render_profile: t_render_profile.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_render_profile.c
+$(B)/t_graphics_gate: t_graphics_gate.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_graphics_gate.c
 $(B)/t_custom_readlog: t_custom_readlog.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_custom_readlog.c
 $(B)/t_crashfence: t_crashfence.c ../dm_crashfence.c ../dm_crashfence.h ../dm_custom.c ../dm_custom.h | $(B)
@@ -240,6 +248,10 @@ $(B)/t_res_auto_policy: t_res_auto_policy.c t_metalfx_handoff_backend.c ../hle_o
 
 $(B)/t_res_cap: t_res_cap.c ../dm_res_cap.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_res_cap.c -lm
+$(B)/t_custom_scroll: t_custom_scroll.c ../dm_custom_scroll.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_custom_scroll.c
+$(B)/t_hud_mask: t_hud_mask.c ../dm_hud_mask.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_hud_mask.c
 
 $(B)/t_pouch_notice: t_pouch_notice.c ../dm_pouch.c ../dm_widget.h ../hle.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_pouch_notice.c

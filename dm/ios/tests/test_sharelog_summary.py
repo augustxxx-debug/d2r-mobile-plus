@@ -25,6 +25,16 @@ class IosSummary(unittest.TestCase):
             self.assertIn(k, keys)
 
 
+    def test_input_mode_line(self):
+        # 输入模式（触屏 / 手柄）切换时记一行「输入模式：」，摘要取最后一条（用户 2026-10-28：手柄模式下的问题要能从日志看出当时是哪种模式）
+        # A "输入模式：" (input mode) line on every touch / controller switch; the summary takes the last one (user 2026-10-28: controller-mode reports must show the mode)
+        keys = re.search(r'static const char \*keys\[\] = \{([^}]*)\}', block(SHARE, 'static void perf_block(')).group(1)
+        self.assertIn('"输入模式："', keys)
+        front = (ROOT / 'ios' / 'Sources' / 'front_ios.m').read_text(encoding='utf-8')
+        pad = block(front, '- (void)padMode:(BOOL)pad {')
+        self.assertIn('LOG("输入模式：', pad)
+        self.assertIn('LOG("输入模式：', block(front, '- (instancetype)initWithFrame:'))
+
 class MacSummary(unittest.TestCase):
     def test_info_has_settings_lines(self):
         share = block(MAC, 'static NSString *share_logs(NSString *to) {')

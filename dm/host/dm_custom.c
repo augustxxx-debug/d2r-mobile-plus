@@ -12,6 +12,7 @@
 // only 「应用」(Apply) (OptionsPanelMessage:AcceptChanges) makes it take effect and saves to disk, 「放弃」(Discard) (CancelChanges) throws away the pending values, and 「默认」(Default) (ResetToDefaults) sets the pending values back to each key's default (power-saving mode off, the rest on; Apply still has to be tapped)
 #include "dm_custom.h"
 #include "dm_res_cap.h"
+#include "dm_custom_scroll.h"
 #include "dm_widget.h"
 #include "dm_cursor.h"
 #include "hle.h"
@@ -41,7 +42,7 @@ static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0 };   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
@@ -50,11 +51,12 @@ static const int k_def[NK] = { 0,
 #define FPS_120 2
 #define K_Q3D (12 + VOICE_ROW)
 #define K_TOUCH_SWAP (15 + VOICE_ROW)
+#define K_FPSHUD (NK - 4)   // fps_hud 显示帧数：图形页第二行（原在自定义页末行）| fps_hud Show frame rate: Graphics tab row 2 (was the last Custom row)
 #define K_UPSCALE (NK - 3)
 #define K_RES (NK - 2)
 #define K_RT (NK - 1)
-#define N_GFX 5   // 图形页的键数：eco_fps / q3d / upscale / render_res / rt_shadow（自定义页的行数 = NK - N_GFX） | Number of Graphics-tab keys (Custom-page rows = NK - N_GFX)
-static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_UPSCALE || i == K_RES || i == K_RT; }
+#define N_GFX 6   // 图形页的键数：eco_fps / q3d / fps_hud / upscale / render_res / rt_shadow（自定义页的行数 = NK - N_GFX） | Number of Graphics-tab keys (Custom-page rows = NK - N_GFX)
+static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_FPSHUD || i == K_UPSCALE || i == K_RES || i == K_RT; }
 static int custom_key_at(int row) {
     for (int i = 0; i < NK; i++) if (!graphics_key(i) && row-- == 0) return i;
     return 0;
@@ -159,7 +161,8 @@ int dm_custom_get(const char *key) {
     load_once(); int i = key_index(key); if (i < 0) return 1;
     return atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : k_def[i];
 }
-int dm_3d_profile_get(void) { return dm_custom_get("upscale") ? dm_custom_get("q3d") : 4; }
+int mtl_upscale_supported(void);   // 弱定义在下面（光追门旁）| weak definition below (next to the ray-tracing gate)
+int dm_3d_profile_get(void) { return mtl_upscale_supported() && dm_custom_get("upscale") ? dm_custom_get("q3d") : 4; }   // 不支持超分的平台固定原版档 | platforms without upscaling stay on the Original profile
 int dm_custom_lang_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_lang_explicit) : -1; }
 int dm_custom_voice_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_voice_explicit) : -1; }
 // 测试开关 DM_TEST_RENDER_RES=<档>[@秒][,<档>@秒…]（功耗基准 power_bench.sh 用）：按宿主初始化起的秒数切档，不读也不写设置文件；切档时同样通知游戏重读。
@@ -239,6 +242,22 @@ int dm_fps_setting(void) {
 // Ray-traced shadows (key rt_shadow, experimental, off by default, Graphics tab): read every frame by rts_on in nvn_rtshadow.inc; treated as off on machines that fail the gate (mtl_rt_shadow_supported), and the Graphics tab hides the row
 __attribute__((weak)) int mtl_rt_shadow_supported(void) { return 0; }   // 弱定义 = 不支持；图形层 nvn_rtshadow.inc 的强定义覆盖它（只有弱引用时，不链图形层的单测在 macOS 上链接不过） | weak definition = unsupported; the strong definition in nvn_rtshadow.inc overrides it (with only a weak reference, unit tests that do not link the graphics layer fail to link on macOS)
 static int rt_shadow_ok(void) { return mtl_rt_shadow_supported(); }
+// 超分（MetalFX 空间超分，键 upscale + q3d）与整帧输出分辨率档（键 render_res）只有 Apple 图形层 / iOS 前端实现：弱定义 = 支持（Apple 行为不变）；
+// Android 的 nvn_vk.c 强定义返回 0 → 图形页把这两组行藏起来、dm_3d_profile_get 固定原版档（方案：不能显示开着超分却只做普通 blit；render_res 在 Android 的 900p 输出下没有意义）
+// Upscaling (MetalFX spatial, keys upscale + q3d) and the whole-frame output resolution level (key render_res) exist only in the Apple graphics layer / iOS front end: weak definition = supported (Apple unchanged);
+// Android's nvn_vk.c defines them strongly as 0 -> the Graphics tab hides both groups of rows and dm_3d_profile_get stays on the Original profile (plan: never show an upscaling switch that only blits; render_res is meaningless with Android's 900p output)
+#ifdef DM_GFX_GATE_TEST_HOOK   // 单测自己给强定义（同 DM_DISPLAY_HZ_TEST_HOOK 的做法）| the unit test supplies the definitions (as DM_DISPLAY_HZ_TEST_HOOK)
+int mtl_upscale_supported(void); int dm_render_res_supported(void);
+#else
+__attribute__((weak)) int mtl_upscale_supported(void) { return 1; }
+__attribute__((weak)) int dm_render_res_supported(void) { return 1; }
+#endif
+// 图形页的行（与 touch_layout.py _graphics_page 同序）：可见的紧挨着排，返回可见行数，out 依次是布局行号；选中框按可见序号放、行为按布局行号走（单测 t_graphics_gate）
+// Graphics-tab rows (same order as touch_layout.py _graphics_page): the visible ones are packed, returns the visible count with the layout row ids in out; the selection frame follows the visible index, behaviour follows the layout row (unit test t_graphics_gate)
+enum { ROW_RES, ROW_FPSHUD, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT };   // 显示帧数行第二（用户 2026-10-28）| the Show-frame-rate row is second (user 2026-10-28)
+static int graphics_rows_pack(int res_ok, int up_ok, int prof_on, int rt_ok, int out[6]) {
+    int n = 0; if (res_ok) out[n++] = ROW_RES; out[n++] = ROW_FPSHUD; out[n++] = ROW_FPS; if (up_ok) { out[n++] = ROW_UPSCALE; if (prof_on) out[n++] = ROW_PROFILE; } if (rt_ok) out[n++] = ROW_RT; return n;
+}
 // 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义）。生效值、设置或机器判定一变就记一行「光追阴影：生效」（分享诊断日志的摘要按这个前缀取最后一行）
 // Read every frame by rts_on in nvn_rtshadow.inc (strong definition of a weak symbol). One "光追阴影：生效" (ray-traced shadows: effective) line whenever the effective value, the setting or the machine gate changes (the share-diagnostics summary takes the last line with this prefix)
 int dm_rt_shadow_setting(void) {
@@ -373,7 +392,7 @@ static void move_ours_y(uint64_t w, int y) {
 }
 void dm_graphics_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
-    static dm_wref seen[5]; static int paint;
+    static dm_wref seen[6]; static int paint;
     uint64_t sp = dm_ui_top(root, "3PlusGraphicsOptionsPanel");
     static int was_open;
     if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); was_open = 0; return; }
@@ -391,7 +410,13 @@ void dm_graphics_ui_pump(unsigned long long root) {
             dm_wref_set(&seen[0], fps);
         } else graphics_select_fps(*(int32_t *)(fps + 0x5c4));
     }
+    // 分辨率行、超分开关（文字 + 勾选）在不支持的平台整组藏起来（Android）；藏了就不参与交互 | the resolution row and the upscaling switch (text + checkbox) are hidden as a group on platforms without them (Android); hidden = no interaction
+    int res_ok = dm_render_res_supported(), up_ok = mtl_upscale_supported();
+    { uint64_t resrow = find_w(sp, "TouchGraphicsResRow", 0); if (resrow) ui_show_ours(resrow, res_ok);
+      uint64_t uptext = find_w(sp, "TouchGraphicsUpscaleText", 0); if (uptext) ui_show_ours(uptext, up_ok); }
     uint64_t upscale = find_w(sp, "TouchGraphicsUpscale", 0);
+    if (upscale) ui_show_ours(upscale, up_ok);
+    if (!up_ok) upscale = 0;
     if (upscale) {
         int want=pending_value(K_UPSCALE);
         if (dm_wref_get(&seen[1])!=upscale) { dm_wref_set(&seen[1],upscale); set_toggle(upscale,want); }
@@ -405,6 +430,13 @@ void dm_graphics_ui_pump(unsigned long long root) {
         if (dm_wref_get(&seen[4]) != rt) { dm_wref_set(&seen[4], rt); set_toggle(rt, want); }
         else if (TOGGLED(rt) != want) atomic_store(&g_pend[K_RT], TOGGLED(rt));
     }
+    // 显示帧数（fps_hud，图形页第二行，缺省开）：勾选框与超分开关同一套处理 | Show frame rate (fps_hud, Graphics row 2, on by default): the checkbox is handled like the upscale switch
+    uint64_t fpshud = find_w(sp, "TouchGraphicsFpsHud", 0);
+    if (fpshud) {
+        int want = pending_value(K_FPSHUD);
+        if (dm_wref_get(&seen[5]) != fpshud) { dm_wref_set(&seen[5], fpshud); set_toggle(fpshud, want); }
+        else if (TOGGLED(fpshud) != want) atomic_store(&g_pend[K_FPSHUD], TOGGLED(fpshud));
+    }
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t);
     static int selected; static dm_wref focus_panel;
     if (dm_wref_get(&focus_panel) != sp) { dm_wref_set(&focus_panel, sp); selected = 0; }
@@ -414,12 +446,12 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // 可见行紧挨着排：档位行藏起来时光追行上移一格补位（下面按可见行数挪光追行与说明行），所以选中框按可见序号 selected 放，行为按布局行号 row_id 走
     // Rows (same order as touch_layout.py _graphics_page, user 2026-10-27): 0 render resolution / 1 frame rate / 2 upscale switch / 3 upscale profile (only while the switch is on) / 4 ray-traced shadows (experimental, only on machines that pass the gate).
     // Visible rows are packed: with the profile row hidden, the ray-tracing row moves up one slot (the ray-tracing row and the hint are moved below by the visible row count), so the selection frame follows the visible index selected and behaviour follows the layout row row_id
-    enum { ROW_RES, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT };
-    int prof_on = pending_value(K_UPSCALE) != 0, rows = 3 + prof_on + (rt != 0);
+    int prof_on = up_ok && pending_value(K_UPSCALE) != 0, vis[6], rows = graphics_rows_pack(res_ok, up_ok, prof_on, rt != 0, vis);
     if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
     if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
-    int row_id = selected == 3 && !prof_on ? ROW_RT : selected;
+    int row_id = vis[selected];
     if ((ev & DM_BTN_A) && row_id == ROW_RT && rt) { int to = !pending_value(K_RT); atomic_store(&g_pend[K_RT], to); set_toggle(rt, to); }
+    if ((ev & DM_BTN_A) && row_id == ROW_FPSHUD && fpshud) { int to = !pending_value(K_FPSHUD); atomic_store(&g_pend[K_FPSHUD], to); set_toggle(fpshud, to); }
     if (row_id == ROW_FPS && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
         int to = fps_pos(pending_value(K_FPS)) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
         if (to>=0 && to<=fps_max_pos()) { graphics_select_fps(to);
@@ -429,12 +461,23 @@ void dm_graphics_ui_pump(unsigned long long root) {
         int to=!pending_value(K_UPSCALE); atomic_store(&g_pend[K_UPSCALE],to);
         if (upscale) set_toggle(upscale,to);
     }
-    int enabled = pending_value(K_UPSCALE);
+    int enabled = prof_on;
     uint64_t row = find_w(sp, "TouchGraphicsProfileRow", 0);
     if (row) ui_show_ours(row, enabled);
-    // 光追行接在最后一个可见行下面（档位行藏着时上移一格），说明行再往下一格 | the ray-tracing row follows the last visible row (one slot up while the profile row is hidden), the hint one slot below that
-    if (rtrow) move_ours_y(rtrow, enabled ? 900 : 720);
-    move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), 180 + 180 * (3 + (enabled != 0) + (rt_ok != 0)));
+    // 可见行紧挨着排：第 i 个可见行放 y = 180 × (i + 1)（文字 / 容器），滑块与勾选框再 +55（touch_layout.py 的 label / toggle 排法）；说明行接在最后一个可见行下面。
+    // 全部可见时各行正好在布局原位（180 / 360 / 540 / 720 / 900），Apple 行为不变
+    // Visible rows are packed: visible row i sits at y = 180 x (i + 1) (text / container), sliders and checkboxes at +55 (touch_layout.py's label / toggle placement); the hint follows the last visible row.
+    // With every row visible each sits at its layout position (180 / 360 / 540 / 720 / 900): Apple unchanged
+    { int all_vis[6], nv = graphics_rows_pack(res_ok, up_ok, enabled, rt_ok, all_vis);
+      for (int i = 0; i < nv; i++) { int y = 180 * (i + 1);
+        switch (all_vis[i]) {
+        case ROW_RES: move_ours_y(find_w(sp, "TouchGraphicsResRow", 0), y); break;
+        case ROW_FPSHUD: move_ours_y(find_w(sp, "TouchGraphicsFpsHudRow", 0), y); break;
+        case ROW_FPS: move_ours_y(find_w(sp, "TouchGraphicsFpsText", 0), y); if (fps) move_ours_y(fps, y + 55); break;
+        case ROW_UPSCALE: move_ours_y(find_w(sp, "TouchGraphicsUpscaleText", 0), y); if (upscale) move_ours_y(upscale, y + 55); break;
+        case ROW_PROFILE: if (row) move_ours_y(row, y); break;
+        case ROW_RT: if (rtrow) move_ours_y(rtrow, y); break; } }
+      move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), 180 + 180 * (nv + 1)); }
     uint64_t slider = find_w(sp, "TouchGraphicsProfile", 0);
     if (slider && DM_WIDGET_OK(main_base(), slider, DM_VT_SLIDER, "图形设置滑块")) {
         // 3.3.94012: render main+aef3cc reads min/max/current here; main+ad7028
@@ -525,9 +568,14 @@ void dm_custom_ui_pump(unsigned long long root) {
       // This page can scroll (the rows are in the original scroll area, touch_layout.py _custom_page): when the controller selects a row outside the list box, let the original scroll area scroll into place by itself -- send wheel events, one notch every 4 frames, until the whole row is inside the box.
       // Amount scrolled = the negative of the rect y of the inner view (the parent widget of the row container); box height = the height of the scroll area (one level further up). Only these two numbers are read; the original game's widgets are not written
       if (pad && tw && cw) { uint64_t rw = find_w(sp, "TouchCustomRows", 0), view = rw ? *(uint64_t *)(rw + 0x30) : 0, sv = view ? *(uint64_t *)(view + 0x30) : 0; static uint64_t lf; uint64_t dm_guest_frame(void); uint64_t f = dm_guest_frame();
+          // 到头判定（dm_custom_scroll.h）：上一格同方向、滚动量没变 = 滚到头（末行下沿露不全），不再发——原先一直发、每格一声点击音（奥丁手柄，用户 2026-10-28）；换行重新来
+          // End detection (dm_custom_scroll.h): the previous notch in the same direction with an unchanged offset = at the end (the last row's bottom edge never fits), no more notches -- previously they were sent forever, one click sound each (Thor controller, user 2026-10-28); a new row starts over
+          static int last_dir, last_off = -1, last_sel = -1; if (sel != last_sel) { last_sel = sel; last_dir = 0; last_off = -1; }
           if (sv && f - lf >= 4) { int32_t *t = (int32_t *)(tw + 0x70), *c = (int32_t *)(cw + 0x70); int top = (t[1] < c[1] ? t[1] : c[1]) - 10, bot = (t[1] + t[3] > c[1] + c[3] ? t[1] + t[3] : c[1] + c[3]) + 10;
               int off = -*(int32_t *)(view + 0x74), vh = *(int32_t *)(sv + 0x7c); if (vh <= 0) vh = 1260; void dm_ui_wheel_on(uint64_t, int); if (sel == 0) top = 0;   /* 选回第一行：一直滚到最顶，把标题行露出来 | selection back on the first row: scroll all the way to the top so that the header row is revealed */
-              if (top < off) { lf = f; dm_ui_wheel_on(sv, 1); } else if (bot > off + vh) { lf = f; dm_ui_wheel_on(sv, -1); } } } }
+              int dir = dm_custom_scroll_step(top, bot, off, vh, last_dir, last_off);
+              if (dir) { lf = f; last_dir = dir; last_off = off; dm_ui_wheel_on(sv, dir); }
+              else if (last_dir && last_off == off && (top < off || bot > off + vh)) { static int logged; if (logged++ < 2) LOG("自定义设置：第 %d 行滚到头仍露不全（行 %d–%d，已滚 %d，框高 %d），不再发滚轮", sel, top, bot, off, vh); } } } }
     { uint64_t bx[LANG_N]; int ok = 1; for (int k = 0; k < LANG_N; k++) { bx[k] = find_w(sp, k_lang_box[k], 0); ok &= bx[k] && *(uint8_t *)(bx[k] + 0x50); }   // 语言行：四项单选，存一个键 lang（0 中 / 1 英 / 2 西 / 3 俄） | Language row: four-option radio, stores one key lang (0 Chinese / 1 English / 2 Spanish / 3 Russian)
       if (ok) { int pd0 = atomic_load(&g_pend[0]), shown = pd0 >= 0 ? pd0 : atomic_load(&g_val[0]), to = shown;
           if (dm_wref_get(&seen[0]) != bx[0]) dm_wref_set(&seen[0], bx[0]);   // 页刚出现（布局里一律是没勾）：先摆成该显示的值，这一帧不当玩家点了 | The page has just appeared (in the layout everything is unchecked): first set it to the value it should show, and do not treat this frame as a player tap
