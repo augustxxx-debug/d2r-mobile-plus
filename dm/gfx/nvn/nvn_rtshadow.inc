@@ -35,7 +35,8 @@
 // Gate: supportsRaytracing and GPU family ≥ Apple9 and a model allowlist (iOS app on a Mac recognized by isiOSAppOnMac); switch: DM_RT_SHADOW=0/1 pins it, otherwise dm_rt_shadow_setting(); DM_RT_POINT=0 turns off point lights only.
 // Timing: the ray-tracing compute encoder goes through pg_compute (DM_NVN_PASSGPU); Metal 4 path only, the module is empty under DM_NVN_M3.
 __attribute__((weak)) int dm_rt_shadow_setting(void) { return 0; }   // 宿主设置页提供强定义；缺省关 | The host settings page provides the strong definition; off by default
-__attribute__((weak)) float dm_rt_shadow_ambient(void) { return 0.45f; }   // 调试叠加的环境项（阴影里保留的亮度比例） | Ambient term of the debug overlay (brightness kept inside shadow)
+__attribute__((weak)) float dm_rt_shadow_ambient(void) { return 0.45f; }
+__attribute__((weak)) int dm_ingame_now(void) { return 1; }   // 宿主 diag.c 提供强定义（读到受控玩家 = 局内）；单测里当局内 | the host's diag.c provides the strong definition (controlled player read = in a run); unit tests count as in a run   // 调试叠加的环境项（阴影里保留的亮度比例） | Ambient term of the debug overlay (brightness kept inside shadow)
 static int rt_is_skin(void);
 #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -239,6 +240,19 @@ static const char *rts_lvl_desc_p(const rts_lvl_params *e, char *b, size_t n) { 
     return b;
 }
 static const char *rts_lvl_desc(char *b, size_t n) { return rts_lvl_desc_p(&g_rts.eff, b, n); }
+static int g_rts_fe_inject = -1;   // 单测：≥ 0 时代替 dm_ingame_now（RTS_FE_SET） | unit tests: when ≥ 0 it replaces dm_ingame_now (RTS_FE_SET)
+#define RTS_FE_SET(v) (g_rts_fe_inject = (v))
+// 局内才光追（RC1 阻塞项，2026-10-28 真机：设置里开着光追进选角页，角色脸一整块黑）：前端（主菜单 / 选角，没读到受控玩家）的布景是近景特写，光追太阳遮罩把兜帽 / 头发对脸的自遮挡算得比原版级联深得多，
+// 而前端不是玩法画面，照原版最稳——前端整个关光追（整体释放），进局再建。DM_RT_FRONTEND=1 恢复前端也光追（对照）。每帧只问一次宿主（取锁读 HUD 快照）
+// ray tracing only in a run (RC1 blocker, device 2026-10-28: entering character select with ray tracing on in settings, the character's face was a solid black block): the front end (main menu / character select, no controlled player read) is a close-up set, where the ray-traced sun mask makes the hood / hair self-shadow the face far darker than the original cascades,
+// and the front end is not gameplay, so the original look is the safe choice: ray tracing is off in the front end (everything released) and rebuilt on entering a run. DM_RT_FRONTEND=1 keeps it on in the front end (comparison). The host is asked once per frame (a locked read of the HUD snapshot)
+static int rts_ingame(void) {
+    static int fe = -1; if (fe < 0) { const char *e = getenv("DM_RT_FRONTEND"); fe = e && atoi(e) != 0; }
+    if (fe) return 1;
+    if (g_rts_fe_inject >= 0) return g_rts_fe_inject;
+    static uint64_t f0 = UINT64_MAX; static int ig = 1; uint64_t f = atomic_load(&g_cur_frame); if (f != f0) { f0 = f; ig = dm_ingame_now() != 0; }
+    return ig;
+}
 static int rts_on(void) {
     if (g_rts.on < 0) {
         const char *e = getenv("DM_RT_SHADOW"); g_rts.gate = mtl_rt_shadow_supported(); g_rts.dbg = getenv("DM_RT_SHADOW_DBG") ? atoi(getenv("DM_RT_SHADOW_DBG")) : 0;
@@ -262,10 +276,10 @@ static int rts_on(void) {
         // 前缀与宿主 dm_rt_shadow_setting 的「光追阴影：生效」同一个：钉住时不走宿主那条，分享诊断日志的摘要照样取得到 | same prefix as "光追阴影：生效" in the host dm_rt_shadow_setting: when pinned that path is skipped, and the share-diagnostics summary still finds the line
         if (e) MLOG("光追阴影：生效 %s（测试开关 DM_RT_SHADOW=%s 钉住%s）", atoi(e) && g_rts.gate ? "开" : "关", e, g_rts.gate ? "" : "，机器不可用，仍不生效");
     }
-    int v = !g_rts.gate || g_rts.failed || g_gcap_on ? 0 : rts_flip(g_rts.on == -2 ? dm_rt_shadow_setting() != 0 : g_rts.on);   // GPU 抓帧前后关掉（g_gcap_on，见 nvn_mtl.m gcap_present）：Metal 抓帧层碰到光追对象就崩，只能整个释放 | off around a GPU capture (g_gcap_on, see gcap_present in nvn_mtl.m): the Metal capture layer crashes on ray-tracing objects, so everything is released
+    int v = !g_rts.gate || g_rts.failed || g_gcap_on ? 0 : rts_flip(g_rts.on == -2 ? dm_rt_shadow_setting() != 0 : g_rts.on); int fe_off = v && !rts_ingame(); if (fe_off) v = 0;   // GPU 抓帧前后关掉（g_gcap_on，见 nvn_mtl.m gcap_present）：Metal 抓帧层碰到光追对象就崩，只能整个释放 | off around a GPU capture (g_gcap_on, see gcap_present in nvn_mtl.m): the Metal capture layer crashes on ray-tracing objects, so everything is released
     if (!v) g_rts.hang_seen = atomic_load(&g_gpu_hang_n);   // 光追关着时的挂起不算光追的 | hangs while ray tracing is off do not count against it
     if (!v) g_rts.memw_seen = atomic_load(&g_mem_warn_n);   // 光追关着时的内存告警与光追无关（没东西可放），再开时不按旧告警降档 | memory warnings while ray tracing is off have nothing to release and do not lower the level on the next switch-on
-    if (!v && g_rts.was_on) rts_release_all(g_rts.failed ? "模块失败" : g_gcap_on ? "GPU 抓帧（Metal 抓帧层碰到光追对象会崩，抓完再开）" : "开关关了");   // 关掉 / 失败：整个缓存等 GPU 在途工作做完后释放（六审 5.1） | off / failed: the whole cache is released once in-flight GPU work is done (sixth review 5.1)
+    if (!v && g_rts.was_on) rts_release_all(g_rts.failed ? "模块失败" : fe_off ? "不在局内（主菜单 / 选角照原版，进局再建）" : g_gcap_on ? "GPU 抓帧（Metal 抓帧层碰到光追对象会崩，抓完再开）" : "开关关了");   // 关掉 / 失败：整个缓存等 GPU 在途工作做完后释放（六审 5.1） | off / failed: the whole cache is released once in-flight GPU work is done (sixth review 5.1)
     g_rts.was_on = v;
     return v;
 }

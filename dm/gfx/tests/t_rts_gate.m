@@ -504,6 +504,24 @@ int main(void) { @autoreleasepool {
       #undef FULL
     }
 #endif
+#ifdef RTS_FE_SET
+    // 27. 局内才光追（RC1：选角页光追开时角色脸一整块黑）：前端（没读到受控玩家）光追整个关、照原版着色、不选 _rt 变体、对象整体释放；进局重建、恢复光追
+    // 27. Ray tracing only in a run (RC1: the character's face was solid black on character select with ray tracing on): in the front end (no controlled player) ray tracing is off, the original shading runs, no _rt variant is selected, the objects are released; on entering a run it rebuilds and comes back
+    { int a1[1] = {0}; RTS_HYST_RESET(); EXPECT("27 局内：光追生效", 1, until_applied(a1, 1));
+      NvProg *vp = [NvProg new]; vp->sh[0] = g_pr->sh[0]; vp->sh[1] = [NvShader new]; vp->fs_base = vp->sh[1]; vp->fs_rt = [NvShader new]; vp->rt_tried = 1;
+      #define SELECT(c, d) ({ R.rt.n = 1; R.rt.color[0] = (c); R.rt.depth = (d); g_rts.hdr_ser = (c)->serial; g_rts.ds_ser = (d)->serial; g_rts.trace_pending = 0; S.ds.dt = 1; S.color.blend_en = 0; vp->sh[1] = vp->fs_base; int dbg_ = g_rts.dbg; g_rts.dbg = 0; rts_select_fs(vp); g_rts.dbg = dbg_; vp->sh[1] == vp->fs_rt; })
+      int sel_in = SELECT(&g_hdr, &g_mdepth); EXPECT("27 局内：主通道选 _rt 变体（对照）", 1, sel_in);
+      __weak id w_tl = nil; @autoreleasepool { w_tl = g_rts.tlas; }
+      RTS_FE_SET(0); uint64_t k0 = g_rts.key_ns, rd0 = g_rts.n_rt_draws; int sel_fe = 0, gone = 0;
+      for (int i = 0; i < 100 && !gone; i++) { @autoreleasepool { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); sel_fe |= SELECT(&g_hdr, &g_mdepth); hdr_again(); frame_close(); gone = w_tl == nil; } if (!gone) usleep(20000); }
+      EXPECT("27 前端：光追关", 0, rts_on()); EXPECT("27 前端：主通道不选 _rt 变体（照原版着色）", 0, sel_fe); EXPECT("27 前端：换 _rt 的绘制 0 次", 0, (long long)(g_rts.n_rt_draws - rd0));
+      EXPECT("27 前端：不算网格键、网格缓存清空", 1, g_rts.key_ns == k0 && g_rts.nmesh == 0); EXPECT("27 前端：TLAS 已释放", 1, gone);
+      setenv("DM_RT_FRONTEND", "1", 1); EXPECT("27 DM_RT_FRONTEND=1 是缓存过的（启动时读一次，这里不变）", 0, rts_on()); unsetenv("DM_RT_FRONTEND");
+      RTS_FE_SET(1); EXPECT("27 进局：光追重建并生效", 1, until_applied(a1, 1)); EXPECT("27 进局：主通道又选 _rt 变体", 1, SELECT(&g_hdr, &g_mdepth));
+      RTS_FE_SET(-1); memset(&R, 0, sizeof R);
+      #undef SELECT
+    }
+#endif
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}
