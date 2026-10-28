@@ -2651,19 +2651,7 @@ static NvArena *arena_new(void) {
     for (NvArena *it in g_arenas) if (it->fence && it->fence <= g_done) { NvArena *r = it; [g_arenas removeObject:r]; r->fence = 0; r->used = 0; return r; }
     NvArena *a = [NvArena new]; a->buf = [g_dev newBufferWithLength:4 << 20 options:MTLResourceStorageModeShared]; a->gpu = a->buf.gpuAddress; res_add(a->buf); return a;
 }
-// 空闲块封顶（RC1 光追关真机长测：参数缓冲块 3 → 6 块只涨不缩）：在途提交多时会新建块，GPU 做完之后它们就一直闲着；每次提交开头只留 ARENA_SPARE 块空闲，
-// 多的（GPU 已用完，fence ≤ g_done）当场移出驻留集放掉。调用方持 g_mu 之外：这里只在提交线程上动 g_arenas（arena_new 也只在提交线程）
-// Cap on idle blocks (RC1 RT-off device long test: argument blocks 3 → 6, only ever growing): with many submissions in flight new blocks are created, and once the GPU is done they sit idle; at each submission start only ARENA_SPARE idle blocks are kept,
-// the rest (GPU done, fence ≤ g_done) are removed from the residency set and released on the spot. g_arenas is only touched on the submission thread (arena_new too)
-#define ARENA_SPARE 4
-static uint64_t g_arena_freed;
-void arena_begin(void) {
-    if (!g_arenas) { g_arenas = [NSMutableArray array]; g_sub_arenas = [NSMutableArray array]; } g_cur_arena = nil;
-    @autoreleasepool { uint64_t done = g_done; int idle = 0;
-        for (NSInteger i = (NSInteger)g_arenas.count - 1; i >= 0; i--) { NvArena *a = g_arenas[(NSUInteger)i]; if (a->fence > done) continue;
-            if (++idle <= ARENA_SPARE) continue;
-            res_remove(a->buf); a->buf = nil; [g_arenas removeObjectAtIndex:(NSUInteger)i]; g_arena_freed++; } }
-}
+void arena_begin(void) { if (!g_arenas) { g_arenas = [NSMutableArray array]; g_sub_arenas = [NSMutableArray array]; } g_cur_arena = nil; }
 void arena_commit(uint64_t fence) { for (NvArena *a in g_sub_arenas) { a->fence = fence; [g_arenas addObject:a]; } [g_sub_arenas removeAllObjects]; g_cur_arena = nil; }
 // 输出参数写成 __strong：ARC 下不加修饰的 id * 是 __autoreleasing，每次调用（每次绘制两次）都把 arena 缓冲放进自动释放池
 // The out-parameter is __strong: an unqualified id * is __autoreleasing under ARC, which put the arena buffer in the autorelease pool at every call (twice per draw)
