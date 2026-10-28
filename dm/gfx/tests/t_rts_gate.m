@@ -46,6 +46,9 @@ int main(void) { printf("SKIP：旧接口版没有光追阴影模块\n"); return
 #ifndef RTS_WHY
 #define RTS_WHY() ""   // 4978d39 及更早：不记跳过追踪的具体原因 | 4978d39 and earlier: the specific reason for skipping the trace is not recorded
 #endif
+#ifndef RTS_MEMW_STREAK_S
+#define mtl_note_memory_warning() ((void)0)   // 内存 P1 之前的代码：系统内存告警光追不管 | code before the memory P1: ray tracing ignores system memory warnings
+#endif
 static int fail, count;
 #define EXPECT(name, want, got) do { long long w_=(long long)(want), g_=(long long)(got); count++; printf("%s 期望 %lld → 真结果 %lld %s\n", name, w_, g_, w_==g_?"✓":"✗"); fail += w_ != g_; } while (0)
 static uint8_t *g_pool, *g_mat, *g_cb3, *g_cam, *g_vtx, *g_idx, *g_big;
@@ -449,6 +452,57 @@ int main(void) { @autoreleasepool {
       EXPECT("局部回退各节 GPU 无错", 1, ok13);
       #undef UNTIL_PART
       g_lvp = NULL; RTS_PART_SET(0); }
+#endif
+    // 25. 系统内存告警（2026-10-28 真机内存 P1 之后）：告警的下一帧放掉网格缓存（旧 BLAS 真释放）并降一档；之前的代码告警什么都不放、档位不动
+    // 25. System memory warning (after the 2026-10-28 device memory P1): the frame after a warning releases the mesh cache (the old BLAS is really freed) and steps down one level; the earlier code released nothing and kept the level
+    { int a1[1] = {0}; RTS_HYST_RESET(); EXPECT("25 告警前光追生效", 1, until_applied(a1, 1));
+      __weak id w_as = nil; @autoreleasepool { rts_mesh *m = mesh_by_ib(g_idx, 96); w_as = m ? m->as : nil; } int live; @autoreleasepool { live = w_as != nil; } EXPECT("25 告警前网格 0 的 BLAS 在", 1, live);
+      int lv0 = g_rts.gov.lvl; mtl_note_memory_warning();
+      int gone = 0; for (int i = 0; i < 100 && !gone; i++) { @autoreleasepool { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); gone = w_as == nil; } if (!gone) usleep(20000); }
+      EXPECT("25 告警后旧 BLAS 已释放（Metal 对象归零）", 1, gone); EXPECT("25 告警后降了一档", lv0 + 1, g_rts.gov.lvl); EXPECT("25 告警后光追照常（网格重建）", 1, until_applied(a1, 1)); }
+#ifdef RTS_MEMW_STREAK_S
+    // 26. 内存告警的其余规则：AO 放掉且不再建；10 秒内第二次 = 连续告警：最低档、网格缓存上限减半、点光遮罩放掉；迟滞（60 秒后放宽一档、之后每 30 秒一档，升不升仍由自动降档）；
+    //     自动降档升不过最低档；按预算的方案（缺省放得下不动、放不下依次关 AO / 缩网格缓存 / 最低档 3）；B 级：光追关着时告警不碰光追
+    // 26. The remaining memory-warning rules: AO released and not rebuilt; a second within 10 s = consecutive: lowest level, mesh cache cap halved, point masks released; hysteresis (one level loosened after 60 s, then one per 30 s, stepping up still up to the automatic downgrade);
+    //     the automatic downgrade cannot step above the floor; the budget plan (default fits → unchanged, otherwise AO off / mesh cache shrunk / floor 3 in order); level B: warnings while ray tracing is off do not touch it
+    { int a1[1] = {0}; uint64_t b0 = g_rts.budget0; g_rts.budget0 = g_rts.budget = 64ull << 20; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0;   // 设置值换了：方案按新设置值重算 | the configured cap changed: the plan is redone for it
+      #define FULL() do { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); } while (0)   // 帧开头的处理要有光追调用才进得去（空帧不经过模块） | the frame-start handling needs a ray-tracing call to run (an empty frame does not go through the module)
+      g_rts.memw = (rts_memw){0}; g_rts.gov.lvl = 0; g_rts.ao_on = 1; rts_lvl_update();
+      for (int i = 0; i < 6 && !g_rts.ao_full; i++) @autoreleasepool { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); }
+      EXPECT("26 告警前 AO 三张贴图在", 1, g_rts.ao_half && g_rts.ao_tmp && g_rts.ao_full);
+      __weak id w_ao = nil; @autoreleasepool { w_ao = g_rts.ao_full; }
+      mtl_note_memory_warning();
+      int gone = 0; for (int i = 0; i < 100 && !gone; i++) { @autoreleasepool { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); gone = w_ao == nil; } if (!gone) usleep(20000); }
+      EXPECT("26 告警后 AO 贴图已释放", 1, gone); EXPECT("26 告警后 AO 不再建（最低第 1 档关 AO）", 1, !g_rts.ao_half && !g_rts.ao_tmp && !g_rts.ao_full && !g_rts.eff.ao);
+      EXPECT("26 单次告警：最低第 1 档", 1, g_rts.memw.floor); EXPECT("26 单次告警：网格缓存上限不变", 64, (long long)(g_rts.budget >> 20));
+      MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:64 height:64 mipmapped:NO]; td.storageMode = MTLStorageModePrivate;
+      __weak id w_pm = nil; @autoreleasepool { g_rts.pmask = [g_dev newTextureWithDescriptor:td]; g_rts.pmaskf = [g_dev newTextureWithDescriptor:td]; w_pm = g_rts.pmaskf; }
+      mtl_note_memory_warning(); gone = 0;
+      for (int i = 0; i < 100 && !gone; i++) { @autoreleasepool { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); gone = w_pm == nil; } if (!gone) usleep(20000); }
+      EXPECT("26 连续告警：最低第 3 档", 3, g_rts.memw.floor); EXPECT("26 连续告警：当前第 3 档", 3, g_rts.gov.lvl); EXPECT("26 连续告警：网格缓存上限减半", 32, (long long)(g_rts.budget >> 20));
+      EXPECT("26 连续告警：点光遮罩放掉（第 3 档不用点光）", 1, gone && !g_rts.pmask && !g_rts.pmaskf); EXPECT("26 连续告警后光追照常", 1, until_applied(a1, 1));
+      g_rts.gov.lvl = 0; rts_lvl_update(); EXPECT("26 档位低于最低档：帧开头抬回最低档", 3, g_rts.gov.lvl);
+      g_rts.gov.n = 100; g_rts.gov.fr = 1; g_rts.gov.rt = 0.1; g_rts.gov.t_under = rts_now() - 100; g_rts.gov.t_change = g_rts.gov.t_up = -1e9; uint64_t held = g_rts.n_mem_floor_held;
+      rts_gov_feed(0.1, 1.0, 60); EXPECT("26 GPU 有余量也升不过最低档", 3, g_rts.gov.lvl); EXPECT("26 挡住的升档计数", 1, (long long)(g_rts.n_mem_floor_held - held));
+      g_rts.memw.t_last -= 59; g_rts.memw.t_step -= 59; @autoreleasepool { FULL(); } EXPECT("26 告警后 59 秒：还不放宽", 3, g_rts.memw.floor);
+      g_rts.memw.t_last -= 2; g_rts.memw.t_step -= 2; @autoreleasepool { FULL(); } EXPECT("26 告警后 61 秒：放宽到最低第 2 档", 2, g_rts.memw.floor); EXPECT("26 放宽不等于升档（升不升由自动降档）", 3, g_rts.gov.lvl);
+      @autoreleasepool { FULL(); } EXPECT("26 放宽后不到 30 秒：不再放宽", 2, g_rts.memw.floor);
+      g_rts.memw.t_step -= 31; @autoreleasepool { FULL(); } EXPECT("26 再过 30 秒：最低第 1 档", 1, g_rts.memw.floor);
+      g_rts.memw.t_step -= 31; @autoreleasepool { FULL(); } EXPECT("26 再过 30 秒：最低第 0 档、AO / 网格缓存上限恢复", 1, g_rts.memw.floor == 0 && !g_rts.memw.ao_off && g_rts.budget == (64ull << 20));
+      setenv("DM_TEST_RT_MEM_AVAIL_MB", "800", 1); EXPECT("26 测试开关给离上限 800 MB", 800, (long long)(rts_avail_bytes() >> 20)); unsetenv("DM_TEST_RT_MEM_AVAIL_MB"); EXPECT("26 Mac 读不到离上限", 0, (long long)rts_avail_bytes());
+      g_rts.gov.lvl = 0; g_rts.mem_avail = 2000ull << 20; g_rts.plan_w = 0; rts_mem_replan(2852, 2006); rts_lvl_update();
+      EXPECT("26 预算够（2000 MB → 192 MB）：缺省不动", 1, !g_rts.mplan.ao_off && !g_rts.mplan.lvl_floor && g_rts.budget == (64ull << 20) && g_rts.eff.ao && g_rts.gov.lvl == 0);
+      g_rts.mem_avail = 400ull << 20; g_rts.plan_w = 0; rts_mem_replan(2852, 2006);
+      EXPECT("26 预算 50 MB（原生 2852x2006）：关 AO", 1, g_rts.mplan.ao_off && !g_rts.eff.ao); EXPECT("26 预算 50 MB：网格缓存上限缩到 16 MB", 16, (long long)(g_rts.budget >> 20)); EXPECT("26 预算 50 MB：最低第 3 档", 3, g_rts.gov.lvl);
+      EXPECT("26 预算 50 MB：收紧后估算不超预算", 1, g_rts.mplan.est <= g_rts.mem_budget);
+      g_rts.mem_avail = 0; g_rts.plan_w = 0; rts_mem_replan(640, 360); g_rts.gov.lvl = 0; rts_lvl_update(); EXPECT("26 预算不限：回到缺省", 1, !g_rts.mplan.ao_off && !g_rts.mplan.lvl_floor && g_rts.gov.lvl == 0);
+      g_rts.on = 0; for (int i = 0; i < 3; i++) @autoreleasepool { frame_open(); sh(0); frame_close(); }
+      uint64_t n0 = g_rts.memw.n, k0 = g_rts.key_ns; mtl_note_memory_warning(); for (int i = 0; i < 3; i++) @autoreleasepool { frame_open(); sh(0); frame_close(); }
+      EXPECT("26 B 级 光追关：告警不处理（计数不变）", 0, (long long)(g_rts.memw.n - n0)); EXPECT("26 B 级 光追关：不建网格、不算键", 1, g_rts.nmesh == 0 && g_rts.key_ns == k0 && !g_rts.tlas);
+      g_rts.on = 1; EXPECT("26 再开后光追生效", 1, until_applied(a1, 1)); EXPECT("26 再开后不按关着时的告警降档", 1, g_rts.memw.n == n0 && g_rts.gov.lvl == 0 && g_rts.memw.floor == 0);
+      g_rts.ao_on = 0; g_rts.budget0 = g_rts.budget = b0; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0; rts_lvl_update();
+      #undef FULL
+    }
 #endif
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;

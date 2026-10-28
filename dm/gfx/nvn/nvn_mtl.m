@@ -146,6 +146,8 @@ static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t g_cv = PTHREAD_COND_INITIALIZER;
 static uint64_t g_done;                         // 已完成的最大栅栏值（完成回调写） | Highest completed fence value (written by the completion callback)
 static _Atomic int g_last_commit_error;
+static _Atomic uint32_t g_mem_warn_n;   // 系统内存告警次数（iOS 主线程 mtl_note_memory_warning 加；光追模块在渲染线程的帧开头看到变了就放缓存、降档，nvn_rtshadow.inc rts_mem_frame） | system memory warnings (bumped by mtl_note_memory_warning on the iOS main thread; the ray-tracing module sees the change at the frame start on the render thread, releases caches and steps down, nvn_rtshadow.inc rts_mem_frame)
+void mtl_note_memory_warning(void) { atomic_fetch_add(&g_mem_warn_n, 1); }
 static _Atomic int g_gpu_hang_n;   // 命令缓冲报「Caused GPU Hang」（不算 InnocentVictim）的次数：光追模块据此降档 / 关掉（nvn_rtshadow.inc rts_hang_check） | command buffers reporting "Caused GPU Hang" (InnocentVictim excluded): the ray-tracing module steps down / switches off on it (nvn_rtshadow.inc rts_hang_check)
 static _Atomic int g_up_pending;
 
@@ -414,7 +416,10 @@ void mtl_init(void) {
     // 只给 DM_GPU_CAPTURE 抓帧包用；日志写明，玩家发来的日志一眼看出是不是抓帧包（分享诊断日志摘要键「Metal 抓帧层：」）
     // Metal capture layer (iOS Info.plist MetalCaptureEnabled / Mac METAL_CAPTURE_ENABLED=1): while on it records commands every frame and resident memory keeps growing and never comes back (device a8161cb: about 190 MB per 300 frames even with ray tracing off, ended by the system for memory within minutes),
     // only for DM_GPU_CAPTURE capture packages; logged so a player's log shows at a glance whether it is a capture package (share-log summary key "Metal 抓帧层：")
-    if ([[MTLCaptureManager sharedCaptureManager] supportsDestination:MTLCaptureDestinationGPUTraceDocument]) MLOG("【红】Metal 抓帧层：开（抓帧包：常驻内存逐帧上涨，不能用于内存 / 长测，只给 DM_GPU_CAPTURE 用）");
+    // 按开关本身判（iOS Info.plist 的 MetalCaptureEnabled、Mac 的 METAL_CAPTURE_ENABLED），启动时不取 MTLCaptureManager（读个开关就够，不为写一行日志多建抓帧对象）
+    // judged by the switch itself (iOS Info.plist MetalCaptureEnabled, Mac METAL_CAPTURE_ENABLED), without fetching MTLCaptureManager at start-up (reading the switch is enough; no capture object is created just to write one log line)
+    int cap_on = [NSBundle.mainBundle.infoDictionary[@"MetalCaptureEnabled"] boolValue]; { const char *ce = getenv("METAL_CAPTURE_ENABLED"); if (ce && atoi(ce)) cap_on = 1; }
+    if (cap_on) MLOG("【红】Metal 抓帧层：开（抓帧包：常驻内存逐帧上涨，不能用于内存 / 长测，只给 DM_GPU_CAPTURE 用）");
     else MLOG("Metal 抓帧层：关");
     udc_selftest();
 }

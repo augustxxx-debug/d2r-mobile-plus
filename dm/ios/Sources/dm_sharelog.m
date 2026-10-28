@@ -39,7 +39,7 @@ static NSString *last_line(NSData *d, const char *key) {
 static void perf_block(NSMutableString *h, NSString *title, NSData *d) {
     [h appendFormat:@"\n—— %@ ——\n", title];
     if (!d) { [h appendString:@"（没有这份日志）\n"]; return; }
-    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "光追阴影：机器判定", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追阴影：局部回退 至第", "光追阴影：阴影图 第", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追阴影：GPU", "自定义设置：读盘", "Metal 抓帧层：", "光追内存：", "内存 至帧", "【内存告警】" };   // 光追阴影：第 N 帧 … = 每 600 帧的统计行（实例、变体、GPU 耗时）；光追点光 = 挑中的点光 | "光追阴影：第" = the 600-frame statistics line (instances, variants, GPU time); "光追点光" = the chosen point lights
+    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "光追阴影：机器判定", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追阴影：局部回退 至第", "光追阴影：阴影图 第", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追阴影：GPU", "自定义设置：读盘", "Metal 抓帧层：", "光追内存：预算", "光追内存：第", "光追内存：告警", "内存 至帧", "【内存告警】" };   // 光追阴影：第 N 帧 … = 每 600 帧的统计行（实例、变体、GPU 耗时）；光追点光 = 挑中的点光 | "光追阴影：第" = the 600-frame statistics line (instances, variants, GPU time); "光追点光" = the chosen point lights
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) { NSString *l = last_line(d, keys[i]); [h appendFormat:@"%@\n", l ?: [NSString stringWithFormat:@"（没有「%@」行）", @(keys[i])]]; }
 }
 // 日志里的路径会带系统用户主目录（Mac 上是 /Users/<用户名>，iPhone 上是 /var/mobile）：导出时一律换成 ~，不把用户名带出去

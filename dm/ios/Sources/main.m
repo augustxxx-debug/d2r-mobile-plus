@@ -1246,12 +1246,13 @@ static void crash_subscribe(void) {
 
 @implementation App
 - (void)applicationWillTerminate:(UIApplication *)a { if (g_host_up) dm_host_shutdown("iOS App 终止"); }
-// 系统内存告警：只记一行，不放任何缓存。用途：玩家被系统按内存终止前不会有任何通知，上一局日志里至少留下前兆与当时的几项读数
+// 系统内存告警：记一行；光追模块下一帧放掉自己的缓存并降档（mtl_note_memory_warning），别的缓存不动。用途：玩家被系统按内存终止前不会有任何通知，上一局日志里至少留下前兆与当时的几项读数
 // （常驻、显卡已分配、游戏主堆余量是上次每 300 帧读到的值、离系统内存上限还有多少）。一局最多记 50 行
-// System memory warning: log one line only, release no cache. Purpose: a player gets no notice before the system terminates the app for memory, so the previous session's log at least keeps the precursor and a few readouts at that moment
+// System memory warning: log one line; the ray-tracing module releases its own caches and steps down at the next frame (mtl_note_memory_warning), no other cache is touched. Purpose: a player gets no notice before the system terminates the app for memory, so the previous session's log at least keeps the precursor and a few readouts at that moment
 // (resident size, GPU allocated, main-heap free space as last read every 300 frames, and how far from the system memory limit). At most 50 lines per session
 - (void)applicationDidReceiveMemoryWarning:(UIApplication *)a {
     { void dm_crashfence_note_memory(void); dm_crashfence_note_memory(); }   // 崩溃围栏：之后在前台没了算内存不足 | crash fence: vanishing in the foreground afterwards counts as out of memory
+    if (g_host_up) { void mtl_note_memory_warning(void); mtl_note_memory_warning(); }   // 光追：下一帧开头放掉网格缓存 / AO / 点光遮罩并降档（只加计数，不在主线程碰 Metal 对象） | ray tracing: at the next frame start release the mesh cache / AO / point masks and step down (only a counter bump, no Metal objects touched on the main thread)
     static int n; if (++n > 50) return;
     task_vm_info_data_t vi; mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT; unsigned long long fp = 0;
     if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS) fp = vi.phys_footprint >> 20;
