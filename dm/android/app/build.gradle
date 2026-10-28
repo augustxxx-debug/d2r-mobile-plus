@@ -105,6 +105,7 @@ def generateGenAssets = tasks.register('generateGenAssets', Exec) {
                 // 开源楷体（-PdmFont=<.ttf> -PdmFontLicense=<OFL.txt> [-PdmFontWeight=0..8]）随包，手机端生成覆盖层时用 | the open-licence Kai font goes into the package for the on-phone overlay step
                 *(project.findProperty('dmFont') ? ['--font', project.findProperty('dmFont'), '--font-license', project.findProperty('dmFontLicense') ?: '', '--font-weight', project.findProperty('dmFontWeight') ?: '0'] : []))
     if (project.findProperty('dmFont')) inputs.files(project.findProperty('dmFont'), project.findProperty('dmFontLicense') ?: [])
+    inputs.file('../THIRD_PARTY_NOTICES.txt')   // 随包第三方许可证清单（四审 A4-01）| licence notices of the bundled third-party components (fourth audit A4-01)
 }
 if (genRuntime) {
     android.sourceSets.main.jniLibs.srcDir("${genRuntime}/jniLibs")

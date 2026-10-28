@@ -174,8 +174,15 @@ final class PackGenerator {
 
     // 生成结果换进运行目录：与导入同一规矩——先进 import.part，齐了逐项换上，pack_info.txt 最后放；同一分区里只改名不复制
     // swap the result into the runtime directory, by the same rule as importing: into import.part first, then item by item, pack_info.txt last; within one partition only renames, no copying
+    // 换上开始前先写「未完成」标记，全部就位、import.part 删掉之后才删它（四审 A4-04）：中途被杀时 out/ 可能已就位而 pack_info.txt 还没有，
+    // 没有这个标记就会被当成开发时直接推进来的文件、永远不再生成
+    // An "unfinished" marker is written before the swap and removed only after everything is in place and import.part is gone (fourth audit A4-04): if the process is
+    // killed midway, out/ may already be in place without pack_info.txt, which would otherwise look like files pushed during development and never be generated again
+    static final String PENDING = "install.pending";
     static void install(File made, File runtime) throws IOException {
         for (String item : ITEMS) if (!new File(made, item).exists()) throw new IOException("missing " + item);
+        if (!runtime.isDirectory() && !runtime.mkdirs()) throw new IOException("mkdir runtime");
+        try (FileOutputStream o = new FileOutputStream(new File(runtime, PENDING))) { o.write('1'); o.getFD().sync(); }
         File part = new File(runtime, "import.part");
         deleteTree(part);
         if (!part.mkdirs()) throw new IOException("mkdir import.part");
@@ -186,6 +193,32 @@ final class PackGenerator {
             if (!from.renameTo(to)) throw new IOException("rename " + item);
         }
         deleteTree(part);
+        if (!new File(runtime, PENDING).delete()) throw new IOException("delete " + PENDING);
+    }
+
+    // gen_log.txt 落在玩家的 Download 里、指南让玩家发到群里：写出前去掉本机路径与包名（四审 A4-09），规则同分享诊断日志（sharelog_android.c：应用数据目录与
+    // /storage/emulated/0 → ~，包名 → <app-id>），另把 APK 安装目录换成 <apk>。生成不读存档，日志里没有角色名
+    // gen_log.txt lands in the player's Download folder and the guide asks players to post it in the group: local paths and the package name are removed before writing
+    // (fourth audit A4-09), by the share-diagnostics rules (sharelog_android.c: app data directory and /storage/emulated/0 -> ~, package name -> <app-id>), and the APK
+    // install directory becomes <apk>. Generation reads no saves, so there are no character names in the log
+    static String scrubLog(String text, String apkDir, String appHome, String appId) {
+        String t = text;
+        if (apkDir != null && apkDir.length() > 1) t = t.replace(apkDir, "<apk>");
+        if (appHome != null && appHome.length() > 1) t = t.replace(appHome, "~");
+        if (appId != null && !appId.isEmpty()) t = t.replace("/data/data/" + appId, "~").replace("/data/user/0/" + appId, "~");
+        t = t.replace("/storage/emulated/0", "~").replace("/sdcard/", "~/");
+        if (appId != null && !appId.isEmpty()) t = t.replace(appId, "<app-id>");
+        return t;
+    }
+
+    // 上次换上没做完（标记还在，或 import.part 残留）| the last swap did not finish (the marker is still there, or import.part is left over)
+    static boolean installPending(File runtime) { return new File(runtime, PENDING).exists() || new File(runtime, "import.part").exists(); }
+
+    // 开发时直接推进来的导入内容：有改写后的主程序、没有 pack_info.txt，且不是一次没做完的换上 | import content pushed directly during development: a patched main
+    // program, no pack_info.txt, and not an unfinished swap
+    static boolean pushedByDeveloper(String have, File runtime, File extRuntime) {
+        if (have != null || installPending(runtime)) return false;
+        return new File(runtime, "out/main.patched.bin").canRead() || (extRuntime != null && new File(extRuntime, "out/main.patched.bin").canRead());
     }
 
     static void deleteTree(File f) throws IOException {

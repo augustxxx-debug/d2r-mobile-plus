@@ -160,10 +160,11 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // 没有导入包、也没导入过，或导入的是给别的版本做的：App 带了生成器（-PdmGenRuntime 出的包）就在手机上用玩家自己的游戏文件现做，不用电脑。
         // 开发时直接推进来的（有 out/main.patched.bin、没有 pack_info.txt）不动
         // No import pack and nothing imported, or what was imported was made for another version: when the App carries the generator (built with -PdmGenRuntime)
-        // it makes the pack on the phone from the player's own game files, without a computer. Files pushed directly during development (out/main.patched.bin, no pack_info.txt) are left alone
+        // it makes the pack on the phone from the player's own game files, without a computer. Files pushed directly during development (out/main.patched.bin, no pack_info.txt) are left alone;
+        // an unfinished swap of a generated pack (install.pending / import.part left over) is not a push and is generated again (fourth audit A4-04)
         String product = packProduct(have);
         File ext = getExternalFilesDir(null);
-        boolean pushed = have == null && (new File(runtime, "out/main.patched.bin").canRead() || (ext != null && new File(ext, "dm/out/main.patched.bin").canRead()));
+        boolean pushed = PackGenerator.pushedByDeveloper(have, runtime, ext == null ? null : new File(ext, "dm"));
         if (generating || (want == null && !pushed && !BuildConfig.DM_PRODUCT.equals(product) && generatorAvailable())) { generate(source.getParentFile(), runtime); return false; }
         // 已导入的是给别的版本做的（App 升级了、导入包没重做）：同样要重做导入包。开发时直接推进来的没有 pack_info.txt，不核
         // The imported pack was made for another version (the app was updated, the pack was not remade): it has to be remade too.
@@ -245,6 +246,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (free < PackGenerator.SPACE_NEEDED) { fail(getString(R.string.dmAndroidGenNoSpace, android.text.format.Formatter.formatShortFileSize(this, free))); return; }
         generating = true; genState.step = PackGenerator.Step.PREPARE; genState.shaderDir = null; genState.shadersMade = 0;
         final File dataDir = data; final String nativeDir = getApplicationInfo().nativeLibraryDir;
+        final String appHome = getFilesDir().getParent(), apkDir = new File(nativeDir).getParentFile().getParent(), appId = getPackageName();   // gen_log.txt 脱敏用 | for scrubbing gen_log.txt
         final android.content.res.AssetManager assets = getAssets(); final android.content.Context app = getApplicationContext();
         final int jobs = Math.max(1, Runtime.getRuntime().availableProcessors());
         new Thread(() -> {
@@ -281,9 +283,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
                 tail.addLast("[java] " + e);
             }
             if (failure != null) {   // 日志放到玩家看得到的地方，反馈时附上 | put the log where the player can see it, to attach when reporting
-                try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) {
-                    if (log.isFile()) Files.copy(log.toPath(), o);
-                    o.write(("\n" + String.join("\n", tail) + "\n").getBytes(StandardCharsets.UTF_8));
+                try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) {   // 脱敏后再写（四审 A4-09）| scrubbed before writing (fourth audit A4-09)
+                    String text = (log.isFile() ? new String(Files.readAllBytes(log.toPath()), StandardCharsets.UTF_8) : "") + "\n" + String.join("\n", tail) + "\n";
+                    o.write(PackGenerator.scrubLog(text, apkDir, appHome, appId).getBytes(StandardCharsets.UTF_8));
                 } catch (IOException ignored) {}
             }
             genFailure = failure;

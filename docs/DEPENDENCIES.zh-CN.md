@@ -49,6 +49,24 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 | adb | 随 Android SDK | 开发调试时看日志、推文件（玩家不需要） | <https://developer.android.com/tools/adb> |
 | Docker（可选） | — | 用 `dm/android/docker/` 的现成构建环境 | <https://www.docker.com> |
 
+## 安卓安装包随附的组件
+
+安卓 APK 带着在手机上生成导入包要用的工具（`assets/dmgen/runtime.zip` 与 `lib/arm64-v8a/libdmgen_*.so`，由 `dm/android/tools/gen_runtime.sh` 编出）和一款开源界面字体，都不是游戏内容。许可证原文随包在 `assets/dmgen/THIRD_PARTY_NOTICES.txt`（与 [`dm/android/THIRD_PARTY_NOTICES.txt`](../dm/android/THIRD_PARTY_NOTICES.txt) 同一份，由 `dm/android/tools/third_party_notices.py` 生成）；下表是 APK 里的实际版本，与上面电脑上装的 Python 包版本不同。
+
+| 组件 | APK 里的版本 | 许可证 |
+|---|---|---|
+| CPython（Chaquopy 的安卓构建），含 OpenSSL 3.5.9、SQLite 3、XZ Utils 5.4.6、bzip2 1.0.8、expat 2.8.5、libffi、libmpdec 2.5.1 | 3.13.16 | PSF-2.0；OpenSSL 为 Apache-2.0；SQLite 为公有领域；其余见许可证清单 |
+| Chaquopy（Python 构建与轮子） | target 3.13.16-0 | MIT |
+| NumPy / OpenBLAS / libgfortran / LLVM libc++ | 1.26.2 / 0.2.20 / 4.9 / 18 | BSD-3-Clause / BSD-3-Clause / GPL-3.0 附 GCC 运行库例外 / Apache-2.0 附 LLVM 例外 |
+| python-lz4（含 LZ4） | 4.3.3 | BSD-3-Clause（LZ4：BSD-2-Clause） |
+| fontTools | 4.67.0 | MIT |
+| Capstone | 5.0.7 | BSD-3-Clause |
+| Pillow，含 FreeType、HarfBuzz、zlib-ng | 13.0.0、2.14.3、14.5.0、2.3.3 | MIT-CMU；FTL；MIT；Zlib |
+| zlib（Python 的 zlib 模块） | 1.3.1 | Zlib |
+| SPIRV-Tools / SPIRV-Headers | 提交 `28f99f74` / `86f980c7` | Apache-2.0 / MIT |
+| .NET NativeAOT 运行时（着色器翻译工具），含 Ryujinx 着色器翻译器 | 10.0.13；Ryujinx 1.3.2 | MIT |
+| 霞鹜文楷（LXGW WenKai）Medium | v1.530 | SIL Open Font License 1.1 |
+
 ## 可选
 
 | 工具 | 用来做什么 | 官方地址 |

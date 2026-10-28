@@ -17,6 +17,11 @@ public class PackGeneratorTest {
         if (!want.equals(actual)) throw new AssertionError("want=" + want + " actual=" + actual);
     }
     private static File temp() throws IOException { return Files.createTempDirectory("pgt").toFile(); }
+    private static File made2() throws IOException {
+        File m = temp();
+        for (String item : new String[]{"out/main.patched.bin", "shaders/a.xgs", "overlay/overlay.manifest", "derived.tsv", "pack_info.txt"}) write(new File(m, item), item);
+        return m;
+    }
     private static void write(File f, String text) throws IOException { f.getParentFile().mkdirs(); Files.write(f.toPath(), text.getBytes(StandardCharsets.UTF_8)); }
 
     public static void main(String[] args) throws Exception {
@@ -59,6 +64,27 @@ public class PackGeneratorTest {
         equal(false, new File(runtime, "shaders/old.xgs").exists());
         equal("PRODUCT=p\n", new String(Files.readAllBytes(new File(runtime, "pack_info.txt").toPath()), StandardCharsets.UTF_8));
         equal(false, new File(runtime, "import.part").exists());
+        equal(false, PackGenerator.installPending(runtime));
+        equal(false, PackGenerator.pushedByDeveloper("PRODUCT=p\n", runtime, null));
+        // 四审 A4-04：换上中途被杀（out/ 已就位、pack_info.txt 未到、标记还在）不能被当成开发推送；标记或 import.part 残留都算没做完
+        // fourth audit A4-04: a swap killed midway (out/ in place, no pack_info.txt yet, marker still there) must not count as a developer push; a leftover marker or import.part means unfinished
+        File killed = temp(); write(new File(killed, "out/main.patched.bin"), "m"); write(new File(killed, PackGenerator.PENDING), "1");
+        equal(true, PackGenerator.installPending(killed));
+        equal(false, PackGenerator.pushedByDeveloper(null, killed, null));
+        File leftover = temp(); write(new File(leftover, "out/main.patched.bin"), "m"); write(new File(leftover, "import.part/pack_info.txt"), "PRODUCT=p\n");
+        equal(false, PackGenerator.pushedByDeveloper(null, leftover, null));
+        File dev = temp(); write(new File(dev, "out/main.patched.bin"), "m");
+        equal(true, PackGenerator.pushedByDeveloper(null, dev, null));
+        File devExt = temp(); write(new File(devExt, "out/main.patched.bin"), "m");
+        equal(true, PackGenerator.pushedByDeveloper(null, temp(), devExt));
+        PackGenerator.install(made2(), killed);   // 重新生成后换上成功，标记清掉 | a regenerated pack installs and clears the marker
+        equal(false, PackGenerator.installPending(killed));
+        // 四审 A4-09：gen_log.txt 写出前去掉应用目录、外部存储、APK 目录与包名 | fourth audit A4-09: app directory, external storage, APK directory and package name removed
+        String raw = "rt /data/user/0/com.xiaoboluo.d2r/files/dmgen/rt\nexe /data/app/~~Ab12==/com.xiaoboluo.d2r-Cd34==/lib/arm64/libdmgen_py.so\n"
+                + "in /storage/emulated/0/Download/S2X/D2R Mobile/ExeFS/main\nold /data/data/com.xiaoboluo.d2r/files\n/sdcard/Download/x\npkg com.xiaoboluo.d2r\nfont=f4b8a34d1f83 step ok";
+        String clean = PackGenerator.scrubLog(raw, "/data/app/~~Ab12==/com.xiaoboluo.d2r-Cd34==", "/data/user/0/com.xiaoboluo.d2r", "com.xiaoboluo.d2r");
+        equal("rt ~/files/dmgen/rt\nexe <apk>/lib/arm64/libdmgen_py.so\nin ~/Download/S2X/D2R Mobile/ExeFS/main\nold ~/files\n~/Download/x\npkg <app-id>\nfont=f4b8a34d1f83 step ok", clean);
+        equal(false, clean.contains("/data/") || clean.contains("/storage/") || clean.contains("xiaoboluo"));
         File broken = temp(); write(new File(broken, "out/x"), "x");
         try { PackGenerator.install(broken, temp()); throw new AssertionError("install of an incomplete pack must fail"); }
         catch (IOException expected) { cases++; }

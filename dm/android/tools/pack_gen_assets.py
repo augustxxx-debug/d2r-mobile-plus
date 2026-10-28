@@ -6,6 +6,7 @@
   dmgen/queries/     4 个查询核（dm/gfx/tools/pack_builtin_queries.py，用 NDK 的 glslc 编），手机上没有 glslc
   dmgen/font/        可选：开源楷体（--font，须带 --font-license 的许可证文件，如霞鹜文楷 + OFL.txt）与 font.txt（文件名、加粗档、sha256）；
                      手机端生成覆盖层时用它替换中日文字形（DM_UI_FONT），字体本身是可再分发的开源字体，不是游戏内容
+  dmgen/THIRD_PARTY_NOTICES.txt  随包第三方组件（运行时、翻译工具、字体）的许可证清单与原文，取自 dm/android/THIRD_PARTY_NOTICES.txt（tools/third_party_notices.py 生成）
 用法：pack_gen_assets.py --output <assets 目录> --glslc <glslc> [--font <.ttf> --font-license <许可证> [--font-weight 0..8]]
 The repo files the App carries for making the import pack on the phone (no game files are read, no game content):
   dmgen/src.zip      git-tracked files under dm/ (work-tree content; without third-party sources, HarmonyOS, tvOS, the Android App itself and any tests/), unpacked on the phone to run dm/tools/d2rm_android.py;
@@ -14,6 +15,7 @@ The repo files the App carries for making the import pack on the phone (no game 
   dmgen/queries/     the 4 query kernels (dm/gfx/tools/pack_builtin_queries.py, compiled with the NDK's glslc); there is no glslc on the phone
   dmgen/font/        optional: an open-licence Kai font (--font, which needs the licence file given by --font-license, e.g. LXGW WenKai + OFL.txt) and font.txt (file name,
                      stroke level, sha256); the on-phone overlay step uses it for the CJK glyphs (DM_UI_FONT); the font is redistributable open-source, not game content
+  dmgen/THIRD_PARTY_NOTICES.txt  licences of the bundled third-party components (runtime, translator, font) with their texts, from dm/android/THIRD_PARTY_NOTICES.txt (made by tools/third_party_notices.py)
 Usage: pack_gen_assets.py --output <assets directory> --glslc <glslc> [--font <.ttf> --font-license <licence> [--font-weight 0..8]]
 """
 import argparse
@@ -60,6 +62,9 @@ def main():
     if a.font and (a.font.suffix.lower() != '.ttf' or not a.font.is_file()): sys.exit('字体要是存在的 .ttf：%s' % a.font)
     dm = Path(__file__).resolve().parents[2]
     gen = a.output / 'dmgen'; shutil.rmtree(gen, ignore_errors=True); gen.mkdir(parents=True)
+    notices = dm / 'android/THIRD_PARTY_NOTICES.txt'   # 随包组件的许可证必须随包（四审 A4-01）| the bundled components' licences must ship with them (fourth audit A4-01)
+    if not notices.is_file(): sys.exit('缺 %s（tools/third_party_notices.py 生成）' % notices)
+    shutil.copyfile(notices, gen / 'THIRD_PARTY_NOTICES.txt')
     names = source_files(dm); write_zip(dm, names, gen / 'src.zip')
     (gen / 'src.sha256').write_text(hashlib.sha256((gen / 'src.zip').read_bytes()).hexdigest() + '\n')
     # pack_builtin_queries.py 不许输出在 dm/ 里（构建目录在 dm/android/app/build 下），先编到临时目录再搬

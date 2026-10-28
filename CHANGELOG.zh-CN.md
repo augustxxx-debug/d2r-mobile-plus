@@ -12,6 +12,8 @@
 
 - 安卓包改为在手机上生成导入包（不用电脑）：把自己的 `ExeFS` 与 `data` 放进手机，首次打开自动生成。安装包随附开源字体霞鹜文楷（SIL OFL 1.1）作楷体界面字；公开包不再使用原先的私有楷体。
 - 可选界面字体：只替换游戏原字体已有的中日文字形（不再补新码位），合成后超过 15 MiB 就拒绝出字体；字体过大时安卓主菜单一画字就闪退。
+- 安卓包许可证：手机端生成随包的第三方组件（CPython 及其 OpenSSL / SQLite 与内含各库、NumPy、OpenBLAS、python-lz4、fontTools、Capstone、Pillow 及 FreeType / HarfBuzz / zlib-ng、zlib、SPIRV-Tools、含 Ryujinx 代码的 .NET NativeAOT 着色器翻译工具）的许可证随包在 `assets/dmgen/THIRD_PARTY_NOTICES.txt`；出包脚本对缺清单或版本对不上的包直接拒绝。生成失败日志 `gen_log.txt` 写到 Download 前先去掉本机路径与包名。生成好的导入包在最后换上时被打断的，下次打开会重新生成，不再被当成开发时推进来的文件。
+- 已知问题：安卓长时间游戏内存缓慢上涨（Adreno 740 掌机五幕换关 31.5 分钟、60 帧：后半程仍约每分钟 8 MB，没被系统关掉、没收到内存告警）；一小时以上待验证。连续玩 1–2 小时后建议重启一次 App。
 - Android 版第一个高通 Adreno 候选（分支 `claude/android-p0-e0b171`，不合进 iOS 线）：崩溃围栏生命周期接线、暂停菜单「分享诊断日志」（脱敏）、显示版本与 `version.sh` 同源、原生出图尺寸 + 图形页「渲染分辨率」档、120 帧档（自动切高刷显示模式）、覆盖层「显示帧数」、实体手柄（Xbox 键位、B / BACK 被消费、手柄 / 触屏模式切换、手柄模式保留经验行）、3D 画面加亮上限缺省 2，以及 Vulkan 引擎的两项 Adreno 740 驱动绕法（warp32 改写的子组掩码改为按车道号算——该驱动读 SubgroupLtMask 第 1 字会挂 GPU；按自检启用的 lane 号改走 ballot）。Mali 设备不在本候选范围内。配置项按平台限制：自定义页「iCloud 存档同步」行只在有 iCloud 的平台出现（安卓的布局与宿主都不出这一行）。
 - 安卓一审修复：分享诊断日志里的中文 / 日文 / 韩文角色名紧挨汉字也会替换，拉丁名挨着汉字也算词边界，名字互为子串时先换长的（iOS / Mac 的 `dm_diagnostic_scrub.h` 同一规则）；lane 号改走 ballot 的改写只在入口函数（全体车道活跃）算一次、存进 Private 变量，辅助函数读它，分歧控制流里被调用的辅助函数也拿到真实 lane 号，并改用 ExclusiveScan（旧版写成 InclusiveScan，得到 lane 号 + 1）；启动 lane 号自检释放内存前先解除映射，fence 没等到时先等队列静止再回收（等不到静止就不回收）。出正式包的脚本固定发布证书（SHA-256 `b4af06c1…52da`），不会生成新钥匙。
 
