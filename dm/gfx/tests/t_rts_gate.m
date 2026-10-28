@@ -31,6 +31,9 @@ int main(void) { printf("SKIP：旧接口版没有光追阴影模块\n"); return
 #define RTS_UNC_PENDING 0
 #define RTS_UNC_PRIM 0
 #endif
+#ifndef RTS_LIT_DROP
+#define RTS_LIT_DROP() ((void)0)   // 七审之前的代码没有全亮遮罩 | code before the seventh review has no lit mask
+#endif
 #ifndef RTS_WHY
 #define RTS_WHY() ""   // 4978d39 及更早：不记跳过追踪的具体原因 | 4978d39 and earlier: the specific reason for skipping the trace is not recorded
 #endif
@@ -105,6 +108,25 @@ static rts_mesh *mesh_by_ib(const uint8_t *ib, size_t len) {
 }
 static uint64_t cache_bytes(void) {
     uint64_t t = 0; for (uint32_t k = 0; k < g_rts.meshes.cap; k++) { rts_mesh *m = g_rts.meshes.vals[k]; if (m) t += m->as.allocatedSize + m->pos.length + m->ib.length; } return t;
+}
+// 七审 Q7-01：按生产 _rt 变体同样的表达式读遮罩（rts_variant.py：fast::min(rts_mask.read(uint2(gl_FragCoord.xy)).x, 原版采样)，原版采样取全亮 1.0），
+// 扫整个渲染目标（w×h，每个像素一条线程，线程坐标 = gl_FragCoord.xy 的整数部分），数被压暗（< 1）的像素
+// Seventh review Q7-01: read the mask with the same expression as the production _rt variants (rts_variant.py: fast::min(rts_mask.read(uint2(gl_FragCoord.xy)).x, original sample), the original sample being fully lit 1.0),
+// over the whole render target (w×h, one thread per pixel, thread position = the integer part of gl_FragCoord.xy), counting darkened (< 1) pixels
+static long dark_pixels(id<MTLTexture> mask, NSUInteger w, NSUInteger h) {
+    static id<MTLComputePipelineState> ps; static id<MTL4ArgumentTable> at; static id<MTLBuffer> buf;
+    if (!ps) { NSError *e = nil;
+        id<MTLLibrary> lib = [g_dev newLibraryWithSource:@"#include <metal_stdlib>\nusing namespace metal;\nkernel void neutral(texture2d<float> rts_mask [[texture(0)]], device uint *o [[buffer(0)]], uint2 g [[thread_position_in_grid]]) {\n"
+            "  if (g.x >= o[1] || g.y >= o[2]) return; float v = fast::min(rts_mask.read(uint2(float2(g) + 0.5)).x, 1.0f); if (v < 0.999f) atomic_fetch_add_explicit((device atomic_uint *)&o[0], 1u, memory_order_relaxed); }\n" options:nil error:&e];
+        if (!lib) { printf("dark_pixels 核编不过：%s\n", e.description.UTF8String); return -1; }
+        ps = [g_dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"neutral"] error:&e];
+        MTL4ArgumentTableDescriptor *ad = [MTL4ArgumentTableDescriptor new]; ad.maxBufferBindCount = 1; ad.maxTextureBindCount = 1; at = [g_dev newArgumentTableWithDescriptor:ad error:&e];
+        buf = [g_dev newBufferWithLength:16 options:MTLResourceStorageModeShared]; res_add(buf); }
+    if (!mask || !ps) return -1;
+    uint32_t *o = buf.contents; o[0] = 0; o[1] = (uint32_t)w; o[2] = (uint32_t)h;
+    mtl_sub_begin(); rp_end(); CENC ce = (CENC)enc_c_begin(NULL); [ce setArgumentTable:at]; enc_c_pso(ce, ps); [at setTexture:mask.gpuResourceID atIndex:0]; [at setAddress:buf.gpuAddress atIndex:0];
+    enc_c_dispatch(ce, MTLSizeMake((w + 7) / 8, (h + 7) / 8, 1), MTLSizeMake(8, 8, 1)); enc_c_end(ce); args_dirty_all();
+    uint64_t f = mtl_sub_commit(); mtl_wait(f, 5000000000ull); return (long)o[0];
 }
 // 让 GPU 在这一帧开头空转约半秒：之后几帧的 CPU 编码一定跑在它前面 | Keep the GPU busy for about half a second at the start of this frame: the CPU encoding of the next few frames is then certainly ahead of it
 static void gpu_spin(void) {
@@ -344,6 +366,35 @@ int main(void) { @autoreleasepool {
         for (int i = 0; i < 3; i++) { drawn += run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; }
         EXPECT("开关关：三帧六次都照原版编码", 6, drawn); EXPECT("开关关：省画 / 照原版画 / 非太阳图计数都不动", 0, (long long)(g_rts.n_skip_draws - s0 + g_rts.n_resid_draws - r0 + g_rts.n_nonsun_draws - n0));
         EXPECT("开关关：不算网格键", 0, (long long)(g_rts.key_ns - k0)); EXPECT("开关关：不写深度标志没置位", 0, g_rts_nowrite); EXPECT("开关关：遮罩不绑", 1, rts_mask_tex() == nil || rts_mask_tex() == g_rts.white); g_rts.on = 1; }
+      // 23. 七审 Q7-01：选上 _rt 变体时它读到的遮罩在整个渲染目标上都得是对的——迟滞等待、只有点光、审计的直接状态（还没建全亮遮罩）、动态分辨率、恢复；光追关时不选变体。
+      //     像素按生产变体同样的读法（dark_pixels）；原先 1x1 白贴图越界读是 0，整屏压暗 | 23. seventh review Q7-01: when an _rt variant is selected, the mask it reads must be right over the whole render target - hysteresis hold, point lights only, the review's direct state (no lit mask built yet), dynamic resolution, recovery; with ray tracing off no variant is selected.
+      //     Pixels are read the way the production variants read them (dark_pixels); the 1x1 white texture used to read 0 out of bounds and darken the whole screen
+      { NvProg *vp = [NvProg new]; vp->sh[0] = g_pr->sh[0]; vp->sh[1] = [NvShader new]; vp->fs_base = vp->sh[1]; vp->fs_rt = [NvShader new]; vp->rt_tried = 1;
+        static tex_t big; big = g_mdepth; big.serial = 79101; big.d.width = 800; big.d.height = 450; static tex_t bighdr; bighdr = g_hdr; bighdr.serial = 79102; bighdr.d.width = 800; bighdr.d.height = 450;
+        #define SELECT(c, d) ({ R.rt.n = 1; R.rt.color[0] = (c); R.rt.depth = (d); g_rts.hdr_ser = (c)->serial; g_rts.ds_ser = (d)->serial; g_rts.trace_pending = 0; S.ds.dt = 1; S.color.blend_en = 0; vp->sh[1] = vp->fs_base; int dbg_ = g_rts.dbg; g_rts.dbg = 0; rts_select_fs(vp); g_rts.dbg = dbg_; vp->sh[1] == vp->fs_rt; })   // 调试叠加模式不选变体：选的这一下关掉 | the debug-overlay mode never selects variants: off for this selection
+        // a. 迟滞等待帧：缺相机失败一帧之后，遮罩照算、画面原版 | a. hysteresis hold: after one failed frame without a camera the mask is traced, the picture original
+        RTS_HYST_RESET(); UNTIL_PART(b2, 2); run_frame(0, b2, 2, &ok); int hold = 0;
+        for (int i = 0; i < 10 && !hold; i++) { run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; hold = g_rts.mask_done && !RTS_MAP_CLEARED(); }   // 退避几帧后进入迟滞等待 | hysteresis hold follows a few backoff frames
+        int sel = SELECT(&g_hdr, &g_mdepth);
+        EXPECT("Q7-01 迟滞等待帧：遮罩算了、画面原版（测试前提）", 1, hold); EXPECT("Q7-01 迟滞等待帧：选上 _rt 变体", 1, sel);
+        EXPECT("Q7-01 迟滞等待帧：整个 640x360 目标没有一个像素被压暗", 0, dark_pixels(rts_mask_tex(), 640, 360));
+        // b. 只有点光（太阳遮罩没算） | b. point lights only (no sun mask)
+        g_rts.mask_done = 0; g_rts.pl_done = 1; sel = SELECT(&g_hdr, &g_mdepth); g_rts.pl_done = 0;
+        EXPECT("Q7-01 只有点光：选上 _rt 变体", 1, sel); EXPECT("Q7-01 只有点光：没有像素被压暗", 0, dark_pixels(rts_mask_tex(), 640, 360));
+        // c. 审计的直接状态：遮罩算了、没清图、全亮遮罩还没建（第一帧 / 刚整体释放） | c. the review's direct state: mask traced, maps not cleared, no lit mask yet (first frame / just released)
+        g_rts.mask_done = 1; g_rts.map_cleared = 0; RTS_LIT_DROP(); sel = SELECT(&g_hdr, &g_mdepth);
+        EXPECT("Q7-01 全亮遮罩还没建：选上变体时没有像素被压暗（当场按目标尺寸建）", 0, sel ? dark_pixels(rts_mask_tex(), 640, 360) : 0); EXPECT("Q7-01 全亮遮罩还没建：绑的不是 1x1", 1, !sel || rts_mask_tex().width == 640);
+        // d. 动态分辨率：目标变成 800x450 | d. dynamic resolution: the target becomes 800x450
+        sel = SELECT(&bighdr, &big);
+        EXPECT("Q7-01 动态分辨率（遮罩不用）：800x450 没有像素被压暗", 0, sel ? dark_pixels(rts_mask_tex(), 800, 450) : 0); EXPECT("Q7-01 动态分辨率（遮罩不用）：绑的盖住 800x450", 1, !sel || (rts_mask_tex().width >= 800 && rts_mask_tex().height >= 450));
+        RTS_HYST_RESET(); UNTIL_PART(b2, 2); id<MTLTexture> traced = rts_mask_tex();
+        sel = SELECT(&bighdr, &big); EXPECT("Q7-01 动态分辨率（光追遮罩 640x360、目标 800x450）：不选变体、照原版着色", 0, sel);
+        // e. 恢复：光追画面，变体读本帧光追遮罩 | e. recovery: the ray-traced picture, the variant reads this frame's traced mask
+        sel = SELECT(&g_hdr, &g_mdepth); EXPECT("Q7-01 恢复：选上变体、读本帧光追遮罩", 1, sel && rts_mask_tex() == g_rts.mask && traced == g_rts.mask);
+        // f. 光追关：不选变体 | f. ray tracing off: no variant
+        g_rts.on = 0; sel = SELECT(&g_hdr, &g_mdepth); g_rts.on = 1; EXPECT("Q7-01 光追关：不选变体", 0, sel);
+        #undef SELECT
+        memset(&R, 0, sizeof R); }
       EXPECT("局部回退各节 GPU 无错", 1, ok13);
       #undef UNTIL_PART
       g_lvp = NULL; RTS_PART_SET(0); }

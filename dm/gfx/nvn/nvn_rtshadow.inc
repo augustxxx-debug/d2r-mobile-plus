@@ -106,6 +106,7 @@ typedef struct { uint64_t key, bytes; id<MTLAccelerationStructure> as; id<MTLBuf
 #define RTS_HYST_SET(v) (g_rts.hyst = (v))   // 单测用：迟滞开关（生产由 DM_RT_SHADOW_HYST 定） | for the unit tests: the hysteresis switch (DM_RT_SHADOW_HYST in production)
 #define RTS_HYST_RESET() (g_rts.need = 1, g_rts.shown_run = 0)   // 单测用：只测单次失败后恢复的段落先清掉累积的要求 | for the unit tests: sections testing recovery from one failure first drop the accumulated requirement
 #define RTS_MAP_CLEARED() (g_rts.map_cleared)   // 局部回退时 = 本帧用上了遮罩（阴影图不清） | with partial fallback = the mask was used this frame (maps are not cleared)
+#define RTS_LIT_DROP() (g_rts.mask_lit = nil)   // 单测用：全亮遮罩当作还没建（第一帧 / 刚整体释放） | for the unit tests: treat the lit mask as not built yet (first frame / just released)
 #define RTS_PART_SET(v) (g_rts.part = (v))   // 单测用：局部回退开关（生产缺省开，DM_RT_SHADOW_PART=0 关） | for the unit tests: the partial-fallback switch (on in production, DM_RT_SHADOW_PART=0 turns it off)
 #define RTS_PAUSE_SET(s) (g_rts.pause_until = (s) > 0 ? rts_now() + (s) : 0, rts_lvl_update())   // 单测用：GPU 挂起保护的暂停（秒；0 = 结束） | for the unit tests: the hang-protection pause (seconds; 0 = end)
 #define RTS_HAS_NOTE_PASS 1
@@ -151,6 +152,7 @@ static struct {
     id<MTL4ArgumentTable> at_decode, at_trace, at_overlay, at_blur, at_pick;
     rts_fslot slot[RTS_SLOTS_MAX]; int nslot, cur; uint64_t slot_frame;   // 槽环；cur = 本帧用的槽（slot_frame 那帧取的） | slot ring; cur = this frame's slot (taken in frame slot_frame)
     id<MTLAccelerationStructure> tlas; id<MTLBuffer> scratch; NSUInteger scratch_len;
+    uint64_t n_mask_small;   // 遮罩盖不住渲染目标、改用原版着色的次数（七审 Q7-01） | times the mask did not cover the render target and the original shading was used (seventh review Q7-01)
     id<MTLTexture> mask_lit;   // 全分辨率全亮的太阳遮罩：不用遮罩的帧（迟滞等待、失败）绑它——_rt 变体按像素坐标读遮罩（rts_variant.py：rts_mask.read(gl_FragCoord)），1x1 白贴图越界读是 0 = 整屏太阳全影（6534ef4 起） | a full-resolution fully lit sun mask: bound on frames that do not use the mask (hysteresis hold, failure) - the _rt variants read the mask by pixel coordinates (rts_variant.py: rts_mask.read(gl_FragCoord)), and an out-of-bounds read of the 1x1 white texture is 0 = the whole screen in sun shadow (since 6534ef4)
     id<MTLTexture> mask, white, mask_raw, mask_tmp, pmask, pmaskf, mask_half; int sun_half, point_div; id<MTLBuffer> plidx_none, prev, lseen, llist;   // prev：上一次选中的位置（滞后）；lseen / llist：点光收集的位图与列表 | prev: last picked positions (hysteresis); lseen / llist: bitmap and list of the point-light gather
     int n_rt_loaded, n_rt_missing, n_pos_loaded, n_pos_missing;
@@ -1282,6 +1284,13 @@ static void rts_select_fs(NvProg *pr) {
     // 接收面（评审 第四节 1）：遮罩按主深度重建，只给主通道里做深度测试、不混合的绘制（主通道不写深度，深度由预渲染写好；混合的是透明 / 水面） | receivers (review 4.1): the mask is reconstructed from the main depth, so only depth-tested, unblended main-pass draws (the main pass does not write depth; blended ones are transparent / water)
     int recv = rts_in_main() && S.ds.dt && !(S.color.blend_en & 1);
     int want = rts_on() && !g_rts.failed && (g_rts.mask_done || g_rts.pl_done) && !g_rts.dbg && recv;
+    // 七审 Q7-01：_rt 变体按像素坐标读太阳遮罩（rts_variant.py：rts_mask.read(uint2(gl_FragCoord.xy))），绑的遮罩必须盖住整个渲染目标：
+    // 不用遮罩时补建 / 取主目标尺寸的全亮遮罩；还盖不住（尺寸不知道、建不出、动态分辨率刚变）就不选变体，照原版着色——宁可原版阴影，不让越界读成 0 整屏压暗
+    // Seventh review Q7-01: the _rt variants read the sun mask by pixel coordinates, so the bound mask must cover the whole render target:
+    // when the mask is not used, build / take a fully lit mask of the main target size; if it still does not cover it (size unknown, cannot be built, dynamic resolution just changed) the variant is not selected and the original shading runs - original shadows rather than an out-of-bounds read of 0 darkening the screen
+    if (want) { NSUInteger tw = R.rt.depth ? (NSUInteger)R.rt.depth->d.width : 0, th = R.rt.depth ? (NSUInteger)R.rt.depth->d.height : 0;
+        id<MTLTexture> mt = rts_mask_tex(); if (mt != g_rts.mask && tw && th) { rts_lit_tex(tw, th); mt = rts_mask_tex(); }
+        if (!mt || !tw || !th || mt.width < tw || mt.height < th) { want = 0; if (++g_rts.n_mask_small <= 3) MLOG("光追阴影：遮罩盖不住渲染目标（遮罩 %lux%lu、目标 %lux%lu），这次绘制照原版着色（第 %llu 次）", (unsigned long)(mt ? mt.width : 0), (unsigned long)(mt ? mt.height : 0), (unsigned long)tw, (unsigned long)th, (unsigned long long)g_rts.n_mask_small); } }
     if (!recv && rts_on() && (g_rts.mask_done || g_rts.pl_done) && pr->fs_rt) g_rts.n_recv_skip++;
     if (want && !pr->rt_tried) { pr->rt_tried = 1;
         NSString *k = [NSString stringWithFormat:@"%.16s_rt", pr->fs_base->key];
