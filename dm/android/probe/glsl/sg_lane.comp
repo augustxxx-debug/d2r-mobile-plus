@@ -1,0 +1,14 @@
+// lane 号的几条来路（Adreno 740 驱动 512.676 上 gl_SubgroupInvocationID 恒为 0 时的替代）：
+//   x = gl_SubgroupInvocationID；y = bitCount(gl_SubgroupLtMask)（≡ lane 号）；z = subgroupBallotExclusiveBitCount(ballot(true))（≡ lane 号）；w = gl_LocalInvocationIndex（调用方按 & (子组大小-1) 推导）
+// Ways to get the lane id (alternatives when gl_SubgroupInvocationID is always 0 on the Adreno 740 512.676 driver):
+//   x = gl_SubgroupInvocationID; y = bitCount(gl_SubgroupLtMask) (== lane id); z = subgroupBallotExclusiveBitCount(ballot(true)) (== lane id); w = gl_LocalInvocationIndex (the caller derives & (subgroup size - 1))
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+layout(local_size_x_id = 0) in;
+layout(std430, binding = 0) buffer Out { uvec4 o[]; };
+void main() {
+    uvec4 lt = gl_SubgroupLtMask; uint ltc = bitCount(lt.x) + bitCount(lt.y) + bitCount(lt.z) + bitCount(lt.w);
+    uint ex = subgroupBallotExclusiveBitCount(subgroupBallot(true));
+    o[gl_LocalInvocationIndex] = uvec4(gl_SubgroupInvocationID, ltc, ex, gl_LocalInvocationIndex | (gl_SubgroupSize << 16));
+}

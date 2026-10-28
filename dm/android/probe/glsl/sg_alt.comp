@@ -1,0 +1,18 @@
+// 与 sg.comp 同一套记录，但 shuffle 下标用 ballot exclusiveBitCount 推导的 lane 号（不用 gl_SubgroupInvocationID 当下标）；x 里同时记 gl_SubgroupInvocationID（bits16..23）与推导 lane（bits 8..15）
+// Same records as sg.comp, but the shuffle index comes from the lane id derived by ballot exclusiveBitCount (gl_SubgroupInvocationID is not used as an index); x carries both gl_SubgroupInvocationID (bits 16..23) and the derived lane (bits 8..15)
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_KHR_shader_subgroup_vote : require
+layout(local_size_x_id = 0) in;
+layout(std430, binding = 0) buffer Out { uvec4 o[]; };
+void main() {
+    uint i = gl_LocalInvocationIndex;
+    uvec4 b = subgroupBallot(true);
+    uint lane = subgroupBallotExclusiveBitCount(b);
+    uint sh = subgroupShuffle(i + 1000u, (lane + 16u) & 31u);
+    uint shx = subgroupShuffleXor(i + 1000u, 16u);
+    bool all32 = subgroupAll(i < 32u);
+    o[gl_WorkGroupID.x * gl_WorkGroupSize.x + i] = uvec4(gl_SubgroupSize | (lane << 8) | (gl_SubgroupInvocationID << 16) | (gl_NumSubgroups << 24), subgroupBallotBitCount(b), sh, shx | (all32 ? 0x80000000u : 0u));
+}

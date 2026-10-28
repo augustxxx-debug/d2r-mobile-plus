@@ -30,7 +30,6 @@
 static FILE *o; static int g_fail;
 #define OK(...) do { fprintf(o, "OK    " __VA_ARGS__); fputc('\n', o); } while (0)
 #define FAIL(...) do { fprintf(o, "FAIL  " __VA_ARGS__); fputc('\n', o); g_fail++; } while (0)
-static uint32_t sh_bad_unused;
 #define INFO(...) do { fprintf(o, "INFO  " __VA_ARGS__); fputc('\n', o); } while (0)
 #define KV(k, ...) do { fprintf(o, "KV    vkm.%s=", k); fprintf(o, __VA_ARGS__); fputc('\n', o); } while (0)
 static uint64_t now_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec; }
@@ -122,33 +121,63 @@ static VkDescriptorSet ds_one(VkDescriptorSetLayout l, VkDescriptorType t, VkDes
     VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO}; ai.descriptorPool = *pp; ai.descriptorSetCount = 1; ai.pSetLayouts = &l; VkDescriptorSet s = VK_NULL_HANDLE; vkAllocateDescriptorSets(dev, &ai, &s); return s;
 }
 
+static void m1_run(VkDescriptorSetLayout dsl, VkPipelineLayout pl, VkShaderModule m, uint32_t ls, int spec, VkPipelineShaderStageCreateFlags flags, const char *variant) {
+    VkSpecializationMapEntry me = {0, 0, 4}; VkSpecializationInfo si = {1, &me, 4, &ls};
+    VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO}; ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT; ci.stage.module = m; ci.stage.pName = "main"; ci.stage.flags = flags; if (spec) ci.stage.pSpecializationInfo = &si; ci.layout = pl;
+    char stepn[48]; snprintf(stepn, sizeof stepn, "M1.%s.ls%u", variant, ls); VkPipeline p = VK_NULL_HANDLE; VkResult r = RISKY(stepn, vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, NULL, &p)); step_end(); if (r) { if (!skipped(stepn)) FAIL("M1 %s LocalSize %u 建计算管线失败 %d", variant, ls, (int)r); return; }
+    buf_t out; buf_make(&out, ls * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); VkDescriptorPool dp; VkDescriptorSet s = ds_one(dsl, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &dp);
+    VkDescriptorBufferInfo di = {out.b, 0, out.size}; VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}; w.dstSet = s; w.descriptorCount = 1; w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w.pBufferInfo = &di; vkUpdateDescriptorSets(dev, 1, &w, 0, NULL);
+    cb_begin(); vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, p); vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pl, 0, 1, &s, 0, NULL); vkCmdDispatch(cb, 1, 1, 1); r = cb_run();
+    if (r) FAIL("M1 %s LocalSize %u 执行失败 %d", variant, ls, (int)r);
+    else {
+        const uint32_t *v = out.p; uint32_t sgsize = v[0] & 0xFF, nsg = v[0] >> 24, maxid = 0, ballot_min = ~0u, ballot_max = 0, sh_ok32 = 0, shx_ok32 = 0, all32 = 0, id_distinct = 0; static uint8_t seen[256];
+        memset(seen, 0, sizeof seen);
+        int alt = !strcmp(variant, "altlane"); uint32_t lane_distinct = 0; static uint8_t seen2[256]; memset(seen2, 0, sizeof seen2);
+        for (uint32_t i = 0; i < ls; i++) { uint32_t id = (v[i * 4] >> 16) & 0xFF; uint32_t dl = (v[i * 4] >> 8) & 0xFF; if (alt) { if (!seen2[dl]) { seen2[dl] = 1; lane_distinct++; } id = dl; } if (id > maxid) maxid = id; if (!seen[id]) { seen[id] = 1; id_distinct++; } uint32_t bc = v[i * 4 + 1]; if (bc < ballot_min) ballot_min = bc; if (bc > ballot_max) ballot_max = bc;
+            uint32_t want_sh = 1000u + (i & ~31u) + ((id + 16u) & 31u), want_shx = 1000u + (i ^ 16u);
+            if (v[i * 4 + 2] == want_sh) sh_ok32++; if ((v[i * 4 + 3] & 0x7FFFFFFF) == want_shx) shx_ok32++; if (v[i * 4 + 3] & 0x80000000u) all32++; }
+        if (alt) { uint32_t raw_id_distinct = 0; static uint8_t seen3[256]; memset(seen3, 0, sizeof seen3); for (uint32_t i = 0; i < ls; i++) { uint32_t rid = (v[i * 4] >> 16) & 0xFF; if (!seen3[rid]) { seen3[rid] = 1; raw_id_distinct++; } } char k2[40]; snprintf(k2, sizeof k2, "m1.altlane.ls%u.ids", ls); KV(k2, "gl_SubgroupInvocationID_distinct=%u derived_lane_distinct=%u", raw_id_distinct, lane_distinct); }
+        char k[40]; snprintf(k, sizeof k, "m1.%s.ls%u", variant, ls); KV(k, "subgroup_size=%u num_subgroups=%u max_invocation_id=%u distinct_ids=%u ballot_bits=%u..%u shuffle_as_32lane=%u/%u shufflexor16_as_32lane=%u/%u all32_true=%u raw0=%#x raw1=%#x raw2=%#x raw3=%#x", sgsize, nsg, maxid, id_distinct, ballot_min, ballot_max, sh_ok32, ls, shx_ok32, ls, all32, v[0], v[4], v[8], v[12]);
+        if (id_distinct < (ls < sgsize ? ls : sgsize)) FAIL("M1 %s LocalSize %u：gl_SubgroupInvocationID 只有 %u 个不同值（应 %u）——子组内 lane 号不可用，warp32 改写与 5 个计算着色器依赖它", variant, ls, id_distinct, ls < sgsize ? ls : sgsize);
+        else if (sgsize >= 32 && ballot_min >= 32 && sh_ok32 == ls && shx_ok32 == ls) OK("M1 %s LocalSize %u：子组 %u 道，ballot / shuffle 按 32 道线程束语义成立", variant, ls, sgsize);
+        else if (sgsize >= 32) INFO("M1 %s LocalSize %u：子组 %u 道（%u 个子组），lane 号 %u 个不同值，ballot 位数 %u–%u，跨 16 道 shuffle 按 32 道语义 %u/%u、shuffleXor(16) %u/%u —— 宽于 32 的子组由引擎 warp32 改写处理（64 / 128）", variant, ls, sgsize, nsg, id_distinct, ballot_min, ballot_max, sh_ok32, ls, shx_ok32, ls);
+        else { INFO("M1 %s LocalSize %u：子组 %u 道（%u 个子组），ballot 位数 %u–%u，跨 16 道 shuffle 按 32 道语义只对了 %u/%u、shuffleXor(16) 对了 %u/%u → 引擎 xbg_spirv_warp32 不处理 <32 道，这些计算着色器在本机语义不成立", variant, ls, sgsize, nsg, ballot_min, ballot_max, sh_ok32, ls, shx_ok32, ls); if (!strcmp(variant, "spec")) FAIL("M1 子组 %u 道 < 32：5 个 ballot / shuffle 计算着色器需要 16 道模拟或改写（方案 P5 阻断项）", sgsize); }
+    }
+    vkDestroyDescriptorPool(dev, dp, NULL); buf_free(&out); vkDestroyPipeline(dev, p, NULL);
+}
 // ---- M1 子组 | subgroups ----
 static void m1_subgroup(void) {
     g_test = "M1";
     VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, NULL}; VkDescriptorSetLayout dsl = dsl_make(&b, 1); VkPipelineLayout pl = pl_make(dsl); VkShaderModule m = mod(spv_sg_comp, spv_sg_comp_words);
     if (!m) { FAIL("M1 子组计算着色器建模块失败"); return; }
     static const uint32_t sizes[3] = {32, 64, 128};
-    for (int k = 0; k < 3; k++) {
-        uint32_t ls = sizes[k]; VkSpecializationMapEntry me = {0, 0, 4}; VkSpecializationInfo si = {1, &me, 4, &ls};
-        VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO}; ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT; ci.stage.module = m; ci.stage.pName = "main"; ci.stage.pSpecializationInfo = &si; ci.layout = pl;
-        char stepn[32]; snprintf(stepn, sizeof stepn, "M1.ls%u", ls); VkPipeline p = VK_NULL_HANDLE; VkResult r = RISKY(stepn, vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, NULL, &p)); step_end(); if (r) { if (!skipped(stepn)) FAIL("M1 LocalSize %u 建计算管线失败 %d", ls, (int)r); continue; }
-        buf_t out; buf_make(&out, ls * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); VkDescriptorPool dp; VkDescriptorSet s = ds_one(dsl, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &dp);
-        VkDescriptorBufferInfo di = {out.b, 0, out.size}; VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}; w.dstSet = s; w.descriptorCount = 1; w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w.pBufferInfo = &di; vkUpdateDescriptorSets(dev, 1, &w, 0, NULL);
-        cb_begin(); vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, p); vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pl, 0, 1, &s, 0, NULL); vkCmdDispatch(cb, 1, 1, 1); r = cb_run();
-        if (r) FAIL("M1 LocalSize %u 执行失败 %d", ls, (int)r);
-        else {
-            const uint32_t *v = out.p; uint32_t sgsize = v[0] & 0xFF, nsg = v[0] >> 24, maxid = 0, ballot_min = ~0u, ballot_max = 0, sh_ok32 = 0, shx_ok32 = 0, all32 = 0;
-            for (uint32_t i = 0; i < ls; i++) { uint32_t id = (v[i * 4] >> 16) & 0xFF; if (id > maxid) maxid = id; uint32_t bc = v[i * 4 + 1]; if (bc < ballot_min) ballot_min = bc; if (bc > ballot_max) ballot_max = bc;
-                // Maxwell 32 道语义下的期望：shuffle((id+16)&31) 读到同一 32 道线程束里的那个线程 = (i & ~31) + ((id + 16) & 31)，shuffleXor(16) = i ^ 16 | expectation under Maxwell 32-lane semantics
-                uint32_t want_sh = 1000u + (i & ~31u) + ((id + 16u) & 31u), want_shx = 1000u + (i ^ 16u);
-                if (v[i * 4 + 2] == want_sh) sh_ok32++; else sh_bad_unused++; if ((v[i * 4 + 3] & 0x7FFFFFFF) == want_shx) shx_ok32++; if (v[i * 4 + 3] & 0x80000000u) all32++; }
-            char k[32]; snprintf(k, sizeof k, "m1.ls%u", ls); KV(k, "subgroup_size=%u num_subgroups=%u max_invocation_id=%u ballot_bits=%u..%u shuffle_as_32lane=%u/%u shufflexor16_as_32lane=%u/%u all32_true=%u", sgsize, nsg, maxid, ballot_min, ballot_max, sh_ok32, ls, shx_ok32, ls, all32);
-            if (sgsize >= 32 && ballot_min >= 32 && sh_ok32 == ls && shx_ok32 == ls) OK("M1 LocalSize %u：子组 %u 道，ballot / shuffle 按 32 道线程束语义成立", ls, sgsize);
-            else INFO("M1 LocalSize %u：子组 %u 道（%u 个子组），ballot 位数 %u–%u，跨 16 道 shuffle 按 32 道语义只对了 %u/%u、shuffleXor(16) 对了 %u/%u → 引擎 xbg_spirv_warp32 不处理 <32 道，这些计算着色器在本机语义不成立", ls, sgsize, nsg, ballot_min, ballot_max, sh_ok32, ls, shx_ok32, ls);
-            if (sgsize < 32) FAIL("M1 子组 %u 道 < 32：5 个 ballot / shuffle 计算着色器需要 16 道模拟或改写（方案 P5 阻断项）", sgsize);
-        }
-        vkDestroyDescriptorPool(dev, dp, NULL); buf_free(&out); vkDestroyPipeline(dev, p, NULL);
-    }
+    for (int k = 0; k < 3; k++) m1_run(dsl, pl, m, sizes[k], 1, 0, "spec");
+    // 变体：固定 LocalSize（无特化常量）；特化常量 + REQUIRE_FULL_SUBGROUPS | variants: fixed LocalSize (no specialization constant); specialization constant + REQUIRE_FULL_SUBGROUPS
+    { VkShaderModule f32 = mod(spv_sg_fixed32, spv_sg_fixed32_words), f64 = mod(spv_sg_fixed64, spv_sg_fixed64_words), f128 = mod(spv_sg_fixed128, spv_sg_fixed128_words);
+      if (f32) m1_run(dsl, pl, f32, 32, 0, 0, "fixed"); if (f64) m1_run(dsl, pl, f64, 64, 0, 0, "fixed"); if (f128) m1_run(dsl, pl, f128, 128, 0, 0, "fixed");
+      if (f32) vkDestroyShaderModule(dev, f32, NULL); if (f64) vkDestroyShaderModule(dev, f64, NULL); if (f128) vkDestroyShaderModule(dev, f128, NULL); }
+    if (has_sgsc) for (int k = 0; k < 3; k++) m1_run(dsl, pl, m, sizes[k], 1, VK_PIPELINE_SHADER_STAGE_CREATE_REQUIRE_FULL_SUBGROUPS_BIT, "full");
+    { VkShaderModule ma = mod(spv_sg_alt_comp, spv_sg_alt_comp_words); if (ma) { for (int k = 0; k < 3; k++) m1_run(dsl, pl, ma, sizes[k], 1, 0, "altlane"); vkDestroyShaderModule(dev, ma, NULL); } }   // shuffle 下标用 ballot 推导的 lane | shuffle index from the ballot-derived lane
+    { VkShaderModule mn = mod(spv_sg_comp_noopt, spv_sg_comp_noopt_words); if (mn) { for (int k = 0; k < 3; k++) m1_run(dsl, pl, mn, sizes[k], 1, 0, "noopt"); vkDestroyShaderModule(dev, mn, NULL); } }   // glslc 不带 -O | glslc without -O
+    // lane 号的替代来路 | alternative lane-id sources
+    for (int opt = 0; opt < 2; opt++) { VkShaderModule lm = opt ? mod(spv_sg_lane_comp, spv_sg_lane_comp_words) : mod(spv_sg_lane_comp_noopt, spv_sg_lane_comp_noopt_words); const char *ov = opt ? "" : ".noopt";
+      if (lm) { for (int k = 0; k < 2; k++) {
+        uint32_t ls = k ? 128 : 64; VkSpecializationMapEntry me = {0, 0, 4}; VkSpecializationInfo si = {1, &me, 4, &ls};
+        VkPipelineShaderStageRequiredSubgroupSizeCreateInfo rq = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO}; rq.requiredSubgroupSize = sgp.subgroupSize;
+        for (int req = 0; req < (has_sgsc ? 2 : 1); req++) {
+          VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO}; ci.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO; ci.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT; ci.stage.module = lm; ci.stage.pName = "main"; ci.stage.pSpecializationInfo = &si; ci.layout = pl; if (req) ci.stage.pNext = &rq;
+          char stepn[48]; snprintf(stepn, sizeof stepn, "M1.lane%s%s.ls%u", ov, req ? ".req" : "", ls); VkPipeline p = VK_NULL_HANDLE; VkResult r = RISKY(stepn, vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &ci, NULL, &p)); step_end(); if (r) { if (!skipped(stepn)) INFO("M1 lane%s LocalSize %u 建管线失败 %d", req ? "(requiredSubgroupSize)" : "", ls, (int)r); continue; }
+          buf_t out; buf_make(&out, ls * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); VkDescriptorPool dp; VkDescriptorSet s = ds_one(dsl, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, &dp);
+          VkDescriptorBufferInfo di = {out.b, 0, out.size}; VkWriteDescriptorSet w = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET}; w.dstSet = s; w.descriptorCount = 1; w.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w.pBufferInfo = &di; vkUpdateDescriptorSets(dev, 1, &w, 0, NULL);
+          cb_begin(); vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, p); vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pl, 0, 1, &s, 0, NULL); vkCmdDispatch(cb, 1, 1, 1); r = cb_run();
+          if (!r) { const uint32_t *v = out.p; uint32_t sg_shader = v[3] >> 16, sg = sgp.subgroupSize ? sgp.subgroupSize : 1; uint32_t ok_id = 0, ok_lt = 0, ok_ex = 0, ok_lin = 0, lt_eq_lin = 0;
+            for (uint32_t i = 0; i < ls; i++) { uint32_t want = i & (sg - 1); if (v[i * 4] == want) ok_id++; if (v[i * 4 + 1] == want) ok_lt++; if (v[i * 4 + 2] == want) ok_ex++; if ((v[i * 4 + 3] & 0xFFFF) == i) ok_lin++; if (v[i * 4 + 1] == v[i * 4 + 2]) lt_eq_lin++; }
+            char k[48]; snprintf(k, sizeof k, "m1.lane%s%s.ls%u", ov, req ? ".req" : "", ls); KV(k, "subgroup_device=%u subgroup_shader=%u id_ok=%u/%u ltmask_ok=%u/%u exclusive_ok=%u/%u localindex_ok=%u/%u ltmask_eq_exclusive=%u/%u raw0=%u,%u,%u raw1=%u,%u,%u raw17=%u,%u,%u", sg, sg_shader, ok_id, ls, ok_lt, ls, ok_ex, ls, ok_lin, ls, lt_eq_lin, ls, v[0], v[1], v[2], v[4], v[5], v[6], v[17 * 4], v[17 * 4 + 1], v[17 * 4 + 2]);
+            if (ok_id == ls && sg_shader == sg) OK("M1 lane%s%s LocalSize %u：gl_SubgroupInvocationID 与 gl_SubgroupSize 都正确", ov, req ? "(requiredSubgroupSize)" : "", ls); else if (ok_id == ls) INFO("M1 lane%s%s LocalSize %u：gl_SubgroupInvocationID 正确，但 gl_SubgroupSize 读成 %u（设备 %u）", ov, req ? "(requiredSubgroupSize)" : "", ls, sg_shader, sg);
+            else INFO("M1 lane%s%s LocalSize %u：gl_SubgroupInvocationID 对 %u/%u；替代来路 SubgroupLtMask 位数对 %u/%u、ballot exclusiveBitCount 对 %u/%u、LocalInvocationIndex&(size-1) 对 %u/%u", ov, req ? "(requiredSubgroupSize)" : "", ls, ok_id, ls, ok_lt, ls, ok_ex, ls, ok_lin, ls); }
+          else FAIL("M1 lane LocalSize %u 执行失败 %d", ls, (int)r);
+          vkDestroyDescriptorPool(dev, dp, NULL); buf_free(&out); vkDestroyPipeline(dev, p, NULL); } }
+        vkDestroyShaderModule(dev, lm, NULL); } }
     // requiredSubgroupSize = 32 | requiredSubgroupSize = 32
     if (has_sgsc) {
         uint32_t ls = 32; VkSpecializationMapEntry me = {0, 0, 4}; VkSpecializationInfo si = {1, &me, 4, &ls};
