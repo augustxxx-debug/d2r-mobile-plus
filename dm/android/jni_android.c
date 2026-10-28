@@ -24,6 +24,10 @@
 #include "touch_android.h"
 #include "lifecycle_dispatch.h"
 #include "fence_glue.h"
+#include "sharelog_android.h"
+#include "../host/dm_i18n.h"
+#include <sys/system_properties.h>
+#include <time.h>
 #include "overlay_validate.h"
 #include "dm_overlay_contract.h"
 #include <sys/stat.h>
@@ -84,7 +88,9 @@ static void *log_pump(void *arg) {
 }
 static void log_init(void) {
     static int initialized; if (initialized) return; initialized = 1;
-    char p[1200]; snprintf(p, sizeof p, "%s/boot.log", g_runtime); g_logf = fopen(p, "a");
+    // 本局 boot.log、上一局 boot.previous.log（同 iOS 的 boot.txt / boot.previous.txt）：启动时把上一局的改名，日志不再无上限追加；分享诊断日志取这两份
+    // This run's boot.log, the previous run's boot.previous.log (as iOS's boot.txt / boot.previous.txt): the previous one is renamed at start, so the log no longer grows without bound; share diagnostics takes both
+    char p[1200], q[1200]; snprintf(p, sizeof p, "%s/boot.log", g_runtime); snprintf(q, sizeof q, "%s/boot.previous.log", g_runtime); rename(p, q); g_logf = fopen(p, "a");
     int fds[2]; if (pipe(fds)) return;
     dup2(fds[1], 2); close(fds[1]); setvbuf(stderr, NULL, _IOLBF, 0);
     pthread_t th; if (!pthread_create(&th, NULL, log_pump, (void *)(intptr_t)fds[0])) pthread_detach(th);
@@ -114,6 +120,40 @@ static int link_romfs(const char *romfs) {
     return n;
 }
 
+// 「分享诊断日志」（五项适配之一；实现 sharelog_android.c，iOS 版 dm_sharelog.m）：游戏主线程只起一条工作线程（客体线程的栈不适合做文件与 JNI），
+// 工作线程组装 + 脱敏到 files/share/<文件名>，再经 text_input_jni.c 的桥让 Java 弹系统分享面板（DiagProvider 给 content:// 权限）。
+// 测试开关 DM_TEST_SHARELOG_CLOSE=<秒>（与 iOS 同名）：不弹面板，导出文件另拷到 files/sharelog_test.txt 供回归核内容。同一时间只做一份。
+// "Share Diagnostics" (one of the five adaptations; implementation sharelog_android.c, iOS: dm_sharelog.m): the game main thread only starts a worker (guest thread stacks are unsuitable for file I/O and JNI);
+// the worker assembles + scrubs into files/share/<name>, then the bridge in text_input_jni.c has Java present the system share sheet (DiagProvider grants the content:// permission).
+// Test switch DM_TEST_SHARELOG_CLOSE=<seconds> (same name as iOS): no sheet; the export is also copied to files/sharelog_test.txt for regression checks. One export at a time.
+void dm_android_share_file(const char *path, const char *title);
+static _Atomic int g_share_busy;
+static void *sharelog_worker(void *arg) {
+    (void)arg;
+    char dir[1200], out[1300], model[PROP_VALUE_MAX] = "", maker[PROP_VALUE_MAX] = "", rel[PROP_VALUE_MAX] = "", soc[PROP_VALUE_MAX] = "", dev[600];
+    __system_property_get("ro.product.model", model); __system_property_get("ro.product.manufacturer", maker); __system_property_get("ro.build.version.release", rel); __system_property_get("ro.soc.model", soc);
+    snprintf(dev, sizeof dev, "%s %s / Android %s / SoC %s（GPU 与驱动见日志里的 NVN caps 行）", maker, model, rel, soc);
+    snprintf(dir, sizeof dir, "%s/share", g_files); mkdir(dir, 0700);
+    { DIR *d = opendir(dir); struct dirent *e; if (d) { while ((e = readdir(d))) if (e->d_name[0] != '.') { char old[2500]; snprintf(old, sizeof old, "%s/%s", dir, e->d_name); unlink(old); } closedir(d); } }   // 上次导出的删掉 | previous exports removed
+    const char *ver = getenv("DM_VERSION_LABEL"); char vs[64] = "", tsb[32]; { const char *v = ver ? ver : ""; size_t n = 0; for (; *v && n < sizeof vs - 1; v++) if ((*v >= '0' && *v <= '9') || *v == '.' || *v == '+') vs[n++] = *v; vs[n] = 0; }
+    time_t now = time(NULL); strftime(tsb, sizeof tsb, "%Y%m%d_%H%M%S", localtime(&now));
+    snprintf(out, sizeof out, "%s/D2RMobile_diagnostics_%s_%s.txt", dir, vs[0] ? vs : "dev", tsb);
+    long n = dm_sharelog_build(g_runtime, g_files, out, ver, dev, "com.xiaoboluo.d2r");
+    if (n < 0) { LOG("【红】诊断日志：打包失败"); atomic_store(&g_share_busy, 0); return NULL; }
+    LOG("诊断日志：已打包 %s（%ld 字节）", strrchr(out, '/') + 1, n);
+    const char *tc = getenv("DM_TEST_SHARELOG_CLOSE");
+    if (tc) { char tp[1300]; snprintf(tp, sizeof tp, "%s/sharelog_test.txt", g_files); FILE *a = fopen(out, "rb"), *b = fopen(tp, "wb"); if (a && b) { char buf[8192]; size_t k; while ((k = fread(buf, 1, sizeof buf, a)) > 0) fwrite(buf, 1, k, b); } if (a) fclose(a); if (b) fclose(b);
+        LOG("诊断日志：测试开关 DM_TEST_SHARELOG_CLOSE：不弹分享面板，副本在 files/sharelog_test.txt"); atomic_store(&g_share_busy, 0); return NULL; }
+    dm_android_share_file(out, dm_ui("dmPauseShareLog"));
+    atomic_store(&g_share_busy, 0); return NULL;
+}
+static void android_sharelog(void) {
+    if (atomic_exchange(&g_share_busy, 1)) { LOG("诊断日志：上一份还在导出，忽略这次点击"); return; }
+    pthread_t th; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstacksize(&at, 256 * 1024);
+    if (pthread_create(&th, &at, sharelog_worker, NULL)) { LOG("【红】诊断日志：起不了工作线程"); atomic_store(&g_share_busy, 0); } else pthread_detach(th);
+    pthread_attr_destroy(&at);
+}
+
 static void *host_thread(void *arg) {
     (void)arg;
     char out[1200]; snprintf(out, sizeof out, "%s/out", g_runtime);
@@ -123,6 +163,7 @@ static void *host_thread(void *arg) {
     snprintf(shaders, sizeof shaders, "%s/shaders", g_runtime);
     int graphics_rc = dm_android_vk_initialize(shaders, error, sizeof error);
     if (graphics_rc) { LOG("boot: Vulkan initialization failed %d: %s", graphics_rc, error); front_android_boot_failed(-6); return NULL; }
+    { void dm_sharelog_init(void (*)(void)); dm_sharelog_init(android_sharelog); }   // 暂停菜单「分享诊断日志」（diag.c 在游戏主线程调）| pause menu "Share Diagnostics" (diag.c calls it on the game main thread)
     char *argv[] = {"dmhost", out, "main", "sdk", NULL};
     LOG("boot: dm_main %s", out);
     int rc = dm_main(4, argv);
