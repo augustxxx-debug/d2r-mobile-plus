@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 探针 App：无权限、不联网、不读别的 App 数据。 | Probe App: no permissions, no network, reads no other App's data. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="@string/probeName" android:allowBackup="false" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+        <activity android:name=".ProbeActivity" android:exported="true" android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
