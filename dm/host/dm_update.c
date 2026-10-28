@@ -43,6 +43,7 @@ void dm_update_offer(int new_build, const char *ver, const char *note, int urgen
 // The failure notice is shown only when there is no new version notice (an existing new version notice stays as before), written on the ordinary update notice line (TouchUpdNote), without the 「更新」(Update) button
 static _Atomic int g_fail;
 static char g_site[96];   // 手动更新去哪：版本文件地址里的主机名（外壳在启动时给，之后不变）；没配更新地址就为空 | Where to go for a manual update: the host name in the version file URL (given by the shell at startup, unchanged afterwards); empty if no update URL is configured
+const char *dm_update_label(void) { return g_label; }   // 提示框「关于」段的版本行（dm_community.c）；外壳没初始化时为空 | the version line of the About section (dm_community.c); empty before the shell initializes it
 void dm_update_site(const char *host) { snprintf(g_site, sizeof g_site, "%s", host ? host : ""); }
 void dm_update_fail(int kind) { if (atomic_exchange(&g_fail, kind) != kind) atomic_store(&g_dirty, 30); }
 // 左安全区（布局单位，2160 高；iPhone 横屏约 304，iPad 0）：前端在 iPhone 上铺满整屏，左下角那行字要让到安全线内。任意线程调

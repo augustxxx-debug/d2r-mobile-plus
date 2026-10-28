@@ -253,16 +253,27 @@ _UPDATE_PAD = (_upd_text('TouchBuild', 3161, 60, 600, 30, (150, 140, 115), 'righ
 def _safe_into(s):   # 手柄版崩溃围栏提示框挂在左侧按钮栏面板下（根 children 末尾）：按钮栏面板画在主菜单面板之上，挂在这里才能盖住按钮栏、在整屏居中（用户：「可以遮挡菜单」） | the controller crash-fence box hangs under the left button-column panel (end of the root children): that panel draws above the main menu panel, so only here can it cover the column and sit at the screen center (user: "it may cover the menu")
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
     return s[:i].rstrip(' ') + _SAFE_PAD + '    ' + s[i:]
-def pad_ribbon(s, movies=False):   # 手柄版主菜单左侧按钮栏 = 原版布局。缺省包不播过场（宿主只按时长空播），「电影动画」是个没用的入口，拿掉（同触屏版没有它）；编进过场解码（MOVIE_FFMPEG=1）的包保留原版入口
+def _fe_btn(name, y, text, msg, up, down):   # 手柄版主菜单左列的一行：同原版那列的中号按钮与焦点框，带上下焦点链 | one row of the controller main-menu column: the column's medium button and focus frame, with the up / down focus links
+    return ('        { "type": "ButtonWidget", "name": "%s", "fields": { "rect": { "x": 164, "y": %d }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonMed", "textString": "%s", '
+            '"onClickMessage": "%s", "fontType": "10ptE", "textColor": "$LightButtonTextColor", "text/style": "$StyleFEButtonText", '
+            '"focusIndicatorFilename": "Controller/HoverImages/FrontEndButtonMed", "focusIndicatorOffset": { "x": -2, "y": 0 }, "hoveredFrame": 3, "disabledFrame": 2, '
+            '"navigation": { "up": { "name": "%s" }, "down": { "name": "%s" }, "right": { "panelBoundary": true } } } },\n') % (name, y, text, msg, up, down)
+# 手柄版主菜单左列（用户 2026-10-28 定稿）：「选项」下面加「关于」（纯「关于」框：版本 + 鸣谢）与「加入社区讨论」（社区框，没有社区值时宿主挪出屏幕），原版「制作人员」保留、往下让两行；
+# 「电影动画」拿掉（缺省包不播过场）。行距 125（同手柄暂停菜单）：选项 1025 / 关于 1150 / 加入社区讨论 1275 / 制作人员 1400；焦点链 选项 ↔ 关于 ↔ 加入社区讨论 ↔ 制作人员
+# The controller main-menu column (user, 2026-10-28): under Options add About (the About-only box: version + credits) and Join the community (the community box; moved off screen by the host without a value); the original Credits stays, two rows lower;
+# Cinematics removed (the default build plays no movies). Pitch 125 (as the controller pause menu): Options 1025 / About 1150 / Join 1275 / Credits 1400; focus chain Options ↔ About ↔ Join ↔ Credits
+_FE_ROWS = (_fe_btn('TouchAboutFe', 1150, '@dmCommunityAbout', 'PanelManager:ClosePanel:TouchAbout', 'Settings', 'TouchCommunityFe')
+            + _fe_btn('TouchCommunityFe', 1275, '@dmCommunityFe', 'PanelManager:ClosePanel:TouchCommunityFe', 'TouchAboutFe', 'Credits'))
+def pad_ribbon(s, movies=False):   # 手柄版主菜单左侧按钮栏 = 原版布局 + 两行 + 崩溃围栏 / 社区两个框。编进过场解码（MOVIE_FFMPEG=1）的包保留原版「电影动画」、列已满不加两行，框照放
+    i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
     if movies:
-        return _safe_into(s)
-    # 「制作人员」上移到它的位置，上下焦点改成「选项 ↔ 制作人员」直连
-    # 「制作人员」(Credits) moves up into its place, and up / down focus becomes a direct link 「选项 ↔ 制作人员」(Options ↔ Credits)
-    s = _sub1(s, '"rect": { "x": 164, "y": 1175 },', '"rect": { "x": 99999, "y": 99999 },')
-    s = _sub1(s, '"rect": { "x": 164, "y": 1325 },', '"rect": { "x": 164, "y": 1175 },')
-    s = _sub1(s, '"down": { "name": "Cinematics" }', '"down": { "name": "Credits" }')
-    s = _sub1(s, '"up": { "name": "Cinematics" }', '"up": { "name": "Settings" }')
-    return _safe_into(s)
+        return s[:i].rstrip(' ') + _SAFE_PAD + _COMM + '    ' + s[i:]
+    s = _sub1(s, '"rect": { "x": 164, "y": 1175 },', '"rect": { "x": 99999, "y": 99999 },')   # 电影动画挪走 | Cinematics away
+    s = _sub1(s, '"rect": { "x": 164, "y": 1325 },', '"rect": { "x": 164, "y": 1400 },')     # 制作人员下移两行 | Credits two rows down
+    s = _sub1(s, '"down": { "name": "Cinematics" }', '"down": { "name": "TouchAboutFe" }')
+    s = _sub1(s, '"up": { "name": "Cinematics" }', '"up": { "name": "TouchCommunityFe" }')
+    i = s.rstrip().rfind(']')
+    return s[:i].rstrip(' ') + _FE_ROWS + _SAFE_PAD + _COMM + '    ' + s[i:]
 def pad_mainmenu(s):   # 手柄版主菜单 = 原版布局原样 + 上面这组控件（加在根 children 末尾） | Controller layout main menu = the original layout as is + the group of widgets above (appended at the end of the root children)
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
     return s[:i].rstrip(' ') + _UPDATE_PAD + '    ' + s[i:]
@@ -287,7 +298,7 @@ def _safe(anchor):
             + ''.join(_upd_text('TouchSafeDesc%d' % k, 99999, 99999, 1700, 36, (232, 228, 214), 'center', a) for k in range(3))
             + _btn('TouchSafeOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchSafeOk', x=99999, anchor=anchor))
 _SAFE = _safe(True); _SAFE_PAD = _safe(False)
-# 社区入口的游戏内提示框（dm/host/dm_community.c）：与崩溃围栏提示框同一套做法——边框 15 片（自己一套切片 Ztouch_comm）+ 标题 + 三行正文（值 / 提示 / 「已复制」）
+# 社区入口的游戏内提示框（dm/host/dm_community.c）：与崩溃围栏提示框同一套做法——边框 15 片（自己一套切片 Ztouch_comm）+ 标题 + 六行正文（社区段：值 / 提示或「已复制」；「关于」段：子标题 / 版本 / 鸣谢两行；主菜单「关于」行开的纯「关于」框只用其中三行）
 # + 「复制群号」「复制链接」（同一条消息，宿主按语言只露出一颗）+ 「确定」。全部屏外起步、字空着，不带锚点：挂在暂停菜单面板（两份）与自定义页面板末尾，
 # 这两个面板都按屏宽一半锚定且带主机档缩放，宿主按面板矩形与缩放算出整屏居中的位置。点「确定」/ 手柄 B 收起；复制走外壳剪贴板回调
 # In-game notice box of the community entry (dm/host/dm_community.c): same approach as the crash-fence box - 15 frame tiles (its own slices Ztouch_comm) + title + three body lines (value / hint / "Copied")
@@ -303,14 +314,16 @@ def _community():
             # 标题 = 面板标题色 GoldYellow，正文 = 原版弹窗正文 / 按钮字色 LightGold，副文 = 图形页说明小字同款 LightGray；字距 ReducedSpacing（原版弹窗正文、设置页文字都带）
             # main / secondary text in different sizes (user): line 1 number / link at 36; line 2 hint and line 3 "Copied" at 28. Colours and spacing follow the original style sheet (_profileHD.json):
             # title = panel title GoldYellow, body = the original modal body / button text LightGold, secondary = the Graphics tab hint's LightGray; ReducedSpacing as the original modal body and settings text
-            + _co_text('TouchCommDesc0', 36, '$FontColorLightGold')
-            + ''.join(_co_text('TouchCommDesc%d' % k, 28, '$FontColorLightGray') for k in (1, 2))
+            + _co_text('TouchCommDesc0', 36, '$FontColorLightGold')                                     # 群号 / 链接（纯「关于」框：版本） | number / link (About-only box: version)
+            + _co_text('TouchCommDesc1', 28, '$FontColorLightGray')                                     # 提示 / 「已复制」 | hint / Copied
+            + _co_text('TouchCommDesc2', 36, '$FontColorGoldYellow')                                    # 「关于」段子标题（二级，标题色） | the About section's sub-title (second level, title colour)
+            + ''.join(_co_text('TouchCommDesc%d' % k, 28, '$FontColorLightGray') for k in (3, 4, 5))   # 版本、鸣谢两行 | version, two credit lines
             + _btn('TouchCommCopyQq', 99999, '@dmCommunityCopyQq', 'PanelManager:ClosePanel:TouchCommCopy', x=99999, anchor=False)
             + _btn('TouchCommCopyLink', 99999, '@dmCommunityCopyLink', 'PanelManager:ClosePanel:TouchCommCopy', x=99999, anchor=False)
             + _btn('TouchCommOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchCommOk', x=99999, anchor=False))
 _COMM = _community()
 _COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchComm\w+)"', _COMM))
-assert _COMM_STUB.count('\n') == 22   # 边框 15 片、标题、正文三行、复制群号、复制链接、确定 | 15 tiles, title, three body lines, Copy number, Copy link, OK
+assert _COMM_STUB.count('\n') == 25   # 边框 15 片、标题、正文六行、复制群号、复制链接、确定 | 15 tiles, title, six body lines, Copy number, Copy link, OK
 _COMM_ROW = (('TouchCommunity', '@dmCommunityJoin', 1028),)   # 暂停菜单「加入社区讨论」行（借「保存并退出」按钮的图和字，消息空操作，宿主当信号收）；没有可显示的值时宿主把它挪出屏幕 | the pause menu's "Join the community" row (Save-and-Exit's image and font, a no-op message the host takes as a signal); without a value the host moves it off screen
 _SAFE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchSafe\w+)"', _SAFE))
 assert _SAFE_STUB.count('\n') == 20   # 边框 15 片、标题、正文三行、确定 | 15 frame tiles, title, three body lines, OK
@@ -323,7 +336,9 @@ def _pc_mainmenu(s):
     s, n = offscreen(s, types=(), names=('OnlinePlaySettingsButton', 'Divider', 'SecondaryContextButton'))
     if n != 3: raise SystemExit('touch_layout：键鼠版主菜单要挪走的控件应为 3 个，找到 %d 个' % n)
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
-    return s[:i].rstrip(' ') + _UPDATE + _SAFE + '    ' + s[i:], n + 2
+    # 「关于」「加入社区讨论」（用户 2026-10-28 定稿）：触屏版首页没有左列（上面 _pc_ribbon 整块删了），两颗钮并排放在「进入游戏」正下方；社区框挂在同一面板下 | About / Join the community: the touch front page has no column (_pc_ribbon drops it), so the two buttons sit side by side right under Play; the box hangs under the same panel
+    return (s[:i].rstrip(' ') + _UPDATE + _SAFE + _btn('TouchAboutFe', 1995, '@dmCommunityAbout', 'PanelManager:ClosePanel:TouchAbout', x=-490)
+            + _btn('TouchCommunityFe', 1995, '@dmCommunityFe', 'PanelManager:ClosePanel:TouchCommunityFe', x=20) + _COMM + '    ' + s[i:], n + 4)
 def _pc_charselect(s):
     # 右侧存档列表：整块往里收 SAFE_X；「线上 / 离线」页签挪走（只有离线）；列表三行字用回原主机档字号（统一 40 的大字装不下三行）
     # Save list on the right: the whole block is pulled inward by SAFE_X; the 「线上 / 离线」(Online / Offline) tabs are moved away (offline only); the three text lines of the list go back to the original console profile font sizes (the uniform large size of 40 does not fit three lines)

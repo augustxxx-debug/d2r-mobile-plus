@@ -74,7 +74,7 @@ class FrontEnd(unittest.TestCase):
     def test_pad_ribbon_two_rows(self):
         out = touch_layout.pad_ribbon(fake_ribbon())
         self.assertIn('"name": "TouchAboutFe", "fields": { "rect": { "x": 164, "y": 1150 }', out); self.assertIn('"textString": "@dmCommunityAbout"', out)
-        self.assertIn('"name": "TouchCommunityFe", "fields": { "rect": { "x": 164, "y": 1275 }', out); self.assertIn('"textString": "@dmCommunityJoin"', out)
+        self.assertIn('"name": "TouchCommunityFe", "fields": { "rect": { "x": 164, "y": 1275 }', out); self.assertIn('"textString": "@dmCommunityFe"', out)
         self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchAbout"', out); self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityFe"', out)
         self.assertIn('"name": "Cinematics", "fields": { "rect": { "x": 99999, "y": 99999 }', out)   # 电影动画挪走 | Cinematics moved away
         self.assertIn('"name": "Credits", "fields": { "rect": { "x": 164, "y": 1400 }', out)       # 制作人员保留，往下让两行 | Credits kept, moved down two rows
@@ -95,7 +95,7 @@ class FrontEnd(unittest.TestCase):
                 '        { "type": "ButtonWidget", "name": "SecondaryContextButton", "fields": { "rect": { "x": 1, "y": 1 } } },\n    ]\n}\n')
         out, n = touch_layout._pc_mainmenu(fake)
         self.assertIn('"name": "TouchAboutFe"', out); self.assertIn('"rect": { "x": -490, "y": 1995 }', out); self.assertIn('"textString": "@dmCommunityAbout"', out)
-        self.assertIn('"name": "TouchCommunityFe"', out); self.assertIn('"rect": { "x": 20, "y": 1995 }', out); self.assertIn('"textString": "@dmCommunityJoin"', out)
+        self.assertIn('"name": "TouchCommunityFe"', out); self.assertIn('"rect": { "x": 20, "y": 1995 }', out); self.assertIn('"textString": "@dmCommunityFe"', out)
         self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchAbout"', out); self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityFe"', out)
         self.assertIn('"name": "TouchSafeOk"', out); self.assertIn('"name": "TouchBuild"', out)
         box_ok(self, out, 'touch main menu')
@@ -169,7 +169,7 @@ class Text(unittest.TestCase):
         langs = ('中文', 'English', 'Español', 'Español MX', 'Русский', '한국어')
         sample = {'dmCommunityQq': '1129913678', 'dmCommunityLink': 'https://github.com/example-owner/d2r-mobile-plus/discussions'}
         sample['dmAboutVersion'] = '1.0.0+123 · 0123456'
-        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityJoin', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
+        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityAbout', 40, BTN_W), ('dmCommunityFe', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
                                ('dmCommunityCopied', 28, BOX_W), ('dmCommunityCopyFail', 28, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
                                ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, 600), ('dmCreditsThanks', 36, 600), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
             texts = rows[key]

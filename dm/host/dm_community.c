@@ -42,7 +42,8 @@ static _Atomic int g_loaded_cm;
 static _Atomic int g_show, g_ack, g_copied;   // g_show：0 不显示 / 1 要显示 / 2 显示着；g_copied：0 / 1 已复制 / -1 复制失败 | g_show: 0 none / 1 pending / 2 shown; g_copied: 0 / 1 copied / -1 failed
 static int (*g_copy)(const char *);
 static _Atomic unsigned g_copies;
-static _Atomic int g_from;   // 从哪里点开（只进日志）：1 暂停菜单 / 2 选项页 | which entry opened it (log only): 1 pause menu / 2 options page
+static _Atomic int g_from;   // 从哪里点开（只进日志）：1 暂停菜单 / 2 主菜单 / 3 自定义页 | which entry opened it (log only): 1 pause menu / 2 main menu / 3 Custom page
+static _Atomic int g_mode;   // 1 社区框（社区段 + 「关于」段）/ 2 纯「关于」框（版本 + 鸣谢，主菜单「关于」行） | 1 community box (community + About section) / 2 About-only box (version + credits, the main menu's About row)
 
 static int cache_path(char *p, size_t n) { char d[1024]; if (!dm_custom_dir(d, sizeof d)) return 0; return snprintf(p, n, "%s/community.txt", d) < (int)n; }
 static int qq_ok(const char *s) { size_t n = strlen(s); if (n < 5 || n > QQ_MAX) return 0; for (size_t i = 0; i < n; i++) if (s[i] < '0' || s[i] > '9') return 0; return 1; }
@@ -188,9 +189,12 @@ int dm_community_value(int lang_group, char *out, size_t n) {
     return k;
 }
 int dm_community_available(void) { return dm_community_value(dm_lang_group(), NULL, 0) != 0; }
-void dm_community_open(int from) {
-    if (!dm_community_available()) { LOG("【红】社区入口：点了入口（%s）但当前语言没有可显示的值", from == 1 ? "暂停菜单按钮" : from == 2 ? "选项页按钮" : "选项页手柄 A"); return; }
-    atomic_store(&g_copied, 0); atomic_store(&g_from, from >= 2 ? 2 : 1); atomic_store(&g_show, 1); LOG("社区入口：点了入口（%s）", from == 1 ? "暂停菜单按钮" : from == 2 ? "选项页按钮" : "选项页手柄 A");
+void dm_community_open(int from) {   // from：1 暂停菜单 / 2 主菜单 / 3 自定义页按钮 / 4 自定义页手柄 A | from: 1 pause menu / 2 main menu / 3 Custom page button / 4 Custom page controller A
+    if (!dm_community_available()) { LOG("【红】社区入口：点了「加入社区讨论」（%s）但当前语言没有可显示的值", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页"); return; }
+    atomic_store(&g_copied, 0); atomic_store(&g_from, from >= 3 ? 3 : from); atomic_store(&g_mode, 1); atomic_store(&g_show, 1); LOG("社区入口：点了「加入社区讨论」（%s%s）", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页", from == 4 ? "手柄 A" : "");
+}
+void dm_community_open_about(void) {   // 主菜单「关于」行：只有版本 + 鸣谢的框，没有社区值也开 | the main menu's About row: the version + credits box, opens without a community value too
+    atomic_store(&g_copied, 0); atomic_store(&g_from, 2); atomic_store(&g_mode, 2); atomic_store(&g_show, 1); LOG("社区入口：点了「关于」（主菜单）");
 }
 void dm_community_copy_init(int (*cb)(const char *)) { g_copy = cb; }
 unsigned dm_community_copy_count(void) { return atomic_load(&g_copies); }
@@ -204,8 +208,10 @@ static void do_copy(int by) {   // by：1 点按钮 / 2 手柄 A | by: 1 button 
 }
 void dm_community_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c 转来，游戏主线程） | UI message callback (forwarded from diag.c, game main thread)
     if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return;
-    if (!strcmp(arg, "TouchCommunity")) dm_community_open(1);
-    else if (!strcmp(arg, "TouchCommunityOpt")) dm_community_open(2);
+    if (!strcmp(arg, "TouchCommunity")) dm_community_open(1);          // 暂停菜单行 | pause-menu row
+    else if (!strcmp(arg, "TouchCommunityFe")) dm_community_open(2);    // 主菜单行 | main-menu row
+    else if (!strcmp(arg, "TouchCommunityOpt")) dm_community_open(3);   // 自定义页「查看」 | Custom page View
+    else if (!strcmp(arg, "TouchAbout")) dm_community_open_about();      // 主菜单「关于」 | main-menu About
     else if (!strcmp(arg, "TouchCommCopy") && atomic_load(&g_show) == 2) do_copy(1);
     else if (!strcmp(arg, "TouchCommOk") && atomic_load(&g_show) == 2) atomic_store(&g_ack, 1);   // 1 点按钮 / 2 手柄 B（只进日志） | 1 button / 2 controller B (log only)
 }
@@ -285,65 +291,86 @@ static void co_tile(uint8_t *b, uint64_t w, const int want[4]) {   // 边框片�
     *atlas = *width = (uint32_t)want[2]; *height = (uint32_t)want[3];
     int32_t *r = (int32_t *)(w + 0x70); if (memcmp(r, want, 4 * sizeof *r)) { r[0] = want[0]; r[1] = want[1]; r[2] = want[2]; r[3] = want[3]; }
 }
-// 提示框挂在哪个面板下：暂停菜单（PauseLayout / PauseLayoutGarden，局内）或自定义页（VideoOptionsPanel，前端与局内都有）——哪个开着、带我们的控件，就用哪个
-// Which panel holds the box: the pause menu (PauseLayout / PauseLayoutGarden, in a run) or the Custom page (VideoOptionsPanel, front end and in a run) - whichever is open and carries our widgets
-static const char *const k_hosts[3] = { "VideoOptionsPanel", "PauseLayout", "PauseLayoutGarden" };   // 自定义页在前：局内从暂停菜单开选项时两者同时开着，选项页画在暂停菜单之上（Mac 实测：挂在暂停菜单下的框被选项页盖住） | Custom page first: in a run both are open when Options is opened from the pause menu, and the options page draws above it (Mac: a box hung under the pause menu was covered by the options page)
+// 提示框挂在哪个面板下：自定义页（VideoOptionsPanel，前端与局内都有；在前——局内从暂停菜单开选项时两者同时开着、选项页画在上面）、暂停菜单（PauseLayout / PauseLayoutGarden）、
+// 前端主菜单（手柄：左侧按钮栏 MainMenuButtonRibbon，画在主菜单之上；触屏：键鼠版 MainMenuPanel）——哪个开着、带我们的控件，就用哪个
+// Which panel holds the box: the Custom page (VideoOptionsPanel, front end and in a run; first because in a run both it and the pause menu are open and the options page draws above), the pause menu (PauseLayout / PauseLayoutGarden),
+// the front-end main menu (controller: the button column MainMenuButtonRibbon, drawn above the main menu; touch: the keyboard-mouse MainMenuPanel) - whichever is open and carries our widgets
+#define N_HOSTS 5
+static const char *const k_hosts[N_HOSTS] = { "VideoOptionsPanel", "PauseLayout", "PauseLayoutGarden", "MainMenuButtonRibbon", "MainMenuPanel" };
 static uint64_t co_host(uint64_t root, int *which) {
-    for (int i = 0; i < 3; i++) { uint64_t p = dm_ui_top(root, k_hosts[i]); if (p && *(uint8_t *)(p + 0x50) && co_find(p, "TouchCommTitle", 0)) { if (which) *which = i; return p; } }
+    for (int i = 0; i < N_HOSTS; i++) { uint64_t p = dm_ui_top(root, k_hosts[i]); if (p && *(uint8_t *)(p + 0x50) && co_find(p, "TouchCommTitle", 0)) { if (which) *which = i; return p; } }
     return 0;
 }
 // 面板原点与缩放（面板级字段，所有控件共有：横向锚点 +0x48、纵向锚点 +0x4c、矩形 +0x70.. 、缩放 +0x80，dm_cursor.c 同口径）：子控件不带锚点时，屏幕坐标 = 原点 + 子坐标 × 缩放。
-// 暂停菜单面板矩形 (-1039, 243) 缩放 1.16、自定义页 (-1007, 390, 1730×1284) 缩放 1.16（主机档 _profileConsoleHD），都按屏宽的一半锚定；算出来的值进日志，Mac 实测核过再信
+// Mac 实测：暂停菜单面板矩形 (-1039, 243) 缩放 1.16、自定义页 (-1007, 390, 1730×1284) 缩放 1.16（主机档 _profileConsoleHD），都按屏宽的一半锚定，算出的框整屏居中；算出来的值进日志
 // Panel origin and scale (panel-level fields shared by all widgets: horizontal anchor +0x48, vertical anchor +0x4c, rect +0x70.., scale +0x80, as in dm_cursor.c): for an unanchored child, screen = origin + child × scale.
-// Pause panel rect (-1039, 243) scale 1.16, Custom page (-1007, 390, 1730×1284) scale 1.16 (console profile _profileConsoleHD), both anchored at half the screen width; the computed values go to the log and are trusted only after a Mac check
+// Mac: pause panel rect (-1039, 243) scale 1.16, Custom page (-1007, 390, 1730×1284) scale 1.16 (console profile), both anchored at half the screen width; the computed box was screen-centered; the values go to the log
 static void co_origin(uint64_t p, int xr, int *ox, int *oy, float *s) {
     float ax = *(float *)(p + 0x48), ay = *(float *)(p + 0x4c), sc = *(float *)(p + 0x80); int32_t *r = (int32_t *)(p + 0x70);
     if (!(ax >= 0 && ax <= 1)) ax = 0; if (!(ay >= 0 && ay <= 1)) ay = 0; if (!(sc > 0.05f && sc < 10)) sc = 1;
     *ox = (int)(ax * xr) + r[0]; *oy = (int)(ay * 2160) + r[1]; *s = sc;
 }
+#define CO_DESC 6   // 正文行：社区框 0 群号或链接 / 1 提示或「已复制」/ 2 「关于」子标题 / 3 版本 / 4–5 鸣谢；纯「关于」框 0 版本 / 1–2 鸣谢，其余空 | body lines: community box 0 number or link / 1 hint or Copied / 2 About sub-title / 3 version / 4-5 credits; About-only box 0 version / 1-2 credits, the rest blank
 static void co_hide_all(uint8_t *b, uint64_t p) {
     for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); uint64_t t = co_find(p, nm, 0); if (t) { int32_t *r = (int32_t *)(t + 0x70); r[0] = r[1] = 99999; } }   // 边框片挪出屏幕（尺寸不动） | tiles off screen (size unchanged)
-    static const char *const tx[] = { "TouchCommTitle", "TouchCommDesc0", "TouchCommDesc1", "TouchCommDesc2" };
-    for (int k = 0; k < 4; k++) { uint64_t w = co_find(p, tx[k], 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); } }
+    uint64_t w = co_find(p, "TouchCommTitle", 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); }
+    for (int k = 0; k < CO_DESC; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommDesc%d", k); w = co_find(p, nm, 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); } }
     static const char *const bt[] = { "TouchCommCopyQq", "TouchCommCopyLink", "TouchCommOk" };
     for (int k = 0; k < 3; k++) co_place(co_find(p, bt[k], 0), 99999, 99999);
 }
+const char *dm_update_label(void);   // dm_update.c：显示版本「1.0.0+N · 哈希」（没经外壳初始化时为空） | display version (empty when the shell has not initialized it)
 void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
     uint8_t *b = co_base(); if (!b) return;
     uint64_t root = *(uint64_t *)(b + 0x2f05458); if (!root) return;
     int avail = dm_community_available();
-    // 入口显隐：暂停菜单那一行、自定义页的「关于」组——没有可显示的值就挪出屏幕（行在滚动区里，只挪 x） | entry show / hide: the pause-menu row and the Custom page's About group - without a value they move off screen (the row sits in a scroll area, so only x moves)
-    for (int i = 0; i < 3; i++) { uint64_t p = dm_ui_top(root, k_hosts[i]); if (!p || !*(uint8_t *)(p + 0x50)) continue;
-        if (i > 0) { uint64_t w = co_find(p, "TouchCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 564 : 99999, r[1]); } }
-        else { uint64_t w = co_find(p, "TouchAboutCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 0 : 99999, r[1]); } credits_render(b, p); } }   // 只藏社区行那一子容器，「关于」标题与鸣谢行照常 | hide only the community sub-container; the About title and credit line stay
+    // 入口显隐：暂停菜单行、主菜单第二行、自定义页「关于」组的社区行——没有可显示的值就挪出屏幕（行在滚动区里，只挪 x）；主菜单「关于」行总在。自定义页同时写鸣谢块
+    // entry show / hide: the pause-menu row, the main menu's second row, the Custom page's community row - without a value they move off screen (the row sits in a scroll area, so only x moves); the main menu's About row stays. The Custom page also gets its credits block written
+    for (int i = 0; i < N_HOSTS; i++) { uint64_t p = dm_ui_top(root, k_hosts[i]); if (!p || !*(uint8_t *)(p + 0x50)) continue;
+        if (i == 0) { uint64_t w = co_find(p, "TouchAboutCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 0 : 99999, r[1]); } credits_render(b, p); }
+        else if (i < 3) { uint64_t w = co_find(p, "TouchCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 564 : 99999, r[1]); } }
+        else { uint64_t w = co_find(p, "TouchCommunityFe", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); int home = i == 3 ? 164 : 20; if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? home : 99999, r[1]); } } }
     int st = atomic_load(&g_show); if (!st) return;
-    int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current();
+    int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current(), mode = atomic_load(&g_mode);
     static int wait; int which = 0; uint64_t p = co_host(root, &which);
     if (!p) { if (st == 1 && ++wait == 600) { wait = 0; atomic_store(&g_show, 0); LOG("【红】社区入口：开着的面板里没有提示框控件（原版布局？），只记日志不显示"); }
               else if (st == 2) { atomic_store(&g_show, 0); LOG("社区入口：所在面板已关，提示框作废"); }
               return; }
     wait = 0;
-    uint64_t ti = co_find(p, "TouchCommTitle", 0), ok = co_find(p, "TouchCommOk", 0), cq = co_find(p, "TouchCommCopyQq", 0), cl = co_find(p, "TouchCommCopyLink", 0), de[3], tl[15]; int tiles = 1;
-    for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); tl[k] = co_find(p, nm, 0); tiles &= tl[k] != 0; }
-    for (int k = 0; k < 3; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommDesc%d", k); de[k] = co_find(p, nm, 0); }
-    if (!tiles || !ti || !de[0] || !de[1] || !de[2] || !ok || !cq || !cl) { atomic_store(&g_show, 0); LOG("【红】社区入口：%s 里的提示框控件不全，不显示", k_hosts[which]); return; }
-    char v[GH_MAX + 1]; int kind = dm_community_value(dm_lang_group(), v, sizeof v);
-    if (!kind) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：没有可显示的值了，提示框收起"); return; }
-    if (pad && st == 2) { uint64_t ev = dm_padmode_page_keys(DM_BTN_A | DM_BTN_B); if (ev & DM_BTN_A) do_copy(2); if (ev & DM_BTN_B) atomic_store(&g_ack, 2); }   // 手柄：显示着时接管 A 复制、B 收起 | controller: while shown, A copies and B dismisses
+    uint64_t ti = co_find(p, "TouchCommTitle", 0), ok = co_find(p, "TouchCommOk", 0), cq = co_find(p, "TouchCommCopyQq", 0), cl = co_find(p, "TouchCommCopyLink", 0), de[CO_DESC], tl[15]; int all = ti && ok && cq && cl;
+    for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); tl[k] = co_find(p, nm, 0); all &= tl[k] != 0; }
+    for (int k = 0; k < CO_DESC; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommDesc%d", k); de[k] = co_find(p, nm, 0); all &= de[k] != 0; }
+    if (!all) { atomic_store(&g_show, 0); LOG("【红】社区入口：%s 里的提示框控件不全，不显示", k_hosts[which]); return; }
+    char v[GH_MAX + 1]; int kind = mode == 1 ? dm_community_value(dm_lang_group(), v, sizeof v) : 0;
+    if (mode == 1 && !kind) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：没有可显示的值了，提示框收起"); return; }
+    if (pad && st == 2) { uint64_t ev = dm_padmode_page_keys(DM_BTN_A | DM_BTN_B); if ((ev & DM_BTN_A) && kind) do_copy(2); if (ev & DM_BTN_B) atomic_store(&g_ack, 2); }   // 手柄：显示着时接管 A 复制（社区框）、B 收起 | controller: while shown, A copies (community box) and B dismisses
     { int ack = atomic_exchange(&g_ack, 0); if (ack) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：收起（%s）", ack == 2 ? "手柄 B" : "点确定"); return; } }
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
     int ox, oy; float s; co_origin(p, xr, &ox, &oy, &s);
-    int cx = (int)((xr / 2 - ox) / s), y0 = (int)((1080 - oy) / s) - 310;   // 整屏居中：框 1800×620（面板单位） | centered on the screen: box 1800×620 (panel units)
-    char line[GH_MAX + 64]; snprintf(line, sizeof line, dm_str(b, kind == 1 ? "dmCommunityQq" : "dmCommunityLink"), v);
-    int cp = atomic_load(&g_copied);
-    co_text(b, ti, dm_str(b, "dmCommunityTitle")); co_text(b, de[0], line); co_text(b, de[1], dm_str(b, kind == 1 ? "dmCommunityQqHint" : "dmCommunityLinkHint"));
-    co_text(b, de[2], cp > 0 ? dm_str(b, "dmCommunityCopied") : cp < 0 ? dm_str(b, "dmCommunityCopyFail") : "");
-    { int g[15][4], h = dm_notice_geometry(1800 - 128, 620 - 24, 1800, g), top = (244 - h) / 2;   // 边框几何同崩溃围栏提示框（dm_crashfence.c） | frame geometry as the crash-fence box
-      for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + g[k][0], y0 + g[k][1] - top, g[k][2], g[k][3] + (k / 3 < 4 ? 2 : 0) }; co_tile(b, tl[k], r); } }
+    int H = mode == 1 ? 760 : 520;   // 社区框：标题 + 社区两行 + 「关于」段四行 + 按钮；纯「关于」框：标题 + 三行 + 确定 | community box: title + two community lines + the four-line About section + buttons; About-only box: title + three lines + OK
+    int cx = (int)((xr / 2 - ox) / s), y0 = (int)((1080 - oy) / s) - H / 2;   // 整屏居中：框 1800×H（面板单位） | centered on the screen: box 1800×H (panel units)
+    // 文字：版本（外壳给的显示版本，没有就空行）、鸣谢（代码缺省名单，最多两行，带标签）、社区值 + 提示 / 「已复制」
+    // Text: version (the shell's display version, blank line if none), credits (default list in code, at most two lines, labelled), community value + hint / Copied
+    char line[GH_MAX + 64], ver[96]; const char *label = dm_update_label(); int cp = atomic_load(&g_copied);
+    if (label && *label) snprintf(ver, sizeof ver, dm_str(b, "dmAboutVersion"), label); else ver[0] = 0;
+    static int grp = -1, ncr; static cr_line_t cr[2]; int g = dm_lang_group();
+    if (g != grp) { int trunc; grp = g; ncr = credits_lines(k_special_default, (int)(sizeof k_special_default / sizeof *k_special_default), NULL, 0, dm_str(b, "dmCreditsSep"), dm_str(b, "dmCreditsUpstreamNote"), cr, 2, &trunc);
+        LOG("社区入口：提示框鸣谢 %d 行（特别鸣谢 %d 名，鸣谢 0 名）%s", ncr, (int)(sizeof k_special_default / sizeof *k_special_default), trunc ? "，超过两行已在末尾加「…」" : ""); }
+    char crt[2][224]; for (int k = 0; k < 2; k++) { if (k < ncr) snprintf(crt[k], sizeof crt[k], "%s%s%s", cr[k].kind == 1 ? dm_str(b, "dmCreditsSpecial") : cr[k].kind == 2 ? dm_str(b, "dmCreditsThanks") : "", cr[k].kind ? " " : "", cr[k].text); else crt[k][0] = 0; }
+    static const int dy_c[CO_DESC] = { 130, 192, 272, 340, 388, 436 }, dy_a[CO_DESC] = { 130, 200, 248, 0, 0, 0 };   // 社区框 / 纯「关于」框各行的 y（§2.6：36 / 28 / 36 子标题 / 28 × 3；36 / 28 / 28） | line y per box
+    const int *dy = mode == 1 ? dy_c : dy_a; int btn_y = mode == 1 ? 600 : 380;
+    if (mode == 1) {
+        snprintf(line, sizeof line, dm_str(b, kind == 1 ? "dmCommunityQq" : "dmCommunityLink"), v);
+        co_text(b, ti, dm_str(b, "dmCommunityTitle")); co_text(b, de[0], line);
+        co_text(b, de[1], cp > 0 ? dm_str(b, "dmCommunityCopied") : cp < 0 ? dm_str(b, "dmCommunityCopyFail") : dm_str(b, kind == 1 ? "dmCommunityQqHint" : "dmCommunityLinkHint"));
+        co_text(b, de[2], dm_str(b, "dmCommunityAbout")); co_text(b, de[3], ver); co_text(b, de[4], crt[0]); co_text(b, de[5], crt[1]); }
+    else { co_text(b, ti, dm_str(b, "dmCommunityAbout")); co_text(b, de[0], ver); co_text(b, de[1], crt[0]); co_text(b, de[2], crt[1]); for (int k = 3; k < CO_DESC; k++) co_text(b, de[k], ""); }
+    { int gm[15][4], h = dm_notice_geometry(1800 - 128, H - 24, 1800, gm), top = (244 - h) / 2;   // 边框几何同崩溃围栏提示框（dm_crashfence.c） | frame geometry as the crash-fence box
+      for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + gm[k][0], y0 + gm[k][1] - top, gm[k][2], gm[k][3] + (k / 3 < 4 ? 2 : 0) }; co_tile(b, tl[k], r); } }
     co_place(ti, cx - 850, y0 + 40);
-    co_place(de[0], cx - 850, y0 + 140); co_place(de[1], cx - 850, y0 + 212); co_place(de[2], cx - 850, y0 + 262);   // 正文 36 号一行，副文 28 号两行（布局 _community 的字号） | main line at 36, two secondary lines at 28 (sizes from the layout _community)
-    co_place(kind == 1 ? cq : cl, cx - 490, y0 + 460); co_place(kind == 1 ? cl : cq, 99999, 99999); co_place(ok, cx + 20, y0 + 460);   // 两颗按钮各 470 宽，左复制、右确定 | two 470-wide buttons: Copy left, OK right
+    for (int k = 0; k < CO_DESC; k++) { if (dy[k]) co_place(de[k], cx - 850, y0 + dy[k]); else co_place(de[k], 99999, 99999); }
+    if (mode == 1) { co_place(kind == 1 ? cq : cl, cx - 490, y0 + btn_y); co_place(kind == 1 ? cl : cq, 99999, 99999); co_place(ok, cx + 20, y0 + btn_y); }   // 两颗按钮各 470 宽，左复制、右确定 | two 470-wide buttons: Copy left, OK right
+    else { co_place(cq, 99999, 99999); co_place(cl, 99999, 99999); co_place(ok, cx - 235, y0 + btn_y); }   // 纯「关于」框：只有「确定」，居中 | About-only box: OK only, centered
     if (st == 1) { atomic_store(&g_show, 2); int32_t *pr = (int32_t *)(p + 0x70);
-        LOG("社区入口：已显示（%s，%s，%s；面板 %s 锚 %.2f/%.2f 矩形 %d,%d %dx%d 缩放 %.2f → 框中心 %d 顶 %d）", atomic_load(&g_from) == 2 ? "选项页" : "暂停菜单", pad ? "手柄模式，A 复制 B 收起" : "触屏 / 鼠标点按钮", kind == 1 ? "群号" : "链接",
-            k_hosts[which], *(float *)(p + 0x48), *(float *)(p + 0x4c), pr[0], pr[1], pr[2], pr[3], s, cx, y0); }
+        LOG("社区入口：已显示（%s，%s，%s，版本%s，鸣谢 %d 行；面板 %s 锚 %.2f/%.2f 矩形 %d,%d %dx%d 缩放 %.2f → 框中心 %d 顶 %d）", atomic_load(&g_from) == 1 ? "暂停菜单" : atomic_load(&g_from) == 2 ? "主菜单" : "自定义页", mode == 2 ? "关于框" : pad ? "手柄模式，A 复制 B 收起" : "触屏 / 鼠标点按钮", mode == 2 ? "版本 + 鸣谢" : kind == 1 ? "群号" : "链接",
+            ver[0] ? "有" : "无", ncr, k_hosts[which], *(float *)(p + 0x48), *(float *)(p + 0x4c), pr[0], pr[1], pr[2], pr[3], s, cx, y0); }
 }
