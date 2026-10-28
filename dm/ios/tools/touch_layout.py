@@ -266,6 +266,30 @@ def pad_ribbon(s, movies=False):   # 手柄版主菜单左侧按钮栏 = 原版�
 def pad_mainmenu(s):   # 手柄版主菜单 = 原版布局原样 + 上面这组控件（加在根 children 末尾） | Controller layout main menu = the original layout as is + the group of widgets above (appended at the end of the root children)
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
     return s[:i].rstrip(' ') + _UPDATE_PAD + '    ' + s[i:]
+# 手柄版前端底部提示条（主菜单页的 MainMenuLegend，选角页也是它）：样式 $StyleButtonLegend 的字号 $MediumFontSize 在字号档里统一成 40（BIG_FONT），
+# 中文 40 号比英文小型大写字母大一圈（用户：「中文底部的字体还是大」）；只在这一条上写回原主机档 _profileConsoleHD 的 28，局内各面板的提示条不动
+# The controller front end's bottom legend (MainMenuLegend on the main menu page, also under character select): its $StyleButtonLegend size $MediumFontSize is 40 in
+# the profiles (BIG_FONT), and Chinese at 40 looks a size larger than the English small caps (user); only this legend goes back to the console profile's 28
+# 原主机档 _profileConsoleHD 的字号（Large 从 HD 基础档继承）；BIG_FONT 之前手柄前端就是这组 | the original console profile sizes (Large inherited from the HD base); the controller front end before BIG_FONT
+CONSOLE_HD_PT = {'$MediumFontSize': 28, '$XMediumFontSize': 30, '$LargeFontSize': 38}
+PAD_LEGEND_PT = CONSOLE_HD_PT['$MediumFontSize']
+# 右侧所选角色信息框（PlayerInfoContainer：名字 / 头衔 / 等级职业 / 「离线」与不能用该角色的几行提示）同理，用户「右侧角色信息框也按同样思路改回原主机档字号」；
+# 主机层这一页每个文字控件都写全了样式，就地把字号变量换成数（各变量的个数核原样）
+# The selected character info box on the right (PlayerInfoContainer: name / title / level and class / "Offline" and the cannot-use lines) likewise goes back to the
+# console sizes (user); every text widget on this console page carries its full style, so the size variables are replaced in place (counts checked against the original)
+PAD_INFO_SIZES = {'$MediumFontSize': 8, '$XMediumFontSize': 2, '$LargeFontSize': 1}
+def pad_info_sizes(s):
+    block = _widget_block(s, 'PlayerInfoContainer')
+    if sorted(re.findall(r'"pointSize"\s*:\s*("\$\w+"|\d+)', block)) != sorted(sum((['"%s"' % k] * n for k, n in PAD_INFO_SIZES.items()), [])):
+        raise SystemExit('touch_layout：手柄版主菜单角色信息框的字号不是原样（原版布局变了？）')
+    new = re.sub(r'("pointSize"\s*:\s*)"(\$\w+)"', lambda m: '%s%d' % (m.group(1), CONSOLE_HD_PT[m.group(2)]), block)
+    return s.replace(block, new, 1)
+def pad_legend_size(s):
+    i = s.index('"type": "ButtonLegendWidget", "name": "MainMenuLegend"')
+    m = re.compile(r'"style"\s*:\s*\{').search(s, i)   # 第二个 style（字面量那块，与 "$StyleButtonLegend" 合并）；里面原本没有字号 | the second style (the literal block merged onto "$StyleButtonLegend"); it has no size of its own
+    if not m or s.find('"$StyleButtonLegend"', i, m.start()) < 0 or '"pointSize"' in s[m.end():_block_end(s, m.end() - 1)]:
+        raise SystemExit('touch_layout：手柄版主菜单提示条的样式不是原样（原版布局变了？）')
+    return s[:m.end()] + '\n                                "pointSize": %d,' % PAD_LEGEND_PT + s[m.end():]
 _UPDATE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchBuild|TouchUpd\w+)"', _UPDATE))
 # 崩溃围栏（发布前闸 1）：连续两次闪退、实验项被自动关掉之后，主菜单上的游戏内提示框（用户：「不要用原生的弹窗，用游戏内弹窗」）。
 # 底板 + 标题 + 三行正文 + 原版前端按钮「确定」（与选角页那三颗同图同字，FrontEnd_ButtonMed）；全部摆在屏幕外、字空着，宿主 dm/host/dm_crashfence.c 要提示时写字、挪回原位。
@@ -323,11 +347,43 @@ def _pc_charselect(s):
     # 「创建新角色」：键鼠版发的 ToCharacterCreate 不带参数，手柄模式下列表收起后不进职业选择页（Mac 宿主实测）；带上参数 1（同手柄版「新角色」键发的）
     # 「创建新角色」(Create New Character): the ToCharacterCreate sent by the keyboard-and-mouse layout carries no argument, and in controller mode after the list collapses it does not enter the class selection page (measured on the Mac host); argument 1 is added (same as what the controller layout's 「新角色」(New Character) key sends)
     s = _sub1(s, '"onClickMessage": "FrontEndNavigation:ToCharacterCreate",', '"onClickMessage": "FrontEndNavigation:ToCharacterCreate:1",')
-    for name, var, size in (('Title', '$XMediumFontSize', 30), ('Name', '$XMediumLargeFontSize', 34), ('Level&Class', '$XMediumFontSize', 30)):
+    for name, var, size in CHARSEL_FONTS:
         i = s.index('"type": "TextBoxWidget", "name": "%s"' % name); m = re.compile(r'"pointSize":\s*"(\$[A-Za-z]+)"').search(s, i)
         if not m or m.group(1) != var: raise SystemExit('touch_layout：选角列表 %s 的字号不是原样（原版布局变了？）' % name)
         s = s[:m.start()] + '"pointSize": %d' % size + s[m.end():]; n += 1
     return s, n + 3
+# 选角列表三行（头衔 / 名字 / 等级职业）用原主机档 _profileConsoleHD 的字号：两份字号档两种模式共用（BIG_FONT 统一 40），40 号的第三行压出 184 高的行，
+# 被下一行的底图和选中金框盖住半截（「15级德鲁伊」只露上半截）
+# The three character list lines (title / name / level and class) use the original console profile _profileConsoleHD sizes: both font profiles are shared by
+# the two modes (BIG_FONT, uniformly 40), and at 40 the third line runs out of the 184-unit row, half covered by the next row's tile and the selection frame
+CHARSEL_FONTS = (('Title', '$XMediumFontSize', 30), ('Name', '$XMediumLargeFontSize', 34), ('Level&Class', '$XMediumFontSize', 30))
+def pad_charselect(s, base):
+    """手柄版选角页（原版 Controller/Console 层原样）+ 列表三行字号同触屏版（CHARSEL_FONTS）。三个文字控件在主机层里只有名字、样式继承键鼠版底层 base；
+    这里照 base 的 style 整块抄进来、只把字号换成数（继承层不保证逐键合并样式，同选项页页签 textStyle 给完整一块）。
+    Controller character select page (the original Controller/Console layer as is) + the list's three font sizes as in the touch version (CHARSEL_FONTS). The three text widgets
+    carry only their names in the console layer and inherit their style from the keyboard-and-mouse base layer; the base style block is copied in whole with only the size replaced
+    by a number (an inheriting layer is not guaranteed to merge a style key by key, as with the options page tabs' textStyle)."""
+    s = s.replace('\r\n', '\n'); base = base.replace('\r\n', '\n')
+    for name, var, size in CHARSEL_FONTS:
+        i = base.index('"type": "TextBoxWidget", "name": "%s"' % name); m = re.compile(r'"style"\s*:\s*\{').search(base, i)
+        style = base[m.end() - 1:_block_end(base, m.end() - 1) + 1]
+        style, k = re.subn(r'"pointSize":\s*"%s"' % re.escape(var), '"pointSize": %d' % size, style)
+        if k != 1: raise SystemExit('touch_layout：键鼠版选角列表 %s 的字号不是原样（原版布局变了？）' % name)
+        fields = '"style": ' + style
+        if name == 'Name':
+            # 名字的「放不下就换样式」altStyle 用 $SmallFontSize（字号档里也是 40）：中文名字按 34 判「放不下」、换回 40（Mac 截图：中文名字改前改后都是 40、英文 34），
+            # 照英文版同字号 34（最长 15 个拉丁字母按 0.7 估 357，放得进 560 宽）
+            # The name's altStyle (used when the text does not fit) is $SmallFontSize, also 40 in the profiles: a Chinese name is judged "does not fit" at 34 and falls
+            # back to 40 (Mac shots: Chinese names stay 40 before and after, English 34); it takes the English size 34 (15 Latin letters estimate 357, inside the 560 width)
+            m = re.compile(r'"altStyle"\s*:\s*\{').search(base, i)
+            alt = base[m.end() - 1:_block_end(base, m.end() - 1) + 1]
+            alt, k = re.subn(r'"pointSize":\s*"\$SmallFontSize"', '"pointSize": %d' % size, alt)
+            if k != 1: raise SystemExit('touch_layout：键鼠版选角列表名字的 altStyle 不是原样（原版布局变了？）')
+            fields += ', "altStyle": ' + alt
+        head = '"type": "TextBoxWidget", "name": "%s",' % name
+        if s.count(head) != 1: raise SystemExit('touch_layout：手柄版选角列表的 %s 控件不是原样（原版布局变了？）' % name)
+        s = s.replace(head, head + '\n                                    "fields": { ' + fields + ' },')
+    return s
 def _pc_ribbon(s):
     # 启用过场时保留原版左侧栏，触屏玩家也能从这里进入「电影动画」。
     if os.environ.get('MOVIE_FFMPEG') == '1':
