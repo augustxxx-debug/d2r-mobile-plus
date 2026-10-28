@@ -45,6 +45,11 @@ t "用本机游戏文件生成真表"
 cp "$O/ref/native_art/dm_touch_native_art.c" "$G/" && cp "$G/dm_vault_tab.h" "$G/dm_hud_exp.h" "$G/dm_touch_native_art.c" "$O/ref/" || die "拷真表失败"
 "$PY" "$DM/ios/tools/shell_stubs.py" data-gen "$G" "$O/ref/derived.tsv" || die "拆表失败"
 "$PY" "$DM/ios/tools/shell_stubs.py" stubs-gen "$G" || die "写替身失败"
+# 版本号在 git 检出里算（源码副本没有 git 会退回 0.0.0 / 20000）：整套传给 gradle；version.sh 说不能出包就停
+# The version is computed in the git checkout (the source copy has no git and would fall back to 0.0.0 / 20000) and passed to gradle as a set; stop when version.sh says the package must not be built
+eval "$(bash "$DM/tools/version.sh")"; [ -z "${DM_VERSION_ERROR:-}" ] || die "version.sh：$DM_VERSION_ERROR"; [ -z "${DM_VERSION_WARN:-}" ] || t "version.sh：$DM_VERSION_WARN"
+t "版本 $DM_VERSION 构建号 $DM_BUILD（$DM_BUILD_SOURCE）显示 $DM_VERSION_LABEL"
+VER=(-PdmVersionName="$DM_VERSION" -PdmBuildNumber="$DM_BUILD" -PdmVersionLabel="$DM_VERSION_LABEL")
 t "构建 APK"
 if [ $KIND = release ]; then
   SIGN=${DM_ANDROID_SIGN:-$HOME/.config/dm-android/release.env}; [ -f "$SIGN" ] || die "没有正式钥匙配置 $SIGN"
@@ -52,7 +57,7 @@ if [ $KIND = release ]; then
   TASK=:app:assembleRelease; OUT=$W/dm/android/app/build/outputs/apk/release/app-release.apk
 else unset DM_ANDROID_KEYSTORE; TASK=:app:assembleDebug; OUT=$W/dm/android/app/build/outputs/apk/debug/app-debug.apk; fi
 rm -f "$OUT"   # 增量打包会在旧 APK 上追加、留下空洞（实测 25 MB 的内容出了 46 MB），整份重写 | incremental packaging appends to the old APK and leaves holes (25 MB of content came out as 46 MB in a test); rewrite it whole
-gradle --no-daemon -q -p "$W/dm/android" $TASK -PdmGenDir="$G" -PdmPython="$PY" "$@" > "$O/build.log" 2>&1 || { grep -E "error|FAIL" "$O/build.log" | head -8; die "构建失败，日志 $O/build.log"; }
+gradle --no-daemon -q -p "$W/dm/android" $TASK -PdmGenDir="$G" -PdmPython="$PY" "${VER[@]}" "$@" > "$O/build.log" 2>&1 || { grep -E "error|FAIL" "$O/build.log" | head -8; die "构建失败，日志 $O/build.log"; }
 cp "$OUT" "$O/D2RMobile-android.apk" || die "没找到构建出的 APK"
 # 核对：APK 里不许有游戏内容——真表里的字符串（编年史仓库的物品键与图标路径，只取源码里本来没有的：多语表等会带物品名）不能出现在原生库里，
 #   也不许带游戏程序 / 着色器包 / 覆盖层
@@ -81,4 +86,5 @@ if [ $KIND = release ]; then
 fi
 bad=$(unzip -l "$A" | awk '{print $4}' | grep -E '\.(xgs|patched\.bin|data)$|^assets/|overlay|derived\.tsv' | head -3)
 [ -z "$bad" ] || die "APK 里带了不该有的文件：$bad"
-t "好了（${KIND}）：${A}（$(($(stat -f %z "$A") / 1048576)) MB）；核了真表里 $n 个源码里没有的字符串，原生库里 0 处；APK 里没有游戏程序 / 着色器包 / 覆盖层，也没有本机路径"
+BT2=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1); vc=$("$BT2/aapt" dump badging "$A" 2>/dev/null | sed -n "s/.*versionCode='\([0-9]*\)'.*versionName='\([^']*\)'.*/\1 \2/p" | head -1); [ "$vc" = "$DM_BUILD $DM_VERSION" ] || die "APK 版本号不对：$vc（应 $DM_BUILD $DM_VERSION）"
+t "好了（${KIND}）：${A}（$(($(stat -f %z "$A") / 1048576)) MB）；版本 $DM_VERSION（$DM_BUILD）；核了真表里 $n 个源码里没有的字符串，原生库里 0 处；APK 里没有游戏程序 / 着色器包 / 覆盖层，也没有本机路径"
