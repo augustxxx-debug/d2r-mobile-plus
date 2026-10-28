@@ -1,9 +1,11 @@
 // lane 号改走 ballot 的改写（xbg_spirv_laneid.cpp）：合成模块里入口函数与辅助函数各读一次 SubgroupLocalInvocationId（且有 shuffle），
-// 改写后每个函数第一块开头有 ballot + ExclusiveScan 位数、各 OpLoad 变成 OpCopyObject 引用它、结果 id 不变、bound 增加、缺的常量补齐；没有该 builtin 的模块不改。
+// 改写后只有入口函数第一块开头有 ballot + ExclusiveScan（GroupOperation 2）位数并存进新增的 Private 变量，各函数的 OpLoad 改读它、结果 id 不变、bound 增加、缺的常量补齐；
+// 没有该 builtin 的模块不改。逐车道语义（分歧调用、早退）见 spirv_laneid_semantics_test.cpp。
 // clang++ -std=c++17 tests/spirv_laneid_test.cpp xbg_spirv_laneid.cpp -o <仓外产物>
 // The lane-id-through-ballot rewrite (xbg_spirv_laneid.cpp): a synthetic module whose entry and helper functions each load SubgroupLocalInvocationId (with a shuffle present);
-// after the rewrite each function's first block starts with ballot + ExclusiveScan bit count, every OpLoad becomes an OpCopyObject of it, result ids are unchanged, bound grows,
-// missing constants are added; a module without the builtin is left alone.
+// after the rewrite only the entry's first block starts with ballot + ExclusiveScan (GroupOperation 2) bit count stored into an added Private variable, every function's OpLoad
+// reads that variable, result ids are unchanged, bound grows, missing constants are added; a module without the builtin is left alone. Lane-by-lane semantics (divergent calls,
+// early exit): spirv_laneid_semantics_test.cpp.
 #include "../xbg_spirv_laneid.h"
 #include <cstdio>
 #include <stdexcept>
@@ -33,22 +35,25 @@ int main() { try {
         Module in = module(true, consts != 0), out; size_t k = xbg_spirv_laneid_ballot(in.data(), in.size(), out);
         require(k == 2, "two lane loads replaced");
         require(out[3] > in[3], "bound grew");
-        auto v = insts(out); bool cap = false; int ballots = 0, counts = 0, copies = 0, loads_of_lane = 0; uint32_t fn_lane_helper = 0, fn_lane_main = 0, cur_fn = 0, last_count = 0;
+        auto v = insts(out); bool cap = false; int ballots = 0, counts = 0, stores = 0, priv_loads = 0, loads_of_lane = 0; uint32_t cur_fn = 0, count_id = 0, priv = 0;
+        for (auto &x : v) if (x.op == 59 && out[x.at + 3] == 6) priv = out[x.at + 2];   // 新增的 Private 变量 | the added Private variable
+        require(priv != 0, "Private lane variable declared");
         for (auto &x : v) {
             if (x.op == 17 && out[x.at + 1] == 64) cap = true;
             if (x.op == 54) cur_fn = out[x.at + 2];
-            if (x.op == 339) { ballots++; require(out[x.at + 3] == 13 || !consts, "subgroup scope constant reused when present"); }
-            if (x.op == 342) { counts++; require(out[x.at + 4] == 1, "ExclusiveScan"); last_count = out[x.at + 2]; if (cur_fn == 22) fn_lane_helper = last_count; else fn_lane_main = last_count; }
+            if (x.op == 339) { ballots++; require(cur_fn == 20, "ballot only in the entry"); require(out[x.at + 3] == 13 || !consts, "subgroup scope constant reused when present"); }
+            if (x.op == 342) { counts++; require(out[x.at + 4] == 2, "GroupOperation ExclusiveScan = 2"); count_id = out[x.at + 2]; }
+            if (x.op == 62 && out[x.at + 1] == priv) { stores++; require(out[x.at + 2] == count_id && cur_fn == 20, "entry stores the scan into the Private variable"); }
             if (x.op == 61 && out[x.at + 3] == 18) loads_of_lane++;
-            if (x.op == 83) { copies++; require(out[x.at + 2] == 30 || out[x.at + 2] == 31, "result ids preserved"); require(out[x.at + 3] == (cur_fn == 22 ? fn_lane_helper : fn_lane_main), "copy reads this function's lane id"); }
+            if (x.op == 61 && out[x.at + 3] == priv) { priv_loads++; require(out[x.at + 2] == 30 || out[x.at + 2] == 31, "result ids preserved"); }
         }
-        require(cap && ballots == 2 && counts == 2 && copies == 2 && loads_of_lane == 0, "ballot capability added; one ballot + count per function; loads replaced");
-        // main 的第一块：OpLabel、OpVariable 之后才是 ballot | main's first block: ballot only after OpLabel and the OpVariable
-        for (size_t i = 0; i + 1 < v.size(); i++) if (v[i].op == 248 && out[v[i].at + 1] == 21) { require(v[i + 1].op == 59 && v[i + 2].op == 339 && v[i + 3].op == 342, "ballot after the leading OpVariable"); }
+        require(cap && ballots == 1 && counts == 1 && stores == 1 && priv_loads == 2 && loads_of_lane == 0, "ballot capability added; one ballot + count + store in the entry; both loads read the Private variable");
+        // main 的第一块：OpLabel、OpVariable 之后才是 ballot、位数、存 | main's first block: ballot, count, store only after OpLabel and the OpVariable
+        for (size_t i = 0; i + 1 < v.size(); i++) if (v[i].op == 248 && out[v[i].at + 1] == 21) { require(v[i + 1].op == 59 && v[i + 2].op == 339 && v[i + 3].op == 342 && v[i + 4].op == 62, "ballot after the leading OpVariable"); }
         if (!consts) { int tv4 = 0, c3 = 0, ctrue = 0; for (auto &x : v) { if (x.op == 23 && out[x.at + 3] == 4) tv4++; if (x.op == 43 && out[x.at + 3] == 3) c3++; if (x.op == 41) ctrue++; } require(tv4 == 1 && c3 == 1 && ctrue == 1, "missing v4uint / scope / true added once"); }
     }
     { Module in = module(false, true), out; require(xbg_spirv_laneid_ballot(in.data(), in.size(), out) == 0 && out.empty(), "module without the builtin is unchanged"); }
     { Module in = module(true, true), out; in[0] = 0; require(xbg_spirv_laneid_ballot(in.data(), in.size(), out) == 0, "bad magic rejected"); }
-    puts("PASS spirv_laneid: lane loads -> per-function ballot ExclusiveScan, ids preserved, declarations added, no-builtin unchanged");
+    puts("PASS spirv_laneid: lane loads -> one entry ballot ExclusiveScan stored in a Private variable, ids preserved, declarations added, no-builtin unchanged");
     return 0;
 } catch (const std::exception &e) { fprintf(stderr, "FAIL %s\n", e.what()); return 1; } }
