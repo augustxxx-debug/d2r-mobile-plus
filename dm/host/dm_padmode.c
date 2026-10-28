@@ -440,7 +440,7 @@ static void legend_pump(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧
         LOG("手柄提示条：帧 %llu，近 120 帧声明 %d 次、补加 %d 次；提示条现有 %llu 条，字形%s", (unsigned long long)frame, tot, miss, (unsigned long long)n, o); tot = miss = 0; }
 }
 static void diff_text(uint8_t *b, uint64_t frame) {   // 游戏主线程：菜单开着时每 6 帧核一次这行的字（只写我们自己的 TouchPadDiffTxt，文字控件虚表 main+0x20ba4c8，同 dm_pouch.c w_text） | Game main thread: while the menu is open, check this row's text every 6 frames (only writes our own TouchPadDiffTxt; text widget vtable main+0x20ba4c8, same as w_text in dm_pouch.c)
-    if (!g_cur || !atomic_load(&g_pause_open) || frame % 6) return;
+    if (!atomic_load(&g_pause_open) || frame % 6) return;   // 两种模式的暂停菜单统一后触屏也有这一行（用户 2026-10-28） | since the two pause menus were unified the touch version has this row too
     uint64_t w = pm_find(rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), "TouchPadDiffTxt", 0); if (!w || rd8(w) - (uint64_t)(uintptr_t)b != 0x20ba4c8) return;
     dm_hud_info h; dm_hud_get(&h); int n = atomic_load(&g_diff_pend); if (!n) n = h.players; if (!n) return;
     char t[64]; snprintf(t, sizeof t, dm_str(b, "dmPadDiffLine"), n); size_t L = strlen(t);

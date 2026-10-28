@@ -699,6 +699,8 @@ def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=(), tail=''):   # t
 # 整组仍以 653 为中心（选项仍在正中那行），上下各外扩一行的一半（299–1125）；其余各版七行以内照旧 125 距、末行接在 1028
 # "Join the community" follows "Share Diagnostics" (community entry dm_community.c): the Chronicle + share version becomes eight rows, which do not fit at a 125 spacing between 278 and 1028, so 118 (button image 120 high, no overlap),
 # still centered on 653 (Options stays on the centre row), extended half a row at the top and bottom (299-1125); every other version has at most seven rows at the usual 125 spacing with the last row at 1028
+# 两种模式共用这一份（用户 2026-10-28 统一）：「选项」固定在 y 653（手柄打开暂停菜单时自由光标在屏幕正中，正中那行只许是按了没后果的）；「游戏难度」「存放」在触屏下与底栏难度格、物品栏「存放」钮各多一个入口
+# One layout for both modes (user, 2026-10-28): Options is fixed at y 653 (the controller's free cursor sits at the screen centre when the pause menu opens; that row must be harmless); under touch, difficulty and deposit are extra entries next to the bottom-bar cell and the inventory button
 def pad_pause(s, garden, share=True):   # share=False（Mac App）：没有系统分享面板，「分享诊断日志」行不放 | share=False (Mac App): there is no system share sheet, so the "Share Diagnostics" row is left out
     hs = () if share else ('MessageLog',)
     if garden and share:
@@ -1104,10 +1106,10 @@ PRESENT = {
     # Pause menu = Options / Save and Exit / Chronicle / Share Diagnostics (center spacing still 240; the four fall within the top and bottom ends of the original six);
     # the classic version used by characters with a mercenary tab has no chronicle = Options / Save and Exit / Share Diagnostics (the background image only fits the span of the original four; center spacing 225, exactly filling the positions of the original first and last)
     # After adding 「一键重开」(Quick Restart) the five / four buttons are spaced evenly between the original first and last: center spacing 180 for the version with chronicle, 150 for the classic version
-    # 触屏版：选项 / 保存并退出 / 一键重开 / [编年史] / 分享诊断日志 / 加入社区讨论（社区入口 dm_community.c），带编年史那版六行改 150 距（278–1028，同原版首末两行），不带的五行 150 距
-    # Touch: Options / Save and Exit / Quick Restart / [Chronicle] / Share Diagnostics / Join the community (community entry dm_community.c); the Chronicle version's six rows go to a 150 spacing (278-1028, the original first and last rows), the other version's five rows at 150
-    'controller/pauselayoutgardenhd.json': _pause_no_help({'Settings': (428, 278), 'Exit': (728, 428), 'Chronicle': (1028, 728), 'MessageLog': (278, 878)}, hide=('Help', 'LootFilter'), restart_y=578, extra=_COMM_ROW, tail=_COMM),
-    'controller/pauselayouthd.json': _pause_no_help({'Settings': (578, 428), 'Exit': (878, 578), 'MessageLog': (428, 878)}, hide=('Help',), restart_y=728, extra=_COMM_ROW, tail=_COMM),
+    # 触屏版暂停菜单 = 手柄版同一份（用户 2026-10-28 统一行序；上游基线分两套）：游戏难度 / 保存并退出 / 一键重开 / 选项 / 存放 / [编年史] / 分享诊断日志 / 加入社区讨论，见 pad_pause
+    # Touch pause menu = the controller one (user 2026-10-28, unified order; the upstream baseline had two): difficulty / save and exit / quick restart / options / deposit / [chronicle] / share diagnostics / join the community, see pad_pause
+    'controller/pauselayoutgardenhd.json': lambda s: (pad_pause(s, True, share=True), 2),
+    'controller/pauselayouthd.json': lambda s: (pad_pause(s, False, share=True), 2),
     'helpbuttonpanelhd.json': lambda s: offscreen(s, types=(), names=('Help',)),
     'controller/buttonbindingmodalhd.json': _bind_touch,
     'youdiedmodalhd.json': lambda s: offscreen(s, types=(), names=('SubText',)),   # 死亡画面第二行「按 ＋ 继续。」（＋ = 手柄键图标）：下面就有「继续」按钮，这句不要（点一下能完成的提示直接去掉） | Second line of the death screen 「按 ＋ 继续。」(Press + to continue.) (+ = controller key icon): there is a 「继续」(Continue) button right below, so this sentence is dropped (hints for something done with one tap are removed outright)

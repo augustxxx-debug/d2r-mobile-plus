@@ -127,8 +127,8 @@ class PauseMenu(unittest.TestCase):
             self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunity"', out)
             self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchShareLog"', out)   # 分享诊断日志仍在 | Share Diagnostics still there
             box_ok(self, out, rel)
-            if garden: self.check_rows(out, {'Settings': 278, 'Exit': 428, 'TouchRestart': 578, 'Chronicle': 728, 'MessageLog': 878, 'TouchCommunity': 1028})
-            else: self.check_rows(out, {'Settings': 428, 'Exit': 578, 'TouchRestart': 728, 'MessageLog': 878, 'TouchCommunity': 1028})
+            if garden: self.check_rows(out, {'TouchPadDiff': 299, 'Exit': 417, 'TouchRestart': 535, 'Settings': 653, 'TouchPadStore': 771, 'Chronicle': 889, 'MessageLog': 1007, 'TouchCommunity': 1125})
+            else: self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'MessageLog': 903, 'TouchCommunity': 1028})
             self.assertEqual(rect_y(out, 'Help'), None)   # 帮助挪走 | Help moved away
 
     def test_pad_pause_rows(self):
