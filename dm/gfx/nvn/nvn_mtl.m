@@ -247,7 +247,13 @@ static void defer_obj_release_ex(id obj, int keep_resident) {
 }
 static void defer_obj_release(id obj) { defer_obj_release_ex(obj, 0); }
 static void defer_obj_unref(id obj) { defer_obj_release_ex(obj, 1); }
-static void defer_drain(void) {
+// 自带自动释放池（RC1 光追关真机长测「已退役未销毁」缓冲 0 → 17 个 416 MB）：这里查弱引用表 g_res_objects 会把对象放进当前线程的自动释放池；
+// mtl_sub_begin 原先在压入提交池之前调它，跑在客体线程上——那个线程的最外层池整局不排空，换关时退役的 32 MB 上传暂存块就一块块攥在里面，移出了驻留集却永远销毁不了。
+// Mac GPU 快，可放的对象几乎都在完成回调（回调线程每次自带池）里放掉，所以只在真机 120 帧、GPU 落后时出现
+// Carries its own autorelease pool (RC1 RT-off device long test: "retired but not destroyed" buffers 0 → 17, 416 MB): checking the weak table g_res_objects here puts the object into the current thread's autorelease pool;
+// mtl_sub_begin used to call this before pushing the submission pool, on the guest thread, whose outermost pool never drains during a game - the 32 MB upload staging blocks retired on level changes piled up in it, out of the residency set but never destroyed.
+// On the Mac the GPU is fast and releasable objects are almost all released in the completion handler (each callback has its own pool), so it only shows on the device at 120 fps with the GPU behind
+static void defer_drain(void) { @autoreleasepool {
     NSMutableArray<NvDeferredRelease *> *ready = [NSMutableArray array];
     pthread_mutex_lock(&g_deferred_mu);
     for (NSInteger i = g_deferred.count - 1; i >= 0; i--) {
@@ -265,7 +271,7 @@ static void defer_drain(void) {
         }
         d->object = nil;
     }
-}
+} }
 
 static pthread_mutex_t g_bf_want_mu = PTHREAD_MUTEX_INITIALIZER;
 static char **g_bf_want_keys; static size_t g_bf_want_n, g_bf_want_cap; static int g_bf_want_loaded;
@@ -586,16 +592,16 @@ static int tbdr_on(void);
 static uint64_t g_sub_serial;   // 第几次提交（并行预编「每次提交只预测一次」用） | Submission index (used by the parallel precompile's 'predict only once per submission')
 static void tbdr_latch(void);
 void mtl_sub_begin(void) {
+    if (g_cb) MDIE("提交重入");
+    g_sub_pool = objc_autoreleasePoolPush();   // 先压提交池：下面的 defer_drain / warm_claim 在客体线程上产生的自动释放对象也随本次提交排空（客体线程最外层池整局不排空） | push the submission pool first: autoreleased objects from defer_drain / warm_claim below on the guest thread drain with this submission too (the guest thread's outermost pool never drains during a game)
     mtl_init(); g_sub_serial++;
     tbdr_latch();
     if (tbdr_on() == 0 && g_ruler_pending) { g_ruler_truth = 0; g_ruler_pending = 0; MLOG("DM_NVN_RULER：切到被测模式"); }
     defer_drain();
     defer_reset();
     warm_claim();
-    if (g_cb) MDIE("提交重入");
     g_sub_thread = pthread_self(); atomic_store(&g_sub_thread_set, 1);
     atomic_store(&g_last_commit_error, 0);
-    g_sub_pool = objc_autoreleasePoolPush();
 #if DM_NVN_M3
     g_cb = [g_q commandBuffer];
 #else
@@ -1283,11 +1289,13 @@ static void up_diag(void) {
     static uint64_t said_swaps = ~0ull, last_ns; static int lines, follow; uint64_t now = clock_gettime_nsec_np(CLOCK_MONOTONIC);
     int chg = g_up_swaps != said_swaps, fol = follow && now - last_ns >= 5000000000ull; if ((!chg && !fol) || lines >= 200) return;
     if (chg && last_ns && now - last_ns < 1000000000ull) return; last_ns = now; said_swaps = g_up_swaps; lines++; follow = chg;
+    @autoreleasepool {   // allObjects 是自动释放的强引用数组、里面就是换下的 32 MB 旧块：不在这里排空，调用线程的池若整局不排空，这些块就被攥住永远放不掉 | allObjects is an autoreleased array of strong references to the switched-out 32 MB blocks: drain it here, or if the caller's pool never drains those blocks are held forever
     unsigned long alive = 0, inres = 0; uint64_t abytes = 0; NSArray *olds = g_up_old.allObjects;
     pthread_mutex_lock(&g_res_mu); unsigned long nres = (unsigned long)g_res_objects.allObjects.count; for (id<MTLBuffer> o in olds) { alive++; abytes += o.length; inres += [g_res_objects containsObject:o]; } pthread_mutex_unlock(&g_res_mu);
     pthread_mutex_lock(&g_deferred_mu); unsigned long ndef = (unsigned long)g_deferred.count; pthread_mutex_unlock(&g_deferred_mu);
     MLOG("上传暂存块%s：累计新建 %llu 块、其中一批内换块 %llu 次（换下的旧块共 %llu MB）；换下的旧块此刻还活着 %lu 块 %llu MB、仍在驻留集 %lu 块；显卡已分配 %llu MB、驻留集 %lu 个对象、延迟释放队列 %lu", fol && !chg ? "（落定后）" : "",
          (unsigned long long)g_up_blocks_new, (unsigned long long)g_up_swaps, (unsigned long long)(g_up_swap_bytes >> 20), alive, (unsigned long long)(abytes >> 20), inres, (unsigned long long)(g_dev.currentAllocatedSize >> 20), nres, ndef);
+    }
 }
 static id<MTLBuffer> up_alloc(size_t n, size_t *off) {
     size_t need = (n + 255u) & ~((size_t)255u);

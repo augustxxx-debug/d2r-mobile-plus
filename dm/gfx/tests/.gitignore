@@ -71,3 +71,5 @@ t_capmem
 t_capmem.dSYM/
 t_gcap
 t_gcap.dSYM/
+t_defer_drain
+t_defer_drain.dSYM/
