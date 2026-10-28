@@ -81,6 +81,9 @@ t_rts_state: t_rts_state.m ../../host/crash.c $(GFX) $(GFX_H)
 t_gcap: t_gcap.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_gcap.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 # Metal 抓帧层与常驻内存（光追内存 P1）：抓帧层关着时整帧光追常驻不涨，开着时逐帧上涨 | Metal capture layer and resident memory (ray-tracing memory P1): with the capture layer off whole ray-traced frames do not grow resident memory, with it on they do
+# 紫闪探针网格「连片」判据 | the magenta probe grid's "contiguous" criterion
+t_mp_grid: t_mp_grid.c ../nvn/nvn_mp_grid.h
+	clang $(CFLAGS) -o $@ t_mp_grid.c
 t_capmem: t_capmem.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_capmem.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 # 延迟释放真正销毁（RC1 光追关真机长测：退役未销毁缓冲 416 MB） | deferred release really destroys (RC1 RT-off device long test: 416 MB of retired but undestroyed buffers)
@@ -120,6 +123,7 @@ run: \
 	t_reorder_chain \
 	t_capmem \
 	t_defer_drain \
+	t_mp_grid \
 	t_gcap \
 	t_rts_gate \
 	t_rts_flicker \
@@ -176,6 +180,7 @@ run: \
 	./t_gcap   # GPU 抓帧（DM_GPU_CAPTURE）；测试自己设 METAL_CAPTURE_ENABLED | GPU capture (DM_GPU_CAPTURE); the test sets METAL_CAPTURE_ENABLED itself
 	@for t in t_rts_gate t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
 	python3 test_tbdr_budget.py
+	./t_mp_grid
 .PHONY: run
 # 旧接口版那一遍（图形后端编译期开关 DM_NVN_M3=1，目标 macOS 15.0）：在旁边的 tests_m3 目录里用同一份测试源码另编另跑，不动这里的缺省产物。
 # 闸门（verify/accept.sh）两遍都跑，免得以后只测一边
