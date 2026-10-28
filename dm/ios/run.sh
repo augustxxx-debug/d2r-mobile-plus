@@ -98,7 +98,7 @@ if [ "$1" = build ]; then
   MACMSL=${DM_MSL_MAC:-${DM_ROOT:-$HOME/dm-work}/build/cache/metal_shader_cache}
   [ -d "$MACMSL/b-$V" ] || { t "🔴 缺 Mac 着色器源缓存 $MACMSL/b-${V}（光追变体从它出；DM_MSL_MAC 指到 metal_shader_cache）"; exit 1; }
   python3 ../gfx/tools/rts_variant.py "$MACMSL/b-$V" "$MSL/b-$V" > Gen/rts_variant.log 2>&1 || { t "🔴 光追着色器变体生成失败（见 Gen/rts_variant.log）"; exit 1; }
-  t "光追变体：$(tail -1 Gen/rts_variant.log)（_rt $(ls "$MSL/b-$V" | grep -c '_rt.json$') 个、_pos $(ls "$MSL/b-$V" | grep -c '_pos.json$') 个）"
+  t "光追变体：$(tail -1 Gen/rts_variant.log)（库 _rt $(ls "$MSL/b-$V" | grep -c '_rt.metallib$') 个、_pos $(ls "$MSL/b-$V" | grep -c '_pos.metallib$') 个、_var $(ls "$MSL/b-$V" | grep -c '_var.metallib$') 个）"   # 按 metallib 数（八审 Q8-02：json 在不等于库在） | counted by metallib (eighth review Q8-02: a json does not mean the library is there)
   mkdir -p Gen/msl && cp -cR "$MSL/b-$V" Gen/msl/
   # 资源直接下载（直装包，Sources/asset_dl.m）：地址文件列表（仓库里的 asset_pointers.txt）+ 出包时的缺省下载根地址（DM_ASSET_BASE，tools/adhoc.sh 传隧道地址；没传就不带）
   # Direct asset download (direct-install package, Sources/asset_dl.m): URL file list (asset_pointers.txt in the repository) + the default download root URL at packaging time (DM_ASSET_BASE; tools/adhoc.sh passes the tunnel URL; omitted if not passed)

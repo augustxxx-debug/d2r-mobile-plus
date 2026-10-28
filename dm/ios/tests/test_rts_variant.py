@@ -127,6 +127,7 @@ def test_fresh_checks_version_note(tmp_path):
     rv.OUT = str(tmp_path)
     (tmp_path / 'k_rt.json').write_text(json.dumps({'notes': [rv.VERSION, 'x']}), encoding='utf-8')
     (tmp_path / 'o_rt.json').write_text(json.dumps({'notes': ['rts_variant 1']}), encoding='utf-8')
+    for f in ('k_rt.metallib', 'k_rt.metal', 'o_rt.metallib', 'o_rt.metal'): (tmp_path / f).write_bytes(b'x')
     assert rv.fresh('k', '_rt') and not rv.fresh('o', '_rt') and not rv.fresh('missing', '_rt')
 
 
@@ -236,6 +237,56 @@ def test_run_sh_stops_when_generator_fails():
     run = (root / 'ios/run.sh').read_text(encoding='utf-8')
     line = next(l for l in run.splitlines() if 'rts_variant.py' in l and 'python3' in l)
     assert '|| {' in line and 'exit 1' in line   # 生成器非零退出 → 出包停下 | generator non-zero exit → packaging stops
+
+
+# 八审 Q8-02：json 在、版本对不等于产物齐全——缺了 metallib 的旧产物要重出（或非零退出），不能报 fresh、退出 0 放过；
+# 最终核对覆盖全部应有产物（含 fresh 的），搬运时 json 最后落盘（它是「产物有效」的标记），出包日志按 metallib 计数，遗留暂存目录开头就清掉（观察 1）
+# Eighth review Q8-02: a json with the right version does not mean the product is complete - an old product missing its metallib is regenerated (or the run exits non-zero), never reported fresh with exit 0;
+# the final check covers every expected product (fresh ones included), the json lands last when moving (it marks the product valid), the packaging log counts metallibs, and leftover staging dirs are removed at the start (observation 1)
+def test_cli_rebuilds_product_whose_metallib_is_missing(tmp_path):
+    src, out = tmp_path / 'src', tmp_path / 'out'; _src(src, FS)
+    assert _cli(src, out).returncode == 0
+    lib = out / (KEY + '_rt.metallib'); lib.unlink(); assert (out / (KEY + '_rt.json')).exists()
+    r = _cli(src, out)
+    assert r.returncode != 0 or lib.exists(), '缺 metallib 却退出 0、没补：' + r.stdout + r.stderr
+    assert lib.exists() and "'ok': 1" in r.stdout.strip().splitlines()[-1], r.stdout + r.stderr
+
+
+def test_fresh_requires_metallib_and_metal(tmp_path):
+    rv.OUT = str(tmp_path)
+    (tmp_path / 'k_rt.json').write_text(json.dumps({'notes': [rv.VERSION]}), encoding='utf-8')
+    assert not rv.fresh('k', '_rt')   # 只有 json | json only
+    (tmp_path / 'k_rt.metallib').write_bytes(b'x'); assert not rv.fresh('k', '_rt')   # 缺 .metal | .metal missing
+    (tmp_path / 'k_rt.metal').write_text('x', encoding='utf-8'); assert rv.fresh('k', '_rt')
+
+
+def test_final_check_covers_fresh_products(tmp_path):
+    rv.OUT = str(tmp_path)
+    for f in ('a_rt.json', 'a_rt.metal', 'a_rt.metallib'): (tmp_path / f).write_text(json.dumps({'notes': [rv.VERSION]}), encoding='utf-8')
+    (tmp_path / 'b_rt.json').write_text(json.dumps({'notes': [rv.VERSION]}), encoding='utf-8')   # 上一次就留下的半个产物 | half a product left over from an earlier run
+    (tmp_path / 'rts_alpha.metal').write_text('x', encoding='utf-8'); (tmp_path / 'rts_alpha.json').write_text(json.dumps({'version': rv.VAR_VERSION}), encoding='utf-8')
+    assert rv.missing_products([('a', '_rt'), ('b', '_rt')]) == ['b_rt']
+    (tmp_path / 'rts_alpha.metal').unlink(); assert rv.missing_products([('a', '_rt')]) == ['rts_alpha']
+
+
+def test_move_order_puts_json_last():
+    files = ['k_rt.json', 'k_rt.metal', 'k_rt.metallib', 'rts_alpha.json', 'rts_alpha.metal', 'a_pos.json', 'a_pos.metallib', 'a_pos.metal']
+    order = rv.move_order(files)
+    assert sorted(order) == sorted(files)
+    for f in files:
+        if f.endswith('.json'): assert all(order.index(f) > order.index(g) for g in files if g.rsplit('.', 1)[0] == f.rsplit('.', 1)[0] and g != f), order
+
+
+def test_cli_removes_leftover_staging_dirs(tmp_path):
+    src, out = tmp_path / 'src', tmp_path / 'out'; _src(src, FS); left = out / '.rts_stage-killed'; left.mkdir(parents=True); (left / 'x_rt.json').write_text('{}', encoding='utf-8')
+    r = _cli(src, out)
+    assert r.returncode == 0 and not [f for f in os.listdir(out) if f.startswith('.rts_stage-')], r.stdout + r.stderr
+
+
+def test_run_sh_counts_metallibs():
+    run = (root / 'ios/run.sh').read_text(encoding='utf-8')
+    line = next(l for l in run.splitlines() if '光追变体：' in l)
+    assert "_rt.metallib$'" in line and "_pos.metallib$'" in line and '_rt.json$' not in line, line
 
 
 # 原先是 pytest 风格的函数、没有入口，直接跑不执行断言（七审测试接线缺口）：收进 unittest，收集到 0 个也算失败

@@ -19,16 +19,27 @@
 # a light among them uses its mask channel, any other keeps the original (cube shadow / 1.0).
 # Variants that exist with the same VERSION (recorded in the json notes) are skipped, so the packaging script can call this every time.
 # Usage: rts_variant.py <b-<chain> cache dir (with .metal / .json)> <output dir (b-<chain>, same as DM_MSL_IOS)> [key...] (none = every fragment shader that samples the cascades + the 10 skinned vertex shaders)
-import os, re, sys, json, tempfile, subprocess, concurrent.futures as cf
+import os, re, sys, json, shutil, tempfile, subprocess, concurrent.futures as cf
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../ios/tools')); import ios_metal
 SRC = OUT = STAGE = None; WANT = set()   # STAGE：本次产物先写进的暂存目录（七审 Q7-03：全部成功才搬进 OUT；None = 直接写 OUT，单测用） | STAGE: the staging dir this run writes into first (seventh review Q7-03: moved into OUT only if everything succeeded; None = straight into OUT, for the unit tests)   # 命令行在文件末尾赋值；测试直接调各变换函数 | assigned at the end of the file from the command line; tests call the transformation functions directly
 CASCADES = ('fp_t_cb196610_105980A8', 'fp_t_cb196610_105980AA')
 VERSION = 'rts_variant 6'   # 改了变换规则就升版本：旧产物全部重出 | bump when the transformation changes: every old product is regenerated
 SKIN_KEYS = ('0fa4eb7559f1637a', '1d97d33ab66abcba', '3deaf68fd65b5298', '4dffa355f2fbcdaf', '54c93fa22abff9ee', '64dd7d022f3fae39', '67e2ebc28c830f44', 'add86ee8e20f89b9', 'b3ae9be5cc670f35', 'fbf6dc1873a449e9')
-def fresh(key, suffix, ver=None):   # 产物已有且版本一致 | product present with the same version
+def fresh(key, suffix, ver=None):   # 产物齐全（.metallib、.metal 都在）且版本一致；八审 Q8-02：只看 json 会放过缺库的旧产物 | product complete (.metallib and .metal present) with the same version; eighth review Q8-02: looking at the json alone let an old product without its library through
+    p = os.path.join(OUT, key + suffix)
+    if not (os.path.exists(p + '.metallib') and os.path.exists(p + '.metal')): return False
     try:
-        with open(os.path.join(OUT, key + suffix + '.json')) as f: return (ver or VERSION) in json.load(f).get('notes', [])
+        with open(p + '.json') as f: return (ver or VERSION) in json.load(f).get('notes', [])
     except Exception: return False
+def missing_products(need, alpha=True):   # need = [(键, 后缀)]：本次应有的全部产物（新生成的和 fresh 的）；返回不全 / 版本不对的 | need = [(key, suffix)]: every product this run should have (new and fresh); returns the incomplete / wrong-version ones
+    miss = [k + s for k, s in need if not fresh(k, s, VAR_VERSION if s == '_var' else None)]
+    if alpha:
+        try: ok = os.path.exists(os.path.join(OUT, 'rts_alpha.metal')) and json.load(open(os.path.join(OUT, 'rts_alpha.json'))).get('version') == VAR_VERSION
+        except Exception: ok = False
+        if not ok: miss.append('rts_alpha')
+    return miss
+def move_order(files):   # 搬进 OUT 的顺序：json 最后（json 是「产物有效」的标记，搬到一半被打断也不会留下有 json 没库的产物） | order of moving into OUT: json last (the json marks a product valid, so an interrupted move never leaves a json without its library)
+    return sorted(files, key=lambda f: (f.endswith('.json'), f))
 def add_binding(msl):   # 返回 (msl, 新 arg_id)；参数块加一行 | returns (msl, new arg_id); one line added to the argument block
     ids = [int(x) for x in re.findall(r'\[\[id\((\d+)\)\]\]', msl)]; aid = max(ids) + 1
     m = re.search(r'struct spvDescriptorSetBuffer0\n\{\n(.*?)\n\};', msl, re.S)
@@ -263,43 +274,48 @@ def emit(key, suffix, out, j, binding, note, ver=None):
 def one(key):
     j = json.load(open(os.path.join(SRC, key + '_b.json'))); msl = open(os.path.join(SRC, key + '_b.metal')).read()
     if j.get('stage') in ('vs', 'vp', 'vertex'):
-        rs = []
+        rs, need = [], [(key, '_pos')] if key in SKIN_KEYS else []
         if key in SKIN_KEYS and not fresh(key, '_pos'):
             out, aid = transform_pos(msl)
             r = emit(key, '_pos', out, json.loads(json.dumps(j)), {'msl_name': 'rts_pos', 'msl_type': 'device float4*', 'arg_id': aid, 'kind': 'rtpos', 'reg': -1}, 'rt skinned position export: clip position → rts_pos')
             rs.append(r + (' pos aid %d' % aid if r == 'ok' else ''))
         try: nout = len(var_outputs(msl)) if '\nvertex ' in msl else 99
         except ValueError: nout = 99
-        if nout <= VAR_MAX_OUT and not fresh(key, '_var', VAR_VERSION):
+        if nout <= VAR_MAX_OUT and fresh(key, '_var', VAR_VERSION): need.append((key, '_var'))
+        elif nout <= VAR_MAX_OUT:
             try:
-                out, aid, locs = transform_var(msl); jv = json.loads(json.dumps(j)); jv['rts_var_locs'] = locs
+                out, aid, locs = transform_var(msl); jv = json.loads(json.dumps(j)); jv['rts_var_locs'] = locs; need.append((key, '_var'))
                 r = emit(key, '_var', out, jv, {'msl_name': 'rts_var', 'msl_type': 'device float4*', 'arg_id': aid, 'kind': 'rtvar', 'reg': -1}, 'rt alpha occluder export: clip position + interpolants %s → rts_var' % locs, VAR_VERSION)
                 rs.append(r + (' var aid %d locs %s' % (aid, locs) if r == 'ok' else ''))
             except ValueError as e: rs.append('varskip %s' % e)
-        return key, '; '.join(rs) if rs else 'fresh'
-    if j.get('stage') not in ('ps', 'fs'): return key, 'skip'
-    if not any('spvDescriptorSet0.' + c + '.sample_compare(' in msl for c in CASCADES): return key, 'skip'
-    if fresh(key, '_rt'): return key, 'fresh'
+        return key, '; '.join(rs) if rs else 'fresh', need
+    if j.get('stage') not in ('ps', 'fs'): return key, 'skip', []
+    if not any('spvDescriptorSet0.' + c + '.sample_compare(' in msl for c in CASCADES): return key, 'skip', []
+    if fresh(key, '_rt'): return key, 'fresh', [(key, '_rt')]
     out, n, aid = transform(msl)
     out, np = transform_point(out, aid + 1)
     j['bindings'].append({'msl_name': 'rts_mask', 'msl_type': 'texture2d<float>', 'arg_id': aid, 'kind': 'rtmask', 'reg': -1})
     if np: j['bindings'].append({'msl_name': 'rts_pmask', 'msl_type': 'texture2d<float>', 'arg_id': aid + 1, 'kind': 'rtpmask', 'reg': -1}); j['bindings'].append({'msl_name': 'rts_plidx', 'msl_type': 'constant int4*', 'arg_id': aid + 2, 'kind': 'rtplidx', 'reg': -1})
     r = emit(key, '_rt', out, j, None, 'rt shadow variant: %d cascade sample_compare → rts_mask, %d point-light cube sample → rts_pl' % (n, np))
-    return key, r + (' %d sites aid %d point %d' % (n, aid, np) if r == 'ok' else '')
+    return key, r + (' %d sites aid %d point %d' % (n, aid, np) if r == 'ok' else ''), [(key, '_rt')]
 # 七审 Q7-03：必需目标（符合条件的 _rt / _pos / _var、判定库）编不过就整体失败——非零退出、OUT 里什么都不换（出包脚本 run.sh 据此停下）；
 # 「不适用 / 剔除」（skip、varskip、判定库里单个编不过而剔除的）不算失败。产物先在 OUT 下的暂存目录生成，全部成功才逐个换进 OUT，换完再核每个 ok 的产物都在、版本对
+# 八审 Q8-02：fresh 也要 .metallib / .metal 在；换完核的是本次应有的全部产物（含 fresh 的、判定库）；json 最后落盘；开头清掉被强杀留下的暂存目录
 # Seventh review Q7-03: a required target (an eligible _rt / _pos / _var, the judge library) that fails to compile fails the whole run - non-zero exit, nothing replaced in OUT (the packaging script run.sh stops on it);
 # "not applicable / excluded" (skip, varskip, single shaders dropped from the judge library) is not a failure. Products are generated in a staging dir under OUT and moved into OUT one by one only if everything succeeded, then every ok product is checked to be present with the right version
+# Eighth review Q8-02: fresh also needs the .metallib / .metal; the check after moving covers every product this run should have (fresh ones and the judge library included); the json lands last; staging dirs left by a killed run are removed first
 def main(argv):
     global SRC, OUT, STAGE, WANT
     SRC, OUT = argv[1:3]; WANT = set(argv[3:]); os.makedirs(OUT, exist_ok=True)
     keys = sorted(WANT) if WANT else sorted(f[:-8] for f in os.listdir(SRC) if f.endswith('_b.metal'))
+    for f in os.listdir(OUT):   # 上一次被强杀留下的暂存目录（八审观察 1：run.sh 整目录拷进 App） | staging dirs left by a killed run (eighth review observation 1: run.sh copies the whole dir into the App)
+        if f.startswith('.rts_stage-'): shutil.rmtree(os.path.join(OUT, f), ignore_errors=True); print('清掉遗留暂存目录', f)
     STAGE = tempfile.mkdtemp(prefix='.rts_stage-', dir=OUT)
     try:
-        res, fails, made = {}, [], []
+        res, fails, need = {}, [], []
         with cf.ThreadPoolExecutor(8) as ex:
-            for key, r in ex.map(one, keys):
-                res[r.split()[0]] = res.get(r.split()[0], 0) + 1
+            for key, r, nd in ex.map(one, keys):
+                res[r.split()[0]] = res.get(r.split()[0], 0) + 1; need += nd
                 if 'FAIL' in r: fails.append((key, r))
                 if not r.startswith(('skip', 'fresh')): print(key, r)
         try:
@@ -309,18 +325,12 @@ def main(argv):
         if fails:
             for key, r in fails: print('【失败】', key, r[:300])
             print('汇总', res, '失败 %d 个，产物没有替换' % len(fails)); return 2
-        made = sorted(os.listdir(STAGE))
-        for f in made: os.replace(os.path.join(STAGE, f), os.path.join(OUT, f))
-        missing = []
-        for f in made:
-            if f.endswith('.json') and f != 'rts_alpha.json':
-                k, suf = f[:-5].rsplit('_', 1)
-                if not os.path.exists(os.path.join(OUT, f[:-5] + '.metallib')) or not fresh(k, '_' + suf, VAR_VERSION if suf == 'var' else None): missing.append(f[:-5])
+        for f in move_order(os.listdir(STAGE)): os.replace(os.path.join(STAGE, f), os.path.join(OUT, f))
+        missing = missing_products(need)   # 八审 Q8-02：核全部应有产物（含 fresh 的），不只是本次搬进去的 | eighth review Q8-02: every expected product (fresh ones included), not only the ones moved in this run
         if missing: print('【失败】产物不全 / 版本不对：', ' '.join(missing[:20])); print('汇总', res, '产物不全 %d 个' % len(missing)); return 3
-        print('汇总', res); return 0
+        print('汇总', res, '产物齐全 %d 个（_rt %d、_pos %d、_var %d）' % (len(need), sum(s == '_rt' for _, s in need), sum(s == '_pos' for _, s in need), sum(s == '_var' for _, s in need))); return 0
     finally:
-        for f in os.listdir(STAGE): os.remove(os.path.join(STAGE, f))
-        os.rmdir(STAGE); STAGE = None
+        shutil.rmtree(STAGE, ignore_errors=True); STAGE = None
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
