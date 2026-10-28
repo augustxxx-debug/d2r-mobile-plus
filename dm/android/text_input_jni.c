@@ -8,7 +8,7 @@
 
 static JavaVM *vm;
 static jclass activity_class;
-static jmethodID show_input, report_failure;
+static jmethodID show_input, report_failure, share_file;
 static pthread_mutex_t input_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t input_done = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t work_ready = PTHREAD_COND_INITIALIZER;
@@ -116,7 +116,8 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *java_vm, void *reserved) {
     show_input = (*env)->GetStaticMethodID(env, activity_class, "showNativeInput",
         "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;III)V");
     report_failure = (*env)->GetStaticMethodID(env, activity_class, "showNativeFailure", "(I)V");
-    if (!show_input || !report_failure) return JNI_ERR;
+    share_file = (*env)->GetStaticMethodID(env, activity_class, "shareDiagnostics", "(Ljava/lang/String;Ljava/lang/String;)V");
+    if (!show_input || !report_failure || !share_file) return JNI_ERR;
     vm = java_vm;
     pthread_t worker;
     if (pthread_create(&worker, NULL, input_worker, NULL)) worker_state = -1;
@@ -184,4 +185,17 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeTextResult(
         pthread_cond_signal(&input_done);
     }
     pthread_mutex_unlock(&input_lock);
+}
+
+// 分享诊断日志（jni_android.c 的工作线程调，不是客体线程）：挂到 JVM，调 DmActivity.shareDiagnostics(路径, 标题)，再脱开
+// Share diagnostics (called from jni_android.c's worker thread, never a guest thread): attach to the JVM, call DmActivity.shareDiagnostics(path, title), detach
+void dm_android_share_file(const char *path, const char *title) {
+    if (!vm || !activity_class || !share_file) { __android_log_write(ANDROID_LOG_ERROR, "dm", "share: JNI bridge not ready"); return; }
+    JNIEnv *env = NULL; int attached = (*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK;
+    if (attached && (*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) { __android_log_write(ANDROID_LOG_ERROR, "dm", "share: AttachCurrentThread failed"); return; }
+    jstring jp = (*env)->NewStringUTF(env, path), jt = (*env)->NewStringUTF(env, title ? title : "");
+    if (jp && jt) (*env)->CallStaticVoidMethod(env, activity_class, share_file, jp, jt);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionDescribe(env); (*env)->ExceptionClear(env); }
+    if (jp) (*env)->DeleteLocalRef(env, jp); if (jt) (*env)->DeleteLocalRef(env, jt);
+    if (attached) (*vm)->DetachCurrentThread(vm);
 }

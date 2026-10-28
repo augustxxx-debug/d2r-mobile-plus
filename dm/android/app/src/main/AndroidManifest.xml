@@ -25,6 +25,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- 分享诊断日志：只开放 files/share/ 的只读 content://，不导出，靠 Intent 临时授权 | share diagnostics: read-only content:// for files/share/ only, not exported, temporary grant via the Intent -->
+        <provider android:name=".DiagProvider" android:authorities="${applicationId}.diag" android:exported="false" android:grantUriPermissions="true" />
         <receiver android:name=".widget.HeroWidget2x2Provider"
             android:exported="false" android:label="@string/dmAndroidWidgetName2x2">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>

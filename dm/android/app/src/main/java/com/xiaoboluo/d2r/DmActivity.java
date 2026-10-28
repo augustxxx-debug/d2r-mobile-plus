@@ -5,7 +5,10 @@
 package com.xiaoboluo.d2r;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
+import android.app.ApplicationExitInfo;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.hardware.display.DisplayManager;
@@ -255,6 +258,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         File data = new File(downloads, "S2X/D2R Mobile/data"), earlier = new File(downloads, "data");
         if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
         String src = data.getAbsolutePath();
+        { File ext2 = getExternalFilesDir(null), internal2 = new File(getFilesDir(), "dm");   // 与上面 / jni_android.c 同一条运行目录规则 | same runtime-directory rule as above / jni_android.c
+          writeExitReasons(new File(internal2, "out/main.patched.bin").canRead() || ext2 == null ? internal2 : new File(ext2, "dm")); }   // 分享诊断日志附系统退出原因 | exit reasons for share diagnostics
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
         if (result < 0) {
             int resource = switch (result) {
@@ -399,6 +404,29 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // Crash fence (gate 1): memory warnings go into the running marker; when the Activity really finishes the host exits gracefully (marker cleared, _exit), the process is not reused
     @Override public void onTrimMemory(int level) { super.onTrimMemory(level); if (started) nativeMemoryWarning(level); }
     @Override public void onLowMemory() { super.onLowMemory(); if (started) nativeMemoryWarning(TRIM_MEMORY_RUNNING_CRITICAL); }
+    // 分享诊断日志（原生工作线程经 text_input_jni.c 调）：系统分享面板，文件经 DiagProvider 以临时读权限交出 | share diagnostics (called by the native worker through text_input_jni.c): system share sheet, the file handed over through DiagProvider with a temporary read grant
+    static void shareDiagnostics(String path, String title) {
+        DmActivity a = current.get(); if (a == null) { android.util.Log.w("dm", "share: no activity"); return; }
+        a.runOnUiThread(() -> {
+            File f = new File(path); Uri uri = DiagProvider.uriFor(a, f);
+            Intent send = new Intent(Intent.ACTION_SEND); send.setType("text/plain"); send.putExtra(Intent.EXTRA_STREAM, uri); send.putExtra(Intent.EXTRA_SUBJECT, f.getName());
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            try { a.startActivity(Intent.createChooser(send, title)); } catch (Exception e) { android.util.Log.w("dm", "share: " + e); }
+        });
+    }
+    // 系统记录的最近退出原因（Android 11+ ApplicationExitInfo，代替 iOS 的 .ips 崩溃日志）：写到 files/dm/exit_reasons.txt，分享诊断日志附上；只读本 App 自己的记录
+    // The system's recent exit reasons (Android 11+ ApplicationExitInfo, in place of iOS's .ips crash logs): written to files/dm/exit_reasons.txt and attached to share diagnostics; only this App's own records
+    private void writeExitReasons(File runtime) {
+        try {
+            ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE); StringBuilder b = new StringBuilder();
+            java.text.SimpleDateFormat df = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT);
+            for (ApplicationExitInfo e : am.getHistoricalProcessExitReasons(getPackageName(), 0, 5)) {
+                b.append("time=").append(df.format(new java.util.Date(e.getTimestamp()))).append(" reason=").append(e.getReason()).append(" status=").append(e.getStatus())
+                 .append(" importance=").append(e.getImportance()).append(" pss_kb=").append(e.getPss()).append(" rss_kb=").append(e.getRss()).append(" desc=").append(e.getDescription()).append('\n');
+            }
+            try (FileOutputStream out = new FileOutputStream(new File(runtime, "exit_reasons.txt"))) { out.write(b.toString().getBytes(StandardCharsets.UTF_8)); }
+        } catch (Throwable t) { android.util.Log.w("dm", "exit reasons: " + t); }
+    }
     @Override protected void onDestroy() {
         if (started && isFinishing()) nativeShutdown();   /* 不返回：宿主 _exit(0) | does not return: the host _exit(0)s */
         if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
