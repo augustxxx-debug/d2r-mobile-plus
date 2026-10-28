@@ -122,21 +122,22 @@ static inline int rts_gov_step(rts_gov *g, double rt_ms, double fr_ms, double bu
         return -1; }
     return 0;
 }
-// 档位 → 实际参数：0 = 按设置；1 = 点光最多 1 盏、点光射线 1/4、关光追 AO（实验性）；2 = 再让镂空遮挡体（树叶、草、栅栏镂空）照原版画进阴影图，不跑判定、追踪用不带相交函数的管线；
-// 3 = 再关点光阴影（太阳强制半分辨率硬阴影）；4 = 光追暂停（原版阴影）。
-// 七审三轮：第 2 档原先就关点光，洞里火把在真机上一直没影子（第 4 条）；镂空判定是森林最重的一段（第 5、8 条），有了局部回退（没进 TLAS 的照原版画）它能单独退回原版，比关点光先退。
-// 太阳 1/4 分辨率那一档去掉了：营地石墙脚下的影子成锯齿、镜头一动就爬动闪烁（真机 79eaa3f 用户录屏），省下的又不多（Mac 约 0.5 ms）
-// Level → effective parameters: 0 = as configured; 1 = at most 1 point light, quarter-resolution point rays, ray-traced AO (experimental) off; 2 = alpha-tested occluders (leaves, grass, cut-out fences) also go back to the original shadow map, no judge runs and the trace uses the pipeline without intersection functions;
-// 3 = point-light shadows off as well (sun forced to half-resolution hard shadows); 4 = ray tracing paused (original shadows).
-// Seventh review round 3: level 2 used to turn point lights off, so cave torches never cast shadows on the device (item 4); the alpha judge is the heaviest part in the forest (items 5, 8), and with partial fallback (draws outside the TLAS drawn as original) it can fall back on its own, before point lights do.
-// The quarter-resolution sun level is gone: the shadow along the camp's stone wall turned into stair steps that crawled and flickered whenever the camera moved (user recording on the device with 79eaa3f), for little saving (about 0.5 ms on the Mac)
-#define RTS_LVL_MAX 4
-typedef struct { int point_on, point_n, point_div, sun_div, soft, ao, off, no_alpha; } rts_lvl_params;
+// 档位 → 实际参数（七审三轮。用户：「不能开了等于没开啊！」——每一档都要看得见光追，暂停不在自动降档序列里）：
+// 0 = 全开（按设置：太阳全分辨率、点光、光追 AO、镂空判定）；1 = 太阳全分辨率 + 点光 ≤ 2 盏 1/4 分辨率 + 关 AO；
+// 2 = 太阳半分辨率 + 点光 1 盏（最近最亮、排除随身光）；3 = 太阳半分辨率 + 关点光 + 静态镂空遮挡体（树叶、草）照原版画进阴影图、不跑判定（人物 / 怪的抖动淡出也是镂空：蒙皮的照样光追，但不判定、按不透明剪影，免得森林里成群的怪把判定的开销又带回来）
+// （判定是森林的大头：Mac 森林光追 3.6 → 0.6 ms；人物 / 怪 / 不透明物件照样光追）。
+// 「暂停」（原版阴影）只给 GPU 挂起保护用（rts_lvl_params.off，由调用方置），太阳 1/4 分辨率那档去掉了（石墙脚下锯齿爬动，真机 79eaa3f 用户录屏）
+// Level → effective parameters (seventh review round 3. The user: "turning it on must not amount to turning nothing on" - every level shows ray tracing, and pausing is not part of the automatic sequence):
+// 0 = everything (as configured: full-resolution sun, point lights, ray-traced AO, alpha judge); 1 = full-resolution sun + at most 2 point lights at quarter resolution + AO off;
+// 2 = half-resolution sun + 1 point light (closest / brightest, the character's own light excluded); 3 = half-resolution sun + point lights off + alpha-tested occluders (leaves, grass) drawn into the shadow map as original, no judge
+// (the judge is the forest's main cost: Mac forest ray tracing 3.6 → 0.6 ms; characters / monsters / opaque objects stay ray traced).
+// "Pause" (original shadows) is only for the GPU-hang protection (rts_lvl_params.off, set by the caller); the quarter-resolution sun level is gone (crawling stair steps along the stone wall, user recording on the device with 79eaa3f)
+#define RTS_LVL_MAX 3
+typedef struct { int point_on, point_n, point_div, sun_div, soft, ao, off, no_alpha, excl_player; } rts_lvl_params;
 static inline rts_lvl_params rts_lvl_apply(int lvl, int point_on, int point_n, int point_div, int sun_half, int soft, int ao) {
-    rts_lvl_params p = {point_on, point_n, point_div, sun_half ? 2 : 1, soft, ao, 0, 0};
-    if (lvl >= 1) { if (p.point_n > 1) p.point_n = 1; p.point_div = 4; p.ao = 0; }
-    if (lvl >= 2) p.no_alpha = 1;
-    if (lvl >= 3) { p.point_on = 0; p.sun_div = 2; p.soft = 0; }
-    if (lvl >= 4) { p.off = 1; p.point_on = 0; p.ao = 0; }
+    rts_lvl_params p = {point_on, point_n, point_div, sun_half ? 2 : 1, soft, ao, 0, 0, 0};
+    if (lvl >= 1) { if (p.point_n > 2) p.point_n = 2; p.point_div = 4; p.ao = 0; }
+    if (lvl >= 2) { p.sun_div = 2; p.soft = 0; if (p.point_n > 1) p.point_n = 1; p.excl_player = 1; }
+    if (lvl >= 3) { p.point_on = 0; p.no_alpha = 1; }
     return p;
 }

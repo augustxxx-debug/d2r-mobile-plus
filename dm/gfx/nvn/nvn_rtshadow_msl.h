@@ -111,7 +111,7 @@ static const char *k_rts_msl =
 "  for (uint q = 0; q < nl; q++) { uint r = list[1 + q]; float4 pw = k.invV * float4(L[r].xyz, 1.0); float3 pos = pw.xyz / pw.w; float4 cr4 = L[r + 1]; float lum = max(cr4.x, max(cr4.y, cr4.z)), rad = cr4.w;\n"
 "    if (!(lum > 0.0) || !(rad > 0.0) || any(isnan(pos)) || any(isinf(pos))) continue;\n"
 "    float3 v = pos - p0; float3 qv = v - dot(v, dir) * dir; float d2 = dot(qv, qv); if (d2 < cd) { cd = d2; cr = int(r); }\n"
-"    if (k.player_on) { float e = length(v - k.poff.xyz); if (e < k.ptol && e < pd) { pd = e; pl = int(r); } }\n"
+"    if (k.player_on & 1u) { float e = length(v - k.poff.xyz); if (e < k.ptol && e < pd) { pd = e; pl = int(r); } if ((k.player_on & 2u) && e < k.ptol) continue; }\n"   // 位 1：随身光不进选灯（降档第 2 档起） | bit 1: the character's own light is not picked (from downgrade level 2)
 "    float s = lum * (max(0.0, 1.0 - sqrt(d2) / (rad * 2.0)) + 1e-3 / (1.0 + d2)); for (uint j = 0; j < 4; j++) if (prev[j].w > 0.0 && distance(prev[j].xyz, pos) < 1.0) { s *= 1.5; break; }\n"
 "    if (!(s > 0.0)) continue; int kk = -1; for (uint j = 0; j < mx; j++) if (bi[j] < 0 || s > best[j]) { kk = int(j); break; }\n"
 "    if (kk < 0) continue; for (int j = int(mx) - 1; j > kk; j--) { best[j] = best[j - 1]; bi[j] = bi[j - 1]; } best[kk] = s; bi[kk] = int(r); }\n"

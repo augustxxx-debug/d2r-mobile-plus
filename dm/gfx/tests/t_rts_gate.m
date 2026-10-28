@@ -269,13 +269,13 @@ int main(void) { @autoreleasepool {
       printf("非太阳那张：原因「%s」\n", why);
       EXPECT("有非太阳的图：太阳那张照常清回全亮", 1, cleared); EXPECT("非太阳那张原样不动（0.25）", 1, tex_depth(&g_top) == 0.25f); EXPECT("清回的只有太阳那 1 张", 1, RTS_MAP_CLEARED());
       EXPECT("原因写明光源不是太阳", 1, strstr(why, "光源不是太阳") != NULL); EXPECT("这几帧 GPU 无错", 1, ok11); }
-    // 12. 自动降档最低档（RTS_LVL_MAX，第 4 档）= 光追暂停（原先第 3 档是太阳 1/4 分辨率，石墙脚下的影子成锯齿、镜头一动就闪）：画面原版、不算网格键、不算失败；回第 0 档后照常光追
-    // 12. The lowest automatic level (RTS_LVL_MAX, level 4) = ray tracing paused (level 3 used to be the sun at quarter resolution, whose stone-wall shadow edges turned into crawling stair steps): original picture, no mesh key, not a failure; back at level 0 ray tracing resumes
+    // 12. GPU 挂起保护的暂停（不在自动降档序列里，七审三轮）：画面原版、不算网格键、不算失败；暂停结束照常光追
+    // 12. The GPU-hang protection pause (not part of the automatic downgrade, seventh review round 3): original picture, no mesh key, not a failure; ray tracing resumes when it ends
     { RTS_HYST_RESET(); EXPECT("第 12 节前光追生效", 1, until_applied(a, 1));
-      int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = RTS_LVL_MAX; int ok12 = 1, applied = 0; uint64_t k0 = g_rts.key_ns; int bo0 = g_rts.backoff;
+      int lv0 = g_rts.gov.lvl; RTS_PAUSE_SET(600); int ok12 = 1, applied = 0; uint64_t k0 = g_rts.key_ns; int bo0 = g_rts.backoff;
       for (int i = 0; i < 4; i++) { ok12 = run_frame(1, a, 1, &ok12) >= 0 && ok12; applied += map_depth() == 1.0f; }
-      EXPECT("最低档：阴影图一帧都没清（原版画面）", 0, applied); EXPECT("最低档：不算网格键", 0, (long long)(g_rts.key_ns - k0)); EXPECT("最低档：不算失败（不退避）", bo0, g_rts.backoff);
-      g_rts.gov.lvl = lv0; RTS_HYST_RESET(); EXPECT("回第 0 档后光追照常", 1, until_applied(a, 1)); }
+      EXPECT("暂停：阴影图一帧都没清（原版画面）", 0, applied); EXPECT("暂停：不算网格键", 0, (long long)(g_rts.key_ns - k0)); EXPECT("暂停：不算失败（不退避）", bo0, g_rts.backoff);
+      EXPECT("最低自动档（第 3 档）不是暂停", 0, rts_lvl_of(RTS_LVL_MAX).off); RTS_PAUSE_SET(0); g_rts.gov.lvl = lv0; RTS_HYST_RESET(); EXPECT("回第 0 档后光追照常", 1, until_applied(a, 1)); }
 #endif
 #ifdef RTS_PART_SET
     // 13–18. 局部回退（生产缺省；七审三轮 P1 / P2 / 第 1、6 条）：真机 79eaa3f 营地 / 森林只有 26% / 31% 的时间是光追画面——一帧里只要一次阴影绘制没进 TLAS（新建配额满 / 网格待建），整帧回原版，
@@ -328,14 +328,19 @@ int main(void) { @autoreleasepool {
         frame_open(); prepass(); shadow_pass(); sh(0); ok13 = frame_close() && ok13;
         run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
         EXPECT("没有主通道的帧：不退避", bo0, g_rts.backoff); EXPECT("没有主通道的帧：不算画面切换", sw0, RTS_SWITCHES()); EXPECT("没有主通道的帧：迟滞要求不变", need0, RTS_NEED()); EXPECT("之后一帧照样是光追画面", 1, RTS_MAP_CLEARED()); }
-      // 19. 最低档（光追暂停）：局部回退也不省画 | 19. the lowest level (ray tracing paused): partial fallback skips nothing either
-      { int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = RTS_LVL_MAX; int drawn = 0; for (int i = 0; i < 3; i++) { drawn += run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; }
-        EXPECT("最低档：三帧六次都照原版画", 6, drawn); EXPECT("最低档：没用遮罩", 0, RTS_MAP_CLEARED()); g_rts.gov.lvl = lv0; }
-      // 20. 第 2 档：镂空遮挡体照原版画进阴影图、不进 TLAS，其余照常光追（七审三轮第 5、8 条：森林的镂空判定最重） | 20. level 2: alpha-tested occluders go into the map as original and stay out of the TLAS, everything else is ray traced as usual (seventh review round 3 items 5, 8: the alpha judge is the heaviest part in the forest)
-      { RTS_HYST_RESET(); UNTIL_PART(b2, 2); int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = 2; NvProg *ap = [NvProg new]; ap->sh[0] = g_pr->sh[0]; ap->sh[1] = [NvShader new]; ap->sh[1]->rf.may_discard = 1;
+      // 19. GPU 挂起保护的暂停：局部回退也不省画 | 19. the hang-protection pause: partial fallback skips nothing either
+      { RTS_PAUSE_SET(600); int drawn = 0; for (int i = 0; i < 3; i++) { drawn += run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; }
+        EXPECT("暂停：三帧六次都照原版画", 6, drawn); EXPECT("暂停：没用遮罩", 0, RTS_MAP_CLEARED()); RTS_PAUSE_SET(0); }
+      // 20. 第 3 档（最低自动档）：镂空遮挡体照原版画进阴影图、不进 TLAS，其余照常光追（七审三轮第 5、8 条：森林的镂空判定最重） | 20. level 3 (the lowest automatic level): alpha-tested occluders go into the map as original and stay out of the TLAS, everything else is ray traced as usual (seventh review round 3 items 5, 8: the alpha judge is the heaviest part in the forest)
+      { RTS_HYST_RESET(); UNTIL_PART(b2, 2); int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = 3; NvProg *ap = [NvProg new]; ap->sh[0] = g_pr->sh[0]; ap->sh[1] = [NvShader new]; ap->sh[1]->rf.may_discard = 1;
         uint64_t lw0 = g_rts.na_why[RA_LEVEL]; frame_open(); prepass(); shadow_pass(); int eo = sh(0); NvProg *keep = g_pr; g_pr = ap; int ea = sh(5); g_pr = keep; int nin = g_rts.ninst; main_pass(); hdr_again(); ok13 = frame_close() && ok13;
-        EXPECT("第 2 档：镂空照原版画（返回 0）", 0, ea); EXPECT("第 2 档：镂空没进 TLAS", 1, nin); EXPECT("第 2 档：镂空记「降档照原版」1 次", 1, (long long)(g_rts.na_why[RA_LEVEL] - lw0));
-        EXPECT("第 2 档：不透明的照样不编码", 1, eo); EXPECT("第 2 档：照样是光追画面", 1, RTS_MAP_CLEARED()); g_rts.gov.lvl = lv0; }
+        EXPECT("第 3 档：镂空照原版画（返回 0）", 0, ea); EXPECT("第 3 档：镂空没进 TLAS", 1, nin); EXPECT("第 3 档：镂空记「降档照原版」1 次", 1, (long long)(g_rts.na_why[RA_LEVEL] - lw0));
+        EXPECT("第 3 档：不透明的照样不编码", 1, eo); EXPECT("第 3 档：照样是光追画面", 1, RTS_MAP_CLEARED()); g_rts.gov.lvl = lv0; }
+      // 21. 开关关着时完全无副作用（CLAUDE.md 闸 3 · B 级）：阴影绘制全照原版编码，局部回退 / 太阳认图的计数一个不动，不写深度标志不置位 | 21. no side effect at all with the switch off (CLAUDE.md gate 3 · level B): every shadow draw is encoded as original, the partial-fallback / sun-map counters do not move, the no-depth-write flag is never set
+      { uint64_t s0 = g_rts.n_skip_draws, r0 = g_rts.n_resid_draws, n0 = g_rts.n_nonsun_draws, k0 = g_rts.key_ns; g_rts.on = 0; int drawn = 0;
+        for (int i = 0; i < 3; i++) { drawn += run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; }
+        EXPECT("开关关：三帧六次都照原版编码", 6, drawn); EXPECT("开关关：省画 / 照原版画 / 非太阳图计数都不动", 0, (long long)(g_rts.n_skip_draws - s0 + g_rts.n_resid_draws - r0 + g_rts.n_nonsun_draws - n0));
+        EXPECT("开关关：不算网格键", 0, (long long)(g_rts.key_ns - k0)); EXPECT("开关关：不写深度标志没置位", 0, g_rts_nowrite); EXPECT("开关关：遮罩不绑", 1, rts_mask_tex() == nil || rts_mask_tex() == g_rts.white); g_rts.on = 1; }
       EXPECT("局部回退各节 GPU 无错", 1, ok13);
       #undef UNTIL_PART
       g_lvp = NULL; RTS_PART_SET(0); }

@@ -68,10 +68,12 @@ int main(void) { @autoreleasepool {
         for (int i = 0; i < 300; i++, t += 1 / 60.0) rts_gov_step(&g3, 1.0, 25.0, B, t, &why); if (g3.lvl) FAIL("gov: stepped down although ray tracing is cheap");
         rts_gov g4; rts_gov_init(&g4, RTS_LVL_MAX); t = 0;   // 光追很贵（> 50%）但整帧有余量（78%）：不降（Mac 实测：AO 开时光追 9 ms、整帧 13 ms，原先误降） | ray tracing costly (> 50%) but the frame has headroom (78%): no step down (measured on the Mac: 9 ms ray tracing with AO, 13 ms frame, which used to step down)
         for (int i = 0; i < 300; i++, t += 1 / 60.0) rts_gov_step(&g4, 9.2, 13.1, B, t, &why); if (g4.lvl) FAIL("gov: stepped down although the frame has headroom");
-        rts_lvl_params p0 = rts_lvl_apply(0, 1, 2, 2, 0, 1, 1), p1 = rts_lvl_apply(1, 1, 2, 2, 0, 1, 1), p2 = rts_lvl_apply(2, 1, 2, 2, 0, 1, 1), p3 = rts_lvl_apply(3, 1, 2, 2, 0, 1, 1), p4 = rts_lvl_apply(4, 1, 2, 2, 0, 1, 1);
-        // 七审三轮：第 2 档只退镂空（点光照留，洞里火把有影），第 3 档再关点光，第 4 档暂停 | seventh review round 3: level 2 only drops alpha-tested occluders (point lights stay, cave torches keep their shadows), level 3 turns point lights off too, level 4 pauses
-        if (p0.point_n != 2 || p0.point_div != 2 || p0.sun_div != 1 || !p0.soft || p0.no_alpha || p1.point_n != 1 || p1.point_div != 4 || !p1.point_on || p1.no_alpha || !p0.ao || p1.ao
-            || !p2.point_on || p2.point_n != 1 || !p2.no_alpha || p2.off || p3.point_on || p3.sun_div != 2 || p3.soft || !p3.no_alpha || p3.off || !p4.off || p4.point_on) FAIL("rts_lvl_apply levels wrong");
+        rts_lvl_params p0 = rts_lvl_apply(0, 1, 4, 2, 0, 1, 1), p1 = rts_lvl_apply(1, 1, 4, 2, 0, 1, 1), p2 = rts_lvl_apply(2, 1, 4, 2, 0, 1, 1), p3 = rts_lvl_apply(3, 1, 4, 2, 0, 1, 1);
+        // 七审三轮：0 全开；1 太阳全分辨率 + 点光 ≤ 2 + 关 AO；2 太阳半分辨率 + 点光 1 盏排除随身光；3 再关点光 + 镂空照原版；哪一档都不是暂停 | seventh review round 3: 0 everything; 1 full-res sun + ≤ 2 point lights + AO off; 2 half-res sun + 1 point light excluding the character's own; 3 point lights off + alpha-tested original; no level is a pause
+        if (p0.point_n != 4 || p0.point_div != 2 || p0.sun_div != 1 || !p0.soft || !p0.ao || p0.no_alpha || p0.excl_player
+            || p1.point_n != 2 || p1.point_div != 4 || p1.sun_div != 1 || !p1.point_on || p1.ao || p1.no_alpha || p1.excl_player
+            || p2.point_n != 1 || !p2.point_on || p2.sun_div != 2 || p2.soft || !p2.excl_player || p2.no_alpha
+            || p3.point_on || p3.sun_div != 2 || !p3.no_alpha || p0.off || p1.off || p2.off || p3.off || RTS_LVL_MAX != 3) FAIL("rts_lvl_apply levels wrong");
     }
     { rts_player_track t = {.rec = -1}; float torch[3] = {40, 0, 0}, player[3] = {5, 0, 5}; int sure = 0;   // 相机沿 x 走：火把偏移在变、随身光偏移不变 | the camera walks along x: the torch's offset changes, the player light's does not
       for (int f = 0; f < 80; f++) { double p0[3] = {f * 0.5, 0, 0}; float pp[3] = {player[0] + f * 0.5f, player[1], player[2]}; sure = rts_player_feed(&t, 7, pp, p0); if (f < 59 && sure) FAIL("player light recognized too early (frame %d)", f); }
@@ -283,6 +285,12 @@ int main(void) { @autoreleasepool {
       const float *lc = lcopyb.contents; if (fabsf(lc[5 * 4 + 0] - 1.0f) > 1e-5f || fabsf(lc[5 * 4 + 3] - 60.f) > 1e-5f || fabsf(lc[10 * 4 + 0] - 0.5f) > 1e-5f || fabsf(lc[4 * 4 + 0] - 30) > 1e-5f)
           FAIL("rts_lcopy: player color %g (want 1.0 = 2.0 x 0.5), radius %g, other %g", lc[20], lc[23], lc[40]);
       if (fabsf(((const float *)lrec.contents)[5 * 4] - 2.0f) > 1e-6f) FAIL("rts_lcopy wrote the source records"); }
+    // 降档第 2 档起随身光不进选灯（PK.player_on 位 1，七审三轮第 4 条）：同一组灯只剩火把（texel 9），随身光照样认出（派生副本照样调弱） | from downgrade level 2 the character's own light is not picked (PK.player_on bit 1, seventh review round 3 item 4): of the same lights only the torch (texel 9) remains, and the player light is still recognized (still weakened in the derived copy)
+    { ((uint32_t *)pkb.contents)[17] = 3; memset(prev.contents, 0, 64);
+      if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at]; [ce setComputePipelineState:ps_pick]; [at setAddress:lrec.gpuAddress atIndex:0]; [at setAddress:picks.gpuAddress atIndex:1]; [at setAddress:pkb.gpuAddress atIndex:2];
+          [at setAddress:prev.gpuAddress atIndex:3]; [at setAddress:list.gpuAddress atIndex:4]; [ce dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)]; })) return 1;
+      const int32_t *o = picks.contents; if (o[20] != 1 || o[0] != 9 || o[1] != -1 || o[21] != 4) FAIL("rts_pick excluding the player light: n=%d rec %d %d, player %d (want 1: 9, player 4)", o[20], o[0], o[1], o[21]);
+      ((uint32_t *)pkb.contents)[17] = 1; }
     if (px(pm, gx_of(19.5) / 2, gy_of(0) / 2, 0) > 0.01f) FAIL("point light: ground x≈19.5 should be shadowed (%g)", px(pm, gx_of(19.5) / 2, gy_of(0) / 2, 0));
     if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 0) < 0.99f) FAIL("point light: ground x=−35 should be lit");
     if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 2) < 0.99f) FAIL("point light: unused channels stay lit");
