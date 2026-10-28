@@ -3,10 +3,15 @@
 | The three MSL transformation contracts of the ray-traced shadow variant generator (dm/gfx/tools/rts_variant.py): cascade sample → min(mask, original), point-light cube sample → rts_pl, skinned vertex → clip position export.
 Synthetic spirv-cross-shaped MSL, no real shader cache, no compilation."""
 import importlib
+import inspect
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
+import unittest
 from pathlib import Path
 
 root = Path(__file__).resolve().parents[2]
@@ -192,3 +197,65 @@ def test_alpha_library_compiles_and_dispatches(tmp_path):
         rv.MAC = True
         try: assert rv.compile_check(lib) is None
         finally: rv.MAC = os.environ.get('RTS_TARGET') == 'mac'
+
+
+# 七审 Q7-03：生成器必需目标编不过要非零退出、什么都不换；出包脚本照退出码停下（命令行真跑，RTS_TARGET=mac 用本机 Metal 编译器）
+# Seventh review Q7-03: a required target failing to compile exits non-zero and replaces nothing; the packaging script stops on that exit code (real command-line runs, RTS_TARGET=mac with the local Metal compiler)
+GEN = root / 'gfx/tools/rts_variant.py'
+KEY = '0000000000000001'
+
+
+def _cli(src, out):
+    if not shutil.which('xcrun'): raise unittest.SkipTest('没有 xcrun（Metal 编译器）')
+    return subprocess.run([sys.executable, str(GEN), str(src), str(out)], capture_output=True, text=True, env=dict(os.environ, RTS_TARGET='mac'), timeout=900)
+
+
+def _src(d, metal):
+    d.mkdir(); (d / (KEY + '_b.json')).write_text('{"stage": "fs", "bindings": []}', encoding='utf-8'); (d / (KEY + '_b.metal')).write_text(metal, encoding='utf-8')
+
+
+def test_cli_compile_failure_exits_nonzero_and_replaces_nothing(tmp_path):
+    src, out = tmp_path / 'src', tmp_path / 'out'; _src(src, '#error QA_INTENTIONAL_COMPILE_FAILURE\n' + FS); out.mkdir()
+    old = out / (KEY + '_rt.json'); old.write_text(json.dumps({'notes': ['rts_variant 1']}), encoding='utf-8')   # 上一次留下的旧产物 | an old product from a previous run
+    r = _cli(src, out)
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert '【失败】' in r.stdout and '产物没有替换' in r.stdout.strip().splitlines()[-1]
+    assert not (out / (KEY + '_rt.metallib')).exists() and json.loads(old.read_text(encoding='utf-8'))['notes'] == ['rts_variant 1']
+    assert not [f for f in os.listdir(out) if f.startswith('.rts_stage-')]
+
+
+def test_cli_success_exits_zero_with_products(tmp_path):
+    src, out = tmp_path / 'src', tmp_path / 'out'; _src(src, FS)
+    r = _cli(src, out)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (out / (KEY + '_rt.metallib')).exists() and rv.VERSION in json.loads((out / (KEY + '_rt.json')).read_text(encoding='utf-8'))['notes']
+    assert r.stdout.strip().splitlines()[-1].startswith('汇总') and not [f for f in os.listdir(out) if f.startswith('.rts_stage-')]
+
+
+def test_run_sh_stops_when_generator_fails():
+    run = (root / 'ios/run.sh').read_text(encoding='utf-8')
+    line = next(l for l in run.splitlines() if 'rts_variant.py' in l and 'python3' in l)
+    assert '|| {' in line and 'exit 1' in line   # 生成器非零退出 → 出包停下 | generator non-zero exit → packaging stops
+
+
+# 原先是 pytest 风格的函数、没有入口，直接跑不执行断言（七审测试接线缺口）：收进 unittest，收集到 0 个也算失败
+# These used to be pytest-style functions without an entry point, so running the file executed no assertion (seventh review test-wiring gap): collected into unittest, and collecting 0 counts as a failure
+class RtsVariant(unittest.TestCase):
+    pass
+
+
+for _name, _fn in sorted(dict(globals()).items()):
+    if _name.startswith('test_') and inspect.isfunction(_fn):
+        def _make(fn=_fn):
+            def t(self):
+                if 'tmp_path' in inspect.signature(fn).parameters:
+                    with tempfile.TemporaryDirectory() as d: fn(Path(d))
+                else: fn()
+            return t
+        setattr(RtsVariant, _name, _make())
+
+
+if __name__ == '__main__':
+    result = unittest.main(exit=False, verbosity=2).result
+    if result.testsRun == 0: print('一个测试都没收集到'); sys.exit(1)
+    sys.exit(0 if result.wasSuccessful() else 1)

@@ -21,12 +21,13 @@
 # Usage: rts_variant.py <b-<chain> cache dir (with .metal / .json)> <output dir (b-<chain>, same as DM_MSL_IOS)> [key...] (none = every fragment shader that samples the cascades + the 10 skinned vertex shaders)
 import os, re, sys, json, tempfile, subprocess, concurrent.futures as cf
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../ios/tools')); import ios_metal
-SRC = OUT = None; WANT = set()   # 命令行在文件末尾赋值；测试直接调各变换函数 | assigned at the end of the file from the command line; tests call the transformation functions directly
+SRC = OUT = STAGE = None; WANT = set()   # STAGE：本次产物先写进的暂存目录（七审 Q7-03：全部成功才搬进 OUT；None = 直接写 OUT，单测用） | STAGE: the staging dir this run writes into first (seventh review Q7-03: moved into OUT only if everything succeeded; None = straight into OUT, for the unit tests)   # 命令行在文件末尾赋值；测试直接调各变换函数 | assigned at the end of the file from the command line; tests call the transformation functions directly
 CASCADES = ('fp_t_cb196610_105980A8', 'fp_t_cb196610_105980AA')
 VERSION = 'rts_variant 6'   # 改了变换规则就升版本：旧产物全部重出 | bump when the transformation changes: every old product is regenerated
 SKIN_KEYS = ('0fa4eb7559f1637a', '1d97d33ab66abcba', '3deaf68fd65b5298', '4dffa355f2fbcdaf', '54c93fa22abff9ee', '64dd7d022f3fae39', '67e2ebc28c830f44', 'add86ee8e20f89b9', 'b3ae9be5cc670f35', 'fbf6dc1873a449e9')
 def fresh(key, suffix, ver=None):   # 产物已有且版本一致 | product present with the same version
-    try: return (ver or VERSION) in json.load(open(os.path.join(OUT, key + suffix + '.json'))).get('notes', [])
+    try:
+        with open(os.path.join(OUT, key + suffix + '.json')) as f: return (ver or VERSION) in json.load(f).get('notes', [])
     except Exception: return False
 def add_binding(msl):   # 返回 (msl, 新 arg_id)；参数块加一行 | returns (msl, new arg_id); one line added to the argument block
     ids = [int(x) for x in re.findall(r'\[\[id\((\d+)\)\]\]', msl)]; aid = max(ids) + 1
@@ -181,8 +182,8 @@ def build_alpha(keys):   # 全部镂空片元着色器 → rts_alpha.metal / .js
     good = [it for it, err in res if not err]; skipped.update({it[0]: '编不过 ' + err.split('\n')[0][:80] for it, err in res if err})
     src = alpha_lib(good); err = compile_check(src)
     if err: raise RuntimeError('rts_alpha.metal 整体编不过：' + err)
-    open(os.path.join(OUT, 'rts_alpha.metal'), 'w').write(src)
-    json.dump({'version': VAR_VERSION, 'fs': [{'key': k, 'locs': l} for k, _, l, _ in good], 'skipped': skipped}, open(os.path.join(OUT, 'rts_alpha.json'), 'w'), indent=1, ensure_ascii=False)
+    d = STAGE or OUT; open(os.path.join(d, 'rts_alpha.metal'), 'w').write(src)
+    json.dump({'version': VAR_VERSION, 'fs': [{'key': k, 'locs': l} for k, _, l, _ in good], 'skipped': skipped}, open(os.path.join(d, 'rts_alpha.json'), 'w'), indent=1, ensure_ascii=False)
     return len(good), len(skipped)
 def strip_call(s, start):   # start 指向 "sample_compare(" 的左括号；返回右括号下标 | start points at the "(" of "sample_compare("; returns the index of the matching ")"
     depth = 0
@@ -255,9 +256,9 @@ def emit(key, suffix, out, j, binding, note, ver=None):
     j['chain_metal'] = MAC_RECORD if MAC else ios_metal.RECORD; j['notes'] = [n for n in j.get('notes', []) if not n.startswith(('rts_variant', 'rts_var'))] + [ver or VERSION, note]
     with tempfile.TemporaryDirectory() as td:
         mp, ap = os.path.join(td, key + suffix + '.metal'), os.path.join(td, key + suffix + '.air'); open(mp, 'w').write(out)
-        try: (mac_compile if MAC else ios_metal.compile)(mp, ap, os.path.join(OUT, key + suffix + '.metallib'))
+        try: (mac_compile if MAC else ios_metal.compile)(mp, ap, os.path.join(STAGE or OUT, key + suffix + '.metallib'))
         except subprocess.CalledProcessError as e: return 'FAIL %s' % e
-    open(os.path.join(OUT, key + suffix + '.metal'), 'w').write(out); json.dump(j, open(os.path.join(OUT, key + suffix + '.json'), 'w'), indent=1, ensure_ascii=False)
+    d = STAGE or OUT; open(os.path.join(d, key + suffix + '.metal'), 'w').write(out); json.dump(j, open(os.path.join(d, key + suffix + '.json'), 'w'), indent=1, ensure_ascii=False)
     return 'ok'
 def one(key):
     j = json.load(open(os.path.join(SRC, key + '_b.json'))); msl = open(os.path.join(SRC, key + '_b.metal')).read()
@@ -285,12 +286,41 @@ def one(key):
     if np: j['bindings'].append({'msl_name': 'rts_pmask', 'msl_type': 'texture2d<float>', 'arg_id': aid + 1, 'kind': 'rtpmask', 'reg': -1}); j['bindings'].append({'msl_name': 'rts_plidx', 'msl_type': 'constant int4*', 'arg_id': aid + 2, 'kind': 'rtplidx', 'reg': -1})
     r = emit(key, '_rt', out, j, None, 'rt shadow variant: %d cascade sample_compare → rts_mask, %d point-light cube sample → rts_pl' % (n, np))
     return key, r + (' %d sites aid %d point %d' % (n, aid, np) if r == 'ok' else '')
-if __name__ == '__main__':
-    SRC, OUT = sys.argv[1:3]; WANT = set(sys.argv[3:]); os.makedirs(OUT, exist_ok=True)
+# 七审 Q7-03：必需目标（符合条件的 _rt / _pos / _var、判定库）编不过就整体失败——非零退出、OUT 里什么都不换（出包脚本 run.sh 据此停下）；
+# 「不适用 / 剔除」（skip、varskip、判定库里单个编不过而剔除的）不算失败。产物先在 OUT 下的暂存目录生成，全部成功才逐个换进 OUT，换完再核每个 ok 的产物都在、版本对
+# Seventh review Q7-03: a required target (an eligible _rt / _pos / _var, the judge library) that fails to compile fails the whole run - non-zero exit, nothing replaced in OUT (the packaging script run.sh stops on it);
+# "not applicable / excluded" (skip, varskip, single shaders dropped from the judge library) is not a failure. Products are generated in a staging dir under OUT and moved into OUT one by one only if everything succeeded, then every ok product is checked to be present with the right version
+def main(argv):
+    global SRC, OUT, STAGE, WANT
+    SRC, OUT = argv[1:3]; WANT = set(argv[3:]); os.makedirs(OUT, exist_ok=True)
     keys = sorted(WANT) if WANT else sorted(f[:-8] for f in os.listdir(SRC) if f.endswith('_b.metal'))
-    res = {}
-    with cf.ThreadPoolExecutor(8) as ex:
-        for key, r in ex.map(one, keys): res[r.split()[0]] = res.get(r.split()[0], 0) + 1; (print(key, r) if not r.startswith(('skip', 'fresh')) else None)
-    na, ns = build_alpha(sorted(f[:-8] for f in os.listdir(SRC) if f.endswith('_b.metal')))
-    print('镂空判定库 %d 个片元着色器（剔除 %d）' % (na, ns))
-    print('汇总', res)
+    STAGE = tempfile.mkdtemp(prefix='.rts_stage-', dir=OUT)
+    try:
+        res, fails, made = {}, [], []
+        with cf.ThreadPoolExecutor(8) as ex:
+            for key, r in ex.map(one, keys):
+                res[r.split()[0]] = res.get(r.split()[0], 0) + 1
+                if 'FAIL' in r: fails.append((key, r))
+                if not r.startswith(('skip', 'fresh')): print(key, r)
+        try:
+            na, ns = build_alpha(sorted(f[:-8] for f in os.listdir(SRC) if f.endswith('_b.metal')))
+            print('镂空判定库 %d 个片元着色器（剔除 %d）' % (na, ns))
+        except Exception as e: fails.append(('rts_alpha', 'FAIL %s' % e))
+        if fails:
+            for key, r in fails: print('【失败】', key, r[:300])
+            print('汇总', res, '失败 %d 个，产物没有替换' % len(fails)); return 2
+        made = sorted(os.listdir(STAGE))
+        for f in made: os.replace(os.path.join(STAGE, f), os.path.join(OUT, f))
+        missing = []
+        for f in made:
+            if f.endswith('.json') and f != 'rts_alpha.json':
+                k, suf = f[:-5].rsplit('_', 1)
+                if not os.path.exists(os.path.join(OUT, f[:-5] + '.metallib')) or not fresh(k, '_' + suf, VAR_VERSION if suf == 'var' else None): missing.append(f[:-5])
+        if missing: print('【失败】产物不全 / 版本不对：', ' '.join(missing[:20])); print('汇总', res, '产物不全 %d 个' % len(missing)); return 3
+        print('汇总', res); return 0
+    finally:
+        for f in os.listdir(STAGE): os.remove(os.path.join(STAGE, f))
+        os.rmdir(STAGE); STAGE = None
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
