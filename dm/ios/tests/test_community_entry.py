@@ -102,6 +102,16 @@ class FrontEnd(unittest.TestCase):
 
 
 class PauseMenu(unittest.TestCase):
+    def test_touch_and_pad_pause_are_the_same(self):   # 两种模式同一份行表、同一顺序、同一位置（用户 2026-10-28 统一；上游基线分两套） | one row table, order and positions for both modes
+        for garden, rel in ((False, 'controller/pauselayouthd.json'), (True, 'controller/pauselayoutgardenhd.json')):
+            touch, _ = touch_layout.PRESENT[rel](fake_pause(garden)); pad = touch_layout.pad_pause(fake_pause(garden), garden, share=True)
+            self.assertEqual(touch, pad, rel)
+            rows = {'TouchPadDiff': 299, 'Exit': 417, 'TouchRestart': 535, 'Settings': 653, 'TouchPadStore': 771, 'Chronicle': 889, 'MessageLog': 1007, 'TouchCommunity': 1125} if garden else \
+                   {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'MessageLog': 903, 'TouchCommunity': 1028}
+            for name, y in rows.items(): self.assertEqual(rect_y(touch, name), y, (rel, name))   # 可达：每行都在屏内、位置一致 | reachable: every row on screen at the same position
+            self.assertEqual(rect_y(touch, 'Help'), None); self.assertIn('"name": "TouchPadDiffTxt"', touch)
+        self.assertNotIn('!g_cur ||', (DM / 'host' / 'dm_padmode.c').read_text(encoding='utf-8').split('static void diff_text')[1].split('\n')[1])   # 「游戏难度：N」触屏也写 | the difficulty text is written under touch too
+
     def check_rows(self, text, want):   # want：{按钮名: y}；相邻行中心距 ≥ 118（按钮图高 120 的手柄版最密排法），每行都在底图范围内 | want: {name: y}; adjacent centres >= 118 apart, every row within the background
         ys = {}
         for name, y in want.items():
