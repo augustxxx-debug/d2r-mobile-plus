@@ -78,6 +78,12 @@ static int sdraw(const uint8_t *ib, int n, int prim, uint32_t fmt) {
     p_draw_idx di = {prim, 1, n, 0, 0, 1, (uint64_t)ib};
     return rts_draw(g_pr, NULL, &di, prim);
 }
+static int qdraw(int first, int count) {   // 非索引四边形（prim 7）阴影绘制 | a non-indexed quad (prim 7) shadow draw
+    memset(&R, 0, sizeof R); R.rt.depth = g_dt; R.has_rt = 1;
+    S.nattr = 1; S.attr[0] = (va_st){.fmt = 0x2b, .offset = 0, .stream = 0}; S.stream[0] = (vs_st){8, 0}; S.vbuf[0] = (NVNbufferRange){(uint64_t)g_vtx, 4096 * 8};
+    S.ubo[0][0] = (p_bind_buf){0, 0, (uint64_t)g_mat, 64}; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)(g_lvp ? g_lvp : g_cb3), 400};
+    p_draw dw = {.prim = NVN_DRAW_PRIMITIVE_QUADS, .first = first, .count = count}; return rts_draw(g_pr, &dw, NULL, NVN_DRAW_PRIMITIVE_QUADS);
+}
 static int sh(int i) { return sdraw(g_idx + (size_t)i * 128, 48, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x2b); }
 static int big(int i) { return sdraw(g_big + (size_t)i * 6000, 3000, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x2b); }
 static void set_rt(int n, const tex_t *c, const tex_t *d) { p_set_rt r = {0}; r.n = n; r.color[0] = c; r.depth = d; R.rt = r; R.has_rt = 1; rts_set_rt(&r); }
@@ -395,6 +401,17 @@ int main(void) { @autoreleasepool {
         g_rts.on = 0; sel = SELECT(&g_hdr, &g_mdepth); g_rts.on = 1; EXPECT("Q7-01 光追关：不选变体", 0, sel);
         #undef SELECT
         memset(&R, 0, sizeof R); }
+      // 24. 七审 Q7-02：非索引四边形（prim 7）按原版光栅化的拓扑建网格（每 4 个顶点 0,1,2,0,2,3、尾巴不画）；不足 4 个顶点是空绘制；带索引的四边形原版不画，光追也不建
+      // 24. seventh review Q7-02: non-indexed quads (prim 7) build their mesh with the original rasterizer's topology (0,1,2,0,2,3 per 4 vertices, the tail not drawn); fewer than 4 vertices is an empty draw; indexed quads are not drawn by the original, so ray tracing builds nothing
+      { RTS_HYST_RESET(); UNTIL_PART(b2, 2); uint64_t e0 = g_rts.n_empty; int nm0 = g_rts.nmesh;
+        frame_open(); prepass(); shadow_pass(); qdraw(0, 4); qdraw(8, 10); qdraw(40, 3);
+        p_draw_idx qi = {NVN_DRAW_PRIMITIVE_QUADS, 1, 8, 0, 0, 1, (uint64_t)g_idx}; memset(&R, 0, sizeof R); R.rt.depth = g_dt; R.has_rt = 1; int ri = rts_draw(g_pr, NULL, &qi, NVN_DRAW_PRIMITIVE_QUADS);
+        main_pass(); hdr_again(); ok13 = frame_close() && ok13;
+        rts_mesh *q4 = NULL, *q10 = NULL; for (uint32_t k = 0; k < g_rts.meshes.cap; k++) { rts_mesh *m = g_rts.meshes.vals[k]; if (m && m->nverts == 4 && m->ib) q4 = m; if (m && m->nverts == 10 && m->ib) q10 = m; }
+        const uint32_t *t4 = q4 ? q4->ib.contents : NULL, *t10 = q10 ? q10->ib.contents : NULL; uint32_t w4[6] = {0, 1, 2, 0, 2, 3}, w10b[6] = {4, 5, 6, 4, 6, 7};
+        EXPECT("Q7-02 四个顶点的四边形：2 个三角形（原版也是 2 个）", 2, q4 ? q4->tris : 0); EXPECT("Q7-02 四边形索引 0,1,2,0,2,3", 1, t4 && !memcmp(t4, w4, sizeof w4));
+        EXPECT("Q7-02 十个顶点（first 8）：4 个三角形、尾巴 2 个不画", 4, q10 ? q10->tris : 0); EXPECT("Q7-02 第二个四边形索引 4,5,6,4,6,7", 1, t10 && !memcmp(t10 + 6, w10b, sizeof w10b));
+        EXPECT("Q7-02 不足 4 个顶点、带索引的四边形：只多了上面两个网格", 2, g_rts.nmesh - nm0); EXPECT("Q7-02 带索引的四边形：照原版处理（返回 0）", 0, ri); EXPECT("Q7-02 不足 4 个和带索引的记空绘制", 2, (long long)(g_rts.n_empty - e0)); }
       EXPECT("局部回退各节 GPU 无错", 1, ok13);
       #undef UNTIL_PART
       g_lvp = NULL; RTS_PART_SET(0); }

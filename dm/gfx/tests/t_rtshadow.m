@@ -46,6 +46,10 @@ int main(void) { @autoreleasepool {
     { double m[16] = {2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 4, 0, 1, 2, 3, 1}, inv[16], id[16]; rts_inv4(m, inv);
       for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) { double s = 0; for (int k = 0; k < 4; k++) s += m[k * 4 + r] * inv[c * 4 + k]; id[c * 4 + r] = s; }
       for (int i = 0; i < 16; i++) if (fabs(id[i] - (i % 5 == 0 ? 1 : 0)) > 1e-9) FAIL("rts_inv4 [%d] = %g", i, id[i]); }
+    { uint32_t o[24]; uint32_t t = rts_quad_expand(4, o);   // 七审 Q7-02：非索引四边形与原版光栅化同一拓扑 | seventh review Q7-02: non-indexed quads use the original rasterizer's topology
+      if (t != 2 || o[0] != 0 || o[1] != 1 || o[2] != 2 || o[3] != 0 || o[4] != 2 || o[5] != 3) FAIL("rts_quad_expand 4: %u tris", t);
+      t = rts_quad_expand(10, o); if (t != 4 || o[6] != 4 || o[7] != 5 || o[8] != 6 || o[9] != 4 || o[10] != 6 || o[11] != 7) FAIL("rts_quad_expand 10 (tail of 2 dropped): %u tris", t);
+      if (rts_quad_expand(3, NULL) != 0 || rts_quad_expand(0, NULL) != 0 || rts_quad_expand(8, NULL) != 4) FAIL("rts_quad_expand counts"); }
     { uint16_t strip[] = {0, 1, 2, 2, 3, 4}; uint32_t out[12]; uint32_t t = rts_strip_expand(strip, 2, 6, out);   // 0,1,2 | 1,2,2 退化 | 2,2,3 退化 | 位置 3 是奇数 → 3,2,4（绕序交替）→ 2 个 | two triangles, two degenerate ones dropped; position 3 is odd → 3,2,4 (alternating winding)
       if (t != 2 || out[0] != 0 || out[1] != 1 || out[2] != 2 || out[3] != 3 || out[4] != 2 || out[5] != 4) FAIL("rts_strip_expand indexed: %u tris", t);
       uint16_t rsv[8] = {300, 301, 302, 303, 0xFFFF, 304, 305, 306}; uint32_t want[9] = {300, 301, 302, 302, 301, 303, 304, 305, 306}; t = rts_strip_expand(rsv, 2, 8, out);   // 重启后重新起算 | restart resets

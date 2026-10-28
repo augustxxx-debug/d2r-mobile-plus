@@ -28,6 +28,15 @@ static inline void rts_inv4(const double *m, double *o) {
 // 三角带 → 三角列表：位置 k 的三角形偶数为 (k, k+1, k+2)、奇数为 (k+1, k, k+2)（绕序交替）；带索引的遇到重启值（16 位 0xFFFF、32 位 0xFFFFFFFF，Metal 带图元恒开重启）重新起算；
 // 退化三角形丢掉（奇偶照常推进）。ib 为空 = 非索引（下标 0..n−1）；out 为空只数；out 至少 (n−2)·3 个 uint32；返回三角形数（审计分支 2fec943 的口径）
 // strip → list: the triangle at position k is (k, k+1, k+2) when even and (k+1, k, k+2) when odd (alternating winding); an indexed strip restarts after the restart value (16-bit 0xFFFF, 32-bit 0xFFFFFFFF; Metal always enables restart for strips);
+// 非索引四边形 → 三角形列表索引（七审 Q7-02）：与原版光栅化同一拓扑（nvn_mtl.m draw：每 4 个顶点 0,1,2,0,2,3，共 (n/4)·6 个索引，不足 4 个的尾巴不画）；
+// 索引相对本次绘制的第一个顶点（first 由解码时的 vbase 处理）。o 为 NULL 只数三角形；返回三角形数
+// Non-indexed quads → triangle-list indices (seventh review Q7-02): the same topology as the original rasterizer (nvn_mtl.m draw: 0,1,2,0,2,3 per 4 vertices, (n/4)·6 indices, a tail of fewer than 4 vertices is not drawn);
+// indices are relative to the draw's first vertex (first is handled by vbase in the decode). With o NULL only the triangles are counted; returns the triangle count
+static inline uint32_t rts_quad_expand(int n, uint32_t *o) {
+    uint32_t q = n >= 4 ? (uint32_t)(n / 4) : 0;
+    if (o) for (uint32_t i = 0; i < q; i++) { uint32_t b = 4 * i, *t = o + 6 * i; t[0] = b; t[1] = b + 1; t[2] = b + 2; t[3] = b; t[4] = b + 2; t[5] = b + 3; }
+    return q * 2;
+}
 // degenerate triangles are dropped (parity still advances). NULL ib = non-indexed (indices 0..n−1); NULL out only counts; out holds at least (n−2)·3 uint32; returns the triangle count (the audit branch 2fec943 convention)
 static inline uint32_t rts_strip_expand(const void *ib, int isz, int n, uint32_t *out) {
     uint32_t t = 0, w[3] = {0}, rs = isz == 2 ? 0xFFFFu : 0xFFFFFFFFu; int run = 0, par = 0;

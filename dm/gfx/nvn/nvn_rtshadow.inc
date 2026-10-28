@@ -152,7 +152,7 @@ static struct {
     id<MTL4ArgumentTable> at_decode, at_trace, at_overlay, at_blur, at_pick;
     rts_fslot slot[RTS_SLOTS_MAX]; int nslot, cur; uint64_t slot_frame;   // 槽环；cur = 本帧用的槽（slot_frame 那帧取的） | slot ring; cur = this frame's slot (taken in frame slot_frame)
     id<MTLAccelerationStructure> tlas; id<MTLBuffer> scratch; NSUInteger scratch_len;
-    uint64_t n_mask_small;   // 遮罩盖不住渲染目标、改用原版着色的次数（七审 Q7-01） | times the mask did not cover the render target and the original shading was used (seventh review Q7-01)
+    uint64_t n_mask_small, n_iquad;   // n_iquad：带索引的四边形当空绘制的次数（七审 Q7-02） | n_iquad: indexed quads treated as empty draws (seventh review Q7-02)   // 遮罩盖不住渲染目标、改用原版着色的次数（七审 Q7-01） | times the mask did not cover the render target and the original shading was used (seventh review Q7-01)
     id<MTLTexture> mask_lit;   // 全分辨率全亮的太阳遮罩：不用遮罩的帧（迟滞等待、失败）绑它——_rt 变体按像素坐标读遮罩（rts_variant.py：rts_mask.read(gl_FragCoord)），1x1 白贴图越界读是 0 = 整屏太阳全影（6534ef4 起） | a full-resolution fully lit sun mask: bound on frames that do not use the mask (hysteresis hold, failure) - the _rt variants read the mask by pixel coordinates (rts_variant.py: rts_mask.read(gl_FragCoord)), and an out-of-bounds read of the 1x1 white texture is 0 = the whole screen in sun shadow (since 6534ef4)
     id<MTLTexture> mask, white, mask_raw, mask_tmp, pmask, pmaskf, mask_half; int sun_half, point_div; id<MTLBuffer> plidx_none, prev, lseen, llist;   // prev：上一次选中的位置（滞后）；lseen / llist：点光收集的位图与列表 | prev: last picked positions (hysteresis); lseen / llist: bitmap and list of the point-light gather
     int n_rt_loaded, n_rt_missing, n_pos_loaded, n_pos_missing;
@@ -626,6 +626,10 @@ static id<MTLBuffer> rts_strip_ib(const uint8_t *ib, int isz, int n, uint32_t *n
     uint32_t *o = malloc((size_t)(n - 2) * 12); uint32_t t = rts_strip_expand(ib, isz, n, o);
     id<MTLBuffer> r = t ? [g_dev newBufferWithBytes:o length:(NSUInteger)t * 12 options:MTLResourceStorageModeShared] : nil; free(o); *ntris = t; return r;
 }
+static id<MTLBuffer> rts_quad_ib(int n, uint32_t *ntris) {   // 非索引四边形 → 三角形列表索引缓冲（展开在 nvn_rtshadow_util.h） | non-indexed quads → triangle-list index buffer (expansion in nvn_rtshadow_util.h)
+    uint32_t t = rts_quad_expand(n, NULL); uint32_t *o = t ? malloc((size_t)t * 12) : NULL; if (o) rts_quad_expand(n, o);
+    id<MTLBuffer> r = o ? [g_dev newBufferWithBytes:o length:(NSUInteger)t * 12 options:MTLResourceStorageModeShared] : nil; free(o); *ntris = t; return r;
+}
 static MTL4PrimitiveAccelerationStructureDescriptor *rts_blas_desc(rts_mesh *m, id<MTLBuffer> pos) {
     MTL4PrimitiveAccelerationStructureDescriptor *pd = [MTL4PrimitiveAccelerationStructureDescriptor new]; MTL4AccelerationStructureTriangleGeometryDescriptor *gd = [MTL4AccelerationStructureTriangleGeometryDescriptor new];
     gd.vertexBuffer = (MTL4BufferRange){pos.gpuAddress, pos.length}; gd.vertexFormat = MTLAttributeFormatFloat3; gd.vertexStride = 12; gd.triangleCount = m->tris; gd.opaque = YES;
@@ -664,7 +668,8 @@ static rts_mesh *rts_mesh_get(const p_draw *dw, const p_draw_idx *di, int n, int
         uint32_t mx = 0, rs = prim == 5 ? (isz == 2 ? 0xFFFFu : 0xFFFFFFFFu) : 0;   // 带的重启值不算顶点（审计分支 2fec943） | a strip's restart value is not a vertex (audit branch 2fec943)
         if (isz == 2) { for (int k = 0; k < n; k++) { uint32_t v = ((const uint16_t *)ib)[k]; if (v > mx && (!rs || v != rs)) mx = v; } } else { for (int k = 0; k < n; k++) { uint32_t v = ((const uint32_t *)ib)[k]; if (v > mx && (!rs || v != rs)) mx = v; } }
         nv = (uint64_t)mx + 1; key = rts_digest(key, ib, ibytes); }
-    if (prim == 5 && !rts_strip_expand(ib, isz, n, NULL)) { g_rts.unc_why = -1; return NULL; }   // 带里没有完整三角形（全是重启 / 退化）：画不出东西，算已覆盖 | no complete triangle in the strip (only restarts / degenerates): draws nothing, counts as covered
+    if (prim == 5 && !rts_strip_expand(ib, isz, n, NULL)) { g_rts.unc_why = -1; return NULL; }
+    if (prim == 7 && !rts_quad_expand(n, NULL)) { g_rts.unc_why = -1; return NULL; }   // 不足 4 个顶点的四边形：原版也不画，算已覆盖 | quads with fewer than 4 vertices: the original draws nothing either, counted as covered   // 带里没有完整三角形（全是重启 / 退化）：画不出东西，算已覆盖 | no complete triangle in the strip (only restarts / degenerates): draws nothing, counts as covered
     // 解码核读第 vbase … vbase+nv−1 个顶点的属性 0：这段要在顶点缓冲声明的范围内，整段也要落在内存池里；乘加都查溢出 | The decode kernel reads attribute 0 of vertices vbase … vbase+nv−1: within the declared vertex buffer and entirely inside a memory pool; every multiply / add is overflow-checked
     uint64_t asz = rts_attr_bytes(at.fmt), vlast, vend;
     if (vbase < 0 || nv > UINT32_MAX || __builtin_mul_overflow((uint64_t)vbase + nv - 1, (uint64_t)sm.stride, &vlast) || __builtin_add_overflow(vlast, (uint64_t)at.offset + asz, &vend) || vend > vb.size) { g_rts.unc_why = RM_VRANGE; return NULL; }
@@ -678,6 +683,7 @@ static rts_mesh *rts_mesh_get(const p_draw *dw, const p_draw_idx *di, int n, int
         if (!m) {
             m = calloc(1, sizeof *m); if (!m) { g_rts.unc_why = RM_ALLOC; return NULL; } m->key = key; m->nverts = (uint32_t)nv; m->isz = (uint32_t)isz; m->skin = skin;
             if (prim == 5) { m->ib = rts_strip_ib(ib, isz, n, &m->tris); m->isz = 4; if (!m->ib) { free(m); g_rts.unc_why = RM_ALLOC; return NULL; } }
+            else if (prim == 7) { m->ib = rts_quad_ib(n, &m->tris); m->isz = 4; if (!m->ib) { free(m); g_rts.unc_why = RM_ALLOC; return NULL; } }   // 非索引四边形（带索引的在 rts_draw_inner 前面就当空绘制） | non-indexed quads (indexed ones are treated as empty draws earlier in rts_draw_inner)
             else { m->tris = (uint32_t)(n / 3); if (ib) m->ib = [g_dev newBufferWithBytes:ib length:(NSUInteger)ibytes options:MTLResourceStorageModeShared]; }   // 索引拷一份：游戏的索引内存会被复用 | copy the indices: the game's index memory gets reused
             m->pos = [g_dev newBufferWithLength:(NSUInteger)nv * 12 options:MTLResourceStorageModePrivate];
             MTLAccelerationStructureSizes sz = m->pos ? [g_dev accelerationStructureSizesWithDescriptor:rts_blas_desc(m, m->pos)] : (MTLAccelerationStructureSizes){0};
@@ -799,6 +805,7 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
     if (shadow && g_rts.part && !sunmap) { g_rts.n_nonsun_draws++; return 0; }
     // 4 三角形列表、5 三角形带（建网格时展开）、7 四边形（与生产光栅化一样按三角形列表画，审计分支 2fec943）；其余记图元不认并记类型 | 4 triangle list, 5 strip (expanded when the mesh is built), 7 quads (drawn as a triangle list like the production rasterizer, audit branch 2fec943); others count as unknown primitive with the type recorded
     if (prim != 4 && prim != 5 && prim != 7) { g_rts.nskip_prim++; if (prim >= 0 && prim < 32) g_rts.prim_mask |= 1u << prim; RTS_MISS(RM_PRIM); }
+    if (prim == 7 && di) { g_rts.n_empty++; g_rts.n_iquad++; return 0; }   // 带索引的四边形：原版光栅化没实现、不画（nvn_mtl.m「带索引的四边形未实现」），光追也不投（七审 Q7-02） | indexed quads: not implemented in the original rasterizer, which draws nothing ("带索引的四边形未实现" in nvn_mtl.m), so ray tracing casts nothing either (seventh review Q7-02)
     int n = dw ? dw->count : di->count; if (n < 3) { g_rts.miss[RM_SMALL]++; g_rts.n_empty++; return 0; }   // 不足 3 个顶点的三角绘制什么也不画：不算没进（不挡清图） | a triangle draw with fewer than 3 vertices draws nothing: not counted as uncovered (does not block the clear)
     if (S.nattr < 1 || S.attr[0].stream >= 16) RTS_MISS(RM_ATTR);
     va_st at = S.attr[0]; vs_st sm = S.stream[at.stream]; NVNbufferRange vb = S.vbuf[at.stream];
