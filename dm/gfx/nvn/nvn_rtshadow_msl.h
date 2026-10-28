@@ -57,23 +57,48 @@ static const char *k_rts_msl =
 "#define RTS_AI\n#define RTS_HIT(ry, as, any, d) rts_hit0(ry, as, any, d)\n"
 "#endif\n"
 // pad = 1：半分辨率追踪（size = 遮罩尺寸，按全分辨率深度的 2× 位置取样）；pad = 4：1/4 分辨率（自动降档最低档）；之后 rts_pup 按深度上采样回全分辨率 | pad = 1: half-resolution trace (size = mask size, sampled at 2× positions of the full-resolution depth); pad = 4: quarter resolution (lowest automatic level); then upsampled back by depth with rts_pup
-"struct K { float4x4 invVP; float4 sun; uint2 size; float bias; float pad; };\n"
+"inline float3 rts_wp(float4x4 iv, uint2 q, uint2 full, float z) { float2 ndc = float2((float(q.x) + 0.5) / float(full.x) * 2.0 - 1.0, 1.0 - (float(q.y) + 0.5) / float(full.y) * 2.0); float4 w = iv * float4(ndc, z, 1.0); return w.xyz / w.w; }\n"
+// 由深度重建表面法线（朝相机）：每轴取深度更接近的邻居（跨深度边缘不取）；退化时返回 0（AO 与太阳追踪共用）。
+// 「朝相机」按相机中心定：透视投影下相机中心在裁剪空间是 (0,0,B,0)，即逆视投影的第三列做齐次除法，与深度约定无关；正交投影（第三列 w ≈ 0）退回近平面 zn 那一侧
+// （0 或 1，CPU 每帧用 rts_near_depth 判：游戏相机是正交、反向深度，zn = 1。原先固定按深度 0 一侧，在游戏里把地面法线翻到了地下，背光面判定把整片地面跳过）
+// Surface normal rebuilt from depth (facing the camera): per axis the neighbour with the closer depth (never across a depth edge); 0 when degenerate (shared by AO and the sun trace).
+// "Facing the camera" uses the camera centre: under a perspective projection the camera centre is (0,0,B,0) in clip space, i.e. the third column of the inverse view-projection after the homogeneous divide -
+// independent of the depth convention (the game uses reversed depth, near plane = 1: picking "the depth-0 side" flipped the ground normal underground in the game and the back-face test skipped the whole ground);
+// only an orthographic projection (third column w ≈ 0) falls back to the near-plane side zn (0 or 1, decided per frame on the CPU by rts_near_depth: the game camera is orthographic with reversed depth, zn = 1)
+"inline float3 rts_nrm(depth2d<float, access::read> depth, float4x4 iv, uint2 fg, uint2 full, float z, float3 p, float zn) {\n"
+"  uint2 xa = uint2(min(fg.x + 1, full.x - 1), fg.y), xb = uint2(fg.x > 0 ? fg.x - 1 : 0, fg.y), ya = uint2(fg.x, min(fg.y + 1, full.y - 1)), yb = uint2(fg.x, fg.y > 0 ? fg.y - 1 : 0);\n"
+"  float za = depth.read(xa), zb = depth.read(xb), wa = depth.read(ya), wb = depth.read(yb);\n"
+"  float3 dx = abs(za - z) <= abs(zb - z) ? rts_wp(iv, xa, full, za) - p : p - rts_wp(iv, xb, full, zb);\n"
+"  float3 dy = abs(wa - z) <= abs(wb - z) ? rts_wp(iv, ya, full, wa) - p : p - rts_wp(iv, yb, full, wb);\n"
+"  float3 n = cross(dx, dy); float nl = length(n); if (!(nl > 1e-12)) return float3(0); n /= nl;\n"
+"  float4 c = iv[2]; float3 cam = abs(c.w) > 1e-6 * length(c.xyz) ? c.xyz / c.w - p : rts_wp(iv, fg, full, zn) - p;\n"
+"  return dot(n, cam) < 0.0 ? -n : n; }\n"
+// 太阳射线起点（十三审后「黑脸 / 身上黑斑」：近距离自遮挡）：背光面（法线与太阳夹角余弦 < nlmin）不追、按受光写 1——那里原版靠自己的光照模型（N·L）暗下去，
+// 光追遮罩不该再判「被自己挡住」（熊背、脸侧的黑斑）；受光面沿法线挪 nbias × (1 − N·L)（掠射角挪得多），再沿太阳挪 bias。法线退化（0）时只沿太阳挪，同原来
+// Sun ray origin (after the 13th review, "black face / dark blotches on bodies": near-range self-occlusion): back-facing surfaces (cosine between normal and sun < nlmin) are not traced and written lit -
+// there the original darkens through its own lighting (N·L), and the RT mask must not also call them "blocked by themselves" (the blotches on the bear's back and face sides); lit surfaces move nbias × (1 − N·L) along the normal
+// (more at grazing angles), then bias along the sun. A degenerate normal (0) moves along the sun only, as before
+"inline bool rts_sun_origin(depth2d<float, access::read> depth, float4x4 iv, uint2 fg, uint2 full, float z, float3 p, float3 sun, float bias, float nbias, float nlmin, float zn, thread float3 &o) {\n"
+"  float3 n = (nbias > 0.0 || nlmin > -1.0) ? rts_nrm(depth, iv, fg, full, z, p, zn) : float3(0); float ndl = dot(n, sun);\n"
+"  if (dot(n, n) > 0.5 && ndl < nlmin) return false;\n"
+"  o = p + n * (nbias * (1.0 - saturate(ndl))) + sun * bias; return true; }\n"
+"struct K { float4x4 invVP; float4 sun; uint2 size; float bias; float pad; float nbias; float nlmin; float zn; float pad2; };\n"
 "kernel void rts_trace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant K &k [[buffer(1)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
 "  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 full = uint2(depth.get_width(), depth.get_height()); uint sc = k.pad > 3.0 ? 4u : k.pad > 0.5 ? 2u : 1u; uint2 fg = min(g * sc, full - 1); float z = depth.read(fg);\n"
 "  if (z >= 1.0) { mask.write(float4(1), g); return; }\n"   // 远平面 = 没画东西（天空） | far plane = nothing drawn (sky)
 "  float2 ndc = float2((float(fg.x) + 0.5) / float(full.x) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(full.y) * 2.0);\n"
 "  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
-"  ray r; r.origin = p + k.sun.xyz * k.bias; r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
+"  ray r; if (!rts_sun_origin(depth, k.invVP, fg, full, z, p, k.sun.xyz, k.bias, k.nbias, k.nlmin, k.zn, r.origin)) { mask.write(float4(1), g); return; } r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
 "  float d; bool hit = RTS_HIT(r, as, true, d);\n"
 "  mask.write(float4(hit ? 0.0 : 1.0), g); }\n"
 // 软阴影：最近命中 + 命中距离（按 maxd 归一）→ RG8；模糊：半径 = 周围 ±2 像素内最远遮挡距离 × 强度（≤ 12 像素），深度差大的邻居权重小 | soft shadows: nearest hit + hit distance (normalized by maxd) → RG8; blur: radius = widest blocker distance within ±2 px × strength (≤ 12 px), neighbours with a large depth difference weigh less
-"struct KS { float4x4 invVP; float4 sun; uint2 size; float bias; float maxd; };\n"
+"struct KS { float4x4 invVP; float4 sun; uint2 size; float bias; float maxd; float nbias; float nlmin; float zn; float pad2; };\n"
 "kernel void rts_trace_soft(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant KS &k [[buffer(1)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
 "  if (g.x >= k.size.x || g.y >= k.size.y) return; float z = depth.read(g);\n"
 "  if (z >= 1.0) { mask.write(float4(1, 0, 0, 0), g); return; }\n"
 "  float2 ndc = float2((float(g.x) + 0.5) / float(k.size.x) * 2.0 - 1.0, 1.0 - (float(g.y) + 0.5) / float(k.size.y) * 2.0);\n"
 "  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
-"  ray r; r.origin = p + k.sun.xyz * k.bias; r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
+"  ray r; if (!rts_sun_origin(depth, k.invVP, g, k.size, z, p, k.sun.xyz, k.bias, k.nbias, k.nlmin, k.zn, r.origin)) { mask.write(float4(1, 0, 0, 0), g); return; } r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
 "  float d; bool hit = RTS_HIT(r, as, false, d);\n"
 "  mask.write(float4(hit ? 0.0 : 1.0, hit ? min(d / k.maxd, 1.0) : 0.0, 0, 0), g); }\n"
 "struct B { uint2 size; int2 dir; float soft; float pad; };\n"
@@ -169,18 +194,12 @@ static const char *k_rts_msl =
 // 每像素的旋转是固定散列（不随帧变，不闪），噪点交给 rts_aoblur（5×5 深度感知）与 rts_pup 上采样；结果在主通道之后乘到 HDR 上（rts_fs）
 // ray-traced AO (experimental, DM_RT_AO=1; plan step 5): half resolution, nray cosine-distributed hemisphere rays per pixel (normal rebuilt from depth neighbours, facing the camera), hits weighted by distance;
 // the per-pixel rotation is a fixed hash (does not change per frame, no flicker), the noise is left to rts_aoblur (5×5 depth-aware) and the rts_pup upsampling; the result is multiplied onto the HDR after the main pass (rts_fs)
-"struct AOK { float4x4 invVP; uint2 size; float radius; float bias; uint seed; uint nray; float pad0; float pad1; };\n"
-"inline float3 rts_wp(float4x4 iv, uint2 q, uint2 full, float z) { float2 ndc = float2((float(q.x) + 0.5) / float(full.x) * 2.0 - 1.0, 1.0 - (float(q.y) + 0.5) / float(full.y) * 2.0); float4 w = iv * float4(ndc, z, 1.0); return w.xyz / w.w; }\n"
+"struct AOK { float4x4 invVP; uint2 size; float radius; float bias; uint seed; uint nray; float zn; float pad1; };\n"
 "kernel void rts_ao(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> ao [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant AOK &k [[buffer(1)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
 "  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 full = uint2(depth.get_width(), depth.get_height()); uint2 fg = min(g * 2, full - 1); float z = depth.read(fg);\n"
 "  if (z >= 1.0) { ao.write(float4(1), g); return; }\n"
 "  float3 p = rts_wp(k.invVP, fg, full, z);\n"
-"  uint2 xa = uint2(min(fg.x + 1, full.x - 1), fg.y), xb = uint2(fg.x > 0 ? fg.x - 1 : 0, fg.y), ya = uint2(fg.x, min(fg.y + 1, full.y - 1)), yb = uint2(fg.x, fg.y > 0 ? fg.y - 1 : 0);\n"
-"  float za = depth.read(xa), zb = depth.read(xb), wa = depth.read(ya), wb = depth.read(yb);\n"   // 每个方向取深度更接近的那个邻居（跨深度边缘不取）| per axis the neighbour with the closer depth (never across a depth edge)
-"  float3 dx = abs(za - z) <= abs(zb - z) ? rts_wp(k.invVP, xa, full, za) - p : p - rts_wp(k.invVP, xb, full, zb);\n"
-"  float3 dy = abs(wa - z) <= abs(wb - z) ? rts_wp(k.invVP, ya, full, wa) - p : p - rts_wp(k.invVP, yb, full, wb);\n"
-"  float3 n = cross(dx, dy); float nl = length(n); if (!(nl > 1e-12)) { ao.write(float4(1), g); return; } n /= nl;\n"
-"  if (dot(n, rts_wp(k.invVP, fg, full, 0.0) - p) < 0.0) n = -n;\n"   // 朝向相机（近平面那一侧）| face the camera (the near-plane side)
+"  float3 n = rts_nrm(depth, k.invVP, fg, full, z, p, k.zn); if (dot(n, n) < 0.5) { ao.write(float4(1), g); return; }\n"   // 法线朝相机、每轴取深度更接近的邻居（rts_nrm）| normal facing the camera, per-axis closer-depth neighbour (rts_nrm)
 "  float3 t = normalize(abs(n.y) < 0.99 ? cross(n, float3(0, 1, 0)) : cross(n, float3(1, 0, 0))), b = cross(n, t);\n"
 "  uint h = (g.x * 1973u) ^ (g.y * 9277u) ^ (k.seed * 26699u); h = h * 747796405u + 2891336453u; h ^= h >> 16; h *= 2246822519u; h ^= h >> 13;\n"
 "  float r0 = float(h & 0xffffu) / 65536.0, r1 = float(h >> 16) / 65536.0, occ = 0.0;\n"

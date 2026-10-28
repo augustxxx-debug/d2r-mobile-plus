@@ -92,6 +92,17 @@ static inline int rts_player_feed(rts_player_track *t, int rec, const float *pos
 // 正交的光源矩阵上它与第 2 列（深度梯度）同向；Mac 营地实测本作的级联矩阵正交、两种算法一致——曾怀疑过的「影子偏转」后来查明是导出参数块复用的错，与这里无关。返回 0 = 矩阵退化
 // Sun direction (toward the sun, y up): with the light view-projection (row vector, clip = p · L) light rays run where light x and y stay constant = column 0 × column 1 (xyz parts), valid for any affine (even sheared) light projection.
 // On an orthogonal light matrix it is parallel to column 2 (the depth gradient); measured at the camp on the Mac, this game's cascade matrices are orthogonal and both agree - the "rotated shadows" once suspected turned out to be the export argument-reuse bug, unrelated to this. Returns 0 = degenerate matrix
+// 近平面在深度 0 还是 1（法线「朝相机」的回退判法用；rts_nrm 在正交投影下按它定朝向）：ia = 逆视投影（列主序，按列当 float4x4 用，同追踪核）。
+// 游戏相机是正交、反向深度（Mac 实测：逆视投影第三列 w = 0；深度 0 反投影到地面以下 y ≈ −4558，深度 1 在上方 y ≈ 437）。正交下光凭矩阵分不出近远，
+// 按「相机从上往下看」定：画面中心深度 0 / 1 两点里世界 y 更大的那个是近平面。返回 0 或 1
+// Whether the near plane is at depth 0 or 1 (for the fallback "facing the camera" rule; rts_nrm orients by it under an orthographic projection): ia = inverse view-projection (column-major, used as float4x4 columns, as in the trace kernels).
+// The game camera is orthographic with reversed depth (measured on the Mac: third column of the inverse view-projection has w = 0; depth 0 unprojects below the ground at y ≈ −4558, depth 1 above at y ≈ 437). An orthographic matrix alone cannot tell near from far,
+// so this relies on "the camera looks down": of the two screen-centre points at depth 0 / 1, the one with the larger world y is the near plane. Returns 0 or 1
+static inline int rts_near_depth(const double ia[16]) {
+    double w0 = ia[15], w1 = ia[11] + ia[15];
+    if (!(fabs(w0) > 1e-12) || !(fabs(w1) > 1e-12)) return 0;
+    return (ia[9] + ia[13]) / w1 > ia[13] / w0;
+}
 static inline int rts_sun_from_lvp(const float *L, float sun[3]) {
     double a[3] = {L[0], L[4], L[8]}, b[3] = {L[1], L[5], L[9]};
     double d[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};

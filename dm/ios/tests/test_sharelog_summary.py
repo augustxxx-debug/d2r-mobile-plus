@@ -21,7 +21,7 @@ def block(src, start):
 class IosSummary(unittest.TestCase):
     def test_perf_block_has_settings_line(self):
         keys = re.search(r'static const char \*keys\[\] = \{([^}]*)\}', block(SHARE, 'static void perf_block(')).group(1)
-        for k in ('"自定义设置：读盘"', '"图形设置："', '"帧率档：生效"', '"帧率档：出图"', '"光追阴影：机器判定"', '"光追阴影：生效"', '"光追阴影：回退"', '"光追阴影：画面"', '"光追阴影：第"', '"Metal 抓帧层："', '"光追内存：预算"', '"光追内存：第"', '"光追内存：告警"', '"内存 至帧"'):
+        for k in ('"自定义设置：读盘"', '"图形设置："', '"帧率档：生效"', '"帧率档：出图"', '"光追阴影：机器判定"', '"光追阴影：生效"', '"光追阴影：回退"', '"光追阴影：画面"', '"光追阴影：第"', '"Metal 抓帧层："', '"光追内存：预算"', '"光追内存：第"', '"光追内存：告警"', '"内存 至帧"', '"光追质量："'):
             self.assertIn(k, keys)
 
 
@@ -38,7 +38,7 @@ class IosSummary(unittest.TestCase):
 class MacSummary(unittest.TestCase):
     def test_info_has_settings_lines(self):
         share = block(MAC, 'static NSString *share_logs(NSString *to) {')
-        for k in ('自定义设置：读盘', '图形设置：', '帧率档：生效', '帧率档：出图', '光追阴影：机器判定', '光追阴影：生效', '光追阴影：回退', '光追阴影：画面', '光追阴影：第', 'Metal 抓帧层：', '光追内存：预算', '光追内存：第', '光追内存：告警', '内存 至帧'):
+        for k in ('自定义设置：读盘', '图形设置：', '帧率档：生效', '帧率档：出图', '光追阴影：机器判定', '光追阴影：生效', '光追阴影：回退', '光追阴影：画面', '光追阴影：第', 'Metal 抓帧层：', '光追内存：预算', '光追内存：第', '光追内存：告警', '内存 至帧', '光追质量：'):
             self.assertIn(k, share)
 
     def test_summary_goes_through_scrub(self):
