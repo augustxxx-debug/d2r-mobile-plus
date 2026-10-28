@@ -11,6 +11,7 @@
 #include "../host/dm_input.h"
 #include "touch_android.h"
 #include "../ios/Sources/dm_touch_game_state.h"
+#include "../host/dm_res_cap.h"
 #include <math.h>
 #include <stdatomic.h>
 
@@ -44,18 +45,42 @@ void front_run(void (*guest)(void)) {
     guest();   // 两种形态都在调用线程上跑：App 形态由 JNI 侧先起好客体线程再进 dm_main | Both forms run on the calling thread: in the App form the JNI side starts the guest thread first and then enters dm_main
 }
 
-// 游戏输出分辨率：DM_GAME_RES 钉住；有屏幕尺寸时按同高度放宽到屏幕比例（与 Mac 真全屏、iOS 同一规则，宽 ≤ 4096、8 对齐），否则原版 16:9
-// Game output resolution: pinned by DM_GAME_RES; with a known screen size, widen at the same height to the screen aspect (the same rule as Mac true full screen and iOS, width ≤ 4096, aligned to 8), otherwise the original 16:9
+// 游戏输出分辨率（与 iOS front_ios.m 同一规则，渲染分辨率开关沿用 iPhone 的那一行）：
+//   主机档 = 屏幕原生像素（界面文字原生；3D 由游戏自带的渲染比例另缩，见 hle_oe.c scale3d_tick）；比 16:9 窄的屏按屏宽取 16:9（上下留边）；
+//   启动预留 = 这个原生尺寸（游戏只接受不超过启动尺寸的新值）；窗口建好之后，实际出图尺寸按「渲染分辨率」档（dm_custom.c render_res：0 自动 / 1 省电 207 万 /
+//   2 均衡 280 万 / 3 原生）的像素预算等比缩小（dm_res_cap.h；安卓没有 Metal 代际表，自动档按通用 400 万预算，超大屏取均衡），图形层出图时整屏放大铺回窗口；
+//   自动档闭环（hle_oe.c 按实际掉帧再降档）同 iOS。档位改了由 dm_custom.c 推 31 让游戏重读。掌机档仍按原版高度 720 × 屏幕比例。DM_GAME_RES=宽x高 钉住（负对照 1600x900 = 原版主机档）。
+//   奥丁 Thor 1920x1080（207 万）：四档都 = 原生；之前固定 1600x900 再由系统合成器拉伸到 1080p，画面糊。
+// Game output resolution (the same rule as iOS front_ios.m; the render-resolution switch is the iPhone row):
+//   docked = the screen's native pixels (UI text native; 3D is scaled separately by the game's own render scale, see hle_oe.c scale3d_tick); screens narrower than 16:9 take 16:9 by width (bars top and bottom);
+//   the startup reserve is that native size (the game only accepts new values no larger than the startup size); once the window is live, the actual output size is shrunk proportionally to the pixel budget of the
+//   render-resolution level (dm_custom.c render_res: 0 Auto / 1 Eco 2.07 MP / 2 Balanced 2.8 MP / 3 Native) per dm_res_cap.h (Android has no Metal generation table: Auto takes the generic 4.0 MP budget, huge
+//   screens Balanced), and the graphics layer's full-screen upscale fills the window again; the Auto closed loop (hle_oe.c, one more step down on measured drops) is the same as on iOS. A level change pushes 31 from
+//   dm_custom.c. Handheld stays at the original height 720 × the screen aspect. DM_GAME_RES=WxH pins it (negative control 1600x900 = the original docked size).
+//   AYN Thor 1920x1080 (2.07 MP): all four levels = native; before this the output was fixed at 1600x900 and stretched to 1080p by the system compositor, which blurred the picture.
 uint64_t front_game_res(int docked) {
     unsigned w, h; const char *e = getenv("DM_GAME_RES");
     if (e && sscanf(e, "%ux%u", &w, &h) == 2) return docked ? (uint64_t)h << 32 | w : (uint64_t)(h * 4 / 5) << 32 | (w * 4 / 5 + 3) / 4 * 4;
-    int dm = atomic_load(&g_screen_w), sh = atomic_load(&g_screen_h);
-    unsigned bh = docked ? 900 : 720;
-    if (dm > 0 && sh > 0 && dm * 9 > sh * 16) {
-        unsigned bw = (unsigned)(llround((double)bh * dm / sh / 8) * 8); if (bw > 4096) bw = 4096;
-        return (uint64_t)bh << 32 | bw;
+    int sw = atomic_load(&g_screen_w), sh = atomic_load(&g_screen_h);
+    unsigned fw = sw > sh ? (unsigned)sw : (unsigned)sh, fh = sw > sh ? (unsigned)sh : (unsigned)sw;   // 长边 × 短边 | long side × short side
+    if (!docked) {   // 掌机档：高 720、宽按屏幕比例（≥16:9），8 对齐 | handheld: height 720, width by the screen aspect (≥ 16:9), aligned to 8
+        unsigned bw = 1280; if (fw && fh && (uint64_t)fw * 9 > (uint64_t)fh * 16) { bw = (unsigned)(llround(720.0 * fw / fh / 8) * 8); if (bw > 4096) bw = 4096; }
+        return 720ull << 32 | bw;
     }
-    return docked ? 900ull << 32 | 1600 : 720ull << 32 | 1280;
+    if (!fw || !fh) return 900ull << 32 | 1600;   // 还没有窗口（命令行形态）：原版 16:9 | no window yet (command-line form): the original 16:9
+    if ((uint64_t)fw * 9 < (uint64_t)fh * 16) fh = (unsigned)(((uint64_t)fw * 9 / 16) & ~1ull);   // 比 16:9 窄：按屏宽取 16:9 | narrower than 16:9: 16:9 by width
+    fw &= ~1u; fh &= ~1u; if (fw > 4096) { fh = (unsigned)(((uint64_t)fh * 4096 / fw) & ~1ull); fw = 4096; }
+    static _Atomic int logged_native; if (!atomic_exchange(&logged_native, 1)) LOG("画面：屏幕 %dx%d → 游戏窗口按 %ux%u 预留（主机档 = 原生；出图尺寸按渲染分辨率档的像素预算缩）", sw, sh, fw, fh);
+    int dm_uiscreen_res_live(void); if (!dm_uiscreen_res_live()) return (uint64_t)fh << 32 | fw;   // 启动预留不缩 | the startup reserve is never shrunk
+    int dm_render_res_level(void), dm_res_auto_step_get(void), dm_3d_quality_mode_get(void); void dm_res_auto_base_set(uint32_t);
+    int lv = dm_render_res_level();
+    uint32_t budget = dm_res_cap_budget_screen(lv, 0, 0, 0, fw, fh);   // 安卓无代际表：自动档 = 通用 400 万，超大屏 280 万 | no generation table on Android: Auto = generic 4.0 MP, huge screens 2.8 MP
+    uint64_t win_px = (uint64_t)fw * fh; uint32_t base = budget && budget < win_px ? budget : (uint32_t)(win_px > 0xffffffffu ? 0xffffffffu : win_px);
+    if (lv == 0) dm_res_auto_base_set(base);
+    int st = dm_res_auto_step_effective(dm_res_auto_step_get(), lv, dm_3d_quality_mode_get() == 1); budget = st ? dm_res_auto_budget(base, st) : budget;
+    uint64_t r = dm_res_cap_apply(fw, fh, budget);
+    static _Atomic uint64_t logged_res; if (atomic_exchange(&logged_res, r | (uint64_t)lv << 62) != (r | (uint64_t)lv << 62)) LOG("画面：渲染分辨率档 %d（像素预算 %u，自动档闭环第 %d 步）→ 出图 %ux%u", lv, budget, st, (unsigned)r, (unsigned)(r >> 32));
+    return r;
 }
 
 // 文本输入框：App 用 text_input_jni.c 的强实现弹系统输入框；命令行无窗口，返回 -1。
