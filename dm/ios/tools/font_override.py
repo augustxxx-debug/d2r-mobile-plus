@@ -161,6 +161,34 @@ def embolden(font, strength):
         font['OS/2'].usWeightClass = min(900, font['OS/2'].usWeightClass + 100 * int(math.ceil(strength / (WEIGHT_STEP * font['head'].unitsPerEm / 1000.0))))
 
 
+def simplify(font):
+    """复合字形展开成普通轮廓、去掉 TrueType 微调（prep / fpgm / cvt 表与各字形的指令）：游戏的字体引擎只认普通轮廓、原字体也不带微调。
+    霞鹜文楷 v1.530 有 288 个复合字形和 prep 表，合进去后安卓上主菜单一画字就空指针闪退（main+0xc75c78，四审真机）；文鼎中楷没有这两样，一直正常。
+    Expand composite glyphs into plain outlines and drop TrueType hinting (prep / fpgm / cvt tables and per-glyph programs): the game's font engine only takes plain
+    outlines and the game font carries no hinting. LXGW WenKai v1.530 has 288 composites and a prep table; merged in, the Android main menu crashed on a null pointer as
+    soon as it drew text (main+0xc75c78, fourth-audit device run); the Arphic font had neither and always worked."""
+    from fontTools.pens.recordingPen import DecomposingRecordingPen
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    from fontTools.ttLib.tables import ttProgram
+    glyf, glyphs = font['glyf'], font.getGlyphSet()
+    composites = [name for name in font.getGlyphOrder() if glyf[name].isComposite()]
+    flat = {}
+    for name in composites:   # 先全部展开再写回：展开时读的部件仍是原样 | expand all first, then write back, so components read during expansion are untouched
+        rec = DecomposingRecordingPen(glyphs); glyphs[name].draw(rec)
+        pen = TTGlyphPen(None); rec.replay(pen); flat[name] = pen.glyph()
+    for name, g in flat.items(): glyf[name] = g
+    decomposed = bool(flat)
+    hinted = [tag for tag in ('prep', 'fpgm', 'cvt ') if tag in font]
+    for tag in hinted: del font[tag]
+    if hinted:   # 字形指令会调用 fpgm 里的函数，表删了指令也要清；没有微调表的字体（如文鼎中楷）一字节不动 | glyph programs call fpgm functions; fonts without hinting tables are left byte-identical
+        for name in font.getGlyphOrder():
+            g = glyf[name]
+            if g.numberOfContours > 0 and hasattr(g, 'program'):
+                g.program = ttProgram.Program(); g.program.fromBytecode(b'')
+    if hinted or decomposed:
+        font['maxp'].maxComponentDepth = 0; font['maxp'].maxComponentElements = 0
+
+
 def compose(original, requested, output, weight=0):
     """中日文码位优先使用自选字体，其余与原字体缺字由原字体补齐；不改写输入文件。 | Prefer the requested font for CJK codepoints, retain the original glyphs for the rest and for missing glyphs, and leave inputs unchanged."""
     from fontTools import subset
@@ -195,6 +223,7 @@ def compose(original, requested, output, weight=0):
 
     if custom['head'].unitsPerEm != base['head'].unitsPerEm:
         scale_upem(custom, base['head'].unitsPerEm)
+    simplify(custom)
     # 加粗只作用于自选字体的字形：原字体回退的字形和图标在下面合并时保持原样。
     # Weight applies to the requested font's glyphs only: fallback glyphs and icons merged below keep their outlines.
     if weight:
@@ -206,6 +235,7 @@ def compose(original, requested, output, weight=0):
             if tag in custom:
                 del custom[tag]
     names = copy.deepcopy(base['name'])
+    stamp = (base['head'].created, base['head'].modified)   # 输出可重复：创建 / 修改时间固定用原字体的，不随生成时刻变（手机与电脑做出的导入包才能逐字节相同）| reproducible output: keep the game font's modified time, not the build time
     hhea = {key: getattr(base['hhea'], key) for key in ('ascent', 'descent', 'lineGap')}
     os2 = {key: getattr(base['OS/2'], key) for key in ('sTypoAscender', 'sTypoDescender', 'sTypoLineGap', 'usWinAscent', 'usWinDescent')}
     options = subset.Options()
@@ -230,6 +260,8 @@ def compose(original, requested, output, weight=0):
             setattr(merged['OS/2'], key, value)
         if not (base_chars | custom_chars) <= set(merged.getBestCmap()):
             raise ValueError('Font composition lost Unicode coverage')
+        merged.recalcTimestamp = False
+        merged['head'].created, merged['head'].modified = stamp
         merged.save(output)
         merged.close()
     base.close()

@@ -62,6 +62,32 @@ class FontComposition(unittest.TestCase):
                 self.assertEqual(merged['hmtx'][merged.getBestCmap()[65]][0], 1000)
             self.assertEqual(before, (base.read_bytes(), custom.read_bytes()))
 
+    def test_composites_and_hinting_are_flattened_and_output_is_reproducible(self):
+        """四审：霞鹜文楷带复合字形与 prep 表，合进游戏字体后安卓主菜单闪退；合成结果要只有普通轮廓、无微调表，且两次合成逐字节相同。
+        Fourth audit: LXGW WenKai has composite glyphs and a prep table and crashed the Android main menu once merged; the composition must hold plain outlines
+        only, no hinting tables, and two compositions must be byte-identical."""
+        from fontTools.ttLib.tables._g_l_y_f import Glyph, GlyphComponent
+        from fontTools.ttLib import newTable
+        with tempfile.TemporaryDirectory() as work:
+            base, custom, out1, out2 = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'a.ttf', 'b.ttf')]
+            synthetic(base, [65, 0x4e00], 1000, 'GameBase')
+            synthetic(custom, [0x4e8c, 0x4e09], 1000, 'Requested')
+            with TTFont(custom) as f:   # 把「三」做成引用「二」的复合字形，再加 prep / fpgm 微调表 | make 0x4e09 a composite of 0x4e8c and add prep / fpgm
+                comp = Glyph(); comp.numberOfContours = -1; c = GlyphComponent(); c.glyphName = 'uni4E8C'; c.x = 0; c.y = 100; c.flags = 0x0001 | 0x0002
+                comp.components = [c]; f['glyf']['uni4E09'] = comp
+                for tag in ('prep', 'fpgm'):
+                    t = newTable(tag); from fontTools.ttLib.tables import ttProgram; t.program = ttProgram.Program(); t.program.fromBytecode(b'\xb0\x00'); f[tag] = t
+                f.save(custom)
+            with TTFont(custom) as f: self.assertTrue(f['glyf']['uni4E09'].isComposite())
+            original = base.read_bytes()
+            font_override.compose(original, custom, out1); font_override.compose(original, custom, out2)
+            self.assertEqual(out1.read_bytes(), out2.read_bytes())
+            with TTFont(out1) as merged:
+                glyf = merged['glyf']
+                self.assertEqual([n for n in merged.getGlyphOrder() if glyf[n].isComposite()], [])
+                self.assertFalse(any(t in merged for t in ('prep', 'fpgm', 'cvt ')))
+                cmap = merged.getBestCmap(); self.assertGreater(glyf[cmap[0x4e09]].numberOfContours, 0)
+
     def test_empty_mapped_letters_fall_back_without_changing_spaces(self):
         with tempfile.TemporaryDirectory() as work:
             base, custom, output = [Path(work)/x for x in ('base.ttf','custom.ttf','out.ttf')]
