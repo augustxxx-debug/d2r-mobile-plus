@@ -190,7 +190,10 @@ class OptionsPage(unittest.TestCase):
 
     def test_about_group_and_box(self):
         out = self.out
-        for w in ('TouchAboutRow', 'TouchAboutTitle', 'TouchAboutCommunity', 'TouchAboutCommunityText', 'TouchCommunityOpt') + tuple(BOX): self.assertIn('"name": "%s"' % w, out, w)
+        for w in ('TouchAboutRow', 'TouchAboutTitle', 'TouchAboutCommunityRow', 'TouchAboutCommunityText', 'TouchCommunityOpt') + tuple(BOX): self.assertIn('"name": "%s"' % w, out, w)
+        # 十二审 Q12-01：社区行子容器名字以 Row 结尾，dm_custom.c indent_rows 才往里找一层把标签右移 40；标签载入 x = 0（缩进只动载入 0 的叶子） | Q12-01: the sub-container ends in Row so indent_rows reaches the label; the label loads at x = 0
+        self.assertNotIn('"name": "TouchAboutCommunity"', out)
+        self.assertIn('"name": "TouchAboutCommunityRow", "fields": { "rect": { "x": 0, "y": 180, "width": 1730, "height": 180 } }, "children": [\n                { "type": "TextBoxWidget", "name": "TouchAboutCommunityText", "fields": { "rect": { "x": 0, "y": 0,', out)
         self.assertIn('"text": "@dmCommunityAbout"', out); self.assertIn('"text": "@dmCommunityRow"', out); self.assertIn('"textString": "@dmCommunityOpen"', out)
         # 鸣谢子块：子标题（标题级）+ 2 个标签框（36 LightGold）+ 6 个名单行框（36 LightGray），字空着由宿主写，不是按钮、不发消息，在社区行之后 | credits sub-block: sub-title + 2 label boxes + 6 name-line boxes, text written by the host, no buttons / messages, after the community row
         for w in ('TouchCreditsTitle', 'TouchCreditLabel0', 'TouchCreditLabel1') + tuple('TouchCreditLine%d' % k for k in range(6)): self.assertIn('"name": "%s"' % w, out, w)
@@ -218,7 +221,7 @@ class Text(unittest.TestCase):
         sample['dmAboutVersion'] = '1.0.0+123 · 0123456'
         for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityAbout', 40, BTN_W), ('dmCommunityFe', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
                                ('dmCommunityCopied', 28, BOX_W), ('dmCommunityCopyFail', 28, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
-                               ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, 600), ('dmCreditsThanks', 36, 600), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
+                               ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, 620 - 40), ('dmCreditsThanks', 36, 620 - 40), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
             texts = rows[key]
             for lang, t in zip(langs, texts):
                 self.assertEqual(t.count('\n'), 0, (key, lang))
@@ -232,7 +235,7 @@ class Host(unittest.TestCase):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
         for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_padmode_page_keys(DM_BTN_A | DM_BTN_B)', 'dm_update_label()', '"dmAboutVersion"',
                   '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : "链接"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
-                  'TouchAboutCommunity', 'TouchCreditLine%d', '"dmCreditsSpecial"', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
+                  '"TouchAboutCommunityRow"', 'TouchCreditLine%d', '"dmCreditsSpecial"', 'co_place(l0, ys >= 0 ? DM_ROW_INDENT : 99999', 'dm_sel_frame.h', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss
@@ -242,7 +245,7 @@ class Host(unittest.TestCase):
         self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))
         custom = (DM / 'host' / 'dm_custom.c').read_text(encoding='utf-8')
-        self.assertIn('dm_community_available()', custom); self.assertIn('TouchAboutCommunity', custom)   # 手柄十字键能选到关于行、A 打开 | the D-pad reaches the About row and A opens it
+        self.assertIn('dm_community_available()', custom); self.assertIn('"TouchAboutCommunityRow"', custom)   # 手柄十字键能选到关于行、A 打开 | the D-pad reaches the About row and A opens it
         self.assertIn('const char *dm_update_label(void) { return g_label; }', (DM / 'host' / 'dm_update.c').read_text(encoding='utf-8'))
 
     def test_shells_hand_over_manifest_and_clipboard(self):
