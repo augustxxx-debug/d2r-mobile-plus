@@ -8,6 +8,10 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). Validation updated on **2026-10-26**.
 
+### Android
+
+- First Qualcomm Adreno candidate of the Android build (branch `claude/android-p0-e0b171`, not merged into the iOS line): crash fence lifecycle wiring, pause-menu Share diagnostics with redaction, version label from the shared `version.sh`, native output size with the Graphics Resolution level, the 120 FPS stop with automatic high-refresh display mode, Show frame rate on the overlay, physical controller support (Xbox layout, B / BACK consumed, controller / touch mode switching, the overlay keeps the experience line in controller mode), 3D brightening cap 2 by default, and two Adreno 740 driver workarounds in the Vulkan engine (the warp32 rewrite computes subgroup masks from the lane id after the driver hung on reading SubgroupLtMask word 1; a probe-gated lane-id-through-ballot rewrite). Mali devices are not covered by this candidate.
+
 ### Added
 
 - Experimental **120 FPS** stop on the Graphics frame-rate selector, shown only on screens with a maximum refresh rate of at least 120 Hz (stored as `eco_fps=2`; older builds read it as 30). On iOS, 120 FPS presents from the present thread instead of CAMetalDisplayLink, because the display-link path was composited at 60 Hz once the in-run UIKit overlay was on screen (every other frame dropped). Device-tested on an iPhone Duo inner screen with full effects (about 3 minutes, 0 system drops, 0.17% late; needs the Eco render resolution); power not measured; other devices untested. Diagnostic log lines 「帧率档：」 and the share-log summary record the effective frame rate and present path.
