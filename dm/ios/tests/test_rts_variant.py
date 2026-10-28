@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -277,10 +278,83 @@ def test_move_order_puts_json_last():
         if f.endswith('.json'): assert all(order.index(f) > order.index(g) for g in files if g.rsplit('.', 1)[0] == f.rsplit('.', 1)[0] and g != f), order
 
 
-def test_cli_removes_leftover_staging_dirs(tmp_path):
+def test_cli_removes_leftover_staging_dirs(tmp_path):   # 旧格式（不带 pid）的遗留目录：一小时没动过才当遗留清掉（九审 Q9-01） | an old-format (no pid) leftover: removed only after an hour untouched (ninth review Q9-01)
     src, out = tmp_path / 'src', tmp_path / 'out'; _src(src, FS); left = out / '.rts_stage-killed'; left.mkdir(parents=True); (left / 'x_rt.json').write_text('{}', encoding='utf-8')
+    old = time.time() - 7200; os.utime(left, (old, old))
     r = _cli(src, out)
     assert r.returncode == 0 and not [f for f in os.listdir(out) if f.startswith('.rts_stage-')], r.stdout + r.stderr
+
+
+# 九审 Q9-01：两个生成器共用同一个 OUT 时，后起的不能删先起的正在用的暂存目录。A 建好暂存目录、在第一次 Metal 编译前停在屏障上，起 B，再放行 A：
+# 两个都退出 0、产物齐全、B 运行期间 A 的暂存目录一直在（修后 B 拿不到 OUT 锁就等，并打「另一个生成器在用」）。思路同九审独立复核的 paused-generator.py
+# Ninth review Q9-01: with two generators sharing one OUT, the later one must not delete the staging dir the earlier one is using. A creates its stage and stops at a barrier before its first Metal compile, B starts, then A is released:
+# both exit 0, the products are complete, and A's stage stays while B runs (fixed: B waits for the OUT lock and says another generator is using it). Same idea as the ninth review's paused-generator.py
+PAUSED = '''import importlib.util, sys, time
+from pathlib import Path
+gen, src, out, ready, resume = sys.argv[1:]
+spec = importlib.util.spec_from_file_location('rv', gen); rv = importlib.util.module_from_spec(spec); spec.loader.exec_module(rv)
+orig = rv.mac_compile
+def paused(msl, air, lib):
+    Path(ready).write_text(str(Path(lib).parent))
+    t = time.monotonic() + 120
+    while not Path(resume).exists():
+        if time.monotonic() > t: raise RuntimeError('barrier timed out')
+        time.sleep(0.01)
+    return orig(msl, air, lib)
+rv.mac_compile = paused
+sys.exit(rv.main([gen, src, out]))
+'''
+
+
+def test_cli_parallel_generators_keep_each_others_stage(tmp_path):
+    if not shutil.which('xcrun'): raise unittest.SkipTest('没有 xcrun（Metal 编译器）')
+    src, out = tmp_path / 'src', tmp_path / 'out'; _src(src, FS); out.mkdir()
+    pa, ready, resume, blog = tmp_path / 'paused.py', tmp_path / 'ready', tmp_path / 'resume', tmp_path / 'b.log'; pa.write_text(PAUSED, encoding='utf-8')
+    env = dict(os.environ, RTS_TARGET='mac')
+    a = subprocess.Popen([sys.executable, str(pa), str(GEN), str(src), str(out), str(ready), str(resume)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    t = time.monotonic() + 120
+    while not ready.exists() and a.poll() is None and time.monotonic() < t: time.sleep(0.02)
+    assert ready.exists(), 'A 没走到屏障：' + (a.communicate()[0] if a.poll() is not None else '超时')
+    stage = Path(ready.read_text(encoding='utf-8'))
+    with open(blog, 'w', encoding='utf-8') as bf: b = subprocess.Popen([sys.executable, str(GEN), str(src), str(out)], stdout=bf, stderr=subprocess.STDOUT, env=env)
+    t = time.monotonic() + 30
+    while b.poll() is None and '另一个生成器' not in blog.read_text(encoding='utf-8') and time.monotonic() < t: time.sleep(0.05)
+    kept = stage.exists()   # B 跑完（旧代码）或在等锁（修后）这一刻，A 的暂存目录还在不在 | is A's stage still there once B finished (old code) or is waiting for the lock (fixed)
+    resume.write_text('go', encoding='utf-8')
+    aout = a.communicate(timeout=600)[0]; b.wait(timeout=600); bout = blog.read_text(encoding='utf-8')
+    assert kept, 'B 删掉了 A 正在用的暂存目录：\nA:\n' + aout + '\nB:\n' + bout
+    assert a.returncode == 0 and b.returncode == 0, 'A 退出 %s、B 退出 %s\nA:\n%s\nB:\n%s' % (a.returncode, b.returncode, aout, bout)
+    assert (out / (KEY + '_rt.metallib')).exists() and rv.VERSION in json.loads((out / (KEY + '_rt.json')).read_text(encoding='utf-8'))['notes']
+    assert not [f for f in os.listdir(out) if f.startswith('.rts_stage-')]
+
+
+def test_cli_removes_stage_of_dead_owner_keeps_live_one(tmp_path):   # 死进程（含 pid 被复用：启动时刻对不上）的暂存目录清掉，活着的不动 | stages of dead owners (pid reused: start time differs) are removed, a live one is kept
+    src, out = tmp_path / 'src', tmp_path / 'out'; _src(src, FS); out.mkdir()
+    p = subprocess.Popen(['sleep', '30']); st = rv.proc_start(p.pid); p.kill(); p.wait()
+    dead, reused, live = '.rts_stage-p%d-s%d-x' % (p.pid, st), '.rts_stage-p%d-s%d-y' % (os.getpid(), 12345), '.rts_stage-p%d-s%d-z' % (os.getpid(), rv.proc_start(os.getpid()))
+    for d in (dead, reused, live): (out / d).mkdir(); (out / d / 'x_rt.json').write_text('{}', encoding='utf-8')
+    r = _cli(src, out)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not (out / dead).exists() and not (out / reused).exists(), r.stdout
+    assert (out / live).exists() and '还在运行' in r.stdout, r.stdout
+
+
+def test_run_sh_keeps_stage_dirs_out_of_the_package():
+    run = (root / 'ios/run.sh').read_text(encoding='utf-8')
+    line = next(l for l in run.splitlines() if 'cp -cR "$MSL/b-$V" Gen/msl/' in l)
+    assert 'rm -rf Gen/msl/b-$V/.rts_stage-*' in line, line
+
+
+def test_lock_file_sits_next_to_out(tmp_path):   # 锁文件不能在 OUT 里（OUT 整目录进包） | the lock file must not be inside OUT (the whole OUT goes into the package)
+    out = tmp_path / 'b-x'; out.mkdir(); fd = rv.lock_out(str(out))
+    try: assert fd is not None and (tmp_path / 'b-x.rts_variant.lock').exists() and not os.listdir(out)
+    finally: os.close(fd)
+
+
+def test_stage_name_carries_pid_and_start():
+    rv.OUT = None; name = rv.stage_prefix()
+    m = re.match(r'\.rts_stage-p(\d+)-s(\d+)-$', name)
+    assert m and int(m[1]) == os.getpid() and abs(int(m[2]) - rv.proc_start(os.getpid())) <= 1, name
 
 
 def test_run_sh_counts_metallibs():

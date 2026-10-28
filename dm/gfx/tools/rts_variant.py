@@ -19,7 +19,7 @@
 # a light among them uses its mask channel, any other keeps the original (cube shadow / 1.0).
 # Variants that exist with the same VERSION (recorded in the json notes) are skipped, so the packaging script can call this every time.
 # Usage: rts_variant.py <b-<chain> cache dir (with .metal / .json)> <output dir (b-<chain>, same as DM_MSL_IOS)> [key...] (none = every fragment shader that samples the cascades + the 10 skinned vertex shaders)
-import os, re, sys, json, shutil, tempfile, subprocess, concurrent.futures as cf
+import os, re, sys, json, time, fcntl, shutil, tempfile, subprocess, concurrent.futures as cf
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../ios/tools')); import ios_metal
 SRC = OUT = STAGE = None; WANT = set()   # STAGE：本次产物先写进的暂存目录（七审 Q7-03：全部成功才搬进 OUT；None = 直接写 OUT，单测用） | STAGE: the staging dir this run writes into first (seventh review Q7-03: moved into OUT only if everything succeeded; None = straight into OUT, for the unit tests)   # 命令行在文件末尾赋值；测试直接调各变换函数 | assigned at the end of the file from the command line; tests call the transformation functions directly
 CASCADES = ('fp_t_cb196610_105980A8', 'fp_t_cb196610_105980AA')
@@ -38,6 +38,39 @@ def missing_products(need, alpha=True):   # need = [(键, 后缀)]：本次应�
         except Exception: ok = False
         if not ok: miss.append('rts_alpha')
     return miss
+# 九审 Q9-01：两个生成器可能共用同一个 OUT（并行出包）。整段（清理、生成、搬运、核对）持 OUT 旁边的锁文件（flock 独占），后起的等前一个做完；
+# 暂存目录名带属主 pid 和启动时刻，清理时只删属主已经不在的（pid 不存在，或 pid 被别的进程复用、启动时刻对不上）；旧格式（不带 pid，168b299 及更早）一小时没动过才当遗留
+# Ninth review Q9-01: two generators may share one OUT (parallel packaging). The whole run (cleanup, generation, move, check) holds a lock file next to OUT (exclusive flock), and a later run waits for the earlier one;
+# staging dir names carry the owner's pid and start time, and cleanup removes only those whose owner is gone (no such pid, or the pid reused by another process with a different start time); the old format (no pid, 168b299 and earlier) counts as left over after an hour untouched
+STAGE_LEGACY_STALE = 3600
+def proc_start(pid):   # 进程启动时刻（秒）；查不到 = None | a process's start time (seconds); None if unknown
+    try: out = subprocess.run(['ps', '-o', 'lstart=', '-p', str(pid)], capture_output=True, text=True, env=dict(os.environ, LC_ALL='C'), timeout=10).stdout.strip()
+    except Exception: return None
+    try: return int(time.mktime(time.strptime(out, '%a %b %d %H:%M:%S %Y'))) if out else None
+    except ValueError: return None
+def stage_prefix():
+    return '.rts_stage-p%d-s%d-' % (os.getpid(), proc_start(os.getpid()) or 0)
+def stage_owner_alive(out, name):   # True = 属主还在（或判不了）：不能删 | True = the owner is alive (or cannot be told): must not be removed
+    m = re.match(r'\.rts_stage-p(\d+)-s(\d+)-', name)
+    if not m:
+        try: return time.time() - os.path.getmtime(os.path.join(out, name)) < STAGE_LEGACY_STALE
+        except OSError: return False
+    pid, start = int(m[1]), int(m[2])
+    try: os.kill(pid, 0)
+    except ProcessLookupError: return False
+    except PermissionError: pass   # 别的用户的进程：活着 | another user's process: alive
+    now = proc_start(pid)
+    return not start or now is None or abs(now - start) <= 1
+def lock_out(out):   # 锁文件放 OUT 旁边（OUT 整目录会被 run.sh 拷进 App）；返回 fd，等超时返回 None | the lock file sits next to OUT (run.sh copies the whole OUT into the App); returns the fd, None on timeout
+    fd = os.open(out.rstrip(os.sep) + '.rts_variant.lock', os.O_RDWR | os.O_CREAT, 0o644)
+    deadline, said = time.monotonic() + float(os.environ.get('RTS_LOCK_WAIT', '3600')), False
+    while True:
+        try: fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB); break
+        except BlockingIOError:
+            if not said: print('另一个生成器在用 %s，等它做完' % os.path.basename(out.rstrip(os.sep)), flush=True); said = True
+            if time.monotonic() > deadline: os.close(fd); return None
+            time.sleep(0.2)
+    os.ftruncate(fd, 0); os.write(fd, b'%d\n' % os.getpid()); return fd
 def move_order(files):   # 搬进 OUT 的顺序：json 最后（json 是「产物有效」的标记，搬到一半被打断也不会留下有 json 没库的产物） | order of moving into OUT: json last (the json marks a product valid, so an interrupted move never leaves a json without its library)
     return sorted(files, key=lambda f: (f.endswith('.json'), f))
 def add_binding(msl):   # 返回 (msl, 新 arg_id)；参数块加一行 | returns (msl, new arg_id); one line added to the argument block
@@ -308,29 +341,36 @@ def main(argv):
     global SRC, OUT, STAGE, WANT
     SRC, OUT = argv[1:3]; WANT = set(argv[3:]); os.makedirs(OUT, exist_ok=True)
     keys = sorted(WANT) if WANT else sorted(f[:-8] for f in os.listdir(SRC) if f.endswith('_b.metal'))
-    for f in os.listdir(OUT):   # 上一次被强杀留下的暂存目录（八审观察 1：run.sh 整目录拷进 App） | staging dirs left by a killed run (eighth review observation 1: run.sh copies the whole dir into the App)
-        if f.startswith('.rts_stage-'): shutil.rmtree(os.path.join(OUT, f), ignore_errors=True); print('清掉遗留暂存目录', f)
-    STAGE = tempfile.mkdtemp(prefix='.rts_stage-', dir=OUT)
+    lk = lock_out(OUT)
+    if lk is None: print('【失败】等了 %s 秒，另一个生成器还在用 OUT' % os.environ.get('RTS_LOCK_WAIT', '3600')); return 4
     try:
-        res, fails, need = {}, [], []
-        with cf.ThreadPoolExecutor(8) as ex:
-            for key, r, nd in ex.map(one, keys):
-                res[r.split()[0]] = res.get(r.split()[0], 0) + 1; need += nd
-                if 'FAIL' in r: fails.append((key, r))
-                if not r.startswith(('skip', 'fresh')): print(key, r)
+        for f in sorted(os.listdir(OUT)):   # 被强杀留下的暂存目录（八审观察 1：run.sh 整目录拷进 App）；属主还活着的不动（九审 Q9-01） | staging dirs left by a killed run (eighth review observation 1: run.sh copies the whole dir into the App); ones whose owner is alive are kept (ninth review Q9-01)
+            if not f.startswith('.rts_stage-'): continue
+            if stage_owner_alive(OUT, f): print('暂存目录 %s 的生成器还在运行，不动它' % f); continue
+            shutil.rmtree(os.path.join(OUT, f), ignore_errors=True); print('清掉遗留暂存目录', f)
+        STAGE = tempfile.mkdtemp(prefix=stage_prefix(), dir=OUT)
         try:
-            na, ns = build_alpha(sorted(f[:-8] for f in os.listdir(SRC) if f.endswith('_b.metal')))
-            print('镂空判定库 %d 个片元着色器（剔除 %d）' % (na, ns))
-        except Exception as e: fails.append(('rts_alpha', 'FAIL %s' % e))
-        if fails:
-            for key, r in fails: print('【失败】', key, r[:300])
-            print('汇总', res, '失败 %d 个，产物没有替换' % len(fails)); return 2
-        for f in move_order(os.listdir(STAGE)): os.replace(os.path.join(STAGE, f), os.path.join(OUT, f))
-        missing = missing_products(need)   # 八审 Q8-02：核全部应有产物（含 fresh 的），不只是本次搬进去的 | eighth review Q8-02: every expected product (fresh ones included), not only the ones moved in this run
-        if missing: print('【失败】产物不全 / 版本不对：', ' '.join(missing[:20])); print('汇总', res, '产物不全 %d 个' % len(missing)); return 3
-        print('汇总', res, '产物齐全 %d 个（_rt %d、_pos %d、_var %d）' % (len(need), sum(s == '_rt' for _, s in need), sum(s == '_pos' for _, s in need), sum(s == '_var' for _, s in need))); return 0
+            res, fails, need = {}, [], []
+            with cf.ThreadPoolExecutor(8) as ex:
+                for key, r, nd in ex.map(one, keys):
+                    res[r.split()[0]] = res.get(r.split()[0], 0) + 1; need += nd
+                    if 'FAIL' in r: fails.append((key, r))
+                    if not r.startswith(('skip', 'fresh')): print(key, r)
+            try:
+                na, ns = build_alpha(sorted(f[:-8] for f in os.listdir(SRC) if f.endswith('_b.metal')))
+                print('镂空判定库 %d 个片元着色器（剔除 %d）' % (na, ns))
+            except Exception as e: fails.append(('rts_alpha', 'FAIL %s' % e))
+            if fails:
+                for key, r in fails: print('【失败】', key, r[:300])
+                print('汇总', res, '失败 %d 个，产物没有替换' % len(fails)); return 2
+            for f in move_order(os.listdir(STAGE)): os.replace(os.path.join(STAGE, f), os.path.join(OUT, f))
+            missing = missing_products(need)   # 八审 Q8-02：核全部应有产物（含 fresh 的），不只是本次搬进去的 | eighth review Q8-02: every expected product (fresh ones included), not only the ones moved in this run
+            if missing: print('【失败】产物不全 / 版本不对：', ' '.join(missing[:20])); print('汇总', res, '产物不全 %d 个' % len(missing)); return 3
+            print('汇总', res, '产物齐全 %d 个（_rt %d、_pos %d、_var %d）' % (len(need), sum(s == '_rt' for _, s in need), sum(s == '_pos' for _, s in need), sum(s == '_var' for _, s in need))); return 0
+        finally:
+            shutil.rmtree(STAGE, ignore_errors=True); STAGE = None
     finally:
-        shutil.rmtree(STAGE, ignore_errors=True); STAGE = None
+        os.close(lk)   # 关掉即释放锁 | closing releases the lock
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv))
