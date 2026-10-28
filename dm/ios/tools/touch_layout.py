@@ -1611,8 +1611,12 @@ def _row_height(fn):
         return text.replace(a, '"rowHeight": 180'), n + text.count(a)
     return g
 for _k in ('soundoptionspanelhd.json', 'gameplayoptionspanelhd.json', 'onlinegameoptionspanelhd.json'): PRESENT[_k] = _row_height(PRESENT[_k])
-# The native console section divider assumes 180 units; avoid overlapping its next row.
-PAD_ROOT['onlinegameoptionspanelhd.json'] = _row_height(PAD_ROOT['onlinegameoptionspanelhd.json'])
+# 手柄版三页同样用 180：原版分组标题下的分割线（$OptionsDividerRect）在本宿主里要配 180 的行距才落在标题行与下一行之间，100 时横穿下一行文字
+# （用户报：安卓手柄模式音频页「分组金黄色分割线乱了」，iOS 手柄模式同样；原先只改了「游戏设定」，「音频」「游戏」漏了）。回归 tests/test_options_divider_rows.py
+# The controller copies of all three pages use 180 too: the stock section divider under a title ($OptionsDividerRect) only lands between the title row and
+# the next row with a 180 pitch in this host; at 100 it crosses the next row's text (user report: Android controller-mode Audio page, iOS controller mode alike;
+# only Game Settings had been changed, Audio and Gameplay were missed). Regression: tests/test_options_divider_rows.py
+for _k in ('soundoptionspanelhd.json', 'gameplayoptionspanelhd.json', 'onlinegameoptionspanelhd.json'): PAD_ROOT[_k] = _row_height(PAD_ROOT[_k])
 
 def _widget_block(s, name):
     m = re.search(r'\{\s*"type"\s*:\s*"[A-Za-z]+"\s*,\s*"name"\s*:\s*"%s"' % re.escape(name), s)
