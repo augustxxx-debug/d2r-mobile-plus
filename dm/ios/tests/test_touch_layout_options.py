@@ -46,6 +46,12 @@ for voice in (False, True):
     defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
 os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
+# 平台限制：DM_TARGET=android 的自定义页没有 icloud 行，其余行序不变（宿主 dm_custom.c custom_row 在没有 iCloud 的平台同样跳过）| per-platform: under DM_TARGET=android the Custom page has no icloud row, the other rows keep their order (the host's custom_row skips it likewise)
+os.environ['DM_TARGET'] = 'android'; layout = importlib.reload(layout)
+assert 'icloud' not in [k for k, _ in layout._CUSTOM_ALL] and [k for k, _ in layout._CUSTOM_ALL][5:7] == ['item_notes', 'pot_pick'], layout._CUSTOM_ALL
+assert 'i == K_ICLOUD && !dm_icloud_supported()' in host_src
+os.environ.pop('DM_TARGET'); layout = importlib.reload(layout)
+assert 'icloud' in [k for k, _ in layout._CUSTOM_ALL]
 host = host_src
 assert 'TouchCustom_touch_swap_above_near' in host
 print('PASS touch layout options: generated radio pair, labels, defaults, host order (default and MOVIE_FFMPEG=1) and scrolling row extent')
