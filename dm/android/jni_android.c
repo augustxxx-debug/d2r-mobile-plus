@@ -322,6 +322,13 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
     if (!getenv("DM_LANG") && *lg) setenv("DM_LANG", lg, 0);   // 首次安装的语言按系统首选（同 iOS CFLocaleCopyPreferredLanguages，见 dm_i18n.c） | first-install language follows the system preference (as iOS CFLocaleCopyPreferredLanguages, see dm_i18n.c)
     if (chdir(g_files)) LOG("【红】chdir %s 失败 errno %d", g_files, errno);
     { const char *v = getenv("DM_VERSION_LABEL"); LOG("boot: 显示版本 %s", v && *v ? v : "（无）"); }
+    // 导入包身份与构建输入（d2rm_android.py 写进 pack_info.txt：PRODUCT / MADE / INPUTS=font=<指纹>;weight=<档>），同 iOS 的「boot: … 构建输入 …」行；分享摘要按「boot: 导入包」取
+    // Import-pack identity and build inputs (written into pack_info.txt by d2rm_android.py: PRODUCT / MADE / INPUTS=font=<fingerprint>;weight=<level>), like iOS's "boot: ... build inputs ..." line; the share summary picks "boot: 导入包"
+    { char pi[1200], line[256], prod[96] = "?", made[48] = "?", inputs[128] = "font=none;weight=0（旧导入包没写）"; snprintf(pi, sizeof pi, "%s/dm/pack_info.txt", g_files); FILE *pf = fopen(pi, "r");
+      if (pf) { while (fgets(line, sizeof line, pf)) { line[strcspn(line, "\r\n")] = 0;
+              if (!strncmp(line, "PRODUCT=", 8)) snprintf(prod, sizeof prod, "%s", line + 8); else if (!strncmp(line, "MADE=", 5)) snprintf(made, sizeof made, "%s", line + 5); else if (!strncmp(line, "INPUTS=", 7)) snprintf(inputs, sizeof inputs, "%s", line + 7); }
+          fclose(pf); }
+      LOG("boot: 导入包 %s（%s）构建输入 %s", prod, made, inputs); }
     (*env)->ReleaseStringUTFChars(env, files, f); (*env)->ReleaseStringUTFChars(env, ext, x); (*env)->ReleaseStringUTFChars(env, src, s); (*env)->ReleaseStringUTFChars(env, lang, lg);
     if (n <= 0) return -2;
     char required[1300];
@@ -367,12 +374,13 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeRefresh(JNIEnv *e
 // Effective frame-rate target (30 / 60 / 120): the Java side asks once a second and switches the window's preferred display mode to 120 Hz when it is 120 (DmActivity.applyPreferredMode)
 int mtl_fps_target(void);
 JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeFpsTarget(JNIEnv *env, jclass cls) { (void)env; (void)cls; return mtl_fps_target(); }
-// 「显示帧数」（自定义页开关 fps_hud）：触控层每帧问，0 = 不画；采样见 fps_hud.h | "Show frame rate" (Custom tab switch fps_hud): the touch overlay asks every frame, 0 = do not draw; sampling in fps_hud.h
-#include "fps_hud.h"
-uint64_t dm_nvn_frame_count(void); int dm_custom_get(const char *key);
+// 「显示帧数」（图形页开关 fps_hud）：触控层每帧问，0 = 不画；口径与采样见 dm/host/dm_fps_hud.h（交换链实际上屏、1 秒滑动窗口、最多 2 Hz） | "Show frame rate" (Custom tab switch fps_hud): the touch overlay asks every frame, 0 = do not draw; sampling in fps_hud.h
+#include "../host/dm_fps_hud.h"
+uint64_t dm_present_count(void); int dm_custom_get(const char *key);   // 交换链实际上屏帧数（vulkan_present.cpp） | frames actually presented by the swapchain (vulkan_present.cpp)
+JNIEXPORT jlong JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativePresentCount(JNIEnv *env, jclass cls) { (void)env; (void)cls; return (jlong)dm_present_count(); }   // 触控层重绘对齐游戏上屏 | the overlay aligns its redraws with the game's presents
 JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeFpsHud(JNIEnv *env, jclass cls) {
     (void)env; (void)cls; static dm_fps_hud s; struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-    return dm_fps_hud_sample(&s, (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec, dm_nvn_frame_count(), dm_custom_get("fps_hud") > 0);
+    return dm_fps_hud_sample(&s, (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec, dm_present_count(), dm_custom_get("fps_hud") > 0);
 }
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSurface(JNIEnv *env, jclass cls, jobject surface, jint w, jint h) {
     (void)cls;

@@ -27,6 +27,7 @@ void dm_gamepad_start(void (*on_mode)(int pad)); void dm_gamepad_touched(void); 
 #include "../../host/dm_world.h"
 #include "../../host/dm_uiscreen.h"
 #include "../../host/dm_res_cap.h"
+#include "../../host/dm_fps_hud.h"
 #include "../../host/dm_actions.h"
 #include "../../host/dm_i18n.h"
 static NSString *SWT(const char *k) { return @(dm_ui(k)); }   // 我们自己的界面文字（中英表 dm/i18n/ui_text.tsv，语言跟原版设置走） | our own UI text (Chinese-English string table dm/i18n/ui_text.tsv, language follows the original game's setting)
@@ -953,13 +954,10 @@ static UIView *test_fold(UIView *top) {
 // frame rate. The switch is read on every refresh, so "Apply" takes effect at once
 static UIView *attach_fps_hud(UIView *top) {
     if (!top) return top;
-    __block uint64_t lp = 0, lt = 0;
-    [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *tm) {
+    static dm_fps_hud s;   // 两端共用的采样（dm/host/dm_fps_hud.h）：交换链实际上屏、1 秒滑动窗口、显示值最多 2 Hz | shared sampler (dm/host/dm_fps_hud.h): actually presented frames, sliding 1 s window, shown value at most 2 Hz
+    [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *tm) {
         int dm_custom_get(const char *); uint64_t mtl_presented_count(void);   // 系统确认真正上屏的帧（复审 F08），不是出图尝试 | frames the system confirms on screen (re-audit F08), not present attempts
-        if (!dm_custom_get("fps_hud")) { g_fps_hud = 0; lt = 0; return; }
-        uint64_t t = now_ns(), p = mtl_presented_count();
-        if (lt && t > lt) g_fps_hud = (int)lround((double)(p - lp) * 1e9 / (double)(t - lt));
-        lt = t; lp = p; }];
+        g_fps_hud = dm_fps_hud_sample(&s, now_ns(), mtl_presented_count(), dm_custom_get("fps_hud") > 0); }];
     return top;
 }
 UIView *front_ios_view(CGRect frame) {

@@ -25,6 +25,10 @@ extern "C" double dm_present_period(void);
 // 错过上屏节拍的帧数（晚于「上次期望时刻 + 周期」2 ms 以上）；自适应出图档按它降档 / 试升
 // Frames that missed their display slot (more than 2 ms later than "previous desired time + period"); the adaptive present tier steps down / probes up by it
 static std::atomic<uint64_t> dm_present_late{0};
+// 交换链实际上屏的帧数（vkQueuePresentKHR 成功或 SUBOPTIMAL）：「显示帧数」按它算，与系统帧率监控同口径（dm/host/dm_fps_hud.h）
+// Frames actually presented by the swapchain (vkQueuePresentKHR success or SUBOPTIMAL): "Show frame rate" counts these, the same measure as system frame-rate monitors (dm/host/dm_fps_hud.h)
+static std::atomic<uint64_t> dm_presents{0};
+extern "C" uint64_t dm_present_count(void){return dm_presents.load(std::memory_order_relaxed);}
 extern "C" uint64_t dm_present_late_count(void){return dm_present_late.load(std::memory_order_relaxed);}
 namespace {
 std::mutex window_mutex;std::condition_variable window_cv;
@@ -276,6 +280,7 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
       if(tgt&&now>tgt+p+2000000)dm_present_late.fetch_add(1,std::memory_order_relaxed);if(next<now)next=now;if(next>now+2*p)next=now+p;tgt=next;OH_NativeWindow_NativeWindowHandleOpt(active,SET_DESIRED_PRESENT_TIMESTAMP,next);}}
 #endif
     XTRACE_BEGIN("dm-queue-present");VkResult pr=vkQueuePresentKHR(queue,&pi);XTRACE_END();
+    if(pr==VK_SUCCESS||pr==VK_SUBOPTIMAL_KHR)dm_presents.fetch_add(1,std::memory_order_relaxed);
     // 呈现失败时先排空，拆除路径要求队列空闲。
     // Drain a failed present before teardown, which requires an idle queue.
     if(overlap){flight^=1;if(pr!=VK_SUCCESS && pr!=VK_SUBOPTIMAL_KHR && (r=vkQueueWaitIdle(queue)))return r;}
