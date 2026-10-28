@@ -51,6 +51,9 @@ fetch https://github.com/zlib-ng/zlib-ng/archive/refs/tags/2.3.3.tar.gz f9c65aa9
 fetch https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.gz e61b31ab26358b946e767ed7eb7f4bb2e507da1cfefeb7a8861ace7fd5c899a1
 fetch https://github.com/harfbuzz/harfbuzz/releases/download/14.5.0/harfbuzz-14.5.0.tar.xz b7132e148358a45185c9feafd049dbaf243649d3c44414b3534d9c95d18592b9
 fetch https://files.pythonhosted.org/packages/source/p/pillow/pillow-13.0.0.tar.gz cdcd1ba258178f7356d74170c9a81ba4eab6a5d55748bc402a5a2a6fe6be3510
+fetch https://zlib.net/fossils/zlib-1.3.1.tar.gz 9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23
+fetch https://raw.githubusercontent.com/python/cpython/v3.13.16/Modules/zlibmodule.c d73bf051e646f4eb5f77194a1ded56c42fff31f7d1dc72541dd776b8d292a0d2
+fetch https://raw.githubusercontent.com/python/cpython/v3.13.16/Modules/clinic/zlibmodule.c.h af2289823b2d9edba268430d2029d727d59d4a0bbb1d0eeb0d697e83f199c6a0
 SPVT=28f99f74a2a922ff85fc8fd966d6b3d6a45be795; SPVH=86f980c731e62ae4eaf383d320449d71687936bf   # 与电脑上 d2rm_android.py 用的 spirv-opt 同一提交（v2026.4-83） | same commit as the spirv-opt d2rm_android.py uses on the computer (v2026.4-83)
 
 # 一、Python 与预编轮子 | 1. Python and prebuilt wheels
@@ -65,6 +68,18 @@ mv "$SP/chaquopy/lib/"* "$RT/lib/"; rm -rf "$SP/chaquopy" "$SP"/chaquopy_*.dist-
 # 标准库里的构建配置记着上游构建机的路径：只留 arm64 那份，路径换成占位 | the build configuration in the standard library records the upstream build machine's paths: keep only the arm64 one, paths replaced by a placeholder
 rm -f "$RT/py/lib/python3.13/_sysconfigdata__android_x86_64-linux-android.py"
 sed -i.bak -E 's#/Users/[A-Za-z0-9._-]+#/build#g' "$RT/py/lib/python3.13/_sysconfigdata__android_aarch64-linux-android.py"; rm -f "$RT/py/lib/python3.13/"*.bak
+
+# Python 的 zlib 模块改为静态链标准 zlib 1.3.1：系统 libz（安卓 13 的 1.2.11 等）在有 ARM CRC32 的真机上级别 9 压出的字节与电脑不同
+#   （解压一样，但覆盖层 CASC 档就不逐字节一致了，奥丁实测）；标准 zlib 的输出与 Mac 上 Python 的一致
+# Python's zlib module is rebuilt statically linked with stock zlib 1.3.1: the system libz (Android 13's 1.2.11 and others) compresses at level 9 to different bytes
+#   than the computer on real devices with ARM CRC32 (same when decompressed, but the overlay CASC archive is then not byte-identical; measured on the Thor);
+#   stock zlib gives the same output as Python on the Mac
+t "Python zlib 模块（标准 zlib 1.3.1 静态链）"
+rm -rf "$B/zlib-1.3.1" "$B/zmod"; tar -xzf "$DL/zlib-1.3.1.tar.gz" -C "$B"; mkdir -p "$B/zmod/clinic"; cp "$DL/zlibmodule.c" "$B/zmod/"; cp "$DL/zlibmodule.c.h" "$B/zmod/clinic/"
+Z=$B/zlib-1.3.1
+$CC -O2 -fPIC "$MAP" -w -shared -DPy_BUILD_CORE_MODULE -I"$B/target/include/python3.13" -I"$B/target/include/python3.13/internal" -I"$Z" "$B/zmod/zlibmodule.c" \
+  $(for f in adler32 compress crc32 deflate infback inffast inflate inftrees trees uncompr zutil; do echo "$Z/$f.c"; done) \
+  -Wl,--exclude-libs,ALL -Wl,-Bsymbolic -L"$RT/lib" -lpython3.13 -Wl,-z,max-page-size=16384 -o "$RT/py/lib/python3.13/lib-dynload/zlib.cpython-313-aarch64-linux-android.so"
 
 # 二、capstone（ctypes 加载包里 lib/libcapstone.so） | 2. capstone (ctypes loads lib/libcapstone.so inside the package)
 t "capstone 5.0.7"
@@ -151,7 +166,7 @@ find "$RT" -name __pycache__ -prune -exec rm -rf {} +
 find "$RT" -name '*.so' -o -name '*.so.*' | while read -r f; do $STRIP "$f" 2>/dev/null || true; done
 leak=$(LC_ALL=C grep -raoE -- "/Users/[A-Za-z0-9._-]+|$HOME" "$RT" "$J" | head -3 || true); [ -z "$leak" ] || { echo "运行时里带着本机路径：$leak"; exit 1; }
 (cd "$RT" && find . -type f | LC_ALL=C sort | sed 's#^\./##' | COPYFILE_DISABLE=1 zip -q -X -@ "$OUT/assets/dmgen/runtime.zip")
-{ echo "python=3.13.16-0 numpy=1.26.2 lz4=4.3.3 capstone=5.0.7 pillow=13.0.0 freetype=2.14.3 harfbuzz=14.5.0 zlib-ng=2.3.3 fonttools=4.67.0"
+{ echo "python=3.13.16-0 zlib(python)=1.3.1 numpy=1.26.2 lz4=4.3.3 capstone=5.0.7 pillow=13.0.0 freetype=2.14.3 harfbuzz=14.5.0 zlib-ng=2.3.3 fonttools=4.67.0"
   echo "spirv-tools=$SPVT spirv-headers=$SPVH"
   echo "xlate_source_sha=$XSHA"
   echo "script_sha=$(shasum -a 256 "$0" | cut -c1-16)"   # shell_apk.sh 据此与 xlate_source_sha 判断能否复用这份运行时 | shell_apk.sh reuses this runtime only when this and xlate_source_sha still match
