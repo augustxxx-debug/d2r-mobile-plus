@@ -42,6 +42,7 @@ run: \
 	$(B)/t_notice_geometry \
 	$(B)/t_oe \
 	$(B)/t_render_profile \
+	$(B)/t_graphics_gate \
 	$(B)/t_res_auto_policy \
 	$(B)/t_res_cap \
 	$(B)/t_uiscreen_frontend \
@@ -230,6 +231,8 @@ $(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
 
 $(B)/t_render_profile: t_render_profile.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_render_profile.c
+$(B)/t_graphics_gate: t_graphics_gate.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_graphics_gate.c
 $(B)/t_custom_readlog: t_custom_readlog.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_custom_readlog.c
 $(B)/t_crashfence: t_crashfence.c ../dm_crashfence.c ../dm_crashfence.h ../dm_custom.c ../dm_custom.h | $(B)

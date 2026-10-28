@@ -10,6 +10,23 @@ plugins { id 'com.android.application' }
 
 def prebuilt = project.findProperty('dmPrebuiltJni')
 
+// 版本号跟 iOS / Mac 同一来源（dm/tools/version.sh）：versionName = DM_VERSION（标签 vX.Y.Z），versionCode = DM_BUILD（沿提交历史单调递增的构建号，
+// 覆盖升级只增不减），BuildConfig.DM_VERSION_LABEL = 「1.0.0+91 · 674f5d5」给启动日志与分享摘要。没有 git 的源码副本（git archive 导出）读不到历史：
+// 退回 0.0.0 / 20000 并在构建输出里提醒；-PdmBuildNumber=<正整数> 可指定构建号（version.sh 的 DM_BUILD_NUMBER）
+// Version numbers from the same source as iOS / Mac (dm/tools/version.sh): versionName = DM_VERSION (tag vX.Y.Z), versionCode = DM_BUILD (build number
+// strictly increasing along the commit history, so upgrades only ever go up), BuildConfig.DM_VERSION_LABEL = "1.0.0+91 · 674f5d5" for the boot log and the share summary.
+// A source copy without git (git archive export) has no history: fall back to 0.0.0 / 20000 with a warning; -PdmBuildNumber=<positive integer> sets the build number (version.sh's DM_BUILD_NUMBER)
+def dmVersion = ['0.0.0', 20000, '0.0.0 · 无 git']
+try {
+    def env = [:]; if (project.findProperty('dmBuildNumber')) env['DM_BUILD_NUMBER'] = project.property('dmBuildNumber').toString()
+    def out = providers.exec {
+        commandLine 'bash', '-c', 'eval "$(bash "$0")"; printf "%s\n%s\n%s\n%s\n" "$DM_VERSION" "$DM_BUILD" "$DM_BUILD_SOURCE" "$DM_VERSION_LABEL"', file('../../tools/version.sh').absolutePath
+        environment env; ignoreExitValue true
+    }.standardOutput.asText.get().readLines()
+    if (out.size() >= 4 && out[2] != 'none' && out[1].isInteger() && out[1].toLong() < 2100000000L) dmVersion = [out[0], out[1].toInteger(), out[3]]
+    else logger.warn("dm: version.sh gave no usable build number (${out}); using ${dmVersion}")
+} catch (Exception e) { logger.warn("dm: version.sh failed (${e.message}); using ${dmVersion}") }
+
 // 启动文案取自统一中英表，生成目录只在 build 下，不入库。
 // Startup text comes from the shared table; generated resources stay under build.
 def startupStrings = layout.buildDirectory.dir('generated/androidStrings')
@@ -39,10 +56,10 @@ android {
         buildConfigField 'String', 'DM_PRODUCT', "\"${file('../../PRODUCT').readLines()[0].trim()}\""
         minSdk 31
         targetSdk 36
-        // 跟发布版本走：versionName = 发布版本号，versionCode = 主 × 10000 + 次 × 100 + 修订（2.0.0 → 20000），只增不减，旧版才能被覆盖升级
-        // Follows the release: versionName = release version, versionCode = major × 10000 + minor × 100 + patch (2.0.0 → 20000), only ever increasing so older installs upgrade in place
-        versionCode 20000
-        versionName '2.0.0'
+        // 版本号见上面 dmVersion（dm/tools/version.sh）| version numbers: dmVersion above (dm/tools/version.sh)
+        versionCode dmVersion[1]
+        versionName dmVersion[0]
+        buildConfigField 'String', 'DM_VERSION_LABEL', "\"${dmVersion[2]}\""
         ndk { abiFilters 'arm64-v8a' }
         if (!prebuilt) externalNativeBuild { cmake {
             arguments "-DDM_GEN_DIR=${project.findProperty('dmGenDir') ?: ''}"

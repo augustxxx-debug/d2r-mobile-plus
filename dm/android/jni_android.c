@@ -23,6 +23,7 @@
 #include "vulkan_present.h"
 #include "touch_android.h"
 #include "lifecycle_dispatch.h"
+#include "fence_glue.h"
 #include "overlay_validate.h"
 #include "dm_overlay_contract.h"
 #include <sys/stat.h>
@@ -145,10 +146,13 @@ static void load_env_file(const char *dir) {
     fclose(fp);
 }
 
-JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env, jclass cls, jstring files, jstring ext, jstring src, jstring lang) {
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env, jclass cls, jstring files, jstring ext, jstring src, jstring lang, jstring version) {
     (void)cls;
     static int started; if (started) return 0;
     const char *f = (*env)->GetStringUTFChars(env, files, NULL), *x = (*env)->GetStringUTFChars(env, ext, NULL), *s = (*env)->GetStringUTFChars(env, src, NULL), *lg = (*env)->GetStringUTFChars(env, lang, NULL);
+    // 显示版本（build.gradle 从 dm/tools/version.sh 取的 DM_VERSION_LABEL，同 iOS 的 DMVersionLabel）：进环境给宿主与分享摘要，启动日志记一行
+    // Display version (DM_VERSION_LABEL that build.gradle takes from dm/tools/version.sh, as iOS's DMVersionLabel): into the environment for the host and the share summary, one boot-log line
+    if (version) { const char *v = (*env)->GetStringUTFChars(env, version, NULL); if (v && *v) setenv("DM_VERSION_LABEL", v, 1); (*env)->ReleaseStringUTFChars(env, version, v); }
     snprintf(g_files, sizeof g_files, "%s", f); snprintf(g_ext, sizeof g_ext, "%s", x); snprintf(g_src, sizeof g_src, "%s", s);
     // 启动时间线零点：Process.getStartUptimeMillis() 是 SystemClock.uptimeMillis（CLOCK_MONOTONIC），与 now_ns 同一时钟（见 main.c proc_start_mono_ns）
     // Boot timeline zero: Process.getStartUptimeMillis() is SystemClock.uptimeMillis (CLOCK_MONOTONIC), the same clock as now_ns (see main.c proc_start_mono_ns)
@@ -275,6 +279,7 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
     setenv("DM_HLE_SPIN_US", "30", 0);
     if (!getenv("DM_LANG") && *lg) setenv("DM_LANG", lg, 0);   // 首次安装的语言按系统首选（同 iOS CFLocaleCopyPreferredLanguages，见 dm_i18n.c） | first-install language follows the system preference (as iOS CFLocaleCopyPreferredLanguages, see dm_i18n.c)
     if (chdir(g_files)) LOG("【红】chdir %s 失败 errno %d", g_files, errno);
+    { const char *v = getenv("DM_VERSION_LABEL"); LOG("boot: 显示版本 %s", v && *v ? v : "（无）"); }
     (*env)->ReleaseStringUTFChars(env, files, f); (*env)->ReleaseStringUTFChars(env, ext, x); (*env)->ReleaseStringUTFChars(env, src, s); (*env)->ReleaseStringUTFChars(env, lang, lg);
     if (n <= 0) return -2;
     char required[1300];
@@ -342,8 +347,26 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeTouch(JNIEnv *env
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeFocus(JNIEnv *env, jclass cls, jint ev) {
     (void)env; (void)cls;
     dm_android_touch_focus(ev == 2 || ev == 3);
+    // 崩溃围栏（闸 1，fence_glue.h）：进后台清运行标记（画面 5 秒没动 = 卡死，标记留着）、回前台重写；与 iOS main.m 的场景回调同一套。UI 线程直接调，只做文件操作
+    // Crash fence (gate 1, fence_glue.h): background clears the running marker (no present for 5 s = frozen, marker kept), foreground writes it again; the same as iOS main.m's scene callbacks. Called on the UI thread, file operations only
+    { void dm_crashfence_background(void), dm_crashfence_resume(void); static const dm_fence_hooks fence = { dm_crashfence_background, dm_crashfence_resume }; dm_android_fence_event(ev, &fence); }
     if (lifecycle_ready()) {
         dm_lifecycle_post(&g_lifecycle, ev);
         __android_log_print(ANDROID_LOG_INFO, "dm-lifecycle", "UI posted event=%d", ev);
     }
+}
+
+// 系统内存告警（DmActivity.onTrimMemory ≥ RUNNING_CRITICAL）：崩溃围栏记下，之后在前台没了算内存不足（同 iOS applicationDidReceiveMemoryWarning）
+// System memory warning (DmActivity.onTrimMemory >= RUNNING_CRITICAL): the crash fence notes it; vanishing in the foreground afterwards counts as out of memory (as iOS applicationDidReceiveMemoryWarning)
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeMemoryWarning(JNIEnv *env, jclass cls, jint level) {
+    (void)env; (void)cls;
+    if (dm_android_trim_is_warning(level)) { void dm_crashfence_note_memory(void); dm_crashfence_note_memory(); LOG("内存：系统告警 level=%d", level); }
+}
+// Activity 结束（onDestroy 且 isFinishing）：宿主优雅退出（hle_lifecycle.c：停后台线程、暂停音频、图形挂起、清崩溃围栏标记，然后 _exit(0)）。
+// 会话绑定进程：下次打开是新进程，不复用半销毁的全局对象（README「本后端尚未接入进程内第二次初始化」）
+// Activity finishing (onDestroy with isFinishing): graceful host exit (hle_lifecycle.c: stop background threads, pause audio, suspend graphics, clear the crash-fence marker, then _exit(0)).
+// The session is bound to the process: the next launch is a new process, no half-destroyed globals are reused (README: no in-process second initialisation yet)
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeShutdown(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls;
+    void dm_host_shutdown(const char *why); dm_host_shutdown("Android Activity 结束");
 }

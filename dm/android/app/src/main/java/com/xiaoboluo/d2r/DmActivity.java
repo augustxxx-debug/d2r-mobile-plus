@@ -42,11 +42,13 @@ import java.nio.file.Files;
 import java.util.Locale;
 
 public class DmActivity extends Activity implements SurfaceHolder.Callback, DisplayManager.DisplayListener {
-    static native int nativeStart(String filesDir, String extDir, String romfsSrc, String lang);
+    static native int nativeStart(String filesDir, String extDir, String romfsSrc, String lang, String versionLabel);
     static native void nativeSurface(Object surface, int w, int h);
     static native void nativeRefresh(float hz);
     static native void nativeTouch(int n, int[] ids, float[] xs, float[] ys);
     static native void nativeFocus(int ev);
+    static native void nativeMemoryWarning(int level);   // 崩溃围栏：系统内存告警 | crash fence: system memory warning
+    static native void nativeShutdown();                  // 宿主优雅退出（Activity 结束时）| graceful host exit (when the Activity finishes)
     static native void nativeTextResult(long id, boolean accepted, String text);
 
     private static WeakReference<DmActivity> current = new WeakReference<>(null);
@@ -253,7 +255,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         File data = new File(downloads, "S2X/D2R Mobile/data"), earlier = new File(downloads, "data");
         if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
         String src = data.getAbsolutePath();
-        int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag());
+        int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
         if (result < 0) {
             int resource = switch (result) {
                 case -2 -> R.string.dmAndroidMissingData;
@@ -393,7 +395,13 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     @Override protected void onPause() { resumed = false; if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
     @Override protected void onStart() { super.onStart(); if (started) nativeFocus(2); }
     @Override protected void onStop() { if (started) nativeFocus(1); com.xiaoboluo.d2r.widget.HeroWidgetProvider.requestUpdate(this); super.onStop(); }
-    @Override protected void onDestroy() { if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
+    // 崩溃围栏（闸 1）：内存告警记进运行标记；Activity 真正结束时让宿主优雅退出（清标记、_exit），进程不复用
+    // Crash fence (gate 1): memory warnings go into the running marker; when the Activity really finishes the host exits gracefully (marker cleared, _exit), the process is not reused
+    @Override public void onTrimMemory(int level) { super.onTrimMemory(level); if (started) nativeMemoryWarning(level); }
+    @Override public void onLowMemory() { super.onLowMemory(); if (started) nativeMemoryWarning(TRIM_MEMORY_RUNNING_CRITICAL); }
+    @Override protected void onDestroy() {
+        if (started && isFinishing()) nativeShutdown();   /* 不返回：宿主 _exit(0) | does not return: the host _exit(0)s */
+        if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
     @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) immersive(); else releaseTouches(); }
 
     @Override public void surfaceCreated(SurfaceHolder h) {}

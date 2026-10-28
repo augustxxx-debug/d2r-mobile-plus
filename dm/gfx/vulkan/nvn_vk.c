@@ -90,7 +90,11 @@ double mtl_display_refresh(void) { double hz = front_display_refresh(NULL, 0); r
 int mtl_display_hz(void) { return (int)(mtl_display_refresh() + 0.5); }
 double dm_pace_hz(double screen_hz, double floor_hz) { return nvn_pace_hz(screen_hz, floor_hz); }
 __attribute__((weak)) int dm_fps_setting(void){return 60;}
-int mtl_fps_target(void){return dm_fps_setting()==30?30:60;}
+int mtl_fps_target(void){return dm_fps_setting()==30?30:60;}   // 120 档落到 60（Android 没有显示节拍器与 120 帧路径）| the 120 stop falls to 60 (no display pacer / 120 fps path on Android)
+// Plus 的超分（MetalFX）与整帧输出分辨率档在 Android 没有实现：告诉设置页藏行、画质档固定原版（dm_custom.c 的弱定义缺省为支持）
+// Plus's upscaling (MetalFX) and whole-frame output resolution level are not implemented on Android: the Graphics tab hides the rows and the profile stays Original (dm_custom.c's weak definitions default to supported)
+int mtl_upscale_supported(void){return 0;}
+int dm_render_res_supported(void){return 0;}
 int mtl_link_active(void){return 0;}
 int mtl_link_wait_tick(uint64_t timeout){(void)timeout;return 0;}
 int mtl_warm_wait(int timeout){(void)timeout;return 0;}
