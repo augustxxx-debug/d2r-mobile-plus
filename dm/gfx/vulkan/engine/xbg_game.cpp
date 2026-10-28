@@ -24,6 +24,7 @@ extern "C" int xbg_completion_wait_selftest(char *report,size_t bytes);
 #include "xbg_spirv_quad.h"
 #include "xbg_spirv_warp.h"
 #include "xbg_spirv_laneid.h"
+#include "xbg_laneid_probe_run.h"
 #include "xbg_laneid_spv.h"
 #include "xbg_spirv_ldc.h"
 #include "xbg_spirv_temps.h"
@@ -1895,37 +1896,21 @@ void laneid_rewrite(std::vector<uint32_t> &words,uint32_t stage,const char *key,
 // 启动自检：跑一次嵌入的同形探针（xbg_laneid_probe.comp：64 线程、有 shuffle，各写自己的 gl_SubgroupInvocationID），数不同值。返回 1 可用、0 不可用、-1 没跑成。
 // Start-up self-test: run the embedded probe once (xbg_laneid_probe.comp: 64 invocations, with a shuffle, each writes its gl_SubgroupInvocationID) and count the
 // distinct values. Returns 1 usable, 0 unusable, -1 could not run.
+// 执行体与回收规则在 xbg_laneid_probe_run.cpp（先解除映射再释放；fence 没等到就先等队列静止，等不到就不回收）。等待时限缺省 2 s，DM_GFX_LANEID_PROBE_TIMEOUT_NS 可改
+// （设 0 复现超时路径）。| The body and its teardown rules live in xbg_laneid_probe_run.cpp (unmap before free; a missed fence waits the queue idle first and keeps the
+// objects if it cannot). The wait limit defaults to 2 s; DM_GFX_LANEID_PROBE_TIMEOUT_NS overrides it (0 reproduces the timeout path).
 int laneid_probe(unsigned &distinct,unsigned &expect){
     distinct=0;expect=subgroup.subgroupSize<64?subgroup.subgroupSize:64;if(!expect)return -1;
     if(!(subgroup.supportedStages&VK_SHADER_STAGE_COMPUTE_BIT) || !(subgroup.supportedOperations&VK_SUBGROUP_FEATURE_SHUFFLE_BIT))return -1;
-    VkDevice d=cfg.device;VkBuffer buf=VK_NULL_HANDLE;VkDeviceMemory mem=VK_NULL_HANDLE;VkDescriptorSetLayout dsl=VK_NULL_HANDLE;VkPipelineLayout pl=VK_NULL_HANDLE;VkShaderModule sm=VK_NULL_HANDLE;VkPipeline pipe=VK_NULL_HANDLE;VkDescriptorPool dp=VK_NULL_HANDLE;VkCommandBuffer cb=VK_NULL_HANDLE;VkFence fence=VK_NULL_HANDLE;
-    int rc=-1;const VkDeviceSize bytes=64*4;
-    auto cleanup=[&]{if(fence)vkDestroyFence(d,fence,nullptr);if(cb)vkFreeCommandBuffers(d,command_pool,1,&cb);if(dp)vkDestroyDescriptorPool(d,dp,nullptr);if(pipe)vkDestroyPipeline(d,pipe,nullptr);if(sm)vkDestroyShaderModule(d,sm,nullptr);if(pl)vkDestroyPipelineLayout(d,pl,nullptr);if(dsl)vkDestroyDescriptorSetLayout(d,dsl,nullptr);if(mem)vkFreeMemory(d,mem,nullptr);if(buf)vkDestroyBuffer(d,buf,nullptr);};
-    do{
-        VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=bytes;bi.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;bi.sharingMode=VK_SHARING_MODE_EXCLUSIVE;if(vkCreateBuffer(d,&bi,nullptr,&buf)!=VK_SUCCESS)break;
-        VkMemoryRequirements req;vkGetBufferMemoryRequirements(d,buf,&req);uint32_t type=UINT32_MAX;const VkMemoryPropertyFlags want=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-        for(uint32_t i=0;i<memories.memoryTypeCount;i++)if((req.memoryTypeBits&(1u<<i)) && (memories.memoryTypes[i].propertyFlags&want)==want){type=i;break;}
-        if(type==UINT32_MAX)break;VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=req.size;ai.memoryTypeIndex=type;if(vkAllocateMemory(d,&ai,nullptr,&mem)!=VK_SUCCESS || vkBindBufferMemory(d,buf,mem,0)!=VK_SUCCESS)break;
-        void *map=nullptr;if(vkMapMemory(d,mem,0,bytes,0,&map)!=VK_SUCCESS)break;memset(map,0xff,size_t(bytes));
-        VkDescriptorSetLayoutBinding b{0,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr};VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};dli.bindingCount=1;dli.pBindings=&b;if(vkCreateDescriptorSetLayout(d,&dli,nullptr,&dsl)!=VK_SUCCESS)break;
-        VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pli.setLayoutCount=1;pli.pSetLayouts=&dsl;if(vkCreatePipelineLayout(d,&pli,nullptr,&pl)!=VK_SUCCESS)break;
-        VkShaderModuleCreateInfo smi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};smi.codeSize=sizeof(xbg_laneid_probe_cs);smi.pCode=xbg_laneid_probe_cs;if(vkCreateShaderModule(d,&smi,nullptr,&sm)!=VK_SUCCESS)break;
-        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,nullptr,0,VK_SHADER_STAGE_COMPUTE_BIT,sm,"main",nullptr};ci.layout=pl;if(vkCreateComputePipelines(d,VK_NULL_HANDLE,1,&ci,nullptr,&pipe)!=VK_SUCCESS)break;
-        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1};VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};dpi.maxSets=1;dpi.poolSizeCount=1;dpi.pPoolSizes=&ps;if(vkCreateDescriptorPool(d,&dpi,nullptr,&dp)!=VK_SUCCESS)break;
-        VkDescriptorSetAllocateInfo dsa{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};dsa.descriptorPool=dp;dsa.descriptorSetCount=1;dsa.pSetLayouts=&dsl;VkDescriptorSet ds;if(vkAllocateDescriptorSets(d,&dsa,&ds)!=VK_SUCCESS)break;
-        VkDescriptorBufferInfo dbi{buf,0,bytes};VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};w.dstSet=ds;w.dstBinding=0;w.descriptorCount=1;w.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;w.pBufferInfo=&dbi;vkUpdateDescriptorSets(d,1,&w,0,nullptr);
-        VkCommandBufferAllocateInfo cba{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};cba.commandPool=command_pool;cba.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;cba.commandBufferCount=1;if(vkAllocateCommandBuffers(d,&cba,&cb)!=VK_SUCCESS)break;
-        VkCommandBufferBeginInfo bgi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};bgi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;if(vkBeginCommandBuffer(cb,&bgi)!=VK_SUCCESS)break;
-        vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pipe);vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pl,0,1,&ds,0,nullptr);vkCmdDispatch(cb,1,1,1);
-        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};mb.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;mb.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&mb,0,nullptr,0,nullptr);
-        if(vkEndCommandBuffer(cb)!=VK_SUCCESS)break;
-        VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};if(vkCreateFence(d,&fi,nullptr,&fence)!=VK_SUCCESS)break;
-        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};si.commandBufferCount=1;si.pCommandBuffers=&cb;if(vkQueueSubmit(cfg.queue,1,&si,fence)!=VK_SUCCESS)break;
-        if(vkWaitForFences(d,1,&fence,VK_TRUE,2000000000ull)!=VK_SUCCESS)break;   // 2 s
-        const uint32_t *o=static_cast<const uint32_t*>(map);uint64_t seen=0;for(unsigned i=0;i<64;i++){uint32_t id=o[i]&0xffff;if(id<64)seen|=uint64_t(1)<<id;}
-        for(unsigned i=0;i<64;i++)distinct+=unsigned((seen>>i)&1);rc=distinct>=expect?1:0;
-    }while(false);
-    cleanup();return rc;
+    static const XbgProbeVk vk{vkCreateBuffer,vkDestroyBuffer,vkGetBufferMemoryRequirements,vkAllocateMemory,vkFreeMemory,vkBindBufferMemory,vkMapMemory,vkUnmapMemory,
+        vkCreateDescriptorSetLayout,vkDestroyDescriptorSetLayout,vkCreatePipelineLayout,vkDestroyPipelineLayout,vkCreateShaderModule,vkDestroyShaderModule,vkCreateComputePipelines,vkDestroyPipeline,
+        vkCreateDescriptorPool,vkDestroyDescriptorPool,vkAllocateDescriptorSets,vkUpdateDescriptorSets,vkAllocateCommandBuffers,vkFreeCommandBuffers,vkBeginCommandBuffer,vkEndCommandBuffer,
+        vkCmdBindPipeline,vkCmdBindDescriptorSets,vkCmdDispatch,vkCmdPipelineBarrier,vkCreateFence,vkDestroyFence,vkQueueSubmit,vkWaitForFences,vkQueueWaitIdle};
+    uint64_t timeout=2000000000ull;if(const char *e=getenv("DM_GFX_LANEID_PROBE_TIMEOUT_NS"))timeout=strtoull(e,nullptr,10);
+    XbgProbeIn in{cfg.device,cfg.queue,command_pool,&memories,xbg_laneid_probe_cs,sizeof(xbg_laneid_probe_cs),expect,timeout};XbgProbeOut out;
+    int rc=xbg_laneid_probe_run(vk,in,out);distinct=out.distinct;
+    if(out.submitted && out.wait!=VK_SUCCESS)xbg_logf("NVN laneid probe fence wait=%d timeout_ns=%llu queue idle=%d released=%d",int(out.wait),(unsigned long long)timeout,int(out.idle),int(out.released));
+    return rc;
 }
 // Two exact clean-ups of the translator's output, after the rewrites above (they match its form), in both module loaders. Each
 // is off unless the host asks; the Android app sets both to 1, and a marker file (1 / 0) still wins.
