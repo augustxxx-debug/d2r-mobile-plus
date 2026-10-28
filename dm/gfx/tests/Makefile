@@ -80,6 +80,9 @@ t_rts_state: t_rts_state.m ../../host/crash.c $(GFX) $(GFX_H)
 # 光追阴影六审剩余风险：当帧回退、槽的 GPU 生命周期、缓存预算与关闭释放 | Sixth-review remaining risks: same-frame fallback, GPU lifetime of slots, cache budget and release on switch-off
 t_gcap: t_gcap.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_gcap.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+# Metal 抓帧层与常驻内存（光追内存 P1）：抓帧层关着时整帧光追常驻不涨，开着时逐帧上涨 | Metal capture layer and resident memory (ray-tracing memory P1): with the capture layer off whole ray-traced frames do not grow resident memory, with it on they do
+t_capmem: t_capmem.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_capmem.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rts_gate: t_rts_gate.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rts_gate.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pso_skey: t_pso_skey.m ../nvn/nvn_pso_skey.h ../nvn/nvn_obj.h
@@ -112,6 +115,7 @@ run: \
 	t_pso_skey \
 	t_refl \
 	t_reorder_chain \
+	t_capmem \
 	t_gcap \
 	t_rts_gate \
 	t_rts_flicker \
@@ -163,6 +167,7 @@ run: \
 	./t_pso_skey
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
+	@./t_capmem; s=$$?; if [ $$s = 77 ]; then echo "SKIP t_capmem"; elif [ $$s != 0 ]; then exit $$s; fi   # 抓帧层与常驻内存（自己起两个子进程，一个带 METAL_CAPTURE_ENABLED）；77 = 机器不支持光追 | capture layer and resident memory (starts two children itself, one with METAL_CAPTURE_ENABLED); 77 = no ray tracing
 	./t_gcap   # GPU 抓帧（DM_GPU_CAPTURE）；测试自己设 METAL_CAPTURE_ENABLED | GPU capture (DM_GPU_CAPTURE); the test sets METAL_CAPTURE_ENABLED itself
 	@for t in t_rts_gate t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
 	python3 test_tbdr_budget.py

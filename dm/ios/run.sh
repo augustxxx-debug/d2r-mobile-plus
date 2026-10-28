@@ -61,9 +61,12 @@ if [ "$1" = build ]; then
   if [ -z "$DF" ]; then SDIRTY=clean; else SDIRTY="$(echo "$DF" | wc -l | tr -d ' '):$(git diff HEAD 2>/dev/null | shasum -a 256 | cut -c1-12):$(echo "$DF" | paste -sd, -)"; fi   # 文件列表记仓库相对路径（五审 Q5-04：只记文件名分不清是不是那三份元数据） | the list holds repo-relative paths (fifth review Q5-04: basenames alone cannot tell the three metadata files apart)
   CHAIN=$(sed -n 's/^#define DMSH_CHAIN "\(.*\)"/\1/p' ../gfx/nvn/dmsh_chain.h)
   FONTFP=none; [ -n "${DM_UI_FONT:-}" ] && [ -f "$DM_UI_FONT" ] && FONTFP=$(shasum -a 256 "$DM_UI_FONT" | cut -c1-12)
-  # GPU 抓帧（DM_GPU_CAPTURE，图形验收链）：只有 run.sh 自己出的 dev 包在 Info.plist 带 MetalCaptureEnabled；DM_GEN_ONLY 之后由 testflight / adhoc 归档的正式包不带（project.yml 的「Metal 抓帧开关」构建步骤按 DM_METAL_CAPTURE 写 / 删）
-  # GPU capture (DM_GPU_CAPTURE, graphics acceptance chain): only the dev package run.sh builds itself carries MetalCaptureEnabled in Info.plist; release packages archived by testflight / adhoc after DM_GEN_ONLY do not (the "Metal capture switch" build step in project.yml writes / removes it by DM_METAL_CAPTURE)
-  MCAP=NO; [ "${DM_GEN_ONLY:-}" = 1 ] || MCAP=YES
+  # GPU 抓帧（DM_GPU_CAPTURE，图形验收链）：只有 run.sh 带 DM_METAL_CAPTURE=1 出的 dev 包（抓帧包）在 Info.plist 带 MetalCaptureEnabled；DM_GEN_ONLY 之后由 testflight / adhoc 归档的正式包不带（project.yml 的「Metal 抓帧开关」构建步骤按 DM_METAL_CAPTURE 写 / 删）
+  # GPU capture (DM_GPU_CAPTURE, graphics acceptance chain): only a dev package run.sh builds with DM_METAL_CAPTURE=1 (a capture package) carries MetalCaptureEnabled in Info.plist; release packages archived by testflight / adhoc after DM_GEN_ONLY do not (the "Metal capture switch" build step in project.yml writes / removes it by DM_METAL_CAPTURE)
+  # 抓帧层开着时常驻内存逐帧上涨（真机 a8161cb：关光追也每 300 帧涨约 190 MB），所以 dev 包缺省也不带；只有显式 DM_METAL_CAPTURE=1 出的「抓帧包」带，专给 DM_GPU_CAPTURE 用，不能拿来测内存 / 长测
+  # with the capture layer on, resident memory grows every frame (device a8161cb: about 190 MB per 300 frames even with ray tracing off), so dev packages do not carry it by default either; only a "capture package" built with an explicit DM_METAL_CAPTURE=1 does, for DM_GPU_CAPTURE only, never for memory / long tests
+  MCAP=NO
+  if [ "${DM_METAL_CAPTURE:-}" = 1 ] && [ "${DM_GEN_ONLY:-}" != 1 ]; then MCAP=YES; t "⚠️ 抓帧包（DM_METAL_CAPTURE=1）：Info.plist 带 MetalCaptureEnabled，常驻内存逐帧上涨，只用于 DM_GPU_CAPTURE，不能测内存 / 长测"; fi
   BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default};capture=${MCAP}"
   printf 'DM_SOURCE_COMMIT = %s\nDM_SOURCE_DIRTY = %s\nDM_BUILD_INPUTS = %s\n' "$SC" "$SDIRTY" "$BINPUTS" >> Gen/dm.xcconfig
   printf 'DM_METAL_CAPTURE = %s\n' "$MCAP" >> Gen/dm.xcconfig
