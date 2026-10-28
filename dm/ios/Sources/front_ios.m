@@ -153,6 +153,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     _rsCover=[[DmSwallowView alloc] initWithFrame:self.bounds]; _rsCover.backgroundColor=UIColor.blackColor; _rsCover.hidden=YES; _rsCover.userInteractionEnabled=YES;   // 开的时候挂到窗口上（restartCover） | Attached to the window when turned on (restartCover)
     { extern void (*g_dm_restart_cover_hook)(int); g_dm_restart_cover_hook=restart_cover_hook; }
     _navigation=0; [self navigationMode:atomic_load(&g_touch_navigation)];
+    LOG("输入模式：触屏（启动缺省；有手柄输入再切）");   // 分享诊断日志摘要取最后一条「输入模式：」（dm_sharelog.m） | the share-log summary takes the last "输入模式：" (input mode) line
     return self;
 }
 - (void)safeAreaInsetsDidChange { [super safeAreaInsetsDidChange]; [self setNeedsLayout]; }
@@ -183,7 +184,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 - (void)hudBlocked:(int)n { _overlay.hudBlocked=n>0; _overlay.dialogOnly=n<0; dm_tc_set_joy_block(&_controls,n<0); [_overlay setNeedsDisplay]; }   // 只开着讲话文字框 / 对话菜单：点底座那一下不起摇杆（只关它，人不走） | only the speech text box / dialogue menu is open: a tap on the base starts no stick (it only closes it, the character does not move)
 // 前端页面（主菜单 / 选角 / 建角 / 读取画面，即不在局内）：不显示摇杆与技能圆钮，触点直接当原生点击交给游戏界面（dm_ui_touch → 鼠标消息，dm_cursor.c）
 // Front-end pages (main menu / character select / character creation / loading screen, i.e. not in a run): no stick or round skill buttons shown; touch points are given straight to the game UI as native clicks (dm_ui_touch → mouse messages, dm_cursor.c)
-- (void)padMode:(BOOL)pad { BOOL same=(_padMode==pad); _padMode=pad; _overlay.hidden=_feMode; _overlay.padMode=pad; [_overlay setNeedsDisplay]; _info.hidden=_feMode; /* 手柄模式不再整层藏：覆盖层按 dm_hud_mask.h 只画经验行文字（用户 2026-10-28） | controller mode no longer hides the whole layer: the overlay draws only the experience line per dm_hud_mask.h (user 2026-10-28) */ if(same) return; if(pad) { _tipUntil=-2; dm_tc_cancel_all(&_controls); [self pushFrom:"padmode" phase:"none"]; } }   // 手柄模式藏触屏控件层（dm_gamepad.m 回调） | Controller mode hides the touch controls layer (dm_gamepad.m callback)
+- (void)padMode:(BOOL)pad { BOOL same=(_padMode==pad); _padMode=pad; _overlay.hidden=_feMode; _overlay.padMode=pad; [_overlay setNeedsDisplay]; _info.hidden=_feMode; /* 手柄模式不再整层藏：覆盖层按 dm_hud_mask.h 只画经验行文字（用户 2026-10-28） | controller mode no longer hides the whole layer: the overlay draws only the experience line per dm_hud_mask.h (user 2026-10-28) */ if(same) return; LOG("输入模式：%s", pad ? "手柄（覆盖层只画经验行 Lv · % · FPS）" : "触屏"); if(pad) { _tipUntil=-2; dm_tc_cancel_all(&_controls); [self pushFrom:"padmode" phase:"none"]; } }   // 手柄模式藏触屏控件层（dm_gamepad.m 回调） | Controller mode hides the touch controls layer (dm_gamepad.m callback)
 - (void)frontendMode:(BOOL)fe { _feMode=fe; _overlay.hidden=fe; _info.hidden=fe; if(fe) { _pendEnd=nil; _finalAsked=NO; for(int i_=0;i_<16;i_++) _slot[i_]=nil; dm_tc_cancel_all(&_controls); [self pushFrom:"frontend" phase:"none"]; } }
 - (void)navigationMode:(int)n {
     if (_navigation==n) return;
