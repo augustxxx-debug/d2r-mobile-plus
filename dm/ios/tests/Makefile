@@ -71,6 +71,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_version.py
 	python3 test_touch_layout_options.py
 	python3 test_touch_layout_language.py
+	python3 test_community_entry.py
 	$(call fixture_test,t_native_binding)
 	$(call fixture_test,t_game_bridge)
 	./t_binding_freshness

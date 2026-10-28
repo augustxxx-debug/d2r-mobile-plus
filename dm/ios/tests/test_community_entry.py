@@ -1,0 +1,165 @@
+"""游戏内「社区入口」：暂停菜单「加入社区讨论」行（触屏两份 / 手柄两份 / Mac App 两份）、选项「自定义」页末尾的「关于」组、
+两处共用的游戏内提示框（边框 15 片 + 标题 + 三行正文 + 复制 / 确定两颗按钮，全部屏外起步，宿主 dm_community.c 写字摆位）；
+六种语言的文字按字宽估算不压边框；宿主 / 外壳 / 分享日志摘要键 / 更新日志都接上。
+In-game community entry: the pause menu's "Join the community" row (two touch layouts / two controller layouts / two Mac App layouts), the "About" group at the end of the Custom options page,
+the in-game notice box the two share (15 frame tiles + title + three body lines + Copy / OK buttons, all starting off screen; the host dm_community.c writes text and places them);
+six languages fit by estimated glyph width; host / shells / share-log summary keys / changelog are wired up."""
+import os
+import re
+import sys
+import unittest
+from pathlib import Path
+
+DM = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(DM / 'ios' / 'tools'))
+os.environ.pop('MOVIE_FFMPEG', None); os.environ.pop('DM_OVERLAY_MAC', None)
+import touch_layout  # noqa: E402
+import dm_i18n  # noqa: E402
+
+BOX_W = 1560   # 同 test_safe_notice：边框 1800 减两侧边条与留白 | as test_safe_notice: the 1800 frame minus edge strips and margins
+BTN_W = 400    # 原版前端中号按钮 470 宽，字留 400 | the original medium front-end button is 470 wide, 400 for text
+PAUSE_BTN_W = 600   # 暂停菜单按钮上的字（「分享诊断日志」同一颗按钮；现有最长的西语「Compartir diagnóstico」按同一估算正好 588） | text on a pause-menu button (the same button as "Share Diagnostics"; the longest existing Spanish "Compartir diagnóstico" estimates to 588 by the same rule)
+
+
+def est_width(line, pt):
+    return sum(pt if re.match(r'[ᄀ-ᇿ　-鿿가-힯＀-￯]', ch) else pt * 0.7 for ch in line)
+
+
+def fake_pause(garden):   # 原版暂停菜单的骨架：只放 _pause_no_help 要找的按钮，位置照原版 | skeleton of the original pause menu: only the buttons _pause_no_help looks for, at the original positions
+    def btn(name, y, text, msg, anchor=''):
+        return ('        {\n            "type": "ButtonWidget", "name": "%s",\n            "fields": {\n                "rect": { "x": 564, "y": %d },\n%s'
+                '                "filename": "Controller/Panel/EscapeMenu/EscapeOptions_Button",\n                "textString": "%s",\n                "onClickMessage": "%s",\n'
+                '                "pointSize": "$MediumLargeFontSize",\n            }\n        }' % (name, y, anchor, text, msg))
+    if garden:
+        rows = [btn('MessageLog', 278, '@minipanelmessage', 'PanelManager:OpenPanel:MessageLogPanel'), btn('Settings', 428, '@OptionsHD', 'PanelManager:OpenPanel:SettingsPanel'),
+                btn('Help', 578, '@minipanelHelp', 'PanelManager:OpenPanel:HelpPanel'), btn('Exit', 728, '@SaveAndExit', 'PausePanelMessage:ExitGame'),
+                btn('LootFilter', 878, '@LootFilter', 'PanelManager:OpenPanel:LootFilterPanel'), btn('Chronicle', 1028, '@Chronicle', 'PanelManager:OpenPanel:ChroniclePanel')]
+        bg = '        { "type": "ImageWidget", "name": "EscapeOptionsBG", "fields": { "rect": { "x": 0, "y": 0 }, "filename": "Controller/Panel/EscapeMenu/EscapeOptionsBG" } }'
+    else:
+        rows = [btn('MessageLog', 428, '@minipanelmessage', 'PanelManager:OpenPanel:MessageLogPanel'), btn('Settings', 578, '@OptionsHD', 'PanelManager:OpenPanel:SettingsPanel'),
+                btn('Help', 728, '@minipanelHelp', 'PanelManager:OpenPanel:HelpPanel'), btn('Exit', 878, '@SaveAndExit', 'PausePanelMessage:ExitGame')]
+        bg = '        { "type": "ImageWidget", "name": "EscapeOptionsBGClassic", "fields": { "rect": { "x": 0, "y": 0 }, "filename": "Controller/Panel/EscapeMenu/EscapeOptionsBGClassic" } }'
+    return '{\n    "basedOn": "PauseLayoutHD.json",\n    "type": "PausePanel", "name": "PauseLayout%s",\n    "children": [\n%s,\n%s,\n    ]\n}\n' % ('Garden' if garden else '', bg, ',\n'.join(rows))
+
+
+def rect_y(text, name):
+    m = re.search(r'"name": "%s",\s*"fields": \{\s*"rect": \{ "x": 564, "y": (\d+)' % re.escape(name), text)
+    return int(m.group(1)) if m else None
+
+
+BOX = ['TouchCommTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchCommTitle', 'TouchCommDesc0', 'TouchCommDesc1', 'TouchCommDesc2', 'TouchCommCopyQq', 'TouchCommCopyLink', 'TouchCommOk']
+
+
+class PauseMenu(unittest.TestCase):
+    def check_rows(self, text, want):   # want：{按钮名: y}；相邻行中心距 ≥ 118（按钮图高 120 的手柄版最密排法），每行都在底图范围内 | want: {name: y}; adjacent centres >= 118 apart, every row within the background
+        ys = {}
+        for name, y in want.items():
+            self.assertEqual(rect_y(text, name), y, name); ys[name] = y
+        order = sorted(ys.values())
+        for a, b in zip(order, order[1:]): self.assertGreaterEqual(b - a, 118, (a, b))
+        self.assertGreaterEqual(order[0], 278); self.assertLessEqual(order[-1], 1125)
+
+    def test_touch_pause_has_community_row_and_box(self):
+        for garden, rel in ((False, 'controller/pauselayouthd.json'), (True, 'controller/pauselayoutgardenhd.json')):
+            out, _ = touch_layout.PRESENT[rel](fake_pause(garden))
+            self.assertIn('"name": "TouchCommunity"', out, rel); self.assertIn('"textString": "@dmCommunityJoin"', out)
+            self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunity"', out)
+            self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchShareLog"', out)   # 分享诊断日志仍在 | Share Diagnostics still there
+            for w in BOX: self.assertIn('"name": "%s"' % w, out, (rel, w))
+            self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommCopy"', out); self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommOk"', out)
+            if garden: self.check_rows(out, {'Settings': 278, 'Exit': 428, 'TouchRestart': 578, 'Chronicle': 728, 'MessageLog': 878, 'TouchCommunity': 1028})
+            else: self.check_rows(out, {'Settings': 428, 'Exit': 578, 'TouchRestart': 728, 'MessageLog': 878, 'TouchCommunity': 1028})
+            self.assertEqual(rect_y(out, 'Help'), None)   # 帮助挪走 | Help moved away
+            body = out[out.index('TouchCommTile00'):]
+            self.assertNotIn('"x": 9', re.sub(r'"x": 99999', '', body), 'the box starts off screen')
+
+    def test_pad_pause_rows(self):
+        # 手柄版：难度 / 退出 / 重开 / 选项（固定 y 653，屏幕正中那行只许是按了没后果的）/ 存放 / [编年史] / 分享诊断日志 / 加入社区讨论
+        # Controller: difficulty / exit / restart / options (fixed at y 653: the row at the screen centre must be one whose press has no consequence) / deposit / [chronicle] / share diagnostics / join the community
+        out = touch_layout.pad_pause(fake_pause(False), False, share=True)
+        self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'MessageLog': 903, 'TouchCommunity': 1028})
+        out = touch_layout.pad_pause(fake_pause(True), True, share=True)
+        self.check_rows(out, {'TouchPadDiff': 299, 'Exit': 417, 'TouchRestart': 535, 'Settings': 653, 'TouchPadStore': 771, 'Chronicle': 889, 'MessageLog': 1007, 'TouchCommunity': 1125})
+        # Mac App（没有系统分享面板）：少「分享诊断日志」，社区行接在它的位置上 | Mac App (no system share sheet): no Share Diagnostics; the community row takes its place
+        out = touch_layout.pad_pause(fake_pause(False), False, share=False)
+        self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'TouchCommunity': 903}); self.assertIsNone(rect_y(out, 'MessageLog'))   # 分享诊断日志那颗在屏外 | the Share Diagnostics button is off screen
+        out = touch_layout.pad_pause(fake_pause(True), True, share=False)
+        self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'Chronicle': 903, 'TouchCommunity': 1028})
+        for w in BOX: self.assertIn('"name": "%s"' % w, out, w)
+        self.assertNotIn('"anchor"', out[out.index('TouchCommTile00'):], 'controller / Mac box carries no anchor: the host places it from the panel rect')
+
+
+class OptionsPage(unittest.TestCase):
+    def setUp(self):
+        out, _ = touch_layout._custom_page('"name": "VideoOptionsPanel", "name": "OptionsTable"')
+        self.out = out
+
+    def test_about_group_and_box(self):
+        out = self.out
+        for w in ('TouchAboutRow', 'TouchAboutTitle', 'TouchAboutCommunityText', 'TouchCommunityOpt') + tuple(BOX): self.assertIn('"name": "%s"' % w, out, w)
+        self.assertIn('"text": "@dmCommunityAbout"', out); self.assertIn('"text": "@dmCommunityRow"', out); self.assertIn('"textString": "@dmCommunityOpen"', out)
+        self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityOpt"', out)
+        rows = out.index('"name": "TouchCustomRows"'); about = out.index('"name": "TouchAboutTitle"'); box = out.index('"name": "TouchCommTile00"'); scroll_end = out.index('"name": "TouchCustomSel"')
+        self.assertLess(rows, about); self.assertLess(about, scroll_end, 'the About group scrolls with the rows')
+        self.assertGreater(box, scroll_end, 'the box is outside the scroll view, drawn above it')
+        # 关于组接在最后一行（含测试假行）之后，容器高度把它算进去 | the About group follows the last row (including test dummy rows) and the container height includes it
+        h = int(re.search(r'"name": "TouchCustomRows", "fields": \{ "rect": \{ "x": 0, "y": 0, "width": 1500, "height": (\d+)', out).group(1))
+        y_about = int(re.search(r'"name": "TouchAboutRow", "fields": \{ "rect": \{ "x": 0, "y": (\d+)', out).group(1))
+        self.assertEqual(y_about, touch_layout._CUSTOM_H); self.assertEqual(h, touch_layout._CUSTOM_H + touch_layout._ABOUT_H)
+        self.assertEqual(touch_layout.pad_custom_page('"name": "VideoOptionsPanel", "name": "OptionsTable"'), out)
+
+
+class Text(unittest.TestCase):
+    def test_six_languages_fit(self):
+        rows = {r[0]: r[1:] for r in dm_i18n.rows()}
+        langs = ('中文', 'English', 'Español', 'Español MX', 'Русский', '한국어')
+        sample = {'dmCommunityQq': '1129913678', 'dmCommunityLink': 'https://github.com/example-owner/d2r-mobile-plus/discussions'}
+        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 36, BOX_W), ('dmCommunityLinkHint', 36, BOX_W),
+                               ('dmCommunityCopied', 36, BOX_W), ('dmCommunityCopyFail', 36, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
+                               ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000)):
+            texts = rows[key]
+            for lang, t in zip(langs, texts):
+                self.assertEqual(t.count('\n'), 0, (key, lang))
+                line = t.replace('%s', sample.get(key, ''))
+                self.assertLessEqual(est_width(line, pt), limit, (key, lang, line, est_width(line, pt)))
+        self.assertEqual(rows['dmCommunityQq'][1].count('%s'), 1); self.assertEqual(rows['dmCommunityLink'][1].count('%s'), 1)
+
+
+class Host(unittest.TestCase):
+    def test_host_wiring(self):
+        c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
+        for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', '"TouchCommCopy"', 'dm_padmode_page_keys(DM_BTN_A | DM_BTN_B)',
+                  '社区入口：已显示', '社区入口：复制 %s %s', '"群号" : "链接"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', 'TouchAboutRow'):
+            self.assertIn(s, c, s)
+        self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
+        self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
+        self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
+        self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))
+        custom = (DM / 'host' / 'dm_custom.c').read_text(encoding='utf-8')
+        self.assertIn('dm_community_available()', custom); self.assertIn('TouchAboutRow', custom)   # 手柄十字键能选到关于行、A 打开 | the D-pad reaches the About row and A opens it
+
+    def test_shells_hand_over_manifest_and_clipboard(self):
+        ios = (DM / 'ios' / 'Sources' / 'dm_update.m').read_text(encoding='utf-8')
+        self.assertIn('dm_community_manifest(', ios); self.assertIn('UIPasteboard', ios); self.assertIn('dm_community_copy_init(', ios)
+        self.assertNotIn('openURL', ios)   # 四审 Q4-04：仍不打开任何页面 | fourth review Q4-04: still opens no page
+        mac = (DM / 'host' / 'app_mac.m').read_text(encoding='utf-8')
+        self.assertIn('dm_community_manifest(', mac); self.assertIn('NSPasteboard', mac); self.assertIn('dm_community_copy_init(', mac)
+        main = (DM / 'host' / 'main.c').read_text(encoding='utf-8'); self.assertIn('dm_community_load()', main)
+        self.assertIn('dm_community_load()', (DM / 'ios' / 'Sources' / 'main.m').read_text(encoding='utf-8'))
+
+    def test_share_log_summary_keys(self):
+        share = (DM / 'ios' / 'Sources' / 'dm_sharelog.m').read_text(encoding='utf-8')
+        keys = re.search(r'static const char \*keys\[\] = \{([^}]*)\}', share).group(1)
+        mac = (DM / 'host' / 'front_mac.m').read_text(encoding='utf-8')
+        for k in ('社区入口：清单', '社区入口：已显示', '社区入口：复制'):
+            self.assertIn('"%s"' % k, keys, k); self.assertIn('@"%s"' % k, mac, k)
+
+    def test_docs(self):
+        for rel in ('CHANGELOG.md', 'CHANGELOG.zh-CN.md', 'README.md', 'README.zh-CN.md'):
+            self.assertIn('community', (DM.parent / rel).read_text(encoding='utf-8').lower(), rel)
+        sample = (DM.parent / 'docs' / 'community_manifest.sample.json').read_text(encoding='utf-8')
+        self.assertIn('"community"', sample); self.assertIn('"qq_group"', sample); self.assertIn('"github"', sample)
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=1)
