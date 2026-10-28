@@ -3,8 +3,11 @@
 // 64 道，于是 32–63 号车道不在计数里；D2R 的杂物、草地、流体与 PPR 着色器用线程束聚合追加建列表（最高的活跃车道用一次原子加
 // 预留 bitCount(选票) 个位置，各车道写到 基址 + bitCount(选票 & 低于自己的车道)），上半边的车道全算出同一个越过预留范围的位置，
 // 条目互相覆盖。这里照 Ryujinx 翻译器在宿主子组宽于 32 时的做法（InstEmitWarp / InstEmitMove / HelperFunctionManager），让每
-// 32 道各自当一个线程束：车道号取 id & 31，选票与掩码取第 id >> 5 个字，投票由本线程束的选票字回答，洗牌在本线程束里取
-// ((id & 0x60) | 源车道)。认不得的子组用法（子组大小、子组号、别的子组运算）一律不改。
+// 32 道各自当一个线程束：车道号取 id & 31，选票取第 id >> 5 个字，投票由本线程束的选票字回答，洗牌在本线程束里取
+// ((id & 0x60) | 源车道)。子组掩码（Eq / Ge / Gt / Le / Lt）不再读 builtin，而是按本线程束的车道号算出（Lt = (1 << (id & 31)) - 1，
+// Eq = 1 << (id & 31)，Le = Lt | Eq，Gt = ~Le，Ge = ~Lt），原来的整掩码 OpLoad / 取第 0 字的 OpAccessChain 删掉：Adreno 740 驱动
+// 512.676.53 在 cs_fluid_sim_accumulate_c 里只要读到 SubgroupLtMask 的第 1 字（哪怕永远选不中）就把 GPU 挂死（2026-10-28 奥丁上
+// 用 spv-override 逐项二分得出；算术掩码的改写版可跑）。认不得的子组用法（子组大小、子组号、别的子组运算）一律不改。
 // Compute shaders translated for 32-lane warps, run on 64- or 128-lane subgroups. The shader library translates for Maxwell's
 // warp (32 lanes): a ballot keeps only subgroupBallot(...).x, a subgroup mask only its word 0, the lane id is
 // gl_SubgroupInvocationID as is, and shuffle source lanes are computed in 0-31. Adreno's subgroups have 64 lanes, so lanes
@@ -14,7 +17,12 @@
 // other's entries. As the Ryujinx translator does when the host subgroup is wider than 32 (InstEmitWarp / InstEmitMove /
 // HelperFunctionManager), every 32 lanes here act as their own warp: the lane id is id & 31, ballots and masks take word
 // id >> 5, a vote is answered from the ballot word of the lane's warp, and a shuffle reads ((id & 0x60) | source lane) inside
-// that warp. Subgroup use this does not know (the subgroup size or id, other subgroup operations) leaves the module unchanged.
+// that warp. The subgroup masks (Eq / Ge / Gt / Le / Lt) are no longer read from the builtin but computed from the lane id
+// within the warp (Lt = (1 << (id & 31)) - 1, Eq = 1 << (id & 31), Le = Lt | Eq, Gt = ~Le, Ge = ~Lt), and the original whole-mask
+// OpLoad / word-0 OpAccessChain are dropped: the Adreno 740 driver 512.676.53 hangs the GPU in cs_fluid_sim_accumulate_c as soon
+// as word 1 of SubgroupLtMask is read, even when never selected (bisected with spv-override on the Thor, 2026-10-28; the
+// arithmetic-mask rewrite runs). Subgroup use this does not know (the subgroup size or id, other subgroup operations) leaves the
+// module unchanged.
 #include "xbg_spirv_warp.h"
 
 namespace {
@@ -22,7 +30,7 @@ enum : uint32_t {
     OpEntryPoint = 15, OpCapability = 17, OpTypeBool = 20, OpTypeInt = 21, OpTypeVector = 23, OpTypePointer = 32,
     OpConstantTrue = 41, OpConstant = 43, OpFunction = 54, OpVariable = 59, OpLoad = 61, OpAccessChain = 65,
     OpInBoundsAccessChain = 66, OpDecorate = 71, OpCompositeExtract = 81, OpBitcast = 124, OpSelect = 169,
-    OpIEqual = 170, OpINotEqual = 171, OpShiftRightLogical = 194, OpBitwiseOr = 197, OpBitwiseAnd = 199,
+    OpISub = 130, OpIEqual = 170, OpINotEqual = 171, OpShiftRightLogical = 194, OpShiftLeftLogical = 196, OpBitwiseOr = 197, OpBitwiseAnd = 199, OpNot = 200,
     OpGroupNonUniformFirst = 333, OpGroupNonUniformAll = 334, OpGroupNonUniformAny = 335, OpGroupNonUniformBallot = 339,
     OpGroupNonUniformShuffle = 345, OpGroupNonUniformLast = 366, OpSubgroupKHRFirst = 4421, OpSubgroupKHRLast = 4432,
     CapGroupNonUniformBallot = 64, DecBuiltIn = 11, StorageInput = 1, ModelGLCompute = 5,
@@ -67,6 +75,7 @@ size_t xbg_spirv_warp32(const uint32_t *in, size_t n, uint32_t subgroup_size, st
     std::vector<Type> types(bound, Type{0, 0, 0});   // 按id保存整数宽度/符号、向量元素/数量、指针类别/指向类型 | By id: integer width/sign, vector component/count, pointer class/pointee
     std::vector<uint32_t> var_type(bound, 0);        // 全局变量的指针类型 | Global variable pointer type
     std::vector<uint8_t> builtin(bound, 0);          // 1为lane builtin，2为Eq/Ge/Gt/Le/Lt掩码 | 1: lane builtin, 2: Eq/Ge/Gt/Le/Lt mask
+    std::vector<uint32_t> mask_builtin(bound, 0);    // 掩码变量的 BuiltIn 编号（4416 Eq … 4420 Lt） | the mask variable's BuiltIn number (4416 Eq ... 4420 Lt)
     std::vector<uint8_t> zero(bound, 0);             // 任意符号的32位整数0常量 | A 32-bit zero constant of either signedness
     size_t first_cap = 0, entry = 0, first_type = 0, first_func = 0, entry_count = 0;
     bool has_ballot_cap = false;
@@ -83,7 +92,7 @@ size_t xbg_spirv_warp32(const uint32_t *in, size_t n, uint32_t subgroup_size, st
                 uint32_t b = in[i + 3];
                 if (b == BuiltInSubgroupSize || b == BuiltInNumSubgroups || b == BuiltInSubgroupId) return 0;   // 使用真实子组几何信息 | Reads the real subgroup geometry
                 if (b == BuiltInSubgroupLocalInvocationId) { lane_var = in[i + 1]; builtin[lane_var] = 1; }
-                else if (b >= BuiltInSubgroupEqMask && b <= BuiltInSubgroupLtMask) builtin[in[i + 1]] = 2;
+                else if (b >= BuiltInSubgroupEqMask && b <= BuiltInSubgroupLtMask) { builtin[in[i + 1]] = 2; mask_builtin[in[i + 1]] = b; }
             }
             if (is_global_decl(op) && !first_type) first_type = i;
             if (op == OpTypeBool && wc == 2) t_bool = in[i + 1];
@@ -112,10 +121,11 @@ size_t xbg_spirv_warp32(const uint32_t *in, size_t n, uint32_t subgroup_size, st
     // function bodies; uses are checked in pass 3, so an OpPhi naming a later definition is still seen.
     std::vector<uint8_t> val(bound, 0);       // 1选票，2掩码load，3掩码指针 | 1 ballot, 2 mask load, 3 mask pointer
     std::vector<uint32_t> chain_mask(bound, 0);   // 掩码指针映射到掩码变量 | Mask pointer to mask variable
+    std::vector<uint32_t> load_mask(bound, 0);    // 整掩码 load 结果映射到掩码变量 | whole-mask load result to mask variable
     for (size_t i = first_func; i < n;) {
         uint32_t wc = in[i] >> 16, op = in[i] & 0xffff;
         if (op == OpGroupNonUniformBallot && wc == 5 && in[i + 2] < bound) val[in[i + 2]] = 1;
-        else if (op == OpLoad && wc >= 4 && in[i + 2] < bound && in[i + 3] < bound && builtin[in[i + 3]] == 2) val[in[i + 2]] = 2;
+        else if (op == OpLoad && wc >= 4 && in[i + 2] < bound && in[i + 3] < bound && builtin[in[i + 3]] == 2) { val[in[i + 2]] = 2; load_mask[in[i + 2]] = in[i + 3]; }
         else if ((op == OpAccessChain || op == OpInBoundsAccessChain) && wc >= 4 && in[i + 2] < bound && in[i + 3] < bound && builtin[in[i + 3]] == 2) { val[in[i + 2]] = 3; chain_mask[in[i + 2]] = in[i + 3]; }
         i += wc;
     }
@@ -123,6 +133,7 @@ size_t xbg_spirv_warp32(const uint32_t *in, size_t n, uint32_t subgroup_size, st
     // Pass 3: classify every instruction; a subgroup value used in any other way leaves the module unchanged.
     struct Site { size_t at; Kind kind; };
     std::vector<Site> sites;
+    size_t rewrites = 0;
     bool votes = false;
     for (size_t i = first_func; i < n;) {
         uint32_t wc = in[i] >> 16, op = in[i] & 0xffff;
@@ -152,11 +163,14 @@ size_t xbg_spirv_warp32(const uint32_t *in, size_t n, uint32_t subgroup_size, st
                       (w == 3 && (k == LaneLoad || k == ChainLoad || k == MaskLoad || k == MaskChain || k == WordExtract));
             if (!ok) return 0;
         }
-        if (k == LaneLoad || k == WordExtract || k == ChainLoad || k == VoteAll || k == VoteAny || k == Shuffle) sites.push_back({i, k});
+        // 掩码的整 load 与取字指针改写后没有引用了，也记下来以便删掉。
+        // The whole-mask load and the word pointer have no uses after the rewrite; record them so they can be dropped.
+        if (k == LaneLoad || k == WordExtract || k == ChainLoad || k == VoteAll || k == VoteAny || k == Shuffle) { sites.push_back({i, k}); ++rewrites; }
+        else if (k == MaskLoad || k == MaskChain) sites.push_back({i, k});
         if (k == VoteAll || k == VoteAny) votes = true;
         i += wc;
     }
-    if (sites.empty()) return 0;
+    if (!rewrites) return 0;
     // 为缺少的声明分配新id。
     // New ids for whatever is missing.
     std::vector<uint32_t> decl, deco;   // 声明插在首个函数前，装饰插在首个类型前 | Add globals before the first function and decorations before the first type
@@ -201,6 +215,30 @@ size_t xbg_spirv_warp32(const uint32_t *in, size_t n, uint32_t subgroup_size, st
             out.insert(out.end(), {inst(OpSelect, 6), k + 1 == words ? rt : t_uint, s, c, x, r}); r = s;
         }
     };
+    // 掩码的本线程束字按车道号算出，不读 builtin（见文件头）。
+    // The warp's word of a subgroup mask computed from the lane id, without reading the builtin (see the file header).
+    auto mask_word = [&](uint32_t rt, uint32_t res, uint32_t code) {
+        const bool want_uint = rt == t_uint;
+        uint32_t raw = raw_lane(), l = fresh(), r = 0;
+        auto emit = [&](uint32_t op, uint32_t a, uint32_t b, bool final) {   // 二元或 OpNot（b = 0）；final 时直接写进 res | binary or OpNot (b = 0); final writes res itself
+            uint32_t id = final && want_uint ? res : fresh();
+            if (op == OpNot) out.insert(out.end(), {inst(OpNot, 4), t_uint, id, a}); else out.insert(out.end(), {inst(op, 5), t_uint, id, a, b});
+            return id;
+        };
+        out.insert(out.end(), {inst(OpBitwiseAnd, 5), t_uint, l, raw, c_u31});
+        if (code == BuiltInSubgroupEqMask) r = emit(OpShiftLeftLogical, c_word[1], l, true);                                   // Eq = 1 << l
+        else {
+            uint32_t eq = emit(OpShiftLeftLogical, c_word[1], l, false);
+            if (code == BuiltInSubgroupLtMask) r = emit(OpISub, eq, c_word[1], true);                                          // Lt = Eq - 1
+            else {
+                uint32_t lt = emit(OpISub, eq, c_word[1], false);
+                if (code == BuiltInSubgroupEqMask + 1) r = emit(OpNot, lt, 0, true);                                          // Ge = ~Lt
+                else if (code == BuiltInSubgroupEqMask + 3) r = emit(OpBitwiseOr, lt, eq, true);                              // Le = Lt | Eq
+                else r = emit(OpNot, emit(OpBitwiseOr, lt, eq, false), 0, true);                                              // Gt = ~Le
+            }
+        }
+        if (!want_uint) out.insert(out.end(), {inst(OpBitcast, 4), rt, res, r});
+    };
     size_t next = 0;
     for (size_t i = 5; i < n;) {
         uint32_t wc = in[i] >> 16;
@@ -222,12 +260,14 @@ size_t xbg_spirv_warp32(const uint32_t *in, size_t n, uint32_t subgroup_size, st
                     out.insert(out.end(), {inst(OpBitwiseAnd, 5), t_uint, masked, u, c_u31});
                     out.insert(out.end(), {inst(OpBitcast, 4), rt, res, masked});
                 }
-            } else if (k == WordExtract) {   // ballot/mask的第id>>5字 | Word id>>5 of the ballot or mask
+            } else if (k == WordExtract && val[in[i + 3]] == 2) {   // 掩码的本线程束字：算出 | the warp's mask word: computed
+                mask_word(rt, res, mask_builtin[load_mask[in[i + 3]]]);
+            } else if (k == WordExtract) {   // ballot的第id>>5字 | Word id>>5 of the ballot
                 uint32_t w = warp_word(); pick(rt, res, in[i + 3], w);
-            } else if (k == ChainLoad) {   // 先加载整掩码，再选第id>>5字 | Load the mask then select word id>>5
-                uint32_t mask = chain_mask[in[i + 3]], mp = var_type[mask], mt = types[mp].b, m = fresh();
-                out.insert(out.end(), {inst(OpLoad, 4), mt, m, mask});
-                uint32_t w = warp_word(); pick(rt, res, m, w);
+            } else if (k == ChainLoad) {   // 掩码的本线程束字：算出 | the warp's mask word: computed
+                mask_word(rt, res, mask_builtin[chain_mask[in[i + 3]]]);
+            } else if (k == MaskLoad || k == MaskChain) {   // 没有引用了，删掉 | no uses left: dropped
+                i += wc; continue;
             } else if (k == VoteAll || k == VoteAny) {   // all比较pred/true选票，any检查非0，均只查本warp字 | All compares predicate/true ballots; any checks nonzero, using this warp's word
                 uint32_t scope = in[i + 3], pred = in[i + 4], b1 = fresh(), x1 = fresh();
                 out.insert(out.end(), {inst(OpGroupNonUniformBallot, 5), t_v4u, b1, scope, pred});
@@ -250,5 +290,5 @@ size_t xbg_spirv_warp32(const uint32_t *in, size_t n, uint32_t subgroup_size, st
         i += wc;
     }
     out[3] = bound;
-    return sites.size();
+    return rewrites;
 }
