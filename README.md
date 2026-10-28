@@ -95,6 +95,8 @@ What it does when on:
 
 Status: experimental. On a Mac M4 Pro (fixed seed, level pinned, camp, Dark Wood, Underground Passage level 1) ray tracing costs about 2.8–4.0 ms of GPU time per frame at levels 0–2 and 1.1–1.5 ms at level 3. On an iPhone Duo (A20 Pro), an earlier build settled at the lowest level at the camp; the current levels have **not yet been measured on a device**, and holding 60 FPS at level 3 is an estimate. Known limits: at level 3 torches cast no ray-traced shadow (point lights off); cave walls, stalagmites and torch stands do not block point lights (they are not in the game's shadow pass); no power measurement.
 
+**Known issues (fixed in RC2):** characters may show a doubled shadow; shadows are hard-edged and do not yet look as good as the original soft shadows. Also: it applies only in a run, the main menu / character select keep the original look; under memory pressure (system memory warnings) it releases its caches and steps down, log prefix "光追内存：".
+
 ### Exploratory device power probe
 
 These are historical readings from before the current local audit fixes. No new phone power measurement was performed during the audit.
