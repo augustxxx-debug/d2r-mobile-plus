@@ -123,6 +123,12 @@ Follow the upstream [game-file preparation guide](docs/GAME_FILES.md), [workspac
 
 The font override is **off by default**. See [optional font configuration](docs/PLUS.md#optional-font) for its dependencies, scope and limitations. A font file must be supplied locally by its owner; ARKai_T is not distributed here.
 
+## Android (Qualcomm Adreno candidate)
+
+The Android build follows the upstream NVN→Vulkan path (`dm/android/`, `dm/gfx/vulkan/`). The first candidate targets Qualcomm Adreno only (verified on an Adreno 740 handheld: camp and combat at 60 FPS, the 120 FPS stop, a physical controller). Mali (MediaTek / Samsung Exynos) still has subgroup-16 and ClipDistance gaps and gets no package yet. The package contains no game content: make the import pack on a computer from your own game files (`dm/tools/d2rm_android.py`), copy it to `Download/S2X/D2R Mobile/` on the phone and open the App to import it; the game `data` goes to the same place. See `dm/android/README.zh-CN.md`.
+
+Android alignment in this round (relative to the upstream Android backend): crash fence wired to background / foreground / memory warnings; pause-menu "Share diagnostics" (redacted, system share sheet); version label and build number from the shared source; native output size plus the Graphics "Resolution" level; the 120 FPS stop (shown on screens of 120 Hz or more, switches the display to its high refresh mode); "Show frame rate"; physical controllers (Xbox layout, B / BACK no longer exit, controller / touch mode switching); 3D brightening cap 2; Adreno 740 driver workarounds (warp32 masks computed from the lane id, lane-id self-test).
+
 ## Verification and limitations
 
 The preview has passed focused host geometry/classification tests, the iOS touch suite, notification generator checks and a signed device build. The quest narration issue was reproduced before the change and retested after it. See [verification details](docs/PLUS.md#verification) for the checks actually performed and those still pending.

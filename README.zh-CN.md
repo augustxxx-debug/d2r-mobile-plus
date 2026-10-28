@@ -123,6 +123,12 @@ cd d2r-mobile-plus
 
 字体替换**默认关闭**。依赖、覆盖范围和限制见[可选字体配置](docs/PLUS.zh-CN.md#可选字体)。字体文件需由持有者在本地提供，仓库不分发 ARKai_T。
 
+## Android（高通 Adreno 候选）
+
+Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gfx/vulkan/`），第一个候选包只面向高通 Adreno（在 Adreno 740 掌机上验过：营地与战斗 60 FPS、120 帧档、手柄）。Mali（联发科 / 三星 Exynos）另有子组 16 道、ClipDistance 等缺口，暂不出包。安装包不含游戏内容：用自己的游戏文件在电脑上做导入包（`dm/tools/d2rm_android.py`），拷到手机 `Download/S2X/D2R Mobile/`，打开 App 导入；游戏资源 `data` 放同一处。详见 `dm/android/README.zh-CN.md`。
+
+本轮 Android 适配（相对上游 Android 后端）：崩溃围栏接入后台 / 前台 / 内存告警；暂停菜单「分享诊断日志」（脱敏、系统分享面板）；显示版本与构建号同源；原生出图尺寸 + 图形页「渲染分辨率」档；120 帧档（屏幕 ≥ 120 Hz 时出现，自动切高刷模式）；「显示帧数」；实体手柄（Xbox 键位、B / BACK 不退出、手柄 / 触屏模式切换）；3D 画面加亮上限 2；Adreno 740 驱动绕法（warp32 掩码按车道号算、lane 号自检）。
+
 ## 验证与限制
 
 当前预览已通过重点宿主几何／分类测试、iOS 触控测试、通知生成器检查及签名实机构建。任务语音问题经过修改前复现与修改后复测。实际执行与尚未执行的检查见[验证说明](docs/PLUS.zh-CN.md#验证)。
