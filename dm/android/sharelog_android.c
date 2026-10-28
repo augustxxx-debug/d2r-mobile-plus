@@ -1,5 +1,6 @@
 // 接口与说明见 sharelog_android.h。| Interface and notes: sharelog_android.h.
 #include "sharelog_android.h"
+#include <stdint.h>
 #include <ctype.h>
 #include <dirent.h>
 #include <stdio.h>
@@ -14,7 +15,6 @@ static int sb_put(sb_t *b, const char *s, size_t n) {
     memcpy(b->p + b->n, s, n); b->n += n; b->p[b->n] = 0; return 1;
 }
 static int sb_puts(sb_t *b, const char *s) { return sb_put(b, s, strlen(s)); }
-static int is_word(unsigned char c) { return c == '_' || c >= 0x80 || isalnum(c); }   // 字母 / 数字 / 下划线；UTF-8 多字节一律当字母 | letters / digits / underscore; UTF-8 bytes count as letters
 static int is_hex(unsigned char c) { return isxdigit(c) != 0; }
 static int is_email_local(unsigned char c) { return isalnum(c) || strchr("._%+-", c) != NULL; }
 static int is_email_domain(unsigned char c) { return isalnum(c) || c == '.' || c == '-'; }
@@ -35,11 +35,32 @@ int dm_sharelog_names_in_text(const char *t, size_t len, char names[][64], int h
     }
     return have;
 }
+// 码位是不是「字母 / 数字」（照 iOS 的 \p{L}\p{N}）：ASCII 按 isalnum；多字节里标点 / 符号区段不算（中文标点「」：，、全角标点、通用标点、拉丁 1 标点），其余（汉字、假名、谚文、带重音的拉丁字母、西里尔……）算。
+// 原先所有多字节一律当字母，紧挨中文标点的角色名不算整词、没被替换（奥丁导出 2026-10-28 漏 4 处）
+// Whether a code point is a letter / number (as iOS's \p{L}\p{N}): ASCII by isalnum; among multi-byte ones the punctuation / symbol blocks are not (CJK punctuation 「」：，、, fullwidth
+// punctuation, general punctuation, Latin-1 punctuation) and everything else (Han, kana, Hangul, accented Latin, Cyrillic...) is. All multi-byte characters used to count as letters,
+// so a character name right next to CJK punctuation was not a whole word and was not replaced (the Thor export of 2026-10-28 leaked 4)
+static int cp_is_word(uint32_t cp) {
+    if (cp < 0x80) return cp == '_' || isalnum((int)cp);
+    if ((cp >= 0xA0 && cp <= 0xBF) || cp == 0xD7 || cp == 0xF7) return 0;
+    if ((cp >= 0x2000 && cp <= 0x206F) || (cp >= 0x3000 && cp <= 0x303F) || (cp >= 0xFE30 && cp <= 0xFE4F)) return 0;
+    if ((cp >= 0xFF00 && cp <= 0xFF0F) || (cp >= 0xFF1A && cp <= 0xFF20) || (cp >= 0xFF3B && cp <= 0xFF40) || (cp >= 0xFF5B && cp <= 0xFF65)) return 0;
+    return 1;
+}
+static uint32_t cp_before(const char *t, size_t i) {   // i 之前那个码位 | the code point ending right before i
+    size_t s = i - 1; while (s > 0 && ((unsigned char)t[s] & 0xC0) == 0x80 && i - s < 4) s--;
+    unsigned char c = (unsigned char)t[s]; uint32_t cp = c < 0x80 ? c : c >= 0xF0 ? c & 7 : c >= 0xE0 ? c & 15 : c & 31;
+    for (size_t k = s + 1; k < i; k++) cp = (cp << 6) | ((unsigned char)t[k] & 63); return cp;
+}
+static uint32_t cp_at(const char *t, size_t len, size_t i) {   // i 处的码位 | the code point starting at i
+    unsigned char c = (unsigned char)t[i]; int n = c < 0x80 ? 0 : c >= 0xF0 ? 3 : c >= 0xE0 ? 2 : 1; uint32_t cp = n == 0 ? c : n == 3 ? c & 7 : n == 2 ? c & 15 : c & 31;
+    for (int k = 1; k <= n && i + k < len; k++) cp = (cp << 6) | ((unsigned char)t[i + k] & 63); return cp;
+}
 // 整词替换（前后都不是字母 / 数字 / 下划线）| whole-word replacement
 static char *repl_word(const char *t, size_t len, const char *name, const char *rep, size_t *out_len) {
     size_t nl = strlen(name); sb_t b = {0}; size_t i = 0; if (!nl) { char *c = malloc(len + 1); memcpy(c, t, len); c[len] = 0; *out_len = len; return c; }
     while (i < len) {
-        if (i + nl <= len && !memcmp(t + i, name, nl) && (i == 0 || !is_word((unsigned char)t[i - 1])) && (i + nl == len || !is_word((unsigned char)t[i + nl]))) { sb_puts(&b, rep); i += nl; }
+        if (i + nl <= len && !memcmp(t + i, name, nl) && (i == 0 || !cp_is_word(cp_before(t, i))) && (i + nl == len || !cp_is_word(cp_at(t, len, i + nl)))) { sb_puts(&b, rep); i += nl; }
         else sb_put(&b, t + i++, 1);
     }
     *out_len = b.n; return b.p ? b.p : calloc(1, 1);
@@ -113,7 +134,7 @@ static void last_line(sb_t *h, const char *log, size_t len, const char *key) {
     if (best) { sb_put(h, best, bl); sb_puts(h, "\n"); } else { sb_puts(h, "（没有「"); sb_puts(h, key); sb_puts(h, "」行）\n"); }
 }
 static void perf_block(sb_t *h, const char *title, const char *log, size_t len) {
-    static const char *const keys[] = { "boot: 显示版本", "boot: dm_main", "NVN caps device=", "NVN caps subgroup", "NVN 32-lane warps", "NVN quad shuffles", "NVN native BC", "NVN texture checks", "guest AS", "崩溃围栏：", "[诊断]", "[perf]", "图形设置：", "帧率档：", "自定义设置：读盘", "内存：", "优雅退出", "【红】" };
+    static const char *const keys[] = { "boot: 显示版本", "boot: 导入包", "boot: dm_main", "NVN caps device=", "NVN caps subgroup", "NVN 32-lane warps", "NVN quad shuffles", "NVN native BC", "NVN texture checks", "guest AS", "崩溃围栏：", "[诊断]", "[perf]", "图形设置：", "帧率档：", "自定义设置：读盘", "内存：", "优雅退出", "【红】" };
     sb_puts(h, "\n—— "); sb_puts(h, title); sb_puts(h, " ——\n");
     if (!log) { sb_puts(h, "（没有这份日志）\n"); return; }
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) last_line(h, log, len, keys[i]);

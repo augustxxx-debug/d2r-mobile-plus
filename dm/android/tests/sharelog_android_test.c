@@ -17,6 +17,10 @@ int main(void) {
     assert(has(o, "/files/save/<character>/<character>.d2s") && has(o, "<character> said hi") && has(o, "Hannah stays") && has(o, "/save.test.work/<character>/ <character>")); free(o);
     o = scrub("/save/Settings/x /save/ModernSharedStash1/y", NULL, 0); assert(has(o, "/save/Settings/x") && has(o, "ModernSharedStash1")); free(o);
     { const char *kn[] = { "Zed" }; o = scrub("hero Zed logged; Zedd not", kn, 1); assert(has(o, "hero <character> logged; Zedd not")); free(o); }
+    // 中文标点挨着角色名（奥丁真机导出 2026-10-28 漏了 4 处：「角色「X」」「个人仓库：X 还没有」）：中文标点不是字母，照 iOS \p{L}\p{N}_ 规则要替换；挨着汉字（字母）的不替换
+    // Chinese punctuation next to a character name (the Thor export of 2026-10-28 leaked 4: "角色「X」", "个人仓库：X 还没有"): CJK punctuation is not a letter, so per iOS's \p{L}\p{N}_ rule it is replaced; next to a Han character (a letter) it is not
+    { const char *kn[] = { "Galkamir" }; o = scrub("秘境：本局没有资格（难度 0，角色「Galkamir」）\n个人仓库：Galkamir 还没有翻过页\n刷怪积分牌：「Galkamir」还没有记录\n汉Galkamir汉 stays", kn, 1);
+      assert(has(o, "角色「<character>」") && has(o, "个人仓库：<character> 还没有") && has(o, "刷怪积分牌：「<character>」") && has(o, "汉Galkamir汉 stays")); free(o); }
     o = scrub("home /Users/someone/x mail someone.x@example.com id 12345678-1234-1234-1234-123456789abc dev 0123ABCD-0123456789ABCDEF ok 0123ABCD-0123456789ABCDEF1 keep deadbeef-cafe", NULL, 0);
     assert(has(o, "home <redacted>/x mail <redacted> id <redacted> dev <redacted> ok 0123ABCD-0123456789ABCDEF1 keep deadbeef-cafe")); free(o);
     o = scrub("屏幕：My Monitor 27，x 屏幕 2622x1206，y 屏幕 Living Room，z", NULL, 0);
