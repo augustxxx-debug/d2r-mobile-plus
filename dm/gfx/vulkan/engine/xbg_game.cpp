@@ -23,6 +23,8 @@ extern "C" int xbg_completion_wait_selftest(char *report,size_t bytes);
 #include "xbg_bright_spv.h"
 #include "xbg_spirv_quad.h"
 #include "xbg_spirv_warp.h"
+#include "xbg_spirv_laneid.h"
+#include "xbg_laneid_spv.h"
 #include "xbg_spirv_ldc.h"
 #include "xbg_spirv_temps.h"
 #include "xbg_spirv_raster.h"
@@ -630,7 +632,7 @@ bool slot_pools_enabled=true,readback_cached=false;
 // samples_report_seen: the game has recorded a samples-passed report (D2R never does: its ~8 pending reports a frame are
 // all timestamps).
 bool heavy_timestamps=false;extern uint64_t pass_fast_hits;   // gfx-heavy-timestamps = '1': timestamp reports end the pass with full barriers, as before
-bool no_occlusion_queries=false,samples_report_seen=false;uint64_t samples_reports=0,samples_reported=0,counter_ops[3]={};extern uint64_t pipeline_fast_hits;extern bool pipe_memo;extern uint64_t pipe_memo_hits,pipe_memo_misses;extern uint64_t snap_front_hits,snap_map_hits,snap_invalidations,snap_invalidated;extern std::atomic<uint64_t> quad_rewrites,warp_rewrites,ldc_folds,temps_forwarded,nan_minmax_swaps;namespace vcache{extern bool enabled;extern uint64_t hits,hit_bytes,fills,fill_bytes,refills,volatiles,untracked,flushes;size_t live();VkDeviceSize arena_bytes();}   // counter_ops: resets, timestamp reports, samples reports recorded
+bool no_occlusion_queries=false,samples_report_seen=false;uint64_t samples_reports=0,samples_reported=0,counter_ops[3]={};extern uint64_t pipeline_fast_hits;extern bool pipe_memo;extern uint64_t pipe_memo_hits,pipe_memo_misses;extern uint64_t snap_front_hits,snap_map_hits,snap_invalidations,snap_invalidated;extern std::atomic<uint64_t> quad_rewrites,warp_rewrites,laneid_rewrites,ldc_folds,temps_forwarded,nan_minmax_swaps;namespace vcache{extern bool enabled;extern uint64_t hits,hit_bytes,fills,fill_bytes,refills,volatiles,untracked,flushes;size_t live();VkDeviceSize arena_bytes();}   // counter_ops: resets, timestamp reports, samples reports recorded
 // Resident uniform texel copies (texel_acquire, before descriptors()).
 struct TexelKey{uint64_t base,bytes;uint32_t format;bool operator==(const TexelKey &o)const{return base==o.base&&bytes==o.bytes&&format==o.format;}};
 struct TexelKeyHash{size_t operator()(const TexelKey &k)const{uint64_t x=k.base*0x9E3779B97F4A7C15ull^k.bytes*0xC2B2AE3D27D4EB4Full^k.format;x^=x>>29;return size_t(x*0xBF58476D1CE4E5B9ull);}};
@@ -930,7 +932,7 @@ void perf_frame(){
     xbg_logf("NVN PERF storage_snapshots_per_frame=%.1f union_mb_per_frame=%.2f",storage_snap_count/f,storage_pages.size()*4096.0/1048576.0/tf);storage_pages.clear();storage_snap_count=0;
     xbg_logf("NVN PERF wtrack copied_kb_per_frame=%.1f dirty_pages_per_frame=%.1f mismatches=%llu fallbacks=%llu",wtrack::copied_bytes/1024.0/f,wtrack::dirty_pages/f,(unsigned long long)wtrack::mismatches,(unsigned long long)wtrack::fallbacks);wtrack::copied_bytes=wtrack::dirty_pages=0;
     xbg_logf("NVN PERF uniform_trimmed_bindings=%llu snap_mb_per_frame other=%.2f vertex=%.2f index=%.2f storage=%.2f texel=%.2f uniform=%.2f requested vertex=%.2f index=%.2f storage=%.2f",(unsigned long long)uniform_trimmed,snap_site_bytes[0]/1048576.0/f,snap_site_bytes[1]/1048576.0/f,snap_site_bytes[2]/1048576.0/f,snap_site_bytes[3]/1048576.0/f,snap_site_bytes[4]/1048576.0/f,snap_site_bytes[5]/1048576.0/f,snap_site_req[1]/1048576.0/f,snap_site_req[2]/1048576.0/f,snap_site_req[3]/1048576.0/f);for(auto &b:snap_site_bytes)b=0;for(auto &b:snap_site_req)b=0;
-    xbg_logf("NVN PERF quad_rewrites=%llu warp_rewrites=%llu ldc_folds=%llu temps_forwarded=%llu nan_minmax=%llu",(unsigned long long)quad_rewrites.load(std::memory_order_relaxed),(unsigned long long)warp_rewrites.load(std::memory_order_relaxed),(unsigned long long)ldc_folds.load(std::memory_order_relaxed),(unsigned long long)temps_forwarded.load(std::memory_order_relaxed),(unsigned long long)nan_minmax_swaps.load(std::memory_order_relaxed));
+    xbg_logf("NVN PERF quad_rewrites=%llu warp_rewrites=%llu laneid_rewrites=%llu ldc_folds=%llu temps_forwarded=%llu nan_minmax=%llu",(unsigned long long)quad_rewrites.load(std::memory_order_relaxed),(unsigned long long)warp_rewrites.load(std::memory_order_relaxed),(unsigned long long)laneid_rewrites.load(std::memory_order_relaxed),(unsigned long long)ldc_folds.load(std::memory_order_relaxed),(unsigned long long)temps_forwarded.load(std::memory_order_relaxed),(unsigned long long)nan_minmax_swaps.load(std::memory_order_relaxed));
     xbg_logf("NVN PERF snapfront front_hits=%.1f map_hits=%.1f invalidations=%.1f erased=%.1f",snap_front_hits/f,snap_map_hits/f,snap_invalidations/f,snap_invalidated/f);xbg_logf("NVN PERF textures bc_native=%llu bc_decoded=%llu live_images=%.1fMB bc_images=%.1fMB bc_payload=%.1fMB",(unsigned long long)native_bc_images,(unsigned long long)decoded_bc_images,image_bytes_live/1048576.0,bc_image_bytes_live/1048576.0,bc_data_bytes_live/1048576.0);snap_front_hits=snap_map_hits=snap_invalidations=snap_invalidated=0;
     if(bright::enabled){xbg_logf("NVN PERF bright applied=%.2f k=%.2f",bright::applied/f,bright::last_k);bright::applied=0;}
     if(tex_dirty){xbg_logf("NVN PERF texdirty tracked=%.1f checks=%.1f changed=%.1f",tex_dirty_tracked/f,tex_dirty_checks/f,tex_dirty_changed/f);tex_dirty_tracked=tex_dirty_checks=tex_dirty_changed=0;}
@@ -1878,6 +1880,53 @@ void warp_rewrite(std::vector<uint32_t> &words,uint32_t stage,const char *key,co
         xbg_logf("NVN warp32 shader=%s loader=%s subgroupSize=%u rewrites=%zu",key,loader,subgroup.subgroupSize,k);
     }
 }
+// 子组 lane 号改走 ballot（xbg_spirv_laneid.cpp）：Adreno 740 驱动 512.676.53 在含 shuffle 的计算着色器里把 SubgroupLocalInvocationId 读成 0，warp32 改写
+// 靠它选线程束，于是 GPU 挂起。放在 warp32 改写之后，只改计算着色器。按启动自检（laneid_probe，下）启用：标记 gfx-laneid-ballot / DM_GFX_LANEID_BALLOT
+// = 0 关、1 强开、2（默认）自检判定 builtin 不可用时才开。
+// Subgroup lane id through ballot (xbg_spirv_laneid.cpp): the Adreno 740 driver 512.676.53 reads SubgroupLocalInvocationId as 0 in compute shaders that
+// shuffle; the warp32 rewrite selects warps with it, so the GPU hangs. After the warp32 rewrite, compute shaders only. Enabled by the start-up self-test
+// (laneid_probe, below): marker gfx-laneid-ballot / DM_GFX_LANEID_BALLOT = 0 off, 1 force on, 2 (default) on only when the self-test finds the builtin unusable.
+int laneid_ballot=2;bool laneid_active=false;std::atomic<uint64_t> laneid_rewrites{0};
+void laneid_rewrite(std::vector<uint32_t> &words,uint32_t stage,const char *key,const char *loader){
+    if(!laneid_active || stage!=5)return;
+    std::vector<uint32_t> out;size_t k=xbg_spirv_laneid_ballot(words.data(),words.size(),out);
+    if(k){validate_capabilities(out,stage);words.swap(out);laneid_rewrites.fetch_add(k,std::memory_order_relaxed);xbg_logf("NVN laneid shader=%s loader=%s lane_loads=%zu",key,loader,k);}
+}
+// 启动自检：跑一次嵌入的同形探针（xbg_laneid_probe.comp：64 线程、有 shuffle，各写自己的 gl_SubgroupInvocationID），数不同值。返回 1 可用、0 不可用、-1 没跑成。
+// Start-up self-test: run the embedded probe once (xbg_laneid_probe.comp: 64 invocations, with a shuffle, each writes its gl_SubgroupInvocationID) and count the
+// distinct values. Returns 1 usable, 0 unusable, -1 could not run.
+int laneid_probe(unsigned &distinct,unsigned &expect){
+    distinct=0;expect=subgroup.subgroupSize<64?subgroup.subgroupSize:64;if(!expect)return -1;
+    if(!(subgroup.supportedStages&VK_SHADER_STAGE_COMPUTE_BIT) || !(subgroup.supportedOperations&VK_SUBGROUP_FEATURE_SHUFFLE_BIT))return -1;
+    VkDevice d=cfg.device;VkBuffer buf=VK_NULL_HANDLE;VkDeviceMemory mem=VK_NULL_HANDLE;VkDescriptorSetLayout dsl=VK_NULL_HANDLE;VkPipelineLayout pl=VK_NULL_HANDLE;VkShaderModule sm=VK_NULL_HANDLE;VkPipeline pipe=VK_NULL_HANDLE;VkDescriptorPool dp=VK_NULL_HANDLE;VkCommandBuffer cb=VK_NULL_HANDLE;VkFence fence=VK_NULL_HANDLE;
+    int rc=-1;const VkDeviceSize bytes=64*4;
+    auto cleanup=[&]{if(fence)vkDestroyFence(d,fence,nullptr);if(cb)vkFreeCommandBuffers(d,command_pool,1,&cb);if(dp)vkDestroyDescriptorPool(d,dp,nullptr);if(pipe)vkDestroyPipeline(d,pipe,nullptr);if(sm)vkDestroyShaderModule(d,sm,nullptr);if(pl)vkDestroyPipelineLayout(d,pl,nullptr);if(dsl)vkDestroyDescriptorSetLayout(d,dsl,nullptr);if(mem)vkFreeMemory(d,mem,nullptr);if(buf)vkDestroyBuffer(d,buf,nullptr);};
+    do{
+        VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};bi.size=bytes;bi.usage=VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;bi.sharingMode=VK_SHARING_MODE_EXCLUSIVE;if(vkCreateBuffer(d,&bi,nullptr,&buf)!=VK_SUCCESS)break;
+        VkMemoryRequirements req;vkGetBufferMemoryRequirements(d,buf,&req);uint32_t type=UINT32_MAX;const VkMemoryPropertyFlags want=VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        for(uint32_t i=0;i<memories.memoryTypeCount;i++)if((req.memoryTypeBits&(1u<<i)) && (memories.memoryTypes[i].propertyFlags&want)==want){type=i;break;}
+        if(type==UINT32_MAX)break;VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=req.size;ai.memoryTypeIndex=type;if(vkAllocateMemory(d,&ai,nullptr,&mem)!=VK_SUCCESS || vkBindBufferMemory(d,buf,mem,0)!=VK_SUCCESS)break;
+        void *map=nullptr;if(vkMapMemory(d,mem,0,bytes,0,&map)!=VK_SUCCESS)break;memset(map,0xff,size_t(bytes));
+        VkDescriptorSetLayoutBinding b{0,VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr};VkDescriptorSetLayoutCreateInfo dli{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};dli.bindingCount=1;dli.pBindings=&b;if(vkCreateDescriptorSetLayout(d,&dli,nullptr,&dsl)!=VK_SUCCESS)break;
+        VkPipelineLayoutCreateInfo pli{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};pli.setLayoutCount=1;pli.pSetLayouts=&dsl;if(vkCreatePipelineLayout(d,&pli,nullptr,&pl)!=VK_SUCCESS)break;
+        VkShaderModuleCreateInfo smi{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};smi.codeSize=sizeof(xbg_laneid_probe_cs);smi.pCode=xbg_laneid_probe_cs;if(vkCreateShaderModule(d,&smi,nullptr,&sm)!=VK_SUCCESS)break;
+        VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,nullptr,0,VK_SHADER_STAGE_COMPUTE_BIT,sm,"main",nullptr};ci.layout=pl;if(vkCreateComputePipelines(d,VK_NULL_HANDLE,1,&ci,nullptr,&pipe)!=VK_SUCCESS)break;
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,1};VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};dpi.maxSets=1;dpi.poolSizeCount=1;dpi.pPoolSizes=&ps;if(vkCreateDescriptorPool(d,&dpi,nullptr,&dp)!=VK_SUCCESS)break;
+        VkDescriptorSetAllocateInfo dsa{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};dsa.descriptorPool=dp;dsa.descriptorSetCount=1;dsa.pSetLayouts=&dsl;VkDescriptorSet ds;if(vkAllocateDescriptorSets(d,&dsa,&ds)!=VK_SUCCESS)break;
+        VkDescriptorBufferInfo dbi{buf,0,bytes};VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};w.dstSet=ds;w.dstBinding=0;w.descriptorCount=1;w.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;w.pBufferInfo=&dbi;vkUpdateDescriptorSets(d,1,&w,0,nullptr);
+        VkCommandBufferAllocateInfo cba{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};cba.commandPool=command_pool;cba.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY;cba.commandBufferCount=1;if(vkAllocateCommandBuffers(d,&cba,&cb)!=VK_SUCCESS)break;
+        VkCommandBufferBeginInfo bgi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};bgi.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;if(vkBeginCommandBuffer(cb,&bgi)!=VK_SUCCESS)break;
+        vkCmdBindPipeline(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pipe);vkCmdBindDescriptorSets(cb,VK_PIPELINE_BIND_POINT_COMPUTE,pl,0,1,&ds,0,nullptr);vkCmdDispatch(cb,1,1,1);
+        VkMemoryBarrier mb{VK_STRUCTURE_TYPE_MEMORY_BARRIER};mb.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;mb.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(cb,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&mb,0,nullptr,0,nullptr);
+        if(vkEndCommandBuffer(cb)!=VK_SUCCESS)break;
+        VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};if(vkCreateFence(d,&fi,nullptr,&fence)!=VK_SUCCESS)break;
+        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};si.commandBufferCount=1;si.pCommandBuffers=&cb;if(vkQueueSubmit(cfg.queue,1,&si,fence)!=VK_SUCCESS)break;
+        if(vkWaitForFences(d,1,&fence,VK_TRUE,2000000000ull)!=VK_SUCCESS)break;   // 2 s
+        const uint32_t *o=static_cast<const uint32_t*>(map);uint64_t seen=0;for(unsigned i=0;i<64;i++){uint32_t id=o[i]&0xffff;if(id<64)seen|=uint64_t(1)<<id;}
+        for(unsigned i=0;i<64;i++)distinct+=unsigned((seen>>i)&1);rc=distinct>=expect?1:0;
+    }while(false);
+    cleanup();return rc;
+}
 // Two exact clean-ups of the translator's output, after the rewrites above (they match its form), in both module loaders. Each
 // is off unless the host asks; the Android app sets both to 1, and a marker file (1 / 0) still wins.
 // - Constant-buffer component fold (xbg_spirv_ldc.cpp; DM_GFX_LDC_FOLD, marker gfx-ldc-fold): an LDC with a computed address
@@ -1935,7 +1984,7 @@ Shader *load_shader(const void *control){
     // gfx-shader-reuse：预热线程已改写过这个着色器时直接取用；2 时照样改写，与取来的逐字比对。
     // gfx-shader-reuse: take the warm-up threads' rewrite of this shader when there is one; with 2, rewrite as well and compare word by word.
     std::vector<uint32_t> reused;const bool have_reused=shader_reuse && !ab_off("shreuse") && warm::take_rewritten(key,reused);
-    if(!have_reused || shader_reuse==2){quad_rewrite(words,h.stage,key.c_str(),"runtime");warp_rewrite(words,h.stage,key.c_str(),"runtime");tidy_rewrite(words);
+    if(!have_reused || shader_reuse==2){quad_rewrite(words,h.stage,key.c_str(),"runtime");warp_rewrite(words,h.stage,key.c_str(),"runtime");laneid_rewrite(words,h.stage,key.c_str(),"runtime");tidy_rewrite(words);
         if(have_reused && reused!=words){++shader_reuse_mismatches;xbg_logf("NVN shader reuse MISMATCH %s stage=%u words=%zu/%zu",key.c_str(),h.stage,reused.size(),words.size());}}
     else words.swap(reused);
     if(have_reused)++shaders_reused;
@@ -2057,7 +2106,7 @@ VkShaderModule load_module(const std::string &key){
     fseek(f,0,SEEK_END);long n=ftell(f);rewind(f);if(n<32 || n>16*1024*1024){fclose(f);return VK_NULL_HANDLE;}std::vector<uint8_t> b(static_cast<size_t>(n));bool ok=fread(b.data(),1,b.size(),f)==b.size();fclose(f);if(!ok)return VK_NULL_HANDLE;
     xbg_shader_header h;memcpy(&h,b.data(),sizeof(h));if(h.magic!=0x31534758 || h.version!=1 || h.spirv_bytes%4)return VK_NULL_HANDLE;
     size_t off=sizeof(h)+size_t(h.binding_count)*sizeof(xbg_shader_binding)+size_t(h.input_count)*4+h.c1_bytes;if(off+h.spirv_bytes!=b.size())return VK_NULL_HANDLE;
-    std::vector<uint32_t> w(h.spirv_bytes/4);memcpy(w.data(),b.data()+off,h.spirv_bytes);spv_override(key,w);quad_rewrite(w,h.stage,key.c_str(),"warm");warp_rewrite(w,h.stage,key.c_str(),"warm");tidy_rewrite(w);
+    std::vector<uint32_t> w(h.spirv_bytes/4);memcpy(w.data(),b.data()+off,h.spirv_bytes);spv_override(key,w);quad_rewrite(w,h.stage,key.c_str(),"warm");warp_rewrite(w,h.stage,key.c_str(),"warm");laneid_rewrite(w,h.stage,key.c_str(),"warm");tidy_rewrite(w);
     if(keep_rewritten){std::lock_guard<std::mutex> l(mu);rewritten.emplace(key,w);}
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};ci.codeSize=w.size()*4;ci.pCode=w.data();VkShaderModule m;if(vkCreateShaderModule(cfg.device,&ci,nullptr,&m)!=VK_SUCCESS)return VK_NULL_HANDLE;
     std::lock_guard<std::mutex> l(mu);auto ins=modules.emplace(key,m);if(!ins.second){vkDestroyShaderModule(cfg.device,m,nullptr);return ins.first->second;}return m;
@@ -3708,6 +3757,11 @@ extern "C" int xbg_game_initialize(const xbg_game_config *c,char *error,size_t b
      if(q){quad_derivatives=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_QUAD_DERIVATIVES"))quad_derivatives=atoi(e)!=0;xbg_logf("NVN quad shuffles to fine derivatives=%d (marker gfx-quad-derivatives)",int(quad_derivatives));}
     {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-warp32").c_str(),"rb");warp32=false;
      if(q){warp32=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_WARP32"))warp32=atoi(e)!=0;xbg_logf("NVN 32-lane warps in wider subgroups=%d subgroup=%u (marker gfx-warp32)",int(warp32),subgroup.subgroupSize);}
+    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-laneid-ballot").c_str(),"rb");laneid_ballot=2;
+     if(q){int c=fgetc(q);laneid_ballot=c=='0'?0:c=='1'?1:2;fclose(q);}else if(const char *e=getenv("DM_GFX_LANEID_BALLOT")){int v=atoi(e);laneid_ballot=v==0?0:v==1?1:2;}
+     unsigned distinct=0,expect=0;int probe=laneid_ballot==2?laneid_probe(distinct,expect):-2;   // -2: 没自检 | not probed
+     laneid_active=laneid_ballot==1 || (laneid_ballot==2 && probe==0);
+     xbg_logf("NVN subgroup lane id through ballot=%d mode=%d probe=%d distinct=%u expect=%u (marker gfx-laneid-ballot; 0 off 1 on 2 auto; probe 1 usable 0 unusable -1 not run)",int(laneid_active),laneid_ballot,probe,distinct,expect);}
     {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');std::string base=cut==std::string::npos?dir:dir.substr(0,cut);
      auto dm=[&](const char *marker,const char *env){FILE *q=fopen((base+marker).c_str(),"rb");bool on=false;if(q){on=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv(env))on=atoi(e)!=0;return on;};
      ldc_fold=dm("/gfx-ldc-fold","DM_GFX_LDC_FOLD");forward_temps=dm("/gfx-forward-temps","DM_GFX_FORWARD_TEMPS");nan_minmax=dm("/gfx-nan-minmax","DM_GFX_NAN_MINMAX");
