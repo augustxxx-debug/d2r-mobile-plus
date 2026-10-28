@@ -45,6 +45,7 @@ SRC=\
 	dm_cursor.c \
 	dm_cursor_item.c \
 	dm_custom.c \
+	dm_crashfence.c \
 	dm_dropfilter.c \
 	dm_drophaptic.c \
 	dm_elysium.c \

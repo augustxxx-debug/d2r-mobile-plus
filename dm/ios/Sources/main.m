@@ -5,6 +5,7 @@
 static int g_nofile_was, g_nofile_now;   // 启动时的文件描述符软上限（原值 / 现值），开日志后记一行 | File descriptor soft limit at launch (old / new value); one line is logged after the log opens
 #import <Metal/Metal.h>
 #import <BackgroundAssets/BackgroundAssets.h>
+#import <MetricKit/MetricKit.h>
 #import "asset_dl.h"
 #import <CommonCrypto/CommonDigest.h>
 #include <sys/mman.h>
@@ -679,6 +680,7 @@ static void boot_prepare(void) {
     for (NSString *d in @[@"save", @"temp"])
         [fm createDirectoryAtPath:[doc stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
     { void dm_custom_init(const char *dir); dm_custom_init(doc.fileSystemRepresentation); }
+    { int dm_crashfence_start(void); dm_crashfence_start(); }   // 崩溃围栏：设置目录定了就读残留运行标记、连续两次异常退出关实验项（要赶在宿主装载读设置之前；dm_crashfence.c） | crash fence: once the settings directory is known, read the leftover running marker; two abnormal exits in a row turn experimental features off (must run before host loading reads settings)
     if (getenv("DM_BENCH_DIR")) {   // 功耗基准（tools/power_bench.sh）：各采样文件都写进 Documents/<DM_BENCH_DIR>/，宿主起来前先把目录建好（DM_SOAK 打不开文件会直接退出） | Power benchmark (tools/power_bench.sh): all sampling files go under Documents/<DM_BENCH_DIR>/; create it before the host starts (DM_SOAK exits if it cannot open its file)
         NSString *bd = [doc stringByAppendingPathComponent:@(getenv("DM_BENCH_DIR"))]; [fm createDirectoryAtPath:bd withIntermediateDirectories:YES attributes:nil error:nil]; plog("boot: 基准输出目录 Documents/%s", getenv("DM_BENCH_DIR"));
         dispatch_async(dispatch_get_main_queue(), ^{ UIApplication.sharedApplication.idleTimerDisabled = YES; plog("boot: 基准期间禁用自动锁屏"); });   // 锁屏 = 进后台 = 游戏暂停，基准作废 | Auto-lock = background = game paused, the run is void
@@ -1180,8 +1182,9 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
     plog("启动计时 T4 willConnect 末 %.1f ms", g_T[4]);
 }
 - (void)sceneWillResignActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(0); }
-- (void)sceneDidEnterBackground:(UIScene *)s { if (g_host_up) front_ios_focus_event(1); }
-- (void)sceneWillEnterForeground:(UIScene *)s { log_promote(); if ([g_mode isEqualToString:@"boot"] && !g_need_assets && !g_no_bc && !g_block_title) { host_start(); if (g_host_up) front_ios_focus_event(2); } }
+// 崩溃围栏：进后台清运行标记（后台被系统 / 玩家划掉是 SIGKILL、不走回调，不能算闪退），回前台再写回（dm_crashfence.c） | crash fence: clear the running marker on entering the background (being killed there by the system / a swipe is a SIGKILL without callbacks and must not count as a crash), write it again on returning to the foreground
+- (void)sceneDidEnterBackground:(UIScene *)s { if (g_host_up) { front_ios_focus_event(1); void dm_crashfence_clean(const char *); dm_crashfence_clean("进后台"); } }
+- (void)sceneWillEnterForeground:(UIScene *)s { log_promote(); if ([g_mode isEqualToString:@"boot"] && !g_need_assets && !g_no_bc && !g_block_title) { int was_up = g_host_up; host_start(); if (g_host_up) front_ios_focus_event(2); if (was_up) { void dm_crashfence_resume(void); dm_crashfence_resume(); } } }
 - (void)sceneDidBecomeActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(3);
     static int warned; if (g_ipad_compat && !warned && [g_mode isEqualToString:@"boot"] && self.window.rootViewController) { warned = 1;   // 只提示一次，不拦启动 | Warn once, do not block the launch
         UIAlertController *a = [UIAlertController alertControllerWithTitle:T("dmIpadModeTitle") message:T("dmIpadModeMsg") preferredStyle:UIAlertControllerStyleAlert];
@@ -1216,6 +1219,31 @@ static void bg_relaunch_test(void) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{ exit(0); });
 }
 
+// 崩溃围栏：系统崩溃日志。iOS 沙盒读不到系统的 .ips，改订 MetricKit：系统在之后某次启动把崩溃诊断送来（常见是下次启动，可能晚到），
+// 把含崩溃的最新一份存成 Documents/dm_crash_last.json（只留一份、覆盖写，上限 512 KB），分享诊断日志附在末尾（dm_sharelog.m、dm_crashlog.h）。
+// 订阅者进程期常驻一个对象，不另开线程（回调在系统的线程上，只写一个文件、记一行）
+// Crash fence: system crash logs. The iOS sandbox cannot read the system's .ips, so subscribe to MetricKit instead: the system delivers crash diagnostics at some later launch (usually the next one, possibly later);
+// the newest payload containing a crash is stored as Documents/dm_crash_last.json (only one kept, overwritten, capped at 512 KB) and the share-diagnostics export appends it at the end (dm_sharelog.m, dm_crashlog.h).
+// The subscriber is one object living for the process, with no thread of its own (the callback runs on a system thread, writes one file and logs one line)
+@interface DmCrashSub : NSObject <MXMetricManagerSubscriber> @end
+@implementation DmCrashSub
+static void crash_payloads(NSArray<MXDiagnosticPayload *> *payloads, const char *how) {
+    MXDiagnosticPayload *last = nil; NSUInteger n = 0;
+    for (MXDiagnosticPayload *p in payloads) if (p.crashDiagnostics.count) { n += p.crashDiagnostics.count; if (!last || [p.timeStampEnd compare:last.timeStampEnd] == NSOrderedDescending) last = p; }
+    if (!last) { if (payloads.count) plog("崩溃围栏：系统诊断%s %lu 份，没有崩溃", how, (unsigned long)payloads.count); return; }
+    NSData *j = last.JSONRepresentation; if (j.length > 512 * 1024) j = [j subdataWithRange:NSMakeRange(0, 512 * 1024)];
+    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+    BOOL ok = [j writeToFile:[doc stringByAppendingPathComponent:@"dm_crash_last.json"] atomically:YES];
+    plog("崩溃围栏：系统崩溃诊断%s %lu 条，最新一份 %lu 字节%s", how, (unsigned long)n, (unsigned long)j.length, ok ? "，存进 dm_crash_last.json" : "【红】写不进 dm_crash_last.json");
+}
+- (void)didReceiveDiagnosticPayloads:(NSArray<MXDiagnosticPayload *> *)payloads { crash_payloads(payloads, "送达"); }
+@end
+static void crash_subscribe(void) {
+    static DmCrashSub *sub; if (sub) return; sub = [DmCrashSub new];
+    [MXMetricManager.sharedManager addSubscriber:sub];
+    crash_payloads(MXMetricManager.sharedManager.pastDiagnosticPayloads, "（之前送达）");
+}
+
 @implementation App
 - (void)applicationWillTerminate:(UIApplication *)a { if (g_host_up) dm_host_shutdown("iOS App 终止"); }
 // 系统内存告警：只记一行，不放任何缓存。用途：玩家被系统按内存终止前不会有任何通知，上一局日志里至少留下前兆与当时的几项读数
@@ -1238,6 +1266,7 @@ static void bg_relaunch_test(void) {
 }
 - (BOOL)application:(UIApplication *)a didFinishLaunchingWithOptions:(NSDictionary *)o {
     g_T[3] = since_start();
+    crash_subscribe();   // 崩溃围栏：订 MetricKit 崩溃诊断 | crash fence: subscribe to MetricKit crash diagnostics
     if ([g_mode isEqualToString:@"blank"]) {   // 发热负对照：不锁屏，按 DM_HEAT 采样 | Heat negative control: do not lock the screen, sample per DM_HEAT
         UIApplication.sharedApplication.idleTimerDisabled = YES;
         uint64_t front_blank_presents(void); void front_ios_heat_start(uint64_t (*)(void), int); front_ios_heat_start(front_blank_presents, 0);

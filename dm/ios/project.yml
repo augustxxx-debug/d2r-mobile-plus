@@ -101,6 +101,7 @@ targets:
     dependencies:
       - target: RomfsDownloader      # 苹果托管资源包要求的下载扩展（系统缺省实现） | Download extension required by Apple-hosted asset packs (system default implementation)
       - sdk: BackgroundAssets.framework
+      - sdk: MetricKit.framework           # 崩溃围栏：系统崩溃诊断（main.m crash_subscribe） | crash fence: system crash diagnostics (main.m crash_subscribe)
       - sdk: Network.framework             # iCloud 首次同步看网络通不通（cloud_ios.m first_listing_ok） | iCloud first sync checks whether the network is reachable (cloud_ios.m first_listing_ok)
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: ${DM_BUNDLE_ID}

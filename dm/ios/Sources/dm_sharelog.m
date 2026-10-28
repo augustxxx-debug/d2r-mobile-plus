@@ -19,6 +19,7 @@
 #include "../../host/dm_custom.h"
 #import "dm_diagnostic_scrub.h"
 #import "dm_diagnostic_read.h"
+#import "dm_crashlog.h"
 #include "../../gfx/nvn/nvn_mtl.h"
 float dm_3d_scale_cur(void);
 void plog(const char *fmt, ...);
@@ -38,7 +39,7 @@ static NSString *last_line(NSData *d, const char *key) {
 static void perf_block(NSMutableString *h, NSString *title, NSData *d) {
     [h appendFormat:@"\n—— %@ ——\n", title];
     if (!d) { [h appendString:@"（没有这份日志）\n"]; return; }
-    static const char *keys[] = { "boot: 版本", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "光追阴影：机器判定", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追阴影：GPU", "自定义设置：读盘" };   // 光追阴影：第 N 帧 … = 每 600 帧的统计行（实例、变体、GPU 耗时）；光追点光 = 挑中的点光 | "光追阴影：第" = the 600-frame statistics line (instances, variants, GPU time); "光追点光" = the chosen point lights
+    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "光追阴影：机器判定", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追阴影：GPU", "自定义设置：读盘" };   // 光追阴影：第 N 帧 … = 每 600 帧的统计行（实例、变体、GPU 耗时）；光追点光 = 挑中的点光 | "光追阴影：第" = the 600-frame statistics line (instances, variants, GPU time); "光追点光" = the chosen point lights
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) { NSString *l = last_line(d, keys[i]); [h appendFormat:@"%@\n", l ?: [NSString stringWithFormat:@"（没有「%@」行）", @(keys[i])]]; }
 }
 // 日志里的路径会带系统用户主目录（Mac 上是 /Users/<用户名>，iPhone 上是 /var/mobile）：导出时一律换成 ~，不把用户名带出去
@@ -66,6 +67,10 @@ static NSURL *build_file(void) {
     NSMutableString *h = [NSMutableString string];
     [h appendFormat:@"D2R Mobile Diagnostics\n导出时间 %@\n版本 %@ 构建 %@\n显示版本 %@\n机型 %s 系统 %@\n", [df stringFromDate:NSDate.date], [inf[@"CFBundleShortVersionString"] description] ?: @"未知", build, [inf[@"DMVersionLabel"] description].length ? [inf[@"DMVersionLabel"] description] : @"未知", hw, pi.operatingSystemVersionString];
     [h appendFormat:@"温控档位 %ld 低电量模式 %@ 电量 %.0f%% %@\n", (long)pi.thermalState, pi.lowPowerModeEnabled ? @"开" : @"关", battery_level < 0 ? -1.0 : battery_level * 100, bs >= 0 && bs <= 3 ? bst[bs] : @"未知"];   // 中文一律走 %@：NSString 的 %s 不按 UTF-8 解 | Chinese always goes through %@: NSString's %s does not decode as UTF-8
+    // 崩溃围栏：MetricKit 送来的最新一份系统崩溃诊断（main.m 存的 Documents/dm_crash_last.json），摘要一行、全文附在末尾 | crash fence: the newest system crash diagnostic delivered by MetricKit (Documents/dm_crash_last.json saved by main.m), one summary line, full text attached at the end
+    NSString *crash_path = [doc stringByAppendingPathComponent:@"dm_crash_last.json"], *crash_sum = nil;
+    NSData *crash = dm_crashlog_section([fm fileExistsAtPath:crash_path] ? crash_path : nil, 256 * 1024, &crash_sum);
+    [h appendFormat:@"%@\n", crash_sum];
     [h appendFormat:@"物理内存 %.1f GB 可用存储 %.1f GB 本次已运行 %.0f 分钟\n", pi.physicalMemory / 1073741824.0, [fsa[NSFileSystemFreeSize] doubleValue] / 1073741824.0, -g_t0.timeIntervalSinceNow / 60];
     mtl_metalfx_status graphics = {0}; mtl_metalfx_snapshot(&graphics);
     static const char *const profiles[] = { "Auto", "Eco", "Balanced", "Quality", "Original" };
@@ -85,6 +90,7 @@ static NSURL *build_file(void) {
         [out appendData:[[NSString stringWithFormat:@"\n\n===== %@（%@）=====\n", t, d ? [NSString stringWithFormat:@"%lu 字节", (unsigned long)d.length] : @"没有这份日志"] dataUsingEncoding:NSUTF8StringEncoding]];
         if (d) [out appendData:d]; };
     part(@"本局日志 boot.txt", cur); part(@"上一局日志 boot.previous.txt", prev);
+    [out appendData:crash];   // 末尾：系统崩溃日志（随整份一起脱敏） | at the end: the system crash log (scrubbed together with the whole file)
     NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"sharelog"];   // 只放这一份导出：每次重建这个目录（我们自己的，不碰别的） | Hold only this one export: rebuild this directory every time (it is our own; nothing else is touched)
     [fm removeItemAtPath:dir error:nil]; [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     df.dateFormat = @"yyyyMMdd_HHmmss";

@@ -95,9 +95,15 @@ const char *dm_save_commitdir(void);
 static int key_index(const char *k) { if (k) for (int i = 0; i < NK; i++) if (!strcmp(k, k_keys[i])) return i; return -1; }
 static char g_dir[1024];   // iOS 外壳启动时给的 Documents（main.m）：启动期（存档挂上之前）就要能读，覆盖层选择用 | Documents given by the iOS shell at startup (main.m): must be readable already during startup (before the save is mounted), used for overlay selection
 void dm_custom_init(const char *dir) { if (dir) strlcpy(g_dir, dir, sizeof g_dir); }
+// 设置文件所在目录：iOS 是外壳给的 Documents；Mac 是存档已提交目录的上一级，存档还没挂上时按 $DM_SAVE（挂上后已提交目录就是它）——崩溃围栏在宿主入口就要读写这里
+// Directory of the settings file: Documents given by the iOS shell; on Mac the parent of the committed save directory, and before the save is mounted $DM_SAVE (which becomes the committed directory once mounted) - the crash fence reads and writes here right at host entry
+int dm_custom_dir(char *p, size_t n) {
+    if (g_dir[0]) { snprintf(p, n, "%s", g_dir); return 1; }
+    const char *c = dm_save_commitdir(); if (!c) c = getenv("DM_SAVE"); if (!c || !*c) return 0;
+    snprintf(p, n, "%s/..", c); return 1; }
 static int file_path(char *p, size_t n) {
-    if (g_dir[0]) { snprintf(p, n, "%s/sw_custom.txt", g_dir); return 1; }
-    const char *c = dm_save_commitdir(); if (!c) return 0; snprintf(p, n, "%s/../sw_custom.txt", c); return 1; }
+    char d[1024]; if (!dm_custom_dir(d, sizeof d)) return 0;
+    snprintf(p, n, "%s/sw_custom.txt", d); return 1; }
 
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
@@ -241,6 +247,21 @@ static void save(void) {
     if (f) ok = fclose(f) == 0 && ok;
     if (ok) ok = rename(t, p) == 0;   // 先写临时文件再换名：写到一半被杀也不会留下半个文件 | Write a temporary file first and then rename: being killed halfway through the write does not leave half a file behind
     LOG("自定义设置：存盘%s", ok ? "" : "【红】失败");
+}
+// 崩溃围栏连续两次异常退出时调（dm_crashfence.c）：实验性功能全关并写回设置文件——120 帧档回 60、光追阴影关、MetalFX 空间超分关（光追 AO 只在光追里跑，随它关）。
+// 玩家没开的项不动；改了才存盘。what 写「改了什么」给日志；返回改了几项
+// Called by the crash fence after two abnormal exits in a row (dm_crashfence.c): turn every experimental feature off and save - 120 fps mode back to 60, ray-traced shadows off, MetalFX spatial upscaling off (ray-traced AO only runs inside ray tracing and goes off with it).
+// Items the player did not turn on are left alone; the file is saved only if something changed. what receives "what changed" for the log; returns how many items changed
+int dm_custom_safe_mode(char *what, size_t n) {
+    load_once(); size_t o = 0; int ch = 0; what[0] = 0;
+    if (!atomic_load(&g_loaded)) { snprintf(what, n, "设置文件还没法读，没改"); return 0; }
+    if (atomic_load(&g_val[K_FPS]) == FPS_120) { atomic_store(&g_val[K_FPS], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s120 帧档 → 60", o ? "、" : ""); }
+    if (atomic_load(&g_val[K_RT])) { atomic_store(&g_val[K_RT], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s光追阴影 → 关（AO 随它关）", o ? "、" : ""); }
+    if (atomic_load(&g_val[K_UPSCALE])) { atomic_store(&g_val[K_UPSCALE], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%sMetalFX 空间超分 → 关", o ? "、" : ""); dm_3d_quality_mode_set(0); }
+    for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1);
+    if (!ch) snprintf(what, n, "实验性功能本来都关着");
+    else { save(); atomic_fetch_add(&g_repaint, 1); }
+    return ch;
 }
 void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     (void)arg; if (!cat || !act || strcmp(cat, "OptionsPanelMessage")) return;

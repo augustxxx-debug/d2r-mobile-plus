@@ -1239,6 +1239,22 @@ void front_save_failed(int err) {
     });
 }
 
+// 原生提示一次（崩溃围栏「已关闭实验性功能」，dm/host/dm_crashfence.c）：覆盖 dm_crashfence.c 的弱日志实现；任意线程调，切主线程弹，不阻塞调用方
+// One native notice (crash fence "experimental features turned off", dm/host/dm_crashfence.c): overrides the weak logging implementation in dm_crashfence.c; callable from any thread, presented on the main thread, never blocks the caller
+void front_notice(const char *title, const char *msg) {
+    NSString *t = title ? @(title) : nil, *m = msg ? @(msg) : nil;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIViewController *vc = nil;
+        for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
+            if ([s isKindOfClass:UIWindowScene.class]) for (UIWindow *w in ((UIWindowScene *)s).windows) if (w.isKeyWindow) vc = w.rootViewController;
+        while (vc.presentedViewController) vc = vc.presentedViewController;
+        if (!vc) { LOG("【红】前端：提示没有窗口，没弹：%s", t.UTF8String); return; }
+        UIAlertController *a = [UIAlertController alertControllerWithTitle:t message:m preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:SWT("dmConfirm") style:UIAlertActionStyleDefault handler:nil]];
+        [vc presentViewController:a animated:YES completion:^{ LOG("前端：提示已显示：%s", t.UTF8String); }];
+    });
+}
+
 #define THERMAL_RESTORE_SEC 60
 
 static void thermal_apply(void) {

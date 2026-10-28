@@ -1,6 +1,7 @@
 // 「自定义」设置：我们自己加的功能的启停开关，统一在这里读写。各模块只调 dm_custom_get，不各自读文件 / 环境变量当设置。
 // 「自定义」(Custom) settings: on/off switches for the features we added ourselves, all read and written here. Each module only calls dm_custom_get and does not read files / environment variables as settings on its own.
 #pragma once
+#include <stddef.h>
 
 // 已生效的值 0 / 1：只在玩家点选项页「应用」后变，「放弃」不变，「默认」= 各键缺省（省电模式关，其余开）。键不认识返回 1。
 // 任意线程可调：第一次调用读一次文件，之后只是原子量读 + 几项字符串比较，无锁。iOS 上启动期（存档挂上之前）就能读。
@@ -20,6 +21,8 @@ int dm_3d_profile_get(void);
 int dm_render_res_level(void);   // 渲染分辨率档位（键 render_res，缺省 0）：0 自动 / 1 省电 / 2 均衡 / 3 原生；iOS 前端 front_game_res 按 dm_res_cap.h 的像素预算缩小整帧输出尺寸 | Render resolution level (key render_res, default 0): 0 Auto / 1 Eco / 2 Balanced / 3 Native; the iOS front end's front_game_res shrinks the whole-frame output size to the pixel budget in dm_res_cap.h
 int dm_fps_setting(void);   // 帧率档（键 eco_fps：0 = 60 缺省 / 1 = 30 省电 / 2 = 120，120 只在屏幕最高刷新率 ≥ 120 时生效，否则按 60）；nvn_mtl.m mtl_fps_target 读 | Frame rate mode (key eco_fps: 0 = 60 default / 1 = 30 power saving / 2 = 120, 120 only when the screen's maximum refresh rate is >= 120, otherwise 60); read by mtl_fps_target in nvn_mtl.m
 
+int dm_custom_dir(char *p, size_t n);   // 设置文件所在目录（iOS Documents；Mac 存档已提交目录的上一级，没挂上时按 $DM_SAVE）；0 = 还不知道 | directory of the settings file (iOS Documents; on Mac the parent of the committed save directory, $DM_SAVE before mounting); 0 = not known yet
+int dm_custom_safe_mode(char *what, size_t n);   // 崩溃围栏：实验性功能全关并写回（120 帧 → 60、光追阴影、MetalFX）；返回改了几项 | crash fence: turn every experimental feature off and save (120 fps -> 60, ray-traced shadows, MetalFX); returns how many items changed
 void dm_custom_init(const char *dir);   // 设置文件所在目录（iOS 外壳启动时给 Documents）；不调则用存档提交目录的上一级（Mac 宿主） | Directory holding the settings file (the iOS shell passes Documents at startup); if not called, the parent of the save commit directory is used (Mac host)
 
 // 以下只给自定义页的界面接线用

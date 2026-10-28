@@ -38,5 +38,27 @@ class MacSummary(unittest.TestCase):
         self.assertRegex(share, r'scrub\(\[info dataUsingEncoding')
 
 
+
+class CrashFence(unittest.TestCase):
+    """崩溃围栏：系统崩溃日志附在导出末尾、先于脱敏；摘要有「崩溃围栏：」行与崩溃日志摘要行（iOS / Mac 两端）。
+    Crash fence: the system crash log is appended at the end of the export, before scrubbing; the summary has the crash-fence line and the crash-log summary line (both iOS and Mac)."""
+    def test_ios_crash_section_before_scrub(self):
+        build = block(SHARE, 'static NSURL *build_file(void) {')
+        self.assertIn('dm_crashlog_section(', build)
+        i = build.index('[out appendData:crash]'); j = build.index('dm_diagnostic_scrub_names(out')
+        self.assertLess(i, j, 'crash section is appended before the export is scrubbed')
+        self.assertLess(build.index('part(@"上一局日志 boot.previous.txt"'), i, 'crash section is at the end')
+        self.assertIn('[h appendFormat:@"%@\\n", crash_sum]', build)
+        keys = re.search(r'static const char \*keys\[\] = \{([^}]*)\}', block(SHARE, 'static void perf_block(')).group(1)
+        self.assertIn('"崩溃围栏："', keys)
+
+    def test_mac_crash_file_scrubbed(self):
+        share = block(MAC, 'static NSString *share_logs(NSString *to) {')
+        self.assertIn('dm_crashlog_newest(', share)
+        self.assertRegex(share, r'\[scrub\(crash\) writeToFile:\[dir stringByAppendingPathComponent:@"crash\.txt"\]')
+        self.assertIn('@"崩溃围栏："', share)
+        self.assertIn('crash_sum', share)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=1)

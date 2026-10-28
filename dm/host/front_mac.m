@@ -16,6 +16,7 @@ void mtl_set_ui_rect_fn(void (*fn)(double *y, double *h));
 static void ui_rect_frac(double *fy, double *fh) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); if (dm_screen_real(&rw, &rh) && rh > 0) { *fy = (double)y / rh; *fh = (double)h / rh; } }   // 同 front_ios.m：界面矩形的纵向位置与高（占画面高的比例） | Same as front_ios.m: vertical position and height of the UI rectangle (as fractions of the frame height)
 __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn(ui_rect_frac); }   // 不开窗口的跑法（截图 / 闸门）也要生效，所以不放在建图层那里 | Must also take effect when running without a window (screenshots / gate checks), so it is not placed where the layer is created
 #include "front.h"
+#import "../ios/Sources/dm_crashlog.h"   // 崩溃围栏：系统崩溃日志附进分享包（与 iOS 同一份） | crash fence: the system crash log goes into the share archive (same as iOS)
 #import "../ios/Sources/dm_diagnostic_scrub.h"   // 分享日志脱敏：与 iOS 同一份（家目录、包名、存档角色名、UUID、邮箱、Team ID） | share-log redaction: the same as iOS (home, bundle id, save character names, UUIDs, e-mail, Team ID)
 #include "hle.h"
 #include <signal.h>
@@ -90,6 +91,9 @@ static NSString *share_logs(NSString *to) {
     // 原先只把家目录换成 ~；容器 UUID（资源目录路径里）、显示器名会原样带出。现在走与 iOS 同一份 dm_diagnostic_scrub | previously only the home directory became ~; container UUIDs (in resource paths) and display names went out verbatim. Now the same dm_diagnostic_scrub as iOS
     NSData *(^scrub)(NSData *) = ^NSData *(NSData *d) { return d ? dm_diagnostic_scrub(d, home, NSBundle.mainBundle.bundleIdentifier ?: @"") : d; };
     int n = 0; for (NSString *f in @[@"host.log", @"host.prev.log"]) { NSData *d = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:f] options:NSDataReadingMappedIfSafe error:nil]; if (d) { [scrub(d) writeToFile:[dir stringByAppendingPathComponent:f] atomically:YES]; n++; } }
+    // 崩溃围栏：~/Library/Logs/DiagnosticReports 里本进程名开头的最新一份系统崩溃报告，过同一份脱敏写成 crash.txt；没有就写「无崩溃日志」 | crash fence: the newest system crash report starting with this process name in ~/Library/Logs/DiagnosticReports, through the same redaction into crash.txt; "no crash log" if none
+    NSString *crash_sum = nil; NSData *crash = dm_crashlog_section(dm_crashlog_newest([home stringByAppendingPathComponent:@"Library/Logs/DiagnosticReports"], @(getprogname()), @[@".ips", @".crash"]), 256 * 1024, &crash_sum);
+    [scrub(crash) writeToFile:[dir stringByAppendingPathComponent:@"crash.txt"] atomically:YES];
     NSString *bt = [NSString stringWithContentsOfFile:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"build.txt"] encoding:NSUTF8StringEncoding error:nil] ?: @"";
     char hw[64] = "?"; size_t hn = sizeof hw; sysctlbyname("hw.model", hw, &hn, NULL, 0); NSProcessInfo *pi = NSProcessInfo.processInfo;
     NSString *info = [NSString stringWithFormat:@"%@\nD2R Mobile (macOS) %@ (%@)\n%@\n%@\nmacOS %@\n%@  %.0f GB\n%@\n", @(ui("dmAppShareInfo")), ver, build, inf[@"CFBundleIdentifier"] ?: @"", [bt stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet],
@@ -97,8 +101,8 @@ static NSString *share_logs(NSString *to) {
     // 设置摘要（同 iOS 分享日志 perf_block）：本次日志里「自定义设置：读盘」「图形设置：」、帧率档（生效值、出图路径）与光追阴影（机器判定、生效值、最近一次回退、最近一次画面在光追 / 原版之间切换、600 帧统计）各最后一行，玩家开了什么（含显示帧数、120 帧、光追）一眼看得到；下面整份 info 照旧过 scrub
     // Settings summary (same as perf_block in the iOS share log): the last "custom settings: load", "Graphics", frame-rate-mode (effective value, present path) and ray-traced-shadow (machine gate, effective value, latest fallback, latest picture switch between ray traced and original, 600-frame statistics) lines of this run's log, so what the player turned on (including the frame-rate display, 120 fps and ray tracing) is visible at a glance; the whole info still goes through scrub below
     NSData *cur = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:@"host.log"] options:NSDataReadingMappedIfSafe error:nil];
-    NSMutableString *sum = [NSMutableString stringWithString:@"\n—— 设置摘要 ——\n"];
-    for (NSString *k in @[@"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：画面", @"光追阴影：第", @"光追点光：光源记录", @"光追阴影：建好", @"光追阴影：没进原因", @"光追镂空：第", @"光追镂空：判定库", @"光追降档：", @"光追 AO：", @"光追阴影：GPU"]) {
+    NSMutableString *sum = [NSMutableString stringWithFormat:@"\n—— 设置摘要 ——\n%@\n", crash_sum];
+    for (NSString *k in @[@"崩溃围栏：", @"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：画面", @"光追阴影：第", @"光追点光：光源记录", @"光追阴影：建好", @"光追阴影：没进原因", @"光追镂空：第", @"光追镂空：判定库", @"光追降档：", @"光追 AO：", @"光追阴影：GPU"]) {
         NSRange r = cur.length ? [cur rangeOfData:[k dataUsingEncoding:NSUTF8StringEncoding] options:NSDataSearchBackwards range:NSMakeRange(0, cur.length)] : NSMakeRange(NSNotFound, 0);
         if (r.location == NSNotFound) { [sum appendFormat:@"（没有「%@」行）\n", k]; continue; }
         const char *b = cur.bytes; NSUInteger ls = r.location, le = r.location; while (ls > 0 && b[ls - 1] != '\n') ls--; while (le < cur.length && b[le] != '\n') le++;
@@ -117,6 +121,13 @@ static NSString *share_logs(NSString *to) {
     LOG("分享日志：已存（日志 %d 份 + 版本信息，%llu 字节）", n, [[fm attributesOfItemAtPath:dst.path error:nil] fileSize]);
     if (!to) [NSWorkspace.sharedWorkspace activateFileViewerSelectingURLs:@[dst]];
     return nil;
+}
+// 原生提示一次（崩溃围栏「已关闭实验性功能」，dm_crashfence.c）：覆盖那边的弱日志实现；任意线程调，切主线程弹（不挡调用方线程）
+// One native notice (crash fence "experimental features turned off", dm_crashfence.c): overrides the weak logging implementation there; callable from any thread, shown on the main thread (the caller's thread is not blocked)
+void front_notice(const char *title, const char *msg) {
+    NSString *t = title ? @(title) : @"", *m = msg ? @(msg) : @"";
+    if (!g_layer) { LOG("前端：提示（无窗口模式不弹）：%s %s", t.UTF8String, m.UTF8String); return; }   // 不开 DM_WINDOW 的无窗口测试 | windowless tests without DM_WINDOW
+    dispatch_async(dispatch_get_main_queue(), ^{ NSAlert *a = [NSAlert new]; a.messageText = t; a.informativeText = m; [a addButtonWithTitle:@(ui("dmAppOK"))]; LOG("前端：提示已显示：%s", t.UTF8String); [a runModal]; });
 }
 static void share_logs_ui(void) { NSString *e = share_logs(nil); if (e) { LOG("【红】分享日志：打包失败 %s", e.UTF8String); NSAlert *a = [NSAlert new]; a.messageText = @(ui("dmAppShareFail")); a.informativeText = e; [a addButtonWithTitle:@(ui("dmAppOK"))]; [a runModal]; } }
 @interface DmWinCtl : NSObject <NSWindowDelegate> @end

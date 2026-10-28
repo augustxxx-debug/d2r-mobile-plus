@@ -27,6 +27,7 @@ static void *term_main(void *arg) { (void)arg; while (sem_wait(&g_term_sem)) {} 
 void dm_host_shutdown(const char *why) {
     static _Atomic int once; if (atomic_exchange(&once, 1)) return;
     uint64_t t0 = now_ns(); LOG("收到 %s：优雅退出", why);
+    { void dm_crashfence_clean(const char *); dm_crashfence_clean("优雅退出"); }   // 崩溃围栏：正常结束，清运行标记（dm_crashfence.c） | crash fence: normal end, clear the running marker
 #ifdef __APPLE__
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1500 * NSEC_PER_MSEC), dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0), ^{
         LOG("【红】优雅退出 1.5 秒未完成，直接退出"); _exit(0); });

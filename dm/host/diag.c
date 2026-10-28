@@ -400,7 +400,8 @@ static void uimsg_print(const uint64_t *regs) {   // 观测门回调：只读寄
     // after returning from a run to the front end (ToFrontEnd and a run was joined before), measure by presented frames again until the next run is joined -- idling on the front end after a run is not being stuck (the false report 「卡在 ClosePanel:SaveIndicatorPanel」(stuck at ClosePanel:SaveIndicatorPanel) 15 seconds after returning to the front end)
     { static int played, back; if (!strcmp(n0, "FrontEndNavigation") && !strcmp(n1, "ToGame")) { played = 1; back = 0; crash_watch_pregame_done(); }
       else if (!strcmp(n0, "FrontEndNavigation") && !strcmp(n1, "ToFrontEnd") && played) { back = 1; void crash_watch_pregame_again(void); crash_watch_pregame_again(); }
-      else if (have_arg && !strcmp(nm, "MainMenuButtonRibbon") && !back) crash_watch_pregame_done(); }
+      else if (have_arg && !strcmp(nm, "MainMenuButtonRibbon") && !back) crash_watch_pregame_done();
+      if (have_arg && !strcmp(nm, "MainMenuButtonRibbon")) { void dm_crashfence_main_menu(void); dm_crashfence_main_menu(); } }   // 崩溃围栏：连续闪退关过实验项的话，主菜单出来时提示一次 | crash fence: if experimental features were turned off after consecutive crashes, notify once when the main menu appears
     for (int k = 0, n = atomic_load(&g_nui_sub); k < n; k++) { char s0[24], s1[24]; g_ui_sub[k](uih_name(f[0], s0), uih_name(f[1], s1), have_arg ? nm : ""); }
     if (!g_ui_print) return;
     const char *cat = uih_name(f[0], b0), *act = uih_name(f[1], b1);
