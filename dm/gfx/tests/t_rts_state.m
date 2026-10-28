@@ -71,7 +71,7 @@ static rts_mesh *mesh_of(int i) {   // 用同一次绘制的键找网格（不�
 }
 
 int main(void) { @autoreleasepool {
-    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_DBG", "1", 1); mtl_init();   // rt2：测试里没有 _rt 变体，调试模式下用叠加合成（审计分支「无变体 = 叠加」的同一路径） | rt2: no _rt variants in the test; debug mode composites with the overlay (the audit branch's "no variants = overlay" path)
+    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_DBG", "1", 1); setenv("DM_RT_SHADOW_PART", "0", 1); mtl_init();   // 前面各节测「整帧清图」对照模式（DM_RT_SHADOW_PART=0）；生产缺省的局部回退另有几节（g_rts.part = 1） | the earlier sections test the clear-the-frame comparison mode (DM_RT_SHADOW_PART=0); the production default, partial fallback, has sections of its own (g_rts.part = 1)   // rt2：测试里没有 _rt 变体，调试模式下用叠加合成（审计分支「无变体 = 叠加」的同一路径） | rt2: no _rt variants in the test; debug mode composites with the overlay (the audit branch's "no variants = overlay" path)
     if (!mtl_rt_shadow_supported()) { printf("SKIP：本机不支持光追阴影\n"); return 77; }
     setup(); rts_on(); g_rts.on = 1;   // 相当于设置页开着光追阴影（g_rts.on 置 0 = 关） | as if the settings page had ray-traced shadows on (g_rts.on = 0 = off)
     int ok, r; int a[1] = {0};

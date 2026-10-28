@@ -116,7 +116,7 @@ static void gpu_spin(void) {
 }
 
 int main(void) { @autoreleasepool {
-    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_CACHE_MB", "1", 1); setenv("DM_RT_SHADOW_DBG", "1", 1); mtl_init();   // rt2：测试里没有 _rt 变体，调试模式下用叠加合成（审计分支「无变体 = 叠加」的同一路径） | rt2: no _rt variants in the test; debug mode composites with the overlay (the audit branch's "no variants = overlay" path)
+    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_CACHE_MB", "1", 1); setenv("DM_RT_SHADOW_DBG", "1", 1); setenv("DM_RT_SHADOW_PART", "0", 1); mtl_init();   // 前面各节测「整帧清图」对照模式（DM_RT_SHADOW_PART=0）；生产缺省的局部回退另有几节（g_rts.part = 1） | the earlier sections test the clear-the-frame comparison mode (DM_RT_SHADOW_PART=0); the production default, partial fallback, has sections of its own (g_rts.part = 1)   // rt2：测试里没有 _rt 变体，调试模式下用叠加合成（审计分支「无变体 = 叠加」的同一路径） | rt2: no _rt variants in the test; debug mode composites with the overlay (the audit branch's "no variants = overlay" path)
     if (!mtl_rt_shadow_supported()) { printf("SKIP：本机不支持光追阴影\n"); return 77; }
     setup(); rts_on(); g_rts.on = 1;
     int ok, enc; int a[1] = {0};
@@ -269,13 +269,76 @@ int main(void) { @autoreleasepool {
       printf("非太阳那张：原因「%s」\n", why);
       EXPECT("有非太阳的图：太阳那张照常清回全亮", 1, cleared); EXPECT("非太阳那张原样不动（0.25）", 1, tex_depth(&g_top) == 0.25f); EXPECT("清回的只有太阳那 1 张", 1, RTS_MAP_CLEARED());
       EXPECT("原因写明光源不是太阳", 1, strstr(why, "光源不是太阳") != NULL); EXPECT("这几帧 GPU 无错", 1, ok11); }
-    // 12. 自动降档第 3 档 = 光追暂停（原先是太阳 1/4 分辨率，石墙脚下的影子成锯齿、镜头一动就闪）：画面原版、不算网格键、不算失败；回第 0 档后照常光追
-    // 12. Automatic level 3 = ray tracing paused (it used to be the sun at quarter resolution, whose stone-wall shadow edges turned into crawling stair steps): original picture, no mesh key, not a failure; back at level 0 ray tracing resumes
+    // 12. 自动降档最低档（RTS_LVL_MAX，第 4 档）= 光追暂停（原先第 3 档是太阳 1/4 分辨率，石墙脚下的影子成锯齿、镜头一动就闪）：画面原版、不算网格键、不算失败；回第 0 档后照常光追
+    // 12. The lowest automatic level (RTS_LVL_MAX, level 4) = ray tracing paused (level 3 used to be the sun at quarter resolution, whose stone-wall shadow edges turned into crawling stair steps): original picture, no mesh key, not a failure; back at level 0 ray tracing resumes
     { RTS_HYST_RESET(); EXPECT("第 12 节前光追生效", 1, until_applied(a, 1));
-      int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = 3; int ok12 = 1, applied = 0; uint64_t k0 = g_rts.key_ns; int bo0 = g_rts.backoff;
+      int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = RTS_LVL_MAX; int ok12 = 1, applied = 0; uint64_t k0 = g_rts.key_ns; int bo0 = g_rts.backoff;
       for (int i = 0; i < 4; i++) { ok12 = run_frame(1, a, 1, &ok12) >= 0 && ok12; applied += map_depth() == 1.0f; }
-      EXPECT("第 3 档：阴影图一帧都没清（原版画面）", 0, applied); EXPECT("第 3 档：不算网格键", 0, (long long)(g_rts.key_ns - k0)); EXPECT("第 3 档：不算失败（不退避）", bo0, g_rts.backoff);
+      EXPECT("最低档：阴影图一帧都没清（原版画面）", 0, applied); EXPECT("最低档：不算网格键", 0, (long long)(g_rts.key_ns - k0)); EXPECT("最低档：不算失败（不退避）", bo0, g_rts.backoff);
       g_rts.gov.lvl = lv0; RTS_HYST_RESET(); EXPECT("回第 0 档后光追照常", 1, until_applied(a, 1)); }
+#endif
+#ifdef RTS_PART_SET
+    // 13–18. 局部回退（生产缺省；七审三轮 P1 / P2 / 第 1、6 条）：真机 79eaa3f 营地 / 森林只有 26% / 31% 的时间是光追画面——一帧里只要一次阴影绘制没进 TLAS（新建配额满 / 网格待建），整帧回原版，
+    //        画面在光追与原版之间来回跳。现在进了 TLAS 的太阳阴影绘制不画进阴影图，没进的照原版画进去，_rt 变体取两者较暗值；阴影图不清。太阳按最大那张图认（第 6 条：头发 / 俯视图先画时太阳方向错了）
+    // 13–18. Partial fallback (production default; seventh review round 3 P1 / P2 / items 1, 6): on the device with 79eaa3f the camp / forest showed ray tracing only 26% / 31% of the time - one shadow draw outside the TLAS (build quota full / mesh pending) sent the whole frame back to original,
+    //        and the picture jumped between ray traced and original. Now sun shadow draws in the TLAS are not drawn into the map, the others are drawn as original, and the _rt variants take the darker of the two; maps are not cleared. The sun is taken from the largest map (item 6: with the hair / top-down map drawn first the sun pointed the wrong way)
+    { RTS_PART_SET(1); static uint8_t *tilt, *other; static tex_t g_small;
+      if (!tilt) { tilt = g_pool + 20480; float l[16] = {1, 0, 0, 0, 0, 0.6f, 0.8f, 0, 0, 0.8f, -0.6f, 0, 0, 0, 0, 1}; memcpy(tilt + 336, l, 64);   // 太阳 (0, 0.8, −0.6)：斜照（竖直的在局部回退里不算太阳） | sun (0, 0.8, −0.6): slanted (a vertical light is not the sun under partial fallback)
+                   other = g_pool + 24576; float o[16] = {1, 0, 0, 0, 0, 0.8f, 0.6f, 0, 0, 0.6f, -0.8f, 0, 0, 0, 0, 1}; memcpy(other + 336, o, 64); }   // 另一盏 (0, 0.6, −0.8) | another light (0, 0.6, −0.8)
+      g_small = g_sdepth; g_small.serial = 79006; g_small.d.width = g_small.d.height = 128;
+      g_lvp = tilt; int b2[2] = {0, 1}, ok13 = 1;
+      #define UNTIL_PART(ids, n) ({ int u_ = 0; for (int i_ = 0; i_ < 12 && !u_; i_++) { RTS_HYST_RESET(); run_frame(1, ids, n, &ok); ok13 = ok13 && ok; u_ = RTS_MAP_CLEARED() > 0; } u_; })
+      // 13. 稳定帧：进了 TLAS 的不编码，遮罩接替，阴影图不清 | 13. steady frame: draws in the TLAS are not encoded, the mask takes over, the map is not cleared
+      EXPECT("局部回退：能进入光追画面", 1, UNTIL_PART(b2, 2));
+      enc = run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+      EXPECT("局部回退：进了 TLAS 的两次绘制都不编码", 0, enc); EXPECT("局部回退：本帧用上遮罩", 1, RTS_MAP_CLEARED()); EXPECT("局部回退：变体拿到的是光追遮罩", 1, rts_mask_tex() == g_rts.mask);
+      EXPECT("局部回退：阴影图不清（0.25 原样）", 1, map_depth() == 0.25f); EXPECT("局部回退：太阳是斜照那盏 (0, 0.8, −0.6)", 1, fabsf(g_rts.sun[1] - 0.8f) < 1e-3f && fabsf(g_rts.sun[2] + 0.6f) < 1e-3f);
+      // 14. 有绘制没进 TLAS（点图元 / 新建配额满）：只有它照原版画，本帧照样是光追画面、画面不切换 | 14. draws outside the TLAS (points / build quota full): only they are drawn as original, the frame still shows ray tracing and the picture does not switch
+      { long long sw0 = RTS_SWITCHES(); uint64_t rf0 = g_rts.n_resid_frames;
+        frame_open(); prepass(); shadow_pass(); int e0 = sh(0), e1 = sdraw(g_idx, 48, NVN_DRAW_PRIMITIVE_POINTS, 0x2b); main_pass(); hdr_again(); ok13 = frame_close() && ok13;
+        EXPECT("有点图元的帧：进了 TLAS 的照样不编码", 1, e0); EXPECT("有点图元的帧：点图元照原版画（返回 0）", 0, e1); EXPECT("有点图元的帧：照样是光追画面", 1, RTS_MAP_CLEARED());
+        uint16_t *fresh = (uint16_t *)(g_pool + 700000); for (int k = 0; k < (RTS_BUILDS_PER_FRAME + 2) * 48; k++) fresh[k] = (uint16_t)(((k * 2654435761u) >> 9) % 4096);   // 一帧冒出的新网格 | new meshes appearing in one frame
+        int skipped = 0, drawn = 0; frame_open(); prepass(); shadow_pass(); sh(0);
+        for (int i = 0; i < RTS_BUILDS_PER_FRAME + 2; i++) { int r = sdraw((const uint8_t *)(fresh + i * 48), 48, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x2b); skipped += r == 1; drawn += r == 0; }
+        main_pass(); hdr_again(); ok13 = frame_close() && ok13;
+        EXPECT("新建配额满的帧：配额内的当帧建好、不编码", RTS_BUILDS_PER_FRAME, skipped); EXPECT("新建配额满的帧：超出的 2 个照原版画", 2, drawn); EXPECT("新建配额满的帧：照样是光追画面", 1, RTS_MAP_CLEARED());
+        run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("之后一帧仍是光追画面", 1, RTS_MAP_CLEARED()); EXPECT("这几帧画面一次都没切换", sw0, RTS_SWITCHES()); EXPECT("局部回退帧记了 2 帧", 2, (long long)(g_rts.n_resid_frames - rf0)); }
+      // 15. 太阳按图认：小图（128²、另一盏光）先画也不当太阳；它照原版画、不进 TLAS | 15. sun by map: a smaller map (128², another light) drawn first is not the sun; it is drawn as original and kept out of the TLAS
+      { uint64_t ns0 = g_rts.n_nonsun_draws;
+        frame_open(); prepass(); g_sp = &g_small; shadow_pass(); g_sp = &g_sdepth; g_dt = &g_small; g_lvp = other; int es = sh(2); g_dt = &g_sdepth; g_lvp = tilt;
+        shadow_pass(); int ex = sh(0); int nin = g_rts.ninst; main_pass(); hdr_again(); ok13 = frame_close() && ok13;
+        EXPECT("小图先画：照原版画（返回 0）", 0, es); EXPECT("小图先画：没进 TLAS（只有大图那 1 个实例）", 1, nin); EXPECT("小图先画：大图照样不编码", 1, ex);
+        EXPECT("太阳取自 256² 那张", 256, g_rts.sun_from_w); EXPECT("太阳方向 = 大图的光 (0, 0.8, −0.6)", 1, fabsf(g_rts.sun[1] - 0.8f) < 1e-3f); EXPECT("非太阳图记了 1 次", 1, (long long)(g_rts.n_nonsun_draws - ns0)); EXPECT("小图那帧照样是光追画面", 1, RTS_MAP_CLEARED()); }
+      // 16. 只有竖直光的图（俯视软影）：不是太阳、照原版画、不进 TLAS，也不算失败 | 16. a map lit only straight down (top-down soft shadow): not the sun, drawn as original, kept out of the TLAS, and not a failure
+      { int bo0 = g_rts.backoff; g_lvp = NULL; frame_open(); prepass(); shadow_pass(); int ev = sh(0); int nin = g_rts.ninst; main_pass(); hdr_again(); ok13 = frame_close() && ok13; g_lvp = tilt;
+        const char *w = RTS_WHY(); EXPECT("竖直光：照原版画（返回 0）", 0, ev); EXPECT("竖直光：没进 TLAS", 0, nin); EXPECT("竖直光：不算「没取到太阳方向」", 1, !w || !strstr(w, "太阳"));
+        run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; EXPECT("竖直光那帧不算失败（不退避）", bo0, g_rts.backoff); }
+      // 17. 省画之后才发现追不成（缺相机）：这一帧那些遮挡体没影子（记【红】），下一帧照原版全画，之后恢复 | 17. the trace turns out impossible after the draws were skipped (no camera): those occluders have no shadow this frame (logged in red), the next frame draws everything as original, then it recovers
+      { RTS_HYST_RESET(); EXPECT("第 17 节前是光追画面", 1, UNTIL_PART(b2, 2)); uint64_t l0 = g_rts.n_skip_lost;
+        enc = run_frame(0, b2, 2, &ok); ok13 = ok13 && ok; EXPECT("缺相机的当帧：帧开头不知道，照样不编码", 0, enc); EXPECT("缺相机的当帧：遮罩没用上", 0, RTS_MAP_CLEARED());
+        enc = run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; EXPECT("下一帧：记「省画后没追成」1 帧", 1, (long long)(g_rts.n_skip_lost - l0)); EXPECT("下一帧（退避）：两次都照原版画", 2, enc);
+        EXPECT("之后恢复光追画面", 1, UNTIL_PART(b2, 2)); }
+      // 18. 以读入开的太阳图（本帧没清，留着上一帧的内容）：进了 TLAS 的也照画，不留旧影 | 18. a sun map opened with a load (not cleared this frame, last frame's content kept): draws in the TLAS are drawn anyway, leaving no stale shadow
+      { uint64_t ld0 = g_rts.n_skip_load; RTS_HYST_RESET(); UNTIL_PART(b2, 2);
+        frame_open(); prepass(); rp_end(); memset(&R, 0, sizeof R); R.rt.depth = &g_sdepth; R.has_rt = 1; rp_begin_ex(0); int el = sh(0); main_pass(); hdr_again(); ok13 = frame_close() && ok13;
+        EXPECT("读入开的太阳图：进了 TLAS 的照画（返回 0）", 0, el); EXPECT("读入开的太阳图：记 1 次", 1, (long long)(g_rts.n_skip_load - ld0)); }
+      // 18b. 没有主通道的帧（读图 / 切关时只画了阴影图）：屏幕上没东西，不退避、不算画面切换、不推高迟滞要求 | 18b. a frame without a main pass (only shadow maps drawn while loading / changing levels): nothing on screen, no backoff, no picture switch, no higher hysteresis requirement
+      { RTS_HYST_RESET(); UNTIL_PART(b2, 2); long long sw0 = RTS_SWITCHES(); int bo0 = g_rts.backoff, need0 = RTS_NEED();
+        frame_open(); prepass(); shadow_pass(); sh(0); ok13 = frame_close() && ok13;
+        run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("没有主通道的帧：不退避", bo0, g_rts.backoff); EXPECT("没有主通道的帧：不算画面切换", sw0, RTS_SWITCHES()); EXPECT("没有主通道的帧：迟滞要求不变", need0, RTS_NEED()); EXPECT("之后一帧照样是光追画面", 1, RTS_MAP_CLEARED()); }
+      // 19. 最低档（光追暂停）：局部回退也不省画 | 19. the lowest level (ray tracing paused): partial fallback skips nothing either
+      { int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = RTS_LVL_MAX; int drawn = 0; for (int i = 0; i < 3; i++) { drawn += run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; }
+        EXPECT("最低档：三帧六次都照原版画", 6, drawn); EXPECT("最低档：没用遮罩", 0, RTS_MAP_CLEARED()); g_rts.gov.lvl = lv0; }
+      // 20. 第 2 档：镂空遮挡体照原版画进阴影图、不进 TLAS，其余照常光追（七审三轮第 5、8 条：森林的镂空判定最重） | 20. level 2: alpha-tested occluders go into the map as original and stay out of the TLAS, everything else is ray traced as usual (seventh review round 3 items 5, 8: the alpha judge is the heaviest part in the forest)
+      { RTS_HYST_RESET(); UNTIL_PART(b2, 2); int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = 2; NvProg *ap = [NvProg new]; ap->sh[0] = g_pr->sh[0]; ap->sh[1] = [NvShader new]; ap->sh[1]->rf.may_discard = 1;
+        uint64_t lw0 = g_rts.na_why[RA_LEVEL]; frame_open(); prepass(); shadow_pass(); int eo = sh(0); NvProg *keep = g_pr; g_pr = ap; int ea = sh(5); g_pr = keep; int nin = g_rts.ninst; main_pass(); hdr_again(); ok13 = frame_close() && ok13;
+        EXPECT("第 2 档：镂空照原版画（返回 0）", 0, ea); EXPECT("第 2 档：镂空没进 TLAS", 1, nin); EXPECT("第 2 档：镂空记「降档照原版」1 次", 1, (long long)(g_rts.na_why[RA_LEVEL] - lw0));
+        EXPECT("第 2 档：不透明的照样不编码", 1, eo); EXPECT("第 2 档：照样是光追画面", 1, RTS_MAP_CLEARED()); g_rts.gov.lvl = lv0; }
+      EXPECT("局部回退各节 GPU 无错", 1, ok13);
+      #undef UNTIL_PART
+      g_lvp = NULL; RTS_PART_SET(0); }
 #endif
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;

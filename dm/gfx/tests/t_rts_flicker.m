@@ -50,10 +50,11 @@ static void shadow_pass(void) {
     rp.depthAttachment.clearDepth = 1.0; rts_note_pass(rp);
 }
 // 一个遮挡体：第 i 个网格（48 个索引，各自的索引段） | One occluder: mesh i (48 indices, each with its own index span)
+static uint8_t *g_lvp3;   // 阴影绘制用的光源常量（缺省 g_cb3）；局部回退那节用斜照的 | the light constants of shadow draws (g_cb3 by default); the partial-fallback section uses a slanted one
 static void sh(int i) {
     memset(&R, 0, sizeof R); R.rt.depth = &g_sdepth; R.has_rt = 1;
     S.nattr = 1; S.attr[0] = (va_st){.fmt = 0x2b, .offset = 0, .stream = 0}; S.stream[0] = (vs_st){8, 0}; S.vbuf[0] = (NVNbufferRange){(uint64_t)g_vtx, 4096 * 8};
-    S.ubo[0][0] = (p_bind_buf){0, 0, (uint64_t)g_mat, 64}; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)g_cb3, 400};
+    S.ubo[0][0] = (p_bind_buf){0, 0, (uint64_t)g_mat, 64}; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)(g_lvp3 ? g_lvp3 : g_cb3), 400};
     p_draw_idx di = {NVN_DRAW_PRIMITIVE_TRIANGLES, 1, 48, 0, 0, 1, (uint64_t)(g_idx + (size_t)i * 96)};
     rts_draw(g_pr, NULL, &di, NVN_DRAW_PRIMITIVE_TRIANGLES);
 }
@@ -61,7 +62,7 @@ static void sh(int i) {
 static void pt(void) {
     memset(&R, 0, sizeof R); R.rt.depth = &g_sdepth; R.has_rt = 1;
     S.nattr = 1; S.attr[0] = (va_st){.fmt = 0x2b, .offset = 0, .stream = 0}; S.stream[0] = (vs_st){8, 0}; S.vbuf[0] = (NVNbufferRange){(uint64_t)g_vtx, 4096 * 8};
-    S.ubo[0][0] = (p_bind_buf){0, 0, (uint64_t)g_mat, 64}; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)g_cb3, 400};
+    S.ubo[0][0] = (p_bind_buf){0, 0, (uint64_t)g_mat, 64}; S.ubo[0][3] = (p_bind_buf){0, 3, (uint64_t)(g_lvp3 ? g_lvp3 : g_cb3), 400};
     p_draw_idx di = {NVN_DRAW_PRIMITIVE_POINTS, 1, 48, 0, 0, 1, (uint64_t)g_idx};
     rts_draw(g_pr, NULL, &di, NVN_DRAW_PRIMITIVE_POINTS);
 }
@@ -76,6 +77,9 @@ static int g_new = 100;
 static int frame(int nw) {
     @autoreleasepool { mtl_set_frame(++g_frame); mtl_sub_begin(); prepass(); shadow_pass(); for (int i = 0; i < 4; i++) sh(i); for (int k = 0; k < nw; k++) { sh(g_new++); pt(); }
       set_rt(1, &g_hdr, &g_mdepth); set_rt(1, &g_hdr, NULL); uint64_t f = mtl_sub_commit(); mtl_wait(f, 10000000000ull); }
+#ifdef RTS_PART_SET
+    if (g_rts.part) return RTS_MAP_CLEARED() > 0;   // 局部回退：阴影图不清，画面是不是光追看本帧用没用上遮罩 | partial fallback: maps are not cleared; whether the frame showed ray tracing is whether it used the mask
+#endif
     return map_depth() == 1.0f;
 }
 static int until_rt(int max) { for (int i = 1; i <= max; i++) if (frame(0)) return i; return 0; }   // 跑到光追画面，返回用了几帧（0 = 没到） | run until the ray-traced picture, returns how many frames it took (0 = never)
@@ -85,7 +89,7 @@ static int alternate(int n, int prev, int *nrt) {
 }
 
 int main(void) { @autoreleasepool {
-    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); unsetenv("DM_RT_SHADOW_HYST"); setenv("DM_RT_SHADOW_DBG", "1", 1); mtl_init();   // 测试里没有 _rt 变体：调试模式下用叠加合成（同 t_rts_gate） | no _rt variants in the test: debug mode composites with the overlay (as in t_rts_gate)
+    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); unsetenv("DM_RT_SHADOW_HYST"); setenv("DM_RT_SHADOW_DBG", "1", 1); setenv("DM_RT_SHADOW_PART", "0", 1); mtl_init();   // 前面各节测「整帧清图」对照模式（DM_RT_SHADOW_PART=0）；生产缺省的局部回退另有几节（g_rts.part = 1） | the earlier sections test the clear-the-frame comparison mode (DM_RT_SHADOW_PART=0); the production default, partial fallback, has sections of its own (g_rts.part = 1)   // 测试里没有 _rt 变体：调试模式下用叠加合成（同 t_rts_gate） | no _rt variants in the test: debug mode composites with the overlay (as in t_rts_gate)
     if (!mtl_rt_shadow_supported()) { printf("SKIP：本机不支持光追阴影\n"); return 77; }
     setup(); rts_on(); g_rts.on = 1;
     int nrt;
@@ -115,6 +119,20 @@ int main(void) { @autoreleasepool {
     { RTS_HYST_SET(0); RTS_HYST_RESET(); until_rt(12); int sw = alternate(20, 1, &nrt);
       printf("迟滞关：交替 20 帧画面切换 %d 次\n", sw);
       EXPECT("迟滞关（对照）：交替帧逐帧切换", 1, sw >= 15); RTS_HYST_SET(1); }
+#ifdef RTS_PART_SET
+    // 7. 局部回退（生产缺省，七审三轮 P1 / P2）：同样每隔一帧冒出新网格 + 一次进不了 TLAS 的绘制，没进的照原版画进阴影图，画面一直是光追、一次都不切；
+    //    光追本身失败（缺相机）照样切回原版、等满迟滞再回 | 7. Partial fallback (production default, seventh review round 3 P1 / P2): the same new mesh + one draw outside the TLAS every other frame; the uncovered draws go into the map as original, the picture stays ray traced and never switches;
+    //    a failure of ray tracing itself (no camera) still switches back and waits out the hysteresis
+    { static uint8_t *tilt; if (!tilt) { tilt = g_pool + 20480; float l[16] = {1, 0, 0, 0, 0, 0.6f, 0.8f, 0, 0, 0.8f, -0.6f, 0, 0, 0, 0, 1}; memcpy(tilt + 336, l, 64); }   // 斜照的太阳（竖直的在局部回退里不算太阳） | a slanted sun (a vertical light is not the sun under partial fallback)
+      RTS_PART_SET(1); g_lvp3 = tilt; frame(0); RTS_HYST_RESET();   // 换模式的头一帧还在结算第 6 节最后那帧（对照模式、有中断），先跑掉再清迟滞要求 | the first frame after the switch still settles section 6's last frame (comparison mode, interrupted): run it first, then drop the hysteresis requirement
+      EXPECT("局部回退：几帧内进入光追画面", 1, until_rt(12) > 0); frame(0);
+      long long s0 = RTS_SWITCHES(); int sw = alternate(40, 1, &nrt);
+      printf("局部回退 交替 40 帧：画面切换 %d 次，光追帧 %d\n", sw, nrt);
+      EXPECT("局部回退：交替 40 帧画面一次都不切", 0, sw); EXPECT("局部回退：40 帧都是光追画面", 40, nrt); EXPECT("局部回退：模块也没记切换", 0, RTS_SWITCHES() - s0);
+      int s; @autoreleasepool { mtl_set_frame(++g_frame); mtl_sub_begin(); shadow_pass(); for (int i = 0; i < 4; i++) sh(i); set_rt(1, &g_hdr, &g_mdepth); set_rt(1, &g_hdr, NULL); uint64_t f = mtl_sub_commit(); mtl_wait(f, 10000000000ull); } s = RTS_MAP_CLEARED() > 0;
+      int n = until_rt(200); printf("局部回退 缺相机之后第 %d 帧回到光追（要求连续完整 %d 帧）\n", n, RTS_NEED());
+      EXPECT("局部回退：缺相机的当帧不是光追画面", 0, s); EXPECT("局部回退：真失败后等满迟滞才回光追", 1, n >= 30); g_lvp3 = NULL; RTS_PART_SET(0); }
+#endif
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

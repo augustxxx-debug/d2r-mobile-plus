@@ -2802,6 +2802,7 @@ static MTLRenderPipelineDescriptor *pso_desc(const pso_key *k, NvShader *vs, NvS
 // Pipeline key: current state S + pass formats (normal pass; a merged pass additionally carries lmap / specialized function, filled in by pso_get)
 static int g_draw_reentry;   // draw 正在为同一次绘制重来（资源版本变了）：nvn_rtshadow.inc 复用上一答案 | draw is retrying the same draw (resource version changed): nvn_rtshadow.inc reuses the previous answer
 static uint8_t g_pso_noraster;   // 本次绘制关光栅化（nvn_rtshadow.inc 的蒙皮位置导出） | this draw rasterizes nothing (skinned position export in nvn_rtshadow.inc)
+static uint8_t g_rts_nowrite;    // 本次绘制不写深度（nvn_rtshadow.inc 局部回退：镂空遮挡体补画原版只为抓片元参数块，影子由光追接替） | this draw writes no depth (nvn_rtshadow.inc partial fallback: an alpha-tested occluder's original re-encode only captures the fragment argument block, ray tracing casts its shadow)
 static void pso_key_fill(pso_key *k, NvShader *vs, NvShader *fs, const uint32_t cfmt[8], uint32_t dfmt, uint32_t sfmt, uint32_t samples, int lmap) {
     memset(k, 0, sizeof *k);
     k->vs = (__bridge void *)vs; k->fs = (__bridge void *)fs; k->noraster = g_pso_noraster;
@@ -2967,13 +2968,13 @@ static void warm_start(void) {
 }
 static int g_rt_ovr;   // 运行时外推的模板覆盖：0 不覆盖；1 只在单位 / 特效 / 外推洞位（0xD0）上通过、不写模板；3 照常深度测试，通过处写特效位 0x40 | Stencil override for runtime extrapolation: 0 no override; 1 pass only on the unit / effect / extrapolation-hole bits (0xD0), no stencil write; 3 depth test as usual, write the effect bit 0x40 where it passes
 static id<MTLDepthStencilState> dss_get(int has_depth, int has_stencil) {
-    struct { ds_st ds; uint32_t vm[2], wm[2]; int hd, hs, ovr; } k;
-    memset(&k, 0, sizeof k); k.ds = S.ds; memcpy(k.vm, S.st_vmask, 8); memcpy(k.wm, S.st_wmask, 8); k.hd = has_depth; k.hs = has_stencil; k.ovr = has_stencil ? g_rt_ovr : 0;
+    struct { ds_st ds; uint32_t vm[2], wm[2]; int hd, hs, ovr, nw; } k;
+    memset(&k, 0, sizeof k); k.ds = S.ds; memcpy(k.vm, S.st_vmask, 8); memcpy(k.wm, S.st_wmask, 8); k.hd = has_depth; k.hs = has_stencil; k.ovr = has_stencil ? g_rt_ovr : 0; k.nw = has_depth && g_rts_nowrite;
     if (!g_dss.klen) g_dss.klen = sizeof k;
     id<MTLDepthStencilState> s = hm_get_id(&g_dss, &k);
     if (s) return s;
     MTLDepthStencilDescriptor *d = [MTLDepthStencilDescriptor new];
-    if (has_depth && S.ds.dt) { d.depthCompareFunction = (MTLCompareFunction)(S.ds.df - 1); d.depthWriteEnabled = S.ds.dw; }
+    if (has_depth && S.ds.dt) { d.depthCompareFunction = (MTLCompareFunction)(S.ds.df - 1); d.depthWriteEnabled = S.ds.dw && !k.nw; }
     if (has_stencil && S.ds.st) {
         MTLStencilDescriptor *f = [MTLStencilDescriptor new], *b = [MTLStencilDescriptor new];
         f.stencilCompareFunction = (MTLCompareFunction)(S.ds.sf_f - 1); f.stencilFailureOperation = (MTLStencilOperation)(S.ds.fail_f - 1);
@@ -4709,7 +4710,8 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
     __unsafe_unretained NvProg *pr = prog_get(S.prog);
     rts_select_fs(pr);   // 光追阴影：按开关换片元 _rt 变体 | ray-traced shadows: swap in the _rt fragment variant per the switch
     int rts_reent = g_draw_reentry, rtsd = rts_draw(pr, dw, di, dw ? dw->prim : di->prim); g_draw_reentry = 0;
-    if (rtsd == 2 && !rts_reent && rts_keep_raster()) { g_rts_plain = 1; draw(dw, di); g_rts_plain = 0; rts_export_state(pr, 1); }   // 保留原图模式：蒙皮导出前先照原版画进阴影图 | keep-raster mode: draw the original into the shadow map before the skinned export   // 光追阴影：阴影图绘制进加速结构（1 = 不编码；2 = 蒙皮位置导出，换 _pos 顶点变体、关光栅化照常编码） | ray-traced shadows: shadow-map draws go into the acceleration structure (1 = do not encode; 2 = skinned position export: _pos vertex variant, rasterization off, encoded as usual)
+    int rts_kr = rtsd == 2 && !rts_reent ? rts_keep_raster() : 0;   // 1 照画；2 不写深度（局部回退的镂空）；0 不补画 | 1 re-encode; 2 without depth writes (alpha-tested under partial fallback); 0 none
+    if (rts_kr) { g_rts_plain = 1; if (rts_kr == 2) { g_rts_nowrite = 1; g_dss_dirty = 1; } draw(dw, di); if (g_rts_nowrite) { g_rts_nowrite = 0; g_dss_dirty = 1; } g_rts_plain = 0; rts_export_state(pr, 1); }   // 保留原图模式：蒙皮导出前先照原版画进阴影图 | keep-raster mode: draw the original into the shadow map before the skinned export   // 光追阴影：阴影图绘制进加速结构（1 = 不编码；2 = 蒙皮位置导出，换 _pos 顶点变体、关光栅化照常编码） | ray-traced shadows: shadow-map draws go into the acceleration structure (1 = do not encode; 2 = skinned position export: _pos vertex variant, rasterization off, encoded as usual)
     if (g_ruler_truth == 0) {   // 尺子负对照（DM_NVN_RULER_NEG=<片元键>）：被测模式下丢掉该着色器的绘制，尺子必须报不等价 | Ruler negative control (DM_NVN_RULER_NEG=<fragment key>): in the mode under test drop this shader's draws, and the ruler must report non-equivalence
         static const char *neg; static int ng = -1; if (ng < 0) { neg = getenv("DM_NVN_RULER_NEG"); ng = neg && *neg; }
         if (ng && pr) for (int st = 0; st < 5; st++) { __unsafe_unretained NvShader *sh = pr->sh[st]; if (sh && sh->stage == 1 && !strncmp(sh->key, neg, strlen(neg))) { static int once; if (!once++) MLOG("DM_NVN_RULER_NEG：被测模式丢弃着色器 %s 的绘制", sh->key); return; } }
