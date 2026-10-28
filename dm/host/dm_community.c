@@ -310,13 +310,22 @@ static void co_origin(uint64_t p, int xr, int *ox, int *oy, float *s) {
     if (!(ax >= 0 && ax <= 1)) ax = 0; if (!(ay >= 0 && ay <= 1)) ay = 0; if (!(sc > 0.05f && sc < 10)) sc = 1;
     *ox = (int)(ax * xr) + r[0]; *oy = (int)(ay * 2160) + r[1]; *s = sc;
 }
-#define CO_DESC 6   // 正文行：社区框 0 群号或链接 / 1 提示或「已复制」/ 2 「关于」子标题 / 3 版本 / 4–5 鸣谢；纯「关于」框 0 版本 / 1–2 鸣谢，其余空 | body lines: community box 0 number or link / 1 hint or Copied / 2 About sub-title / 3 version / 4-5 credits; About-only box 0 version / 1-2 credits, the rest blank
+#define CO_DESC 6   // 正文行：社区框 0 群号或链接 / 1 提示或「已复制」/ 2 空（分隔线占这一行）/ 3 版本 / 4–5 鸣谢；纯「关于」框 0 版本 / 1–2 鸣谢，其余空 | body lines: community box 0 number or link / 1 hint or Copied / 2 empty (the divider takes this line) / 3 version / 4-5 credits; About-only box 0 version / 1-2 credits, the rest blank
 static void co_hide_all(uint8_t *b, uint64_t p) {
     for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); uint64_t t = co_find(p, nm, 0); if (t) { int32_t *r = (int32_t *)(t + 0x70); r[0] = r[1] = 99999; } }   // 边框片挪出屏幕（尺寸不动） | tiles off screen (size unchanged)
     uint64_t w = co_find(p, "TouchCommTitle", 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); }
     for (int k = 0; k < CO_DESC; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommDesc%d", k); w = co_find(p, nm, 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); } }
-    static const char *const bt[] = { "TouchCommCopyQq", "TouchCommCopyLink", "TouchCommOk" };
-    for (int k = 0; k < 3; k++) co_place(co_find(p, bt[k], 0), 99999, 99999);
+    static const char *const bt[] = { "TouchCommCopyQq", "TouchCommCopyLink", "TouchCommOk", "TouchCommDivider" };
+    for (int k = 0; k < 4; k++) co_place(co_find(p, bt[k], 0), 99999, 99999);
+}
+// 社区段与「关于」段之间的分隔线（用户 2026-10-29：「关于」子标题换成分隔线）：原版设置页分节同一张图 PauseMenu\Divider，共享精灵不改尺寸——
+// 只读它的图宽（精灵 +0xd0，同 co_tile 的偏移）按框中线居中；读不到就按 1500 估。核过是图片控件、名字对才摆
+// Divider between the community and About sections (user, 2026-10-29: replaces the About sub-title): the original settings-section image PauseMenu\Divider, a shared sprite never resized --
+// only its width is read (sprite +0xd0, same offset as co_tile) to centre it on the box; 1500 assumed if unreadable. Placed only after checking it is an image widget with our name
+static void co_divider(uint8_t *b, uint64_t w, int cx, int y) {
+    if (!w || !dm_widget_is(b, w, DM_VT_IMAGE)) return;
+    uint64_t ref = *(uint64_t *)(w + 0x88), sp = ref ? *(uint64_t *)ref : 0; uint32_t wd = sp ? *(uint32_t *)(sp + 0xd0) : 0;
+    co_place(w, cx - (int)(wd > 0 && wd < 4000 ? wd : 1500) / 2, y);
 }
 const char *dm_update_label(void);   // dm_update.c：显示版本「1.0.0+N · 哈希」（没经外壳初始化时为空） | display version (empty when the shell has not initialized it)
 void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
@@ -362,12 +371,13 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
         snprintf(line, sizeof line, dm_str(b, kind == 1 ? "dmCommunityQq" : "dmCommunityLink"), v);
         co_text(b, ti, dm_str(b, "dmCommunityTitle")); co_text(b, de[0], line);
         co_text(b, de[1], cp > 0 ? dm_str(b, "dmCommunityCopied") : cp < 0 ? dm_str(b, "dmCommunityCopyFail") : dm_str(b, kind == 1 ? "dmCommunityQqHint" : "dmCommunityLinkHint"));
-        co_text(b, de[2], dm_str(b, "dmCommunityAbout")); co_text(b, de[3], ver); co_text(b, de[4], crt[0]); co_text(b, de[5], crt[1]); }
+        co_text(b, de[2], ""); co_text(b, de[3], ver); co_text(b, de[4], crt[0]); co_text(b, de[5], crt[1]); }   // 第 2 行空：「关于」子标题换成分隔线 | line 2 empty: the About sub-title became the divider
     else { co_text(b, ti, dm_str(b, "dmCommunityAbout")); co_text(b, de[0], ver); co_text(b, de[1], crt[0]); co_text(b, de[2], crt[1]); for (int k = 3; k < CO_DESC; k++) co_text(b, de[k], ""); }
     { int gm[15][4], h = dm_notice_geometry(1800 - 128, H - 24, 1800, gm), top = (244 - h) / 2;   // 边框几何同崩溃围栏提示框（dm_crashfence.c） | frame geometry as the crash-fence box
       for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + gm[k][0], y0 + gm[k][1] - top, gm[k][2], gm[k][3] + (k / 3 < 4 ? 2 : 0) }; co_tile(b, tl[k], r); } }
     co_place(ti, cx - 850, y0 + 40);
     for (int k = 0; k < CO_DESC; k++) { if (dy[k]) co_place(de[k], cx - 850, y0 + dy[k]); else co_place(de[k], 99999, 99999); }
+    { uint64_t dv = co_find(p, "TouchCommDivider", 0); if (mode == 1) co_divider(b, dv, cx, y0 + 296); else co_place(dv, 99999, 99999); }   // 原「关于」行（y 272，高 60）的中线 | the middle of the former About line
     if (mode == 1) { co_place(kind == 1 ? cq : cl, cx - 490, y0 + btn_y); co_place(kind == 1 ? cl : cq, 99999, 99999); co_place(ok, cx + 20, y0 + btn_y); }   // 两颗按钮各 470 宽，左复制、右确定 | two 470-wide buttons: Copy left, OK right
     else { co_place(cq, 99999, 99999); co_place(cl, 99999, 99999); co_place(ok, cx - 235, y0 + btn_y); }   // 纯「关于」框：只有「确定」，居中 | About-only box: OK only, centered
     if (st == 1) { atomic_store(&g_show, 2); int32_t *pr = (int32_t *)(p + 0x70);
