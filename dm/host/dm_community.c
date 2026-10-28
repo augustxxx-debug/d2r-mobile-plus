@@ -143,6 +143,7 @@ void dm_community_open(int from) {
 }
 void dm_community_copy_init(int (*cb)(const char *)) { g_copy = cb; }
 unsigned dm_community_copy_count(void) { return atomic_load(&g_copies); }
+int dm_community_shown(void) { return atomic_load(&g_show) == 2; }
 static void do_copy(int by) {   // by：1 点按钮 / 2 手柄 A | by: 1 button / 2 controller A
     char v[GH_MAX + 1]; int k = dm_community_value(dm_lang_group(), v, sizeof v);
     if (!k) { atomic_store(&g_copied, -1); LOG("【红】社区入口：复制失败（没有可复制的值）"); return; }
@@ -190,7 +191,7 @@ static void co_tile(uint8_t *b, uint64_t w, const int want[4]) {   // 边框片�
 }
 // 提示框挂在哪个面板下：暂停菜单（PauseLayout / PauseLayoutGarden，局内）或自定义页（VideoOptionsPanel，前端与局内都有）——哪个开着、带我们的控件，就用哪个
 // Which panel holds the box: the pause menu (PauseLayout / PauseLayoutGarden, in a run) or the Custom page (VideoOptionsPanel, front end and in a run) - whichever is open and carries our widgets
-static const char *const k_hosts[3] = { "PauseLayout", "PauseLayoutGarden", "VideoOptionsPanel" };
+static const char *const k_hosts[3] = { "VideoOptionsPanel", "PauseLayout", "PauseLayoutGarden" };   // 自定义页在前：局内从暂停菜单开选项时两者同时开着，选项页画在暂停菜单之上（Mac 实测：挂在暂停菜单下的框被选项页盖住） | Custom page first: in a run both are open when Options is opened from the pause menu, and the options page draws above it (Mac: a box hung under the pause menu was covered by the options page)
 static uint64_t co_host(uint64_t root, int *which) {
     for (int i = 0; i < 3; i++) { uint64_t p = dm_ui_top(root, k_hosts[i]); if (p && *(uint8_t *)(p + 0x50) && co_find(p, "TouchCommTitle", 0)) { if (which) *which = i; return p; } }
     return 0;
@@ -217,7 +218,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     int avail = dm_community_available();
     // 入口显隐：暂停菜单那一行、自定义页的「关于」组——没有可显示的值就挪出屏幕（行在滚动区里，只挪 x） | entry show / hide: the pause-menu row and the Custom page's About group - without a value they move off screen (the row sits in a scroll area, so only x moves)
     for (int i = 0; i < 3; i++) { uint64_t p = dm_ui_top(root, k_hosts[i]); if (!p || !*(uint8_t *)(p + 0x50)) continue;
-        if (i < 2) { uint64_t w = co_find(p, "TouchCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 564 : 99999, r[1]); } }
+        if (i > 0) { uint64_t w = co_find(p, "TouchCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 564 : 99999, r[1]); } }
         else { uint64_t w = co_find(p, "TouchAboutRow", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 0 : 99999, r[1]); } } }
     int st = atomic_load(&g_show); if (!st) return;
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current();
