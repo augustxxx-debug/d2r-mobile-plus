@@ -37,6 +37,11 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 ### Fixed
 
+- **Experimental** ray-traced shadows, seventh-review fixes:
+  ① frames that do not use the sun mask (hysteresis hold, failure, point lights only) used to bind a 1×1 white texture to the `_rt` variants, which read it by pixel coordinates and got 0 out of bounds, darkening the whole frame; they now bind a fully lit mask of the main target size, and when the bound mask does not cover the render target (not built yet, dynamic resolution just changed) the variant is not selected and the original shading runs (the regression test reads it on the GPU over the whole target the way the variants do);
+  ② non-indexed quads are built in the ray tracing with the original rasterizer's topology (0,1,2,0,2,3 per 4 vertices) instead of a single triangle that left half of each occluder without a shadow; indexed quads, which the original does not draw, are not built either;
+  ③ `rts_variant.py` fails as a whole with a non-zero exit when a required variant does not compile, replacing no product (generated in a staging dir first), so packaging stops; the variant tests are now unittest, registered in the iOS tests, and collecting 0 tests fails;
+  ④ the ray-tracing GPU time statistics are read and reset in one go under the completion callback's lock (TSan regression).
 - `DM_FPS=120` without `DM_PRESENT_HZ=120` no longer stalls the game: the host pacer now follows the 120 FPS target, and while the display link drives presents its target can no longer drift ahead of real time (it used to drift tens of seconds, and one late link callback then put the acquire fallback to sleep until then).
 
 - Route enhanced UI notifications through a bounded queue drained on the game main thread. Paused-menu deposit feedback no longer waits for the server to resume; controller gold/item tooltips no longer move the notice.
