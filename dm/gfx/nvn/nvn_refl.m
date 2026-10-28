@@ -44,6 +44,9 @@ int nvn_refl_from_json(NSDictionary *j, nvn_refl *o, char *err, int errlen) {
             else if ([k isEqualToString:@"c1"]) r->kind = NVN_RB_C1;
             else if ([k isEqualToString:@"drvcb"]) r->kind = [b[@"bank"] intValue] == 2 ? NVN_RB_DRV2 : NVN_RB_DRV0;
             else if ([k isEqualToString:@"rtmask"]) r->kind = NVN_RB_RTMASK;   // 光追阴影遮罩（dm/gfx/tools/rts_variant.py 出的 _rt 变体） | ray-traced shadow mask (_rt variants from dm/gfx/tools/rts_variant.py)
+            else if ([k isEqualToString:@"rtpos"] || [k isEqualToString:@"rtvar"]) r->kind = NVN_RB_RTPOS;   // 蒙皮位置 / 镂空插值导出缓冲（rts_variant.py 出的 _pos / _var 顶点变体，写的都是当前导出绘制的槽缓冲） | skinned position / alpha interpolant export buffer (_pos / _var vertex variants from rts_variant.py; both write the slot buffer of the export draw being encoded)
+            else if ([k isEqualToString:@"rtpmask"]) r->kind = NVN_RB_RTPMASK;   // 光追点光遮罩（半分辨率 RGBA8） | ray-traced point-light mask (half-resolution RGBA8)
+            else if ([k isEqualToString:@"rtplidx"]) r->kind = NVN_RB_RTPLIDX;   // 光追点光的 4 个记录下标 | the 4 record indices of the ray-traced point lights
             else FAIL("B 绑定种类 %s 未实现（%s）", k.UTF8String, [b[@"msl_name"] UTF8String]);
             if ((r->kind == NVN_RB_CBUF || r->kind == NVN_RB_SAMP || r->kind == NVN_RB_SAMPT || r->kind == NVN_RB_TEX || r->kind == NVN_RB_IMG || r->kind == NVN_RB_TBUF || r->kind == NVN_RB_SBUFP || r->kind == NVN_RB_UBOP) && reg < 0)
                 FAIL("B 绑定 %s 没解出槽号", [b[@"msl_name"] UTF8String]);

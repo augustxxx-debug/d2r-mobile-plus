@@ -1524,10 +1524,13 @@ void front_ios_lifecycle_install(void) {
             [g_touch_view captureTouchLayer:[docs stringByAppendingPathComponent:file]];
         });
     }
-    const char *ss = getenv("DM_SCREEN_SHOT"); char sn[256]; double st;
-    if (ss && sscanf(ss, "%lf:%255s", &st, sn) == 2) {
+    // DM_SCREEN_SHOT=<秒>:<文件名>[;<秒>:<文件名>…]：到点各截一张（同一局里拍光追开 / 关对比用多张） | at each time take one shot (several in one run for ray-traced on / off comparisons)
+    const char *ss = getenv("DM_SCREEN_SHOT"); char sn[256]; double st; int nb = 0;
+    for (const char *q = ss; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL) {
+        if (sscanf(q, "%lf:%255[^;]", &st, sn) != 2) break;
         NSString *name = @(sn);
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(st * 1e9)), dispatch_get_main_queue(), ^{ window_shot(name); });
+        if (++nb >= 32) break;
     }    NSNotificationCenter *nc = NSNotificationCenter.defaultCenter; NSOperationQueue *mq = NSOperationQueue.mainQueue;
     [nc addObserverForName:NSProcessInfoThermalStateDidChangeNotification object:nil queue:mq usingBlock:^(NSNotification *n) { (void)n; thermal_apply(); }];
     if (NSProcessInfo.processInfo.thermalState >= NSProcessInfoThermalStateSerious) thermal_apply();   // 启动时已经热 | Already hot at launch

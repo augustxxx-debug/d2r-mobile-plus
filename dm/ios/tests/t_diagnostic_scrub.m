@@ -13,6 +13,8 @@ int main(void) { @autoreleasepool {
     if (!result || [result containsString:@"person@example.com"]) return 4;
     result=[[NSString alloc] initWithData:dm_diagnostic_scrub_names([@"角色 TestPerson MetalFX active=1" dataUsingEncoding:NSUTF8StringEncoding],@"",@"",@[@"TestPerson"]) encoding:NSUTF8StringEncoding];
     if ([result containsString:@"TestPerson"] || ![result containsString:@"active=1"]) return 10;
+    result=[[NSString alloc] initWithData:dm_diagnostic_scrub([@"1 屏幕：Sample Monitor G8，2560x1440\n出图节拍（1 屏幕 Sample Monitor G8，刷新率 120）\n屏幕 2622x1206：签名工具开了，" dataUsingEncoding:NSUTF8StringEncoding],@"",@"") encoding:NSUTF8StringEncoding];
+    if ([result containsString:@"Sample Monitor"] || ![result containsString:@"屏幕：<display>，2560x1440"] || ![result containsString:@"刷新率 120"] || ![result containsString:@"屏幕 2622x1206：签名工具开了，"]) return 11;
     NSString *dir=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
     [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     NSString *path=[dir stringByAppendingPathComponent:@"log.txt"];

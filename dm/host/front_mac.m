@@ -16,6 +16,7 @@ void mtl_set_ui_rect_fn(void (*fn)(double *y, double *h));
 static void ui_rect_frac(double *fy, double *fh) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); if (dm_screen_real(&rw, &rh) && rh > 0) { *fy = (double)y / rh; *fh = (double)h / rh; } }   // 同 front_ios.m：界面矩形的纵向位置与高（占画面高的比例） | Same as front_ios.m: vertical position and height of the UI rectangle (as fractions of the frame height)
 __attribute__((constructor)) static void ui_shift_reg(void) { mtl_set_ui_rect_fn(ui_rect_frac); }   // 不开窗口的跑法（截图 / 闸门）也要生效，所以不放在建图层那里 | Must also take effect when running without a window (screenshots / gate checks), so it is not placed where the layer is created
 #include "front.h"
+#import "../ios/Sources/dm_diagnostic_scrub.h"   // 分享日志脱敏：与 iOS 同一份（家目录、包名、存档角色名、UUID、邮箱、Team ID） | share-log redaction: the same as iOS (home, bundle id, save character names, UUIDs, e-mail, Team ID)
 #include "hle.h"
 #include <signal.h>
 
@@ -74,10 +75,10 @@ static void app_quit(const char *why) {
 static const char *ui(const char *k) { const char *dm_ui(const char *key); return dm_ui(k); }
 static void show_keys(void) { NSAlert *a = [NSAlert new]; a.messageText = @(ui("dmAppKeysTitle")); a.informativeText = @(ui("dmAppKeysText")); [a addButtonWithTitle:@(ui("dmAppOK"))]; [a runModal]; }
 // 帮助 → 分享日志…：把本次与上一次的日志（~/Library/Logs/D2R Mobile/host.log、host.prev.log）和一份版本信息打成一个压缩包，弹系统的存储面板让玩家选位置（缺省桌面），存好后在访达里选中它。
-// 不上传、不发邮件；包里只有这三份文件——不放存档、不放 iCloud 目录里的任何东西。日志里的家目录前缀一律换成 ~（同 iOS 的分享日志 dm_sharelog.m scrub_home：不把用户名带出去）。
+// 不上传、不发邮件；包里只有这三份文件——不放存档、不放 iCloud 目录里的任何东西。三份文件都过 dm_diagnostic_scrub（与 iOS 分享日志同一份）：家目录换成 ~、包名、容器 UUID、邮箱、存档角色名、显示器名都换掉。
 // to 非空 = 测试（DM_TEST_SHARELOG）：不弹面板，直接写到这个路径。返回 nil 成功，否则是失败原因
 // Help -> Share Log...: pack the logs of this run and the previous one (~/Library/Logs/D2R Mobile/host.log, host.prev.log) and a version-information file into one archive, show the system save panel for the player to choose a location (Desktop by default), and select it in Finder once saved.
-// Nothing is uploaded or mailed; the archive contains only these three files - no saves, nothing from the iCloud directory. The home-directory prefix in the logs is always replaced with ~ (same as the iOS share-log dm_sharelog.m scrub_home: the user name is not carried out).
+// Nothing is uploaded or mailed; the archive contains only these three files - no saves, nothing from the iCloud directory. All three files go through dm_diagnostic_scrub (the same as the iOS share log): the home directory becomes ~, and the bundle id, container UUIDs, e-mail addresses, save character names and display names are replaced.
 // to non-empty = test (DM_TEST_SHARELOG): no panel, write directly to this path. Returns nil on success, otherwise the reason for failure
 static NSString *share_logs(NSString *to) {
     NSFileManager *fm = NSFileManager.defaultManager; NSString *home = NSHomeDirectory(), *logd = [home stringByAppendingPathComponent:@"Library/Logs/D2R Mobile"];
@@ -86,10 +87,8 @@ static NSString *share_logs(NSString *to) {
     NSString *tmp = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"dm_share_%d", getpid()]], *dir = [tmp stringByAppendingPathComponent:name];
     [fm removeItemAtPath:tmp error:nil]; if (![fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil]) return @"mkdir";
     fflush(stderr);
-    NSData *hb = [home dataUsingEncoding:NSUTF8StringEncoding]; NSData *tilde = [@"~" dataUsingEncoding:NSUTF8StringEncoding];
-    NSData *(^scrub)(NSData *) = ^NSData *(NSData *d) { if (!d || hb.length < 2) return d; NSMutableData *o = [NSMutableData dataWithCapacity:d.length]; NSRange all = NSMakeRange(0, d.length), r;
-        while ((r = [d rangeOfData:hb options:0 range:all]).location != NSNotFound) { [o appendData:[d subdataWithRange:NSMakeRange(all.location, r.location - all.location)]]; [o appendData:tilde]; all = NSMakeRange(NSMaxRange(r), d.length - NSMaxRange(r)); }
-        [o appendData:[d subdataWithRange:all]]; return o; };
+    // 原先只把家目录换成 ~；容器 UUID（资源目录路径里）、显示器名会原样带出。现在走与 iOS 同一份 dm_diagnostic_scrub | previously only the home directory became ~; container UUIDs (in resource paths) and display names went out verbatim. Now the same dm_diagnostic_scrub as iOS
+    NSData *(^scrub)(NSData *) = ^NSData *(NSData *d) { return d ? dm_diagnostic_scrub(d, home, NSBundle.mainBundle.bundleIdentifier ?: @"") : d; };
     int n = 0; for (NSString *f in @[@"host.log", @"host.prev.log"]) { NSData *d = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:f] options:NSDataReadingMappedIfSafe error:nil]; if (d) { [scrub(d) writeToFile:[dir stringByAppendingPathComponent:f] atomically:YES]; n++; } }
     NSString *bt = [NSString stringWithContentsOfFile:[NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"build.txt"] encoding:NSUTF8StringEncoding error:nil] ?: @"";
     char hw[64] = "?"; size_t hn = sizeof hw; sysctlbyname("hw.model", hw, &hn, NULL, 0); NSProcessInfo *pi = NSProcessInfo.processInfo;
@@ -99,7 +98,7 @@ static NSString *share_logs(NSString *to) {
     // Settings summary (same as perf_block in the iOS share log): the last "custom settings: load", "Graphics", frame-rate-mode (effective value, present path) and ray-traced-shadow (machine gate, effective value, latest fallback to the original shadow map, 600-frame statistics) lines of this run's log, so what the player turned on (including the frame-rate display, 120 fps and ray tracing) is visible at a glance; the whole info still goes through scrub below
     NSData *cur = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:@"host.log"] options:NSDataReadingMappedIfSafe error:nil];
     NSMutableString *sum = [NSMutableString stringWithString:@"\n—— 设置摘要 ——\n"];
-    for (NSString *k in @[@"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：第"]) {
+    for (NSString *k in @[@"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：第", @"光追点光：光源记录", @"光追阴影：建好", @"光追阴影：没进原因", @"光追镂空：第", @"光追镂空：判定库", @"光追降档：", @"光追 AO：", @"光追阴影：GPU"]) {
         NSRange r = cur.length ? [cur rangeOfData:[k dataUsingEncoding:NSUTF8StringEncoding] options:NSDataSearchBackwards range:NSMakeRange(0, cur.length)] : NSMakeRange(NSNotFound, 0);
         if (r.location == NSNotFound) { [sum appendFormat:@"（没有「%@」行）\n", k]; continue; }
         const char *b = cur.bytes; NSUInteger ls = r.location, le = r.location; while (ls > 0 && b[ls - 1] != '\n') ls--; while (le < cur.length && b[le] != '\n') le++;
@@ -107,7 +106,7 @@ static NSString *share_logs(NSString *to) {
     info = [info stringByAppendingString:sum];
     [[scrub([info dataUsingEncoding:NSUTF8StringEncoding]) copy] writeToFile:[dir stringByAppendingPathComponent:@"info.txt"] atomically:YES];
     NSString *zip = [tmp stringByAppendingPathComponent:[name stringByAppendingString:@".zip"]];
-    NSTask *t = [NSTask new]; t.executableURL = [NSURL fileURLWithPath:@"/usr/bin/ditto"]; t.arguments = @[@"-c", @"-k", @"--keepParent", dir, zip]; NSError *err = nil;
+    NSError *err = nil; NSTask *t = [NSTask new]; t.executableURL = [NSURL fileURLWithPath:@"/usr/bin/ditto"]; t.arguments = @[@"-c", @"-k", @"--norsrc", @"--noextattr", @"--noacl", @"--keepParent", dir, zip];   // 不带扩展属性：原先每个文件多一个「._」附件，带出来源 / 隔离属性 | no extended attributes: each file used to get a "._" companion carrying provenance / quarantine attributes
     if (![t launchAndReturnError:&err]) { [fm removeItemAtPath:tmp error:nil]; return err.localizedDescription ?: @"ditto"; } [t waitUntilExit];
     if (t.terminationStatus != 0 || ![fm fileExistsAtPath:zip]) { [fm removeItemAtPath:tmp error:nil]; return [NSString stringWithFormat:@"ditto %d", t.terminationStatus]; }
     NSURL *dst = to ? [NSURL fileURLWithPath:to] : nil;
@@ -375,7 +374,9 @@ void front_run(void (*guest)(void)) {
                       LOG("DM_TEST_NSMOUSE：%.2f 秒投 %s 内容区 (%.0f,%.0f)（窗口%s是主窗口，App %s在前台，背板缩放 %.1f）", NSProcessInfo.processInfo.systemUptime - t0, ty == NSEventTypeMouseMoved ? "悬停" : ty == NSEventTypeLeftMouseDown ? "按下" : ty == NSEventTypeLeftMouseUp ? "抬起" : "拖动", last.x, v.bounds.size.height - last.y, win.isKeyWindow ? "" : "不", NSApp.isActive ? "" : "不", win.backingScaleFactor);
                       [NSApp postEvent:ev atStart:NO]; }); }
               LOG("DM_TEST_NSMOUSE：%d 条排好", n); }
-          if ((e = getenv("DM_TEST_SHARELOG"))) { NSString *to = @(e); dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ NSString *er = share_logs(to); LOG("DM_TEST_SHARELOG：第 8 秒打包到 %s → %s", to.lastPathComponent.UTF8String, er ? er.UTF8String : "OK"); }); }   // 测试：不弹存储面板，第 8 秒直接把压缩包写到这个路径 | test: no save panel, write the archive directly to this path at second 8
+          if ((e = getenv("DM_TEST_SHARELOG"))) { NSString *to = @(e); double at = 8; NSRange ar = [to rangeOfString:@"@" options:NSBackwardsSearch];   // DM_TEST_SHARELOG=<路径>[@<秒>]：缺省第 8 秒 | DM_TEST_SHARELOG=<path>[@<seconds>]: second 8 by default
+            if (ar.location != NSNotFound && ar.location + 1 < to.length) { at = [to substringFromIndex:ar.location + 1].doubleValue; to = [to substringToIndex:ar.location]; if (at <= 0) at = 8; }
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ NSString *er = share_logs(to); LOG("DM_TEST_SHARELOG：第 %.0f 秒打包到 %s → %s", at, to.lastPathComponent.UTF8String, er ? er.UTF8String : "OK"); }); }   // 测试：不弹存储面板，第 8 秒直接把压缩包写到这个路径 | test: no save panel, write the archive directly to this path at second 8
           if ((e = getenv("DM_TEST_QUIT_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ app_quit("DM_TEST_QUIT_AT"); }); }
         // 生命周期（hle.h / dm.h）：失焦 → 2、拿回焦点 → 1；最小化 → 3 + 音频暂停 + GPU 挂起，还原 → 恢复（随后拿回焦点 → 1）
         // Lifecycle (hle.h / dm.h): focus lost → 2, focus regained → 1; minimized → 3 + audio paused + GPU suspended, restored → resume (followed by focus regained → 1)

@@ -71,7 +71,7 @@ static rts_mesh *mesh_of(int i) {   // 用同一次绘制的键找网格（不�
 }
 
 int main(void) { @autoreleasepool {
-    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); mtl_init();
+    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_DBG", "1", 1); mtl_init();   // rt2：测试里没有 _rt 变体，调试模式下用叠加合成（审计分支「无变体 = 叠加」的同一路径） | rt2: no _rt variants in the test; debug mode composites with the overlay (the audit branch's "no variants = overlay" path)
     if (!mtl_rt_shadow_supported()) { printf("SKIP：本机不支持光追阴影\n"); return 77; }
     setup(); rts_on(); g_rts.on = 1;   // 相当于设置页开着光追阴影（g_rts.on 置 0 = 关） | as if the settings page had ray-traced shadows on (g_rts.on = 0 = off)
     int ok, r; int a[1] = {0};
@@ -112,6 +112,11 @@ int main(void) { @autoreleasepool {
     { rts_mesh *m = mesh_of(40); EXPECT("网格 40 在缓存且没建成", 1, m && !RTS_MESH_READY(m)); }
     int before = g_rts.nmesh; for (int i = 0; i < 1300; i++) rts_frame_begin(++g_frame);
     EXPECT("1300 帧后未建成的网格 40 被淘汰", 1, mesh_of(40) == NULL); EXPECT("1300 帧后缓存清空", 0, g_rts.nmesh); (void)before;
+#ifdef RTS_MAX_ALPHA
+    // 导出绘制的顶点参数块（第四阶段 Mac 实测）：补画原版会把顶点阶段标成干净，同一通道里同一变体、绑定不变时会复用上一份参数块 → 各部件写进第一个部件的槽；切到导出状态必须重新标脏
+    // the export draw's vertex argument block (measured on the Mac in phase 4): the original re-encode marks the vertex stage clean, and with the same variant and unchanged bindings in one pass the previous block is reused → every part writes into the first part's slot; switching to the export state must mark it dirty again
+    { NvShader *keep = g_pr->vs_base; if (!g_pr->vs_base) g_pr->vs_base = g_pr->sh[0]; g_args_dirty[0] = 0; rts_export_state(g_pr, 1); EXPECT("切到导出状态时顶点参数块标脏", 1, g_args_dirty[0]); rts_export_state(g_pr, 0); g_pr->vs_base = keep; }
+#endif
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

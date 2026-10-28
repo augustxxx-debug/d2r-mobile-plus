@@ -7,6 +7,7 @@ typedef struct {
     const void *vs, *fs; uint32_t cfmt[8], dfmt, sfmt, samples, blend_en, chmask, a2c; blend_st blend[8];
     va_st attr[16]; vs_st stream[16];
     uint8_t lmap[8]; const void *fsfn;
+    uint8_t noraster;   // 光追阴影的蒙皮位置导出绘制：关光栅化、无片元（nvn_rtshadow.inc） | ray-traced shadows' skinned position-export draw: rasterization off, no fragment (nvn_rtshadow.inc)
 } pso_key;
 
 typedef struct {

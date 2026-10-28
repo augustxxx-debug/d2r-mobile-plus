@@ -84,6 +84,11 @@ static float map_depth(void) {   // 回读阴影图中心的深度 | Read back t
     mtl_sub_begin(); [blit() copyFromTexture:tex_mtl(&g_sdepth) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(256, 256, 1) toBuffer:b destinationOffset:0 destinationBytesPerRow:256 * 4 destinationBytesPerImage:256 * 256 * 4];
     uint64_t f = mtl_sub_commit(); mtl_wait(f, 5000000000ull); float v = ((float *)b.contents)[128 * 256 + 128]; res_remove(b); return v;
 }
+static float tex_depth(const tex_t *tx) {   // 回读任一张 256x256 深度图中心的值 | Read back the centre value of any 256x256 depth map
+    id<MTLBuffer> b = [g_dev newBufferWithLength:256 * 256 * 4 options:MTLResourceStorageModeShared]; res_add(b);
+    mtl_sub_begin(); [blit() copyFromTexture:tex_mtl(tx) sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(256, 256, 1) toBuffer:b destinationOffset:0 destinationBytesPerRow:256 * 4 destinationBytesPerImage:256 * 256 * 4];
+    uint64_t f = mtl_sub_commit(); mtl_wait(f, 5000000000ull); float v = ((float *)b.contents)[128 * 256 + 128]; res_remove(b); return v;
+}
 static int until_applied(const int *ids, int nid) {   // 跑完整帧直到光追生效（阴影图被清回 1.0），最多 12 帧 | Run whole frames until ray tracing applies (map cleared back to 1.0), at most 12
     int ok; for (int i = 0; i < 12; i++) { run_frame(1, ids, nid, &ok); if (map_depth() == 1.0f) return 1; } return 0;
 }
@@ -104,7 +109,7 @@ static void gpu_spin(void) {
 }
 
 int main(void) { @autoreleasepool {
-    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_CACHE_MB", "1", 1); mtl_init();
+    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_CACHE_MB", "1", 1); setenv("DM_RT_SHADOW_DBG", "1", 1); mtl_init();   // rt2：测试里没有 _rt 变体，调试模式下用叠加合成（审计分支「无变体 = 叠加」的同一路径） | rt2: no _rt variants in the test; debug mode composites with the overlay (the audit branch's "no variants = overlay" path)
     if (!mtl_rt_shadow_supported()) { printf("SKIP：本机不支持光追阴影\n"); return 77; }
     setup(); rts_on(); g_rts.on = 1;
     int ok, enc; int a[1] = {0};
@@ -176,7 +181,8 @@ int main(void) { @autoreleasepool {
         else { printf("没清的读入通道：回退原因「%s」\n", why); EXPECT("本帧没清、通道读入：不清阴影图（原版阴影保留）", 0, applied); EXPECT("回退原因写明是读入", 1, strstr(why, "读入") != NULL); }
       }
       // 退避中的帧（不是光追帧）不算网格键：真机键摘要每帧上毫秒，退避帧白算 | Frames in backoff (not ray-traced) compute no mesh key: on the device the key digest costs over a millisecond per frame, wasted in backoff
-      int b1[2] = {1, 2}; uint64_t k0 = g_rts.key_ns; run_frame(1, b1, 2, &ok);
+      // 按张处理之后 B 不再算失败（光追照常、只是那张不清），退避改用缺相机的一帧造出来 | with per-map handling B is no longer a failure (tracing applies, that map is just not cleared); backoff is produced by a frame without a camera instead
+      int b1[2] = {1, 2}; run_frame(0, b1, 2, &ok); uint64_t k0 = g_rts.key_ns; run_frame(1, b1, 2, &ok);
       EXPECT("测试前提：这帧在退避中", 0, g_rts.rt_frame); EXPECT("退避帧不算网格键", 0, (long long)(g_rts.key_ns - k0)); }
     // 6. 光追帧里没进 TLAS 的绘制要分原因计数（真机 3fc0f41：走到某处后每帧约 8 次没进 TLAS，日志分不出原因）：
     //    一帧 14 个新网格 → 12 个排队（待建）、2 个配额满；下一帧阴影绘制所在的通道没登记 → 通道没登记
@@ -204,6 +210,25 @@ int main(void) { @autoreleasepool {
       EXPECT("带重启：展开成 3 个三角形，绕序交替、重启后重新起算", 1, t && !memcmp(t, want, sizeof want));
       long long pr0 = RTS_UNC(RTS_UNC_PRIM); frame_open(); prepass(); shadow_pass(); sh(0); sdraw(g_idx, 48, NVN_DRAW_PRIMITIVE_POINTS, 0x2b); main_pass(); hdr_again(); frame_close();
       EXPECT("点图元：记图元不认 1 次", 1, RTS_UNC(RTS_UNC_PRIM) - pr0); }
+#ifdef RTS_UNC
+    // 8. 按张处理跨帧保留的阴影图（真机 3fc0f41 / d42c8ee：第 3 / 4 张 256x256 本帧第一次挂上是读入、本帧没清过，进局后约 2000 帧整帧回退）：
+    //    同一帧里第 1 张正常清过再画、第 2 张以读入开（内容 0.5 是游戏上一帧留下的）也画 → 第 1 张清回 1.0、第 2 张原样 0.5 不动，原因写明「读入」
+    // 8. Per-map handling of a map kept across frames (device 3fc0f41 / d42c8ee: the 3rd / 4th 256x256 map first attached with a load and not cleared this frame, whole frames fell back for about 2000 frames):
+    //    in one frame map 1 is cleared and drawn as usual, map 2 opens with a load (content 0.5 left by the game's previous frame) and is drawn too → map 1 back to 1.0, map 2 untouched at 0.5, the reason names the load
+    { static tex_t g_keep; g_keep = g_sdepth; g_keep.serial = 79004;
+      frame_open(); { RPD *rp = [RPD new]; rp.depthAttachment.texture = tex_mtl(&g_keep); rp.depthAttachment.loadAction = MTLLoadActionClear; rp.depthAttachment.clearDepth = 0.5; rp.depthAttachment.storeAction = MTLStoreActionStore;
+        RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; m4_end(en); } frame_close();   // 上一帧游戏留下的内容（不经登记） | content the game left last frame (not registered)
+      int applied = 0, ok8 = 1; char why[256] = "";
+      for (int i = 0; i < 12 && !applied; i++) {
+          frame_open(); prepass(); shadow_pass(); sh(0);
+          memset(&R, 0, sizeof R); R.rt.depth = &g_keep; R.has_rt = 1; rp_begin_ex(0); sh(1);   // 生产开通道：读入 | production pass begin: load
+          main_pass(); hdr_again(); ok8 = frame_close() && ok8;
+          const char *w = RTS_WHY(); if (w && *w) snprintf(why, sizeof why, "%s", w);
+          applied = map_depth() == 1.0f; }
+      printf("跨帧保留的那张：原因「%s」\n", why);
+      EXPECT("一张跨帧保留：能清的那张照样清回全亮（光追生效）", 1, applied); EXPECT("跨帧保留的那张原样不动（0.5）", 1, tex_depth(&g_keep) == 0.5f);
+      EXPECT("清回的只有 1 张", 1, RTS_MAP_CLEARED()); EXPECT("原因写明是读入", 1, strstr(why, "读入") != NULL); EXPECT("这几帧 GPU 无错", 1, ok8); }
+#endif
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

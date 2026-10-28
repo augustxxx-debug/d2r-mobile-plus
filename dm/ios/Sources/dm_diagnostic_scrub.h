@@ -30,6 +30,9 @@ static NSData *dm_diagnostic_scrub_names(NSData *data, NSString *home, NSString 
         NSRegularExpression *r = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:nil];
         text = [r stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0,text.length) withTemplate:@"<redacted>"];
     }
+    // 外接显示器名（宿主日志「屏幕：<名字>，」「屏幕 <名字>，」）可能带型号或用户自起的名字；「屏幕 2622x1206」这类分辨率不动 | external display names in host logs may carry a model or a user-chosen name; resolutions such as 「屏幕 2622x1206」 are kept
+    NSRegularExpression *disp = [NSRegularExpression regularExpressionWithPattern:@"(屏幕(?:[：:]\\s*|\\s+))(?!\\d+x\\d)[^，,\\n]+([，,])" options:0 error:nil];
+    text = [disp stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0,text.length) withTemplate:@"$1<display>$2"];
     return [text dataUsingEncoding:NSUTF8StringEncoding];
 }
 

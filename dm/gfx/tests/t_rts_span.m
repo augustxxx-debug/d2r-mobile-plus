@@ -69,7 +69,7 @@ static void fill_idx(void *p, int itype, int n, uint32_t mod) { for (int k = 0; 
 static rts_mesh *mesh_with(uint32_t tris, uint32_t isz) { for (uint32_t i = 0; i < g_rts.meshes.cap; i++) { rts_mesh *m = g_rts.meshes.vals[i]; if (m && m->tris == tris && m->isz == isz && m->last_frame == g_rts.frame) return m; } return NULL; }
 
 int main(void) { @autoreleasepool {
-    setvbuf(stdout, NULL, _IONBF, 0); setenv("DM_RT_SHADOW", "1", 1); mtl_init();
+    setvbuf(stdout, NULL, _IONBF, 0); setenv("DM_RT_SHADOW", "1", 1); setenv("DM_RT_SHADOW_DBG", "1", 1); mtl_init();   // rt2：测试里没有 _rt 变体，调试模式下用叠加合成（审计分支「无变体 = 叠加」的同一路径） | rt2: no _rt variants in the test; debug mode composites with the overlay (the audit branch's "no variants = overlay" path)
     if (!mtl_rt_shadow_supported()) { printf("SKIP：本机不支持光追阴影\n"); return 77; }
     setup(); int fault;
     // 1. 索引片段在池末端：16 / 32 位 × 3 / 6 / 99 个索引 | 1. Index fragment at the end of the pool: 16 / 32 bit × 3 / 6 / 99 indices
