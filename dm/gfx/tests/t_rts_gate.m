@@ -34,6 +34,15 @@ int main(void) { printf("SKIP：旧接口版没有光追阴影模块\n"); return
 #ifndef RTS_LIT_DROP
 #define RTS_LIT_DROP() ((void)0)   // 七审之前的代码没有全亮遮罩 | code before the seventh review has no lit mask
 #endif
+#ifndef RTS_LIT_FAIL_SET
+#define RTS_LIT_FAIL_SET(v) ((void)0)   // 八审之前的代码：全亮遮罩分配失败没法注入、也不计尝试次数 | code before the eighth review: lit-mask allocation failure cannot be injected and attempts are not counted
+#define RTS_LIT_TRIES() (-1LL)
+#define RTS_LIT_RETRY 60
+#endif
+#ifndef RTS_QUOTAS
+#define RTS_QUOTAS_FILL() ((void)0)   // 八审之前：日志名额不随整体释放清零 | before the eighth review: log quotas are not reset on release
+#define RTS_QUOTAS() (-1LL)
+#endif
 #ifndef RTS_WHY
 #define RTS_WHY() ""   // 4978d39 及更早：不记跳过追踪的具体原因 | 4978d39 and earlier: the specific reason for skipping the trace is not recorded
 #endif
@@ -180,11 +189,13 @@ int main(void) { @autoreleasepool {
       @autoreleasepool { rts_mesh *m = mesh_by_ib(g_idx, 96); w_as = m ? m->as : nil; w_tlas = g_rts.tlas; w_mask = g_rts.mask; }
       int live0; @autoreleasepool { live0 = w_as && w_tlas && w_mask; }   // 读弱引用会把对象放进当前自动释放池：每次都在自己的池里读 | reading a weak reference puts the object into the current autorelease pool: always read inside a pool of its own
       EXPECT("关之前缓存非空", 1, g_rts.nmesh > 0 && live0);
+      RTS_QUOTAS_FILL();   // 八审观察 2：日志名额用完、全亮遮罩在等重试 | eighth review observation 2: log quotas used up, the lit mask waiting for a retry
       g_rts.on = 0;
       for (int i = 0; i < 4; i++) @autoreleasepool { frame_open(); sh(0); frame_close(); }
       int g_as = 0, g_tl = 0, g_mk = 0;
       for (int i = 0; i < 100 && !(g_as && g_tl && g_mk); i++) {   // GPU 做完之后 Metal 内部的引用是异步放掉的：最多等 2 秒（每 20 ms 空跑一帧让延迟释放表走一遍） | Metal drops its internal references asynchronously after the GPU finishes: wait up to 2 s (an empty frame every 20 ms runs the deferred-release table)
           @autoreleasepool { frame_open(); frame_close(); g_as = w_as == nil; g_tl = w_tlas == nil; g_mk = w_mask == nil; } if (!(g_as && g_tl && g_mk)) usleep(20000); }
+      EXPECT("关掉后「盖不住」日志名额、全亮遮罩重试等待清零（八审观察 2）", 0, RTS_QUOTAS());
       EXPECT("关掉后网格缓存清空", 0, g_rts.nmesh); EXPECT("关掉后 BLAS 已释放", 1, g_as); EXPECT("关掉后 TLAS 已释放", 1, g_tl); EXPECT("关掉后遮罩已释放", 1, g_mk);
       builds0 = g_rts.n_builds; g_rts.on = 1;
       EXPECT("再开后光追重建并生效", 1, until_applied(a, 1)); EXPECT("再开后重新建了 BLAS", 1, g_rts.n_builds > builds0); }
@@ -412,6 +423,29 @@ int main(void) { @autoreleasepool {
         EXPECT("Q7-02 四个顶点的四边形：2 个三角形（原版也是 2 个）", 2, q4 ? q4->tris : 0); EXPECT("Q7-02 四边形索引 0,1,2,0,2,3", 1, t4 && !memcmp(t4, w4, sizeof w4));
         EXPECT("Q7-02 十个顶点（first 8）：4 个三角形、尾巴 2 个不画", 4, q10 ? q10->tris : 0); EXPECT("Q7-02 第二个四边形索引 4,5,6,4,6,7", 1, t10 && !memcmp(t10 + 6, w10b, sizeof w10b));
         EXPECT("Q7-02 不足 4 个顶点、带索引的四边形：只多了上面两个网格", 2, g_rts.nmesh - nm0); EXPECT("Q7-02 带索引的四边形：照原版处理（返回 0）", 0, ri); EXPECT("Q7-02 不足 4 个和带索引的记空绘制", 2, (long long)(g_rts.n_empty - e0)); }
+      // 25. 八审 Q8-01：全亮遮罩建不出时（注入分配失败）不选 _rt 变体、照原版着色；同一帧几百次绘制只试一次分配，之后隔 RTS_LIT_RETRY 帧才再试；恢复后照常建、选变体、不压暗
+      // 25. eighth review Q8-01: when the lit mask cannot be built (injected allocation failure) no _rt variant is selected and the original shading runs; hundreds of draws in one frame try the allocation once, the next try comes RTS_LIT_RETRY frames later; after recovery it is built, variants are selected, nothing is darkened
+      { NvProg *vp = [NvProg new]; vp->sh[0] = g_pr->sh[0]; vp->sh[1] = [NvShader new]; vp->fs_base = vp->sh[1]; vp->fs_rt = [NvShader new]; vp->rt_tried = 1;
+        #define SELECT(c, d) ({ R.rt.n = 1; R.rt.color[0] = (c); R.rt.depth = (d); g_rts.hdr_ser = (c)->serial; g_rts.ds_ser = (d)->serial; g_rts.trace_pending = 0; S.ds.dt = 1; S.color.blend_en = 0; vp->sh[1] = vp->fs_base; int dbg_ = g_rts.dbg; g_rts.dbg = 0; rts_select_fs(vp); g_rts.dbg = dbg_; vp->sh[1] == vp->fs_rt; })
+        #define HOLD() (g_rts.mask_done = 1, g_rts.map_cleared = 0)   // 迟滞等待的状态：遮罩算了、画面原版，变体要绑全亮遮罩 | the hysteresis-hold state: mask traced, picture original, the variant needs the lit mask
+        RTS_HYST_RESET(); UNTIL_PART(b2, 2); long long t0 = RTS_LIT_TRIES(); int nsel = 0;
+        RTS_LIT_FAIL_SET(1); RTS_LIT_DROP(); HOLD();
+        for (int i = 0; i < 300; i++) nsel += SELECT(&g_hdr, &g_mdepth);
+        EXPECT("Q8-01 全亮遮罩建不出：300 次绘制一次都不选 _rt 变体", 0, nsel);
+        EXPECT("Q8-01 全亮遮罩建不出：同一帧 300 次绘制只试分配 1 次", 1, RTS_LIT_TRIES() - t0);
+        int nf = 0; for (int i = 0; i < 5; i++) { run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; HOLD(); for (int k = 0; k < 50; k++) nsel += SELECT(&g_hdr, &g_mdepth); nf++; }
+        EXPECT("Q8-01 之后 5 帧（各 50 次绘制）：还在等，不再试分配", 1, RTS_LIT_TRIES() - t0); EXPECT("Q8-01 之后 5 帧：仍不选变体", 0, nsel);
+        for (int i = 0; i < RTS_LIT_RETRY + 2 && RTS_LIT_TRIES() - t0 < 2; i++) { run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; HOLD(); nsel += SELECT(&g_hdr, &g_mdepth); nf++; }
+        EXPECT("Q8-01 一直建不出：等满间隔再试第 2 次，仍不选变体", 1, RTS_LIT_TRIES() - t0 == 2 && nf >= RTS_LIT_RETRY - 6 && !nsel && !g_rts.mask_lit);   // 第 2 次失败不再记【红】（日志里只一行，见证据） | the second failure logs no red line (one line in the log, see the evidence)
+        RTS_LIT_FAIL_SET(0); int built = 0; nf = 0;
+        for (int i = 0; i < RTS_LIT_RETRY + 2 && !built; i++) { run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; nf++; built = g_rts.mask_lit && g_rts.mask_lit.width == 640; }
+        EXPECT("Q8-01 分配恢复后：等满间隔就重建了 640x360 全亮遮罩", 1, built); EXPECT("Q8-01 不是马上重试：失败后至少隔 RTS_LIT_RETRY - 6 帧", 1, nf >= RTS_LIT_RETRY - 6);
+        EXPECT("Q8-01 整段只试了 3 次分配（失败 2 次 + 恢复 1 次）", 3, RTS_LIT_TRIES() - t0);
+        HOLD(); int sel = SELECT(&g_hdr, &g_mdepth);
+        EXPECT("Q8-01 恢复后：迟滞等待帧选上变体", 1, sel); EXPECT("Q8-01 恢复后：640x360 没有像素被压暗", 0, sel ? dark_pixels(rts_mask_tex(), 640, 360) : -1);
+        #undef HOLD
+        #undef SELECT
+        memset(&R, 0, sizeof R); }
       EXPECT("局部回退各节 GPU 无错", 1, ok13);
       #undef UNTIL_PART
       g_lvp = NULL; RTS_PART_SET(0); }

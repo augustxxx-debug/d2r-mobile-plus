@@ -107,6 +107,12 @@ typedef struct { uint64_t key, bytes; id<MTLAccelerationStructure> as; id<MTLBuf
 #define RTS_HYST_RESET() (g_rts.need = 1, g_rts.shown_run = 0)   // 单测用：只测单次失败后恢复的段落先清掉累积的要求 | for the unit tests: sections testing recovery from one failure first drop the accumulated requirement
 #define RTS_MAP_CLEARED() (g_rts.map_cleared)   // 局部回退时 = 本帧用上了遮罩（阴影图不清） | with partial fallback = the mask was used this frame (maps are not cleared)
 #define RTS_LIT_DROP() (g_rts.mask_lit = nil)   // 单测用：全亮遮罩当作还没建（第一帧 / 刚整体释放） | for the unit tests: treat the lit mask as not built yet (first frame / just released)
+#define RTS_LIT_FAIL_SET(v) (g_rts_lit_inject = (v))   // 单测用：全亮遮罩的分配当作失败（八审 Q8-01） | for the unit tests: the lit-mask allocation is treated as failed (eighth review Q8-01)
+#define RTS_LIT_TRIES() ((long long)g_rts.n_lit_try)   // 单测用：全亮遮罩分配尝试次数 | for the unit tests: lit-mask allocation attempts
+#define RTS_QUOTAS_FILL() (g_rts.mask_small_log = 3, g_rts.lit_logged = 1, g_rts.lit_retry_at = g_rts.n_frames + RTS_LIT_RETRY)   // 单测用：日志名额用完、全亮遮罩在等重试 | for the unit tests: log quotas used up, the lit mask waiting for a retry
+#define RTS_QUOTAS() ((long long)g_rts.mask_small_log + g_rts.lit_logged + (long long)g_rts.lit_retry_at)   // 单测用：整体释放后应为 0 | for the unit tests: 0 after a full release
+#define RTS_LIT_RETRY 60   // 全亮遮罩建不出后隔多少帧再试；其间不选 _rt 变体（八审 Q8-01） | frames to wait before retrying a lit mask that could not be built; no _rt variant meanwhile (eighth review Q8-01)
+static int g_rts_lit_inject;   // RTS_LIT_FAIL_SET 的开关，生产恒 0 | the RTS_LIT_FAIL_SET switch, always 0 in production
 #define RTS_PART_SET(v) (g_rts.part = (v))   // 单测用：局部回退开关（生产缺省开，DM_RT_SHADOW_PART=0 关） | for the unit tests: the partial-fallback switch (on in production, DM_RT_SHADOW_PART=0 turns it off)
 #define RTS_PAUSE_SET(s) (g_rts.pause_until = (s) > 0 ? rts_now() + (s) : 0, rts_lvl_update())   // 单测用：GPU 挂起保护的暂停（秒；0 = 结束） | for the unit tests: the hang-protection pause (seconds; 0 = end)
 #define RTS_HAS_NOTE_PASS 1
@@ -152,7 +158,7 @@ static struct {
     id<MTL4ArgumentTable> at_decode, at_trace, at_overlay, at_blur, at_pick;
     rts_fslot slot[RTS_SLOTS_MAX]; int nslot, cur; uint64_t slot_frame;   // 槽环；cur = 本帧用的槽（slot_frame 那帧取的） | slot ring; cur = this frame's slot (taken in frame slot_frame)
     id<MTLAccelerationStructure> tlas; id<MTLBuffer> scratch; NSUInteger scratch_len;
-    uint64_t n_mask_small, n_iquad;   // n_iquad：带索引的四边形当空绘制的次数（七审 Q7-02） | n_iquad: indexed quads treated as empty draws (seventh review Q7-02)   // 遮罩盖不住渲染目标、改用原版着色的次数（七审 Q7-01） | times the mask did not cover the render target and the original shading was used (seventh review Q7-01)
+    uint64_t n_mask_small, n_iquad, n_lit_try, n_lit_fail, lit_retry_at; int mask_small_log, lit_logged;   // n_lit_try / n_lit_fail：全亮遮罩分配尝试 / 失败累计，lit_retry_at：建不出后下次可试的帧，lit_logged：本轮已记过【红】；mask_small_log：「盖不住」日志名额（整体释放时清零，累计数不清；八审 Q8-01、观察 2） | n_lit_try / n_lit_fail: lit-mask allocation attempts / failures, lit_retry_at: the frame a failed build may be retried, lit_logged: the red line was logged this round; mask_small_log: the "does not cover" log quota (reset on release, the cumulative counts are not; eighth review Q8-01, observation 2)   // n_iquad：带索引的四边形当空绘制的次数（七审 Q7-02） | n_iquad: indexed quads treated as empty draws (seventh review Q7-02)   // 遮罩盖不住渲染目标、改用原版着色的次数（七审 Q7-01） | times the mask did not cover the render target and the original shading was used (seventh review Q7-01)
     id<MTLTexture> mask_lit;   // 全分辨率全亮的太阳遮罩：不用遮罩的帧（迟滞等待、失败）绑它——_rt 变体按像素坐标读遮罩（rts_variant.py：rts_mask.read(gl_FragCoord)），1x1 白贴图越界读是 0 = 整屏太阳全影（6534ef4 起） | a full-resolution fully lit sun mask: bound on frames that do not use the mask (hysteresis hold, failure) - the _rt variants read the mask by pixel coordinates (rts_variant.py: rts_mask.read(gl_FragCoord)), and an out-of-bounds read of the 1x1 white texture is 0 = the whole screen in sun shadow (since 6534ef4)
     id<MTLTexture> mask, white, mask_raw, mask_tmp, pmask, pmaskf, mask_half; int sun_half, point_div; id<MTLBuffer> plidx_none, prev, lseen, llist;   // prev：上一次选中的位置（滞后）；lseen / llist：点光收集的位图与列表 | prev: last picked positions (hysteresis); lseen / llist: bitmap and list of the point-light gather
     int n_rt_loaded, n_rt_missing, n_pos_loaded, n_pos_missing;
@@ -443,7 +449,8 @@ static void rts_release_all(const char *why) {
     if (atomic_load(&g_rts_alpha_st) != -2) atomic_store(&g_rts_alpha_st, 0); g_rts.alpha_idx = nil; g_rts.nai = 0; g_rts.ai_cap = -1; g_rts.exp_vs = nil; pthread_mutex_unlock(&g_rts_alpha_mu);
     for (int i = 0; i < g_rts.nslot; i++) rts_fslot_free(&g_rts.slot[i]);
     g_rts.ao_half = g_rts.ao_tmp = g_rts.ao_full = nil; g_rts.ao_done = g_rts.ao_applied = 0; g_rts.badv = nil; g_rts.bad_seen[0] = g_rts.bad_seen[1] = 0;
-    g_rts.tlas = nil; g_rts.scratch = nil; g_rts.mask_lit = nil; g_rts.mask = g_rts.mask_raw = g_rts.mask_tmp = g_rts.pmask = g_rts.pmaskf = g_rts.mask_half = nil; g_rts.prev = g_rts.lseen = g_rts.llist = nil; g_rts.ps_overlay = nil;
+    g_rts.tlas = nil; g_rts.scratch = nil; g_rts.mask_lit = nil; g_rts.lit_retry_at = 0; g_rts.lit_logged = g_rts.mask_small_log = 0;   // 再开时日志名额、重试等待从头算（累计数不清，八审观察 2） | log quotas and the retry wait start over on the next switch-on (cumulative counts kept, eighth review observation 2)
+    g_rts.mask = g_rts.mask_raw = g_rts.mask_tmp = g_rts.pmask = g_rts.pmaskf = g_rts.mask_half = nil; g_rts.prev = g_rts.lseen = g_rts.llist = nil; g_rts.ps_overlay = nil;
     g_rts.at_decode = g_rts.at_trace = g_rts.at_overlay = g_rts.at_blur = g_rts.at_pick = nil; g_rts.scratch_len = 0; g_rts.nslot = 0; g_rts.cur = -1; g_rts.slot_frame = 0;
     g_rts.npend = g_rts.nsub = g_rts.ninst = g_rts.nexp = 0; g_rts.nkeep = 0; g_rts.pause_until = 0; g_rts.cur_pos4 = nil; g_rts.cache_bytes = 0; g_rts.rt_frame = g_rts.backoff = 0; g_rts.retry_at = 0; g_rts.show = g_rts.held = g_rts.streak = g_rts.last_shown = g_rts.shown_run = 0; g_rts.need = 1;
     g_rts.skip_on = g_rts.f_skip = g_rts.f_resid = g_rts.last_skip = 0; g_rts.sun_w = g_rts.sun_w_now = g_rts.sun_from_w = 0;
@@ -500,8 +507,10 @@ static void rts_frame_begin(uint64_t f) {
             (unsigned long long)g_rts.n_rt_frames, (unsigned long long)g_rts.n_fail_frames, (unsigned long long)g_rts.n_partial_frames, (unsigned long long)g_rts.n_orig_draws, g_rts.map_cleared ? "是" : "否",
             (unsigned long long)g_rts.n_rt_draws, (unsigned long long)g_rts.n_recv_skip, (unsigned long long)g_rts.n_late_trace, g_rts.nslot, (unsigned long long)g_rts.n_slot_busy, g_rts.key_ns / 1e3 / (g_rts.n_rt_frames ? g_rts.n_rt_frames : 1), g_rts.key_bytes / 1024.0 / (g_rts.n_rt_frames ? g_rts.n_rt_frames : 1), (unsigned long long)g_rts.n_switch, (unsigned long long)g_rts.n_drop, (unsigned long long)g_rts.n_held, g_rts.hyst ? g_rts.need : 1);
         { char mb[600] = "", ub[600]; size_t mo = 0; for (int i = 0; i < RM_N; i++) if (g_rts.miss[i]) mo += (size_t)snprintf(mb + mo, mo < sizeof mb ? sizeof mb - mo : 0, "%s%s %llu", mo ? "、" : "", k_rm_why[i], (unsigned long long)g_rts.miss[i]);
-          MLOG("光追阴影：没进原因 至第 %llu 帧 没进 TLAS 的阴影绘制按原因累计：%s；其中光追帧里（整帧因此照原版）：%s；空绘制 %llu 次；不认的图元类型掩码 %#x", (unsigned long long)g_rts.n_frames, mo ? mb : "无",
-              rts_unc_str(ub, sizeof ub, g_rts.n_unc, NULL), (unsigned long long)g_rts.n_empty, g_rts.prim_mask); }
+          MLOG("光追阴影：没进原因 至第 %llu 帧 没进 TLAS 的阴影绘制按原因累计：%s；其中光追帧里（整帧因此照原版）：%s；空绘制 %llu 次（其中带索引的四边形 %llu 次）；不认的图元类型掩码 %#x；"
+               "遮罩盖不住渲染目标、照原版着色 %llu 次；全亮遮罩建不出 %llu 次（试 %llu 次）", (unsigned long long)g_rts.n_frames, mo ? mb : "无",
+              rts_unc_str(ub, sizeof ub, g_rts.n_unc, NULL), (unsigned long long)g_rts.n_empty, (unsigned long long)g_rts.n_iquad, g_rts.prim_mask,
+              (unsigned long long)g_rts.n_mask_small, (unsigned long long)g_rts.n_lit_fail, (unsigned long long)g_rts.n_lit_try); }   // 八审观察 2：这两个计数原先不进统计行、也不进分享摘要（本行前缀在摘要键表里） | eighth review observation 2: these counts were in neither the stats line nor the share summary (this line's prefix is a summary key)
         { char wb[400] = ""; size_t o = 0; uint64_t wtot = 0; for (int i = 1; i < RA_N; i++) wtot += g_rts.na_why[i]; for (int i = 1; i < RA_N; i++) if (g_rts.na_why[i]) o += (size_t)snprintf(wb + o, o < sizeof wb ? sizeof wb - o : 0, "%s%s %llu", o ? "、" : "", k_ra_why[i], (unsigned long long)g_rts.na_why[i]);
           MLOG("光追镂空：第 %llu 帧 本帧镂空实例 %d、镂空绘制 %d；累计进光追 %llu 次、留原图 %llu 次（%s）；判定库 %s（%d 个）、_var 变体 %d 个（缺 %d）；导出没编进去的实例 %llu、实例化绘制没进 %llu", (unsigned long long)g_rts.n_frames, g_rts.nalpha_rt, g_rts.nalpha,
               (unsigned long long)g_rts.n_alpha_rt_draws, (unsigned long long)wtot, o ? wb : "无",
@@ -1041,14 +1050,24 @@ static void rts_check(CENC ce, id<MTLTexture> depth, const double *ivp) {   // c
     { const float *q = g_rts.smap[si].l; MLOG("光追阴影：核对 阴影图 %d 光源视投影 [%g %g %g %g | %g %g %g %g | %g %g %g %g | %g %g %g %g]；太阳 (%.3f %.3f %.3f)", si, q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], q[10], q[11], q[12], q[13], q[14], q[15], g_rts.sun[0], g_rts.sun[1], g_rts.sun[2]); }
     MLOG("光追阴影：几何核对编进第 %llu 帧（阴影图 %d：%lux%lu 层 %lu，光源视投影第 3 列 (%.4f %.4f %.4f %.4f)）", (unsigned long long)atomic_load(&g_cur_frame), si, (unsigned long)sv.width, (unsigned long)sv.height, (unsigned long)m->slice, m->l[2], m->l[6], m->l[10], m->l[14]);
 }
+// 八审 Q8-01：建不出时记下帧号，隔 RTS_LIT_RETRY 帧才再试（原先每次主通道绘制都重试分配、每次一行【红】）；其间返回 nil，rts_select_fs 判「盖不住」不选变体、照原版着色。
+// 【红】每轮失败只记第一次，之后的次数进每 600 帧的「没进原因」行；建好时一并记下此前失败了几次
+// Eighth review Q8-01: a failed build records the frame and the next try waits RTS_LIT_RETRY frames (it used to retry the allocation and log a red line on every main-pass draw); meanwhile nil is returned and rts_select_fs sees "does not cover", selects no variant and shades as original.
+// The red line is logged once per failing round, later counts go into the 600-frame "没进原因" line; a successful build also logs how many attempts had failed
 static id<MTLTexture> rts_lit_tex(NSUInteger w, NSUInteger h) {   // 全亮遮罩（按主深度尺寸建一次，换尺寸重建；旧的等在途提交做完再放） | the fully lit mask (built once per main-depth size, rebuilt on resize; the old one after in-flight submissions)
     if (g_rts.mask_lit && g_rts.mask_lit.width == w && g_rts.mask_lit.height == h) return g_rts.mask_lit;
-    defer_obj_release(g_rts.mask_lit); g_rts.mask_lit = nil;
+    if (g_rts.n_frames < g_rts.lit_retry_at) return nil;
+    defer_obj_release(g_rts.mask_lit); g_rts.mask_lit = nil; g_rts.n_lit_try++;
     MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm width:w height:h mipmapped:NO]; d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModeShared;
-    id<MTLTexture> t = [g_dev newTextureWithDescriptor:d]; uint8_t *ones = t ? malloc(w * h) : NULL;
-    if (!t || !ones) { free(ones); MLOG("【红】光追阴影：全亮遮罩 %lux%lu 建不出（不用遮罩的帧退回 1x1，太阳影会全黑）", (unsigned long)w, (unsigned long)h); return nil; }
+    id<MTLTexture> t = g_rts_lit_inject ? nil : [g_dev newTextureWithDescriptor:d]; uint8_t *ones = t ? malloc(w * h) : NULL;
+    if (!t || !ones) { free(ones); g_rts.n_lit_fail++; g_rts.lit_retry_at = g_rts.n_frames + RTS_LIT_RETRY;
+        if (!g_rts.lit_logged++) MLOG("【红】光追阴影：全亮遮罩 %lux%lu 建不出（不用太阳遮罩的帧不选 _rt 变体、照原版着色；隔 %d 帧再试，之后的次数记在每 600 帧的「没进原因」行）", (unsigned long)w, (unsigned long)h, RTS_LIT_RETRY);
+        return nil; }
     memset(ones, 0xff, w * h); [t replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:ones bytesPerRow:w]; free(ones);
-    res_add(t); g_rts.mask_lit = t; MLOG("光追阴影：全亮遮罩 %lux%lu（不用太阳遮罩的帧绑它）", (unsigned long)w, (unsigned long)h); return t;
+    res_add(t); g_rts.mask_lit = t; g_rts.lit_retry_at = 0;
+    if (g_rts.lit_logged) MLOG("光追阴影：全亮遮罩 %lux%lu（不用太阳遮罩的帧绑它；此前建不出累计 %llu 次）", (unsigned long)w, (unsigned long)h, (unsigned long long)g_rts.n_lit_fail);
+    else MLOG("光追阴影：全亮遮罩 %lux%lu（不用太阳遮罩的帧绑它）", (unsigned long)w, (unsigned long)h);
+    g_rts.lit_logged = 0; return t;
 }
 static void rts_build_and_trace(id<MTLTexture> depth) {
     if (depth) rts_lit_tex(depth.width, depth.height);
@@ -1298,7 +1317,7 @@ static void rts_select_fs(NvProg *pr) {
     // when the mask is not used, build / take a fully lit mask of the main target size; if it still does not cover it (size unknown, cannot be built, dynamic resolution just changed) the variant is not selected and the original shading runs - original shadows rather than an out-of-bounds read of 0 darkening the screen
     if (want) { NSUInteger tw = R.rt.depth ? (NSUInteger)R.rt.depth->d.width : 0, th = R.rt.depth ? (NSUInteger)R.rt.depth->d.height : 0;
         id<MTLTexture> mt = rts_mask_tex(); if (mt != g_rts.mask && tw && th) { rts_lit_tex(tw, th); mt = rts_mask_tex(); }
-        if (!mt || !tw || !th || mt.width < tw || mt.height < th) { want = 0; if (++g_rts.n_mask_small <= 3) MLOG("光追阴影：遮罩盖不住渲染目标（遮罩 %lux%lu、目标 %lux%lu），这次绘制照原版着色（第 %llu 次）", (unsigned long)(mt ? mt.width : 0), (unsigned long)(mt ? mt.height : 0), (unsigned long)tw, (unsigned long)th, (unsigned long long)g_rts.n_mask_small); } }
+        if (!mt || !tw || !th || mt.width < tw || mt.height < th) { want = 0; g_rts.n_mask_small++; if (++g_rts.mask_small_log <= 3) MLOG("光追阴影：遮罩盖不住渲染目标（遮罩 %lux%lu、目标 %lux%lu），这次绘制照原版着色（第 %llu 次）", (unsigned long)(mt ? mt.width : 0), (unsigned long)(mt ? mt.height : 0), (unsigned long)tw, (unsigned long)th, (unsigned long long)g_rts.n_mask_small); } }
     if (!recv && rts_on() && (g_rts.mask_done || g_rts.pl_done) && pr->fs_rt) g_rts.n_recv_skip++;
     if (want && !pr->rt_tried) { pr->rt_tried = 1;
         NSString *k = [NSString stringWithFormat:@"%.16s_rt", pr->fs_base->key];
