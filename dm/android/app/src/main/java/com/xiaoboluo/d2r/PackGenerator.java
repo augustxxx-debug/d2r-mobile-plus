@@ -2,6 +2,7 @@ package com.xiaoboluo.d2r;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.nio.file.Files;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -122,6 +123,15 @@ final class PackGenerator {
         e.put("DOTNET_SYSTEM_GLOBALIZATION_INVARIANT", "1");
         e.put("DM_GEN_PROGRESS", "1");
         e.put("J", Integer.toString(jobs));
+        // 开源楷体（APK 自带时 DmActivity 解到 dmgen/font/）：font.txt 记文件名与加粗档；只认同目录里的 .ttf 与 0..8 档，不合规就不给（原版字）
+        // The bundled open-licence Kai font (unpacked by DmActivity to dmgen/font/): font.txt names the file and the stroke level; only a .ttf in that folder and levels 0..8, otherwise no font (original typeface)
+        File fontDir = new File(gen, "font"), spec = new File(fontDir, "font.txt");
+        if (spec.isFile()) {
+            String file = null, weight = "0";
+            try { for (String line : Files.readAllLines(spec.toPath(), StandardCharsets.UTF_8)) { if (line.startsWith("file=")) file = line.substring(5).trim(); else if (line.startsWith("weight=")) weight = line.substring(7).trim(); } }
+            catch (IOException ignored) { file = null; }
+            if (file != null && file.matches("[A-Za-z0-9._-]+\\.ttf") && !file.startsWith(".") && weight.matches("[0-8]")) { e.put("DM_UI_FONT", new File(fontDir, file).getPath()); e.put("DM_UI_FONT_WEIGHT", weight); }
+        }
         return e;
     }
 

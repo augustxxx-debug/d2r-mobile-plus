@@ -4,13 +4,17 @@
                      与 libdm 编进去的覆盖层源指纹同一份源码，生成的覆盖层清单才对得上
   dmgen/src.sha256   src.zip 的 sha256（App 据此判断要不要重新解开）
   dmgen/queries/     4 个查询核（dm/gfx/tools/pack_builtin_queries.py，用 NDK 的 glslc 编），手机上没有 glslc
-用法：pack_gen_assets.py --output <assets 目录> --glslc <glslc>
+  dmgen/font/        可选：开源楷体（--font，须带 --font-license 的许可证文件，如霞鹜文楷 + OFL.txt）与 font.txt（文件名、加粗档、sha256）；
+                     手机端生成覆盖层时用它替换中日文字形（DM_UI_FONT），字体本身是可再分发的开源字体，不是游戏内容
+用法：pack_gen_assets.py --output <assets 目录> --glslc <glslc> [--font <.ttf> --font-license <许可证> [--font-weight 0..8]]
 The repo files the App carries for making the import pack on the phone (no game files are read, no game content):
   dmgen/src.zip      git-tracked files under dm/ (work-tree content; without third-party sources, HarmonyOS, tvOS, the Android App itself and any tests/), unpacked on the phone to run dm/tools/d2rm_android.py;
                      the same sources as the overlay source fingerprint compiled into libdm, so the generated overlay manifest matches
   dmgen/src.sha256   sha256 of src.zip (the App unpacks again when it changes)
   dmgen/queries/     the 4 query kernels (dm/gfx/tools/pack_builtin_queries.py, compiled with the NDK's glslc); there is no glslc on the phone
-Usage: pack_gen_assets.py --output <assets directory> --glslc <glslc>
+  dmgen/font/        optional: an open-licence Kai font (--font, which needs the licence file given by --font-license, e.g. LXGW WenKai + OFL.txt) and font.txt (file name,
+                     stroke level, sha256); the on-phone overlay step uses it for the CJK glyphs (DM_UI_FONT); the font is redistributable open-source, not game content
+Usage: pack_gen_assets.py --output <assets directory> --glslc <glslc> [--font <.ttf> --font-license <licence> [--font-weight 0..8]]
 """
 import argparse
 import hashlib
@@ -50,7 +54,10 @@ def write_zip(dm, names, out):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--output', type=Path, required=True); ap.add_argument('--glslc', required=True)
+    ap.add_argument('--font', type=Path); ap.add_argument('--font-license', type=Path); ap.add_argument('--font-weight', default='0', choices=[str(i) for i in range(9)])
     a = ap.parse_args()
+    if a.font and not (a.font_license and a.font_license.is_file()): sys.exit('带字体必须带许可证文件（--font-license）| a font needs its licence file (--font-license)')
+    if a.font and (a.font.suffix.lower() != '.ttf' or not a.font.is_file()): sys.exit('字体要是存在的 .ttf：%s' % a.font)
     dm = Path(__file__).resolve().parents[2]
     gen = a.output / 'dmgen'; shutil.rmtree(gen, ignore_errors=True); gen.mkdir(parents=True)
     names = source_files(dm); write_zip(dm, names, gen / 'src.zip')
@@ -64,7 +71,10 @@ def main():
         if len(got) != 4: sys.exit('查询核不是 4 个：%s' % got)
         (gen / 'queries').mkdir()
         for f in got: shutil.copyfile(q / f, gen / 'queries' / f)
-    print('dmgen：src.zip %d 个文件，查询核 %d 个' % (len(names), len(got)))
+    if a.font:
+        f = gen / 'font'; f.mkdir(); shutil.copyfile(a.font, f / a.font.name); shutil.copyfile(a.font_license, f / 'OFL.txt')
+        (f / 'font.txt').write_text('file=%s\nweight=%s\nsha256=%s\n' % (a.font.name, a.font_weight, hashlib.sha256(a.font.read_bytes()).hexdigest()))
+    print('dmgen：src.zip %d 个文件，查询核 %d 个，字体 %s' % (len(names), len(got), a.font.name if a.font else '无'))
 
 
 if __name__ == '__main__':

@@ -63,6 +63,16 @@ if [ "$GR" != none ]; then
   if grep -qx "xlate_source_sha=$XS" "$GR/assets/dmgen/runtime.txt" 2> /dev/null && grep -qx "script_sha=$SS" "$GR/assets/dmgen/runtime.txt"; then t "手机端生成器运行时：复用 $GR"
   else t "手机端生成器运行时：重编到 $GR"; bash "$HERE/gen_runtime.sh" "${DM_GEN_WORK:-$HOME/dm-android/genrt-work}" "$GR" > "$O/gen_runtime.log" 2>&1 || die "编运行时失败，日志 $O/gen_runtime.log"; fi
   GEN=(-PdmGenRuntime="$GR")
+  # 开源楷体随包（手机端生成覆盖层时替换中日文字形）：缺省霞鹜文楷 Medium v1.530（SIL OFL 1.1，许可证同目录 OFL.txt），加粗 0 档（观感对齐原先私有楷体的 3 档）；
+  #   DM_ANDROID_FONT=<.ttf> 换字体（同目录要有 OFL.txt 或用 DM_ANDROID_FONT_LICENSE 指定），DM_ANDROID_FONT=none 不带（原版字）；字体文件不进仓库
+  # The open-licence Kai font goes into the package (the on-phone overlay step uses it for CJK glyphs): LXGW WenKai Medium v1.530 by default (SIL OFL 1.1, licence OFL.txt
+  #   next to it), stroke level 0 (matching the look of the former private Kai font at level 3); DM_ANDROID_FONT=<.ttf> picks another font (OFL.txt next to it, or
+  #   DM_ANDROID_FONT_LICENSE), DM_ANDROID_FONT=none ships none (original typeface); font files never enter the repository
+  FONT=${DM_ANDROID_FONT:-$HOME/dm-android/fonts/lxgw-wenkai-v1.530/LXGWWenKai-Medium.ttf}
+  if [ "$FONT" != none ]; then
+    FLIC=${DM_ANDROID_FONT_LICENSE:-$(dirname "$FONT")/OFL.txt}; [ -f "$FONT" ] && [ -f "$FLIC" ] || die "字体或许可证不在：$FONT / $FLIC（DM_ANDROID_FONT=none 不带字体）"
+    GEN+=(-PdmFont="$FONT" -PdmFontLicense="$FLIC" -PdmFontWeight="${DM_ANDROID_FONT_WEIGHT:-0}"); t "随包字体：$(basename "$FONT")（sha256 $(shasum -a 256 "$FONT" | cut -c1-16)…），加粗 ${DM_ANDROID_FONT_WEIGHT:-0} 档"
+  fi
 fi
 t "构建 APK"
 if [ $KIND = release ]; then
@@ -109,8 +119,11 @@ fi
 # With the on-phone generator (-PdmGenRuntime), assets/dmgen/ may hold only these: the runtime (tools, gen_runtime.sh), this repo's generator scripts, and the 4 query kernels
 #   (written by the project, keys from nvn_builtin.h); both zips are unpacked and checked for local paths again, and the runtime may hold only lib/ and py/
 QK=$(sed -n 's/.*{"\([0-9a-f]\{16\}\)", "q_[a-z0-9]*"}.*/\1/p' "$DM/gfx/nvn/nvn_builtin.h" | sort)
-GEN=$(unzip -l "$A" | awk '{print $4}' | grep '^assets/dmgen/' | grep -vxE 'assets/dmgen/(runtime\.zip|runtime\.txt|src\.zip|src\.sha256)' | grep -vxE "assets/dmgen/queries/($(echo $QK | tr ' ' '|'))\.xgs" | head -3)
+GEN=$(unzip -l "$A" | awk '{print $4}' | grep '^assets/dmgen/' | grep -vxE 'assets/dmgen/(runtime\.zip|runtime\.txt|src\.zip|src\.sha256)' | grep -vxE "assets/dmgen/queries/($(echo $QK | tr ' ' '|'))\.xgs" \
+  | grep -vxE 'assets/dmgen/font/([A-Za-z0-9._-]+\.ttf|OFL\.txt|font\.txt)' | head -3)
 [ -z "$GEN" ] || die "assets/dmgen/ 里有不认识的文件：$GEN"
+# 带字体就必须带许可证（OFL 要求随字体分发许可证）| a bundled font must ship with its licence (OFL requires it)
+if unzip -l "$A" | grep -qE 'assets/dmgen/font/[^/]+\.ttf$'; then unzip -l "$A" | grep -q 'assets/dmgen/font/OFL.txt' || die "带了字体却没有 OFL.txt"; t "随包字体与许可证：$(unzip -l "$A" | awk '{print $4}' | grep '^assets/dmgen/font/' | sed 's|assets/dmgen/font/||' | tr '\n' ' ')"; fi
 if unzip -l "$A" | grep -q 'assets/dmgen/runtime.zip'; then
   Z=$O/dmgen_x; rm -rf "$Z" && mkdir -p "$Z/rt" "$Z/src" && unzip -q -o -d "$Z" "$A" 'assets/dmgen/*' && unzip -q "$Z/assets/dmgen/runtime.zip" -d "$Z/rt" && unzip -q "$Z/assets/dmgen/src.zip" -d "$Z/src" || die "解不开 assets/dmgen"
   [ -z "$(ls "$Z/rt" | grep -vxE 'lib|py')" ] || die "运行时里有 lib/ py/ 之外的东西：$(ls "$Z/rt")"
