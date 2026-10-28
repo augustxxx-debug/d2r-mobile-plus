@@ -1,3 +1,4 @@
+#include "../../host/dm_hud_mask.h"
 #import "DmTouchOverlay.h"
 #include "DmTouchControlArt.h"
 #include <math.h>
@@ -161,7 +162,14 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
 }
 - (void)drawV4:(CGContextRef)c {
     NSDictionary *ui=v4ui(); const dm_hud_info h=self.hud; const dm_tc_state *s=self.controls;
-    if(!ui || !dm_hud_bar_visible(&h,self.navigationMode && !self.dialogOnly,self.hudBlocked)) return;   // 只在局内常态显示：面板 / 读取画面 / 过场（导航态）与死亡时让开，不挡游戏自己的画面（dm_hud.h） | Shown only in the normal in-run state: yields during panels / loading screen / cutscenes (navigation mode) and on death, so it does not cover the game's own picture (dm_hud.h)
+    if(!ui || !dm_hud_bar_visible(&h,self.navigationMode && !self.dialogOnly,self.hudBlocked)) return;
+    // 手柄模式（dm_hud_mask.h）：原版手柄底栏自己在（含生命 / 法力数字），这里只补经验行文字；画了底图 / 数字会叠在原版上
+    // Controller mode (dm_hud_mask.h): the original controller bar is there (life / mana numbers included), only the experience line text is added; bar art / numbers would overlap it
+    const int mask=dm_hud_draw_mask(self.padMode); const BOOL bar=(mask&DM_HUD_BAR)!=0;
+    if(!bar) { NSDictionary *lv0=ui[@"lv"]; CGFloat W0=self.bounds.size.width, u0=self.bounds.size.height/1320.0;
+        NSString *lvs0=[NSString stringWithFormat:@"Lv %d · %d%%",h.level,h.exp_permille/10]; if(self.fps>0) lvs0=[lvs0 stringByAppendingFormat:@" · %d FPS",self.fps];
+        if(mask&DM_HUD_EXPLINE) v4text(lvs0,lv0[@"glyphs"],[lv0[@"x"] doubleValue],[lv0[@"baseline"] doubleValue],0,W0,u0);
+        return; }   // 只在局内常态显示：面板 / 读取画面 / 过场（导航态）与死亡时让开，不挡游戏自己的画面（dm_hud.h） | Shown only in the normal in-run state: yields during panels / loading screen / cutscenes (navigation mode) and on death, so it does not cover the game's own picture (dm_hud.h)
     CGFloat W=self.bounds.size.width, u=self.bounds.size.height/1320.0;
     CGFloat (^X)(CGFloat)=^(CGFloat px){ return (px-1434)*u+W/2; };
     // 底栏静态美术：效果图原生分辨率直接贴（不经游戏 1568×720 渲染再放大）；腰带格内挖空透出游戏画的药水、球心挖空透出球液
@@ -219,6 +227,7 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
     CGFloat k = l->joy_radius / 60;
     if (k <= 0) return;
     CGContextRef c = UIGraphicsGetCurrentContext();
+    if (!(dm_hud_draw_mask(self.padMode) & DM_HUD_CONTROLS)) { [self drawV4:c]; return; }   // 手柄模式：不画触屏控件与摇杆，drawV4 只补经验行 | controller mode: no touch controls or stick, drawV4 adds only the experience line
     uint64_t hostNow=now_ns(); dm_tg_snapshot native=self.nativeMapping;
     // 圆钮上可能写出来的字一律走中英表（dm/i18n/ui_text.tsv），跟游戏语言：技能钮画图标 / 键位图、不写字；腰带 / 十字由底栏画（下面整个跳过），这几格不会写字
     // Any text that could be written on round buttons always goes through the bilingual table (dm/i18n/ui_text.tsv) and follows the game language: skill buttons draw icons / key glyphs and no text; the belt / cross are drawn by the bottom bar (skipped entirely below), so these cells never get text

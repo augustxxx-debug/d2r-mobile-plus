@@ -183,8 +183,8 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 - (void)hudBlocked:(int)n { _overlay.hudBlocked=n>0; _overlay.dialogOnly=n<0; dm_tc_set_joy_block(&_controls,n<0); [_overlay setNeedsDisplay]; }   // 只开着讲话文字框 / 对话菜单：点底座那一下不起摇杆（只关它，人不走） | only the speech text box / dialogue menu is open: a tap on the base starts no stick (it only closes it, the character does not move)
 // 前端页面（主菜单 / 选角 / 建角 / 读取画面，即不在局内）：不显示摇杆与技能圆钮，触点直接当原生点击交给游戏界面（dm_ui_touch → 鼠标消息，dm_cursor.c）
 // Front-end pages (main menu / character select / character creation / loading screen, i.e. not in a run): no stick or round skill buttons shown; touch points are given straight to the game UI as native clicks (dm_ui_touch → mouse messages, dm_cursor.c)
-- (void)padMode:(BOOL)pad { BOOL same=(_padMode==pad); _padMode=pad; _overlay.hidden=_feMode || pad; _info.hidden=_feMode; if(same) return; if(pad) { _tipUntil=-2; dm_tc_cancel_all(&_controls); [self pushFrom:"padmode" phase:"none"]; } }   // 手柄模式藏触屏控件层（dm_gamepad.m 回调） | Controller mode hides the touch controls layer (dm_gamepad.m callback)
-- (void)frontendMode:(BOOL)fe { _feMode=fe; _overlay.hidden=fe || _padMode; _info.hidden=fe; if(fe) { _pendEnd=nil; _finalAsked=NO; for(int i_=0;i_<16;i_++) _slot[i_]=nil; dm_tc_cancel_all(&_controls); [self pushFrom:"frontend" phase:"none"]; } }
+- (void)padMode:(BOOL)pad { BOOL same=(_padMode==pad); _padMode=pad; _overlay.hidden=_feMode; _overlay.padMode=pad; [_overlay setNeedsDisplay]; _info.hidden=_feMode; /* 手柄模式不再整层藏：覆盖层按 dm_hud_mask.h 只画经验行文字（用户 2026-10-28） | controller mode no longer hides the whole layer: the overlay draws only the experience line per dm_hud_mask.h (user 2026-10-28) */ if(same) return; if(pad) { _tipUntil=-2; dm_tc_cancel_all(&_controls); [self pushFrom:"padmode" phase:"none"]; } }   // 手柄模式藏触屏控件层（dm_gamepad.m 回调） | Controller mode hides the touch controls layer (dm_gamepad.m callback)
+- (void)frontendMode:(BOOL)fe { _feMode=fe; _overlay.hidden=fe; _info.hidden=fe; if(fe) { _pendEnd=nil; _finalAsked=NO; for(int i_=0;i_<16;i_++) _slot[i_]=nil; dm_tc_cancel_all(&_controls); [self pushFrom:"frontend" phase:"none"]; } }
 - (void)navigationMode:(int)n {
     if (_navigation==n) return;
     dm_tc_set_navigation_mode(&_controls,n); _navigation=n; atomic_store(&g_nav_pub,n);   // 内部按非零归一 | Internally normalized to non-zero
@@ -430,7 +430,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 }
 - (void)tickTouchControls:(double)now {
     [self mapGoalSync];
-    { int dm_padmode_busy(void); BOOL hide=_feMode || _padMode || dm_padmode_busy(); if(_overlay.hidden!=hide) _overlay.hidden=hide; }   // 切换事务进行中也藏触屏层；宿主自己发起的切换（测试开关 DM_TEST_PADMODE 等）由注册表项「触屏控件层随模式」经 front_touch_overlay_mode 通知，见下 | Also hidden while a switch transaction is in progress; switches the host starts itself (DM_TEST_PADMODE and the like) reach us through the registry item "touch overlay follows the mode" via front_touch_overlay_mode, see below
+    { int dm_padmode_busy(void); BOOL hide=_feMode || dm_padmode_busy(); if(_overlay.hidden!=hide) _overlay.hidden=hide; if(_overlay.padMode!=_padMode) { _overlay.padMode=_padMode; [_overlay setNeedsDisplay]; } }   // 切换事务进行中也藏触屏层；宿主自己发起的切换（测试开关 DM_TEST_PADMODE 等）由注册表项「触屏控件层随模式」经 front_touch_overlay_mode 通知，见下 | Also hidden while a switch transaction is in progress; switches the host starts itself (DM_TEST_PADMODE and the like) reach us through the registry item "touch overlay follows the mode" via front_touch_overlay_mode, see below
     { void dm_rift_hud_draw(UIView *, CGRect, BOOL); dm_rift_hud_draw(_info, world_rect(self), _navigation || _info.hidden); }
     {   // 高价值掉落震动（宿主 dm_drophaptic.c 判档）：1 重 / 2 中 / 3 轻 | High-value drop haptics (the host's dm_drophaptic.c decides the level): 1 heavy / 2 medium / 3 light
         int dm_drop_haptic_take(void); int t = dm_drop_haptic_take();
