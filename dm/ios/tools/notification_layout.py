@@ -54,7 +54,9 @@ def build_modal_art(romfs, outdir):
     return replacements
 
 
-def build_notice_slices(romfs, outdir, width):
+def build_notice_slices(romfs, outdir, width, folder='ztouch_notification', prefix='notice_'):
+    # folder：另一组提示框（崩溃围栏的主菜单提示框用 ztouch_safe）各用自己一套切片——宿主改的是切片精灵本身的绘制尺寸，两组共用会互相改掉
+    # folder: another notice box (the crash fence's main-menu box uses ztouch_safe) gets its own slices - the host changes the slice sprites' own draw size, so sharing them would let the two overwrite each other
     from pathlib import Path
     import romfs_art
     import gen_notification_frame as frame
@@ -66,12 +68,12 @@ def build_notice_slices(romfs, outdir, width):
     parts = {'tile%d%d' % (row,col): image.crop((xs[col],ys[row],xs[col+1],ys[row+1])) for row in range(5) for col in range(3)}
     replacements = {}
     for name, part in parts.items():
-        output = Path(outdir) / ('notice_' + name + '.sprite')
+        output = Path(outdir) / (prefix + name + '.sprite')
         # Each path is private to one notice slice, with exactly one full frame.
         # The host adjusts only its draw dimensions; UVs and GPU texture stay
         # unchanged. A native NineTile would repeat the gradient and show seams.
         output.write_bytes(codec.pack(codec.lib(), source, codec.bc3(part), part.width, part.height, part.width))
-        replacements['data/hd/global/ui/ztouch_notification/' + name + '.sprite'] = str(output)
+        replacements['data/hd/global/ui/%s/%s.sprite' % (folder, name)] = str(output)
     return replacements
 
 

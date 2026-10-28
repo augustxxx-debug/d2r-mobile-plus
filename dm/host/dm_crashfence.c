@@ -16,6 +16,8 @@
 #include "dm_custom.h"
 #include "dm_i18n.h"
 #include "dm_input.h"
+#include "dm_widget.h"
+#include "dm_notice_geometry.h"
 #include "hle.h"
 #include <stdatomic.h>
 #include <stdio.h>
@@ -91,11 +93,11 @@ void dm_crashfence_resume(void) {
     LOG("崩溃围栏：回前台，重写运行标记%s", g_marked ? "" : "【红】失败");
 }
 int dm_crashfence_notice_take(void) { return atomic_exchange(&g_notice, 0); }
-// 主菜单上的游戏内提示框（用户：「不要用原生的弹窗，用游戏内弹窗」）：控件是布局覆盖层在主菜单面板下加的 TouchSafeBg / Title / Desc / Ok
+// 主菜单上的游戏内提示框（用户：「不要用原生的弹窗，用游戏内弹窗」）：控件是布局覆盖层在主菜单面板下加的边框 15 片 TouchSafeTile（我们通知框同一套美术、自己一套切片 Ztouch_safe）/ Title / Desc0–2 / Ok
 // （dm/ios/tools/touch_layout.py _SAFE / _SAFE_PAD），平时摆在屏幕外、字空着。要提示时每帧在游戏主线程写字、摆到屏幕中间；
 // 「确定」按钮发 PanelManager:ClosePanel:TouchSafeOk（空操作，宿主当信号收），手柄模式接管 A 键当确定。点了就收回屏幕外，本次启动不再出。
 // 布局里没有这些控件（跑原版布局）：等 600 帧还找不到就只记一行日志作罢。「前端：提示已显示」「玩家点了确定」两行保留（分享诊断日志要看）
-// In-game notice box on the main menu (user: "do not use a native popup, use an in-game one"): the widgets are TouchSafeBg / Title / Desc / Ok added under the main menu panel by the layout overlay
+// In-game notice box on the main menu (user: "do not use a native popup, use an in-game one"): the widgets are the 15 frame tiles TouchSafeTile (same art as our notification box, its own slices Ztouch_safe) / Title / Desc0-2 / Ok added under the main menu panel by the layout overlay
 // (_SAFE / _SAFE_PAD in dm/ios/tools/touch_layout.py), normally off screen with empty text. While notifying, every frame on the game main thread writes the text and moves them to the screen center;
 // "OK" sends PanelManager:ClosePanel:TouchSafeOk (a no-op the host takes as a signal), and controller mode takes over A as OK. Once confirmed they go back off screen and do not return during this launch.
 // Without these widgets (original layout): after 600 frames without finding them only one log line is written. The "shown" / "player tapped OK" lines are kept (share diagnostics read them)
@@ -117,6 +119,21 @@ static uint64_t cf_find(uint64_t w, const char *name, int dep) {   // 按名字�
 static void cf_place(uint64_t w, int x, int y) {   // 矩形 +0x70 / +0x74，改完调虚表 +0x10 重算（同 dm_update.c place） | rect at +0x70 / +0x74, then vtable +0x10 to recompute (same as dm_update.c place)
     int32_t *r = (int32_t *)(w + 0x70); if (r[0] == x && r[1] == y) return; r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x10))(w);
 }
+// 边框片的位置与大小（同 dm_cursor.c ui_notice_tile_rect 的做法与检查）：只改我们自己的单帧切片 Ztouch_safe/tileRC 的绘制尺寸，名字、文件名、帧数都对上才写
+// Position and size of a frame tile (same method and checks as ui_notice_tile_rect in dm_cursor.c): only the draw size of our own single-frame slice Ztouch_safe/tileRC is changed, written only when name, file name and frame count all match
+static void cf_tile(uint8_t *b, uint64_t w, const int want[4]) {
+    const char *name = w ? *(const char **)(w + 8) : NULL, *pre = "TouchSafeTile"; size_t n = strlen(pre);
+    if (!name || strncmp(name, pre, n) || name[n] < '0' || name[n] > '4' || name[n + 1] < '0' || name[n + 1] > '2' || name[n + 2]) return;
+    if (want[2] < 1 || want[2] > 4000 || want[3] < 1 || want[3] > 800 || !dm_widget_is(b, w, DM_VT_IMAGE)) return;
+    char expect[40]; snprintf(expect, sizeof expect, "Ztouch_safe/tile%c%c", name[n], name[n + 1]);
+    const char *file = *(const char **)(w + 0x108); uint64_t len = *(uint64_t *)(w + 0x110);
+    if (!file || len != strlen(expect) || memcmp(file, expect, len) || *(int32_t *)(w + 0x90) != 0) return;
+    uint64_t ref = *(uint64_t *)(w + 0x88), sp = ref ? *(uint64_t *)ref : 0; if (!sp) return;
+    uint32_t *atlas = (uint32_t *)(sp + 0xbc), *height = (uint32_t *)(sp + 0xc0), *frames = (uint32_t *)(sp + 0xcc), *width = (uint32_t *)(sp + 0xd0);
+    if (*frames != 1 || *atlas != *width || !*width || *width > 4000 || !*height || *height > 800) return;
+    *atlas = *width = (uint32_t)want[2]; *height = (uint32_t)want[3];
+    int32_t *r = (int32_t *)(w + 0x70); if (memcmp(r, want, 4 * sizeof *r)) { r[0] = want[0]; r[1] = want[1]; r[2] = want[2]; r[3] = want[3]; }
+}
 static void cf_text(uint8_t *b, uint64_t w, const char *s) {   // 文字框设文本（同 dm_update.c set_text；不是文字框不动） | set a text box's text (same as dm_update.c set_text; not a text box = left alone)
     if (*(uint64_t *)w - (uint64_t)(uintptr_t)b != 0x20ba4c8) return;
     size_t n = strlen(s); if (*(uint64_t *)(w + 0x90) == n && !memcmp(*(const char **)(w + 0x88), s, n)) return;
@@ -125,18 +142,29 @@ static void cf_text(uint8_t *b, uint64_t w, const char *s) {   // 文字框设�
 void dm_crashfence_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
     int st = atomic_load(&g_show); if (!st) return;
     static int wait; uint8_t *b = cf_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, mm = root ? cf_find(root, "MainMenuPanel", 0) : 0;
-    uint64_t bg = mm ? cf_find(mm, "TouchSafeBg", 0) : 0, ti = mm ? cf_find(mm, "TouchSafeTitle", 0) : 0, de = mm ? cf_find(mm, "TouchSafeDesc", 0) : 0, ok = mm ? cf_find(mm, "TouchSafeOk", 0) : 0;
-    if (!bg || !ti || !de || !ok) { if (st == 1 && ++wait == 600) { atomic_store(&g_show, 0); LOG("【红】崩溃围栏：主菜单面板里没有提示框控件（原版布局？），只记日志不显示"); } return; }
+    uint64_t ti = mm ? cf_find(mm, "TouchSafeTitle", 0) : 0, ok = mm ? cf_find(mm, "TouchSafeOk", 0) : 0, de[3], tl[15]; int tiles = 1;
+    for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchSafeTile%d%d", k / 3, k % 3); tl[k] = mm ? cf_find(mm, nm, 0) : 0; tiles &= tl[k] != 0; }
+    for (int k = 0; k < 3; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchSafeDesc%d", k); de[k] = mm ? cf_find(mm, nm, 0) : 0; }   // 正文三行各一个文字框（游戏文字框不认换行） | one text box per body line (the game's text box ignores newlines)
+    if (!tiles || !ti || !de[0] || !de[1] || !de[2] || !ok) { if (st == 1 && ++wait == 600) { atomic_store(&g_show, 0); LOG("【红】崩溃围栏：主菜单面板里没有提示框控件（原版布局？），只记日志不显示"); } return; }
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current(), vis = *(uint8_t *)(mm + 0x50);
     if (pad && vis && st == 2 && (dm_padmode_page_keys(DM_BTN_A) & DM_BTN_A)) atomic_store(&g_ack, 1);   // 手柄：显示着时接管 A 当确定（游戏收不到这一下） | controller: while shown, take over A as OK (the game does not get this press)
     const char *title = dm_str(b, "dmSafeModeTitle");
     if (atomic_exchange(&g_ack, 0)) {
-        cf_place(bg, 99999, 99999); cf_place(ti, 99999, 99999); cf_place(de, 99999, 99999); cf_place(ok, 99999, 99999); cf_text(b, ti, ""); cf_text(b, de, "");
+        for (int k = 0; k < 15; k++) { int32_t *r = (int32_t *)(tl[k] + 0x70); r[0] = r[1] = 99999; }   // 边框片挪出屏幕（尺寸不动） | frame tiles off screen (size unchanged)
+        cf_place(ti, 99999, 99999); cf_place(ok, 99999, 99999); cf_text(b, ti, "");
+        for (int k = 0; k < 3; k++) { cf_place(de[k], 99999, 99999); cf_text(b, de[k], ""); }
         atomic_store(&g_show, 0); LOG("前端：提示「%s」玩家点了确定（%s，游戏内提示框收起）", title, pad ? "手柄 A" : "点按钮"); return;
     }
     // 屏宽（布局单位，2160 = 屏高）：手柄版控件不带锚点，按屏宽居中；触屏版跟主菜单面板锚在屏幕中心，x 相对中心 | screen width in layout units: controller widgets have no anchor and are centered by width; touch widgets are anchored at the center
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), cx = pad ? (vh > 0 ? (int)((long)vw * 2160 / vh) : 3840) / 2 : 0;
-    cf_text(b, ti, title); cf_text(b, de, dm_str(b, "dmSafeModeMsg"));
-    cf_place(bg, cx - 900, 640); cf_place(ti, cx - 850, 680); cf_place(de, cx - 850, 790); cf_place(ok, cx - 235, 1120);
+    cf_text(b, ti, title);
+    { const char *m = dm_str(b, "dmSafeModeMsg"); for (int k = 0; k < 3; k++) { const char *e = m ? strchr(m, '\n') : NULL; char ln[256];   // 按 \n 拆三行 | split into three lines at \n
+        snprintf(ln, sizeof ln, "%.*s", m ? (int)(e ? (size_t)(e - m) : strlen(m)) : 0, m ? m : ""); cf_text(b, de[k], ln); m = e ? e + 1 : NULL; } }
+    // 边框：宽 1800、高 620，左上角 (cx − 900, 640)；几何同我们的通知框（dm_notice_geometry：四角与宝石定长、边条拉伸），它以 244 高为基准上下居中，这里换算到 640 起
+    // Frame: 1800 wide, 620 high, top left at (cx - 900, 640); geometry as our notification box (dm_notice_geometry: fixed corners and gems, stretched edge strips), which centers around a 244-high baseline, converted here to start at 640
+    { int g[15][4], h = dm_notice_geometry(1800 - 128, 620 - 24, 1800, g), top = (244 - h) / 2;
+      for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + g[k][0], 640 + g[k][1] - top, g[k][2], g[k][3] }; cf_tile(b, tl[k], r); } }
+    cf_place(ti, cx - 850, 680); cf_place(ok, cx - 235, 1120);
+    for (int k = 0; k < 3; k++) cf_place(de[k], cx - 850, 800 + 66 * k);
     if (st == 1) { atomic_store(&g_show, 2); LOG("前端：提示已显示：%s（游戏内提示框，%s）", title, pad ? "手柄模式，A 键确定" : "点「确定」按钮"); }
 }

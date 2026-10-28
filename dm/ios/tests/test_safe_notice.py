@@ -23,13 +23,17 @@ class Layout(unittest.TestCase):
     def test_widgets(self):
         for name, anchored in (('_SAFE', True), ('_SAFE_PAD', False)):
             t = getattr(touch_layout, name)
-            for w in ('TouchSafeBg', 'TouchSafeTitle', 'TouchSafeDesc', 'TouchSafeOk'):
+            for w in ['TouchSafeTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchSafeTitle', 'TouchSafeDesc0', 'TouchSafeDesc1', 'TouchSafeDesc2', 'TouchSafeOk']:
                 self.assertIn('"name": "%s"' % w, t, (name, w))
             self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchSafeOk"', t)
+            self.assertIn('"filename": "Ztouch_safe/tile42"', t)   # 边框 = 我们通知框同一套美术、自己一套切片 | frame = same art as our notification box, own slices
+            self.assertNotIn('RectangleWidget', t)   # 不另叠底板：按钮图中间本身是不透明的石纹 | no separate backing: the button image's middle is opaque stone
             self.assertIn('"textString": "@dmConfirm"', t)
             self.assertEqual('"anchor"' in t, anchored, name)
             self.assertNotIn('"x": 9', re.sub(r'"x": 99999', '', t), 'everything starts off screen: ' + name)
-        self.assertEqual(touch_layout._SAFE_STUB.count('\n'), 4)
+        self.assertEqual(touch_layout._SAFE_STUB.count('\n'), 20)
+        ov = (DM / 'ios' / 'tools' / 'gen_romfs_overlay.py').read_text(encoding='utf-8')
+        self.assertIn("build_notice_slices(romfs,t,nw,folder='ztouch_safe',prefix='safe_')", ov)
 
     def test_both_main_menus_carry_it(self):
         fake = '{\n    "type": "Widget", "name": "MainMenuPanel",\n    "children": [\n        { "type": "Widget", "name": "X" },\n    ]\n}'
@@ -54,7 +58,7 @@ class Text(unittest.TestCase):
                 self.assertEqual(t.count('\n'), n, (key, lang))
                 for line in t.split('\n'):
                     self.assertLessEqual(est_width(line, pt), BOX_W, (key, lang, line, est_width(line, pt)))
-        self.assertEqual(rows['dmSafeModeMsg'][1].count('\n'), 2, 'three lines (the body box is 300 high)')
+        self.assertEqual(rows['dmSafeModeMsg'][1].count('\n'), 2, 'three lines (one text box each: TouchSafeDesc0..2)')
 
 
 class Host(unittest.TestCase):

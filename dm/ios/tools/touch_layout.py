@@ -274,14 +274,18 @@ _UPDATE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) fo
 # The touch version follows the main menu panel's horizontal anchor at the screen center; the controller version's original main menu panel rect is 0x0, so no anchor and the host computes positions from the screen width (as _UPDATE_PAD)
 def _safe(anchor):
     a = _C if anchor else ''
-    return ('        { "type": "RectangleWidget", "name": "TouchSafeBg", "fields": { %s"rect": { "x": 99999, "y": 99999, "width": 1800, "height": 620 }, "color": [ 0.04, 0.04, 0.04, 0.92 ] } },\n' % a
+    # 边框 = 我们通知框同一套（原版前端按钮图拉伸、切成 5×3 片：四角与两颗宝石不拉伸，边条拉伸），用自己的切片 Ztouch_safe/（notification_layout.build_notice_slices）；
+    # 按钮图中间本身是不透明的深色石纹，直接当底，不再另叠半透明底板（用户：「弹窗边框用我们通知的」）
+    # Frame = the same as our notification box (the original front-end button image stretched and cut 5x3: corners and the two gems unstretched, edge strips stretched), with its own slices Ztouch_safe/ (notification_layout.build_notice_slices);
+    # the button image's middle is already opaque dark stone, so it serves as the background without a separate translucent backing (user: "use our notification's frame for the popup border")
+    return (''.join('        { "type": "ImageWidget", "name": "TouchSafeTile%d%d", "fields": { %s"rect": { "x": 99999, "y": 99999, "width": 52, "height": 24 }, "filename": "Ztouch_safe/tile%d%d" } },\n' % (r, c, a, r, c) for r in range(5) for c in range(3))
             + _upd_text('TouchSafeTitle', 99999, 99999, 1700, 48, (230, 200, 120), 'center', a)
-            + ('        { "type": "TextBoxWidget", "name": "TouchSafeDesc", "fields": { %s"rect": { "x": 99999, "y": 99999, "width": 1700, "height": 300 }, "text": "", '
-               '"style": { "pointSize": 36, "fontColor": { "r": 232, "g": 228, "b": 214, "a": 255 }, "alignment": { "h": "center", "v": "top" }, "dropShadow": "$DefaultDropShadow" } } },\n') % a
+            # 正文三行各一个文字框：游戏文字框不认正文里的换行（Mac 原生宿主实测三行挤成一行、换行变空格），宿主按 \n 拆开分别写 | one text box per body line: the game's text box ignores newlines in the text (Mac native host: three lines squeezed into one, newlines became spaces), so the host splits at \n and writes each
+            + ''.join(_upd_text('TouchSafeDesc%d' % k, 99999, 99999, 1700, 36, (232, 228, 214), 'center', a) for k in range(3))
             + _btn('TouchSafeOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchSafeOk', x=99999, anchor=anchor))
 _SAFE = _safe(True); _SAFE_PAD = _safe(False)
 _SAFE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchSafe\w+)"', _SAFE))
-assert _SAFE_STUB.count('\n') == 4   # 底板、标题、正文、确定 | backing, title, body, OK
+assert _SAFE_STUB.count('\n') == 20   # 边框 15 片、标题、正文三行、确定 | 15 frame tiles, title, three body lines, OK
 assert _UPDATE_STUB.count('\n') == 5   # 构建号、普通提示、底板、标题、说明（四审 Q4-04 起没有按钮） | build, notice, backing, title, description (no buttons since fourth review Q4-04)
 def _pc_mainmenu(s):
     # 「进入游戏」居中（键鼠版它在左半、右半是联机大厅按钮）；下面的齿轮（联机建局设置）、分隔条、联机大厅按钮挪走
