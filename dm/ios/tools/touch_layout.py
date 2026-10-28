@@ -1305,26 +1305,16 @@ _CUSTOM_ROW_H = [(5 * _CUSTOM_LINE_H if k == 'q3d' else _CUSTOM_Q3D_H if k in ('
 _CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
 _CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
 # 末尾的「关于」组（社区入口 dm_community.c）：分节标题「关于」+ 一行「社区讨论 …… [查看]」（原版前端中号按钮，发空操作消息 ClosePanel:TouchCommunityOpt，宿主当信号收、打开提示框）。
-# 整组包在容器 TouchAboutRow 里，和各行同在滚动区、跟着滚；社区行单独包在子容器 TouchAboutCommunity 里，没有可显示的值时宿主把它的 x 挪出屏幕（y 不动：滚动区按子控件范围算内容高度），标题与鸣谢行照常。手柄模式十字键能选到社区行、A 打开（dm_custom.c）。
-# 鸣谢子块（用户 2026-10-28 定稿，§2.6 三级层级）：子标题「鸣谢」（标题级 GoldYellow）+「特别鸣谢」/「鸣谢」两行：标签 36 号 LightGold、名单 36 号 LightGray，
-# 名单由宿主 dm_community.c 按语言拼（每行 ≤ 4 名、按估算宽折行、封顶 6 行加「…」；「鸣谢」为空整行不显示），名字不翻译。布局里预放 2 个标签框 + 6 个名单行框、字空着、行框在屏外，
-# 宿主每帧摆位并把 TouchAboutRow 的高度按行数改（滚动区按子控件范围算内容高度）。名字放代码缺省常量（RC1：上游作者 jhaizhou-ops），RC2 由清单 credits 字段覆盖
-# Credits sub-block (user, 2026-10-28; §2.6 three levels): sub-title "Credits" (title level GoldYellow) + "Special thanks" / "Thanks" lines: label 36 LightGold, names 36 LightGray,
-# names assembled by the host dm_community.c per language (≤ 4 per line, wrapped by estimated width, capped at 6 lines with "…"; an empty "Thanks" line is not shown), names untranslated. The layout pre-places 2 label boxes + 6 line boxes, empty, lines off screen;
-# the host places them every frame and sets TouchAboutRow's height by the line count. Names come from a default constant in code (RC1: upstream author jhaizhou-ops); RC2 lets the manifest credits field override
-_CREDIT_LINE_H, _CREDIT_LINES = 90, 6   # 名单行距（只读文字，不是触控行）、最多行数（宿主封顶，同 dm_community.c） | name-line pitch (read-only text, not a touch row), max lines (host cap, as dm_community.c)
-_ABOUT_H = 3 * _CUSTOM_LINE_H + _CREDIT_LINE_H   # 标题 / 社区行 / 鸣谢子标题 + 缺省一行名单；宿主按实际行数改高 | title / community row / credits sub-title + one default name line; the host adjusts by the real line count
+# 整组包在容器 TouchAboutRow 里，和各行同在滚动区、跟着滚；没有可显示的值时宿主把容器的 x 挪出屏幕（y 不动：滚动区按子控件范围算内容高度）。手柄模式十字键能选到这一行、A 打开（dm_custom.c）
+# The About group at the end (community entry dm_community.c): a section title "About" + one row "Community ... [View]" (the original medium front-end button sending the no-op ClosePanel:TouchCommunityOpt, which the host takes as a signal to open the box).
+# The whole group sits in the container TouchAboutRow, in the scroll area with the rows and scrolling with them; without a value the host moves the container's x off screen (y stays: the scroll area sizes its content by the children). In controller mode the D-pad reaches this row and A opens it (dm_custom.c)
+_ABOUT_H = 2 * _CUSTOM_LINE_H
 def _custom_about():
     return ('        { "type": "Widget", "name": "TouchAboutRow", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_H, _ABOUT_H)
             + '            { "type": "TextBoxWidget", "name": "TouchAboutTitle", "fields": { "rect": { "x": 0, "y": 0, "width": 1730, "height": %d }, "text": "@dmCommunityAbout", "style": "$StyleSettingsTitle" }, "children": [\n' % _CUSTOM_LINE_H
             + '                { "type": "ImageWidget", "name": "TouchAboutDivider", "fields": { "rect": "$OptionsDividerRect", "filename": "PauseMenu\\\\Divider" } },\n            ] },\n'
-            + '            { "type": "Widget", "name": "TouchAboutCommunity", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_LINE_H, _CUSTOM_LINE_H)
-            + '                { "type": "TextBoxWidget", "name": "TouchAboutCommunityText", "fields": { "rect": { "x": 0, "y": 0, "width": 1000, "height": %d }, "text": "@dmCommunityRow", "style": "$StyleSettingsText" } },\n' % _CUSTOM_LINE_H
-            + _btn('TouchCommunityOpt', 30, '@dmCommunityOpen', 'PanelManager:ClosePanel:TouchCommunityOpt', x=1110, anchor=False).replace('\n        ', '\n                ')
-            + '            ] },\n'
-            + '            { "type": "TextBoxWidget", "name": "TouchCreditsTitle", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d }, "text": "@dmCreditsTitle", "style": "$StyleSettingsTitle" } },\n' % (2 * _CUSTOM_LINE_H, _CUSTOM_LINE_H)
-            + ''.join('            { "type": "TextBoxWidget", "name": "TouchCreditLabel%d", "fields": { "rect": { "x": 99999, "y": %d, "width": 600, "height": %d }, "text": "", "style": { "pointSize": 36, "fontColor": "$FontColorLightGold", "spacing": "$ReducedSpacing", "alignment": { "h": "left", "v": "center" } } } },\n' % (k, 3 * _CUSTOM_LINE_H, _CREDIT_LINE_H) for k in range(2))
-            + ''.join('            { "type": "TextBoxWidget", "name": "TouchCreditLine%d", "fields": { "rect": { "x": 99999, "y": %d, "width": 1110, "height": %d }, "text": "", "style": { "pointSize": 36, "fontColor": "$FontColorLightGray", "spacing": "$ReducedSpacing", "alignment": { "h": "left", "v": "center" } } } },\n' % (k, 3 * _CUSTOM_LINE_H, _CREDIT_LINE_H) for k in range(_CREDIT_LINES))
+            + '            { "type": "TextBoxWidget", "name": "TouchAboutCommunityText", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "@dmCommunityRow", "style": "$StyleSettingsText" } },\n' % (_CUSTOM_LINE_H, _CUSTOM_LINE_H)
+            + _btn('TouchCommunityOpt', _CUSTOM_LINE_H + 30, '@dmCommunityOpen', 'PanelManager:ClosePanel:TouchCommunityOpt', x=1110, anchor=False).replace('\n        ', '\n            ')
             + '        ] },\n')
 def _custom_toggle_row(i, key, label):
     y, h = _CUSTOM_Y[i], _CUSTOM_LINE_H

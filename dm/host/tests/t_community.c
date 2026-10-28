@@ -120,32 +120,6 @@ int main(void) {
       for (size_t i = 0; i < sizeof good / sizeof *good; i++) { CHECK(dm_community_manifest(M_NONE, strlen(M_NONE)) == 0);
           int r = dm_community_manifest(good[i], strlen(good[i])); k = dm_community_value(DM_LG_ZH, v, sizeof v);
           if (r != 1 || k != 1 || strcmp(v, "123456")) { fails++; checks++; printf("FAIL Q11-01 好清单 %zu: 返回 %d 种类 %d 值 %s\n", i, r, k, v); } else checks++; } }
-    // 17. 鸣谢（用户 2026-10-28）：名单拼行——每行 ≤ 4 名、估算宽 ≤ 44 单位、特别鸣谢末尾接括号说明、鸣谢为空不出行、封顶 6 行加「…」、中文「、」其他「, 」
-    // 17. Credits: line assembly - ≤ 4 names per line, estimated width ≤ 44 units, the special list ends with the note, an empty thanks list shows no line, capped at 6 lines with "…", "、" in Chinese and ", " elsewhere
-    { cr_line_t ln[CR_LINES]; int tr;
-      int n = credits_lines(k_special_default, 1, NULL, 0, "、", "（d2r-mobile 原作者）", ln, CR_LINES, &tr); CHECK(n == 1); CHECK(ln[0].kind == 1); CHECK(!strcmp(ln[0].text, "jhaizhou-ops（d2r-mobile 原作者）")); CHECK(!tr);
-      n = credits_lines(k_special_default, 1, NULL, 0, ", ", " (author of d2r-mobile)", ln, CR_LINES, &tr); CHECK(n == 1); CHECK(!strcmp(ln[0].text, "jhaizhou-ops (author of d2r-mobile)"));
-      static const char *const nine[] = { "a1", "b2", "c3", "d4", "e5", "f6", "g7", "h8", "i9" }; static const char *const two[] = { "x", "y" };
-      n = credits_lines(nine, 9, two, 2, ", ", "", ln, CR_LINES, &tr); CHECK(n == 4); CHECK(ln[0].kind == 1 && ln[1].kind == 0 && ln[2].kind == 0 && ln[3].kind == 2);
-      CHECK(!strcmp(ln[0].text, "a1, b2, c3, d4")); CHECK(!strcmp(ln[2].text, "i9")); CHECK(!strcmp(ln[3].text, "x, y")); CHECK(!tr);
-      n = credits_lines(nine, 9, two, 2, "、", "", ln, CR_LINES, &tr); CHECK(!strcmp(ln[0].text, "a1、b2、c3、d4"));
-      static const char *const longn[] = { "abcdefghijklmnopqrst", "abcdefghijklmnopqrsu", "abcdefghijklmnopqrsv" };   // 20 字节 × 3：按宽折成两行 | 20 bytes × 3: wrapped by width into two lines
-      n = credits_lines(longn, 3, NULL, 0, ", ", "", ln, CR_LINES, &tr); CHECK(n == 2); CHECK(cr_units(ln[0].text) <= CR_LINE_UNITS); CHECK(ln[1].kind == 0);
-      static const char *const many[20] = { "n01", "n02", "n03", "n04", "n05", "n06", "n07", "n08", "n09", "n10", "n11", "n12", "n13", "n14", "n15", "n16", "n17", "n18", "n19", "n20" };
-      n = credits_lines(many, 20, many, 20, ", ", "", ln, CR_LINES, &tr); CHECK(n == CR_LINES); CHECK(tr); CHECK(strstr(ln[CR_LINES - 1].text, "…"));
-      n = credits_lines(NULL, 0, NULL, 0, ", ", "", ln, CR_LINES, &tr); CHECK(n == 0); CHECK(!tr); }
-    // 18. 清单 credits 字段（RC2 用，RC1 只解析计数）：数组只收 ≤ 32 字节、不带转义的字符串，去重，合计 ≤ 24；坏形状整个忽略并记红，社区字段照常
-    // 18. Manifest credits field (for RC2; RC1 only parses and counts): arrays take only escape-free strings ≤ 32 bytes, deduped, ≤ 24 in all; a bad shape is ignored as a whole with a red line; the community field is unaffected
-    { static const char *const c1 = "{\"community\": {\"qq_group\": \"123456\"}, \"credits\": {\"special\": [\"a\", \"b\", \"a\"], \"thanks\": [\"c\"]}}";
-      log_reset(); CHECK(dm_community_manifest(c1, strlen(c1)) == 1); CHECK(strstr(log_text(), "credits=特别 2 / 鸣谢 1")); CHECK(!strstr(log_text(), "【红】"));
-      static const char *const c2 = "{\"community\": {\"qq_group\": \"123456\"}, \"credits\": \"jhaizhou-ops\"}";
-      log_reset(); CHECK(dm_community_manifest(c2, strlen(c2)) == 1); CHECK(strstr(log_text(), "【红】社区入口：清单 credits 字段格式坏")); CHECK(strstr(log_text(), "credits=特别 0 / 鸣谢 0")); CHECK(dm_community_available());
-      static const char *const c3 = "{\"community\": {\"qq_group\": \"123456\"}, \"credits\": {\"special\": [1, \"ok\"]}}";
-      log_reset(); CHECK(dm_community_manifest(c3, strlen(c3)) == 1); CHECK(strstr(log_text(), "credits 字段格式坏"));
-      static const char *const c4 = "{\"community\": {\"qq_group\": \"123456\"}, \"credits\": {\"special\": [\"abcdefghijklmnopqrstuvwxyz0123456789\"]}}";   // 36 字节 | 36 bytes
-      log_reset(); CHECK(dm_community_manifest(c4, strlen(c4)) == 1); CHECK(strstr(log_text(), "credits 字段格式坏"));
-      static const char *const c5 = "{\"credits\": {\"special\": [\"a\"]}}";   // 只有 credits、没有 community：仍是无字段 | credits only: still no community field
-      CHECK(dm_community_manifest(c5, strlen(c5)) == 0); CHECK(!dm_community_available()); }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);

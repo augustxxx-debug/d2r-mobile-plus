@@ -68,10 +68,7 @@ static void cache_delete(void) { char p[1100]; if (cache_path(p, sizeof p)) unli
 // Strict minimal JSON parsing (Q11-01): the whole input must be one valid JSON root object (object / array / string / number / true / false / null all validated);
 // only the root object's direct child "community" (must be an object) and its direct children "qq_group" / "github" (must be strings without escapes) are honored; deeper same-name keys are ignored;
 // a duplicate community / qq_group / github is a format error. Syntax error, trailing comma, non-object root, trailing content = format error. Depth capped at 16
-#define CR_NAME_MAX 32   // 鸣谢名字上限（字节） | credit name limit (bytes)
-#define CR_MAX 24        // 两份名单合计上限 | both lists together
-typedef struct { const char *p, *e; char qq[QQ_MAX + 1], gh[GH_MAX + 1]; int n_comm, n_qq, n_gh, bad_type, too_long;
-    char cr[CR_MAX][CR_NAME_MAX + 1]; int n_cr, n_special, n_thanks, n_credits, bad_credits; } jp_t;   // credits：RC1 只解析、去重、计数进日志，不渲染不缓存（RC2 覆盖静态缺省） | credits: RC1 only parses, dedupes and logs counts; not rendered or cached (RC2 overrides the static default)
+typedef struct { const char *p, *e; char qq[QQ_MAX + 1], gh[GH_MAX + 1]; int n_comm, n_qq, n_gh, bad_type, too_long; } jp_t;
 static void js_ws(jp_t *j) { while (j->p < j->e && (*j->p == ' ' || *j->p == '\t' || *j->p == '\n' || *j->p == '\r')) j->p++; }
 static int js_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 // 字符串：验语法（转义只许 \" \\ \/ \b \f \n \r \t \uXXXX，不许控制字符）；out 非空时原样抄（遇到转义记 *esc，抄不下记 *over） | string: validate (escapes only the JSON set, no control characters); with out, copy raw bytes (an escape sets *esc, overflow sets *over)
@@ -95,18 +92,7 @@ static int js_number(jp_t *j) {
     j->p = p; return 1;
 }
 static int js_lit(jp_t *j, const char *w) { size_t n = strlen(w); if ((size_t)(j->e - j->p) < n || memcmp(j->p, w, n)) return 0; j->p += n; return 1; }
-static int js_value(jp_t *j, int depth, int ctx);   // ctx：0 别处 / 1 根对象 / 2 community 对象 / 3 credits 对象 | ctx: 0 elsewhere / 1 root object / 2 the community object / 3 the credits object
-// credits 的名单数组：只收不带转义、≤ 32 字节的字符串，去重，合计 ≤ 24；别的元素 / 超限记 bad_credits（整个 credits 忽略），语法仍要对 | a credits name array: only escape-free strings ≤ 32 bytes, deduped, ≤ 24 in all; anything else / over the cap sets bad_credits (credits ignored as a whole); syntax must still hold
-static int js_names(jp_t *j, int depth, int which) {
-    if (depth > 16 || j->p >= j->e || *j->p != '[') { j->bad_credits = 1; return js_value(j, depth, 0); }
-    j->p++; js_ws(j); if (j->p < j->e && *j->p == ']') { j->p++; return 1; }
-    for (;;) { if (j->p < j->e && *j->p == '"') { char nm[CR_NAME_MAX + 1]; int esc = 0, over = 0; if (!js_string(j, nm, sizeof nm, &esc, &over)) return 0;
-            if (esc || over || !nm[0]) j->bad_credits = 1;
-            else { int dup = 0; for (int k = 0; k < j->n_cr; k++) dup |= !strcmp(j->cr[k], nm);
-                if (!dup) { if (j->n_cr < CR_MAX) { snprintf(j->cr[j->n_cr++], CR_NAME_MAX + 1, "%s", nm); if (which) j->n_thanks++; else j->n_special++; } else j->bad_credits = 1; } } }
-        else { j->bad_credits = 1; if (!js_value(j, depth + 1, 0)) return 0; }
-        js_ws(j); if (j->p >= j->e) return 0; if (*j->p == ']') { j->p++; return 1; } if (*j->p != ',') return 0; j->p++; js_ws(j); }
-}
+static int js_value(jp_t *j, int depth, int ctx);   // ctx：0 别处 / 1 根对象 / 2 community 对象 | ctx: 0 elsewhere / 1 root object / 2 the community object
 static int js_object(jp_t *j, int depth, int ctx) {
     if (depth > 16 || j->p >= j->e || *j->p != '{') return 0; j->p++; js_ws(j);
     if (j->p < j->e && *j->p == '}') { j->p++; return 1; }
@@ -119,9 +105,6 @@ static int js_object(jp_t *j, int depth, int ctx) {
             if (j->p < j->e && *j->p == '"') { int esc = 0, over = 0; char *out = gh ? j->gh : j->qq; size_t n = gh ? sizeof j->gh : sizeof j->qq;
                 if (!js_string(j, out, n, &esc, &over)) return 0; if (esc || over) { out[0] = 0; j->too_long |= over; j->bad_type |= esc; } }
             else { j->bad_type = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
-        else if (ctx == 1 && !strcmp(key, "credits")) { j->n_credits++;
-            if (j->p < j->e && *j->p == '{') { if (!js_object(j, depth + 1, 3)) return 0; } else { j->bad_credits = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
-        else if (ctx == 3 && (!strcmp(key, "special") || !strcmp(key, "thanks"))) { if (!js_names(j, depth + 1, key[0] == 't')) return 0; }
         else if (!js_value(j, depth + 1, 0)) return 0;
         js_ws(j); if (j->p >= j->e) return 0;
         if (*j->p == '}') { j->p++; return 1; }
@@ -159,8 +142,7 @@ int dm_community_manifest(const char *json, size_t len) {
     bad += j.bad_type + j.too_long;
     if (!j.qq[0] && !j.gh[0]) { drop_values(); LOG("【红】社区入口：清单格式错（%d 项不合规：群号须 5–12 位数字，链接须 https://github.com/ 开头、不超过 %d 字符、不带转义），入口不显示（缓存已清）", bad, GH_MAX); return 0; }
     set_values(j.qq, j.gh); int wr = cache_write(j.qq, j.gh);
-    if (j.n_credits > 1 || j.bad_credits) LOG("【红】社区入口：清单 credits 字段格式坏（%s），忽略（RC1 只计数不渲染）", j.n_credits > 1 ? "重复" : "须是 { special: [名字…], thanks: [名字…] }，名字 ≤ 32 字节、不带转义、合计 ≤ 24");
-    LOG("社区入口：清单有字段 群号=%s 链接=%s%s%s credits=特别 %d / 鸣谢 %d", j.qq[0] ? j.qq : "无", j.gh[0] ? j.gh : "无", bad ? "（另一项格式坏，已忽略）" : "", wr ? "" : "【红】缓存写不进设置目录", j.bad_credits || j.n_credits > 1 ? 0 : j.n_special, j.bad_credits || j.n_credits > 1 ? 0 : j.n_thanks);
+    LOG("社区入口：清单有字段 群号=%s 链接=%s%s%s", j.qq[0] ? j.qq : "无", j.gh[0] ? j.gh : "无", bad ? "（另一项格式坏，已忽略）" : "", wr ? "" : "【红】缓存写不进设置目录");
     return 1;
 }
 static void cache_read(void) {
@@ -210,51 +192,6 @@ void dm_community_on_uimsg(const char *cat, const char *act, const char *arg) { 
     else if (!strcmp(arg, "TouchCommOk") && atomic_load(&g_show) == 2) atomic_store(&g_ack, 1);   // 1 点按钮 / 2 手柄 B（只进日志） | 1 button / 2 controller B (log only)
 }
 
-// ---- 鸣谢（自定义页「关于」组的子块，用户 2026-10-28）：名字放代码缺省常量（RC2 由清单 credits 覆盖），宿主按语言拼行：每行 ≤ 4 名且估算宽不超名单框（36 号 × 0.7 ≈ 25 单位 / 字，框 1110 → 44 单位），
-// 「特别鸣谢」名单末尾接括号说明（六套文案），「鸣谢」为空整行不显示；封顶 6 行，超出末行加「…」并记一条日志；续行标签留空；中文用「、」、其他语言用「, 」分隔
-// Credits (sub-block of the About group, user 2026-10-28): names are a default constant in code (RC2: the manifest credits field overrides); the host assembles lines per language: ≤ 4 names per line and estimated width within the name box (36 × 0.7 ≈ 25 units per char, box 1110 → 44 units),
-// the special list ends with a parenthetical note (six texts), an empty thanks list shows no line; capped at 6 lines with "…" on the last and one log line; continuation lines have no label; "、" in Chinese, ", " elsewhere
-static const char *const k_special_default[] = { "jhaizhou-ops" };   // 上游 d2r-mobile 原作者的公开 GitHub 账号名（README 引用的 https://github.com/jhaizhou-ops/d2r-mobile）；不写真名、不写别的信息 | the public GitHub handle of the upstream d2r-mobile author; no real name, nothing else
-#define CR_LINES 6
-#define CR_PER_LINE 4
-#define CR_LINE_UNITS 44
-typedef struct { int kind; char text[192]; } cr_line_t;   // kind：1 特别鸣谢首行 / 2 鸣谢首行 / 0 续行 | kind: 1 first special line / 2 first thanks line / 0 continuation
-static int cr_units(const char *s) { int u = 0; for (; *s; s++) u += ((unsigned char)*s & 0xC0) == 0x80 ? 0 : ((unsigned char)*s >= 0x80 ? 2 : 1); return u; }   // 估算宽：ASCII 1、多字节字符 2 | estimated width: ASCII 1, multibyte 2
-static int cr_list(const char *const *names, int n, int kind, const char *sep, const char *note, cr_line_t *out, int o, int max) {   // sep = 名字间分隔（表 dmCreditsSep：中文「、」、其他「, 」）；返回新的行数 | sep = separator between names (table dmCreditsSep); returns the new line count
-    char cur[192] = ""; int cnt = 0, first = 1;
-    for (int i = 0; i < n; i++) { char cand[192]; snprintf(cand, sizeof cand, "%s%s%s", cur, cur[0] ? sep : "", names[i]);
-        if (cnt > 0 && (cnt >= CR_PER_LINE || cr_units(cand) > CR_LINE_UNITS)) { if (o < max) { out[o].kind = first ? kind : 0; snprintf(out[o].text, sizeof out[o].text, "%s", cur); } o++; first = 0; snprintf(cur, sizeof cur, "%s", names[i]); cnt = 1; }
-        else { snprintf(cur, sizeof cur, "%s", cand); cnt++; } }
-    if (note && *note) { char cand[192]; snprintf(cand, sizeof cand, "%s%s", cur, note);
-        if (cur[0] && cr_units(cand) > CR_LINE_UNITS) { if (o < max) { out[o].kind = first ? kind : 0; snprintf(out[o].text, sizeof out[o].text, "%s", cur); } o++; first = 0; snprintf(cur, sizeof cur, "%s", note); }
-        else snprintf(cur, sizeof cur, "%s", cand); }
-    if (cur[0]) { if (o < max) { out[o].kind = first ? kind : 0; snprintf(out[o].text, sizeof out[o].text, "%s", cur); } o++; }
-    return o;
-}
-// 两份名单 → 行；*truncated = 超过 max 行（末行已加「…」） | both lists → lines; *truncated = more than max lines (the last line got "…")
-static int credits_lines(const char *const *sp, int nsp, const char *const *th, int nth, const char *sep, const char *note, cr_line_t *out, int max, int *truncated) {
-    int o = cr_list(sp, nsp, 1, sep, note, out, 0, max); o = cr_list(th, nth, 2, sep, NULL, out, o, max); *truncated = o > max;
-    if (o > max) { o = max; size_t L = strlen(out[o - 1].text); if (L + 4 < sizeof out[o - 1].text) strcpy(out[o - 1].text + L, "…"); }
-    return o;
-}
-static void co_text(uint8_t *b, uint64_t w, const char *s);
-static void co_place(uint64_t w, int x, int y);
-static uint64_t co_find(uint64_t w, const char *name, int dep);
-static void credits_render(uint8_t *b, uint64_t sp) {   // 自定义页开着时每帧（游戏主线程）：按当前语言拼一次并缓存，摆标签 / 名单行、改「关于」容器高度 | every frame while the Custom page shows: assemble once per language and cache; place labels / lines, set the About container's height
-    static int grp = -1, n, trunc; static cr_line_t lines[CR_LINES]; int g = dm_lang_group();
-    if (g != grp) { grp = g; n = credits_lines(k_special_default, (int)(sizeof k_special_default / sizeof *k_special_default), NULL, 0, dm_str(b, "dmCreditsSep"), dm_str(b, "dmCreditsUpstreamNote"), lines, CR_LINES, &trunc);
-        LOG("社区入口：鸣谢 %d 行（特别鸣谢 %d 名，鸣谢 0 名）%s", n, (int)(sizeof k_special_default / sizeof *k_special_default), trunc ? "，超过上限已在末尾加「…」" : ""); }
-    uint64_t about = co_find(sp, "TouchAboutRow", 0); if (!about) return;
-    int y0 = 3 * 180, ys = -1, yt = -1;
-    for (int k = 0; k < CR_LINES; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCreditLine%d", k); uint64_t w = co_find(about, nm, 0); if (!w) continue;
-        if (k < n) { co_text(b, w, lines[k].text); co_place(w, 620, y0 + 90 * k); if (lines[k].kind == 1) ys = y0 + 90 * k; if (lines[k].kind == 2) yt = y0 + 90 * k; }
-        else { co_text(b, w, ""); co_place(w, 99999, y0); } }
-    uint64_t l0 = co_find(about, "TouchCreditLabel0", 0), l1 = co_find(about, "TouchCreditLabel1", 0);
-    if (l0) { co_text(b, l0, ys >= 0 ? dm_str(b, "dmCreditsSpecial") : ""); co_place(l0, ys >= 0 ? 0 : 99999, ys >= 0 ? ys : y0); }
-    if (l1) { co_text(b, l1, yt >= 0 ? dm_str(b, "dmCreditsThanks") : ""); co_place(l1, yt >= 0 ? 0 : 99999, yt >= 0 ? yt : y0); }
-    int32_t *r = (int32_t *)(about + 0x70), h = y0 + 90 * (n > 0 ? n : 1);   // 容器高度 = 子标题下沿 + 行数 × 行距（滚动区按它算内容高度） | container height = below the sub-title + lines × pitch (the scroll area sizes by it)
-    if (r[3] != h) { r[3] = h; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)about + 0x10))(about); }
-}
 // ---- 画面 | picture ----
 static uint8_t *co_base(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
 static uint64_t co_find(uint64_t w, const char *name, int dep) {   // 按名字找控件：名字 +8、子控件数组 +0x58、个数 +0x60（同 dm_crashfence.c） | find a widget by name (same as dm_crashfence.c)
@@ -315,7 +252,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     // 入口显隐：暂停菜单那一行、自定义页的「关于」组——没有可显示的值就挪出屏幕（行在滚动区里，只挪 x） | entry show / hide: the pause-menu row and the Custom page's About group - without a value they move off screen (the row sits in a scroll area, so only x moves)
     for (int i = 0; i < 3; i++) { uint64_t p = dm_ui_top(root, k_hosts[i]); if (!p || !*(uint8_t *)(p + 0x50)) continue;
         if (i > 0) { uint64_t w = co_find(p, "TouchCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 564 : 99999, r[1]); } }
-        else { uint64_t w = co_find(p, "TouchAboutCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 0 : 99999, r[1]); } credits_render(b, p); } }   // 只藏社区行那一子容器，「关于」标题与鸣谢行照常 | hide only the community sub-container; the About title and credit line stay
+        else { uint64_t w = co_find(p, "TouchAboutRow", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 0 : 99999, r[1]); } } }
     int st = atomic_load(&g_show); if (!st) return;
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current();
     static int wait; int which = 0; uint64_t p = co_host(root, &which);
