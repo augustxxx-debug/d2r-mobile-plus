@@ -268,6 +268,23 @@ int dm_rt_shadow_setting(void) {
     if (atomic_exchange(&last, key) != key) LOG("光追阴影：生效 %s（设置 %s，机器%s）", on ? "开" : "关", set ? "开" : "关", ok ? "可用" : "不可用");
     return on;
 }
+// 光追开时启动即降一档渲染分辨率（dm_res_cap.h dm_res_rt_budget）：只在第一次被问时（iOS 前端报启动预留那一刻）按当时的光追生效值定，整局不变——游戏的渲染目标按启动尺寸建、局中改不回来。
+// 光追开 = 测试开关 DM_RT_SHADOW 钉住时按它，否则按设置；都要过机器门槛。DM_RT_RES_DROP=0 关掉（真机 A/B 量省了多少内存用）
+// One render-resolution tier down from startup when RT is on (dm_res_cap.h dm_res_rt_budget): decided on the first call (the moment the iOS front end reports the startup reserve) from the RT state then, fixed for the run -
+// the game builds its render targets at the startup size and cannot take them back mid-run. RT on = the DM_RT_SHADOW test switch when it pins, otherwise the setting; both must pass the machine gate. DM_RT_RES_DROP=0 turns it off (device A/B of the memory saved)
+// 纯函数给单测：drop_env / rt_env 是两个环境变量（NULL = 没设），gate 机器门槛，setting_on 设置生效值（已含门槛）；*on 回填「启动时光追开没开」
+// Pure function for unit tests: drop_env / rt_env are the two environment variables (NULL = unset), gate the machine gate, setting_on the effective setting (gate included); *on returns whether RT was on at startup
+static int rt_res_drop_decide(const char *drop_env, const char *rt_env, int gate, int setting_on, int *on) {
+    *on = rt_env ? atoi(rt_env) != 0 && gate : setting_on;
+    return *on && !(drop_env && !atoi(drop_env));
+}
+int dm_render_res_rt_drop(void) {
+    static _Atomic int v = -1; int r = atomic_load(&v), on; if (r >= 0) return r;
+    const char *d = getenv("DM_RT_RES_DROP"), *e = getenv("DM_RT_SHADOW"); int off = d && !atoi(d);
+    r = rt_res_drop_decide(d, e, e ? rt_shadow_ok() : 0, e ? 0 : dm_rt_shadow_setting(), &on); atomic_store(&v, r);
+    LOG("光追降分辨率：判定 %s（启动时光追%s%s；整局不变，改光追设置下次启动生效）", r ? "降一档" : "不降", on ? "开" : "关", off ? "，测试开关 DM_RT_RES_DROP=0 关掉" : "");
+    return r;
+}
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;

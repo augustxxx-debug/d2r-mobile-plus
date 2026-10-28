@@ -138,5 +138,15 @@ int main(void) {
     // DM_TEST_FPS 时间表（纯函数）：帧率只认 30 / 60 / 120 | DM_TEST_FPS schedule (pure function): only 30 / 60 / 120 are accepted
     CHECK(fps_schedule("120",0)==120); CHECK(fps_schedule("30@0,60@40,120@70",39.9)==30); CHECK(fps_schedule("30@0,60@40,120@70",40)==60); CHECK(fps_schedule("30@0,60@40,120@70",500)==120);
     CHECK(fps_schedule("120@20",0)==120); CHECK(fps_schedule("",0)==-1); CHECK(fps_schedule("45",0)==-1); CHECK(fps_schedule("120@-1",0)==-1); CHECK(fps_schedule("60;120@5",0)==-1);
+    // 光追开时启动即降一档的判定（纯函数）：环境钉住优先且要过门槛；没钉住按设置；DM_RT_RES_DROP=0 关掉；其它值不关 | RT-on startup tier drop decision (pure): the env pin wins and needs the gate; otherwise the setting; DM_RT_RES_DROP=0 turns it off; other values do not
+    { int on;
+      CHECK(rt_res_drop_decide(NULL,NULL,1,1,&on)==1 && on==1); CHECK(rt_res_drop_decide(NULL,NULL,1,0,&on)==0 && on==0);
+      CHECK(rt_res_drop_decide(NULL,"1",1,0,&on)==1 && on==1); CHECK(rt_res_drop_decide(NULL,"1",0,1,&on)==0 && on==0);   // 钉开但机器不可用：不降 | pinned on but the machine fails the gate: no drop
+      CHECK(rt_res_drop_decide(NULL,"0",1,1,&on)==0 && on==0);   // 钉关压过设置 | pinned off overrides the setting
+      CHECK(rt_res_drop_decide("0",NULL,1,1,&on)==0 && on==1); CHECK(rt_res_drop_decide("1",NULL,1,1,&on)==1);
+      // 整局只定一次：第一次之后改设置不影响（游戏渲染目标按启动尺寸建） | decided once per run: later setting changes do not matter (the game's render targets are built at the startup size)
+      FILE *file=fopen(path,"w"); CHECK(file); fputs("rt_shadow=1\n",file); fclose(file); atomic_store(&g_loaded,0);
+      int first=dm_render_res_rt_drop(); CHECK(first==0);   // 单测不链图形层：弱定义的机器门槛 = 不可用 → 不降 | unit tests do not link the graphics layer: the weak machine gate = unsupported → no drop
+      file=fopen(path,"w"); CHECK(file); fputs("rt_shadow=0\n",file); fclose(file); atomic_store(&g_loaded,0); CHECK(dm_render_res_rt_drop()==first); }
     unlink(path); rmdir(directory); printf("PASS render profiles: %d migration/persistence checks\n",checks); return 0;
 }

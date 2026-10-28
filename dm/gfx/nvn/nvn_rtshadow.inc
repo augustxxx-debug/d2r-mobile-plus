@@ -189,8 +189,10 @@ static struct {
 } g_rts = { .on = -1, .meshes = {.klen = 8}, .cur_smap = -1, .cur = -1, .ai_cap = -1 };
 int mtl_rt_shadow_supported(void) {   // 宿主设置页用：这台机器能不能显示「光追阴影」 | For the host settings page: whether this machine may show "ray-traced shadows"
     static int v = -1; if (v >= 0) return v;
-    v = 0; if (!g_dev) return 0;
-    int rt = [g_dev supportsRaytracing], fam = [g_dev supportsFamily:MTLGPUFamilyApple9];
+    // 图形层还没初始化时（iOS 前端启动预留那一刻就要问，dm_custom.c dm_render_res_rt_drop）用系统缺省设备——与 mtl_init 建的 g_dev 是同一个；原先 g_dev 为空就把 0 记死
+    // Before the graphics layer is initialised (the iOS front end asks at the startup reserve, dm_custom.c dm_render_res_rt_drop) use the system default device - the same one mtl_init makes g_dev from; it used to latch 0 when g_dev was still nil
+    id<MTLDevice> dev = g_dev ? g_dev : MTLCreateSystemDefaultDevice(); v = 0; if (!dev) return 0;
+    int rt = [dev supportsRaytracing], fam = [dev supportsFamily:MTLGPUFamilyApple9];
     char hw[64] = "?"; size_t hn = sizeof hw; sysctlbyname("hw.machine", hw, &hn, NULL, 0); int model = 0, major = 0, minor = 0;
 #if TARGET_OS_OSX
     int on_mac = 1;   // Mac 原生宿主：只看 GPU 家族 | native Mac host: GPU family alone decides

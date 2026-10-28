@@ -1042,12 +1042,20 @@ uint64_t front_game_res(int docked) {
         // 出图线程现有的整屏放大把它铺回窗口（比例不变、不留边）；界面矩形与触控都是相对坐标，不受影响。档位改了由 dm_custom.c 推 31 让游戏重读
         // The startup reserve is never shrunk: the game only accepts new values no larger than the startup size, and the level must be able to go back to Native at runtime. The actual output size is shrunk proportionally
         // to the pixel budget of the render-resolution level (dm_custom.c render_res); the present thread's existing full-screen upscale fills the window again (same aspect, no bars); UI rect and touch are relative and unaffected. A level change pushes 31 from dm_custom.c
-        if (!dm_uiscreen_res_live()) return g_res_cap;
         int dm_render_res_level(void); int lv = dm_render_res_level();
         static int cls_gen, cls_pro, cls_m, cls_done;   // 自动档预算按 GPU 代际（dm_res_cap.h），设备名只读一次 | Auto budget by GPU generation (dm_res_cap.h); the device name is read once
         if (!cls_done) { cls_done = 1; id<MTLDevice> dev = MTLCreateSystemDefaultDevice(); const char *nm = dev.name.UTF8String; dm_res_gpu_class(nm, &cls_gen, &cls_pro, &cls_m);
             LOG("画面：显卡「%s」→ 代际 A%d%s M%d，自动档像素预算 %u", nm ?: "?", cls_gen, cls_pro ? " Pro" : "", cls_m, dm_res_cap_budget_auto(cls_gen, cls_pro, cls_m)); }
         uint64_t now = atomic_load(&g_res_now);
+        // 光追开时启动即降一档（dm_custom.c dm_render_res_rt_drop、dm_res_cap.h）：第一次到这里时定光追预留，游戏窗口建好之前报它，之后的输出都按它封顶
+        // One tier down when RT is on at startup (dm_custom.c dm_render_res_rt_drop, dm_res_cap.h): the RT reserve is decided the first time here, reported until the game window is built, and caps every later output
+        static uint64_t rt_res; static uint32_t rt_budget; static int rt_done;
+        if (!rt_done) { rt_done = 1; int dm_render_res_rt_drop(void);
+            if (dm_render_res_rt_drop()) {
+                uint32_t nw = (uint32_t)now, nh = (uint32_t)(now >> 32), b = dm_res_cap_budget_screen(lv, cls_gen, cls_pro, cls_m, nw, nh); uint64_t px = (uint64_t)nw * nh;
+                rt_budget = dm_res_rt_budget(lv, b && b < px ? b : (uint32_t)(px > 0xffffffffu ? 0xffffffffu : px)); rt_res = dm_res_rt_reserve((uint32_t)g_res_cap, (uint32_t)(g_res_cap >> 32), nw, nh, rt_budget);
+                LOG("光追降分辨率：档位 %d 降一档 → 像素预算 %u，启动预留 %ux%u → %ux%u，局中输出按它封顶（分享诊断日志摘要键）", lv, rt_budget, (unsigned)g_res_cap, (unsigned)(g_res_cap >> 32), (unsigned)rt_res, (unsigned)(rt_res >> 32)); } }
+        if (!dm_uiscreen_res_live()) return rt_budget ? rt_res : g_res_cap;
         uint32_t budget = dm_res_cap_budget_screen(lv, cls_gen, cls_pro, cls_m, (uint32_t)now, (uint32_t)(now >> 32));   // 超大屏自动档取均衡预算（dm_res_cap.h） | Very large screens: Auto takes the Balanced budget (dm_res_cap.h)
         { int dm_res_auto_step_get(void), dm_3d_quality_mode_get(void); void dm_res_auto_base_set(uint32_t);
           uint64_t win_px = (uint64_t)(uint32_t)now * (uint32_t)(now >> 32); uint32_t base = budget && budget < win_px ? budget : (uint32_t)(win_px > 0xffffffffu ? 0xffffffffu : win_px);   // 有效基础 = 预算与窗口实际像素取小（复审 F05） | effective base = min(budget, actual window pixels) (re-audit F05)
@@ -1055,6 +1063,7 @@ uint64_t front_game_res(int docked) {
           int st = dm_res_auto_step_effective(dm_res_auto_step_get(), lv, dm_3d_quality_mode_get() == 1); budget = st ? dm_res_auto_budget(base, st) : budget;   // 自动档闭环（hle_oe.c 按实际掉帧推进） | Auto closed loop (advanced by hle_oe.c from measured dropped frames)
           static _Atomic int logged_step; if (atomic_exchange(&logged_step, st) != st) LOG("画面：自动输出档闭环 → 第 %d 步，像素预算 %u", st, budget); }
         uint64_t capped = dm_res_cap_apply((uint32_t)now, (uint32_t)(now >> 32), budget);
+        if (rt_budget) capped = dm_res_rt_clamp(capped, rt_budget, rt_res);
         static _Atomic uint64_t logged; if (capped != now && atomic_exchange(&logged, capped) != capped)
             LOG("画面：渲染分辨率档位 %d → 出图 %ux%u（窗口 %ux%u，像素预算 %u）", lv, (unsigned)capped, (unsigned)(capped >> 32), (unsigned)now, (unsigned)(now >> 32), budget);
         return capped;

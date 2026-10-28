@@ -97,6 +97,29 @@ int main(void) {
       n = 0; t += 12 * sec; while (ra.step == 2 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 2, 1, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 1 && n == 45);   // 下次升要 45 窗 | next raise needs 45
       n = 0; t += 12 * sec; while (ra.step == 1 && n < 100) { t += 2 * sec; dm_res_auto_step(&ra, 2, 0, 0.0, 1, 0.0, 1, 1, t); n++; } CHECK(ra.step == 0 && n == 30);   // 回到代际预算 | back to the generation budget
       t += 12 * sec; CHECK(dm_res_auto_step(&ra, 2, 1, 0.0, 1, 0.0, 1, 1, t) == 0); }   // 已在 0 步：干净窗不再升 | at step 0 clean windows do nothing
+    // 光追开时启动即降一档（十三审闸 2）：档位映射、预留、局中封顶 | One tier down when RT is on at startup (13th review gate 2): level mapping, reserve, runtime cap
+    { CHECK(dm_res_rt_budget(3, 0) == 2800000u); CHECK(dm_res_rt_budget(2, 0) == 2073600u); CHECK(dm_res_rt_budget(1, 0) == 2073600u);   // 原生 → 均衡、均衡 → 省电、省电不变 | Native → Balanced, Balanced → Eco, Eco unchanged
+      CHECK(dm_res_rt_budget(0, 2800000u) == 2073600u);              // Duo 内屏自动（超大屏取均衡预算）→ 省电 | Duo inner screen Auto (huge screen takes Balanced) → Eco
+      CHECK(dm_res_rt_budget(0, 2622u * 1206u) == 2800000u);         // 17 Pro 自动（基础 = 窗口 316 万）→ 均衡 | 17 Pro Auto (base = window 3.16 MP) → Balanced
+      CHECK(dm_res_rt_budget(0, 2073600u) == 2073600u);              // 基础已 ≤ 207 万：不变 | base already ≤ 2.07 MP: unchanged
+      // 窗口不变尺寸：预留 = 窗口按预算缩 | window never resizes: reserve = window shrunk to the budget
+      uint64_t r = dm_res_rt_reserve(2622, 1206, 2622, 1206, 2800000u); CHECK(r == dm_res_cap_apply(2622, 1206, 2800000u)); CHECK((uint64_t)W(r) * H(r) <= 2800000u);
+      CHECK(dm_res_rt_reserve(2622, 1206, 2622, 1206, 0) == ((uint64_t)1206 << 32 | 2622));   // 预算 0 = 不封顶 | budget 0 = no cap
+      // Duo 内屏启动（折叠屏预留 3070x2160）原生 → 均衡：预留 2592x1468，比原预留少 43% 像素；内外屏在任一预算下的输出都装得下 | Duo inner-screen start (fold reserve 3070x2160) Native → Balanced: reserve 2592x1468, 43% fewer pixels; both screens fit at any budget
+      r = dm_res_rt_reserve(3070, 2160, 2852, 2006, 2800000u); CHECK(W(r) == 2592 && H(r) == 1468);
+      CHECK((uint64_t)W(r) * H(r) * 100 / (3070u * 2160u) < 58);
+      const unsigned scr[][2] = { {2852, 2006}, {2034, 1398}, {2622, 1206}, {2868, 1320}, {2732, 2048}, {2400, 1080} };
+      const uint32_t bud[] = { 2800000u, 2073600u };
+      for (unsigned b = 0; b < 2; b++) { uint64_t res = dm_res_rt_reserve(3142, 2160, 2034, 1398, bud[b]);   // 外屏启动的折叠屏预留 | fold reserve from an outer-screen start
+        CHECK(W(res) <= 3142 && H(res) <= 2160 && W(res) % 2 == 0 && H(res) % 2 == 0);
+        for (unsigned i = 0; i < sizeof scr / sizeof *scr; i++) { double a = (double)scr[i][0] / scr[i][1]; if (a < 1.3 || a > 2.4) continue;
+          uint64_t o = dm_res_rt_clamp((uint64_t)scr[i][1] << 32 | scr[i][0], bud[b], res);   // 局中档位改原生（输出 = 窗口） | mid-run switch to Native (output = window)
+          CHECK(W(o) <= W(res) && H(o) <= H(res)); CHECK((uint64_t)W(o) * H(o) <= bud[b]); CHECK(o == dm_res_cap_apply(scr[i][0], scr[i][1], bud[b]));   // 宽高比 1.3–2.4 不必再按预留收 | aspects 1.3–2.4 need no extra fit
+          CHECK(W(o) % 2 == 0 && H(o) % 2 == 0); } }
+      // 局中封顶：输出已在预算内原样；超预留的逐边等比收进去 | runtime cap: an output already within budget is unchanged; one larger than the reserve is scaled into it
+      CHECK(dm_res_rt_clamp((uint64_t)1206 << 32 | 1714, 2073600u, (uint64_t)1468 << 32 | 2592) == ((uint64_t)1206 << 32 | 1714));
+      uint64_t o = dm_res_rt_clamp((uint64_t)2000 << 32 | 2000, 2800000u, (uint64_t)1468 << 32 | 2592); CHECK(H(o) <= 1468 && W(o) <= 2592 && W(o) % 2 == 0 && H(o) % 2 == 0);
+      CHECK(dm_res_rt_clamp((uint64_t)2006 << 32 | 2852, 0, 0) == ((uint64_t)2006 << 32 | 2852)); }   // 预算 0：不动 | budget 0: untouched
     printf("t_res_cap: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

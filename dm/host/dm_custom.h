@@ -19,6 +19,7 @@ int dm_custom_voice_explicit(void);   // 单独配音开关（键 voice）：-1 
 // q3d: 0 Auto, 1 Eco, 2 Balanced, 3 Quality, 4 Original; applies live after Apply, without restarting.
 int dm_3d_profile_get(void);
 int dm_render_res_level(void);   // 渲染分辨率档位（键 render_res，缺省 0）：0 自动 / 1 省电 / 2 均衡 / 3 原生；iOS 前端 front_game_res 按 dm_res_cap.h 的像素预算缩小整帧输出尺寸 | Render resolution level (key render_res, default 0): 0 Auto / 1 Eco / 2 Balanced / 3 Native; the iOS front end's front_game_res shrinks the whole-frame output size to the pixel budget in dm_res_cap.h
+int dm_render_res_rt_drop(void);   // 光追开时启动即降一档（启动第一次被问时定，整局不变）：1 = 降 | one tier down when RT is on at startup (decided on the first call, fixed for the run): 1 = drop
 int dm_fps_setting(void);   // 帧率档（键 eco_fps：0 = 60 缺省 / 1 = 30 省电 / 2 = 120，120 只在屏幕最高刷新率 ≥ 120 时生效，否则按 60）；nvn_mtl.m mtl_fps_target 读 | Frame rate mode (key eco_fps: 0 = 60 default / 1 = 30 power saving / 2 = 120, 120 only when the screen's maximum refresh rate is >= 120, otherwise 60); read by mtl_fps_target in nvn_mtl.m
 
 int dm_custom_dir(char *p, size_t n);   // 设置文件所在目录（iOS Documents；Mac 存档已提交目录的上一级，没挂上时按 $DM_SAVE）；0 = 还不知道 | directory of the settings file (iOS Documents; on Mac the parent of the committed save directory, $DM_SAVE before mounting); 0 = not known yet

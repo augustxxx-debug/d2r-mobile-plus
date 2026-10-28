@@ -101,3 +101,37 @@ static inline int dm_res_auto_step(dm_res_auto_state *s, int max_steps, int at_f
     else s->good = 0;
     return s->step;
 }
+
+// ---------- 光追开时启动即降一档（十三审闸 2：光追开的 footprint 平台要压在内存告警线以下）----------
+// 游戏按启动时报的尺寸建渲染目标、整局不缩（局中降档只缩出图、不放内存），所以省内存只能在启动预留这一步：光追开着启动时，按「降一档」的像素预算报预留，
+// 局中输出也按它封顶（档位改成原生也不超过，下次启动按新设置重定）。降一档：原生 → 均衡 280 万、均衡 → 省电 207 万、省电不变、自动 → 闭环第 1 步（基础已 ≤ 207 万就不变）
+// ---------- One tier down from startup when RT is on (13th review gate 2: the RT-on footprint plateau must stay below the memory-warning line) ----------
+// The game builds its render targets at the size reported at startup and never shrinks them (a runtime tier drop only shrinks the output, it frees no memory), so memory can only be saved at the startup
+// reserve: when RT is on at startup, the reserve is reported at the "one tier down" pixel budget and the runtime output is capped by it too (switching to Native does not exceed it; the next launch re-decides
+// from the settings). One tier down: Native → Balanced 2.8 MP, Balanced → Eco 2.07 MP, Eco unchanged, Auto → closed-loop step 1 (unchanged once the base is ≤ 2.07 MP)
+static inline uint32_t dm_res_rt_budget(int level, uint32_t auto_base) {
+    switch (level) { case 3: return dm_res_cap_budget(2); case 2: case 1: return dm_res_cap_budget(1); default: return dm_res_auto_budget(auto_base, 1); }
+}
+static inline uint32_t dm_res_isqrt(uint64_t v) { uint64_t lo = 0, hi = 1u << 20; while (lo < hi) { uint64_t m = (lo + hi + 1) / 2; if (m * m <= v) lo = m; else hi = m - 1; } return (uint32_t)lo; }
+// 光追预留：窗口不会变尺寸（预留 = 窗口）时就是窗口按预算缩的尺寸；折叠屏（预留比窗口大，内外屏切换时窗口在预留以内变）时按宽高比 1.3–2.4 的屏都装得下取宽、高上限，
+// 再不超过原预留。返回打包同 dm_res_cap_apply；预算 0 = 不封顶，原样返回预留
+// RT reserve: when the window never resizes (reserve = window) it is the window shrunk to the budget; on a fold (reserve larger than the window, which changes within it on inner / outer switches)
+// the width / height limits fit any screen of aspect 1.3–2.4, never above the original reserve. Packed as dm_res_cap_apply; budget 0 = no cap, the reserve comes back unchanged
+static inline uint64_t dm_res_rt_reserve(uint32_t cap_w, uint32_t cap_h, uint32_t win_w, uint32_t win_h, uint32_t budget) {
+    uint64_t cap = (uint64_t)cap_h << 32 | cap_w;
+    if (!budget || !cap_w || !cap_h || !win_w || !win_h) return cap;
+    if (cap_w == win_w && cap_h == win_h) return dm_res_cap_apply(win_w, win_h, budget);
+    uint32_t w = (dm_res_isqrt((uint64_t)budget * 24 / 10) + 1) & ~1u, h = (dm_res_isqrt((uint64_t)budget * 10 / 13) + 1) & ~1u;
+    if (w > cap_w) w = cap_w; if (h > cap_h) h = cap_h;
+    return (uint64_t)h << 32 | w;
+}
+// 局中输出封顶：先按光追预算缩，再按预留逐边等比收进去（游戏只接受不超过启动尺寸的新值）
+// Runtime output cap: shrink to the RT budget, then scale proportionally into the reserve edge by edge (the game only accepts new values no larger than the startup size)
+static inline uint64_t dm_res_rt_clamp(uint64_t out, uint32_t budget, uint64_t reserve) {
+    uint32_t w = (uint32_t)out, h = (uint32_t)(out >> 32), rw = (uint32_t)reserve, rh = (uint32_t)(reserve >> 32);
+    if (!budget || !w || !h) return out;
+    uint64_t r = dm_res_cap_apply(w, h, budget); w = (uint32_t)r; h = (uint32_t)(r >> 32);
+    if (rw && rh && (w > rw || h > rh)) { uint64_t nw = w, nh = h; if ((uint64_t)w * rh > (uint64_t)h * rw) { nw = rw; nh = (uint64_t)h * rw / w; } else { nh = rh; nw = (uint64_t)w * rh / h; }
+        w = (uint32_t)nw & ~1u; h = (uint32_t)nh & ~1u; if (w < 2) w = 2; if (h < 2) h = 2; }
+    return (uint64_t)h << 32 | w;
+}
