@@ -16,6 +16,9 @@ module_t *module_of(const void *p) { (void)p; return NULL; }
 module_t g_mod[MAX_MOD]; int g_nmod;
 void svc_thread_dump(void) {}
 uint64_t now_ns(void) { return bp_now(); }
+#ifndef ARENA_SPARE
+#define ARENA_SPARE 4   // 封顶之前的代码没有这个常量（用同一个期望值核它） | code before the cap has no such constant (checked against the same expected value)
+#endif
 static int fail, count;
 #define EXPECT(name, want, got) do { long long w_=(long long)(want), g_=(long long)(got); count++; printf("%s 期望 %lld → 真结果 %lld %s\n", name, w_, g_, w_==g_?"✓":"✗"); fail += w_ != g_; } while (0)
 static int alive(__weak id *w) { int a; @autoreleasepool { a = *w != nil; } return a; }   // 读弱引用本身也会自动释放：在自己的池里读 | reading a weak reference autoreleases too: read it inside its own pool
@@ -43,6 +46,16 @@ int main(void) {
         [g_up_old addObject:b]; g_up_swaps++;   // 换块次数变了：up_diag 打一行，数旧块还活着几块 | the switch count changed: up_diag logs a line counting how many old blocks are alive
         up_diag(); b = nil;
         EXPECT("3 up_diag 之后放掉最后一个引用、外层池弹出之前：旧暂存块已销毁", 0, alive(&w));
+    }
+    {   // 4. 参数缓冲块空闲封顶：一次提交里用掉 10 块（在途多时就是这样长出来的），GPU 做完后下一次提交开头只留 ARENA_SPARE 块空闲，多的真销毁 | 4. idle cap on argument blocks: one submission uses 10 blocks (how the pool grows with many in flight); after the GPU is done the next submission start keeps only ARENA_SPARE idle, the rest really destroyed
+        __weak id wb[10]; mtl_set_frame(3); mtl_sub_begin();
+        for (int i = 0; i < 10; i++) { __strong id<MTLBuffer> b = nil; arena_alloc((4 << 20) - 256, &b); wb[i] = b; }
+        uint64_t f = mtl_sub_commit(); mtl_wait(f, 10000000000ull);
+        EXPECT("4 这次提交之后池里 ≥ 10 块", 1, g_arenas.count >= 10);
+        mtl_set_frame(4); mtl_sub_begin(); f = mtl_sub_commit(); mtl_wait(f, 10000000000ull);
+        int idle = 0; for (NvArena *x in g_arenas) idle += x->fence <= g_done;
+        int gone = 0; for (int i = 0; i < 10; i++) gone += !alive(&wb[i]);
+        EXPECT("4 下一次提交开头之后空闲块 ≤ ARENA_SPARE", 1, idle <= ARENA_SPARE); EXPECT("4 多出的块真销毁（10 块里至少 10 − ARENA_SPARE − 1 块没了）", 1, gone >= 10 - ARENA_SPARE - 1);
     }
     objc_autoreleasePoolPop(guest);
     printf("== %d 项，失败 %d ==\n", count, fail);
