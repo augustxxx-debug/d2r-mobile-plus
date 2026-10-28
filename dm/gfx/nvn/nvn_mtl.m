@@ -5038,7 +5038,9 @@ static void warm_claim(void) { @autoreleasepool {   // 自带池（十三审 Q13
 static os_unfair_lock g_mp_lk = OS_UNFAIR_LOCK_INIT; static id<MTLTexture> g_mp_lut;
 static MTLPixelFormat g_mp_fmt[3]; static int g_mp_haslut[3], g_mp_grid[3];   // g_mp_grid：本槽做了哪几块网格扫描（位 0 游戏画面、位 1 drawable） | g_mp_grid: which grid scans this slot ran (bit 0 game picture, bit 1 drawable)
 #include "nvn_mp_grid.h"
-static _Atomic uint64_t g_mp_n, g_mp_mag, g_mp_lutbad, g_mp_gmag[2], g_mp_giso[2];   // g_mp_giso：网格只有孤立 / 稀疏品红点的次数（不记红，nvn_mp_grid.h） | g_mp_giso: grid hits with only isolated / sparse magenta points (no red line, nvn_mp_grid.h)
+static _Atomic uint64_t g_mp_n, g_mp_mag, g_mp_lutbad, g_mp_gmag[2], g_mp_giso[2], g_mp_gbrief[2];   // g_mp_giso：网格只有孤立 / 稀疏品红点的次数（不记红，nvn_mp_grid.h） | g_mp_giso: grid hits with only isolated / sparse magenta points (no red line, nvn_mp_grid.h)
+// g_mp_gbrief：连片但不到 MP_PERSIST 次连续（短暂光效，不记红） | g_mp_gbrief: blocks shorter than MP_PERSIST consecutive presents (brief glow, no red line)
+static mp_persist_t g_mp_pst[2]; static pthread_mutex_t g_mp_pst_mu = PTHREAD_MUTEX_INITIALIZER;   // 反馈回调可能在不同线程上 | feedback handlers may run on different threads
 static uint64_t g_stall_t0, g_stall_n;   // 定义在显示节拍那段 | Defined in the display-link section
 float dm_bright_k(void);   // 定义在下面 3D 画面加亮（弱定义，宿主 dm_bright.c 给强定义） | Defined below in the 3D brightening section (weak definition; the host dm_bright.c provides the strong one)
 static int mp_on(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_MAGENTA_PROBE_OFF"); v = !(e && *e && strcmp(e, "0")); } return v; }
@@ -5150,8 +5152,11 @@ static void mp_check(int i, uint64_t ticket) {
         (unsigned long long)ticket, pt, mag, lt, dm_bright_k(), (unsigned long long)g_stall_n, g_stall_t0 ? "在" : "不在", (unsigned long long)nm);
     if (lutbad && (nl <= 30 || nl % 50 == 0)) MLOG("【红】紫闪探针：出图 %llu 调色表格子异常（非数 / 无穷 / 品红）%s；画面 5 点%s；累计 %llu 次", (unsigned long long)ticket, lt, pt, (unsigned long long)nl);
     for (int k = 0; k < 2; k++) if (g_mp_grid[i] >> k & 1) {
-        const uint32_t *q = (const uint32_t *)(m + (9 + k) * 256); if (!q[0]) continue;
-        if (!mp_grid_block(q[0], q[1], q[2], q[3], q[4])) { atomic_fetch_add(&g_mp_giso[k], 1); continue; }   // 孤立 / 稀疏的点：特效像素，只计数 | isolated / sparse points: effect pixels, only counted
+        const uint32_t *q = (const uint32_t *)(m + (9 + k) * 256); if (!q[0]) { pthread_mutex_lock(&g_mp_pst_mu); mp_grid_persist(&g_mp_pst[k], ticket, 0, 0, 0, 0, 0); pthread_mutex_unlock(&g_mp_pst_mu); continue; }
+        if (!mp_grid_block(q[0], q[1], q[2], q[3], q[4])) { atomic_fetch_add(&g_mp_giso[k], 1); pthread_mutex_lock(&g_mp_pst_mu); mp_grid_persist(&g_mp_pst[k], ticket, 0, 0, 0, 0, 0); pthread_mutex_unlock(&g_mp_pst_mu); continue; }   // 孤立 / 稀疏的点：特效像素，只计数 | isolated / sparse points: effect pixels, only counted
+        pthread_mutex_lock(&g_mp_pst_mu); uint32_t run = mp_grid_persist(&g_mp_pst[k], ticket, 1, q[1], q[2], q[3], q[4]); pthread_mutex_unlock(&g_mp_pst_mu);
+        if (run < MP_PERSIST) { atomic_fetch_add(&g_mp_gbrief[k], 1); continue; }   // 连片但还不够持久：短暂光效，只计数（nvn_mp_grid.h） | a block that has not persisted yet: brief glow, only counted (nvn_mp_grid.h)
+        if (run > MP_PERSIST) continue;   // 同一段持续的连片只记一次 | one red line per persistent episode
         uint64_t ng = atomic_fetch_add(&g_mp_gmag[k], 1) + 1; if (ng > 30 && ng % 50) continue;
         char map[48]; for (int c = 0; c < 5; c++) snprintf(map + c * 8, sizeof map - c * 8, "%08x", q[5 + c]);
         const uint32_t *pr = q + 32;
@@ -5159,8 +5164,8 @@ static void mp_check(int i, uint64_t ticket) {
              (unsigned long long)ticket, k ? "drawable" : "游戏画面", MP_GX, MP_GY, q[0], pr[0] + (2 * q[1] + 1) * pr[2] / (2 * MP_GX), pr[1] + (2 * q[3] + 1) * pr[3] / (2 * MP_GY),
              pr[0] + (2 * q[2] + 1) * pr[2] / (2 * MP_GX), pr[1] + (2 * q[4] + 1) * pr[3] / (2 * MP_GY), map, (unsigned long long)g_stall_n, g_stall_t0 ? "在" : "不在", (unsigned long long)ng);
     }
-    if (n % 3600 == 0 || n == 600) MLOG("紫闪探针 至出图 %llu：取样 %llu 次，画面品红 %llu 次，调色表异常 %llu 次，网格品红 游戏画面 %llu / drawable %llu 次（连片），孤立点 %llu / %llu 次（不记红）（本次 5 点%s，调色表 %s）", (unsigned long long)ticket, (unsigned long long)n, (unsigned long long)nm, (unsigned long long)nl,
-        (unsigned long long)atomic_load(&g_mp_gmag[0]), (unsigned long long)atomic_load(&g_mp_gmag[1]), (unsigned long long)atomic_load(&g_mp_giso[0]), (unsigned long long)atomic_load(&g_mp_giso[1]), pt, lt);
+    if (n % 3600 == 0 || n == 600) MLOG("紫闪探针 至出图 %llu：取样 %llu 次，画面品红 %llu 次，调色表异常 %llu 次，网格品红 游戏画面 %llu / drawable %llu 次（连片），孤立点 %llu / %llu 次、短暂连片 %llu / %llu 次（不记红）（本次 5 点%s，调色表 %s）", (unsigned long long)ticket, (unsigned long long)n, (unsigned long long)nm, (unsigned long long)nl,
+        (unsigned long long)atomic_load(&g_mp_gmag[0]), (unsigned long long)atomic_load(&g_mp_gmag[1]), (unsigned long long)atomic_load(&g_mp_giso[0]), (unsigned long long)atomic_load(&g_mp_giso[1]), (unsigned long long)atomic_load(&g_mp_gbrief[0]), (unsigned long long)atomic_load(&g_mp_gbrief[1]), pt, lt);
 }
 // ---------- 3D 画面加亮 ----------
 // 色调映射（片元 a1b1aab66933fa8f）= 把合成后的 HDR ×0.008 做 PQ 编码、再查 32³ 调色表（每帧由计算着色器 552f45c348a61b86 按区域重算，只被色调映射读）。

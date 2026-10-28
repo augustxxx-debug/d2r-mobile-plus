@@ -14,6 +14,20 @@ int main(void) {
     EXPECT("通知栏那种局部块 12×4 里 30 点记红", 1, mp_grid_block(30, 0, 11, 0, 3));
     EXPECT("整屏没写过的显存 64×36 全品红记红", 1, mp_grid_block(64 * 36, 0, 63, 0, 35));
     EXPECT("外接框反了不记红", 0, mp_grid_block(5, 3, 2, 0, 1));
+    {   // 持续性 | persistence
+        mp_persist_t st = {0}; int blk = mp_grid_block(8, 24, 29, 10, 13);
+        EXPECT("能耗对比局：施法光晕 8 点在 6×4 格里——按连片判是块", 1, blk);
+        EXPECT("只闪 1 帧：连续 1 次，不到 MP_PERSIST，不记红", 1, mp_grid_persist(&st, 26327, blk, 24, 29, 10, 13));
+        EXPECT("下一帧没了：清零", 0, mp_grid_persist(&st, 26328, 0, 0, 0, 0, 0));
+        mp_persist_t a = {0}; mp_grid_persist(&a, 100, 1, 10, 20, 5, 9); mp_grid_persist(&a, 101, 1, 11, 21, 5, 9);
+        EXPECT("缺贴图：同一处连续 3 帧 → 3，记红", 3, mp_grid_persist(&a, 102, 1, 11, 21, 6, 10));
+        mp_persist_t b = {0}; mp_grid_persist(&b, 100, 1, 10, 20, 5, 9);
+        EXPECT("隔一帧再出现：不连续，从 1 起", 1, mp_grid_persist(&b, 102, 1, 10, 20, 5, 9));
+        mp_persist_t c = {0}; mp_grid_persist(&c, 100, 1, 0, 5, 0, 5);
+        EXPECT("下一帧换到远处（光效换位置）：不重叠，从 1 起", 1, mp_grid_persist(&c, 101, 1, 40, 50, 20, 30));
+        mp_persist_t d = {0}; mp_grid_persist(&d, 100, 1, 10, 12, 10, 12);
+        EXPECT("相邻 1 格算重叠", 2, mp_grid_persist(&d, 101, 1, 13, 15, 10, 12));
+    }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }

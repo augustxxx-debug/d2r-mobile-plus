@@ -12,3 +12,18 @@ static inline int mp_grid_block(uint32_t n, uint32_t x0, uint32_t x1, uint32_t y
     uint64_t area = (uint64_t)(x1 - x0 + 1) * (uint64_t)(y1 - y0 + 1);
     return (uint64_t)n * 4 >= area;
 }
+
+// 持续性（十三审后 RC1 能耗对比局 bench 031334：1 条红 = 第 47 关、迪亚波罗红色闪电与角色连锁闪电叠加，64×36 里 8 点、外接框约 6×4 格，压线过了连片判据，
+// 只在 26400 次取样中的 1 帧出现）：真缺贴图跟着物体在屏上一直在，法术光效逐帧换形。连片还要在连续 MP_PERSIST 次出图里出现、外接框相互重叠（差 1 格以内）才记红，
+// 不够的只计「短暂连片」。返回这一次之后连续的次数（不是连片返回 0）
+// Persistence (RC1 power-comparison run bench 031334 after the 13th review: 1 red line = level 47, Diablo's red lightning over the character's Chain Lightning, 8 of 64×36 points in a ~6×4-cell box,
+// just over the contiguity line, in 1 frame of 26400 samples): a real missing texture stays on screen with its object, spell glow changes shape every frame. A contiguous block must also appear in MP_PERSIST
+// consecutive presents with overlapping bounding boxes (within 1 cell) to log a red line; shorter runs only count as "brief blocks". Returns the run length after this sample (0 when not a block)
+#define MP_PERSIST 3
+typedef struct { uint64_t last; uint32_t run, x0, x1, y0, y1; } mp_persist_t;
+static inline uint32_t mp_grid_persist(mp_persist_t *s, uint64_t ticket, int block, uint32_t x0, uint32_t x1, uint32_t y0, uint32_t y1) {
+    if (!block) { s->run = 0; return 0; }
+    int cont = s->run && s->last + 1 == ticket && x0 <= s->x1 + 1 && s->x0 <= x1 + 1 && y0 <= s->y1 + 1 && s->y0 <= y1 + 1;
+    s->run = cont ? s->run + 1 : 1; s->last = ticket; s->x0 = x0; s->x1 = x1; s->y0 = y0; s->y1 = y1;
+    return s->run;
+}
