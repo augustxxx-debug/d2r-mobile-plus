@@ -405,7 +405,7 @@ JNIEXPORT jboolean JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativePadMotion(JNI
     (void)env; (void)cls; return dm_android_pad_motion(device, vendor, product, source, lx, ly, rx, ry, lt, rt, hx, hy) ? JNI_TRUE : JNI_FALSE;
 }
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativePadDrop(JNIEnv *env, jclass cls, jint device) { (void)env; (void)cls; dm_android_pad_drop(device); }
-JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativePadMode(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_android_pad_overlay_hidden(); }
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeHudMask(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_android_pad_hud_mask(dm_android_pad_overlay_hidden()); }
 // UI只入队：0失焦，1后台，2前台，3激活；激活也声明前台，合并2/3时不会漏恢复。
 // UI posts only: 0 unfocused, 1 background, 2 foreground, 3 active; active also declares foreground so merging 2/3 cannot lose resume.
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeFocus(JNIEnv *env, jclass cls, jint ev) {

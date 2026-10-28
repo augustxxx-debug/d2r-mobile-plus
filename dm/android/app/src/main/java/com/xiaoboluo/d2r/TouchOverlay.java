@@ -35,8 +35,8 @@ public final class TouchOverlay extends View {
     private static native void nativeResize(float width, float height, float left, float right, float bottom, boolean tablet);
     private static native void nativeLayout(float[] out);
     private static native int nativeFpsHud();   // 「显示帧数」：要画的数，0 = 不画（fps_hud.h 每 0.5 秒更新）| "Show frame rate": the number to draw, 0 = none (fps_hud.h updates every 0.5 s)
-    private int fpsHud, padMode;
-    private static native int nativePadMode();   // 手柄模式（宿主切换事务完成后）：触控层不画，触点照收（碰屏回触屏模式）| controller mode (after the host's switch transaction): nothing drawn, touches still received (a touch returns to touch mode)
+    private int fpsHud, hudMask=7;
+    private static native int nativeHudMask();   // 各模式画什么（pad_android.h DM_PAD_HUD_*）：手柄模式只画经验行 / 生命法力文字，触点照收（碰屏回触屏模式）| what to draw per mode (pad_android.h DM_PAD_HUD_*): controller mode draws only the experience / life / mana texts, touches still received (a touch returns to touch mode)
     private final float density;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private static final int GLYPHS=119, HUD=167, DRAW_FLOATS=185;
@@ -49,7 +49,7 @@ public final class TouchOverlay extends View {
     private final Choreographer.FrameCallback poll = new Choreographer.FrameCallback() {
         @Override public void doFrame(long frameTimeNanos) {
             if (!running) return;
-            if (inputEnabled && isShown()) { nativeLayout(probe); int f=nativeFpsHud(), pm=nativePadMode(); if (!drawnValid || f!=fpsHud || pm!=padMode || !Arrays.equals(probe, drawn)) { fpsHud=f; padMode=pm; invalidate(); } }
+            if (inputEnabled && isShown()) { nativeLayout(probe); int f=nativeFpsHud(), hm=nativeHudMask(); if (!drawnValid || f!=fpsHud || hm!=hudMask || !Arrays.equals(probe, drawn)) { fpsHud=f; hudMask=hm; invalidate(); } }
             Choreographer.getInstance().postFrameCallback(this);
         }
     };
@@ -386,23 +386,24 @@ public final class TouchOverlay extends View {
     }
     private void hud(Canvas c) {
         if(hudUi==null || layout[HUD]==0) return;
-        float u=getHeight()/density/1320;
+        float u=getHeight()/density/1320; boolean bar=(hudMask&2)!=0, text=(hudMask&4)!=0;   // 手柄模式：原版手柄底栏自己在，只补文字 | controller mode: the original controller bar is there, only the texts are added
         try {
-            JSONObject base=hudUi.getJSONObject("base");hudImage(c,"base_full.png",base.getDouble("x"),base.getDouble("y"),u);
+            JSONObject base=hudUi.getJSONObject("base");if(bar)hudImage(c,"base_full.png",base.getDouble("x"),base.getDouble("y"),u);
             JSONArray slots=hudUi.getJSONArray("slots"), inner=hudUi.getJSONArray("inner"), menu=slots.getJSONArray(5);
             boolean alert=layout[HUD+12]>0 || layout[HUD+13]>0, held=layout[4+10*5+4]!=0;
             Bitmap button=image("hud_v4_ui/"+(alert?"lvl_":"lvl_d")+(held?1:0)+".png");
-            if(button!=null) c.drawBitmap(button,null,new RectF(hudX(menu.getDouble(0),u),(float)menu.getDouble(1)*u,hudX(menu.getDouble(2),u),(float)menu.getDouble(3)*u),paint);
+            if(bar && button!=null) c.drawBitmap(button,null,new RectF(hudX(menu.getDouble(0),u),(float)menu.getDouble(1)*u,hudX(menu.getDouble(2),u),(float)menu.getDouble(3)*u),paint);
             JSONObject e=hudUi.getJSONObject("exp");
             float x=hudX(e.getDouble("x0"),u),y=(float)e.getDouble("y")*u,w=(float)(e.getDouble("x1")-e.getDouble("x0"))*u,h=(float)e.getDouble("h")*u;
-            paint.setColor(0xff16120e);c.drawRect(x,y,x+w,y+h,paint);
+            if(bar){paint.setColor(0xff16120e);c.drawRect(x,y,x+w,y+h,paint);
             paint.setColor(0xffc4a046);c.drawRect(x+u,y+u,x+u+(w-2*u)*Math.max(0,Math.min(1000,layout[HUD+2]))/1000,y+h-u,paint);
             paint.setColor(0xff463a28);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(u);c.drawRect(x,y,x+w,y+h,paint);paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xff16120e);for(int i=1;i<20;i++)c.drawRect(x+w*i/20,y+u,x+w*i/20+u,y+h-u,paint);
+            paint.setColor(0xff16120e);for(int i=1;i<20;i++)c.drawRect(x+w*i/20,y+u,x+w*i/20+u,y+h-u,paint);}
             JSONObject lv=hudUi.getJSONObject("lv"), vital=hudUi.getJSONObject("vital"),badge=hudUi.getJSONObject("badge");
             // 显示帧数（同 iOS DmTouchOverlay）：接在经验行末尾、同一套字形，不另起标签 | Show frame rate (as iOS DmTouchOverlay): appended to the experience line with the same glyphs, no separate label
             String lvs=String.format(Locale.ROOT,levelFormat,(int)layout[HUD+1],(int)layout[HUD+2]/10); if(fpsHud>0) lvs=lvs+" · "+fpsHud+" FPS";
-            hudText(c,lvs,lv.getJSONObject("glyphs"),lv.getDouble("x"),lv.getDouble("baseline"),false,u);
+            if(text)hudText(c,lvs,lv.getJSONObject("glyphs"),lv.getDouble("x"),lv.getDouble("baseline"),false,u);
+            if(!bar) return;   // 手柄模式：原版手柄底栏自带生命 / 法力数字，这里不再画（画了会叠字）| controller mode: the original controller bar has its own life / mana numbers, drawing ours overlaps them
             hudText(c,String.format(Locale.ROOT,lifeFormat,(int)layout[HUD+8],(int)layout[HUD+9]),vital.getJSONObject("glyphs"),vital.getDouble("left_x"),vital.getDouble("baseline"),false,u);
             hudText(c,String.format(Locale.ROOT,manaFormat,(int)layout[HUD+10],(int)layout[HUD+11]),vital.getJSONObject("glyphs"),vital.getDouble("right_x"),vital.getDouble("baseline"),false,u);
             for(int i=1;i<=4;i++) if(layout[HUD+2+i]>0) {
@@ -431,8 +432,8 @@ public final class TouchOverlay extends View {
     }
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas); if (!inputEnabled) return; nativeLayout(layout); System.arraycopy(layout, 0, drawn, 0, layout.length); drawnValid=true;
-        if (padMode!=0) return;   // 手柄模式：原版手柄界面自己画 HUD，触控层整层不画（同 iOS 藏覆盖层）| controller mode: the original controller UI draws its own HUD, the overlay draws nothing (as iOS hides it)
         canvas.save(); canvas.scale(density,density);
+        if ((hudMask&1)==0) { hud(canvas); canvas.restore(); return; }   // 手柄模式：不画触屏控件与摇杆，只画 hud() 里的文字部分 | controller mode: no touch controls or joystick, only the text part of hud()
         boolean navigation=layout[2]!=0;
         float k=layout[4+12*5+2]/60;   // 与 iOS 同一个字号 / 粗细单位：摇杆半径 / 60 | the same size unit as iOS: joystick radius / 60
         // 同 iOS drawRect：底栏六格（腰带 / 十字）由底栏画、这里只留命中区；难度与 1–8 选择条也由底栏画（hud）。

@@ -44,7 +44,14 @@ void dm_android_pad_drop(int device);   // 设备拔掉 | device removed
 void dm_android_pad_touched(void);      // 碰了屏幕 → 触屏模式 | the screen was touched -> touch mode
 void dm_android_pad_reset(void);        // 失活 / 进后台：键与摇杆清零 | resign / background: buttons and sticks cleared
 int dm_android_pad_mode(void);          // 1 = 手柄模式 | 1 = controller mode
-int dm_android_pad_overlay_hidden(void);   // 宿主切换事务完成后的当前模式（front_touch_overlay_mode）：触控层据此不画 | current mode after the host's switch transaction (front_touch_overlay_mode): the touch overlay stops drawing on it
+int dm_android_pad_overlay_hidden(void);   // 宿主切换事务完成后的当前模式（front_touch_overlay_mode）：1 = 手柄模式 | current mode after the host's switch transaction (front_touch_overlay_mode): 1 = controller mode
+// 触控层在各模式下画什么（Java TouchOverlay 每帧问 nativeHudMask）：触屏模式全画；手柄模式照 iOS 藏触屏控件与触屏底栏（原版手柄界面自己有底栏），
+// 但经验行文字（Lv · % · FPS）照画——原版手柄底栏没有这一行（生命 / 法力数字它自带，不重画）（用户 2026-10-28：进手柄模式后 XP 数字和帧数没了）
+// What the touch overlay draws in each mode (Java TouchOverlay asks nativeHudMask every frame): touch mode draws everything; controller mode hides the touch controls and the touch
+// bottom bar as iOS does (the original controller UI has its own bar) but keeps the experience line text (Lv · % · FPS), which the original controller bar lacks (it has its own life / mana numbers, so those are not redrawn)
+// (user 2026-10-28: the XP digits and the frame rate vanished in controller mode)
+enum { DM_PAD_HUD_CONTROLS = 1, DM_PAD_HUD_BAR = 2, DM_PAD_HUD_TEXT = 4 };
+int dm_android_pad_hud_mask(int pad_mode);
 #ifdef __cplusplus
 }
 #endif
