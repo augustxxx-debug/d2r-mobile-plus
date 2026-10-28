@@ -1,10 +1,13 @@
 """「游戏难度」从暂停菜单挪到「选项 → 游戏」页（用户 2026-10-28）：暂停菜单两种模式统一后 7 行、没有难度行、「选项」仍在 y 653（手柄光标初始落点那一行）；
-游戏页借原版离线难度滑块（SettingsSliderWidget OfflineDifficultyScaling）作难度行：分节标题 / 行名 / 说明换成我们的六语文案，原版「下一局生效」说明去掉，
-触屏版与手柄版两份页都一样；宿主每帧读滑块、变了即走底栏难度格同一条路（dm_hud_request_players）立刻生效；分享日志摘要带「游戏难度：」行。
+游戏页的难度行是我们自己的一块（原版这页的「离线难度」三行在本版被面板代码按行名无条件藏起、滑块刻度从不设——要用就得改写原版控件可见位，违反守卫）：
+滚动区里、原版表格之前放 TouchDiffRows（分节标题 / 行名 + 滑块 TouchDiffSlider / 说明），原版表格下移；原版三行原样不动；触屏版与手柄版两份页都一样；
+宿主每帧读滑块、手柄接管 Y（+1 档）并写提示条，变了即走底栏难度格同一条路（dm_hud_request_players）立刻生效；分享日志摘要带「游戏难度：」行。
 "Game Difficulty" moved from the pause menu to the Options → Gameplay page (user, 2026-10-28): the unified pause menu has 7 rows, no difficulty row, and Options still sits at y 653
-(the row where the controller cursor lands); the Gameplay page borrows the original offline difficulty slider (SettingsSliderWidget OfflineDifficultyScaling) as the difficulty row:
-section title / row label / note use our six-language text, the original 'takes effect next game' note is removed, touch and controller pages alike; the host reads the slider every
-frame and on change goes the same way as the bottom-bar difficulty cell (dm_hud_request_players) so it takes effect at once; the share-log summary carries a 「游戏难度：」 line."""
+(the row where the controller cursor lands); the Gameplay page's difficulty row is a block of our own (the page's original three "offline difficulty" rows are hidden unconditionally by
+row name by the panel code in this build and the slider scale is never set -- using them would mean writing original widgets' visible flags, which the guard forbids):
+TouchDiffRows (section title / label + slider TouchDiffSlider / note) inside the scroll view before the original table, which moves down; the original three rows untouched; touch and
+controller pages alike; the host reads the slider every frame, takes over Y (+1 level) on the controller and writes the legend, and on change goes the same way as the bottom-bar
+difficulty cell (dm_hud_request_players) so it takes effect at once; the share-log summary carries a 「游戏难度：」 line."""
 import os
 import re
 import sys
@@ -40,7 +43,8 @@ def fake_gameplay():   # 原版游戏页的骨架：生成器要删的行各一�
                     '                                                "rect": { "x": 0, "y": 0, "width": 1730 },\n                                                "anchor": { "x": 0.0, "y": 1.0 },\n'
                     '                                                "text": "@OfflineSettingsEffectNote",\n                                                "style": "$StyleSettingsText"\n                                        }\n                                }'))
     rows.append(row('DataPrivacy', text('DataPrivacy', '@DataPrivacyHeader', '$StyleSettingsTitle')))
-    return '{\n    "type": "GameplayOptionsPanel", "name": "GameplayOptionsPanel",\n    "children": [\n        { "type": "TableWidget", "name": "OptionsTable", "fields": { "rowHeight": "$OptionsTableRowHeight" }, "children": [\n%s\n        ] }\n    ]\n}\n' % ',\n'.join(rows)
+    return ('{\n    "type": "GameplayOptionsPanel", "name": "GameplayOptionsPanel",\n    "children": [\n        { "type": "ScrollViewWidget", "name": "ScrollView", "fields": { "fitToParent": true }, "children": [\n'
+            '        {\n            "type": "TableWidget", "name": "OptionsTable",\n            "fields": { "rowHeight": "$OptionsTableRowHeight" }, "children": [\n%s\n        ] }\n        ] }\n    ]\n}\n' % ',\n'.join(rows))
 
 
 class PauseMenu(unittest.TestCase):
@@ -58,7 +62,8 @@ class PauseMenu(unittest.TestCase):
         ys = sorted(want.values())
         for a, b in zip(ys, ys[1:]): self.assertEqual(b - a, 125, where)   # 原版行距，整组从原版首行 278 起 | the original spacing, the group starts at the original first row 278
         self.assertEqual(want['Settings'], 653, where); self.assertEqual(sum(1 for y in ys if y < 653), 3, where)   # 「选项」= 第四行 | Options = the fourth row
-        for gone in ('TouchPadDiff', 'TouchPadDiffTxt', 'Help', 'LootFilter'): self.assertIsNone(rect_y(out, gone), (where, gone)); self.assertNotIn('"name": "%s"' % gone, out, (where, gone))
+        for gone in ('TouchPadDiff', 'TouchPadDiffTxt', 'Help', 'LootFilter'): self.assertIsNone(rect_y(out, gone), (where, gone))   # 难度行没有；帮助 / 掉落筛选照旧挪出屏 | no difficulty row; Help / loot filter stay off screen
+        self.assertTrue('TouchPadDiff' not in out, where)
         self.assertNotIn('@OptionsMenuGameDifficulty', out, where)
 
     def test_pause_rows_both_modes(self):
@@ -76,22 +81,24 @@ class GameplayPage(unittest.TestCase):
         self.assertTrue(re.search(pat, out), (where, pat))
 
     def check(self, out, where):
-        self.has(out, r'"type": "SettingsSliderWidget",\s*"name": "OfflineDifficultyScaling"', where)   # 原版滑块照用（宿主按名字找它） | the original slider stays (the host finds it by name)
-        self.has(out, r'"onUpdateMessage": "OptionsPanelMessage:SetOfflineDifficultyScaling"', where)
-        self.has(out, r'"name": "Offline",\s*"fields": \{\s*"text": "@dmDiffSection",\s*"style": "\$StyleSettingsTitle"', where)   # 分节标题「难度」 | section title
-        self.has(out, r'"name": "OfflineDifficultyScalingText",\s*"fields": \{\s*"text": "@dmDiffRow",\s*"style": "\$StyleSettingsText"', where)   # 行名「游戏难度」 | row label
-        self.assertTrue('"name": "Row OfflineSettingsEffectNote"' in out and '"name": "Row DataPrivacy"' in out, where)
-        note = out[out.index('"name": "Row OfflineSettingsEffectNote"'):out.index('"name": "Row DataPrivacy"')]
-        self.has(note, r'"text": "@dmDiffRowNote"', where)   # 说明行换成我们的（立刻生效），副文 28 号灰 | note row replaced with ours (takes effect at once), secondary text 28 gray
-        for pat in (r'"pointSize": 28', r'"fontColor": "\$FontColorLightGray"', r'"spacing": "\$ReducedSpacing"'): self.has(note, pat, where)
-        self.assertNotIn('"style": "$StyleSettingsText"', note, where)
-        for gone in ('@OfflineHeader', '@OptionsMenuOfflineDifficultyScalingSetting', '@OfflineSettingsEffectNote', 'tooltipString'): self.assertTrue(gone not in out, (where, gone))
-        rows = re.findall(r'"name": "Row ([A-Za-z ]+)"', out)
-        self.assertEqual(rows[-4:], ['Offline', 'OfflineDifficultyScaling', 'OfflineSettingsEffectNote', 'DataPrivacy'], where)   # 行序不动 | row order unchanged
+        sv, blk, tab = out.find('"name": "ScrollView"'), out.find('"name": "TouchDiffRows"'), out.find('"name": "OptionsTable"')
+        self.assertTrue(0 <= sv < blk < tab, (where, sv, blk, tab))   # 我们的一块在滚动区里、原版表格之前 | our block is inside the scroll view, before the original table
+        self.has(out, r'"name": "TouchDiffRows", "fields": \{ "rect": \{ "x": 0, "y": 0, "width": 1730, "height": %d \}' % touch_layout.DIFF_H, where)
+        self.has(out, r'"name": "OptionsTable",\s*"fields": \{ "rect": \{ "x": 0, "y": %d \},' % touch_layout.DIFF_H, where)   # 原版表格整体下移 | the original table moves down
+        block = out[blk:tab]
+        self.has(block, r'"name": "TouchDiffTitle", "fields": \{ "rect": \{ "x": 0, "y": 0, "width": 1730, "height": 180 \}, "text": "@dmDiffSection", "style": "\$StyleSettingsTitle"', where)
+        self.has(block, r'"name": "Divider"', where)
+        self.has(block, r'"name": "TouchDiffText", "fields": \{ "rect": \{ "x": 0, "y": 180, "width": 1000, "height": 180 \}, "text": "@dmDiffRow", "style": "\$StyleSettingsText"', where)
+        self.has(block, r'"type": "SettingsSliderWidget", "name": "TouchDiffSlider", "fields": \{ "rect": \{ "x": 1110, "y": 235, "width": 480, "height": 72 \}', where)   # 同图形页滑块的摆法 | placed like the Graphics page sliders
+        self.has(block, r'"name": "TouchDiffNote", "fields": \{ "rect": \{ "x": 0, "y": 360, "width": 1670, "height": 100 \}, "text": "@dmDiffRowNote", "style": \{ "fontColor": "\$FontColorLightGray", "pointSize": 28, "spacing": "\$ReducedSpacing"', where)   # §2.6 副文 | secondary text
+        self.assertTrue('onClickMessage' not in block and 'tooltipString' not in block, where)
+        for keep in ('"name": "Row Offline"', '"name": "Row OfflineDifficultyScaling"', '"name": "Row OfflineSettingsEffectNote"', '@OfflineHeader', '@OfflineSettingsEffectNote'):
+            self.assertTrue(keep in out, (where, keep))   # 原版三行原样（原版自己藏） | the original three rows untouched (the game hides them itself)
 
     def test_touch_and_pad_pages(self):
         out, n = touch_layout.PRESENT['gameplayoptionspanelhd.json'](fake_gameplay()); self.check(out, 'touch')
         self.assertEqual(len(re.findall(r'"name": "Row ', out)), 4)   # 其余行都删了 | all other rows removed
+        self.assertEqual(out.count('"name": "TouchDiffRows"'), 1)
         pad, _ = touch_layout.PAD_ROOT['gameplayoptionspanelhd.json'](fake_gameplay()); self.check(pad, 'pad')
         self.assertEqual(len(re.findall(r'"name": "Row ', pad)), 4 + len(TOUCH_ROWS) - len(PAD_ROWS))
 
@@ -107,11 +114,11 @@ class Text(unittest.TestCase):
         rows = {r[0]: r[1:] for r in dm_i18n.rows()}
         langs = ('中文', 'English', 'Español', 'Español MX', 'Русский', '한국어')
         self.assertTrue('dmPadDiffLine' not in rows)   # 暂停菜单那行的字不再用 | the pause-row text is gone
-        for key, pt, limit in (('dmDiffSection', 40, 1000), ('dmDiffRow', 36, 1000), ('dmDiffRowNote', 28, 1730)):
-            self.assertIn(key, rows, key); texts = rows[key]; self.assertEqual(len(texts), 7, key)
+        for key, pt, limit in (('dmDiffSection', 40, 1000), ('dmDiffRow', 36, 1000), ('dmDiffRowNote', 28, 1670), ('dmDiffOutOfRun', 28, 1670), ('dmDiffLegend', 36, 700)):
+            self.assertTrue(key in rows, key); texts = rows[key]; self.assertEqual(len(texts), 6, key)
             for lang, t in zip(langs, texts):
-                self.assertTrue(t.strip(), (key, lang)); self.assertEqual(t.count('\n'), 0, (key, lang)); self.assertNotIn('%', t, (key, lang))
-                self.assertLessEqual(est_width(t, pt), limit, (key, lang, t, est_width(t, pt)))
+                self.assertTrue(t.strip(), (key, lang)); self.assertEqual(t.count('\n'), 0, (key, lang)); self.assertEqual(t.count('%d'), 1 if key == 'dmDiffLegend' else 0, (key, lang))
+                line = t.replace('%d', '8'); self.assertLessEqual(est_width(line, pt), limit, (key, lang, line, est_width(line, pt)))
         self.assertEqual(rows['dmDiffRow'][0], '游戏难度')
 
 
@@ -119,7 +126,9 @@ class Host(unittest.TestCase):
     def test_wiring(self):
         pm = (DM / 'host' / 'dm_padmode.c').read_text(encoding='utf-8')
         self.assertTrue('TouchPadDiff' not in pm and 'dmPadDiffLine' not in pm)   # 暂停菜单难度行的宿主代码删掉 | host code of the pause-menu difficulty row removed
-        for s in ('"GameplayOptionsPanel"', '"OfflineDifficultyScaling"', 'DM_VT_SLIDER', 'dm_hud_request_players(', 'dm_hud_slider_players(', 'dm_hud_slider_value(', '游戏难度：'): self.assertTrue(s in pm, s)
+        for s in ('"GameplayOptionsPanel"', '"TouchDiffSlider"', '"TouchDiffNote"', 'DM_VT_SLIDER', 'dm_hud_request_players(', 'dm_hud_slider_players(', 'dm_hud_slider_value(', '游戏难度：',
+                  'dm_padmode_page_keys(DM_BTN_Y)', 'dm_padmode_legend(1,', '"dmDiffLegend"', '"dmDiffRowNote"', '"dmDiffOutOfRun"', 'diff_pump(b, frame);'): self.assertTrue(s in pm, s)
+        self.assertTrue('"OfflineDifficultyScaling"' not in pm)   # 不碰原版藏着的那颗滑块 | never touches the original hidden slider
         hud = (DM / 'host' / 'dm_hud.h').read_text(encoding='utf-8')
         self.assertTrue('int dm_hud_slider_players(int lo, int hi, int v);' in hud and 'int dm_hud_slider_value(int lo, int hi, int n);' in hud)
         self.assertTrue('游戏难度：当前' in (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))   # 拍线程：档位变了记一行，摘要取最后一行 | tick thread: one line per change, the summary takes the last
