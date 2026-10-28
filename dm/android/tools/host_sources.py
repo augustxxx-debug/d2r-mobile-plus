@@ -34,4 +34,5 @@ if __name__ == "__main__":
     text = ""
     for name, paths in (("HOST_SRCS", source), ("LIBDEFLATE_SRCS", libraries)):
         text += "set(" + name + "\n" + "\n".join('  "' + p.as_posix() + '"' for p in paths) + "\n)\n"
-    args.output.write_text(text, encoding="utf-8", newline="\n")
+    with open(args.output, "w", encoding="utf-8", newline="\n") as f:   # Python 3.9 也行（Path.write_text 的 newline 要 3.10）| works on Python 3.9 (Path.write_text(newline=) needs 3.10)
+        f.write(text)
