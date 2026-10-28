@@ -19,6 +19,7 @@ static int g_pad_mode, g_need_center, g_glyph = DM_GLYPH_XBOX, g_on[2]; static u
 static _Atomic int g_overlay_hidden;
 int dm_android_pad_mode(void) { return g_pad_mode; }
 int dm_android_pad_overlay_hidden(void) { return atomic_load(&g_overlay_hidden); }
+int dm_android_pad_hud_mask(int pad_mode) { return pad_mode ? DM_PAD_HUD_TEXT : DM_PAD_HUD_CONTROLS | DM_PAD_HUD_BAR | DM_PAD_HUD_TEXT; }
 #ifndef DM_PAD_ANDROID_TEST
 void front_touch_overlay_mode(int pad) { atomic_store(&g_overlay_hidden, pad ? 1 : 0); }   // 宿主 dm_padmode.c 的前端钩子（强定义）| the host's front-end hook in dm_padmode.c (strong definition)
 #endif
