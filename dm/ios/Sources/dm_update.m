@@ -31,6 +31,8 @@ void dm_update_offer(int new_build, const char *ver, const char *note, int urgen
 void dm_update_safe_left(int units);
 void dm_update_fail(int kind);
 void dm_update_site(const char *host);
+int dm_community_manifest(const char *json, size_t len);   // dm/host/dm_community.c：同一份版本文件里的 community 字段（群号 / 仓库地址） | the community field (group number / repository address) of the same version file
+void dm_community_copy_init(int (*cb)(const char *text));
 
 static NSString *g_url; static int g_own; static _Atomic int g_inflight;
 
@@ -106,6 +108,9 @@ static void upd_fetch(int n) {
             NSDictionary *j = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil]; NSNumber *rs = [j isKindOfClass:NSDictionary.class] ? j[@"render_safe"] : nil;
             extern int g_dm_rt_ab; if ([rs isKindOfClass:NSNumber.class] && rs.boolValue) { if (g_dm_rt_ab) { g_dm_rt_ab = 0; plog("画法：版本文件 render_safe = true → 本局退回原画法"); } }
             else plog("画法：版本文件没有 render_safe（或为 false）→ 新画法照常"); }
+        // 社区入口（dm_community.c）：取到了就把原文交给宿主解析 community 字段（版本号字段不合规也照交，那是另一回事）；三次都取不到才报「没拉到」= 沿用缓存 | community entry (dm_community.c): when fetched, hand the raw text to the host to parse the community field (even when the version fields are invalid, that is a separate matter); only after all attempts fail report "not fetched" = keep the cache
+        if (!e && (![r isKindOfClass:NSHTTPURLResponse.class] || [(NSHTTPURLResponse *)r statusCode] == 200) && d.length && d.length <= 4096) dm_community_manifest(d.bytes, d.length);
+        else if (n >= UPD_TRIES) dm_community_manifest(NULL, 0);
         if (why) {
             plog("更新：查 %s（第 %d / %d 次）→ %s%s", us.UTF8String, n, UPD_TRIES, why.UTF8String, n < UPD_TRIES ? "，稍后再试" : "，已有的提示不动");
             if (e) plog("更新：第 %d 次取不到的错误码 %s %ld", n, e.domain.UTF8String, (long)e.code);
@@ -121,7 +126,15 @@ static void upd_fetch(int n) {
         dm_update_offer(build, ver.UTF8String, note.UTF8String, urgent);
     }] resume];
 }
+// 社区入口的剪贴板回调（dm_community.c）：宿主在游戏主线程调，这里到主线程写 UIPasteboard（同 dm_sharelog.m 电量快照的做法） | clipboard callback of the community entry (dm_community.c): the host calls it on the game thread; written to UIPasteboard on the main thread (as the battery snapshot in dm_sharelog.m)
+static int ios_copy(const char *s) {
+    NSString *t = @(s ?: ""); __block int ok = 0;
+    void (^w)(void) = ^{ UIPasteboard.generalPasteboard.string = t; ok = [UIPasteboard.generalPasteboard.string isEqualToString:t]; };
+    if (NSThread.isMainThread) w(); else dispatch_sync(dispatch_get_main_queue(), w);
+    return ok;
+}
 void dm_update_boot(void) {   // main.m 起宿主前调一次 | main.m calls this once before starting the host
+    dm_community_copy_init(ios_copy);
     const char *tb = getenv("DM_TEST_UPDATE_BUILD"), *tu = getenv("DM_TEST_UPDATE_URL");
     NSString *v = tb ? @(tb) : [NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"] description]; g_own = v.intValue;
     if (![v isEqualToString:[NSString stringWithFormat:@"%d", g_own]] || g_own < 0) g_own = 0;

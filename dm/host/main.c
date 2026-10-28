@@ -192,7 +192,8 @@ int main(int argc, char **argv) {
 #if TARGET_OS_OSX   // iOS 包也编这个文件（入口由外壳调），那边没有 app_mac.m | The iOS package compiles this file too (the entry is called by the shell); there is no app_mac.m on that side
     if (dm_app_bootstrap(&argc, &argv)) { void dm_cloud_boot(void); dm_cloud_boot(); }   // App 形态：挂存档之前先做一次 iCloud 同步（同 iOS 壳的启动次序）；取不到容器 / 测试存档时它自己记一行就返回 | App form: do one iCloud sync before mounting the save (same startup order as the iOS shell); when the container cannot be obtained / with a test save it logs one line and returns
 #endif
-    { int dm_crashfence_start(void); dm_crashfence_start(); }   // 崩溃围栏：读残留运行标记、写本局的（iOS 外壳在 boot_prepare 已调过，这里不重复；dm_crashfence.c） | crash fence: read the leftover running marker and write this run's (the iOS shell already called it in boot_prepare; no repeat here)
+    { int dm_crashfence_start(void); dm_crashfence_start(); }
+    { void dm_community_load(void); dm_community_load(); }   // 社区入口：读缓存的群号 / 链接（可重入；iOS 外壳也调过；dm_community.c） | community entry: read the cached group number / link (idempotent; the iOS shell calls it too; dm_community.c)   // 崩溃围栏：读残留运行标记、写本局的（iOS 外壳在 boot_prepare 已调过，这里不重复；dm_crashfence.c） | crash fence: read the leftover running marker and write this run's (the iOS shell already called it in boot_prepare; no repeat here)
     if (getenv("DM_PRELOAD")) dm_host_preload_start(argc, argv);   // Mac 上验证提前起跑的路径（iOS 由 App 的 main() 调） | Exercise the early-start path on Mac (on iOS it is called from the App's main())
     if (atomic_load(&g_pre.started)) {
         pthread_join(g_pre.th, NULL);

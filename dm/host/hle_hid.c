@@ -380,7 +380,8 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     DM_PROF(0, "ui_frontend", dm_ui_frontend_pump());
     { void dm_textinput_pump(void); DM_PROF(0, "textinput", dm_textinput_pump()); }   // 文本框补「弹键盘」那一下、数量框设值（dm_textinput.c） | the extra "bring up keyboard" press for text boxes, setting the value of quantity boxes (dm_textinput.c)
     { void dm_update_pump(void); DM_PROF(0, "update", dm_update_pump()); }
-    { void dm_crashfence_pump(void); dm_crashfence_pump(); }   // 崩溃围栏的主菜单游戏内提示框（dm_crashfence.c） | the crash fence's in-game notice box on the main menu       // 选角页的构建号与新版本提示（dm_update.c） | build number and new-version notice on the character select page (dm_update.c)
+    { void dm_crashfence_pump(void); dm_crashfence_pump(); }
+    { void dm_community_pump(void); dm_community_pump(); }   // 社区入口：入口显隐与游戏内提示框（dm_community.c） | community entry: entry show / hide and the in-game notice box (dm_community.c)   // 崩溃围栏的主菜单游戏内提示框（dm_crashfence.c） | the crash fence's in-game notice box on the main menu       // 选角页的构建号与新版本提示（dm_update.c） | build number and new-version notice on the character select page (dm_update.c)
     { void dm_actions_pump(void); DM_PROF(0, "actions", dm_actions_pump()); }     // 商人买卖 / 加点入口与读数（dm_actions.c） | vendor buy/sell / stat point entry and readout (dm_actions.c)
     { void dm_world_pump(void); DM_PROF(0, "world", dm_world_pump()); }   // 点世界目标 = 交互（dm_world.c） | tapping a world target = interact (dm_world.c)
     { void dm_game_notice_ui_pump(void); dm_game_notice_ui_pump(); }
