@@ -89,6 +89,12 @@ static int voice_running(void) { return lang_running() == 0 ? 0 : 1; }   // 没�
 // (merc_pot=1 in an old file is also on, the same result). The merc_pot line is still written with the current value, so packages of older versions read it without error
 static _Atomic int g_merc_explicit = -1;   // 文件里写着的 merc_pot_v2：-1 没写 / 0 / 1 | merc_pot_v2 as written in the file: -1 not written / 0 / 1
 
+// 崩溃围栏自动关实验项之前的原值（-1 = 没备份）：存进设置文件一行 exp_off_backup=eco_fps:2,rt_shadow:1,upscale:1；
+// 玩家下次打开图形页时按它预选（勾选框恢复成原来的样子），点「应用」生效并清掉备份，「放弃」保留备份、下次打开再预选
+// Original values before the crash fence turned experimental features off (-1 = no backup): saved in the settings file as one line exp_off_backup=eco_fps:2,rt_shadow:1,upscale:1;
+// the next time the player opens the Graphics tab they are pre-selected (checkboxes back as they were); Apply makes them effective and clears the backup, Discard keeps the backup and pre-selects again next time
+static const char *const k_bak_name[3] = { "eco_fps", "rt_shadow", "upscale" };
+static _Atomic int g_bak[3] = { -1, -1, -1 };
 static _Atomic int g_repaint;        // 默认 / 放弃之后：页上的勾选框按待定值 / 生效值重摆一遍 | After default / discard: lay out the checkboxes on the page again according to pending values / effective values
 
 const char *dm_save_commitdir(void);
@@ -111,6 +117,7 @@ static void load_once(void) {
     int v[NK]; for (int i = 0; i < NK; i++) v[i] = k_def[i];
     FILE *f = fopen(p, "r"); char ln[128];
     int lang = -1, voice = -1, merc = -1, qv2 = 0;
+    for (int b = 0; b < 3; b++) atomic_store(&g_bak[b], -1);   // 备份以文件为准 | the backup follows the file
     while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0';
         if (i == K_Q3D) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 4) v[i] = (int)q; else v[i] = 0; }
         if (i == K_RES) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q < DM_RES_LEVELS) v[i] = (int)q; else v[i] = 0; }
@@ -120,7 +127,9 @@ static void load_once(void) {
 #if VOICE_ROW
         if (i == K_VOICE) { int x = atoi(eq + 1); if (x == 0 || x == 1) voice = v[K_VOICE] = x; }
 #endif
-        if (!strcmp(ln, "merc_pot_v2")) merc = eq[1] != '0'; }
+        if (!strcmp(ln, "merc_pot_v2")) merc = eq[1] != '0';
+        if (!strcmp(ln, "exp_off_backup")) for (int b = 0; b < 3; b++) { const char *q = strstr(eq + 1, k_bak_name[b]); size_t L = strlen(k_bak_name[b]);
+            if (q && q[L] == ':' && q[L + 1] >= '0' && q[L + 1] <= '9') atomic_store(&g_bak[b], q[L + 1] - '0'); } }
     if (f) fclose(f);
     if (!qv2) v[K_Q3D] = v[K_Q3D] == 1 ? 3 : 0;
     if (v[K_Q3D] == 4) { v[K_Q3D] = 0; v[K_UPSCALE] = 0; }
@@ -244,6 +253,8 @@ static void save(void) {
     for (int i = 0; ok && i < NK; i++) { if (i == 0 && (atomic_load(&g_lang_explicit) < 0 || g_lang_test)) continue; if (i == K_VOICE && (atomic_load(&g_voice_explicit) < 0 || g_voice_test)) continue; ok = fprintf(f, "%s=%d\n", k_keys[i], atomic_load(&g_val[i])) > 0; }   // lang / voice 只在玩家真改过之后才写进文件
     if (ok) ok = fprintf(f, "q3d_v2=1\n") > 0;
     if (ok && atomic_load(&g_merc_explicit) >= 0) ok = fprintf(f, "merc_pot_v2=%d\n", atomic_load(&g_merc_explicit)) > 0;
+    { char bk[96]; size_t o = 0; bk[0] = 0; for (int b = 0; b < 3; b++) if (atomic_load(&g_bak[b]) >= 0) o += (size_t)snprintf(bk + o, sizeof bk - o, "%s%s:%d", o ? "," : "", k_bak_name[b], atomic_load(&g_bak[b]));
+      if (ok && o) ok = fprintf(f, "exp_off_backup=%s\n", bk) > 0; }
     if (f) ok = fclose(f) == 0 && ok;
     if (ok) ok = rename(t, p) == 0;   // 先写临时文件再换名：写到一半被杀也不会留下半个文件 | Write a temporary file first and then rename: being killed halfway through the write does not leave half a file behind
     LOG("自定义设置：存盘%s", ok ? "" : "【红】失败");
@@ -255,6 +266,8 @@ static void save(void) {
 int dm_custom_safe_mode(char *what, size_t n) {
     load_once(); size_t o = 0; int ch = 0; what[0] = 0;
     if (!atomic_load(&g_loaded)) { snprintf(what, n, "设置文件还没法读，没改"); return 0; }
+    static const int bk_key[3] = { K_FPS, K_RT, K_UPSCALE };   // 改之前记原值（已有备份不覆盖：连着两轮自动关时，第二轮看到的已经是关） | record the original before changing (an existing backup is kept: on a second automatic pass the value is already off)
+    for (int b = 0; b < 3; b++) { int v = atomic_load(&g_val[bk_key[b]]), on = b == 0 ? v == FPS_120 : v != 0; if (on && atomic_load(&g_bak[b]) < 0) atomic_store(&g_bak[b], v); }
     if (atomic_load(&g_val[K_FPS]) == FPS_120) { atomic_store(&g_val[K_FPS], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s120 帧档 → 60", o ? "、" : ""); }
     if (atomic_load(&g_val[K_RT])) { atomic_store(&g_val[K_RT], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s光追阴影 → 关（AO 随它关）", o ? "、" : ""); }
     if (atomic_load(&g_val[K_UPSCALE])) { atomic_store(&g_val[K_UPSCALE], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%sMetalFX 空间超分 → 关", o ? "、" : ""); dm_3d_quality_mode_set(0); }
@@ -262,6 +275,13 @@ int dm_custom_safe_mode(char *what, size_t n) {
     if (!ch) snprintf(what, n, "实验性功能本来都关着");
     else { save(); atomic_fetch_add(&g_repaint, 1); }
     return ch;
+}
+// 图形页刚打开（dm_graphics_ui_pump）：有崩溃围栏的备份就按原值预选，返回预选了几项 | The Graphics tab just opened (dm_graphics_ui_pump): with a crash-fence backup, pre-select the original values; returns how many were pre-selected
+static int exp_restore_pending(void) {
+    static const int bk_key[3] = { K_FPS, K_RT, K_UPSCALE }; int n = 0;
+    for (int b = 0; b < 3; b++) { int v = atomic_load(&g_bak[b]); if (v >= 0) { atomic_store(&g_pend[bk_key[b]], v); n++; } }
+    if (n) { atomic_fetch_add(&g_repaint, 1); LOG("自定义设置：图形页打开，按崩溃围栏自动关闭前的值预选 %d 项（点应用生效，放弃则保持关闭）", n); }
+    return n;
 }
 void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     (void)arg; if (!cat || !act || strcmp(cat, "OptionsPanelMessage")) return;
@@ -271,6 +291,8 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
         if (atomic_load(&g_pend[K_Q3D]) == 4) { atomic_store(&g_pend[K_Q3D], 0); atomic_store(&g_pend[K_UPSCALE], 0); }
         for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_RES) res_changed = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd == 3); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd == 3 ? "Quality" : "Adaptive", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
         dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && atomic_load(&g_val[K_Q3D]) == 3);
+        { int had = 0; for (int b = 0; b < 3; b++) had |= atomic_exchange(&g_bak[b], -1) >= 0;   // 应用 = 玩家已经决定：崩溃围栏的备份用完即清 | Apply = the player has decided: the crash-fence backup is cleared
+          if (had) { ch = 1; LOG("自定义设置：应用，清掉崩溃围栏的实验项备份"); } }
         if (res_changed) res_notify();
         atomic_fetch_add(&g_repaint, 1);
         if (ch) save(); }
@@ -353,8 +375,11 @@ void dm_graphics_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
     static dm_wref seen[5]; static int paint;
     uint64_t sp = dm_ui_top(root, "3PlusGraphicsOptionsPanel");
-    if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); return; }
-    load_once(); int repaint = atomic_load(&g_repaint);
+    static int was_open;
+    if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); was_open = 0; return; }
+    load_once();
+    if (!was_open) { was_open = 1; exp_restore_pending(); }   // 刚打开：崩溃围栏关过实验项就按原值预选 | just opened: if the crash fence turned experimental features off, pre-select the originals
+    int repaint = atomic_load(&g_repaint);
     if (paint != repaint) { paint = repaint; memset(seen, 0, sizeof seen); }
     uint64_t fps = find_w(sp, "TouchGraphicsFps", 0);
     int fps_ok = fps && DM_WIDGET_OK(main_base(), fps, DM_VT_SLIDER, "图形设置帧率");

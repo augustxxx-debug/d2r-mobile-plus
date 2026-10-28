@@ -112,3 +112,12 @@ host/loader.c	安卓	同上
 host/loader.c	鸿蒙	同上
 ios/tools/gen_romfs_overlay.py	ASTC 版覆盖层的新数据档	构建期一致性错误，仅写终端，不写入游戏布局
 ios/tools/drop_light.py	掉落光变体：	构建期生成数量统计，仅写终端，不显示给玩家
+host/dm_custom.c	设置文件还没法读	崩溃围栏关实验项的说明，只拼进日志行（dm_crashfence.c LOG）
+host/dm_custom.c	120 帧档 → 60	同上，只进日志
+host/dm_custom.c	光追阴影 → 关	同上，只进日志
+host/dm_custom.c	MetalFX 空间超分 → 关	同上，只进日志
+host/dm_custom.c	=、	同上：日志里各项之间的分隔
+host/dm_custom.c	实验性功能本来都关着	同上，只进日志
+host/hle_lifecycle.c	@dm_crashfence_clean	崩溃围栏清标记的原因，只进日志
+ios/Sources/main.m	@dm_crashfence_clean	崩溃围栏清标记的原因，只进日志
+ios/Sources/main.m	@crash_payloads	崩溃围栏 MetricKit 送达方式，只进日志
