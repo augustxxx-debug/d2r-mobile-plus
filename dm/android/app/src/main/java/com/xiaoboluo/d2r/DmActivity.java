@@ -157,15 +157,174 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             }, "dm-import").start();
             return false;
         }
+        // 没有导入包、也没导入过，或导入的是给别的版本做的：App 带了生成器（-PdmGenRuntime 出的包）就在手机上用玩家自己的游戏文件现做，不用电脑。
+        // 开发时直接推进来的（有 out/main.patched.bin、没有 pack_info.txt）不动
+        // No import pack and nothing imported, or what was imported was made for another version: when the App carries the generator (built with -PdmGenRuntime)
+        // it makes the pack on the phone from the player's own game files, without a computer. Files pushed directly during development (out/main.patched.bin, no pack_info.txt) are left alone
+        String product = packProduct(have);
+        File ext = getExternalFilesDir(null);
+        boolean pushed = have == null && (new File(runtime, "out/main.patched.bin").canRead() || (ext != null && new File(ext, "dm/out/main.patched.bin").canRead()));
+        if (generating || (want == null && !pushed && !BuildConfig.DM_PRODUCT.equals(product) && generatorAvailable())) { generate(source.getParentFile(), runtime); return false; }
         // 已导入的是给别的版本做的（App 升级了、导入包没重做）：同样要重做导入包。开发时直接推进来的没有 pack_info.txt，不核
         // The imported pack was made for another version (the app was updated, the pack was not remade): it has to be remade too.
         // Files pushed directly during development have no pack_info.txt and are not checked
-        String product = packProduct(have);
         if (have != null && !BuildConfig.DM_PRODUCT.equals(product)) { showStartError(getString(R.string.dmAndroidImportVersion, product)); return false; }
         return true;
     }
 
     private interface Progress { void percent(int p); }
+
+    // ---- 手机端生成导入包（PackGenerator）：自动开始，进度与失败原因显示在这一页；生成线程不持有 Activity，界面每半秒从静态状态取一次 ----
+    // ---- On-phone import pack generation (PackGenerator): starts by itself, progress and failure reasons on this screen; the generation thread holds no Activity and the screen polls the static state every half second ----
+    private static volatile boolean generating;
+    private static final PackGenerator.State genState = new PackGenerator.State();
+    private static volatile String genFailure;   // 生成失败时给玩家看的原因（已按语言取好） | the failure reason shown to the player (already localised)
+    private final android.os.Handler genHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private TextView genStep;
+
+    private boolean generatorAvailable() {
+        if (!new File(getApplicationInfo().nativeLibraryDir, "libdmgen_py.so").canExecute()) return false;
+        try (InputStream in = getAssets().open("dmgen/runtime.txt")) { return true; } catch (IOException e) { return false; }
+    }
+
+    private void showGenScreen(String title, String body, String hint) {
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL); box.setPadding(64, 48, 64, 48);
+        box.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        // 三层：标题 / 正文 / 副文，字号 24 / 18 / 14（相邻比 1.29–1.33，同 CLAUDE 文案原则的层级） | three levels: title / body / sub at 24 / 18 / 14 (neighbouring ratio 1.29-1.33)
+        TextView t = new TextView(this); t.setTextSize(24); t.setText(title); box.addView(t);
+        TextView b = new TextView(this); b.setTextSize(18); b.setText(body); b.setPadding(0, 24, 0, 0); box.addView(b);
+        genStep = null;
+        if (hint != null) {
+            genStep = new TextView(this); genStep.setTextSize(18); genStep.setPadding(0, 24, 0, 0); box.addView(genStep);
+            TextView h = new TextView(this); h.setTextSize(14); h.setText(hint); h.setPadding(0, 24, 0, 0); box.addView(h);
+        }
+        setContentView(box);
+    }
+
+    private String stepLabel(PackGenerator.Step step) {
+        switch (step) {
+            case PATCH: return getString(R.string.dmAndroidGenStepPatch);
+            case ASSETS: return getString(R.string.dmAndroidGenStepAssets);
+            case OVERLAY: return getString(R.string.dmAndroidGenStepOverlay);
+            case PACKS: return getString(R.string.dmAndroidGenStepPacks);
+            case SHADERS: return getString(R.string.dmAndroidGenStepShaders);
+            case FINISH: return getString(R.string.dmAndroidGenStepFinish);
+            default: return getString(R.string.dmAndroidGenStepPrepare);
+        }
+    }
+
+    private final Runnable genPoll = new Runnable() {
+        @Override public void run() {
+            if (genFailure != null) { showGenScreen(getString(R.string.dmAndroidGenFailed), genFailure, null); return; }
+            if (!generating) { if (resumed) startHost(); return; }
+            PackGenerator.State s = genState;
+            if (s.step == PackGenerator.Step.SHADERS && s.shaderDir != null) s.shadersMade = PackGenerator.count(new File(s.shaderDir), ".xgs");
+            String line = stepLabel(s.step) + " · " + s.percent() + "%";
+            if (s.step == PackGenerator.Step.SHADERS) line += " · " + s.shadersMade + " / " + PackGenerator.SHADERS;
+            if (genStep != null) genStep.setText(line);
+            genHandler.postDelayed(this, 500);
+        }
+    };
+
+    // base = Download/S2X/D2R Mobile（玩家放 ExeFS 与 data 的地方），runtime = files/dm | base = Download/S2X/D2R Mobile (where the player puts ExeFS and data), runtime = files/dm
+    private void generate(File base, File runtime) {
+        genHandler.removeCallbacks(genPoll);
+        if (genFailure != null) { showGenScreen(getString(R.string.dmAndroidGenFailed), genFailure, null); return; }
+        showGenScreen(getString(R.string.dmAndroidGenTitle), getString(R.string.dmAndroidGenBody), getString(R.string.dmAndroidGenHint));
+        genHandler.post(genPoll);
+        if (generating) return;   // Activity 重建：生成线程还在跑，只接回界面 | the Activity was recreated: the generation thread is still running; only reattach the screen
+        // 资源目录与 startHost 同一条规则（缺省 data，没有就沿用早先的 Download/data） | resource directory by the same rule as startHost (data by default, else the earlier Download/data)
+        File data = new File(base, "data"), earlier = new File(base.getParentFile().getParentFile(), "data");
+        if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
+        java.util.List<String> missing = PackGenerator.missingInputs(base);
+        if (data != new File(base, "data") && new File(data, "build_manifest.psv").isFile()) missing.remove("data/build_manifest.psv");
+        if (!missing.isEmpty()) { fail(getString(R.string.dmAndroidGenNeedFiles, String.join(", ", missing))); return; }
+        File gen = new File(getFilesDir(), "dmgen");
+        long free = new android.os.StatFs(getFilesDir().getPath()).getAvailableBytes() + treeBytes(new File(gen, "root"));
+        if (free < PackGenerator.SPACE_NEEDED) { fail(getString(R.string.dmAndroidGenNoSpace, android.text.format.Formatter.formatShortFileSize(this, free))); return; }
+        generating = true; genState.step = PackGenerator.Step.PREPARE; genState.shaderDir = null; genState.shadersMade = 0;
+        final File dataDir = data; final String nativeDir = getApplicationInfo().nativeLibraryDir;
+        final android.content.res.AssetManager assets = getAssets(); final android.content.Context app = getApplicationContext();
+        final int jobs = Math.max(1, Runtime.getRuntime().availableProcessors());
+        new Thread(() -> {
+            String failure = null; java.util.Deque<String> tail = PackGenerator.newTail(); File log = new File(gen, "gen.log");
+            try {
+                unpackIfChanged(assets, "dmgen/runtime.zip", "dmgen/runtime.txt", new File(gen, "rt"));
+                unpackIfChanged(assets, "dmgen/src.zip", "dmgen/src.sha256", new File(gen, "src"));
+                File queries = new File(gen, "queries"); PackGenerator.deleteTree(queries); queries.mkdirs();
+                for (String q : assets.list("dmgen/queries")) try (InputStream in = assets.open("dmgen/queries/" + q)) { Files.copy(in, new File(queries, q).toPath()); }
+                // 脚本要的目录形状：<游戏>/ExeFS、<游戏>/RomFS/data，用符号链接指到玩家放的地方（只读，清理时不跟链接） | the layout the script wants: <game>/ExeFS, <game>/RomFS/data, as symlinks to where the player put them (read only; cleaning never follows links)
+                File game = new File(gen, "game"); PackGenerator.deleteTree(game); new File(game, "RomFS").mkdirs();
+                Os.symlink(new File(base, "ExeFS").getPath(), new File(game, "ExeFS").getPath());
+                Os.symlink(dataDir.getPath(), new File(game, "RomFS/data").getPath());
+                File out = new File(gen, "out"); PackGenerator.deleteTree(out);
+                int exit = PackGenerator.run(PackGenerator.command(new File(nativeDir), gen, game, out), PackGenerator.environment(new File(nativeDir), gen, jobs), new File(gen, "src"), log, genState, tail);
+                PackGenerator.Failure kind = PackGenerator.classify(exit, new java.util.ArrayList<>(tail));
+                if (kind == PackGenerator.Failure.NONE) {
+                    PackGenerator.install(new File(out, "android"), runtime);
+                    for (String d : new String[]{"root", "out", "game"}) PackGenerator.deleteTree(new File(gen, d));   // 缓存与中间产物约 1 GB，做完就删 | caches and intermediates are about 1 GB; removed when done
+                } else {
+                    failure = kind == PackGenerator.Failure.NEED_FILES ? app.getString(R.string.dmAndroidGenNeedFiles, PackGenerator.missingDetail(new java.util.ArrayList<>(tail)))
+                            : kind == PackGenerator.Failure.NO_SPACE ? app.getString(R.string.dmAndroidGenNoSpace, android.text.format.Formatter.formatShortFileSize(app, new android.os.StatFs(gen.getPath()).getAvailableBytes()))
+                            : kind == PackGenerator.Failure.STEP_FAILED ? app.getString(R.string.dmAndroidGenStepFailed, stepLabelFor(app, genState.step))
+                            : app.getString(R.string.dmAndroidGenInterrupted, "exit " + exit);
+                }
+            } catch (IOException | ErrnoException | InterruptedException | RuntimeException e) {
+                String m = e.getMessage() == null ? e.toString() : e.getMessage();
+                failure = m.contains("No space left") || m.contains("ENOSPC")
+                        ? app.getString(R.string.dmAndroidGenNoSpace, android.text.format.Formatter.formatShortFileSize(app, new android.os.StatFs(gen.getPath()).getAvailableBytes()))
+                        : app.getString(R.string.dmAndroidGenInterrupted, m);
+                tail.addLast("[java] " + e);
+            }
+            if (failure != null) {   // 日志放到玩家看得到的地方，反馈时附上 | put the log where the player can see it, to attach when reporting
+                try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) {
+                    if (log.isFile()) Files.copy(log.toPath(), o);
+                    o.write(("\n" + String.join("\n", tail) + "\n").getBytes(StandardCharsets.UTF_8));
+                } catch (IOException ignored) {}
+            }
+            genFailure = failure;
+            generating = false;
+        }, "dm-generate").start();
+    }
+
+    private static String stepLabelFor(android.content.Context c, PackGenerator.Step step) {
+        int id;
+        switch (step) {
+            case PATCH: id = R.string.dmAndroidGenStepPatch; break;
+            case ASSETS: id = R.string.dmAndroidGenStepAssets; break;
+            case OVERLAY: id = R.string.dmAndroidGenStepOverlay; break;
+            case PACKS: id = R.string.dmAndroidGenStepPacks; break;
+            case SHADERS: id = R.string.dmAndroidGenStepShaders; break;
+            case FINISH: id = R.string.dmAndroidGenStepFinish; break;
+            default: id = R.string.dmAndroidGenStepPrepare;
+        }
+        return c.getString(id);
+    }
+
+    private void fail(String reason) { genFailure = reason; showGenScreen(getString(R.string.dmAndroidGenFailed), reason, null); }
+
+    private static long treeBytes(File f) {
+        if (java.nio.file.Files.isSymbolicLink(f.toPath())) return 0;
+        if (!f.isDirectory()) return f.length();
+        long n = 0; File[] list = f.listFiles();
+        if (list != null) for (File c : list) n += treeBytes(c);
+        return n;
+    }
+
+    // 资产里的 zip 与它的版本记录：记录变了才重新解开（先解到 .part 再改名） | a zip in the assets and its version record: unpacked again only when the record changed (into .part, then renamed)
+    private static void unpackIfChanged(android.content.res.AssetManager assets, String zip, String stamp, File dest) throws IOException {
+        String want;
+        try (InputStream in = assets.open(stamp)) { want = new String(in.readAllBytes(), StandardCharsets.UTF_8); }
+        File mark = new File(dest, ".stamp");
+        if (want.equals(readText(mark))) return;
+        File part = new File(dest.getPath() + ".part");
+        PackGenerator.deleteTree(part); part.mkdirs();
+        try (InputStream in = assets.open(zip)) { PackGenerator.unzip(in, part); }
+        Files.write(new File(part, ".stamp").toPath(), want.getBytes(StandardCharsets.UTF_8));
+        PackGenerator.deleteTree(dest);
+        if (!part.renameTo(dest)) throw new IOException("rename " + dest.getName());
+    }
 
     private static void importPack(File source, File runtime, Progress progress) throws IOException {
         for (String item : IMPORT_ITEMS) if (!new File(source, item).exists()) throw new IOException("missing " + item);
@@ -448,7 +607,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     @Override public void onDisplayAdded(int id) { updateRefresh(); }
     @Override public void onDisplayRemoved(int id) { updateRefresh(); }
     @Override public void onDisplayChanged(int id) { updateRefresh(); }
-    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
+    // 回到前台时生成失败的结论作废、重新判断：玩家可能刚补好游戏文件或腾出空间 | back in the foreground a generation failure is dropped and judged afresh: the player may have just added the game files or freed space
+    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); if (!generating) genFailure = null; startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
     @Override protected void onPause() { resumed = false; if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
     @Override protected void onStart() { super.onStart(); if (started) nativeFocus(2); }
     @Override protected void onStop() { if (started) nativeFocus(1); com.xiaoboluo.d2r.widget.HeroWidgetProvider.requestUpdate(this); super.onStop(); }

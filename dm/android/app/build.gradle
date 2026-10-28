@@ -6,9 +6,16 @@
 //   default: externalNativeBuild builds it with dm/android/CMakeLists.txt (needs -PdmGenDir=<directory of host headers generated from the game files>, see that file's header);
 //   -PdmPrebuiltJni=<dir>: package the already built <dir>/arm64-v8a/libdm.so directly (when CMake is unavailable on the build machine).
 //   -PdmAppId=<id>: install under another application id (to sit beside a same-name package signed by someone else; default com.xiaoboluo.d2r).
+//   -PdmGenRuntime=<目录>：带上手机端生成导入包的运行时（dm/android/tools/gen_runtime.sh 的输出：jniLibs 里的 Python / 翻译工具 / SPIRV-Tools 可执行文件、
+//   assets/dmgen/runtime.zip），并现打本仓的生成脚本与 4 个查询核（tools/pack_gen_assets.py）；这时原生库按旧方式解到 nativeLibraryDir（才能 exec）。不给就没有手机端生成，只认电脑做的导入包。
+//   -PdmGenRuntime=<dir>: include the runtime for making the import pack on the phone (output of dm/android/tools/gen_runtime.sh: the Python / translator / SPIRV-Tools executables in jniLibs,
+//   assets/dmgen/runtime.zip), and pack this repo's generator scripts and the 4 query kernels (tools/pack_gen_assets.py); native libraries are then extracted to nativeLibraryDir the legacy way (so they can be exec'd).
+//   Without it there is no on-phone generation, and only an import pack made on a computer is accepted.
 plugins { id 'com.android.application' }
 
 def prebuilt = project.findProperty('dmPrebuiltJni')
+def genRuntime = project.findProperty('dmGenRuntime')
+if (genRuntime && !file("${genRuntime}/assets/dmgen/runtime.zip").isFile()) throw new GradleException("dmGenRuntime=${genRuntime} 里没有 assets/dmgen/runtime.zip（先跑 dm/android/tools/gen_runtime.sh）")
 
 // 版本号跟 iOS / Mac 同一来源（dm/tools/version.sh）：versionName = DM_VERSION（标签 vX.Y.Z），versionCode = DM_BUILD（沿提交历史单调递增的构建号，
 // 覆盖升级只增不减），BuildConfig.DM_VERSION_LABEL = 「1.0.0+91 · 674f5d5」给启动日志与分享摘要。没有 git 的源码副本（git archive 导出）读不到历史：
@@ -68,7 +75,7 @@ android {
         if (!prebuilt) externalNativeBuild { cmake {
             arguments "-DDM_GEN_DIR=${project.findProperty('dmGenDir') ?: ''}"
             if (project.findProperty('dmPython')) arguments "-DPython3_EXECUTABLE=${project.property('dmPython')}"
-            targets 'dm'
+            targets 'dm', 'dmdeswizzle'
         } }
     }
     if (!prebuilt) externalNativeBuild { cmake { path '../CMakeLists.txt'; version '3.31.6' } }
@@ -87,4 +94,18 @@ android {
     buildTypes { release { minifyEnabled false; if (releaseKey) signingConfig signingConfigs.release } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
-tasks.named('preBuild').configure { dependsOn(generateStartupStrings, generateLauncherIcon) }
+// 手机端生成：本仓的生成脚本（src.zip）与查询核，构建时现打，与 libdm 编入的覆盖层源指纹出自同一棵树
+// On-phone generation: this repo's generator scripts (src.zip) and the query kernels, packed at build time from the same tree as the overlay source fingerprint compiled into libdm
+def genAssets = layout.buildDirectory.dir('generated/dmgenAssets')
+def generateGenAssets = tasks.register('generateGenAssets', Exec) {
+    inputs.files(fileTree('../..') { include 'tools/**', 'ios/tools/**', 'gfx/**', 'host/**', 'i18n/**', 'data/**', 'verify/**', 'android/tools/**', 'PRODUCT'; exclude '**/__pycache__/**' })
+    outputs.dir(genAssets)
+    commandLine(project.findProperty('dmPython') ?: 'python3', '../tools/pack_gen_assets.py', '--output', genAssets.get().asFile,
+                '--glslc', "${androidComponents.sdkComponents.ndkDirectory.get().asFile}/shader-tools/${org.gradle.internal.os.OperatingSystem.current().isMacOsX() ? 'darwin-x86_64' : (org.gradle.internal.os.OperatingSystem.current().isWindows() ? 'windows-x86_64' : 'linux-x86_64')}/glslc")
+}
+if (genRuntime) {
+    android.sourceSets.main.jniLibs.srcDir("${genRuntime}/jniLibs")
+    android.sourceSets.main.assets.srcDirs("${genRuntime}/assets", genAssets.get().asFile)
+    android.packaging.jniLibs.useLegacyPackaging = true
+}
+tasks.named('preBuild').configure { dependsOn(generateStartupStrings, generateLauncherIcon); if (genRuntime) dependsOn(generateGenAssets) }
