@@ -1240,11 +1240,16 @@ void front_save_failed(int err) {
 }
 
 // 原生提示一次（崩溃围栏「已关闭实验性功能」，dm/host/dm_crashfence.c）：覆盖 dm_crashfence.c 的弱日志实现；任意线程调，切主线程弹，不阻塞调用方。
-// 真机 e28e471：主菜单那一刻（前端启动中）弹出后日志记「已显示」，35 秒后屏幕上却没有了，也没人点确定。所以改成主菜单出来后等 3 秒再弹，
-// 弹出后每 2 秒看一次它还在不在窗口里：没点确定就不见了 → 记一行、重弹（最多 3 次）；点了确定记一行。
+// 真机 e28e471：日志记「已显示」，35 秒后屏幕上没有了——事后查明是用户自己点掉的（那一版不记「点确定」，日志看不出来）。
+// 现在：主菜单出来后等 3 秒再弹；点确定记一行；只有「没点确定就不见了」才重弹（最多 3 次）。判断以确定按钮的回调标记为准：UIKit 先收起弹框、
+// 再调按钮回调，中间有一小段弹框已不在窗口里、标记还没置上，所以要连续两次（隔 2 秒）都看到「不在、没点」才算被收掉，避免玩家点了确定还重弹。
+// 测试：触点脚本「alert ok」在没有输入对话框时点这个提示的确定（与真点同样先收起、再调回调）
 // One native notice (crash fence "experimental features turned off", dm/host/dm_crashfence.c): overrides the weak logging implementation in dm_crashfence.c; callable from any thread, presented on the main thread, never blocks the caller.
 // Device run of e28e471: presented at the moment of the main menu (front end still starting) the log said "shown", yet 35 s later it was gone from the screen and nobody had tapped OK. So it is now presented 3 s after the main menu appears,
 // and checked every 2 s after presenting: gone without OK → log a line and present again (at most 3 times); tapping OK is logged.
+// (Device run of e28e471: the vanished alert turned out to be the user tapping it; that build did not log OK. Decisions follow the OK handler's flag: UIKit dismisses the alert first and calls the handler afterwards,
+//  so "gone and not tapped" must be seen on two checks in a row (2 s apart) before it counts as removed - a player who tapped OK never gets it again. Test: the touch script's "alert ok", with no input dialog up, taps this notice's OK the same way)
+static __weak UIAlertController *g_notice_alert; static void (^g_notice_ok)(void);
 static void notice_present(NSString *t, NSString *m, int attempt) {
     UIViewController *vc = nil;
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes)
@@ -1253,14 +1258,16 @@ static void notice_present(NSString *t, NSString *m, int attempt) {
     if (!vc) { LOG("【红】前端：提示没有窗口，没弹：%s", t.UTF8String); return; }
     __block int tapped = 0;
     UIAlertController *a = [UIAlertController alertControllerWithTitle:t message:m preferredStyle:UIAlertControllerStyleAlert];
-    [a addAction:[UIAlertAction actionWithTitle:SWT("dmConfirm") style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { tapped = 1; LOG("前端：提示「%s」玩家点了确定", t.UTF8String); }]];
-    __weak UIAlertController *wa = a;
+    void (^ok)(void) = ^{ if (tapped) return; tapped = 1; g_notice_ok = nil; LOG("前端：提示「%s」玩家点了确定", t.UTF8String); };
+    [a addAction:[UIAlertAction actionWithTitle:SWT("dmConfirm") style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { ok(); }]];
+    __weak UIAlertController *wa = a; g_notice_alert = a; g_notice_ok = ok;
     [vc presentViewController:a animated:YES completion:^{ LOG("前端：提示已显示：%s（第 %d 次，挂在 %s 上）", t.UTF8String, attempt, NSStringFromClass(vc.class).UTF8String); }];
-    __block int n = 0;   // 计时器自己持有这个块，看到结论就作废 | the timer holds this block itself and is invalidated once there is an answer
+    __block int n = 0, gone = 0;   // 计时器自己持有这个块，看到结论就作废 | the timer holds this block itself and is invalidated once there is an answer
     [NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer *tm) {
         n++; UIAlertController *s = wa;
-        if (tapped) { [tm invalidate]; return; }
-        if (s && s.viewIfLoaded.window) { if (n >= 15) [tm invalidate]; return; }   // 还在：看到 30 秒为止 | still there: watch for up to 30 s
+        if (tapped) { [tm invalidate]; return; }   // 以确定按钮的回调为准 | the OK handler decides
+        if (s && s.viewIfLoaded.window) { gone = 0; if (n >= 15) [tm invalidate]; return; }   // 还在：看到 30 秒为止 | still there: watch for up to 30 s
+        if (++gone < 2) return;   // 第一次看到不在：可能正处在「已收起、回调还没来」之间，再等一拍 | first time gone: may be between "dismissed" and "handler not yet called", wait one more tick
         [tm invalidate];
         LOG("【红】前端：提示「%s」没点确定就不见了（弹出后约 %d 秒）%s", t.UTF8String, 2 * n, attempt < 3 ? "，重弹" : "，不再重弹");
         if (attempt < 3) notice_present(t, m, attempt + 1);
@@ -1508,6 +1515,8 @@ static void touch_script_start(void) {
                 UIAlertAction *okAct=nil; for(UIAlertAction *x in al.actions) if(x.style==UIAlertActionStyleDefault) okAct=x;
                 if(al && fin && ok && okAct && !okAct.enabled) LOG("[script] alert 确定：按钮是灰的（框内「%s」），没点",al.textFields.firstObject.text.UTF8String);   // 真人点不动灰按钮，脚本也不许绕过 | A real person cannot tap a greyed-out button, and the script must not bypass it either
                 else if(al && fin) { LOG("[script] alert %s（框内「%s」）",ok?"确定":"取消",al.textFields.firstObject.text.UTF8String); [al dismissViewControllerAnimated:NO completion:^{ fin(ok); }]; }
+                else if(g_notice_alert && g_notice_ok) { UIAlertController *na=g_notice_alert; void (^nok)(void)=g_notice_ok; LOG("[script] alert：点提示框的确定（先收起、再调回调，同真点）");
+                    [na dismissViewControllerAnimated:YES completion:^{ nok(); }]; }
                 else LOG("[script] alert：没有弹着的输入对话框"); }
             else if([op isEqualToString:@"note"]) LOG("[script] note %s",[[f subarrayWithRange:NSMakeRange(2,f.count-2)] componentsJoinedByString:@" "].UTF8String);
             else [g_touch_view scriptPhase:op slot:[f[2] intValue] at:f.count>3?f[3]:nil];
