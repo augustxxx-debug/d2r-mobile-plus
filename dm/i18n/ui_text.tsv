@@ -504,5 +504,5 @@ dmCommunityCopyLink	复制链接	Copy link	Copiar enlace		Копировать	�
 dmCreditsTitle	鸣谢	Credits	Créditos		Благодарности	감사의 말	自定义页「关于」组社区行之后的「鸣谢」子块标题（标题级 GoldYellow；touch_layout.py _custom_about，名单由宿主 dm_community.c 按语言拼）
 dmCreditsSpecial	特别鸣谢	Special thanks	Agradecimiento especial		Особая благодарность	특별 감사	鸣谢子块第一行的标签（36 号 LightGold，名单 36 号 LightGray 由宿主写）
 dmCreditsThanks	鸣谢	Thanks	Agradecimientos		Благодарность	감사	鸣谢子块第二行的标签（名单为空时整行不显示）
-dmCreditsUpstreamNote	（d2r-mobile 原作者）	(author of d2r-mobile)	(autor de d2r-mobile)		(автор d2r-mobile)	(d2r-mobile 원작자)	特别鸣谢名单末尾的括号说明（名字不翻译，只翻译这段）
+dmCreditsUpstreamNote	（d2r-mobile 原作者）	 (author of d2r-mobile)	 (autor de d2r-mobile)		 (автор d2r-mobile)	 (d2r-mobile 원작자)	特别鸣谢名单末尾的括号说明（名字不翻译，只翻译这段）
 dmCreditsSep	、	, 	, 		, 	, 	鸣谢名单里名字之间的分隔（中文顿号，其他语言逗号加空格；dm_community.c 拼行用）
