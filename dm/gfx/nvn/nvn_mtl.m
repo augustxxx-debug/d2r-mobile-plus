@@ -1663,7 +1663,7 @@ static void pass_dims(RPD *pd, NSUInteger nc, NSUInteger *w, NSUInteger *h) {
 // On TBDR passes overlap in the pipeline (the later pass's vertex stage is earlier than the end of the earlier pass's fragment stage): gpu_ms = this pass's start-to-end span (including queueing) and cannot be summed;
 // attribution uses the timeline increment inc_ms = t1 − max(t0, latest t1 of the passes completed so far); the sum of the increments of all passes = total time the GPU is busy (command buffers complete in submission order)
 typedef struct { uint64_t frame, pass; int idx, kind, w, h, draws, slot; uint32_t cfmt0, dfmt; char load[12]; int rt; } pg_pass;   // rt：光追阴影的计算通道，耗时另计到 g_rts_gpu_*（nvn_rtshadow.inc 的统计行） | rt: the ray-traced shadow compute pass, also accumulated into g_rts_gpu_* (the statistics line of nvn_rtshadow.inc)
-static double g_rts_gpu_sum; static uint64_t g_rts_gpu_n;
+#include "nvn_rt_gpustat.h"   // g_rts_gpu_sum / g_rts_gpu_n：只在 g_pg_mu 里读写（七审 Q7-04） | g_rts_gpu_sum / g_rts_gpu_n: read and written only inside g_pg_mu (seventh review Q7-04)
 // pass：全局通道号（同 DM_NVN_PASSDUMP 各行的通道号，供两份记录对接） | pass: global pass number (same as the pass number in the DM_NVN_PASSDUMP lines, for joining the two records)
 #define PG_SLOTS 4096   // 计数采样缓冲上限 32768 字节 = 4096 个时间戳（本机报错实测） | Counter sample buffer limit 32768 bytes = 4096 timestamps (measured from the error on this machine)
 #define PG_RING 8
@@ -1817,7 +1817,7 @@ static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回�
             fprintf(g_pg_f, "%llu\t%d\t%c\t%.4f\t%.4f\t%d\t%d\t%u\t%u\t%s\t%d\t%llu\t%llu\t%llu\t%d\n", (unsigned long long)p->frame, p->idx, p->kind ? 'C' : 'R', ms, inc,
                     p->w, p->h, p->cfmt0, p->dfmt, p->load, p->draws, (unsigned long long)a, (unsigned long long)b, (unsigned long long)p->pass, (int)p->rt);
             if (p->idx < 256 && p->frame > 300) { pg_stat *st = &g_pg_st[p->idx]; st->sum += inc; st->n++; st->last = inc; st->meta = *p; }
-            if (p->rt) { g_rts_gpu_sum += ms; g_rts_gpu_n++; }
+            if (p->rt) rts_gpu_stat_add(ms);   // 持有 g_pg_mu | g_pg_mu held
             if (p->frame >= g_pg_rep_frame + 300 && p->frame > 300) {   // 每 300 帧报一次前五（第 300 帧起累计） | Report the top five every 300 frames (accumulated from frame 300)
                 g_pg_rep_frame = p->frame; double tot = 0; int top[5] = {-1, -1, -1, -1, -1};
                 for (int k = 0; k < 256; k++) if (g_pg_st[k].n) { double m = g_pg_st[k].sum / g_pg_st[k].n; tot += m;

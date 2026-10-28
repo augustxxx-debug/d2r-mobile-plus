@@ -490,12 +490,13 @@ static void rts_frame_begin(uint64_t f) {
       if ((b0 != g_rts.bad_seen[0] || b1 != g_rts.bad_seen[1]) && nl++ < 8) MLOG("光追阴影：坏顶点（非有限 / 超过 1e7）已收成原点：解码累计 %u 个、反投影累计 %u 个（帧 %llu；反投影的多为该次绘制没用到的顶点——同一顶点缓冲分几次画时各次只写自己引用的，没写的不进三角形，无害）", b0, b1, (unsigned long long)f);
       g_rts.bad_seen[0] = b0; g_rts.bad_seen[1] = b1; }
     if (g_rts.n_frames && g_rts.n_frames % 600 == 0) {
+        double gpu_mean; uint64_t gpu_n; rts_gpu_stat_take(&g_pg_mu, &gpu_mean, &gpu_n);   // 七审 Q7-04：与完成回调同一把锁取快照并清零，下面锁外记日志 | seventh review Q7-04: snapshot and reset under the completion callback's lock, logged below outside it
         MLOG("光追阴影：第 %llu 帧 实例 %d（重复 %d、蒙皮 %d、其中绑定姿势 %d、格式不认 %d、非三角列表 %d、镂空 %d）、网格缓存 %d（%.1f / %llu MB，预算淘汰 %llu）、累计建 %llu 个 BLAS（%.1f 万三角形）、refit %llu 次、追踪 %llu 帧、"
              "进 TLAS 的阴影绘制 %llu 次、_rt 变体 %d 个（缺 %d）、_pos 变体 %d 个（缺 %d）、点光 %d 盏（追踪 %llu 帧）、本帧太阳 %s、预渲染遮挡体 %d（保留表 %d、本帧补进 %d）、玩家光 %s（副本 %llu 次）、光追 GPU %.2f ms/帧（%llu 帧计时）；"
              "光追帧 %llu、失败退回 %llu 帧、有绘制没进 TLAS 整帧留原图 %llu 帧、没进 TLAS 的绘制 %llu 次、阴影图清回全亮 %s；换 _rt 变体的绘制 %llu 次、接收面不符没换 %llu 次、主通道无绘制补追 %llu 次；每帧槽 %d（全忙 %llu 次）、键摘要 %.0f µs / %.0f KB 每光追帧；画面切换 %llu 次（切回原版 %llu 次、等迟滞 %llu 帧，现要求连续完整 %d 帧）",
             (unsigned long long)g_rts.n_frames, g_rts.ninst, g_rts.ndup, g_rts.nskin, g_rts.nskin_pose, g_rts.nskip_fmt, g_rts.nskip_prim, g_rts.nalpha, g_rts.nmesh, g_rts.cache_bytes / 1048576.0, (unsigned long long)(g_rts.budget >> 20), (unsigned long long)g_rts.n_evict_budget,
             (unsigned long long)g_rts.n_builds, g_rts.build_tris / 1e4, (unsigned long long)g_rts.n_refit, (unsigned long long)g_rts.n_traced, (unsigned long long)g_rts.n_skipped_draws, g_rts.n_rt_loaded, g_rts.n_rt_missing, g_rts.n_pos_loaded, g_rts.n_pos_missing,
-            g_rts.last_npl, (unsigned long long)g_rts.n_ptraced, g_rts.have_sun ? "有" : "无", g_rts.nprepass, g_rts.nkeep, g_rts.nkeep_used, g_rts.ptrack.sure ? "已认出" : "未认出", (unsigned long long)g_rts.n_player_scaled, g_rts_gpu_n ? g_rts_gpu_sum / g_rts_gpu_n : 0, (unsigned long long)g_rts_gpu_n,
+            g_rts.last_npl, (unsigned long long)g_rts.n_ptraced, g_rts.have_sun ? "有" : "无", g_rts.nprepass, g_rts.nkeep, g_rts.nkeep_used, g_rts.ptrack.sure ? "已认出" : "未认出", (unsigned long long)g_rts.n_player_scaled, gpu_mean, (unsigned long long)gpu_n,
             (unsigned long long)g_rts.n_rt_frames, (unsigned long long)g_rts.n_fail_frames, (unsigned long long)g_rts.n_partial_frames, (unsigned long long)g_rts.n_orig_draws, g_rts.map_cleared ? "是" : "否",
             (unsigned long long)g_rts.n_rt_draws, (unsigned long long)g_rts.n_recv_skip, (unsigned long long)g_rts.n_late_trace, g_rts.nslot, (unsigned long long)g_rts.n_slot_busy, g_rts.key_ns / 1e3 / (g_rts.n_rt_frames ? g_rts.n_rt_frames : 1), g_rts.key_bytes / 1024.0 / (g_rts.n_rt_frames ? g_rts.n_rt_frames : 1), (unsigned long long)g_rts.n_switch, (unsigned long long)g_rts.n_drop, (unsigned long long)g_rts.n_held, g_rts.hyst ? g_rts.need : 1);
         { char mb[600] = "", ub[600]; size_t mo = 0; for (int i = 0; i < RM_N; i++) if (g_rts.miss[i]) mo += (size_t)snprintf(mb + mo, mo < sizeof mb ? sizeof mb - mo : 0, "%s%s %llu", mo ? "、" : "", k_rm_why[i], (unsigned long long)g_rts.miss[i]);
@@ -517,7 +518,7 @@ static void rts_frame_begin(uint64_t f) {
             (unsigned long long)g_rts.n_skip_draws, (unsigned long long)g_rts.n_resid_draws, (unsigned long long)g_rts.n_resid_frames, (unsigned long long)g_rts.n_nonsun_draws, (unsigned long long)g_rts.n_skip_lost, (unsigned long long)g_rts.n_skip_load, (unsigned long long)g_rts.n_nomain);
         if (g_rts.ao_on) MLOG("光追 AO：第 %llu 帧 当前%s；累计追 %llu 帧、乘到画面 %llu 帧、算了没乘上 %llu 帧（主通道之后没再挂 HDR）", (unsigned long long)g_rts.n_frames, g_rts.eff.ao ? "开" : "关（自动降档）",
             (unsigned long long)g_rts.n_ao_traced, (unsigned long long)g_rts.n_ao_applied, (unsigned long long)g_rts.n_ao_missed);
-        g_rts_gpu_sum = 0; g_rts_gpu_n = 0; g_rts.n_rt_draws = g_rts.n_recv_skip = 0; }
+        g_rts.n_rt_draws = g_rts.n_recv_skip = 0; }
     // 1. 就绪闸门：上一帧（必须紧挨着）完整才走光追；失败退避 2、4 … 512 帧。失败那一帧自己的阴影图没被清，原版阴影还在（六审 5.1） | 1. Readiness gate: ray trace only if the previous (adjacent) frame was complete; failures back off 2, 4 … 512 frames. The failing frame's own shadow map was not cleared (sixth review 5.1)
     const char *why = g_rts.n_frames && g_rts.frame + 1 == f ? rts_frame_fail() : "上一帧没经过光追模块";
     // 局部回退时「没有主通道」的帧（读图 / 切关时只画了阴影图）屏幕上什么都没有：不退避、不算画面切换（Mac 营地实测进局读图那一帧把迟滞要求推到 30 帧） | with partial fallback a frame "without a main pass" (only shadow maps drawn during loading / level changes) shows nothing: no backoff and no picture switch (measured at the Mac camp: the loading frame pushed the hysteresis requirement to 30 frames)
