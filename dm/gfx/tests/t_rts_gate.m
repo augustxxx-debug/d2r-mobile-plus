@@ -18,6 +18,9 @@ int main(void) { printf("SKIP：旧接口版没有光追阴影模块\n"); return
 #ifndef RTS_LAST_SLOT_BUF
 #define RTS_LAST_SLOT_BUF() (g_rts.instbuf[(g_rts.ri + 2) % 3])   // 79d571f：三槽轮转，刚用过的那一槽 | 79d571f: three rotating slots, the one just used
 #endif
+#ifndef RTS_HYST_RESET
+#define RTS_HYST_RESET() ((void)0)   // 没有画面迟滞的旧代码 | older code without picture hysteresis
+#endif
 #ifndef RTS_MAP_CLEARED
 #define RTS_MAP_CLEARED() 0   // 79d571f 从不清阴影图（靠不画） | 79d571f never clears the shadow map (it skips the draws instead)
 #endif
@@ -90,7 +93,8 @@ static float tex_depth(const tex_t *tx) {   // 回读任一张 256x256 深度图
     uint64_t f = mtl_sub_commit(); mtl_wait(f, 5000000000ull); float v = ((float *)b.contents)[128 * 256 + 128]; res_remove(b); return v;
 }
 static int until_applied(const int *ids, int nid) {   // 跑完整帧直到光追生效（阴影图被清回 1.0），最多 12 帧 | Run whole frames until ray tracing applies (map cleared back to 1.0), at most 12
-    int ok; for (int i = 0; i < 12; i++) { run_frame(1, ids, nid, &ok); if (map_depth() == 1.0f) return 1; } return 0;
+    // 这里各段测的是单次失败后恢复：每帧先清掉画面迟滞要求（切回原版是在下一帧开头才记的；迟滞本身见 t_rts_flicker） | the sections here test recovery from a single failure: drop the picture-hysteresis requirement before every frame (the switch back is recorded at the next frame start; the hysteresis itself is in t_rts_flicker)
+    int ok; for (int i = 0; i < 12; i++) { RTS_HYST_RESET(); run_frame(1, ids, nid, &ok); if (map_depth() == 1.0f) return 1; } return 0;
 }
 static rts_mesh *mesh_by_ib(const uint8_t *ib, size_t len) {
     for (uint32_t k = 0; k < g_rts.meshes.cap; k++) { rts_mesh *m = g_rts.meshes.vals[k]; if (m && m->ib && m->ib.length == len && !memcmp(m->ib.contents, ib, len)) return m; }
@@ -167,7 +171,7 @@ int main(void) { @autoreleasepool {
     { int ok2 = 0;
       for (int pass = 0; pass < 2; pass++) {
         int applied = 0; char why[256] = "";
-        for (int i = 0; i < 12 && !applied; i++) {
+        for (int i = 0; i < 12 && !applied; i++) { RTS_HYST_RESET();   // 画面迟滞另测（t_rts_flicker） | picture hysteresis is tested separately (t_rts_flicker)
             frame_open(); prepass(); rp_end();
             if (pass == 0) { p_clear_tex ct = {0}; ct.tex = &g_sdepth; ct.r.width = ct.r.height = 256; ct.r.depth = 1; ct.mask = 0xf; ct.c.f[0] = 1.0f; clear_tex(&ct); }
             { RPD *rp = [RPD new]; rp.depthAttachment.texture = tex_mtl(&g_sdepth); rp.depthAttachment.loadAction = MTLLoadActionClear; rp.depthAttachment.clearDepth = 0.25; rp.depthAttachment.storeAction = MTLStoreActionStore;
@@ -199,7 +203,7 @@ int main(void) { @autoreleasepool {
     { uint16_t *st = (uint16_t *)(g_pool + 600000); for (int k = 0; k < 48; k++) st[k] = (uint16_t)((k * 37 + 5) % 512);   // 48 个索引的带 = 46 个三角形 | a 48-index strip = 46 triangles
       uint16_t *rs = (uint16_t *)(g_pool + 600200); uint16_t rsv[8] = {300, 301, 302, 303, 0xFFFF, 304, 305, 306}; memcpy(rs, rsv, sizeof rsv);   // 重启：(300,301,302)、(302,301,303)，再 (304,305,306) | restart: (300,301,302), (302,301,303), then (304,305,306)
       int applied = 0;
-      for (int i = 0; i < 12 && !applied; i++) {
+      for (int i = 0; i < 12 && !applied; i++) { RTS_HYST_RESET();   // 画面迟滞另测（t_rts_flicker） | picture hysteresis is tested separately (t_rts_flicker)
           frame_open(); prepass(); shadow_pass(); sh(0); sdraw(g_idx, 2, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x2b);   // 2 个顶点的空绘制 | an empty draw of 2 vertices
           sdraw((const uint8_t *)st, 48, NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP, 0x2b); sdraw((const uint8_t *)rs, 8, NVN_DRAW_PRIMITIVE_TRIANGLE_STRIP, 0x2b);
           main_pass(); hdr_again(); frame_close(); applied = map_depth() == 1.0f; }
@@ -219,7 +223,7 @@ int main(void) { @autoreleasepool {
       frame_open(); { RPD *rp = [RPD new]; rp.depthAttachment.texture = tex_mtl(&g_keep); rp.depthAttachment.loadAction = MTLLoadActionClear; rp.depthAttachment.clearDepth = 0.5; rp.depthAttachment.storeAction = MTLStoreActionStore;
         RENC en = [g_cb renderCommandEncoderWithDescriptor:rp]; [en barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; m4_end(en); } frame_close();   // 上一帧游戏留下的内容（不经登记） | content the game left last frame (not registered)
       int applied = 0, ok8 = 1; char why[256] = "";
-      for (int i = 0; i < 12 && !applied; i++) {
+      for (int i = 0; i < 12 && !applied; i++) { RTS_HYST_RESET();   // 画面迟滞另测（t_rts_flicker） | picture hysteresis is tested separately (t_rts_flicker)
           frame_open(); prepass(); shadow_pass(); sh(0);
           memset(&R, 0, sizeof R); R.rt.depth = &g_keep; R.has_rt = 1; rp_begin_ex(0); sh(1);   // 生产开通道：读入 | production pass begin: load
           main_pass(); hdr_again(); ok8 = frame_close() && ok8;
