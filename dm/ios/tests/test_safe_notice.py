@@ -42,8 +42,8 @@ class Layout(unittest.TestCase):
         self.assertIn('TouchSafeOk', touch_layout.pad_ribbon(fake, movies=True))   # 手柄版挂在左侧按钮栏面板下（画在主菜单之上） | controller: under the button-column panel (drawn above the main menu)
         self.assertNotIn('TouchSafeOk', touch_layout.pad_mainmenu(fake))
         src = (DM / 'ios' / 'tools' / 'touch_layout.py').read_text(encoding='utf-8')
-        self.assertIn("+ _UPDATE + _SAFE + _btn('TouchAboutFe'", src)   # 触屏版主菜单：更新提示 + 崩溃围栏框 + 「关于」「加入社区讨论」两颗钮与社区框（dm_community.c） | touch main menu: update notice + crash-fence box + the About / Join buttons and the community box
-        self.assertIn('_UPDATE_STUB + _SAFE_STUB + mid[i:]', src)
+        self.assertIn("+ _UPDATE + _SAFE + row + _COMM", src)   # 触屏版主菜单：更新提示 + 崩溃围栏框 + 「加入社区讨论」钮与社区框（dm_community.c） | touch main menu: update notice + crash-fence box + the About / Join buttons and the community box
+        self.assertIn('_PCMAIN_STUB = _UPDATE_STUB + _SAFE_STUB', src)
 
     def test_update_notice_still_has_no_buttons(self):   # 四审 Q4-04 不受影响 | fourth review Q4-04 unaffected
         for name in ('_UPDATE', '_UPDATE_PAD'):

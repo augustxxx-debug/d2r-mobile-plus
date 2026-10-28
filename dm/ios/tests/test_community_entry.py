@@ -69,36 +69,72 @@ def fake_ribbon():   # 手柄版主菜单左列骨架：选项 / 电影动画 / 
 
 
 class FrontEnd(unittest.TestCase):
-    """前端主菜单（用户定稿）：「选项」下面、「制作人员」上面加「关于」与「加入社区讨论」两行，制作人员保留；手柄焦点链串起来、触屏首页两颗钮都可点；框挂在同一面板下。
-    Front-end main menu (user): "About" and "Join the community" between Options and Credits, Credits kept; controller focus chain linked, touch buttons tappable; the box hangs under the same panel."""
-    def test_pad_ribbon_two_rows(self):
+    """前端主菜单（用户 2026-10-28 再定）：只留「加入社区讨论」一行（开含「关于」段的同一个社区框，同暂停菜单），「关于」行撤掉；手柄左列放在原「电影动画」那一格，
+    制作人员原位保留；触屏首页「进入游戏」旁一颗钮，三种版式（缺省 = 正下方居中）；触屏首页继承层要列出所有新加的控件名，否则不建。
+    Front-end main menu (user, revised): only "Join the community" (the same community box with an About section, as the pause menu), the About row withdrawn; the controller column puts it in the
+    original Cinematics slot, Credits stays; the touch front page has one button beside Play in three layouts (default = right under, centred); the touch front page's inheriting layer must list every added widget, or it is not built."""
+    def test_pad_ribbon_one_row(self):
         out = touch_layout.pad_ribbon(fake_ribbon())
-        self.assertIn('"name": "TouchAboutFe", "fields": { "rect": { "x": 164, "y": 1150 }', out); self.assertIn('"textString": "@dmCommunityAbout"', out)
-        self.assertIn('"name": "TouchCommunityFe", "fields": { "rect": { "x": 164, "y": 1275 }', out); self.assertIn('"textString": "@dmCommunityFe"', out)
-        self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchAbout"', out); self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityFe"', out)
-        self.assertIn('"name": "Cinematics", "fields": { "rect": { "x": 99999, "y": 99999 }', out)   # 电影动画挪走 | Cinematics moved away
-        self.assertIn('"name": "Credits", "fields": { "rect": { "x": 164, "y": 1400 }', out)       # 制作人员保留，往下让两行 | Credits kept, moved down two rows
-        self.assertIn('"name": "Settings", "fields": { "rect": { "x": 164, "y": 1025 }, "navigation": { "up": { "name": "QuickPlayButton" }, "down": { "name": "TouchAboutFe" }', out)
-        self.assertIn('"navigation": { "up": { "name": "Settings" }, "down": { "name": "TouchCommunityFe" }', out)
-        self.assertIn('"navigation": { "up": { "name": "TouchAboutFe" }, "down": { "name": "Credits" }', out)
-        self.assertIn('"name": "Credits", "fields": { "rect": { "x": 164, "y": 1400 }, "navigation": { "up": { "name": "TouchCommunityFe" }', out)
-        self.assertIn('"name": "TouchSafeOk"', out)   # 崩溃围栏那框还在 | the crash-fence box is still there
+        self.assertIn('"name": "TouchCommunityFe", "fields": { "rect": { "x": 164, "y": 1175 }', out); self.assertIn('"textString": "@dmCommunityFe"', out)
+        self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityFe"', out)
+        self.assertNotIn('TouchAboutFe', out); self.assertNotIn('"PanelManager:ClosePanel:TouchAbout"', out); self.assertNotIn('@dmCommunityAbout', out)
+        self.assertIn('"name": "Cinematics", "fields": { "rect": { "x": 99999, "y": 99999 }', out)   # 电影动画挪走，那一格给社区行 | Cinematics away, its slot to the row
+        self.assertIn('"name": "Credits", "fields": { "rect": { "x": 164, "y": 1325 }', out)       # 制作人员原位 | Credits at its original place
+        self.assertIn('"name": "Settings", "fields": { "rect": { "x": 164, "y": 1025 }, "navigation": { "up": { "name": "QuickPlayButton" }, "down": { "name": "TouchCommunityFe" }', out)
+        self.assertIn('"navigation": { "up": { "name": "Settings" }, "down": { "name": "Credits" }', out)
+        self.assertIn('"name": "Credits", "fields": { "rect": { "x": 164, "y": 1325 }, "navigation": { "up": { "name": "TouchCommunityFe" }', out)
+        self.assertEqual(out.count('FrontEnd_ButtonMed", "textString"'), 1)   # 前端左列只加了一行 | only one row added to the column
+        self.assertIn('"name": "TouchSafeOk"', out)
         box_ok(self, out, 'pad ribbon')
-        movies = touch_layout.pad_ribbon(fake_ribbon(), movies=True)   # 编进过场的包：列已满，两行不放，框照放 | movie builds: the column is full, no rows, the box still hangs
-        self.assertNotIn('TouchAboutFe', movies); box_ok(self, movies, 'pad ribbon movies')
+        movies = touch_layout.pad_ribbon(fake_ribbon(), movies=True)   # 编进过场的包：列已满，不放行，框照放 | movie builds: column full, no row, the box still hangs
+        self.assertNotIn('"name": "TouchCommunityFe"', movies); box_ok(self, movies, 'pad ribbon movies')
 
-    def test_touch_main_menu_two_buttons_under_play(self):
-        fake = ('{\n    "type": "MainMenuPanel", "name": "MainMenuPanel",\n    "children": [\n'
-                '        { "type": "ButtonWidget", "name": "PlayTab", "fields": { "rect": { "x": -1010, "y": 1865 }, "textString": "@PlayTab", } },\n'
-                '        { "type": "ButtonWidget", "name": "OnlinePlaySettingsButton", "fields": { "rect": { "x": 1, "y": 1 } } },\n'
-                '        { "type": "ImageWidget", "name": "Divider", "fields": { "rect": { "x": 1, "y": 1 } } },\n'
-                '        { "type": "ButtonWidget", "name": "SecondaryContextButton", "fields": { "rect": { "x": 1, "y": 1 } } },\n    ]\n}\n')
-        out, n = touch_layout._pc_mainmenu(fake)
-        self.assertIn('"name": "TouchAboutFe"', out); self.assertIn('"rect": { "x": -490, "y": 1995 }', out); self.assertIn('"textString": "@dmCommunityAbout"', out)
-        self.assertIn('"name": "TouchCommunityFe"', out); self.assertIn('"rect": { "x": 20, "y": 1995 }', out); self.assertIn('"textString": "@dmCommunityFe"', out)
-        self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchAbout"', out); self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityFe"', out)
-        self.assertIn('"name": "TouchSafeOk"', out); self.assertIn('"name": "TouchBuild"', out)
-        box_ok(self, out, 'touch main menu')
+    FAKE_MAIN = ('{\n    "type": "MainMenuPanel", "name": "MainMenuPanel",\n    "children": [\n'
+                 '        { "type": "ButtonWidget", "name": "PlayTab", "fields": { "rect": { "x": -1010, "y": 1865 }, "textString": "@PlayTab", } },\n'
+                 '        { "type": "ButtonWidget", "name": "OnlinePlaySettingsButton", "fields": { "rect": { "x": 1, "y": 1 } } },\n'
+                 '        { "type": "ImageWidget", "name": "Divider", "fields": { "rect": { "x": 1, "y": 1 } } },\n'
+                 '        { "type": "ButtonWidget", "name": "SecondaryContextButton", "fields": { "rect": { "x": 1, "y": 1 } } },\n    ]\n}\n')
+
+    def rect(self, out, name):
+        m = re.search(r'"name": "%s",\s*"fields": \{\s*(?:"anchor": \{"x": 0.5\},\s*)?"rect": \{ "x": (-?\d+), "y": (\d+)' % name, out)
+        return (int(m.group(1)), int(m.group(2))) if m else None
+
+    def test_touch_main_menu_layouts(self):
+        PW, PH, MW, MH, GAP = 606, 141, 470, 115, 80   # 大号 / 中号前端按钮图（Mac 截图量）与并排间隔 | large / medium front-end button images (measured) and the side gap
+        self.assertEqual((touch_layout.FE_PLAY_W, touch_layout.FE_PLAY_H, touch_layout.FE_MED_W, touch_layout.FE_MED_H, touch_layout.FE_GAP), (PW, PH, MW, MH, GAP))
+        self.assertEqual(touch_layout.FE_TOUCH_ROW if not os.environ.get('DM_TEST_FE_ROW') else 'below', 'below')   # 缺省 = 正下方居中（用户最新一条） | default = right under, centred
+        old = touch_layout.FE_TOUCH_ROW
+        try:
+            for mode, play, join in (('below', (-303, 1865 - MH - 20), (-235, 1865 - MH - 20 + PH + 20)),   # 不叠：中号顶 = 大号底 + 20；整体底 = 原「进入游戏」底附近 | no overlap; pair bottom near Play's original bottom
+                                     ('row_right', (-303, 1865), (303 + GAP, 1865 + PH - MH)),                # 同行：「进入游戏」原位，次级钮靠右，底边对齐 | same row: Play in place, secondary to the right, bottoms aligned
+                                     ('row_center', (-(PW + GAP + MW) // 2, 1865), (-(PW + GAP + MW) // 2 + PW + GAP, 1865 + PH - MH))):   # 同行整体居中 | same row centred
+                touch_layout.FE_TOUCH_ROW = mode
+                out, n = touch_layout._pc_mainmenu(self.FAKE_MAIN)
+                self.assertEqual(self.rect(out, 'PlayTab'), play, mode); self.assertEqual(self.rect(out, 'TouchCommunityFe'), join, mode)
+                self.assertEqual(out.count('"name": "TouchCommunityFe"'), 1, mode); self.assertNotIn('TouchAboutFe', out, mode); self.assertNotIn('ClosePanel:TouchAbout"', out, mode)
+                self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityFe"', out); self.assertIn('"textString": "@dmCommunityFe"', out)
+                self.assertIn('"filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonMed"', out)   # 次级钮 = 中号（小一号） | the secondary is medium (one size smaller)
+                (px, py), (jx, jy) = play, join
+                self.assertTrue(jy >= py + PH or jx >= px + PW or jx + MW <= px, (mode, 'overlap'))   # 两颗不叠 | the two never overlap
+                self.assertLessEqual(max(py + PH, jy + MH), 2030, mode)   # 底边不低于原版「进入游戏」底（2006）太多：参考高 2160，下方留安全区 | bottoms stay near the original (2006): reference height 2160, safe area below
+                self.assertLessEqual(max(px + PW, jx + MW), 2592 // 2 - 62, mode)   # 窄屏（4:3 / 内屏，参考宽 ≥ 2592）右侧留安全区 62 | narrow screens: right safe area 62
+                self.assertGreaterEqual(min(px, jx), -(2592 // 2) + 62 + 420, mode)   # 左边让开版本标签（x 79 起宽 420） | clears the version label on the left
+                self.assertIn('"name": "TouchSafeOk"', out); self.assertIn('"name": "TouchBuild"', out); box_ok(self, out, 'touch main menu ' + mode)
+        finally:
+            touch_layout.FE_TOUCH_ROW = old
+
+    def test_touch_main_menu_inherit_layer_lists_every_widget(self):
+        # 触屏首页走继承层（Controller/MainMenuPanelHD basedOn 1touchbase_lay），继承层只建按名字列出的子控件：_pc_mainmenu 加的每个 Touch 控件都要列上
+        # （先前漏了社区钮与提示框：Mac 实测触屏首页看不到钮，宿主报「开着的面板里没有提示框控件」） | the inheriting layer builds only listed children: every Touch widget _pc_mainmenu adds must be listed
+        out, _ = touch_layout._pc_mainmenu(self.FAKE_MAIN)
+        added = set(re.findall(r'"name": "(Touch\w+)"', out))
+        listed = set(re.findall(r'"name": "(Touch\w+)"', touch_layout._PCMAIN_STUB))
+        self.assertEqual(added - listed, set()); self.assertIn('TouchCommunityFe', listed); self.assertIn('TouchCommTitle', listed)
+        self.assertIn('_PCMAIN_STUB + mid[i:]', (DM / 'ios' / 'tools' / 'touch_layout.py').read_text(encoding='utf-8'))
+
+    def test_host_moves_join_with_play(self):   # 手机上宿主把「进入游戏」按底部安全区往上抬，社区钮要一起抬 | on phones the host lifts Play for the bottom safe area; Join must move with it
+        c = (DM / 'host' / 'dm_cursor.c').read_text(encoding='utf-8')
+        self.assertIn('{"MainMenuPanel","TouchCommunityFe"}', c); self.assertIn('!strcmp(nm,"TouchCommunityFe")', c)
 
 
 class PauseMenu(unittest.TestCase):
