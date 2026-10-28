@@ -83,9 +83,9 @@ typedef struct { float lvp[16]; float vp[4]; float dr[2]; uint32_t fs, stride; u
 _Static_assert(sizeof(rts_ai) == 144, "rts_ai layout");
 enum { RA_OK, RA_NOLIB, RA_COMPILING, RA_NOFS, RA_NOVAR, RA_LOC, RA_ARGS, RA_NONIDX, RA_SLOT, RA_CAP, RA_QUOTA, RA_FSLOT, RA_MSLOT, RA_LEVEL, RA_N };
 static const char *const k_ra_why[RA_N] = {"", "无判定库", "判定库在编", "片元不在库", "顶点无_var", "插值对不上", "参数块过长", "非索引绘制", "网格未就绪", "参数块没抓到", "导出配额满", "每帧槽忙", "网格槽满", "降档照原版"};
-enum { RM_PASS, RM_NODEPTH, RM_SMAPFULL, RM_PRIM, RM_SMALL, RM_ATTR, RM_FMT, RM_ITYPE, RM_INSTANCED, RM_CB0, RM_IDX, RM_VRANGE, RM_VPOOL, RM_QUOTA, RM_ALLOC, RM_MESH, RM_NOTRT, RM_NOTREADY, RM_FULL, RM_POSE, RM_ALPHA, RM_N };   // 阴影绘制没进 TLAS 的原因（本帧阴影图因此不清） | why a shadow draw stayed out of the TLAS (so this frame's maps are not cleared)
+enum { RM_PASS, RM_NODEPTH, RM_SMAPFULL, RM_PRIM, RM_SMALL, RM_ATTR, RM_FMT, RM_ITYPE, RM_INSTANCED, RM_CB0, RM_IDX, RM_VRANGE, RM_VPOOL, RM_QUOTA, RM_ALLOC, RM_MESH, RM_NOTRT, RM_NOTREADY, RM_FULL, RM_POSE, RM_ALPHA, RM_CACHE, RM_N };   // 阴影绘制没进 TLAS 的原因（本帧阴影图因此不清） | why a shadow draw stayed out of the TLAS (so this frame's maps are not cleared)
 static const char *const k_rm_why[RM_N] = {"通道没登记", "通道没挂深度", "阴影图登记满", "图元不认（不是三角形列表 / 带 / 四边形）", "顶点不足 3（不画，不挡清图）", "无位置属性", "位置格式不认", "索引宽度不认", "实例化", "无 cb0",
-    "索引段不在内存池", "顶点范围越界", "顶点不在内存池", "本帧新建配额满", "网格对象建不出", "网格取不到", "非光追帧", "网格待建 / 刚提交", "实例满", "蒙皮只有绑定姿势", "镂空"};
+    "索引段不在内存池", "顶点范围越界", "顶点不在内存池", "本帧新建配额满", "网格对象建不出", "网格取不到", "非光追帧", "网格待建 / 刚提交", "实例满", "蒙皮只有绑定姿势", "镂空", "网格缓存满（工作集比上限大，不新建，免得每帧淘汰重建）"};
 // 单测用（审计分支 d42c8ee / 2fec943 的口径）：光追帧里没进 TLAS 的绘制按原因累计 | for the unit tests (the audit branch's d42c8ee / 2fec943 convention): draws outside the TLAS in ray-traced frames, by reason
 #define RTS_UNC(r) ((long long)g_rts.n_unc[r])
 #define RTS_UNC_PASS RM_PASS
@@ -183,6 +183,7 @@ static struct {
     int ao_on, ao_rays, ao_done, ao_applied; float ao_radius, ao_strength; id<MTLComputePipelineState> ps_ao, ps_aoblur, ps_ao_a; id<MTLTexture> ao_half, ao_tmp, ao_full; uint64_t n_ao_traced, n_ao_applied, n_ao_missed;   // 光追 AO（实验性）：设置、管线、半分辨率 / 模糊 / 全分辨率贴图、统计 | ray-traced AO (experimental): settings, pipelines, half-res / blur / full-res textures, counters
     // 光追内存（2026-10-28 真机内存 P1 之后）：budget0 = 网格缓存上限的设置值（DM_RT_SHADOW_CACHE_MB，缺省 64 MB），budget = 按预算 / 告警收紧后的生效值；mem_avail = 光追建好时离系统内存上限（0 = 不知道）
     // ray-tracing memory (after the 2026-10-28 device memory P1): budget0 = the configured mesh cache cap (DM_RT_SHADOW_CACHE_MB, 64 MB by default), budget = the effective one after the budget / warnings tighten it; mem_avail = distance to the system memory limit when ray tracing was set up (0 = unknown)
+    uint64_t cache_hold_until, n_evict_hot, n_cache_refuse;   // 网格缓存防抖：帧开头淘汰到上一帧刚用过的网格（工作集比上限大）后 600 帧内，缓存到上限就不新建 | mesh cache anti-thrash: for 600 frames after the frame-start eviction hit a mesh used in the previous frame (working set larger than the cap), no new mesh is created while the cache is at the cap
     rts_memw memw; uint32_t memw_seen; uint64_t budget0, mem_avail, mem_budget, n_mem_floor_held; rts_mem_plan mplan; NSUInteger plan_w, plan_h;
     int last_r;   // 上一次绘制的答案：draw 重入（g_draw_reentry）时原样复用，不重复登记实例 / 槽 | the previous draw's answer: reused on draw re-entry (g_draw_reentry), so instances / slots are not registered twice
 } g_rts = { .on = -1, .meshes = {.klen = 8}, .cur_smap = -1, .cur = -1, .ai_cap = -1 };
@@ -623,8 +624,8 @@ static void rts_frame_begin(uint64_t f) {
         if (g_rts.part) MLOG("光追阴影：局部回退 至第 %llu 帧 省画 %llu 次、照原版画进太阳图 %llu 次（%llu 帧有）、非太阳图不进 TLAS %llu 次、省画后没追成 %llu 帧、以读入开的太阳图 %llu 次、没有主通道的帧 %llu", (unsigned long long)g_rts.n_frames,
             (unsigned long long)g_rts.n_skip_draws, (unsigned long long)g_rts.n_resid_draws, (unsigned long long)g_rts.n_resid_frames, (unsigned long long)g_rts.n_nonsun_draws, (unsigned long long)g_rts.n_skip_lost, (unsigned long long)g_rts.n_skip_load, (unsigned long long)g_rts.n_nomain);
         { rts_mem_used_t u = rts_mem_used(); char ub[200], bb[32] = "不限"; uint64_t tot = u.masks + u.point + u.ao + u.mesh + u.fixed; if (g_rts.mem_budget && g_rts.mem_budget != UINT64_MAX) snprintf(bb, sizeof bb, "%llu MB", (unsigned long long)(g_rts.mem_budget >> 20));
-          MLOG("光追内存：第 %llu 帧 已用 %.1f MB（%s）；预算 %s；系统内存告警 %llu 次、内存定的最低第 %d 档（按预算 %d、告警 %d）、挡住的升档 %llu 次", (unsigned long long)g_rts.n_frames, tot / 1048576.0, rts_mem_str(ub, sizeof ub, &u),
-               bb, (unsigned long long)g_rts.memw.n, rts_mem_floor(), g_rts.mplan.lvl_floor, g_rts.memw.floor, (unsigned long long)g_rts.n_mem_floor_held); }
+          MLOG("光追内存：第 %llu 帧 已用 %.1f MB（%s）；预算 %s；系统内存告警 %llu 次、内存定的最低第 %d 档（按预算 %d、告警 %d）、挡住的升档 %llu 次；网格缓存淘汰到刚用过的 %llu 次、缓存满不新建 %llu 次", (unsigned long long)g_rts.n_frames, tot / 1048576.0, rts_mem_str(ub, sizeof ub, &u),
+               bb, (unsigned long long)g_rts.memw.n, rts_mem_floor(), g_rts.mplan.lvl_floor, g_rts.memw.floor, (unsigned long long)g_rts.n_mem_floor_held, (unsigned long long)g_rts.n_evict_hot, (unsigned long long)g_rts.n_cache_refuse); }
         if (g_rts.ao_on) MLOG("光追 AO：第 %llu 帧 当前%s；累计追 %llu 帧、乘到画面 %llu 帧、算了没乘上 %llu 帧（主通道之后没再挂 HDR）", (unsigned long long)g_rts.n_frames, g_rts.eff.ao ? "开" : "关（自动降档）",
             (unsigned long long)g_rts.n_ao_traced, (unsigned long long)g_rts.n_ao_applied, (unsigned long long)g_rts.n_ao_missed);
         g_rts.n_rt_draws = g_rts.n_recv_skip = 0; }
@@ -694,9 +695,12 @@ static void rts_frame_begin(uint64_t f) {
     if (g_rts.alpha_logged == 0 && atomic_load(&g_rts_alpha_st) == -1) { g_rts.alpha_logged = -1; MLOG("【红】光追镂空：判定库编不出或包里没有，镂空遮挡体留原阴影图（带镂空遮挡体的帧阴影图不清）"); }
     g_rts.prepass_occ = g_rts.n_frames > 1 && g_rts.shadow_draws == 0; g_rts.shadow_draws = 0; g_rts.nprepass = 0;
     // 4. 总字节预算：超了从最久没用的开始淘汰（这时本帧还没用任何网格，淘汰的只会在早先的提交里在途，defer 等它们做完） | 4. Total byte budget: over it, evict least recently used first (nothing is used by this frame yet; defer waits for earlier submissions)
-    for (int n = 0; g_rts.cache_bytes > g_rts.budget && g_rts.nmesh && n < 256; n++) {
+    int trig = 0; for (int n = 0; g_rts.cache_bytes > g_rts.budget && g_rts.nmesh && n < 256; n++) {
         rts_mesh *old = NULL; for (uint32_t i = 0; i < g_rts.meshes.cap; i++) { rts_mesh *m = g_rts.meshes.vals[i]; if (m && (!old || m->last_frame < old->last_frame)) old = m; }
-        if (!old) break; rts_mesh_drop(old); g_rts.n_evict_budget++;
+        if (!old) break;
+        if (old->last_frame + 1 >= f) { if (f < g_rts.cache_hold_until && !trig) { g_rts.cache_hold_until = f + 600; break; }   // 防抖期内：刚用过的不淘汰（还有压力就续期）；缓存满由下面「不新建」挡住 | within the anti-thrash period: recently used meshes are not evicted (the period is renewed while the pressure lasts); a full cache is held by "no new builds" instead
+            if (!trig) { trig = 1; g_rts.n_evict_hot++; g_rts.cache_hold_until = f + 600; } }   // 第一次：这一帧照样淘汰到预算以下，之后进防抖期 | the first time: this frame still evicts down to the budget, then the anti-thrash period begins   // 淘汰到上一帧刚用过的：工作集比上限大，本帧再建就是每帧淘汰重建（Mac 营地上限 32 MB、工作集 39 MB：每帧建 32 个） | evicting one used in the previous frame: the working set exceeds the cap, and rebuilding it this frame means evict-and-rebuild every frame (Mac camp with a 32 MB cap and a 39 MB working set: 32 builds per frame)
+        rts_mesh_drop(old); g_rts.n_evict_budget++;
     }
     // 600 帧没用过的释放（待建的也算） | release meshes unused for 600 frames (pending ones too)
     if (g_rts.n_frames % 120 == 0 && g_rts.nmesh) { rts_mesh *dead[64]; int nd = 0;
@@ -792,6 +796,7 @@ static rts_mesh *rts_mesh_get(const p_draw *dw, const p_draw_idx *di, int n, int
     if (!m || (m->state == RTS_PENDING && !m->queued)) {   // 新网格，或待建而本帧还没排队 | new mesh, or pending and not queued this frame
         if (g_rts.npend >= RTS_BUILDS_PER_FRAME) { g_rts.unc_why = RM_QUOTA; return NULL; }   // 本帧配额用完：下一帧再建 | quota for this frame used up: build next frame
         if (!m) {
+            if (g_rts.cache_bytes >= g_rts.budget && g_rts.frame < g_rts.cache_hold_until) { g_rts.n_cache_refuse++; g_rts.unc_why = RM_CACHE; return NULL; }   // 防抖：缓存满就不建，这次照原版画进阴影图（局部回退） | anti-thrash: no build while the cache is full; this draw goes into the shadow map as original (partial fallback)
             m = calloc(1, sizeof *m); if (!m) { g_rts.unc_why = RM_ALLOC; return NULL; } m->key = key; m->nverts = (uint32_t)nv; m->isz = (uint32_t)isz; m->skin = skin;
             if (prim == 5) { m->ib = rts_strip_ib(ib, isz, n, &m->tris); m->isz = 4; if (!m->ib) { free(m); g_rts.unc_why = RM_ALLOC; return NULL; } }
             else if (prim == 7) { m->ib = rts_quad_ib(n, &m->tris); m->isz = 4; if (!m->ib) { free(m); g_rts.unc_why = RM_ALLOC; return NULL; } }   // 非索引四边形（带索引的在 rts_draw_inner 前面就当空绘制） | non-indexed quads (indexed ones are treated as empty draws earlier in rts_draw_inner)

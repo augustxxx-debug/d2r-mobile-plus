@@ -522,6 +522,17 @@ int main(void) { @autoreleasepool {
       #undef SELECT
     }
 #endif
+    // 28. 网格缓存防抖（Mac 营地实测：告警把上限减到 32 MB、工作集 39 MB，每帧淘汰 32 个又重建 32 个）：每帧画同一批 12 个大网格（约 1.95 MB）、预算 1 MB 放不下这批，
+    //     稳定后不该再每帧建 BLAS；帧开头缓存不超预算；没建的照原版画进阴影图，光追照常。之前的代码这里每帧都在淘汰重建
+    // 28. Mesh cache anti-thrash (measured in the Mac camp: a warning cut the cap to 32 MB with a 39 MB working set, evicting and rebuilding 32 meshes every frame): the same 12 large meshes every frame (about 1.95 MB), a 1 MB budget that cannot hold them;
+    //     once settled no BLAS should be built every frame; the cache stays within budget at frame start; the uncached draws go into the map as original and ray tracing goes on. The earlier code evicted and rebuilt here every frame
+    { int ok28 = 1; uint64_t b0 = g_rts.budget; g_rts.budget = 1u << 20;
+      for (int f = 0; f < 12; f++) { frame_open(); prepass(); shadow_pass(); for (int i = 0; i < 12; i++) big(i); main_pass(); hdr_again(); ok28 = frame_close() && ok28; }
+      uint64_t nb0 = g_rts.n_builds, worst = 0;
+      for (int f = 0; f < 10; f++) { frame_open(); prepass(); shadow_pass(); for (int i = 0; i < 12; i++) big(i); main_pass(); hdr_again(); ok28 = frame_close() && ok28; if (cache_bytes() > worst) worst = cache_bytes(); }
+      printf("28 稳定后 10 帧新建 BLAS %llu 个，缓存最多 %.2f MB\n", (unsigned long long)(g_rts.n_builds - nb0), worst / 1048576.0);
+      EXPECT("28 工作集比预算大：稳定后 10 帧不再新建 BLAS（不每帧淘汰重建）", 0, (long long)(g_rts.n_builds - nb0)); EXPECT("28 帧末缓存不超预算 1 MB 太多（≤ 预算 + 一帧建的量）", 1, worst <= (2u << 20));
+      EXPECT("28 GPU 无错", 1, ok28); g_rts.budget = b0; EXPECT("28 预算恢复后光追照常", 1, until_applied((int[]){0}, 1)); }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}
