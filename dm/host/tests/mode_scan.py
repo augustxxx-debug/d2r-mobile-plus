@@ -45,7 +45,7 @@ else:
 # Crash fence notice box (dm_crashfence.c, 1): picks the panel by mode and takes over A in controller mode; it looks widgets up by name every frame and caches no address, so after a switch rebuild the new widgets get text and placement as usual, no enter / leave hook needed
 # 社区入口提示框（dm_community.c 1 处）：同崩溃围栏提示框——按名字现找控件、手柄模式接管 A 复制 / B 收起，不缓存地址，不用进 / 出钩子 | community entry box (dm_community.c, 1): as the crash-fence box - widgets found by name every frame, controller A copies / B dismisses, no cached address, no enter / leave hook
 PADMODE = {'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_cursor.c': 9, 'host/dm_custom.c': 3, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
-AUTOKEY = {'host/dm_cursor.c': 38, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
+AUTOKEY = {'host/dm_cursor.c': 39, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
 def count(pat, skip_defs):
     out = {}
     for f in sorted(glob.glob(os.path.join(root, 'host', '*.c')) + glob.glob(os.path.join(root, 'ios', 'Sources', '*.m')) + glob.glob(os.path.join(root, 'ios', 'Sources', '*.c'))):
