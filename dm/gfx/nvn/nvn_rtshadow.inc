@@ -696,6 +696,9 @@ static void rts_frame_begin(uint64_t f) {
     if (!g_rts.eff.ao && (g_rts.ao_half || g_rts.ao_tmp || g_rts.ao_full)) {   // 降档关了 AO：三张贴图等在途提交做完放掉，升回来再建 | AO switched off by the downgrade: the three textures are released after in-flight submissions and rebuilt on the way back up
         defer_obj_release(g_rts.ao_half); defer_obj_release(g_rts.ao_tmp); defer_obj_release(g_rts.ao_full); g_rts.ao_half = g_rts.ao_tmp = g_rts.ao_full = nil; MLOG("光追 AO：降档关掉，贴图放掉（升回 0 档再建）"); }
     if (!g_rts.eff.point_on && (g_rts.pmask || g_rts.pmaskf)) { rts_point_release(); MLOG("光追点光：本档关点光，两张点光遮罩放掉（升回有点光的档再建）"); }   // 第 3 档 / 内存最低档：点光遮罩不用就放（原先一直留着，原生档约 24 MB） | level 3 / the memory floor: point masks are released when unused (they used to stay, about 24 MB at native resolution)
+    // 软阴影（RC1 起缺省开）只在第 0、1 档生效：降到第 2 档起两张全分辨率 RG8（Duo 原生约 2 × 11.4 MB）原先一直留到整个光追拆掉，现在等在途提交做完放掉，升回来再建（资源审查）
+    // Soft shadows (on by default from RC1) apply only at levels 0 and 1: from level 2 the two full-resolution RG8 textures (about 2 × 11.4 MB at Duo native) used to stay until the whole RT teardown; now they are released after in-flight submissions and rebuilt when the level comes back (resource review)
+    if (!g_rts.eff.soft && (g_rts.mask_raw || g_rts.mask_tmp)) { defer_obj_release(g_rts.mask_raw); defer_obj_release(g_rts.mask_tmp); g_rts.mask_raw = g_rts.mask_tmp = nil; MLOG("光追软阴影：本档不用软阴影，两张 RG8 贴图放掉（升回第 0、1 档再建）"); }
     // 2. 上一帧编进构建的网格转可用；3. 没建的排队作废（源地址只在当帧有效） | 2. Meshes built last frame become usable; 3. unbuilt queue entries are dropped (source addresses are per frame)
     for (int i = 0; i < g_rts.nsub; i++) g_rts.submitted[i]->state = RTS_READY;
     g_rts.nsub = 0;
