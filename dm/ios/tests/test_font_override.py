@@ -49,11 +49,13 @@ class FontComposition(unittest.TestCase):
     def test_coverage_metrics_and_unchanged_inputs(self):
         with tempfile.TemporaryDirectory() as work:
             base, custom, output = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'out.ttf')]
-            synthetic(base, [65, 0x4e00], 1000, 'GameBase')
-            synthetic(custom, [65, 0x4e8c], 2048, 'Requested')
+            synthetic(base, [65, 0x4e00, 0x4e8c], 1000, 'GameBase')
+            synthetic(custom, [65, 0x4e8c, 0x4e09], 2048, 'Requested')
             before = (base.read_bytes(), custom.read_bytes())
             font_override.compose(before[0], custom, output)
             with TTFont(output) as merged:
+                # 自选字体独有的 0x4e09 不补进来：只换原字体已有的码位（四审：全量补字把字体撑过游戏能读的体积）
+                # 0x4e09, only in the requested font, is not added: only codepoints the game font has are replaced (fourth audit: adding them all overflowed the size the game loads)
                 self.assertEqual(set(merged.getBestCmap()), {65, 0x4e00, 0x4e8c})
                 self.assertEqual(merged['head'].unitsPerEm, 1000)
                 self.assertEqual(merged['hhea'].ascent, 750)
@@ -63,14 +65,14 @@ class FontComposition(unittest.TestCase):
             self.assertEqual(before, (base.read_bytes(), custom.read_bytes()))
 
     def test_composites_and_hinting_are_flattened_and_output_is_reproducible(self):
-        """四审：霞鹜文楷带复合字形与 prep 表，合进游戏字体后安卓主菜单闪退；合成结果要只有普通轮廓、无微调表，且两次合成逐字节相同。
-        Fourth audit: LXGW WenKai has composite glyphs and a prep table and crashed the Android main menu once merged; the composition must hold plain outlines
-        only, no hinting tables, and two compositions must be byte-identical."""
+        """四审：霞鹜文楷带复合字形与 prep 表；合成结果要与原字体同构（只有普通轮廓、无微调表），且两次合成逐字节相同（手机与电脑做的导入包要一致）。
+        Fourth audit: LXGW WenKai has composite glyphs and a prep table; the composition must match the game font's structure (plain outlines only, no hinting
+        tables), and two compositions must be byte-identical (packs made on the phone and on a computer must match)."""
         from fontTools.ttLib.tables._g_l_y_f import Glyph, GlyphComponent
         from fontTools.ttLib import newTable
         with tempfile.TemporaryDirectory() as work:
             base, custom, out1, out2 = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'a.ttf', 'b.ttf')]
-            synthetic(base, [65, 0x4e00], 1000, 'GameBase')
+            synthetic(base, [65, 0x4e00, 0x4e8c, 0x4e09], 1000, 'GameBase')
             synthetic(custom, [0x4e8c, 0x4e09], 1000, 'Requested')
             with TTFont(custom) as f:   # 把「三」做成引用「二」的复合字形，再加 prep / fpgm 微调表 | make 0x4e09 a composite of 0x4e8c and add prep / fpgm
                 comp = Glyph(); comp.numberOfContours = -1; c = GlyphComponent(); c.glyphName = 'uni4E8C'; c.x = 0; c.y = 100; c.flags = 0x0001 | 0x0002
@@ -87,6 +89,21 @@ class FontComposition(unittest.TestCase):
                 self.assertEqual([n for n in merged.getGlyphOrder() if glyf[n].isComposite()], [])
                 self.assertFalse(any(t in merged for t in ('prep', 'fpgm', 'cvt ')))
                 cmap = merged.getBestCmap(); self.assertGreater(glyf[cmap[0x4e09]].numberOfContours, 0)
+
+    def test_size_cap_refuses_to_write_an_oversized_font(self):
+        """四审真机：合并后 17.9 / 20.6 MiB 的字体让安卓主菜单闪退，15.6 MiB 正常；超过 FONT_BYTES_MAX 要报错且不留输出文件。
+        Fourth-audit device runs: 17.9 / 20.6 MiB merged fonts crashed the Android main menu, 15.6 MiB worked; over FONT_BYTES_MAX must fail and leave no output."""
+        self.assertLess(font_override.FONT_BYTES_MAX, 16 * 1024 * 1024)
+        with tempfile.TemporaryDirectory() as work:
+            base, custom, output = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'out.ttf')]
+            synthetic(base, [65, 0x4e00], 1000, 'GameBase')
+            synthetic(custom, [0x4e00], 1000, 'Requested')
+            with patch.object(font_override, 'FONT_BYTES_MAX', 64):
+                with self.assertRaisesRegex(ValueError, 'MiB'):
+                    font_override.compose(base.read_bytes(), custom, output)
+            self.assertFalse(output.exists())
+            font_override.compose(base.read_bytes(), custom, output)
+            self.assertTrue(output.is_file())
 
     def test_empty_mapped_letters_fall_back_without_changing_spaces(self):
         with tempfile.TemporaryDirectory() as work:
@@ -144,7 +161,7 @@ class FontComposition(unittest.TestCase):
     def test_custom_vertical_tables_with_horizontal_game_font(self):
         with tempfile.TemporaryDirectory() as work:
             base, custom, output = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'out.ttf')]
-            synthetic(base, [65, 0x4e00], 1000, 'GameBase')
+            synthetic(base, [65, 0x4e00, 0x4e8c], 1000, 'GameBase')
             synthetic(custom, [65, 0x4e8c], 2048, 'Requested')
             builder = FontBuilder(font=TTFont(custom))
             builder.setupVerticalMetrics({name: (2048, 0) for name in builder.font.getGlyphOrder()})
@@ -158,7 +175,7 @@ class FontComposition(unittest.TestCase):
     def test_weight_thickens_requested_glyphs_only_and_keeps_metrics(self):
         with tempfile.TemporaryDirectory() as work:
             base, custom, plain, bold = [Path(work) / x for x in ('base.ttf', 'custom.ttf', 'plain.ttf', 'bold.ttf')]
-            synthetic(base, [65, 0x4e00, 0xe001], 1000, 'GameBase')
+            synthetic(base, [65, 0x4e00, 0x4e8c, 0x4e8d, 0xe001], 1000, 'GameBase')
             synthetic(custom, [65, 0x4e8c, 0x4e8d, 0xe001], 2048, 'Requested')
             data = base.read_bytes()
             font_override.compose(data, custom, plain)
