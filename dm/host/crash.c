@@ -38,7 +38,15 @@ void crash_watch_progress(uint32_t tick, const char *stage) {
     atomic_fetch_add(&g_watch_count, 1);
     atomic_store(&g_watch_last_ns, watch_now_ns());
 }
-void crash_watch_frame(void) { if (atomic_load(&g_watch_pregame)) crash_watch_progress(0, "出图帧"); }
+// 最近一次出图的时刻（崩溃围栏判「卡死」：进后台那一刻已经 5 秒没出图 = 画面卡住了，dm_crashfence.c）。每帧都记，不论在不在局内
+// Time of the most recent present (the crash fence's "frozen" test: no present for 5 s at the moment of going to the background = the picture was stuck, dm_crashfence.c). Recorded every frame, in a run or not
+static _Atomic uint64_t g_present_ns;
+uint64_t crash_last_present_ns(void) { return atomic_load(&g_present_ns); }
+uint64_t crash_now_ns(void) { return watch_now_ns(); }
+void crash_watch_frame(void) { atomic_store(&g_present_ns, watch_now_ns()); if (atomic_load(&g_watch_pregame)) crash_watch_progress(0, "出图帧"); }
+// 致命信号退出之前调一次（崩溃围栏把「闪退」记进运行标记，dm_crashfence.c 登记）。只许做异步信号安全的事；不登记 = 不调（图形单测只链本文件）
+// Called once before exiting on a fatal signal (the crash fence records "crash" in the running marker, registered by dm_crashfence.c). Must be async-signal-safe; unregistered = not called (the graphics unit tests link only this file)
+void (*g_crash_note_hook)(int sig);
 void crash_watch_pregame_done(void) { atomic_store(&g_watch_pregame, 0); }
 void crash_watch_pregame_again(void) { atomic_store(&g_watch_pregame, 1); }   // 从局里退回前端：重新按出图帧算进展（diag.c） | Back from a run to the front end: count progress by presented frames again (diag.c)
 void crash_dump_now(const char *why);
@@ -143,6 +151,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
     for (int i = 0; i < 29; i++) fprintf(stderr, "x%d=%#llx%s", i, UC_X(uc, i), i % 6 == 5 ? "\n" : " ");
     fprintf(stderr, "\n");
     dm_backtrace(UC_FP(uc));
+    if (g_crash_note_hook) g_crash_note_hook(sig);   // 崩溃围栏：标记里记「闪退」（先于现场导出，导出里万一再出错也记上了） | crash fence: record "crash" in the marker (before the state dump, so it is recorded even if the dump fails)
     if (g_dump_hook) g_dump_hook();
     _exit(128 + sig);
 }

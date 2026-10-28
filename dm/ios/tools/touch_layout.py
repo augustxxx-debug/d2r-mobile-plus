@@ -250,19 +250,22 @@ _UPDATE_PAD = (_upd_text('TouchBuild', 3161, 60, 600, 30, (150, 140, 115), 'righ
                + '        { "type": "RectangleWidget", "name": "TouchUpdBg", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1400, "height": 186 }, "color": [ 0.0, 0.0, 0.0, 0.59 ] } },\n'
                + _upd_text('TouchUpdTitle', 1220, 1524, 1400, 46, (214, 74, 58), 'center')
                + _upd_text('TouchUpdDesc', 1220, 1610, 1400, 36, (232, 228, 214), 'center'))
+def _safe_into(s):   # 手柄版崩溃围栏提示框挂在左侧按钮栏面板下（根 children 末尾）：按钮栏面板画在主菜单面板之上，挂在这里才能盖住按钮栏、在整屏居中（用户：「可以遮挡菜单」） | the controller crash-fence box hangs under the left button-column panel (end of the root children): that panel draws above the main menu panel, so only here can it cover the column and sit at the screen center (user: "it may cover the menu")
+    i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
+    return s[:i].rstrip(' ') + _SAFE_PAD + '    ' + s[i:]
 def pad_ribbon(s, movies=False):   # 手柄版主菜单左侧按钮栏 = 原版布局。缺省包不播过场（宿主只按时长空播），「电影动画」是个没用的入口，拿掉（同触屏版没有它）；编进过场解码（MOVIE_FFMPEG=1）的包保留原版入口
     if movies:
-        return s
+        return _safe_into(s)
     # 「制作人员」上移到它的位置，上下焦点改成「选项 ↔ 制作人员」直连
     # 「制作人员」(Credits) moves up into its place, and up / down focus becomes a direct link 「选项 ↔ 制作人员」(Options ↔ Credits)
     s = _sub1(s, '"rect": { "x": 164, "y": 1175 },', '"rect": { "x": 99999, "y": 99999 },')
     s = _sub1(s, '"rect": { "x": 164, "y": 1325 },', '"rect": { "x": 164, "y": 1175 },')
     s = _sub1(s, '"down": { "name": "Cinematics" }', '"down": { "name": "Credits" }')
     s = _sub1(s, '"up": { "name": "Cinematics" }', '"up": { "name": "Settings" }')
-    return s
+    return _safe_into(s)
 def pad_mainmenu(s):   # 手柄版主菜单 = 原版布局原样 + 上面这组控件（加在根 children 末尾） | Controller layout main menu = the original layout as is + the group of widgets above (appended at the end of the root children)
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
-    return s[:i].rstrip(' ') + _UPDATE_PAD + _SAFE_PAD + '    ' + s[i:]
+    return s[:i].rstrip(' ') + _UPDATE_PAD + '    ' + s[i:]
 _UPDATE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchBuild|TouchUpd\w+)"', _UPDATE))
 # 崩溃围栏（发布前闸 1）：连续两次闪退、实验项被自动关掉之后，主菜单上的游戏内提示框（用户：「不要用原生的弹窗，用游戏内弹窗」）。
 # 底板 + 标题 + 三行正文 + 原版前端按钮「确定」（与选角页那三颗同图同字，FrontEnd_ButtonMed）；全部摆在屏幕外、字空着，宿主 dm/host/dm_crashfence.c 要提示时写字、挪回原位。

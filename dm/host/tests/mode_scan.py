@@ -41,7 +41,9 @@ else:
 
 # ---- 2 ----
 # Graphics adds a controller-only focus/input branch; both page pumps keep shared values.
-PADMODE = {'host/dm_cursor.c': 9, 'host/dm_custom.c': 3, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
+# 崩溃围栏提示框（dm_crashfence.c 1 处）：按模式选挂哪个面板、手柄模式接管 A；每帧按名字现找控件、不缓存地址，切换重建后新控件照样写字摆位，不用进 / 出钩子
+# Crash fence notice box (dm_crashfence.c, 1): picks the panel by mode and takes over A in controller mode; it looks widgets up by name every frame and caches no address, so after a switch rebuild the new widgets get text and placement as usual, no enter / leave hook needed
+PADMODE = {'host/dm_crashfence.c': 1, 'host/dm_cursor.c': 9, 'host/dm_custom.c': 3, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
 AUTOKEY = {'host/dm_cursor.c': 38, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
 def count(pat, skip_defs):
     out = {}

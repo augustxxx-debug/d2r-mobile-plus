@@ -119,5 +119,12 @@ host/dm_custom.c	MetalFX 空间超分 → 关	同上，只进日志
 host/dm_custom.c	=、	同上：日志里各项之间的分隔
 host/dm_custom.c	实验性功能本来都关着	同上，只进日志
 host/hle_lifecycle.c	@dm_crashfence_clean	崩溃围栏清标记的原因，只进日志
-ios/Sources/main.m	@dm_crashfence_clean	崩溃围栏清标记的原因，只进日志
+host/dm_crashfence.c	@dm_crashfence_clean	崩溃围栏清标记的原因，只进日志
 ios/Sources/main.m	@crash_payloads	崩溃围栏 MetricKit 送达方式，只进日志
+host/dm_crashfence.c	闪退：信号	崩溃围栏异常退出原因的说明（cause_text），只拼进日志行
+host/dm_crashfence.c	卡死：进后台时	同上
+host/dm_crashfence.c	内存不足：之前收到	同上
+host/dm_crashfence.c	=原因不明	崩溃围栏原因名（k_cf_name），只进日志
+host/dm_crashfence.c	=闪退	同上
+host/dm_crashfence.c	=卡死	同上
+host/dm_crashfence.c	=内存不足	同上

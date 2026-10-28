@@ -1182,8 +1182,8 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
     plog("启动计时 T4 willConnect 末 %.1f ms", g_T[4]);
 }
 - (void)sceneWillResignActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(0); }
-// 崩溃围栏：进后台清运行标记（后台被系统 / 玩家划掉是 SIGKILL、不走回调，不能算闪退），回前台再写回（dm_crashfence.c） | crash fence: clear the running marker on entering the background (being killed there by the system / a swipe is a SIGKILL without callbacks and must not count as a crash), write it again on returning to the foreground
-- (void)sceneDidEnterBackground:(UIScene *)s { if (g_host_up) { front_ios_focus_event(1); void dm_crashfence_clean(const char *); dm_crashfence_clean("进后台"); } }
+// 崩溃围栏：进后台清运行标记（后台被系统 / 玩家划掉是 SIGKILL、不走回调，不能算闪退；画面已卡住 5 秒的除外，记卡死），回前台再写回（dm_crashfence.c） | crash fence: clear the running marker on entering the background (being killed there by the system / a swipe is a SIGKILL without callbacks and must not count as a crash), write it again on returning to the foreground
+- (void)sceneDidEnterBackground:(UIScene *)s { if (g_host_up) { front_ios_focus_event(1); void dm_crashfence_background(void); dm_crashfence_background(); } }
 - (void)sceneWillEnterForeground:(UIScene *)s { log_promote(); if ([g_mode isEqualToString:@"boot"] && !g_need_assets && !g_no_bc && !g_block_title) { int was_up = g_host_up; host_start(); if (g_host_up) front_ios_focus_event(2); if (was_up) { void dm_crashfence_resume(void); dm_crashfence_resume(); } } }
 - (void)sceneDidBecomeActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(3);
     static int warned; if (g_ipad_compat && !warned && [g_mode isEqualToString:@"boot"] && self.window.rootViewController) { warned = 1;   // 只提示一次，不拦启动 | Warn once, do not block the launch
@@ -1251,6 +1251,7 @@ static void crash_subscribe(void) {
 // System memory warning: log one line only, release no cache. Purpose: a player gets no notice before the system terminates the app for memory, so the previous session's log at least keeps the precursor and a few readouts at that moment
 // (resident size, GPU allocated, main-heap free space as last read every 300 frames, and how far from the system memory limit). At most 50 lines per session
 - (void)applicationDidReceiveMemoryWarning:(UIApplication *)a {
+    { void dm_crashfence_note_memory(void); dm_crashfence_note_memory(); }   // 崩溃围栏：之后在前台没了算内存不足 | crash fence: vanishing in the foreground afterwards counts as out of memory
     static int n; if (++n > 50) return;
     task_vm_info_data_t vi; mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT; unsigned long long fp = 0;
     if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS) fp = vi.phys_footprint >> 20;

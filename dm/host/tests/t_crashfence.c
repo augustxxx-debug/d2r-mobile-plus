@@ -14,10 +14,14 @@ int dm_3d_quality_mode_get(void) { return 0; }
 float dm_3d_scale_cur(void) { return .75f; }
 int dm_display_max_hz(void) { return 120; }
 const char *dm_ui(const char *key) { return key; }
+void (*g_crash_note_hook)(int sig);   // crash.c 里的定义（这里不链 crash.c） | defined in crash.c (not linked here)
+static uint64_t t_present, t_now = 100000000000ull;
+uint64_t crash_last_present_ns(void) { return t_present; }
+uint64_t crash_now_ns(void) { return t_now; }
 static int checks, fails;
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
 static char dir[64], marker[128], settings[128];
-static void restart(void) { g_started = g_marked = g_streak = g_test = 0; atomic_store(&g_notice, 0); atomic_store(&g_show, 0); atomic_store(&g_loaded, 0); }
+static void restart(void) { g_started = g_marked = g_streak = g_test = g_cause = g_cause_arg = 0; g_msg = CF_OTHER; g_hist[0] = 0; g_crash_note_hook = NULL; atomic_store(&g_notice, 0); atomic_store(&g_show, 0); atomic_store(&g_loaded, 0); }
 static int marker_streak(void) { FILE *f = fopen(marker, "r"); if (!f) return -1; int k = -2; if (fscanf(f, "streak=%d", &k) != 1) k = -2; fclose(f); return k; }
 static void read_settings(char *out, size_t n) { FILE *f = fopen(settings, "r"); size_t r = f ? fread(out, 1, n - 1, f) : 0; out[r] = 0; if (f) fclose(f); }
 static void write_settings(const char *s) { FILE *f = fopen(settings, "w"); fputs(s, f); fclose(f); }
@@ -94,6 +98,27 @@ int main(void) {
     // 13. 只有一部分开着：只备份开着的那几项 | 13. Only some were on: only those are backed up
     write_settings("eco_fps=0\nrt_shadow=1\nupscale=0\nq3d=0\nq3d_v2=1\n"); atomic_store(&g_loaded, 0);
     CHECK(dm_custom_safe_mode(what, sizeof what) == 1); read_settings(text, sizeof text); CHECK(strstr(text, "exp_off_backup=rt_shadow:1\n"));
+    // 14. 分场景（用户：「哪里闪退了，应该分场景」）：闪退两次 → 闪退文案；卡死（进后台时 5 秒没出图）两次 → 卡死文案；内存告警后没了两次 → 内存不足文案；原因不同 → 异常退出文案
+    // 14. By scenario (user: "where did it crash, it should be split by scenario"): two crashes → crash text; two freezes (no present for 5 s when going to the background) → frozen text; two vanishings after memory warnings → memory text; different causes → generic text
+    write_settings("eco_fps=2\nrt_shadow=1\nupscale=1\nq3d=0\nq3d_v2=1\n");
+    unlink(marker); restart(); dm_crashfence_start(); CHECK(g_crash_note_hook == cf_on_signal);
+    g_crash_note_hook(11);                                                  // 致命信号 → 标记 cause=1:11 | fatal signal → marker cause=1:11
+    { FILE *f = fopen(marker, "r"); char m[128] = {0}; fread(m, 1, sizeof m - 1, f); fclose(f); CHECK(strstr(m, "cause=1:11\n")); CHECK(strstr(m, "streak=0\n")); }
+    restart(); CHECK(dm_crashfence_start() == 1); CHECK(!strcmp(g_hist, "1"));
+    g_crash_note_hook(6); restart(); CHECK(dm_crashfence_start() == 2); CHECK(!strcmp(g_hist, "11")); CHECK(g_msg == CF_CRASH); CHECK(!strcmp(k_cf_msg[g_msg], "dmSafeModeMsgCrash"));
+    dm_crashfence_clean("优雅退出"); restart(); dm_crashfence_start(); CHECK(g_hist[0] == 0);
+    t_present = t_now - 1000000000ull; dm_crashfence_background(); CHECK(access(marker, F_OK) != 0);   // 画面还在动：进后台清标记 | picture still moving: going to the background clears
+    dm_crashfence_resume(); t_present = t_now - 7000000000ull; dm_crashfence_background(); CHECK(access(marker, F_OK) == 0);   // 7 秒没出图：标记留着、记卡死 | 7 s without a present: marker kept, frozen recorded
+    { FILE *f = fopen(marker, "r"); char m[128] = {0}; fread(m, 1, sizeof m - 1, f); fclose(f); CHECK(strstr(m, "cause=2:7\n")); }
+    dm_crashfence_resume(); { FILE *f = fopen(marker, "r"); char m[128] = {0}; fread(m, 1, sizeof m - 1, f); fclose(f); CHECK(strstr(m, "cause=0:0\n")); }   // 回前台撤销 | back in the foreground: revoked
+    dm_crashfence_background();                                             // 又卡住进后台、被划掉 | stuck again, switched away and swiped off
+    restart(); CHECK(dm_crashfence_start() == 1); CHECK(!strcmp(g_hist, "2"));
+    dm_crashfence_note_memory(); restart(); CHECK(dm_crashfence_start() == 2); CHECK(!strcmp(g_hist, "23")); CHECK(g_msg == CF_OTHER);   // 卡死 + 内存不足：原因不同 → 异常退出文案 | frozen + memory: different → generic text
+    dm_crashfence_note_memory(); restart(); dm_crashfence_start(); CHECK(!strcmp(g_hist, "233")); CHECK(g_msg == CF_MEM);   // 最近两次都是内存不足 | the last two are memory
+    dm_crashfence_note_memory(); g_crash_note_hook(11); restart(); dm_crashfence_start(); CHECK(g_hist[strlen(g_hist) - 1] == '1');   // 告警之后又闪退：按闪退记 | a crash after the warning counts as a crash
+    dm_crashfence_clean("优雅退出");
+    setenv("DM_TEST_CRASH_MARK", "2", 1); setenv("DM_TEST_CRASH_CAUSE", "hang", 1); restart(); dm_crashfence_start(); CHECK(g_msg == CF_HANG); CHECK(!strcmp(g_hist, "22"));
+    unsetenv("DM_TEST_CRASH_MARK"); unsetenv("DM_TEST_CRASH_CAUSE"); dm_crashfence_clean("优雅退出");
     // 10. 没有设置目录：不写标记、不崩 | 10. No settings directory: no marker, no crash
     g_dir[0] = 0; restart(); CHECK(dm_crashfence_start() == 0); CHECK(g_marked == 0);
     printf("t_crashfence: %d checks, %d failed\n", checks, fails);
