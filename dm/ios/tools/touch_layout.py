@@ -293,12 +293,18 @@ _SAFE = _safe(True); _SAFE_PAD = _safe(False)
 # In-game notice box of the community entry (dm/host/dm_community.c): same approach as the crash-fence box - 15 frame tiles (its own slices Ztouch_comm) + title + three body lines (value / hint / "Copied")
 # + "Copy number" / "Copy link" (one message; the host shows one by language) + "OK". All start off screen with empty text and carry no anchor: hung at the end of the pause menu panel (both) and of the Custom page panel,
 # which are anchored at half the screen width and carry the console-profile scale; the host computes the screen-centered position from the panel's rect and scale. OK / controller B dismisses; copy goes through the shell's clipboard callback
+def _co_text(name, size, color):   # 提示框文字行：原版色票 + ReducedSpacing（同 _upd_text 的其余字段） | a text line of the box: original colour token + ReducedSpacing (otherwise as _upd_text)
+    return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1700, "height": 60 }, "text": "", '
+            '"style": { "pointSize": %d, "fontColor": "%s", "alignment": { "h": "center", "v": "center" }, "spacing": "$ReducedSpacing", "dropShadow": "$DefaultDropShadow" } } },\n') % (name, size, color)
 def _community():
     return (''.join('        { "type": "ImageWidget", "name": "TouchCommTile%d%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 52, "height": 24 }, "filename": "Ztouch_comm/tile%d%d" } },\n' % (r, c, r, c) for r in range(5) for c in range(3))
-            + _upd_text('TouchCommTitle', 99999, 99999, 1700, 48, (230, 200, 120), 'center')
-            # 正文 / 副文分字号（用户：「都一个字体丑死了」）：第一行群号 / 链接 36 号亮色；第二行提示句、第三行「已复制」28 号灰色 | main / secondary text in different sizes (user): line 1 number / link at 36 light; line 2 hint and line 3 "Copied" at 28 grey
-            + _upd_text('TouchCommDesc0', 99999, 99999, 1700, 36, (232, 228, 214), 'center')
-            + ''.join(_upd_text('TouchCommDesc%d' % k, 99999, 99999, 1700, 28, (178, 172, 158), 'center') for k in (1, 2))
+            + _co_text('TouchCommTitle', 48, '$FontColorGoldYellow')
+            # 正文 / 副文分字号（用户：「都一个字体丑死了」）：第一行群号 / 链接 36 号；第二行提示句、第三行「已复制」28 号。颜色与字距照原版样式表（_profileHD.json）：
+            # 标题 = 面板标题色 GoldYellow，正文 = 原版弹窗正文 / 按钮字色 LightGold，副文 = 图形页说明小字同款 LightGray；字距 ReducedSpacing（原版弹窗正文、设置页文字都带）
+            # main / secondary text in different sizes (user): line 1 number / link at 36; line 2 hint and line 3 "Copied" at 28. Colours and spacing follow the original style sheet (_profileHD.json):
+            # title = panel title GoldYellow, body = the original modal body / button text LightGold, secondary = the Graphics tab hint's LightGray; ReducedSpacing as the original modal body and settings text
+            + _co_text('TouchCommDesc0', 36, '$FontColorLightGold')
+            + ''.join(_co_text('TouchCommDesc%d' % k, 28, '$FontColorLightGray') for k in (1, 2))
             + _btn('TouchCommCopyQq', 99999, '@dmCommunityCopyQq', 'PanelManager:ClosePanel:TouchCommCopy', x=99999, anchor=False)
             + _btn('TouchCommCopyLink', 99999, '@dmCommunityCopyLink', 'PanelManager:ClosePanel:TouchCommCopy', x=99999, anchor=False)
             + _btn('TouchCommOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchCommOk', x=99999, anchor=False))
