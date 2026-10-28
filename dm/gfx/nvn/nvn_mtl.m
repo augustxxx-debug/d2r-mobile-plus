@@ -591,6 +591,7 @@ static int tbdr_on(void);
 
 static uint64_t g_sub_serial;   // 第几次提交（并行预编「每次提交只预测一次」用） | Submission index (used by the parallel precompile's 'predict only once per submission')
 static void tbdr_latch(void);
+static void (*g_sub_begin_probe)(void);   // 单测钩子（十三审 Q13-01）：mtl_sub_begin 开头那段里调，生产恒为空——t_defer_drain 第 2 节在这里自动释放一个对象，验证它随本次提交排空 | unit-test hook (thirteenth review Q13-01): called in the head of mtl_sub_begin, always null in production - t_defer_drain section 2 autoreleases an object here to verify it drains with this submission
 void mtl_sub_begin(void) {
     if (g_cb) MDIE("提交重入");
     g_sub_pool = objc_autoreleasePoolPush();   // 先压提交池：下面的 defer_drain / warm_claim 在客体线程上产生的自动释放对象也随本次提交排空（客体线程最外层池整局不排空） | push the submission pool first: autoreleased objects from defer_drain / warm_claim below on the guest thread drain with this submission too (the guest thread's outermost pool never drains during a game)
@@ -600,6 +601,7 @@ void mtl_sub_begin(void) {
     defer_drain();
     defer_reset();
     warm_claim();
+    if (g_sub_begin_probe) g_sub_begin_probe();
     g_sub_thread = pthread_self(); atomic_store(&g_sub_thread_set, 1);
     atomic_store(&g_last_commit_error, 0);
 #if DM_NVN_M3
@@ -4998,7 +5000,7 @@ frz_plain:;
     if (g_rt_range_pending) { PD("j rt_level_range pass=%llu vc=%u", g_stat_pass, (unsigned)(dw ? dw->count : di->count)); g_rt_range_pending=0; }
 }
 static nvn_hmap g_cps = {.klen = sizeof(void *)};
-static void warm_claim(void) {
+static void warm_claim(void) { @autoreleasepool {   // 自带池（十三审 Q13-01）：表里取出的着色器 / 管线若经自动释放，随这一次认领排空，不依赖调用方的池 | own pool (thirteenth review Q13-01): anything autoreleased while claiming drains with this claim, regardless of the caller's pool
     if (!atomic_exchange_explicit(&g_warm_ready, 0, memory_order_acq_rel)) return;
     os_unfair_lock_lock(&g_warm_lock);
     NSArray<WarmItem *> *items = [g_warm_items copy];
@@ -5022,7 +5024,7 @@ static void warm_claim(void) {
             if (!hm_get_id(&g_cps, &key)) { hm_put_id(&g_cps, &key, item->object); g_warm_claim_cps++; }
         }
     }
-}
+} }
 // ---------- 紫闪探针 ----------
 // A16 视频：重负载下 3D 画面整块变品红 (255,0,254)、界面照常画在上面，0.35 秒一阵。缺省开（DM_MAGENTA_PROBE_OFF=1 关），只在内测包里看日志：
 // 每次出图在上屏命令缓冲末尾把游戏最终画面的 5 个点（中心与四个四分之一点）和调色表 4 格拷进共享缓冲，命令缓冲完成时在回调里判，不等 GPU、不占帧。
