@@ -26,15 +26,25 @@ WEIGHT_STEP = 5
 WEIGHT_MAX = 8
 # 两边都有的码位里只有这些区段取自选字体：中日文部首、标点、假名、注音、汉字（含扩展与兼容区）、竖排 / 全角形式。
 # GB 字库（楷体等）的拉丁 / 西里尔 / 希腊 / 通用标点多为全角，数字比大写字母高、% 偏小，游戏按原字体排的数字与西文会错位、被撑开；
-# 这些码位一律保留游戏原字形。自选字体独有的码位（扩展汉字等）照样补进来。
+# 这些码位一律保留游戏原字形。自选字体独有的码位（扩展汉字等）不补：游戏文本、我们的界面文本都只用原字体已有的码位（原字体已含 2 万多汉字），
+# 补进去只会把字体撑大——霞鹜文楷全量合并后 20.6 MiB，安卓主菜单一画字就闪退（见 FONT_BYTES_MAX）。
 # For codepoints both fonts cover, only these ranges come from the requested font: CJK radicals, punctuation, kana, bopomofo,
 # ideographs (extensions and compatibility included), vertical / full-width forms. GB fonts (Kai and the like) carry mostly full-width
 # Latin / Cyrillic / Greek / general punctuation, digits taller than capitals and a small %, which misalign and spread numbers and
 # Western text laid out for the original font; those codepoints keep the game glyphs. Codepoints only the requested font has
-# (extension ideographs and so on) are still added.
+# (extension ideographs and so on) are not added: the game text and our UI text only use codepoints the game font already covers
+# (over 20,000 ideographs), and adding them only bloats the font -- LXGW WenKai merged in full is 20.6 MiB and crashed the Android main
+# menu as soon as it drew text (see FONT_BYTES_MAX).
 CJK_RANGES = ((0x2e80, 0x2fff), (0x3000, 0x30ff), (0x3100, 0x312f), (0x31a0, 0x31ff), (0x3200, 0x33ff),
               (0x3400, 0x4dbf), (0x4e00, 0x9fff), (0xf900, 0xfaff), (0xfe10, 0xfe1f), (0xfe30, 0xfe4f),
               (0xff00, 0xffef), (0x20000, 0x3ffff))
+
+# 合成字体的体积上限。四审真机（安卓）：合并后 15.6 MiB（文鼎中楷）正常，17.9 MiB、20.6 MiB（霞鹜文楷子集 / 全量）主菜单一画字就空指针闪退
+# （main+0xc75c78，地址 0xa0），9.3 MiB 的同款字体子集正常——游戏读字体的缓冲大概是 16 MiB。超出就不出字体、报错，不让游戏带着它闪退。
+# Size cap for the composed font. Fourth-audit device runs (Android): 15.6 MiB merged (Arphic) works, 17.9 MiB and 20.6 MiB (LXGW WenKai
+# subset / full) crash on a null pointer as the main menu draws text (main+0xc75c78, address 0xa0), and a 9.3 MiB subset of the same font
+# works -- the game's font buffer is probably 16 MiB. Over the cap we refuse to write the font rather than ship one that crashes.
+FONT_BYTES_MAX = 15 * 1024 * 1024
 
 
 def is_cjk(codepoint):
@@ -162,11 +172,11 @@ def embolden(font, strength):
 
 
 def simplify(font):
-    """复合字形展开成普通轮廓、去掉 TrueType 微调（prep / fpgm / cvt 表与各字形的指令）：游戏的字体引擎只认普通轮廓、原字体也不带微调。
-    霞鹜文楷 v1.530 有 288 个复合字形和 prep 表，合进去后安卓上主菜单一画字就空指针闪退（main+0xc75c78，四审真机）；文鼎中楷没有这两样，一直正常。
-    Expand composite glyphs into plain outlines and drop TrueType hinting (prep / fpgm / cvt tables and per-glyph programs): the game's font engine only takes plain
-    outlines and the game font carries no hinting. LXGW WenKai v1.530 has 288 composites and a prep table; merged in, the Android main menu crashed on a null pointer as
-    soon as it drew text (main+0xc75c78, fourth-audit device run); the Arphic font had neither and always worked."""
+    """复合字形展开成普通轮廓、去掉 TrueType 微调（prep / fpgm / cvt 表与各字形的指令），与原字体一致：原字体只有普通轮廓、不带微调。
+    霞鹜文楷 v1.530 有 288 个复合字形和 prep 表；四审真机上它的闪退最后查明是体积（FONT_BYTES_MAX），这一步单独不解决闪退，留着是让合成结果和原字体同构。
+    Expand composite glyphs into plain outlines and drop TrueType hinting (prep / fpgm / cvt tables and per-glyph programs), matching the game font, which has plain
+    outlines only and no hinting. LXGW WenKai v1.530 has 288 composites and a prep table; its fourth-audit device crash turned out to be size (FONT_BYTES_MAX), so this
+    step alone does not fix the crash; it stays so the composed font has the same structure as the game font."""
     from fontTools.pens.recordingPen import DecomposingRecordingPen
     from fontTools.pens.ttGlyphPen import TTGlyphPen
     from fontTools.ttLib.tables import ttProgram
@@ -215,11 +225,12 @@ def compose(original, requested, output, weight=0):
                     and base['glyf'][base_map[c]].numberOfContours != 0}
     western = {c for c in base_chars & custom_chars if not is_cjk(c)}
     protected = symbols | placeholders | western
-    if protected:
+    wanted = (custom_chars & base_chars) - protected   # 只换原字体已有的码位，不补新码位（见 CJK_RANGES 注释）| replace codepoints the game font has; add none
+    if wanted != custom_chars:
         keep = subset.Subsetter()
-        keep.populate(unicodes=custom_chars - protected)
+        keep.populate(unicodes=wanted)
         keep.subset(custom)
-        custom_chars -= protected
+        custom_chars = wanted
 
     if custom['head'].unitsPerEm != base['head'].unitsPerEm:
         scale_upem(custom, base['head'].unitsPerEm)
@@ -262,8 +273,13 @@ def compose(original, requested, output, weight=0):
             raise ValueError('Font composition lost Unicode coverage')
         merged.recalcTimestamp = False
         merged['head'].created, merged['head'].modified = stamp
-        merged.save(output)
+        data = io.BytesIO()
+        merged.save(data)
         merged.close()
+        if data.tell() > FONT_BYTES_MAX:
+            raise ValueError('Composed font is %.1f MiB, over the %d MiB the game can load; pick a smaller font'
+                             % (data.tell() / 1048576.0, FONT_BYTES_MAX // 1048576))
+        Path(output).write_bytes(data.getvalue())
     base.close()
     custom.close()
 
@@ -282,7 +298,7 @@ def prepare(romfs):
     original = romfs_art.read(romfs, GAME_FONT)
     weight = weight_level()
     # 指纹带档位和每档的量：改标定也要重建 | The fingerprint carries the level and the per-level amount, so a recalibration rebuilds too
-    digest = hashlib.sha256(b'font-override-v7\0' + ('w%d/%d\0' % (weight, WEIGHT_STEP)).encode() + original + path.read_bytes()).hexdigest()
+    digest = hashlib.sha256(b'font-override-v8\0' + ('w%d/%d\0' % (weight, WEIGHT_STEP)).encode() + original + path.read_bytes()).hexdigest()
     if output.is_file() and stamp.is_file() and stamp.read_text() == digest:
         return str(output)
     with tempfile.TemporaryDirectory(dir=directory) as work:
