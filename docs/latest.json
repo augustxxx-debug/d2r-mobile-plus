@@ -1,0 +1,10 @@
+{
+  "build": 1793219587,
+  "version": "1.0.0",
+  "note": "1.0.0 RC1：光追阴影画质（双影、软阴影）、内存修复与按机型分档、霞鹜文楷、游戏内社区入口。",
+  "urgent": false,
+  "community": {
+    "qq_group": "1129913678",
+    "github": "https://github.com/augustxxx-debug/d2r-mobile-plus"
+  }
+}
