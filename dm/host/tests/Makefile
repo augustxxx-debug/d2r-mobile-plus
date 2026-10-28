@@ -46,6 +46,7 @@ run: \
 	$(B)/t_graphics_gate \
 	$(B)/t_res_auto_policy \
 	$(B)/t_res_cap \
+	$(B)/t_update_appear \
 	$(B)/t_custom_scroll \
 	$(B)/t_hud_mask \
 	$(B)/t_uiscreen_frontend \
@@ -101,6 +102,7 @@ run: \
 	$(B)/t_crashfence 2>/dev/null
 	$(B)/t_community 2>/dev/null
 	$(B)/t_res_cap
+	$(B)/t_update_appear
 	$(B)/t_custom_scroll
 	$(B)/t_hud_mask
 	$(B)/t_res_auto_policy 2>/dev/null
@@ -252,6 +254,8 @@ $(B)/t_res_auto_policy: t_res_auto_policy.c t_metalfx_handoff_backend.c ../hle_o
 
 $(B)/t_res_cap: t_res_cap.c ../dm_res_cap.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_res_cap.c -lm
+$(B)/t_update_appear: t_update_appear.c ../dm_update.c | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_update_appear.c
 $(B)/t_custom_scroll: t_custom_scroll.c ../dm_custom_scroll.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_custom_scroll.c
 $(B)/t_hud_mask: t_hud_mask.c ../dm_hud_mask.h | $(B)

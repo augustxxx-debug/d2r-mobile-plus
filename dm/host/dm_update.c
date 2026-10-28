@@ -18,6 +18,7 @@
 #include "dm_cursor.h"
 #include "dm_uiscreen.h"
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <stdatomic.h>
 #include <pthread.h>
@@ -55,8 +56,13 @@ void dm_update_foreground(void) { if (g_own >= 0) atomic_store(&g_fg, 1); }
 void dm_update_mode_enter(void) { if (g_own >= 0) atomic_store(&g_dirty, 30); }
 void dm_update_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c 转来，游戏主线程） | UI message callback (forwarded from diag.c, game main thread)
     if (g_own < 0 || strcmp(cat, "PanelManager")) return;
-    if (!strcmp(act, "OpenPanel") && (!strcmp(arg, "MainMenuPanel") || !strcmp(arg, "CharacterSelectPanel"))) { atomic_store(&g_dirty, 30);   // 面板重建后控件是新的，重写一遍 | After a panel rebuild the widgets are new, so write everything again
-        if (arg[0] == 'C') atomic_store(&g_appear, 1); }   // 选角页出现一次（启动、从局里退回来、列表收起后重开）：外壳重查一次新版本 | The character select page appears once (startup, returning from a run, list reopened after being collapsed): the shell rechecks once for a new version
+    // 「选页出现」= 玩家落脚的第一页：触屏版是选角页（CharacterSelectPanel），手柄版是原版手柄主菜单（MainMenuButtonRibbon：左侧按钮栏 + 角色预览，玩家多半从这里直接进游戏、不开角色列表）。
+    // 原先只认选角页：手柄玩家不开角色列表，外壳就一直不给左安全区（iOS dm_update.m on_select），版本字一直不写、新版本也不查（用户 2026-10-28：手柄模式下版本号不显示）
+    // "Page appears" = the first page the player lands on: the character select page in the touch layout (CharacterSelectPanel), the original controller main menu in the controller layout (MainMenuButtonRibbon: button ribbon + character preview; players mostly enter the game from there without opening the character list).
+    // Only the character select page counted before: a controller player who never opened the character list never got the left safe area from the shell (iOS dm_update.m on_select), so the version label was never written and no update check ran (user 2026-10-28: version label missing in controller mode)
+    int appear = !strcmp(arg, "CharacterSelectPanel") || !strcmp(arg, "MainMenuButtonRibbon");
+    if (!strcmp(act, "OpenPanel") && (appear || !strcmp(arg, "MainMenuPanel"))) { atomic_store(&g_dirty, 30);   // 面板重建后控件是新的，重写一遍 | After a panel rebuild the widgets are new, so write everything again
+        if (appear) atomic_store(&g_appear, 1); }   // 选角页出现一次（启动、从局里退回来、列表收起后重开）：外壳重查一次新版本 | The character select page appears once (startup, returning from a run, list reopened after being collapsed): the shell rechecks once for a new version
 }
 static uint8_t *tb(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
 static uint64_t find(uint64_t w, const char *name, int dep) {   // 按名字找控件：名字 +8、子控件数组 +0x58、个数 +0x60（同 dm_cursor.c ui_find） | Find a widget by name: name +8, child array +0x58, count +0x60 (same as dm_cursor.c ui_find)
@@ -69,8 +75,11 @@ static void set_text(uint8_t *b, uint64_t w, const char *s);
 static void place(uint64_t w, int x, int y) {   // 矩形 x / y 在 +0x70 / +0x74；改完照原版补一次虚表 +0x10 让它重算（同 dm_cursor.c 安全区那处） | Rectangle x / y at +0x70 / +0x74; after changing them, call vtable +0x10 once as the original game does so it recomputes (same as the safe area site in dm_cursor.c)
     int32_t *r = (int32_t *)(w + 0x70); if (r[0] == x && r[1] == y) return; r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x10))(w);
 }
+static void test_on_select(void) { LOG("更新：测试开关的外壳回调——给左安全区 0"); dm_update_safe_left(0); }   // 同 iOS dm_update.m on_select：页出现时外壳才给左安全区 | like iOS dm_update.m on_select: the shell supplies the left safe area only when the page appears
 void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Called every frame at the controller poll (game main thread)
-    if (g_own < 0) return;
+    if (g_own < 0) {   // 测试开关 DM_TEST_UPDATE_LABEL=<字串>：没有包信息的宿主（Mac 原生宿主 dmhost）也按这串字写选角页版本标签，用来核两种布局下的位置 | test switch DM_TEST_UPDATE_LABEL=<text>: a host without bundle info (the Mac native host dmhost) also writes the character-select version label with this text, to check its position in both layouts
+        static int once; const char *e = once++ ? NULL : getenv("DM_TEST_UPDATE_LABEL"); if (!e || !*e) return;
+        dm_update_init(1, e, test_on_select); LOG("更新：测试开关 DM_TEST_UPDATE_LABEL，版本标签写「%s」（安全区同 iOS 外壳：等选页回调再给）", e); }
     if (atomic_exchange(&g_fg, 0)) {   // 选角列表面板在且显示着（可见位 +0x50）、构建号控件也在 = 人停在选角页 | Character select list panel present and shown (visible bit +0x50) and the build number widget also present = the user is sitting on the character select page
         uint8_t *fb = tb(); uint64_t fr = fb ? *(uint64_t *)(fb + 0x2f05458) : 0, fm = fr ? find(fr, "MainMenuPanel", 0) : 0, fl = fr ? find(fr, "CharacterSelectPanel", 0) : 0;
         if (fm && find(fm, "TouchBuild", 0) && fl && *(uint8_t *)(fl + 0x50)) { atomic_store(&g_appear, 1); atomic_store(&g_dirty, 30); LOG("更新：回到前台时停在选角页，重查一次新版本"); } }
