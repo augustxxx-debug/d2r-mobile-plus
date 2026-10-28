@@ -296,7 +296,9 @@ _SAFE = _safe(True); _SAFE_PAD = _safe(False)
 def _community():
     return (''.join('        { "type": "ImageWidget", "name": "TouchCommTile%d%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 52, "height": 24 }, "filename": "Ztouch_comm/tile%d%d" } },\n' % (r, c, r, c) for r in range(5) for c in range(3))
             + _upd_text('TouchCommTitle', 99999, 99999, 1700, 48, (230, 200, 120), 'center')
-            + ''.join(_upd_text('TouchCommDesc%d' % k, 99999, 99999, 1700, 36, (232, 228, 214), 'center') for k in range(3))
+            # 正文 / 副文分字号（用户：「都一个字体丑死了」）：第一行群号 / 链接 36 号亮色；第二行提示句、第三行「已复制」28 号灰色 | main / secondary text in different sizes (user): line 1 number / link at 36 light; line 2 hint and line 3 "Copied" at 28 grey
+            + _upd_text('TouchCommDesc0', 99999, 99999, 1700, 36, (232, 228, 214), 'center')
+            + ''.join(_upd_text('TouchCommDesc%d' % k, 99999, 99999, 1700, 28, (178, 172, 158), 'center') for k in (1, 2))
             + _btn('TouchCommCopyQq', 99999, '@dmCommunityCopyQq', 'PanelManager:ClosePanel:TouchCommCopy', x=99999, anchor=False)
             + _btn('TouchCommCopyLink', 99999, '@dmCommunityCopyLink', 'PanelManager:ClosePanel:TouchCommCopy', x=99999, anchor=False)
             + _btn('TouchCommOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchCommOk', x=99999, anchor=False))

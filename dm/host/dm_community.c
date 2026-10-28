@@ -156,7 +156,7 @@ void dm_community_on_uimsg(const char *cat, const char *act, const char *arg) { 
     if (!strcmp(arg, "TouchCommunity")) dm_community_open(1);
     else if (!strcmp(arg, "TouchCommunityOpt")) dm_community_open(2);
     else if (!strcmp(arg, "TouchCommCopy") && atomic_load(&g_show) == 2) do_copy(1);
-    else if (!strcmp(arg, "TouchCommOk") && atomic_load(&g_show) == 2) atomic_store(&g_ack, 1);
+    else if (!strcmp(arg, "TouchCommOk") && atomic_load(&g_show) == 2) atomic_store(&g_ack, 1);   // 1 点按钮 / 2 手柄 B（只进日志） | 1 button / 2 controller B (log only)
 }
 
 // ---- 画面 | picture ----
@@ -233,8 +233,8 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     if (!tiles || !ti || !de[0] || !de[1] || !de[2] || !ok || !cq || !cl) { atomic_store(&g_show, 0); LOG("【红】社区入口：%s 里的提示框控件不全，不显示", k_hosts[which]); return; }
     char v[GH_MAX + 1]; int kind = dm_community_value(dm_lang_group(), v, sizeof v);
     if (!kind) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：没有可显示的值了，提示框收起"); return; }
-    if (pad && st == 2) { uint64_t ev = dm_padmode_page_keys(DM_BTN_A | DM_BTN_B); if (ev & DM_BTN_A) do_copy(2); if (ev & DM_BTN_B) atomic_store(&g_ack, 1); }   // 手柄：显示着时接管 A 复制、B 收起 | controller: while shown, A copies and B dismisses
-    if (atomic_exchange(&g_ack, 0)) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：收起（%s）", pad ? "手柄 B" : "点确定"); return; }
+    if (pad && st == 2) { uint64_t ev = dm_padmode_page_keys(DM_BTN_A | DM_BTN_B); if (ev & DM_BTN_A) do_copy(2); if (ev & DM_BTN_B) atomic_store(&g_ack, 2); }   // 手柄：显示着时接管 A 复制、B 收起 | controller: while shown, A copies and B dismisses
+    { int ack = atomic_exchange(&g_ack, 0); if (ack) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：收起（%s）", ack == 2 ? "手柄 B" : "点确定"); return; } }
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
     int ox, oy; float s; co_origin(p, xr, &ox, &oy, &s);
     int cx = (int)((xr / 2 - ox) / s), y0 = (int)((1080 - oy) / s) - 310;   // 整屏居中：框 1800×620（面板单位） | centered on the screen: box 1800×620 (panel units)
@@ -245,7 +245,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     { int g[15][4], h = dm_notice_geometry(1800 - 128, 620 - 24, 1800, g), top = (244 - h) / 2;   // 边框几何同崩溃围栏提示框（dm_crashfence.c） | frame geometry as the crash-fence box
       for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + g[k][0], y0 + g[k][1] - top, g[k][2], g[k][3] + (k / 3 < 4 ? 2 : 0) }; co_tile(b, tl[k], r); } }
     co_place(ti, cx - 850, y0 + 40);
-    for (int k = 0; k < 3; k++) co_place(de[k], cx - 850, y0 + 150 + 66 * k);
+    co_place(de[0], cx - 850, y0 + 140); co_place(de[1], cx - 850, y0 + 212); co_place(de[2], cx - 850, y0 + 262);   // 正文 36 号一行，副文 28 号两行（布局 _community 的字号） | main line at 36, two secondary lines at 28 (sizes from the layout _community)
     co_place(kind == 1 ? cq : cl, cx - 490, y0 + 460); co_place(kind == 1 ? cl : cq, 99999, 99999); co_place(ok, cx + 20, y0 + 460);   // 两颗按钮各 470 宽，左复制、右确定 | two 470-wide buttons: Copy left, OK right
     if (st == 1) { atomic_store(&g_show, 2); int32_t *pr = (int32_t *)(p + 0x70);
         LOG("社区入口：已显示（%s，%s，%s；面板 %s 锚 %.2f/%.2f 矩形 %d,%d %dx%d 缩放 %.2f → 框中心 %d 顶 %d）", atomic_load(&g_from) == 2 ? "选项页" : "暂停菜单", pad ? "手柄模式，A 复制 B 收起" : "触屏 / 鼠标点按钮", kind == 1 ? "群号" : "链接",

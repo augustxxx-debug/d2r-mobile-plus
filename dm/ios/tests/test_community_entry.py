@@ -87,6 +87,9 @@ class PauseMenu(unittest.TestCase):
         self.check_rows(out, {'TouchPadDiff': 278, 'Exit': 403, 'TouchRestart': 528, 'Settings': 653, 'TouchPadStore': 778, 'Chronicle': 903, 'TouchCommunity': 1028})
         for w in BOX: self.assertIn('"name": "%s"' % w, out, w)
         self.assertNotIn('"anchor"', out[out.index('TouchCommTile00'):], 'controller / Mac box carries no anchor: the host places it from the panel rect')
+        # 正文 / 副文分字号：第一行 36，提示句与「已复制」28 | main / secondary sizes: line 1 at 36, hint and Copied at 28
+        self.assertIn('"name": "TouchCommDesc0", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1700, "height": 60 }, "text": "", "style": { "pointSize": 36', out)
+        for k in (1, 2): self.assertIn('"name": "TouchCommDesc%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1700, "height": 60 }, "text": "", "style": { "pointSize": 28' % k, out)
 
 
 class OptionsPage(unittest.TestCase):
@@ -114,8 +117,8 @@ class Text(unittest.TestCase):
         rows = {r[0]: r[1:] for r in dm_i18n.rows()}
         langs = ('中文', 'English', 'Español', 'Español MX', 'Русский', '한국어')
         sample = {'dmCommunityQq': '1129913678', 'dmCommunityLink': 'https://github.com/example-owner/d2r-mobile-plus/discussions'}
-        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 36, BOX_W), ('dmCommunityLinkHint', 36, BOX_W),
-                               ('dmCommunityCopied', 36, BOX_W), ('dmCommunityCopyFail', 36, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
+        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
+                               ('dmCommunityCopied', 28, BOX_W), ('dmCommunityCopyFail', 28, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
                                ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000)):
             texts = rows[key]
             for lang, t in zip(langs, texts):
