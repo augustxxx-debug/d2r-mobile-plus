@@ -1263,6 +1263,9 @@ static void tsummary(uint64_t frame) {
       // Present interval p5 / p50 / p95: with an evenly dividing frame rate all three are equal (72 fps on a 144 Hz screen is 13.9 for all); otherwise two tiers alternate (60 fps on a 144 Hz screen gives 13.9 / 20.8)
       if (k) { qsort(v, k, sizeof *v, dcmp); LOG("[nvn] 上屏 至帧 %llu：%u 帧，掉帧 %u（丢弃 %u），间隔 p5 %.2f / p50 %.2f / p95 %.2f，p99 %.2f ms；footprint %.0f MiB；亮度 %.2f；温控 %d", frame, k + discard, drop, discard,
           v[(k * 5) / 100], v[k / 2], v[(k * 95) / 100 < k ? (k * 95) / 100 : k - 1], v[(k * 99) / 100 < k ? (k * 99) / 100 : k - 1], fp, br, dm_thermal_now()); }
+      // 没有呈现时间读数（120 帧走显示节拍时真机 7500 帧后呈现回调不再给时间）也照样每 300 帧记一行：footprint 不能跟着断（真机长测 6a777d0：之后 1300 秒没有 footprint 采样，只能从余量倒推）
+      // no presentation-time reading (on the device at 120 fps through the display link the presented callback stops giving times after frame 7500) still logs one line every 300 frames: footprint must not stop with it (device long test 6a777d0: no footprint sample for the following 1300 s, it could only be inferred from the headroom)
+      else LOG("[nvn] 上屏 至帧 %llu：%u 帧，掉帧 %u（丢弃 %u），呈现时间无读数；footprint %.0f MiB；亮度 %.2f；温控 %d", frame, discard, discard, discard, fp, br, dm_thermal_now());
       g_presn = 0; }
     { static uint64_t pi, pc, pd, pf; uint64_t ci = atomic_load(&g_cum_sub_instr), cc = atomic_load(&g_cum_sub_cpu_ns), ps_, dr_; mtl_stats(&ps_, &dr_);   // 翻译层 | translation layer
       if (pf && frame > pf && dr_ > pd) LOG("[nvn] 翻译 至帧 %llu：每次绘制 %.0f 条指令，每帧提交 %.2f M 条 / CPU %.3f ms，每帧绘制 %.0f", frame,

@@ -181,6 +181,7 @@ run: \
 	@for t in t_rts_gate t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
 	python3 test_tbdr_budget.py
 	./t_mp_grid
+	python3 test_present_line.py   # 上屏行全程带 footprint（真机长测 7500 帧后断） | the present line carries footprint throughout (cut after frame 7500 in the device long test)
 .PHONY: run
 # 旧接口版那一遍（图形后端编译期开关 DM_NVN_M3=1，目标 macOS 15.0）：在旁边的 tests_m3 目录里用同一份测试源码另编另跑，不动这里的缺省产物。
 # 闸门（verify/accept.sh）两遍都跑，免得以后只测一边
