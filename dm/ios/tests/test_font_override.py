@@ -178,7 +178,7 @@ class FontComposition(unittest.TestCase):
             font = Path(work) / 'input.ttf'
             synthetic(font, [65], 1000, 'Requested')
             digest = hashlib.sha256(font.read_bytes()).hexdigest()
-            with patch.dict(os.environ, DM_UI_FONT=str(font), DM_UI_FONT_WEIGHT=''):
+            with patch.dict(os.environ, DM_UI_FONT=str(font), DM_UI_FONT_WEIGHT='', DM_PRIVATE_FONT='1'):
                 self.assertEqual(font_override.weight_level(), 0)
                 self.assertEqual(font_override.source_fingerprint(), digest)
                 os.environ['DM_UI_FONT_WEIGHT'] = '2'
@@ -189,11 +189,62 @@ class FontComposition(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         font_override.weight_level()
 
+    def test_private_font_needs_the_private_build_switch(self):
+        with tempfile.TemporaryDirectory() as work:
+            font = Path(work) / 'private' / 'Kai' / 'kai.ttf'
+            font.parent.mkdir(parents=True)
+            synthetic(font, [65], 1000, 'Private')
+            (font.parent / 'OFL.txt').write_text('a licence file does not make a private directory public')
+            with patch.dict(os.environ, DM_UI_FONT=str(font), DM_PRIVATE_FONT=''):
+                with self.assertRaises(ValueError):
+                    font_override.source_path()
+                os.environ['DM_PRIVATE_FONT'] = '1'
+                self.assertEqual(font_override.source_path(), font)
+                (Path(work) / font_override.PACKAGED_LICENCE).write_text('stale')
+                self.assertIsNone(font_override.package_licence(work, font))
+                self.assertFalse((Path(work) / font_override.PACKAGED_LICENCE).exists())
+
+    def test_public_font_requires_and_packages_its_licence(self):
+        with tempfile.TemporaryDirectory() as work:
+            font = Path(work) / 'public' / 'WenKai' / 'wenkai.ttf'
+            font.parent.mkdir(parents=True)
+            synthetic(font, [65], 1000, 'Public')
+            with patch.dict(os.environ, DM_UI_FONT=str(font), DM_PRIVATE_FONT='1'):
+                with self.assertRaises(ValueError):   # 公开目录没有许可证，即使是私有构建也不行 | no licence in a public directory fails even for a private build
+                    font_override.source_path()
+                (font.parent / 'OFL.txt').write_text('Copyright 2021 Example\nSIL OPEN FONT LICENSE Version 1.1\n')
+                os.environ['DM_PRIVATE_FONT'] = ''
+                self.assertEqual(font_override.source_path(), font)
+                packaged = font_override.package_licence(work, font)
+                self.assertEqual(packaged, Path(work) / font_override.PACKAGED_LICENCE)
+                text = packaged.read_text()
+                self.assertIn('SIL OPEN FONT LICENSE Version 1.1', text)
+                self.assertIn('Copyright 2021 Example', text)
+                self.assertIn('Public', text)   # 字体名进了说明 | the font name is in the note
+                self.assertIn('subset', text)
+                self.assertIn(hashlib.sha256(font.read_bytes()).hexdigest(), text)
+
+    def test_font_outside_public_and_private_goes_by_the_licence_file(self):
+        with tempfile.TemporaryDirectory() as work:
+            font = Path(work) / 'fonts' / 'plain.ttf'
+            font.parent.mkdir(parents=True)
+            synthetic(font, [65], 1000, 'Plain')
+            with patch.dict(os.environ, DM_UI_FONT=str(font), DM_PRIVATE_FONT=''):
+                with self.assertRaises(ValueError):
+                    font_override.source_path()
+                os.environ['DM_PRIVATE_FONT'] = '1'
+                self.assertEqual(font_override.source_path(), font)
+                self.assertIsNone(font_override.package_licence(work, font))
+                os.environ['DM_PRIVATE_FONT'] = ''
+                (font.parent / 'LICENSE.txt').write_text('MIT-like text')
+                self.assertEqual(font_override.source_path(), font)
+                self.assertTrue(font_override.package_licence(work, font).read_text().endswith('MIT-like text'))
+
     def test_fingerprint_and_disabled_cleanup(self):
         with tempfile.TemporaryDirectory() as work:
             font = Path(work) / 'input.ttf'
             synthetic(font, [65], 1000, 'Requested')
-            with patch.dict(os.environ, DM_UI_FONT=str(font), DM_GEN_ASSETS=work):
+            with patch.dict(os.environ, DM_UI_FONT=str(font), DM_GEN_ASSETS=work, DM_PRIVATE_FONT='1'):
                 self.assertEqual(font_override.source_fingerprint(), hashlib.sha256(font.read_bytes()).hexdigest())
                 font.write_bytes(font.read_bytes() + b'changed')
                 self.assertEqual(font_override.source_fingerprint(), hashlib.sha256(font.read_bytes()).hexdigest())
@@ -201,9 +252,11 @@ class FontComposition(unittest.TestCase):
                 output.mkdir()
                 (output / 'theme.ttf').write_bytes(b'stale')
                 (output / 'fingerprint.txt').write_text('stale')
+                (output / font_override.PACKAGED_LICENCE).write_text('stale')
                 os.environ['DM_UI_FONT'] = ''
                 self.assertIsNone(font_override.prepare('unused'))
                 self.assertFalse((output / 'theme.ttf').exists())
+                self.assertFalse((output / font_override.PACKAGED_LICENCE).exists())
                 self.assertEqual(font_override.source_fingerprint(), 'original')
 
     def test_missing_input_fails_early(self):

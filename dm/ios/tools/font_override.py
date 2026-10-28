@@ -41,6 +41,52 @@ def is_cjk(codepoint):
     return any(lo <= codepoint <= hi for lo, hi in CJK_RANGES)
 
 
+# 许可证：与字体同目录、按这些名字找；打进包里的副本叫 PACKAGED_LICENCE（iOS 在 App 的 UIFonts/ 下，和 theme.ttf 并排；安卓导入包放 dmgen/font/ 下同名）。
+# Licence: looked up next to the font under these names; the copy shipped in the package is PACKAGED_LICENCE (iOS: UIFonts/ in the App next to theme.ttf;
+# the Android import pack puts the same name under dmgen/font/).
+LICENCE_NAMES = ('OFL.txt', 'OFL-1.1.txt', 'LICENSE', 'LICENSE.txt', 'LICENCE', 'LICENCE.txt', 'COPYING')
+PACKAGED_LICENCE = 'FONT_LICENSE.txt'
+
+
+def licence_path(font):
+    """与字体同目录的许可证文件，没有则 None。 | The licence file next to the font, or None."""
+    for name in LICENCE_NAMES:
+        candidate = Path(font).parent / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def font_policy(path):
+    """公开 / 私有字体准入（十三审 Q13-02）：返回要打进包的许可证路径，私有字体返回 None。
+    路径里有 private 目录：必须 DM_PRIVATE_FONT=1 才允许（商业字体只进自用包），不打包许可证；
+    路径里有 public 目录：同目录必须有许可证文件（OFL 要求每份分发副本带版权声明与许可证），否则构建失败；
+    两者都不是：旁边有许可证就按公开字体打包，没有就要 DM_PRIVATE_FONT=1。
+    Public / private font admission (13th review Q13-02): returns the licence file to ship, None for a private font.
+    A path with a `private` directory needs DM_PRIVATE_FONT=1 (commercial fonts only go into private builds) and ships no licence;
+    a path with a `public` directory must have a licence file beside the font (the OFL requires the copyright notice and licence with
+    every distributed copy) or the build fails; anything else ships the licence when one is there and otherwise needs DM_PRIVATE_FONT=1."""
+    path = Path(path)
+    parts = {part.lower() for part in path.parent.parts}
+    private_flag = os.environ.get('DM_PRIVATE_FONT', '').strip() == '1'
+    licence = licence_path(path)
+    if 'private' in parts:
+        if not private_flag:
+            raise ValueError('DM_UI_FONT is under a private directory: only a private build with DM_PRIVATE_FONT=1 may use it; '
+                             'public packages need a redistributable font with its licence file in a public directory')
+        return None
+    if 'public' in parts:
+        if licence is None:
+            raise ValueError('DM_UI_FONT is under a public directory but no licence file (%s) sits next to it; the licence must ship in the package'
+                             % ', '.join(LICENCE_NAMES))
+        return licence
+    if licence is not None:
+        return licence
+    if private_flag:
+        return None
+    raise ValueError('no licence file next to DM_UI_FONT: put OFL.txt / LICENSE beside a redistributable font, or build with DM_PRIVATE_FONT=1 for a private font')
+
+
 def source_path():
     value = os.environ.get('DM_UI_FONT', '')
     if not value:
@@ -48,7 +94,30 @@ def source_path():
     path = Path(value).expanduser()
     if not path.is_file():
         raise ValueError('DM_UI_FONT must point to a readable local font file')
+    font_policy(path)
     return path
+
+
+def package_licence(directory, path):
+    """把许可证连同来源与修改说明写成 <directory>/PACKAGED_LICENCE；私有字体或未配置时删掉旧副本。返回写出的路径或 None。
+    Write the licence with a provenance and modification note to <directory>/PACKAGED_LICENCE; remove a stale copy for a private font or
+    when disabled. Returns the written path or None."""
+    target = Path(directory) / PACKAGED_LICENCE
+    licence = font_policy(path) if path is not None else None
+    if licence is None:
+        target.unlink(missing_ok=True)
+        return None
+    from fontTools.ttLib import TTFont
+    with TTFont(path, lazy=True) as font:
+        full = font['name'].getDebugName(4) or font['name'].getDebugName(1) or Path(path).name
+        version = font['name'].getDebugName(5) or ''
+    digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    header = ('This package embeds a modified version of the font "%s" %s (file %s, sha256 %s):\n'
+              'the font was subset to the characters the game and this project use and merged with the game\'s own font, and the merged '
+              'font carries the game font\'s registration name, not the original font name. The original copyright notice and licence '
+              'follow unchanged; the modified version is distributed under that same licence.\n\n' % (full, version, Path(path).name, digest))
+    target.write_text(header + licence.read_text(encoding='utf-8', errors='replace'), encoding='utf-8')
+    return target
 
 
 def weight_level():
@@ -245,7 +314,9 @@ def prepare(romfs):
     if path is None:
         output.unlink(missing_ok=True)
         stamp.unlink(missing_ok=True)
+        package_licence(directory, None)
         return None
+    package_licence(directory, path)   # 每次都重写：许可证副本随字体走 | rewritten every time: the licence copy follows the font
     import romfs_art
     original = romfs_art.read(romfs, GAME_FONT)
     weight = weight_level()

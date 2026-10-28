@@ -162,4 +162,4 @@ cd d2r-mobile-plus
 
 基于 [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile)，感谢原作者及贡献者。保留既有版权声明及 [MIT 许可证](LICENSE)。《暗黑破坏神 II：狱火重生》及其资源的权利归相应权利人所有。本项目为独立社区项目。
 
-**字体。** 公开包内嵌 [霞鹜文楷](https://github.com/lxgw/LxgwWenKai)（LXGW WenKai，Medium 字重，作者 LXGW，源自 Fontworks 的 Klee One）作为可选主界面字体，按游戏与本项目实际用字子集，西文字形与图标仍用游戏自带字体。霞鹜文楷以 [SIL Open Font License 1.1](https://openfontlicense.org/) 发布，保留字体名「霞鹜」「霞鶩」「落霞孤鹜」「落霞孤鶩」「LXGW」；许可证原文（OFL.txt）随字体放在构建环境中，未作修改。字体文件不进仓库，由出包者从上游 Release 自行获取。感谢 LXGW 提供这款字体。
+**字体。** 公开包内嵌 [霞鹜文楷](https://github.com/lxgw/LxgwWenKai)（LXGW WenKai，Medium 字重，作者 LXGW，源自 Fontworks 的 Klee One）作为可选主界面字体，按游戏与本项目实际用字子集，西文字形与图标仍用游戏自带字体。霞鹜文楷以 [SIL Open Font License 1.1](https://openfontlicense.org/) 发布，保留字体名「霞鹜」「霞鶩」「落霞孤鹜」「落霞孤鶩」「LXGW」；许可证原文（OFL.txt）随字体放在构建环境中，未作修改。内嵌的是 OFL 意义上的修改版：v1.530 的 Medium 字面，按实际用字子集并与游戏字体合并，合并后的字体使用游戏字体的注册名而不是保留字体名。字体的版权声明与完整许可证文本随每个包一起分发，位于包内 `UIFonts/FONT_LICENSE.txt`（构建时写在生成字体旁边；字体来自 public 目录而旁边没有许可证文件时构建失败，来自 private 目录的字体只有带 `DM_PRIVATE_FONT=1` 的自用构建才接受）。字体文件不进仓库，由出包者从上游 Release 自行获取。感谢 LXGW 提供这款字体。
