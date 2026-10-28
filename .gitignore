@@ -25,3 +25,9 @@ dm/android/.cxx/
 /private/
 /artifacts/
 dm/android/local.env
+*.mobileprovision
+*.p8
+*.pem
+*.cer
+secrets/
+local*.env
