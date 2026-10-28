@@ -1,6 +1,7 @@
 #!/bin/bash
 # 出安卓的发布包：一个不含任何游戏内容的 APK。玩家用自己的游戏文件在电脑上做导入包（dm/tools/d2rm_android.py），拷进手机，App 打开时导入。
 #   shell_apk.sh [release] [gradle 参数…]      例：shell_apk.sh -PdmAppId=org.example.test（换包名并排装）
+#   带手机端生成器：shell_apk.sh -PdmGenRuntime=<gen_runtime.sh 的输出>（玩家不用电脑，App 首次打开自己生成导入包；生成器只是工具，仍不含游戏内容）
 #   缺省出调试包（可调试，测试用：art_compare.sh 要 run-as）；release = 发布用的正式包：release 构建、用正式钥匙签，钥匙与密码在本机
 #   ${DM_ANDROID_SIGN:-~/.config/dm-android/release.env}（DM_ANDROID_KEYSTORE / DM_ANDROID_KEY_ALIAS / DM_ANDROID_KEY_PASS），不进仓库
 # 产物（$DM_ROOT/build/android_shell/）：D2RMobile-android.apk；gen/ = 编进去的替身表；ref/ = 用本机游戏文件生成的真表（只用来核对，不发布）
@@ -12,6 +13,7 @@
 # 环境：JAVA_HOME（JDK 17+）、ANDROID_HOME（SDK 36 + NDK 29.0.14206865 + CMake 3.31.6）；缺省取 Homebrew 的 openjdk@17 与 ~/Library/Android/sdk
 # Build the Android release package: an APK with no game content. Players make the import pack on a computer from their own game files (dm/tools/d2rm_android.py), copy it to the phone, and the App imports it when opened.
 #   shell_apk.sh [release] [gradle arguments...]      e.g. shell_apk.sh -PdmAppId=org.example.test (another application id, to install side by side)
+#   With the on-phone generator: shell_apk.sh -PdmGenRuntime=<output of gen_runtime.sh> (no computer needed: the App makes the import pack itself on first launch; the generator is only tools, still no game content)
 #   Default is a debug package (debuggable, for testing: art_compare.sh needs run-as); release = the package for publishing: a release build signed with the release key, whose key and password live on this machine in
 #   ${DM_ANDROID_SIGN:-~/.config/dm-android/release.env} (DM_ANDROID_KEYSTORE / DM_ANDROID_KEY_ALIAS / DM_ANDROID_KEY_PASS), never in the repository
 # Products ($DM_ROOT/build/android_shell/): D2RMobile-android.apk; gen/ = the stand-in tables compiled in; ref/ = the real tables generated from this machine's game files (only for checking, never released)
@@ -90,7 +92,20 @@ if [ $KIND = release ]; then
   dn=$("$BT/apksigner" verify --print-certs "$A" 2>&1 | sed -n 's/.*certificate DN: //p' | head -1); [ "$dn" = "CN=D2R Mobile, O=D2R Mobile" ] || die "证书主体不对：$dn"
   "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$A" | grep -q 'android:debuggable' && die "正式包是可调试的"
 fi
-bad=$(unzip -l "$A" | awk '{print $4}' | grep -E '\.(xgs|patched\.bin|data)$|^assets/|overlay|derived\.tsv' | head -3)
+# 带手机端生成器（-PdmGenRuntime）时 assets/dmgen/ 只许有这几样：运行时（工具，gen_runtime.sh）、本仓生成脚本、4 个查询核（项目手写，键取自 nvn_builtin.h）；
+#   两个 zip 解开再查一遍本机路径，运行时里只许 lib/ 与 py/
+# With the on-phone generator (-PdmGenRuntime), assets/dmgen/ may hold only these: the runtime (tools, gen_runtime.sh), this repo's generator scripts, and the 4 query kernels
+#   (written by the project, keys from nvn_builtin.h); both zips are unpacked and checked for local paths again, and the runtime may hold only lib/ and py/
+QK=$(sed -n 's/.*{"\([0-9a-f]\{16\}\)", "q_[a-z0-9]*"}.*/\1/p' "$DM/gfx/nvn/nvn_builtin.h" | sort)
+GEN=$(unzip -l "$A" | awk '{print $4}' | grep '^assets/dmgen/' | grep -vxE 'assets/dmgen/(runtime\.zip|runtime\.txt|src\.zip|src\.sha256)' | grep -vxE "assets/dmgen/queries/($(echo $QK | tr ' ' '|'))\.xgs" | head -3)
+[ -z "$GEN" ] || die "assets/dmgen/ 里有不认识的文件：$GEN"
+if unzip -l "$A" | grep -q 'assets/dmgen/runtime.zip'; then
+  Z=$O/dmgen_x; rm -rf "$Z" && mkdir -p "$Z/rt" "$Z/src" && unzip -q -o -d "$Z" "$A" 'assets/dmgen/*' && unzip -q "$Z/assets/dmgen/runtime.zip" -d "$Z/rt" && unzip -q "$Z/assets/dmgen/src.zip" -d "$Z/src" || die "解不开 assets/dmgen"
+  [ -z "$(ls "$Z/rt" | grep -vxE 'lib|py')" ] || die "运行时里有 lib/ py/ 之外的东西：$(ls "$Z/rt")"
+  leak=$(LC_ALL=C grep -raoE -- "/Users/[A-Za-z0-9._-]+|$HOME" "$Z" | head -3); [ -z "$leak" ] || die "assets/dmgen 里带着本机路径：$leak"
+  t "带手机端生成器：assets/dmgen 核过（查询核 $(echo $QK | wc -w | tr -d ' ') 个、运行时只有 lib/ py/、无本机路径）"
+fi
+bad=$(unzip -l "$A" | awk '{print $4}' | grep -v '^assets/dmgen/' | grep -E '\.(xgs|patched\.bin|data)$|^assets/|overlay|derived\.tsv' | head -3)
 [ -z "$bad" ] || die "APK 里带了不该有的文件：$bad"
 BT2=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1); vc=$("$BT2/aapt" dump badging "$A" 2>/dev/null | sed -n "s/.*versionCode='\([0-9]*\)'.*versionName='\([^']*\)'.*/\1 \2/p" | head -1); [ "$vc" = "$DM_BUILD $DM_VERSION" ] || die "APK 版本号不对：$vc（应 $DM_BUILD $DM_VERSION）"
 t "好了（${KIND}）：${A}（$(($(stat -f %z "$A") / 1048576)) MB）；版本 $DM_VERSION（$DM_BUILD）；核了真表里 $n 个源码里没有的字符串，原生库里 0 处；APK 里没有游戏程序 / 着色器包 / 覆盖层，也没有本机路径"

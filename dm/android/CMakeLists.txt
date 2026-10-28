@@ -121,3 +121,10 @@ target_include_directories(dm PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_definitions(dm PRIVATE $<$<CONFIG:Debug>:DM_ANDROID_DEBUG_ENV=1>)
 target_link_libraries(dm PRIVATE -Wl,--whole-archive dmcore -Wl,--no-whole-archive android)
 target_link_options(dm PRIVATE -Wl,--no-undefined -Wl,-z,nostart-stop-gc -Wl,-Bsymbolic)   # 汇编按页寻址宿主全局（adrp + :lo12:）：库内符号就地绑定，不许被抢占 | assembly addresses host globals by page (adrp + :lo12:): symbols bind locally inside the library and cannot be preempted
+
+# 手机上生成导入包时用的贴图块线性 ↔ 线性转换库：romfs_art.py / gen_widestash_art.py 经 DM_DESWIZZLE_LIB 加载（电脑上它们用 clang 现编同两份源码，同 -O2）
+# The block-linear <-> linear texture library used when making the import pack on the phone: romfs_art.py / gen_widestash_art.py load it through DM_DESWIZZLE_LIB
+# (on a computer they compile the same two sources with clang on the fly, also -O2)
+add_library(dmdeswizzle SHARED ${DM}/gfx/tex/nvn_deswizzle.c ${DM}/gfx/nvn/nvn_tex.c)
+target_include_directories(dmdeswizzle PRIVATE ${DM}/gfx/nvn ${DM}/gfx/tex)
+target_compile_options(dmdeswizzle PRIVATE -O2)

@@ -8,6 +8,8 @@
 # 之后：把 android 文件夹整个拷到手机的 Download/S2X/D2R Mobile/ 下（和放游戏资源的 data 文件夹并排），打开 App 就会导入；导入完可以删掉这份。
 # 需要：Python 3.9+ 与 pillow numpy lz4 capstone unicorn；.NET SDK（编着色器翻译工具）；Vulkan SDK 里的 spirv-opt、spirv-val、glslc
 #   （Mac：brew install spirv-tools shaderc；Windows / Linux：LunarG Vulkan SDK；glslc 也可以用安卓 NDK 里的）。缺什么本工具开头会逐项报。
+# 手机上：App（带 -PdmGenRuntime 构建的）发现没有导入包时自己跑这个脚本（PackGenerator.java），工具由环境变量给（DMSH_XLATE / SPIRV_OPT / SPIRV_VAL / DM_PREBUILT_QUERIES，
+#   见 dm/android/tools/gen_runtime.sh），产物与电脑上逐字节相同。
 # 它做的事与 d2rm_pack.py（iOS 壳）同一套：改写游戏程序换成安卓目标，着色器翻成 Vulkan 用的包（dm/gfx/tools/dmsh_vk.py）而不是 Metal 库。
 # 鸿蒙：d2rm_android.py --target ohos <游戏文件目录> <输出目录>，写出 <输出目录>/harmony/dm/：改写目标换成鸿蒙（out/ 与安卓不能共用），着色器包与安卓同一份，
 #   另加 ui-art/（技能键标签 lbl_* 与技能剪影 sil_*，各 9 张，取自底栏素材生成器的输出）；把 dm 文件夹拷进手机上和游戏资源 data 并排的「D2R Mobile」文件夹，应用导入时选它。
@@ -20,6 +22,8 @@
 # Then: copy the whole android folder to Download/S2X/D2R Mobile/ on the phone (next to the data folder with the game resources); opening the App imports it, and afterwards this copy can be deleted.
 # Needs: Python 3.9+ with pillow numpy lz4 capstone unicorn; the .NET SDK (to build the shader translation tool); spirv-opt, spirv-val and glslc from the Vulkan SDK
 #   (Mac: brew install spirv-tools shaderc; Windows / Linux: the LunarG Vulkan SDK; glslc can also come from the Android NDK). The tool lists anything missing at the start.
+# On the phone: the App (built with -PdmGenRuntime) runs this script itself when it finds no import pack (PackGenerator.java), with the tools given by environment variables
+#   (DMSH_XLATE / SPIRV_OPT / SPIRV_VAL / DM_PREBUILT_QUERIES, see dm/android/tools/gen_runtime.sh); the output is byte-identical to the computer's.
 # It does the same as d2rm_pack.py (the iOS shell): the game program is rewritten for the Android target, and the shaders become the bundles Vulkan uses (dm/gfx/tools/dmsh_vk.py) instead of a Metal library.
 # HarmonyOS: d2rm_android.py --target ohos <game files directory> <output directory> writes <output directory>/harmony/dm/: the game program is rewritten for HarmonyOS (out/ cannot be shared with Android), the shader bundles are the same as Android's,
 #   plus ui-art/ (9 skill-button labels lbl_* and 9 skill silhouettes sil_*, taken from the bottom-bar art generator's output); copy the dm folder into a "D2R Mobile" folder on the phone next to the data folder with the game resources, and pick that folder when the app asks to import.
@@ -29,29 +33,71 @@ HERE = os.path.dirname(os.path.abspath(__file__)); DM = os.path.dirname(HERE); I
 sys.path.insert(0, HERE); from d2rm_pack import ROOT, PY, MODS, say, die, run, step   # 共用 iOS 壳工具的执行与跳步框架（含 Windows 换行处理） | the run-and-skip framework shared with the iOS shell tool (including the Windows line-ending handling)
 
 
+def tool(var, name):
+    """spirv-opt / spirv-val：环境变量给了就用它（手机上 App 自带的那份），否则在 PATH 里找 | spirv-opt / spirv-val: the environment variable when given (the copy shipped in the App on the phone), otherwise PATH"""
+    p = os.environ.get(var)
+    return p if p else shutil.which(name)
+
+
+def progress(*what):
+    """App 在手机上跑本工具时（DM_GEN_PROGRESS=1）按这些标记显示进度，电脑上不打 | When the App runs this tool on the phone (DM_GEN_PROGRESS=1) it shows progress from these markers; nothing is printed on a computer"""
+    if os.environ.get('DM_GEN_PROGRESS') == '1': print('@progress ' + ' '.join(str(x) for x in what), flush=True)
+
+
 def check_env(game):
+    # 手机上（App 自带工具）：DMSH_XLATE = 预编好的翻译器（NativeAOT），SPIRV_OPT / SPIRV_VAL = NDK 编的 SPIRV-Tools，DM_PREBUILT_QUERIES = 构建 App 时编好的 4 个查询核；
+    # 这三样给了就不要 .NET、glslc。返回 dotnet 的路径（不需要时为 None）
+    # On the phone (tools shipped in the App): DMSH_XLATE = the prebuilt translator (NativeAOT), SPIRV_OPT / SPIRV_VAL = SPIRV-Tools built with the NDK,
+    # DM_PREBUILT_QUERIES = the 4 query kernels built with the App; with these given, neither .NET nor glslc is needed. Returns the dotnet path (None when not needed)
     bad = []
-    for m in ('PIL', 'numpy', 'lz4', 'capstone', 'unicorn'):
+    for m in ('PIL', 'numpy', 'lz4', 'capstone', 'unicorn')[:4 if os.environ.get('DMSH_XLATE') else 5]:   # unicorn 本工具用不到，电脑上照旧查（与 d2rm_pack 同一套环境），手机上不带 | this tool does not use unicorn; still checked on a computer (same environment as d2rm_pack), not shipped on the phone
         try: __import__(m)
         except Exception: bad.append('Python 包 %s：%s -m pip install pillow numpy lz4 capstone unicorn' % (m, PY))
-    dotnet = shutil.which('dotnet') or (os.path.expanduser('~/.dotnet/dotnet') if os.path.exists(os.path.expanduser('~/.dotnet/dotnet')) else None)
-    if not dotnet: bad.append('.NET SDK（dotnet）：https://dotnet.microsoft.com/download')
-    for t in ('spirv-opt', 'spirv-val'):
-        if not shutil.which(t): bad.append('%s：Vulkan SDK（https://vulkan.lunarg.com/），Mac 上 brew install spirv-tools' % t)
-    if shutil.which('spirv-opt') and b'--trim-capabilities' not in subprocess.run(['spirv-opt', '--help'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout:
-        bad.append('spirv-opt 版本太旧（%s，没有 --trim-capabilities）：换新版 Vulkan SDK 的（spirv-opt --help 里要有这一项）；安卓 NDK 自带的那份也太旧，别让它排在 PATH 前面' % shutil.which('spirv-opt'))
-    sys.path.insert(0, GT); import pack_builtin_queries
-    try: pack_builtin_queries.find_glslc(None)
-    except SystemExit: bad.append('glslc：Vulkan SDK 或安卓 NDK 里都有（Mac 上 brew install shaderc），也可以用环境变量 GLSLC 指过去')
+    dotnet = None
+    if os.environ.get('DMSH_XLATE'):
+        if not os.access(os.environ['DMSH_XLATE'], os.X_OK): bad.append('着色器翻译工具（DMSH_XLATE=%s 不能执行）' % os.environ['DMSH_XLATE'])
+    else:
+        dotnet = shutil.which('dotnet') or (os.path.expanduser('~/.dotnet/dotnet') if os.path.exists(os.path.expanduser('~/.dotnet/dotnet')) else None)
+        if not dotnet: bad.append('.NET SDK（dotnet）：https://dotnet.microsoft.com/download')
+    opt = tool('SPIRV_OPT', 'spirv-opt')
+    for var, t in (('SPIRV_OPT', 'spirv-opt'), ('SPIRV_VAL', 'spirv-val')):
+        p = tool(var, t)
+        if not p or not os.access(p, os.X_OK): bad.append('%s：Vulkan SDK（https://vulkan.lunarg.com/），Mac 上 brew install spirv-tools' % t)
+    if opt and os.access(opt, os.X_OK) and b'--trim-capabilities' not in subprocess.run([opt, '--help'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout:
+        bad.append('spirv-opt 版本太旧（%s，没有 --trim-capabilities）：换新版 Vulkan SDK 的（spirv-opt --help 里要有这一项）；安卓 NDK 自带的那份也太旧，别让它排在 PATH 前面' % opt)
+    if not os.environ.get('DM_PREBUILT_QUERIES'):
+        sys.path.insert(0, GT); import pack_builtin_queries
+        try: pack_builtin_queries.find_glslc(None)
+        except SystemExit: bad.append('glslc：Vulkan SDK 或安卓 NDK 里都有（Mac 上 brew install shaderc），也可以用环境变量 GLSLC 指过去')
     for f in ('ExeFS/main', 'ExeFS/sdk', 'RomFS/data/build_manifest.psv'):
         if not os.path.isfile(os.path.join(game, f)): bad.append('游戏文件 %s（在 %s 下没找到）' % (f, game))
     if bad: die('还缺 %d 项：\n  - %s' % (len(bad), '\n  - '.join(bad)))
-    if not os.environ.get('DOTNET_ROOT'):   # 翻译工具启动时自己找 .NET 运行时，理由见 d2rm_pack.check_env | the translation tool finds the .NET runtime itself at startup; see d2rm_pack.check_env for why
+    if dotnet and not os.environ.get('DOTNET_ROOT'):   # 翻译工具启动时自己找 .NET 运行时，理由见 d2rm_pack.check_env | the translation tool finds the .NET runtime itself at startup; see d2rm_pack.check_env for why
         import re
         r = subprocess.run([dotnet, '--list-runtimes'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         m = re.search(r'^Microsoft\.NETCore\.App \S+ \[(.*)[/\\]shared[/\\]Microsoft\.NETCore\.App\]', r.stdout.decode('utf-8', 'replace'), re.M)
         if m: os.environ['DOTNET_ROOT'] = m.group(1)
     return dotnet
+
+
+def hud_dir():
+    """底栏 v4 素材（gen_assets.py 的产物）：跟 gen_paths 走，DM_GEN_ASSETS 指到源码树外时（手机上）也找得到 | The bottom-bar v4 art (output of gen_assets.py): follows gen_paths, so it is found when DM_GEN_ASSETS points outside the source tree (on the phone)"""
+    sys.path.insert(0, os.path.join(IOS, 'tools')); import gen_paths
+    return gen_paths.gen_dir('NativeHUD', 'v4', 'hud_v4_ui')
+
+
+def add_queries(sh, stage):
+    """4 个查询核（项目手写，不是游戏内容）：手机上用构建 App 时编好的（DM_PREBUILT_QUERIES），电脑上现编 | The 4 query kernels (written by the project, not game content): on the phone the ones built with the App (DM_PREBUILT_QUERIES), on a computer compiled here"""
+    pre = os.environ.get('DM_PREBUILT_QUERIES')
+    if pre:
+        got = sorted(f for f in os.listdir(pre) if f.endswith('.xgs'))
+        if len(got) != 4: die('App 带的查询核不是 4 个（%s：%d 个）' % (pre, len(got)))
+        os.makedirs(sh, exist_ok=True)
+        for f in got: shutil.copyfile(os.path.join(pre, f), os.path.join(sh, f))
+        return
+    q = os.path.join(stage, 'queries'); run([PY, os.path.join(GT, 'pack_builtin_queries.py'), '--output', q], what='编查询核')
+    for f in os.listdir(q):
+        if f.endswith('.xgs'): shutil.move(os.path.join(q, f), os.path.join(sh, f))
 
 
 def main():
@@ -68,10 +114,11 @@ def main():
     romfs = os.path.join(game, 'RomFS'); stage = os.path.join(ROOT, 'build', 'pack', T); shutil.rmtree(stage, ignore_errors=True); os.makedirs(stage)
     final = os.path.join(dst, 'android') if T == 'android' else os.path.join(dst, 'harmony', 'dm')
     say('产物代号 %s；做好的文件夹放在 %s' % (P, final))
+    progress('product', P)
 
     # 一、改写游戏程序（安卓 / 鸿蒙目标）
     # 1. Rewrite the game program (Android / HarmonyOS target)
-    out = os.path.join(ROOT, 'build', 'cache', 'dm', 'out', P + '-' + T); os.makedirs(out, exist_ok=True)
+    out = os.path.join(ROOT, 'build', 'cache', 'dm', 'out', P + '-' + T); os.makedirs(out, exist_ok=True); progress('patch')
     def patch():
         for m in MODS: run([PY, os.path.join(HERE, 'patch_nso.py'), os.path.join(game, 'ExeFS', m), out, m], env={'DM_TARGET': T, 'DM_RULESET': 'touch-run-v4'},
                            log=os.path.join(out, m + '.patch.log'), what='改写 ' + m)
@@ -89,7 +136,7 @@ def main():
 
     # 二、界面素材、技能图标索引与几张数据表
     # 2. UI art, the skill icon index and a few data tables
-    say('从游戏文件生成界面素材（输入没变会自己跳过）')
+    say('从游戏文件生成界面素材（输入没变会自己跳过）'); progress('assets')
     run([PY, os.path.join(IOS, 'tools', 'gen_assets.py'), romfs], cwd=IOS, env={'DM_ROMFS_SRC': romfs}, log=os.path.join(stage, 'gen_assets.log'), what='生成界面素材')
     gen = os.path.join(stage, 'gen'); os.makedirs(gen)
     run([PY, os.path.join(IOS, 'tools', 'native_art', 'generate.py'), romfs, '--output-dir', gen], what='生成技能图标')
@@ -100,10 +147,10 @@ def main():
 
     # 三、覆盖层（触屏布局、界面底图）+ 技能图集与 HUD 小图，最后写清单（App 启动时逐文件核对）
     # 3. Overlay (touch layout, UI base art) + skill atlases and small HUD images, then write the manifest (the App checks it file by file at startup)
-    say('生成覆盖层')
+    say('生成覆盖层'); progress('overlay')
     run([PY, os.path.join(IOS, 'tools', 'gen_romfs_overlay.py'), romfs, os.path.join(stage, 'overlay')], cwd=IOS, env={'DM_ROMFS_SRC': romfs, 'DM_TARGET': T}, log=os.path.join(stage, 'gen_overlay.log'), what='生成覆盖层')   # DM_TARGET：布局按平台限制配置项（touch_layout.py，安卓不出 iCloud 行） | DM_TARGET: per-platform settings rows in the layout (touch_layout.py, no iCloud row on Android)
     sys.path.insert(0, os.path.join(DM, 'android', 'tools')); import stage_touch_assets
-    hud = os.path.join(IOS, 'Gen', 'assets', 'NativeHUD', 'v4', 'hud_v4_ui')
+    hud = hud_dir()
     stage_touch_assets.stage(os.path.join(gen, 'TouchArt'), hud, os.path.join(stage, 'overlay'))
     if T == 'ohos':   # 鸿蒙前端从 ui-art/ 取技能键标签与技能剪影（剪影是彩色原图，银灰在绘制时做，同 iOS） | the HarmonyOS front end takes the skill-button labels and skill silhouettes from ui-art/ (the silhouettes are the colour originals; the silver is applied when drawing, as on iOS)
         os.makedirs(os.path.join(stage, 'ui-art'))
@@ -113,21 +160,24 @@ def main():
 
     # 四、着色器：取包 → 翻译工具 → 翻成 Vulkan 用的包；再加 4 个查询核（项目手写，现编）
     # 4. Shaders: get the packages → translation tool → translate into the bundles Vulkan uses; then add the 4 query kernels (written by the project, compiled here)
-    packs = os.path.join(ROOT, 'build', 'cache', 'dm', 'dmsh')
+    packs = os.path.join(ROOT, 'build', 'cache', 'dm', 'dmsh'); progress('packs')
     def get_packs():
         os.makedirs(packs, exist_ok=True); e = {'DMX_ROOT': os.path.join(romfs, 'data')}
         for line in run([PY, os.path.join(HERE, 'dmx.py'), 'list', 'data:data/hd/shaders/*.bin'], env=e, what='列着色器包').splitlines():
             p = line.split('\t')[0]
             if p: run([PY, os.path.join(HERE, 'dmx.py'), 'get', p, os.path.join(packs, os.path.basename(p))], env=e, what='取着色器包 ' + p)
     step('取着色器包（162 个）', lambda: os.path.isdir(packs) and len(os.listdir(packs)) == 162, get_packs)
-    xl = os.path.join(ROOT, 'build', 'gfx', 'dmsh_xlate'); exe = os.path.join(xl, 'dmsh_xlate.exe' if os.name == 'nt' else 'dmsh_xlate')
-    step('编译着色器翻译工具', lambda: os.path.isfile(exe),
-         lambda: run([dotnet, 'publish', os.path.join(GT, 'dmsh_xlate'), '-c', 'Release', '-o', xl, '-v', 'quiet'], what='编译着色器翻译工具'))
-    sh = os.path.join(stage, 'shaders'); t0 = time.time(); say('翻译全部着色器（约 2 分钟）')
-    run([PY, os.path.join(GT, 'dmsh_vk.py'), packs, sh], env={'XLATE': exe, 'MAIN': os.path.join(game, 'ExeFS', 'main'), 'WORK': stage}, log=os.path.join(stage, 'shaders.log'), what='翻译着色器')
-    q = os.path.join(stage, 'queries'); run([PY, os.path.join(GT, 'pack_builtin_queries.py'), '--output', q], what='编查询核')
-    for f in os.listdir(q):
-        if f.endswith('.xgs'): shutil.move(os.path.join(q, f), os.path.join(sh, f))
+    exe = os.environ.get('DMSH_XLATE')
+    if exe: say('着色器翻译工具：用 App 带的（%s）' % exe)
+    else:
+        xl = os.path.join(ROOT, 'build', 'gfx', 'dmsh_xlate'); exe = os.path.join(xl, 'dmsh_xlate.exe' if os.name == 'nt' else 'dmsh_xlate')
+        step('编译着色器翻译工具', lambda: os.path.isfile(exe),
+             lambda: run([dotnet, 'publish', os.path.join(GT, 'dmsh_xlate'), '-c', 'Release', '-o', xl, '-v', 'quiet'], what='编译着色器翻译工具'))
+    sh = os.path.join(stage, 'shaders'); t0 = time.time(); say('翻译全部着色器（约 2 分钟）'); progress('shaders', sh)
+    run([PY, os.path.join(GT, 'dmsh_vk.py'), packs, sh], env={'XLATE': exe, 'MAIN': os.path.join(game, 'ExeFS', 'main'), 'WORK': stage,
+                                                             'SPIRV_OPT': tool('SPIRV_OPT', 'spirv-opt'), 'SPIRV_VAL': tool('SPIRV_VAL', 'spirv-val')},
+        log=os.path.join(stage, 'shaders.log'), what='翻译着色器')
+    add_queries(sh, stage)
     n = len([f for f in os.listdir(sh) if f.endswith('.xgs')]); say('着色器 %d 个（%d 秒）' % (n, time.time() - t0))
 
     # 五、放到输出目录：先写在旁边，齐了再换上（中途失败不留半份）
@@ -141,7 +191,7 @@ def main():
     inputs = 'font=%s;weight=%s' % (fp, os.environ.get('DM_UI_FONT_WEIGHT', '0') if fp != 'none' else '0')
     say('构建输入：' + inputs)
     with open(os.path.join(stage, 'pack_info.txt'), 'w', encoding='utf-8', newline='\n') as f: f.write('PRODUCT=%s\nTARGET=%s\nMADE=%s\nINPUTS=%s\n' % (P, T, time.strftime('%Y-%m-%dT%H:%M:%S'), inputs))
-    part = final + '.part'
+    part = final + '.part'; progress('finish')
     shutil.rmtree(part, ignore_errors=True); os.makedirs(part)
     for x in ('out', 'shaders', 'overlay') + (('ui-art',) if T == 'ohos' else ()): shutil.copytree(os.path.join(stage, x), os.path.join(part, x))
     for x in ('derived.tsv', 'pack_info.txt'): shutil.copyfile(os.path.join(stage, x), os.path.join(part, x))
