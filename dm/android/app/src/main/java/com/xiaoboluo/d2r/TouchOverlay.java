@@ -35,7 +35,8 @@ public final class TouchOverlay extends View {
     private static native void nativeResize(float width, float height, float left, float right, float bottom, boolean tablet);
     private static native void nativeLayout(float[] out);
     private static native int nativeFpsHud();   // 「显示帧数」：要画的数，0 = 不画（fps_hud.h 每 0.5 秒更新）| "Show frame rate": the number to draw, 0 = none (fps_hud.h updates every 0.5 s)
-    private int fpsHud;
+    private int fpsHud, padMode;
+    private static native int nativePadMode();   // 手柄模式（宿主切换事务完成后）：触控层不画，触点照收（碰屏回触屏模式）| controller mode (after the host's switch transaction): nothing drawn, touches still received (a touch returns to touch mode)
     private final float density;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private static final int GLYPHS=119, HUD=167, DRAW_FLOATS=185;
@@ -48,7 +49,7 @@ public final class TouchOverlay extends View {
     private final Choreographer.FrameCallback poll = new Choreographer.FrameCallback() {
         @Override public void doFrame(long frameTimeNanos) {
             if (!running) return;
-            if (inputEnabled && isShown()) { nativeLayout(probe); int f=nativeFpsHud(); if (!drawnValid || f!=fpsHud || !Arrays.equals(probe, drawn)) { fpsHud=f; invalidate(); } }
+            if (inputEnabled && isShown()) { nativeLayout(probe); int f=nativeFpsHud(), pm=nativePadMode(); if (!drawnValid || f!=fpsHud || pm!=padMode || !Arrays.equals(probe, drawn)) { fpsHud=f; padMode=pm; invalidate(); } }
             Choreographer.getInstance().postFrameCallback(this);
         }
     };
@@ -430,6 +431,7 @@ public final class TouchOverlay extends View {
     }
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas); if (!inputEnabled) return; nativeLayout(layout); System.arraycopy(layout, 0, drawn, 0, layout.length); drawnValid=true;
+        if (padMode!=0) return;   // 手柄模式：原版手柄界面自己画 HUD，触控层整层不画（同 iOS 藏覆盖层）| controller mode: the original controller UI draws its own HUD, the overlay draws nothing (as iOS hides it)
         canvas.save(); canvas.scale(density,density);
         boolean navigation=layout[2]!=0;
         float k=layout[4+12*5+2]/60;   // 与 iOS 同一个字号 / 粗细单位：摇杆半径 / 60 | the same size unit as iOS: joystick radius / 60
