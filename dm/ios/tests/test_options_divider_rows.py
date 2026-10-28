@@ -1,12 +1,12 @@
 """选项页分组分割线与行距（两种模式）。 | Options-page section dividers versus row pitch (both modes).
 
-原版分组标题下的金色分割线（标题控件的子控件 Divider，rect = $OptionsDividerRect）在本宿主里要配 180 单位的行距才落在「标题行与下一行之间」；
-原版 100 单位行距时它落在下一行文字中间（用户报：安卓手柄模式音频页「分组金黄色分割线乱了」；iOS 手柄模式同样，Mac 触屏 180 行距正常）。
+原版分组标题下的金色分割线（标题控件的子控件 Divider，rect = $OptionsDividerRect）原版在 y 90、配 100 行距；我们的大字号档 BIG_FONT 把它挪到 y 150
+（配触屏 180 行距），这个档两种模式共用，于是仍用 100 行距的原版表格分割线落进下一行文字（用户报：安卓手柄模式音频页「分组金黄色分割线乱了」；iOS 手柄模式同样）。
 触屏版三页早就改成 180（热区）；手柄版只有「游戏设定」改了，「音频」「游戏」漏了。本测试要求：音频 / 游戏 / 游戏设定三页在两种模式下，
 带 Divider 的表格行距一律 180。
-The gold divider under a section title (child Divider of the title, rect = $OptionsDividerRect) only lands between the title row and the next row with a
-180-unit row pitch in this host; with the stock 100 it crosses the next row's text (user report: Android controller-mode Audio page; iOS controller mode is the
-same, Mac touch at 180 is fine). The touch copies of the three pages were already at 180 (hit areas); of the controller copies only Game Settings was, Audio and
+The gold divider under a section title (child Divider of the title, rect = $OptionsDividerRect) sits at y 90 with a 100 pitch in the stock game; our large-font
+profile BIG_FONT moves it to y 150 (for the touch 180 pitch), and that profile is shared by both modes, so stock tables still at 100 put the divider into the next
+row's text (user report: Android controller-mode Audio page; iOS controller mode alike). The touch copies of the three pages were already at 180 (hit areas); of the controller copies only Game Settings was, Audio and
 Gameplay were missed. This test requires every Divider-bearing table of the three pages to use row pitch 180 in both modes.
 """
 import json
@@ -44,6 +44,14 @@ def walk(node, out):
     return out
 def has_divider(node): return any(c.get('name') == 'Divider' for c in walk(node, [])[1:])
 
+# 几何不变量（三审 A3-01）：分割线 y 取自大字号档；它要在标题字底（标题在行内垂直居中，40 号字底约 y 110）之下、行距之内
+# Geometric invariant (third audit A3-01): the divider y comes from the large-font profile; it must lie below the title text (titles are centred in the row, the
+# bottom of 40-pt text is about y 110) and inside the row pitch
+m = re.search(r'"OptionsDividerRect": \{ "x": 0, "y": (\d+) \}', ''.join(layout.BIG_FONT))
+assert m, 'large-font profile no longer moves OptionsDividerRect'
+DIV_Y, TITLE_BOTTOM = int(m.group(1)), 110
+assert TITLE_BOTTOM <= DIV_Y < 180, 'divider y %d must lie between the title text bottom %d and the 180 row pitch' % (DIV_Y, TITLE_BOTTOM)
+
 fails = []
 for mode, table in (('touch', layout.PRESENT), ('controller', layout.PAD_ROOT)):
     for page in PAGES:
@@ -53,14 +61,16 @@ for mode, table in (('touch', layout.PRESENT), ('controller', layout.PAD_ROOT)):
         nodes = walk(doc, [])
         native = [n for n in nodes if n.get('name') == 'OptionsTable']   # 按名字认原版表格，前面有我们的分节也照认 | the native table by name, our sections before it are fine
         if len(native) != 1: fails.append('%s %s: %d native OptionsTable' % (mode, page, len(native))); continue
-        if has_divider(native[0]) and native[0]['fields'].get('rowHeight') != 180:
-            fails.append('%s %s: native table rowHeight %r with a section divider' % (mode, page, native[0]['fields'].get('rowHeight')))
-        # 我们自己插的分节（Touch 开头）若带分割线，它的标题框高度也得是 180，分割线才落在标题与下一行之间 | our own Touch* sections with a divider need a 180-tall title box too
+        rh = native[0]['fields'].get('rowHeight')
+        if has_divider(native[0]) and (rh != 180 or not isinstance(rh, int) or rh <= DIV_Y):
+            fails.append('%s %s: native table rowHeight %r with a section divider at y %d' % (mode, page, rh, DIV_Y))
+        # 我们自己插的分节（Touch 开头，如 iOS RC1 游戏页的 TouchDiffRows；本分支三页没有，并线后才有覆盖）若带分割线，标题框高度要大于分割线 y（三审 A3-03）
+        # our own Touch* sections with a divider (e.g. iOS RC1's TouchDiffRows on the Gameplay page; none on this branch, covered after the merge) need a title box taller than the divider y (third audit A3-03)
         for n in nodes:
             kids = n.get('children', [])
             if str(n.get('name', '')).startswith('Touch') and any(c.get('name') == 'Divider' for c in kids):
                 h = n.get('fields', {}).get('rect', {}).get('height')
-                if h != 180: fails.append('%s %s: our section title %s height %r with a divider' % (mode, page, n['name'], h))
+                if not isinstance(h, int) or h <= DIV_Y: fails.append('%s %s: our section title %s height %r with a divider at y %d' % (mode, page, n['name'], h, DIV_Y))
 for f in fails: print('FAIL', f)
 assert not fails, '%d page(s) keep a row pitch that misplaces the section divider' % len(fails)
-print('PASS options dividers: Audio / Gameplay / Game Settings native tables use row pitch 180 in touch and controller mode; our own divider sections are 180 tall')
+print('PASS options dividers: divider y %d lies between the title text and the 180 pitch; Audio / Gameplay / Game Settings native tables use 180 in touch and controller mode' % DIV_Y)
