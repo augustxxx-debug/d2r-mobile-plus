@@ -47,12 +47,14 @@ def rect_y(text, name):
     return int(m.group(1)) if m else None
 
 
-BOX = ['TouchCommTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchCommTitle'] + ['TouchCommDesc%d' % k for k in range(6)] + ['TouchCommCopyQq', 'TouchCommCopyLink', 'TouchCommOk']
+BOX = ['TouchCommTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchCommTitle'] + ['TouchCommDesc%d' % k for k in range(6)] + ['TouchCommDivider', 'TouchCommCopyQq', 'TouchCommCopyLink', 'TouchCommOk']
 
 
 def box_ok(tc, out, where):   # 提示框：22 + 3 个控件屏外起步、不带锚点；正文六行按 §2.6 三级：群号 / 链接 36 LightGold、提示 28 LightGray、子标题「关于」36 GoldYellow、版本与鸣谢两行 28 LightGray
     for w in BOX: tc.assertIn('"name": "%s"' % w, out, (where, w))
     tc.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommCopy"', out); tc.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommOk"', out)
+    # 「关于」段的子标题换成原版设置页同款分隔线（用户 2026-10-29：视觉更舒服）：原版图 PauseMenu\\Divider 原尺寸（共享精灵不改尺寸），屏外起步 | the About sub-title becomes the original settings divider, native size, off screen at start
+    tc.assertIn('"type": "ImageWidget", "name": "TouchCommDivider", "fields": { "rect": { "x": 99999, "y": 99999 }, "filename": "PauseMenu\\\\Divider" } }', out, where)
     body = out[out.index('TouchCommTile00'):]
     tc.assertNotIn('"x": 9', re.sub(r'"x": 99999', '', body), 'the box starts off screen: ' + where)
     tc.assertNotIn('"anchor"', body, 'the box carries no anchor: the host places it from the panel rect: ' + where)
@@ -233,6 +235,9 @@ class Host(unittest.TestCase):
                   'TouchAboutCommunity', 'TouchCreditLine%d', '"dmCreditsSpecial"', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
+        self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss
+        self.assertNotIn('co_text(b, de[2], dm_str(b, "dmCommunityAbout"))', c)   # 社区框不再写「关于」子标题 | the community box no longer writes the About sub-title
+        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 26)
         self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))
