@@ -54,6 +54,12 @@ t "构建 APK"
 if [ $KIND = release ]; then
   SIGN=${DM_ANDROID_SIGN:-$HOME/.config/dm-android/release.env}; [ -f "$SIGN" ] || die "没有正式钥匙配置 $SIGN"
   set -a; . "$SIGN"; set +a; [ -f "${DM_ANDROID_KEYSTORE:-}" ] && [ -n "${DM_ANDROID_KEY_PASS:-}" ] || die "钥匙配置不全：$SIGN"
+  # 发布钥匙从此固定（2026-10-28 生成，证书 SHA-256 下面这串）：换钥匙签出来的包，已装的用户不能覆盖升级。钥匙库对不上就不出包，也不另生成新钥匙；口令只走环境变量，不上命令行
+  # The release key is fixed from now on (made 2026-10-28, certificate SHA-256 below): a package signed with another key cannot upgrade existing installs. A keystore that does not
+  # match stops the build and no new key is ever generated; the password goes through an environment variable, never the command line
+  PIN=${DM_ANDROID_CERT_SHA256:-b4af06c165dd8699ab9f2b0dec8f6c2de05cd4d01f510fe63778eac6898a52da}
+  have=$("$JAVA_HOME/bin/keytool" -list -v -keystore "$DM_ANDROID_KEYSTORE" -storepass:env DM_ANDROID_KEY_PASS 2>/dev/null | sed -n 's/^.*SHA256: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+  [ "$have" = "$PIN" ] || die "钥匙库不是固定的发布钥匙（钥匙库 ${have:-读不出} / 应 $PIN）：用备份恢复，别换钥匙"
   TASK=:app:assembleRelease; OUT=$W/dm/android/app/build/outputs/apk/release/app-release.apk
 else unset DM_ANDROID_KEYSTORE; TASK=:app:assembleDebug; OUT=$W/dm/android/app/build/outputs/apk/debug/app-debug.apk; fi
 rm -f "$OUT"   # 增量打包会在旧 APK 上追加、留下空洞（实测 25 MB 的内容出了 46 MB），整份重写 | incremental packaging appends to the old APK and leaves holes (25 MB of content came out as 46 MB in a test); rewrite it whole
@@ -79,8 +85,8 @@ leak=$(LC_ALL=C grep -raoE -- "/Users/[A-Za-z0-9._-]+|$HOME" "$X" | head -3)
 if [ $KIND = release ]; then
   BT=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1)
   got=$("$BT/apksigner" verify --print-certs "$A" 2>&1 | sed -n 's/.*certificate SHA-256 digest: //p' | head -1)
-  want=$("$JAVA_HOME/bin/keytool" -list -v -keystore "$DM_ANDROID_KEYSTORE" -storepass "$DM_ANDROID_KEY_PASS" 2>/dev/null | sed -n 's/^.*SHA256: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
-  [ -n "$got" ] && [ "$got" = "$want" ] || die "签名不是正式钥匙（APK $got / 钥匙 ${want}）"
+  want=$("$JAVA_HOME/bin/keytool" -list -v -keystore "$DM_ANDROID_KEYSTORE" -storepass:env DM_ANDROID_KEY_PASS 2>/dev/null | sed -n 's/^.*SHA256: //p' | head -1 | tr -d ':' | tr 'A-F' 'a-f')
+  [ -n "$got" ] && [ "$got" = "$want" ] && [ "$got" = "$PIN" ] || die "签名不是固定的发布钥匙（APK $got / 钥匙 ${want} / 应 $PIN）"
   dn=$("$BT/apksigner" verify --print-certs "$A" 2>&1 | sed -n 's/.*certificate DN: //p' | head -1); [ "$dn" = "CN=D2R Mobile, O=D2R Mobile" ] || die "证书主体不对：$dn"
   "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$A" | grep -q 'android:debuggable' && die "正式包是可调试的"
 fi
