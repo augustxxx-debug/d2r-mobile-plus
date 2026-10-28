@@ -546,13 +546,13 @@ void dm_custom_ui_pump(unsigned long long root) {
     // buttons go to the original as before
     { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); static int sel; static dm_wref sel_sp; int pad = dm_padmode_current() && !dm_ui_modal_active(root) && !dm_community_shown();   // 社区提示框显示着时 A / B 归它（dm_community.c） | while the community box shows, A / B belong to it (dm_community.c)
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
-      uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64]; int oy = 0;   // oy：选中行相对 TouchCustomRows 的纵向偏移（「关于」组的社区行套在两层容器里，自己的矩形 y 是 0） | oy: the selected row's vertical offset within TouchCustomRows (the About group's community row sits two containers deep, its own rect y is 0)
+      uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64]; int oy = 0, about_bot = -1;   // about_bot：选到「关于」组的社区行时，自动滚动要把整组（含下面的鸣谢子块）滚进框 | about_bot: with the About group's community row selected, auto-scroll brings the whole group (credits sub-block below included) into view. oy：选中行相对 TouchCustomRows 的纵向偏移（「关于」组的社区行套在两层容器里，自己的矩形 y 是 0） | oy: the selected row's vertical offset within TouchCustomRows (the About group's community row sits two containers deep, its own rect y is 0)
       int rows = NK - N_GFX + (dm_community_available() ? 1 : 0); if (sel >= rows) sel = rows - 1;   // 末尾「关于」组的社区行（dm_community.c；布局 touch_layout.py _custom_about）：有可显示的值时多一行可选，A = 打开提示框 | the About group's community row at the end (dm_community.c; layout _custom_about): one more selectable row when there is a value, A = open the box
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
           if (ev & DM_BTN_DOWN) sel = sel + 1 < rows ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
           int ci = sel < NK - N_GFX ? custom_key_at(sel) : -1;
           if (ci < 0) { tw = find_w(sp, "TouchAboutCommunityText", 0); cw = find_w(sp, "TouchCommunityOpt", 0); uint64_t ar = find_w(sp, "TouchAboutRow", 0), ac = find_w(sp, "TouchAboutCommunity", 0);
-              oy = (ar ? *(int32_t *)(ar + 0x74) : 0) + (ac ? *(int32_t *)(ac + 0x74) : 0); if ((ev & DM_BTN_A) && cw && ac) dm_community_open(3); }
+              oy = (ar ? *(int32_t *)(ar + 0x74) : 0) + (ac ? *(int32_t *)(ac + 0x74) : 0); if (ar) about_bot = *(int32_t *)(ar + 0x74) + *(int32_t *)(ar + 0x7c); if ((ev & DM_BTN_A) && cw && ac) dm_community_open(3); }
           else {
           snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[ci]); cw = find_w(sp, ci == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[ci]); tw = find_w(sp, nm, 0);   // 语言行：框住标签到最右那一格 | Language row: box from the label to the rightmost cell
           if ((ev & DM_BTN_A) && cw && dm_wref_get(&seen[ci]) == cw) {
@@ -576,7 +576,7 @@ void dm_custom_ui_pump(unsigned long long root) {
           // 到头判定（dm_custom_scroll.h）：上一格同方向、滚动量没变 = 滚到头（末行下沿露不全），不再发——原先一直发、每格一声点击音（奥丁手柄，用户 2026-10-28）；换行重新来
           // End detection (dm_custom_scroll.h): the previous notch in the same direction with an unchanged offset = at the end (the last row's bottom edge never fits), no more notches -- previously they were sent forever, one click sound each (Thor controller, user 2026-10-28); a new row starts over
           static int last_dir, last_off = -1, last_sel = -1; if (sel != last_sel) { last_sel = sel; last_dir = 0; last_off = -1; }
-          if (sv && f - lf >= 4) { int32_t *t = (int32_t *)(tw + 0x70), *c = (int32_t *)(cw + 0x70); int top = (t[1] < c[1] ? t[1] : c[1]) + oy - 10, bot = (t[1] + t[3] > c[1] + c[3] ? t[1] + t[3] : c[1] + c[3]) + oy + 10;
+          if (sv && f - lf >= 4) { int32_t *t = (int32_t *)(tw + 0x70), *c = (int32_t *)(cw + 0x70); int top = (t[1] < c[1] ? t[1] : c[1]) + oy - 10, bot = (about_bot > 0 ? about_bot : (t[1] + t[3] > c[1] + c[3] ? t[1] + t[3] : c[1] + c[3]) + oy) + 10;
               int off = -*(int32_t *)(view + 0x74), vh = *(int32_t *)(sv + 0x7c); if (vh <= 0) vh = 1260; void dm_ui_wheel_on(uint64_t, int); if (sel == 0) top = 0;   /* 选回第一行：一直滚到最顶，把标题行露出来 | selection back on the first row: scroll all the way to the top so that the header row is revealed */
               int dir = dm_custom_scroll_step(top, bot, off, vh, last_dir, last_off);
               if (dir) { lf = f; last_dir = dir; last_off = off; dm_ui_wheel_on(sv, dir); }
