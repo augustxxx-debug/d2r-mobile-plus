@@ -102,7 +102,7 @@ int main(void) { @autoreleasepool {
       printf("交替 40 帧：画面切换 %d 次，其中光追帧 %d（切回原版后要连续完整 %d 帧）\n", sw, nrt, RTS_NEED());
       EXPECT("交替 40 帧：画面最多切换 1 次（光追 → 原版后不再来回切）", 1, sw <= 1);
       EXPECT("交替 40 帧：模块记下的画面切换次数与回读一致", sw, RTS_SWITCHES() - s0);
-      EXPECT("等待期（阴影图没清）不绑遮罩：画面就是原版，不叠两层影（真机 79eaa3f 角色双影）", 1, ({ frame(1); !g_rts.map_cleared && rts_mask_tex() == g_rts.white; }));
+      EXPECT("等待期（阴影图没清）不绑遮罩：画面就是原版，不叠两层影（真机 79eaa3f 角色双影）", 1, ({ frame(1); !g_rts.map_cleared && rts_mask_tex() == g_rts.mask_lit && g_rts.mask_lit.width == g_mdepth.d.width; }));
       EXPECT("交替那几帧新网格照常建好（等待期不停建 BLAS）", 1, ({ int r = 0; for (uint32_t k = 0; k < g_rts.meshes.cap; k++) { rts_mesh *m = g_rts.meshes.vals[k]; if (m && m->state == RTS_READY) r++; } r >= 4 + 18; })); }
     // 3. 稳定之后回到光追：至少等满要求的连续完整帧数，但不会一直不回 | 3. After it settles, ray tracing comes back: not before the required streak of complete frames, but not never
     { int need = RTS_NEED(); int n = until_rt(200);

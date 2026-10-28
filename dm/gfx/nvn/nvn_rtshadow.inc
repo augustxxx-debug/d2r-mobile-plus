@@ -151,6 +151,7 @@ static struct {
     id<MTL4ArgumentTable> at_decode, at_trace, at_overlay, at_blur, at_pick;
     rts_fslot slot[RTS_SLOTS_MAX]; int nslot, cur; uint64_t slot_frame;   // 槽环；cur = 本帧用的槽（slot_frame 那帧取的） | slot ring; cur = this frame's slot (taken in frame slot_frame)
     id<MTLAccelerationStructure> tlas; id<MTLBuffer> scratch; NSUInteger scratch_len;
+    id<MTLTexture> mask_lit;   // 全分辨率全亮的太阳遮罩：不用遮罩的帧（迟滞等待、失败）绑它——_rt 变体按像素坐标读遮罩（rts_variant.py：rts_mask.read(gl_FragCoord)），1x1 白贴图越界读是 0 = 整屏太阳全影（6534ef4 起） | a full-resolution fully lit sun mask: bound on frames that do not use the mask (hysteresis hold, failure) - the _rt variants read the mask by pixel coordinates (rts_variant.py: rts_mask.read(gl_FragCoord)), and an out-of-bounds read of the 1x1 white texture is 0 = the whole screen in sun shadow (since 6534ef4)
     id<MTLTexture> mask, white, mask_raw, mask_tmp, pmask, pmaskf, mask_half; int sun_half, point_div; id<MTLBuffer> plidx_none, prev, lseen, llist;   // prev：上一次选中的位置（滞后）；lseen / llist：点光收集的位图与列表 | prev: last picked positions (hysteresis); lseen / llist: bitmap and list of the point-light gather
     int n_rt_loaded, n_rt_missing, n_pos_loaded, n_pos_missing;
     int point_on, point_n; id<MTLBuffer> lbuf; uint64_t lbuf_off; uint32_t lbuf_texels; int lbuf_tid;
@@ -431,7 +432,7 @@ static void rts_release_all(const char *why) {
     if (!g_rts.nmesh && !g_rts.ps_trace && !g_rts.nslot) return;
     MLOG("光追阴影：释放（%s）：网格 %d 个 %.1f MB、TLAS、暂存 %lu KiB、遮罩、%d 个每帧槽、管线，等 GPU 在途工作做完后放掉", why, g_rts.nmesh, g_rts.cache_bytes / 1048576.0, (unsigned long)(g_rts.scratch_len >> 10), g_rts.nslot);
     while (g_rts.nmesh) { rts_mesh *m = NULL; for (uint32_t i = 0; i < g_rts.meshes.cap && !m; i++) m = g_rts.meshes.vals[i]; if (!m) break; rts_mesh_drop(m); }
-    id o[] = {g_rts.badv, g_rts.ao_half, g_rts.ao_tmp, g_rts.ao_full, g_rts.tlas, g_rts.scratch, g_rts.mask, g_rts.mask_raw, g_rts.mask_tmp, g_rts.pmask, g_rts.pmaskf, g_rts.mask_half, g_rts.prev, g_rts.lseen, g_rts.llist, g_rts.ps_overlay, g_rts.at_decode, g_rts.at_trace, g_rts.at_overlay, g_rts.at_blur, g_rts.at_pick};
+    id o[] = {g_rts.mask_lit, g_rts.badv, g_rts.ao_half, g_rts.ao_tmp, g_rts.ao_full, g_rts.tlas, g_rts.scratch, g_rts.mask, g_rts.mask_raw, g_rts.mask_tmp, g_rts.pmask, g_rts.pmaskf, g_rts.mask_half, g_rts.prev, g_rts.lseen, g_rts.llist, g_rts.ps_overlay, g_rts.at_decode, g_rts.at_trace, g_rts.at_overlay, g_rts.at_blur, g_rts.at_pick};
     for (size_t i = 0; i < sizeof o / sizeof o[0]; i++) if (o[i]) defer_obj_release(o[i]);
     id<MTLComputePipelineState> __strong *ps[13] = {&g_rts.ps_decode, &g_rts.ps_unproj, &g_rts.ps_trace, &g_rts.ps_trace_soft, &g_rts.ps_blur, &g_rts.ps_ptrace, &g_rts.ps_pick, &g_rts.ps_lcopy, &g_rts.ps_lclear, &g_rts.ps_lgather, &g_rts.ps_pup, &g_rts.ps_ao, &g_rts.ps_aoblur};
     for (int i = 0; i < 13; i++) { if (*ps[i]) defer_obj_release(*ps[i]); *ps[i] = nil; }
@@ -440,7 +441,7 @@ static void rts_release_all(const char *why) {
     if (atomic_load(&g_rts_alpha_st) != -2) atomic_store(&g_rts_alpha_st, 0); g_rts.alpha_idx = nil; g_rts.nai = 0; g_rts.ai_cap = -1; g_rts.exp_vs = nil; pthread_mutex_unlock(&g_rts_alpha_mu);
     for (int i = 0; i < g_rts.nslot; i++) rts_fslot_free(&g_rts.slot[i]);
     g_rts.ao_half = g_rts.ao_tmp = g_rts.ao_full = nil; g_rts.ao_done = g_rts.ao_applied = 0; g_rts.badv = nil; g_rts.bad_seen[0] = g_rts.bad_seen[1] = 0;
-    g_rts.tlas = nil; g_rts.scratch = nil; g_rts.mask = g_rts.mask_raw = g_rts.mask_tmp = g_rts.pmask = g_rts.pmaskf = g_rts.mask_half = nil; g_rts.prev = g_rts.lseen = g_rts.llist = nil; g_rts.ps_overlay = nil;
+    g_rts.tlas = nil; g_rts.scratch = nil; g_rts.mask_lit = nil; g_rts.mask = g_rts.mask_raw = g_rts.mask_tmp = g_rts.pmask = g_rts.pmaskf = g_rts.mask_half = nil; g_rts.prev = g_rts.lseen = g_rts.llist = nil; g_rts.ps_overlay = nil;
     g_rts.at_decode = g_rts.at_trace = g_rts.at_overlay = g_rts.at_blur = g_rts.at_pick = nil; g_rts.scratch_len = 0; g_rts.nslot = 0; g_rts.cur = -1; g_rts.slot_frame = 0;
     g_rts.npend = g_rts.nsub = g_rts.ninst = g_rts.nexp = 0; g_rts.nkeep = 0; g_rts.pause_until = 0; g_rts.cur_pos4 = nil; g_rts.cache_bytes = 0; g_rts.rt_frame = g_rts.backoff = 0; g_rts.retry_at = 0; g_rts.show = g_rts.held = g_rts.streak = g_rts.last_shown = g_rts.shown_run = 0; g_rts.need = 1;
     g_rts.skip_on = g_rts.f_skip = g_rts.f_resid = g_rts.last_skip = 0; g_rts.sun_w = g_rts.sun_w_now = g_rts.sun_from_w = 0;
@@ -1030,7 +1031,17 @@ static void rts_check(CENC ce, id<MTLTexture> depth, const double *ivp) {   // c
     { const float *q = g_rts.smap[si].l; MLOG("光追阴影：核对 阴影图 %d 光源视投影 [%g %g %g %g | %g %g %g %g | %g %g %g %g | %g %g %g %g]；太阳 (%.3f %.3f %.3f)", si, q[0], q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], q[10], q[11], q[12], q[13], q[14], q[15], g_rts.sun[0], g_rts.sun[1], g_rts.sun[2]); }
     MLOG("光追阴影：几何核对编进第 %llu 帧（阴影图 %d：%lux%lu 层 %lu，光源视投影第 3 列 (%.4f %.4f %.4f %.4f)）", (unsigned long long)atomic_load(&g_cur_frame), si, (unsigned long)sv.width, (unsigned long)sv.height, (unsigned long)m->slice, m->l[2], m->l[6], m->l[10], m->l[14]);
 }
+static id<MTLTexture> rts_lit_tex(NSUInteger w, NSUInteger h) {   // 全亮遮罩（按主深度尺寸建一次，换尺寸重建；旧的等在途提交做完再放） | the fully lit mask (built once per main-depth size, rebuilt on resize; the old one after in-flight submissions)
+    if (g_rts.mask_lit && g_rts.mask_lit.width == w && g_rts.mask_lit.height == h) return g_rts.mask_lit;
+    defer_obj_release(g_rts.mask_lit); g_rts.mask_lit = nil;
+    MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm width:w height:h mipmapped:NO]; d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModeShared;
+    id<MTLTexture> t = [g_dev newTextureWithDescriptor:d]; uint8_t *ones = t ? malloc(w * h) : NULL;
+    if (!t || !ones) { free(ones); MLOG("【红】光追阴影：全亮遮罩 %lux%lu 建不出（不用遮罩的帧退回 1x1，太阳影会全黑）", (unsigned long)w, (unsigned long)h); return nil; }
+    memset(ones, 0xff, w * h); [t replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:ones bytesPerRow:w]; free(ones);
+    res_add(t); g_rts.mask_lit = t; MLOG("光追阴影：全亮遮罩 %lux%lu（不用太阳遮罩的帧绑它）", (unsigned long)w, (unsigned long)h); return t;
+}
 static void rts_build_and_trace(id<MTLTexture> depth) {
+    if (depth) rts_lit_tex(depth.width, depth.height);
     int trace = g_rts.rt_frame && g_rts.ninst && g_rts.have_cam && depth && (g_rts.have_sun || (g_rts.eff.point_on && g_rts.lbuf && g_rts.s0_gpu && g_rts.s1_gpu));
     if (!trace && !g_rts.npend) return;
     if (trace && g_rts.have_sun && !(g_rts.mask = rts_tex(g_rts.mask, MTLPixelFormatR8Unorm, depth.width, depth.height, "遮罩"))) { g_rts.failed = 1; rts_unqueue(); return; }
@@ -1259,7 +1270,7 @@ static void rts_ao_apply(id<MTLTexture> hdr) {
     args_dirty_all(); g_pso_dirty = g_dss_dirty = 1; g_rts.ao_applied = 1; g_rts.n_ao_applied++;
 }
 // _rt 变体的遮罩绑定：本帧太阳遮罩算了就给遮罩（阴影图清没清都对：清了 = min(遮罩, 1)，没清 = min(遮罩, 原采样)），否则 1x1 全亮 | Mask binding of the _rt variants: the mask when the sun mask was traced this frame (correct whether or not the maps were cleared: min(mask, 1) or min(mask, original)), else a 1x1 fully lit texel
-static id<MTLTexture> rts_mask_tex(void) { static int lit = -1; if (lit < 0) lit = getenv("DM_RT_MASK_LIT") != NULL; return g_rts.mask_done && g_rts.mask && !lit && g_rts.map_cleared ? g_rts.mask : g_rts.white; }   // 太阳阴影图本帧清了才用遮罩：没清的帧（迟滞等待、有绘制没进 TLAS）画面就是原版，不叠两层影 | the mask only when the sun maps were cleared this frame: otherwise (hysteresis hold, draws outside the TLAS) the picture is the original one, no doubled shadows   // DM_RT_MASK_LIT（对照用）：遮罩恒亮，配合清图得「无阴影」画面 | DM_RT_MASK_LIT (for comparison): the mask is always lit; with the maps cleared this gives the "no shadow" picture
+static id<MTLTexture> rts_mask_tex(void) { static int lit = -1; if (lit < 0) lit = getenv("DM_RT_MASK_LIT") != NULL; return g_rts.mask_done && g_rts.mask && !lit && g_rts.map_cleared ? g_rts.mask : g_rts.mask_lit ? g_rts.mask_lit : g_rts.white; }   // 太阳阴影图本帧清了才用遮罩：没清的帧（迟滞等待、有绘制没进 TLAS）画面就是原版，不叠两层影 | the mask only when the sun maps were cleared this frame: otherwise (hysteresis hold, draws outside the TLAS) the picture is the original one, no doubled shadows   // DM_RT_MASK_LIT（对照用）：遮罩恒亮，配合清图得「无阴影」画面 | DM_RT_MASK_LIT (for comparison): the mask is always lit; with the maps cleared this gives the "no shadow" picture
 static uint64_t rts_mask_rid(void) { id<MTLTexture> t = rts_mask_tex(); return t ? t.gpuResourceID._impl : 0; }
 static int rts_in_main(void) { return R.rt.n >= 1 && R.rt.color[0] && R.rt.color[0]->serial == g_rts.hdr_ser && R.rt.depth && R.rt.depth->serial == g_rts.ds_ser; }
 // 片元 _rt 变体：主通道里做深度测试、不混合的绘制，且本帧太阳或点光遮罩算了，用 <键>_rt（首次按需加载）；否则用原版 | Fragment _rt variant: depth-tested, unblended main-pass draws with a sun or point mask this frame use <key>_rt (loaded on demand); otherwise the original

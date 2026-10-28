@@ -317,6 +317,9 @@ int main(void) { @autoreleasepool {
       // 17. 省画之后才发现追不成（缺相机）：这一帧那些遮挡体没影子（记【红】），下一帧照原版全画，之后恢复 | 17. the trace turns out impossible after the draws were skipped (no camera): those occluders have no shadow this frame (logged in red), the next frame draws everything as original, then it recovers
       { RTS_HYST_RESET(); EXPECT("第 17 节前是光追画面", 1, UNTIL_PART(b2, 2)); uint64_t l0 = g_rts.n_skip_lost;
         enc = run_frame(0, b2, 2, &ok); ok13 = ok13 && ok; EXPECT("缺相机的当帧：帧开头不知道，照样不编码", 0, enc); EXPECT("缺相机的当帧：遮罩没用上", 0, RTS_MAP_CLEARED());
+        // 17b. 不用太阳遮罩的帧绑的那张必须处处全亮：_rt 变体按像素坐标读遮罩（rts_mask.read(gl_FragCoord)），原先绑 1x1 白贴图，越界读是 0 = 整屏太阳全影、画面压暗（6534ef4 起） | 17b. the texture bound on a frame that does not use the sun mask must be lit everywhere: the _rt variants read the mask by pixel coordinates, and the 1x1 white texture bound before read 0 out of bounds = the whole screen in sun shadow, darkening the picture (since 6534ef4)
+        { id<MTLTexture> mt = rts_mask_tex(); uint8_t px = 0; if (mt && mt.width > 600 && mt.height > 300 && mt.storageMode == MTLStorageModeShared) [mt getBytes:&px bytesPerRow:mt.width fromRegion:MTLRegionMake2D(600, 300, 1, 1) mipmapLevel:0];
+          EXPECT("不用遮罩的帧：绑的遮罩是主深度尺寸（640x360）", 1, mt && mt.width == 640 && mt.height == 360); EXPECT("不用遮罩的帧：(600, 300) 处也是 1.0", 255, px); }
         enc = run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; EXPECT("下一帧：记「省画后没追成」1 帧", 1, (long long)(g_rts.n_skip_lost - l0)); EXPECT("下一帧（退避）：两次都照原版画", 2, enc);
         EXPECT("之后恢复光追画面", 1, UNTIL_PART(b2, 2)); }
       // 18. 以读入开的太阳图（本帧没清，留着上一帧的内容）：进了 TLAS 的也照画，不留旧影 | 18. a sun map opened with a load (not cleared this frame, last frame's content kept): draws in the TLAS are drawn anyway, leaving no stale shadow
