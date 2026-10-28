@@ -115,6 +115,12 @@ static int file_path(char *p, size_t n) {
     char d[1024]; if (!dm_custom_dir(d, sizeof d)) return 0;
     snprintf(p, n, "%s/sw_custom.txt", d); return 1; }
 
+// 120 帧档不给超分「高画质」（用户 2026-10-29，RC1：拿一点画质换内存余量）：存着的高画质（q3d=3）在 120 帧生效时按均衡（2）走，设置文件里仍是 3，回到 60 / 30 帧照旧高画质；
+// 图形页在 120 帧下档位滑块只到均衡、档位行下多一行灰色副文（dm_graphics_ui_pump）。纯函数给单测（t_render_profile）
+// 120 fps gets no MetalFX Quality (user 2026-10-29, RC1: trade a little image quality for memory headroom): a saved Quality (q3d=3) runs as Balanced (2) while 120 fps is in effect; the file keeps 3 and 60 / 30 fps get Quality back;
+// at 120 fps the Graphics tab's profile slider stops at Balanced and a grey subtext line appears under the profile row (dm_graphics_ui_pump). Pure function for unit tests (t_render_profile)
+static int q3d_for_fps(int q3d, int fps) { return fps == 120 && q3d == 3 ? 2 : q3d; }
+static int fps_effective(int saved);   // 下面帧率档那里（测试开关 + 屏幕刷新率）；读盘时用它，不能走 dm_custom_get（会再进 load_once） | defined with the frame rate mode below (test switch + screen refresh); used while loading, where dm_custom_get would re-enter load_once
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
     char p[1100]; if (!file_path(p, sizeof p)) return;   // 存档还没挂上：先按缺省开答，挂上后再读 | The save is not mounted yet: answer with the default (on) for now, and read again after it is mounted
@@ -152,7 +158,7 @@ static void load_once(void) {
     atomic_store(&g_voice_explicit, voice);
     v[K_MERC] = merc < 0 ? k_def[K_MERC] : merc; atomic_store(&g_merc_explicit, merc);
     for (int i = 0; i < NK; i++) { atomic_store(&g_val[i], v[i]); atomic_store(&g_pend[i], -1); }
-    dm_3d_quality_mode_set(v[K_UPSCALE] && v[K_Q3D] == 3); LOG("3D profile loaded: %d", v[K_UPSCALE] ? v[K_Q3D] : 4);
+    dm_3d_quality_mode_set(v[K_UPSCALE] && q3d_for_fps(v[K_Q3D], fps_effective(v[K_FPS])) == 3); LOG("3D profile loaded: %d", v[K_UPSCALE] ? v[K_Q3D] : 4);
     // 读盘行按键表写全每个键（分享诊断日志的摘要靠它看出玩家开了什么；原先写死到 eco_fps，后加的 fps_hud / upscale / render_res 等都不在）
     // The load line lists every key from the key table (the diagnostic share summary relies on it; it used to stop at eco_fps, so later keys such as fps_hud / upscale / render_res were missing)
     char kv[512]; size_t o = 0; kv[0] = 0;
@@ -164,7 +170,17 @@ int dm_custom_get(const char *key) {
     return atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : k_def[i];
 }
 int mtl_upscale_supported(void);   // 弱定义在下面（光追门旁）| weak definition below (next to the ray-tracing gate)
-int dm_3d_profile_get(void) { return mtl_upscale_supported() && dm_custom_get("upscale") ? dm_custom_get("q3d") : 4; }   // 不支持超分的平台固定原版档 | platforms without upscaling stay on the Original profile
+// 生效档：不支持超分的平台固定原版档；120 帧生效时高画质按均衡（q3d_for_fps）。设置档、生效档或帧率一变就记一行「超分档位：」（分享诊断日志摘要取最后一条，dm_sharelog.m perf_block / front_mac.m）
+// Effective profile: platforms without upscaling stay on Original; Quality runs as Balanced while 120 fps is in effect (q3d_for_fps). One "超分档位：" line whenever the saved or effective profile or the frame rate changes (the share summary takes the last one, dm_sharelog.m perf_block / front_mac.m)
+int dm_3d_profile_get(void) {
+    if (!mtl_upscale_supported() || !dm_custom_get("upscale")) return 4;
+    int q = dm_custom_get("q3d"), f = dm_fps_setting(), e = q3d_for_fps(q, f);
+    static _Atomic int last = -1; int key = (q & 7) * 64 + (e & 7) * 8 + (f == 120 ? 2 : f == 30);
+    static const char *const nm[5] = { "自动", "省电", "均衡", "高画质", "原版" };
+    if (atomic_exchange(&last, key) != key)
+        LOG("超分档位：帧率 %d → 设置 %s、生效 %s%s", f, q >= 0 && q < 5 ? nm[q] : "?", e >= 0 && e < 5 ? nm[e] : "?", e != q ? "（120 帧档不提供高画质，按均衡）" : "");
+    return e;
+}
 int dm_custom_lang_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_lang_explicit) : -1; }
 int dm_custom_voice_explicit(void) { load_once(); return atomic_load(&g_loaded) ? atomic_load(&g_voice_explicit) : -1; }
 // 测试开关 DM_TEST_RENDER_RES=<档>[@秒][,<档>@秒…]（功耗基准 power_bench.sh 用）：按宿主初始化起的秒数切档，不读也不写设置文件；切档时同样通知游戏重读。
@@ -232,12 +248,19 @@ static int fps120_ok(void) { return dm_display_max_hz() >= 119; }   // 119：容
 // 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义）：eco_fps 0 = 60 / 1 = 30（省电）/ 2 = 120 | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol): eco_fps 0 = 60 / 1 = 30 (power saving) / 2 = 120
 // 生效值或原因一变就记一行「帧率档：」（分享诊断日志的摘要按这个前缀取最后一行，dm_sharelog.m perf_block）。屏幕刷新率要等有窗口才读得到，所以「按 60」在建窗前后各可能记一次
 // One "帧率档：" (frame rate mode) line whenever the effective value or its reason changes (the share-diagnostics summary takes the last line with this prefix, dm_sharelog.m perf_block). The screen refresh rate is readable only once there is a window, so "runs at 60" may be logged once before and once after
+static int fps_effective(int saved) {   // 设置值（eco_fps）+ 测试开关 + 屏幕刷新率 → 生效帧率 30 / 60 / 120 | saved value (eco_fps) + test switch + screen refresh -> effective 30 / 60 / 120
+    int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t == 120 ? FPS_120 : 0) : saved;
+    return v == 1 ? 30 : v == FPS_120 && fps120_ok() ? 120 : 60;
+}
 int dm_fps_setting(void) {
     int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t == 120 ? FPS_120 : 0) : dm_custom_get("eco_fps"), hz = dm_display_max_hz();
     int f = v == 1 ? 30 : v == FPS_120 && fps120_ok() ? 120 : 60, why = (v == FPS_120 && f == 60) * 2 + (t > 0);
     static _Atomic int last = -1; int key = f * 16 + why * 4 + (hz > 0);
-    if (atomic_exchange(&last, key) != key)
+    if (atomic_exchange(&last, key) != key) {
+        // 生效帧率变了（应用、测试开关、建窗后才读到 120 Hz）：3D 比例控制的高画质模式跟着 120 帧的上限走 | the effective rate changed (Apply, test switch, 120 Hz known only once the window exists): the 3D scale controller's Quality mode follows the 120 fps cap
+        if (atomic_load(&g_loaded)) dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && q3d_for_fps(atomic_load(&g_val[K_Q3D]), f) == 3);
         LOG("帧率档：生效 %d 帧（%s%s，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", v == 1 ? "30" : v == FPS_120 ? "120" : "60", hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz, why >= 2 && hz > 0 ? "；屏幕不到 120 Hz，120 档按 60" : why >= 2 ? "；暂按 60" : "");
+    }
     return f;
 }
 // 光追阴影（键 rt_shadow，实验性，缺省关，图形页）：图形层 nvn_rtshadow.inc rts_on 每帧读；机器不过门槛（mtl_rt_shadow_supported）时按关处理，图形页也不显示这一行
@@ -328,7 +351,7 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
         // Migrate the former fifth radio option to the independent enable switch.
         if (atomic_load(&g_pend[K_Q3D]) == 4) { atomic_store(&g_pend[K_Q3D], 0); atomic_store(&g_pend[K_UPSCALE], 0); }
         for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_RES) res_changed = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd == 3); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd == 3 ? "Quality" : "Adaptive", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
-        dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && atomic_load(&g_val[K_Q3D]) == 3);
+        dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && q3d_for_fps(atomic_load(&g_val[K_Q3D]), dm_fps_setting()) == 3);   // 120 帧下高画质按均衡 | Quality runs as Balanced at 120 fps
         { int had = 0; for (int b = 0; b < 3; b++) had |= atomic_exchange(&g_bak[b], -1) >= 0;   // 应用 = 玩家已经决定：崩溃围栏的备份用完即清 | Apply = the player has decided: the crash-fence backup is cleared
           if (had) { ch = 1; LOG("自定义设置：应用，清掉崩溃围栏的实验项备份"); } }
         if (res_changed) res_notify();
@@ -379,8 +402,13 @@ static void graphics_select_fps(int pos) {
     atomic_store(&g_pend[K_FPS], fps_val(pos));
     LOG("图形设置：帧率 → %d FPS（点应用生效）", pos == 0 ? 30 : pos == 2 ? 120 : 60);
 }
+// 图形页的档位滑块：120 帧格选着时只到均衡（q3d_for_fps），显示的是落到均衡后的档；读回显示档不算改动，选高画质被挡住
+// The Graphics profile slider: with the 120 fps stop selected it stops at Balanced (q3d_for_fps) and shows the capped profile; reading back the shown profile is not a change, picking Quality is refused
+static int profile_fps_pending(void) { return fps_pos(pending_value(K_FPS)) == 2 ? 120 : 60; }
+static int profile_max(void) { return q3d_for_fps(3, profile_fps_pending()); }
+static int profile_shown(void) { return q3d_for_fps(pending_value(K_Q3D), profile_fps_pending()); }
 static void graphics_select_profile(int value) {
-    if (value < 0 || value > 3 || value == pending_value(K_Q3D)) return;
+    if (value < 0 || value > profile_max() || value == profile_shown()) return;
     atomic_store(&g_pend[K_Q3D], value);
     LOG("图形设置：MetalFX 档位 → %d（点应用生效）", value);
 }
@@ -514,15 +542,20 @@ void dm_graphics_ui_pump(unsigned long long root) {
         // clamps and moves the indicator. Native onUpdateMessage has no numeric payload.
         if (dm_wref_get(&seen[2]) != slider) {
             *(int32_t *)(slider + 0x5b0) = 1;
-            *(int32_t *)(slider + 0x5b8) = 3;
+            *(int32_t *)(slider + 0x5b8) = profile_max();
             *(int32_t *)(slider + 0x5bc) = 0;
-            *(int32_t *)(slider + 0x5c0) = 3;
-            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, pending_value(K_Q3D), 0, 0);
+            *(int32_t *)(slider + 0x5c0) = profile_max();
+            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, profile_shown(), 0, 0);
             dm_wref_set(&seen[2], slider);
+        } else if (*(int32_t *)(slider + 0x5b8) != profile_max()) {
+            // 帧率格换到 / 换离 120：滑块上限在均衡 / 高画质之间换（同上面刚出现时的写法），指示块摆到显示档；这一帧不读回 | the frame-rate stop moved to / away from 120: the slider maximum switches between Balanced / Quality (written as on first sight above) and the indicator goes to the shown profile; not read back this frame
+            *(int32_t *)(slider + 0x5b8) = profile_max(); *(int32_t *)(slider + 0x5c0) = profile_max();
+            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, profile_shown(), 0, 0);
+            LOG("图形设置：超分档位滑块上限 → %s（帧率格 %d）", profile_max() == 3 ? "高画质" : "均衡", profile_fps_pending());
         } else if (enabled) graphics_select_profile(*(int32_t *)(slider + 0x5c4));
         if (enabled && row_id == ROW_PROFILE && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
-            int to = pending_value(K_Q3D) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
-            if (to >= 0 && to < 4) { graphics_select_profile(to);
+            int to = profile_shown() + ((ev & DM_BTN_RIGHT) ? 1 : -1);
+            if (to >= 0 && to <= profile_max()) { graphics_select_profile(to);
                 ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(slider, to, 0, 0); }
         }
     }
@@ -550,8 +583,10 @@ void dm_graphics_ui_pump(unsigned long long root) {
     if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? dm_sel_frame_x(DM_ROW_INDENT) : 99999, y = pad ? 170 + 180 * selected : 0;
         if (r[0] != x || r[1] != y) { r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)focus + 0x10))(focus); } }
     static const char *const captions[] = { "dmGraphicsProfileAuto", "dmGraphicsProfileEco", "dmGraphicsProfileBalanced", "dmGraphicsProfileQuality" };
-    int profile = pending_value(K_Q3D); if (profile < 0 || profile > 3) profile = 0;
+    int profile = profile_shown(); if (profile < 0 || profile > 3) profile = 0;
     graphics_text(find_w(sp, "TouchGraphicsProfileText", 0), dm_str(main_base(), captions[profile]));
+    // 120 帧格选着时档位行下的灰色副文「120 帧下不提供高画质」（布局 touch_layout.py TouchGraphicsProfileNote，缺省藏着）| at the 120 fps stop, the grey subtext under the profile row (layout TouchGraphicsProfileNote, hidden by default)
+    { uint64_t note = find_w(sp, "TouchGraphicsProfileNote", 0); if (note) ui_show_ours(note, enabled && profile_max() < 3); }
     uint64_t vt = *(uint64_t *)sp; int valid = 0;
     for (int k = 0; k < 96 && !valid; k++) valid = *(uint64_t *)(vt + 8 * k) == (uint64_t)main_base() + 0xae5f28;
     if (valid) { int dirty = enhanced_settings_dirty();

@@ -39,7 +39,7 @@ static NSString *last_line(NSData *d, const char *key) {
 static void perf_block(NSMutableString *h, NSString *title, NSData *d) {
     [h appendFormat:@"\n—— %@ ——\n", title];
     if (!d) { [h appendString:@"（没有这份日志）\n"]; return; }
-    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "光追阴影：机器判定", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追阴影：局部回退 至第", "光追阴影：阴影图 第", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追质量：", "光追降分辨率：", "光追阴影：GPU", "自定义设置：读盘", "输入模式：", "社区入口：清单", "社区入口：已显示", "社区入口：复制", "Metal 抓帧层：", "光追内存：预算", "光追内存：第", "光追内存：告警", "内存 至帧", "【内存告警】", "游戏难度：" };
+    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "超分档位：", "光追阴影：机器判定", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追阴影：局部回退 至第", "光追阴影：阴影图 第", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追质量：", "光追降分辨率：", "光追阴影：GPU", "自定义设置：读盘", "输入模式：", "社区入口：清单", "社区入口：已显示", "社区入口：复制", "Metal 抓帧层：", "光追内存：预算", "光追内存：第", "光追内存：告警", "内存 至帧", "【内存告警】", "游戏难度：" };
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) { NSString *l = last_line(d, keys[i]); [h appendFormat:@"%@\n", l ?: [NSString stringWithFormat:@"（没有「%@」行）", @(keys[i])]]; }
 }
 // 日志里的路径会带系统用户主目录（Mac 上是 /Users/<用户名>，iPhone 上是 /var/mobile）：导出时一律换成 ~，不把用户名带出去
@@ -77,7 +77,9 @@ static NSURL *build_file(void) {
     static const char *const fallback[] = { "none-or-not-attempted", "unsupported-device", "initialization-failed", "encode-failed" };
     int selected = dm_custom_get("q3d"), effective = graphics.profile;
     [h appendFormat:@"\n—— Plus graphics (applied values; no pending UI changes) ——\nMetalFX enabled=%d selected=%s effective=%s lastEligiblePassActive=%d supported=%d (-1=not-probed) fallback=%s\n", dm_custom_get("upscale"), selected>=0 && selected<4 ? profiles[selected] : "unknown", effective>=0 && effective<5 ? profiles[effective] : "unknown", graphics.active, graphics.supported, graphics.fallback>=0 && graphics.fallback<4 ? fallback[graphics.fallback] : "unknown"];
-    [h appendFormat:@"FPS target=%d renderScale=%.3f lastUpscaleInput=%ux%u lastUpscaleOutput=%ux%u\n", dm_fps_setting(), dm_3d_scale_cur(), graphics.input_width, graphics.input_height, graphics.output_width, graphics.output_height];
+    // 帧率档与超分档同一行看出联动：120 帧档不给高画质，设置是高画质时生效按均衡（dm_custom.c q3d_for_fps，用户 2026-10-29） | frame rate and upscale profile on one line: no Quality at 120 fps, a saved Quality runs as Balanced (dm_custom.c q3d_for_fps, user 2026-10-29)
+    int fps_now = dm_fps_setting();
+    [h appendFormat:@"FPS target=%d profileSelected=%s profileEffective=%s qualityCapped120=%d renderScale=%.3f lastUpscaleInput=%ux%u lastUpscaleOutput=%ux%u\n", fps_now, selected>=0 && selected<4 ? profiles[selected] : "unknown", effective>=0 && effective<5 ? profiles[effective] : "unknown", fps_now == 120 && selected == 3 && effective == 2, dm_3d_scale_cur(), graphics.input_width, graphics.input_height, graphics.output_width, graphics.output_height];
     [h appendString:@"Enhanced preferences (applied):"];
     static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above" };
     for (unsigned i=0;i<sizeof custom/sizeof *custom;i++) [h appendFormat:@" %s=%d",custom[i],dm_custom_get(custom[i])];

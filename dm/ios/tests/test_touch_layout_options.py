@@ -97,6 +97,13 @@ assert g_nodes['TouchGraphicsRows']['fields']['rect']['height'] >= _hint['y'] + 
 # 光追阴影（实验性）：自成一行，缺省摆在档位行之后（宿主按可见行数挪：档位行藏着时上移到 720），说明再往下；勾选框 + 标签都在行容器里，宿主按 mtl_rt_shadow_supported 藏整行 | Ray-traced shadows (experimental): its own row, laid out after the profile row (the host moves it by the visible row count: up to 720 while the profile row is hidden), the hint below it; checkbox + label inside the row container, the host hides the whole row via mtl_rt_shadow_supported
 _rt = g_nodes['TouchGraphicsRtRow']['fields']['rect']; assert _rt['y'] == _rows_y[-1] + 180 and _hint['y'] == _rt['y'] + 180, (_rt, _hint)
 assert g_nodes['TouchGraphicsRtShadow']['type'] == 'ToggleButtonWidget' and g_nodes['TouchGraphicsRtText']['fields']['text'] == '@dmGraphicsRtShadow'
+# 120 帧档不给高画质（用户 2026-10-29）：档位行里一行副文（28 号、说明灰、$ReducedSpacing，CLAUDE.md §2.6），宿主只在 120 帧格选着时显示；在档位文字下方、行内，不压下一行
+# 120 fps gets no Quality (user 2026-10-29): one subtext line inside the profile row (28 pt, description grey, $ReducedSpacing, CLAUDE.md §2.6), shown by the host only while the 120 fps stop is selected; below the profile caption, inside the row, never over the next row
+_note = g_nodes['TouchGraphicsProfileNote']['fields']
+assert _note['text'] == '@dmGraphicsQuality120Note' and _note['style/pointSize'] == 28 and _note['style/fontColor'] == '$FontColorLightGray', _note
+assert _note['style/spacing'] == '$ReducedSpacing', _note
+assert _note['rect']['x'] == 0 and _note['rect']['y'] >= 100 and _note['rect']['y'] + _note['rect']['height'] <= 180, _note['rect']
+assert 'TouchGraphicsProfileNote' in [c['name'] for c in g_nodes['TouchGraphicsProfileRow']['children']]
 print('PASS Graphics page: native FPS/profile sliders, independent upscale toggle, localization hooks')
 
 # Regression: adding Graphics must preserve all original destinations and native settings.

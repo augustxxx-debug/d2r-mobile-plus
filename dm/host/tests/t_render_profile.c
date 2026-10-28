@@ -148,5 +148,50 @@ int main(void) {
       FILE *file=fopen(path,"w"); CHECK(file); fputs("rt_shadow=1\n",file); fclose(file); atomic_store(&g_loaded,0);
       int first=dm_render_res_rt_drop(); CHECK(first==0);   // 单测不链图形层：弱定义的机器门槛 = 不可用 → 不降 | unit tests do not link the graphics layer: the weak machine gate = unsupported → no drop
       file=fopen(path,"w"); CHECK(file); fputs("rt_shadow=0\n",file); fclose(file); atomic_store(&g_loaded,0); CHECK(dm_render_res_rt_drop()==first); }
+    // 120 帧档不给超分「高画质」（用户 2026-10-29，RC1）：存着的高画质在 120 帧生效时按均衡走、文件里仍是高画质；60 / 30 帧下高画质照旧（0 副作用）；
+    // 还没窗口（刷新率 0）时按 60，建窗后到 120 再落到均衡；图形页在 120 帧下档位滑块只到均衡、读回均衡不算改动，回到 60 恢复可选
+    // 120 fps gets no MetalFX Quality (user 2026-10-29, RC1): a saved Quality runs as Balanced while 120 fps is in effect and the file keeps Quality; Quality at 60 / 30 fps is untouched (no side effect);
+    // with no window yet (refresh 0) it runs as 60 and drops to Balanced once 120 takes effect; at 120 the Graphics profile slider stops at Balanced, reading Balanced back is not a change, and 60 makes Quality selectable again
+    CHECK(q3d_for_fps(3,120)==2); CHECK(q3d_for_fps(3,60)==3); CHECK(q3d_for_fps(3,30)==3);
+    for (int q=0;q<5;q++) if (q!=3) { CHECK(q3d_for_fps(q,120)==q); CHECK(q3d_for_fps(q,60)==q); CHECK(q3d_for_fps(q,30)==q); }
+    { const char *cs[]={"eco_fps=2\n","eco_fps=0\n","eco_fps=1\n"}; const int at120[]={2,3,3};
+      for (unsigned i=0;i<sizeof cs/sizeof *cs;i++) { FILE *file=fopen(path,"w"); CHECK(file); fputs("q3d=3\nq3d_v2=1\nupscale=1\n",file); fputs(cs[i],file); fclose(file);
+          display_hz=120; atomic_store(&g_loaded,0); load_once(); CHECK(quality==(at120[i]==3)); CHECK(dm_3d_profile_get()==at120[i]); CHECK(quality==(at120[i]==3));
+          display_hz=60; CHECK(dm_3d_profile_get()==3); CHECK(quality==1);            // 60 Hz 屏：120 档按 60，高画质回来 | 60 Hz screen: 120 runs as 60, Quality is back
+          display_hz=0; atomic_store(&g_loaded,0); load_once(); CHECK(quality==1); CHECK(dm_3d_profile_get()==3);   // 还没窗口 | no window yet
+          display_hz=120; CHECK(dm_3d_profile_get()==at120[i]); CHECK(quality==(at120[i]==3));   // 建窗后 | once the window exists
+          save(); file=fopen(path,"r"); CHECK(file); char text[4096]={0}; fread(text,1,sizeof text-1,file); fclose(file); CHECK(strstr(text,"q3d=3\n")); }   // 文件仍存高画质 | the file keeps Quality
+      // 其余档在 120 帧下不变 | the other profiles are unchanged at 120
+      for (int q=0;q<3;q++) { FILE *file=fopen(path,"w"); CHECK(file); fprintf(file,"q3d=%d\nq3d_v2=1\nupscale=1\neco_fps=2\n",q); fclose(file);
+          display_hz=120; atomic_store(&g_loaded,0); CHECK(dm_3d_profile_get()==q); CHECK(quality==0); }
+      // 超分关着：仍是原版档，与帧率无关 | upscaling off: still Original, whatever the frame rate
+      { FILE *file=fopen(path,"w"); CHECK(file); fputs("q3d=3\nq3d_v2=1\nupscale=0\neco_fps=2\n",file); fclose(file); display_hz=120; atomic_store(&g_loaded,0); CHECK(dm_3d_profile_get()==4); CHECK(quality==0); }
+      // 日志：「超分档位：」行写出帧率、设置档与生效档（分享诊断日志摘要取最后一条）| log: the "超分档位：" line carries the frame rate, the saved and the effective profile (the share summary takes the last one)
+      { char logp[1100]; snprintf(logp,sizeof logp,"%s/log.txt",directory);
+        FILE *file=fopen(path,"w"); CHECK(file); fputs("q3d=3\nq3d_v2=1\nupscale=1\neco_fps=2\n",file); fclose(file); display_hz=120; atomic_store(&g_loaded,0);
+        int saved_err=dup(2); CHECK(saved_err>=0); CHECK(freopen(logp,"w",stderr)); int p=dm_3d_profile_get(); fflush(stderr); dup2(saved_err,2); close(saved_err); CHECK(p==2);
+        file=fopen(logp,"r"); CHECK(file); char text[8192]={0}; fread(text,1,sizeof text-1,file); fclose(file); unlink(logp);
+        char *line=strstr(text,"超分档位："); CHECK(line); char *e=strchr(line,'\n'); if (e) *e=0;
+        CHECK(strstr(line,"120")); CHECK(strstr(line,"高画质")); CHECK(strstr(line,"均衡")); }
+      // 图形页 | Graphics tab
+      FILE *file=fopen(path,"w"); CHECK(file); fputs("q3d=3\nq3d_v2=1\nupscale=1\neco_fps=0\n",file); fclose(file); display_hz=120; atomic_store(&g_loaded,0); load_once();
+      CHECK(profile_max()==3); CHECK(profile_shown()==3);
+      graphics_select_profile(3); CHECK(atomic_load(&g_pend[K_Q3D])==-1);
+      graphics_select_fps(2); CHECK(profile_max()==2); CHECK(profile_shown()==2); CHECK(atomic_load(&g_pend[K_Q3D])==-1);   // 选到 120：显示落到均衡 | 120 selected: the display drops to Balanced
+      graphics_select_profile(3); CHECK(atomic_load(&g_pend[K_Q3D])==-1);   // 120 帧下选不到高画质 | Quality cannot be picked at 120
+      graphics_select_profile(2); CHECK(atomic_load(&g_pend[K_Q3D])==-1);   // 滑块读回均衡：不是改动 | the slider reads back Balanced: not a change
+      dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==120); CHECK(dm_3d_profile_get()==2); CHECK(quality==0); CHECK(!enhanced_settings_dirty());
+      { file=fopen(path,"r"); CHECK(file); char text[4096]={0}; fread(text,1,sizeof text-1,file); fclose(file); CHECK(strstr(text,"q3d=3\n")); CHECK(strstr(text,"eco_fps=2\n")); }
+      graphics_select_fps(1); CHECK(profile_max()==3); CHECK(profile_shown()==3);   // 回到 60：高画质恢复可选 | back to 60: Quality selectable again
+      dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==60); CHECK(dm_3d_profile_get()==3); CHECK(quality==1);
+      graphics_select_fps(0); CHECK(profile_max()==3); CHECK(profile_shown()==3);   // 30 帧同 60 | 30 fps same as 60
+      dm_custom_on_uimsg("OptionsPanelMessage","CancelChanges",NULL);
+      graphics_select_profile(1); CHECK(pending_value(K_Q3D)==1); graphics_select_profile(3); CHECK(pending_value(K_Q3D)==3);   // 60 帧下高画质照常可选 | at 60 Quality is selectable as before
+      dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_3d_profile_get()==3); CHECK(quality==1);
+      graphics_select_fps(2); graphics_select_profile(1); CHECK(pending_value(K_Q3D)==1); CHECK(profile_shown()==1);   // 120 帧下其余档照常 | the other profiles work at 120
+      dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==120); CHECK(dm_3d_profile_get()==1); CHECK(quality==0);
+      graphics_select_profile(3); CHECK(atomic_load(&g_pend[K_Q3D])==-1);
+      display_hz=60; CHECK(profile_max()==3); CHECK(dm_fps_setting()==60);   // 60 Hz 屏：没有 120 档，也就没有上限 | 60 Hz screen: no 120 stop, so no cap
+      display_hz=0; }
     unlink(path); rmdir(directory); printf("PASS render profiles: %d migration/persistence checks\n",checks); return 0;
 }

@@ -1540,9 +1540,13 @@ def _graphics_page(text):
     # 行号与宿主 dm_custom.c dm_graphics_ui_pump 的手柄选行、选中框 y（170 + 180 × 行号）一一对应，改这里要一起改
     # Row order (user, 2026-10-27): render resolution / frame rate / MetalFX switch / upscale profile. Render resolution no longer sits next to upscaling, so the two are not confused; the profile row is last and hides without leaving a gap when the switch is off.
     # Row numbers match the controller row selection and the selection frame y (170 + 180 × row) in the host's dm_custom.c dm_graphics_ui_pump; change both together
+    # 120 帧档不给高画质（用户 2026-10-29）：档位文字下方一行副文（CLAUDE.md §2.6：28 号、说明灰、$ReducedSpacing），宿主 dm_graphics_ui_pump 只在帧率格选着 120 时显示，其余时候藏着
+    # 120 fps gets no Quality (user 2026-10-29): one subtext line under the profile caption (CLAUDE.md §2.6: 28 pt, description grey, $ReducedSpacing); the host's dm_graphics_ui_pump shows it only while the 120 fps stop is selected
+    profile_note = label('TouchGraphicsProfileNote', 'dmGraphicsQuality120Note', 0, 116, 1000, 60)
+    profile_note['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
     profile = {'type': 'Widget', 'name': 'TouchGraphicsProfileRow', 'fields': {
         'rect': {'x': 0, 'y': 900, 'width': 1730, 'height': 180}}, 'children': [
-        label('TouchGraphicsProfileText', 'dmGraphicsProfileAuto', 0, 0, 1000, 180),
+        label('TouchGraphicsProfileText', 'dmGraphicsProfileAuto', 0, 0, 1000, 180), profile_note,
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsProfile', 'fields': {
             'rect': {'x': 1110, 'y': 55, 'width': 480, 'height': 72},
             'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',

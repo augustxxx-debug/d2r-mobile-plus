@@ -129,3 +129,8 @@ host/dm_crashfence.c	=原因不明	崩溃围栏原因名（k_cf_name），只进
 host/dm_crashfence.c	=闪退	同上
 host/dm_crashfence.c	=卡死	同上
 host/dm_crashfence.c	=内存不足	同上
+host/dm_custom.c	自动	超分档位名（dm_3d_profile_get 的「超分档位：」日志行），只拼进日志
+host/dm_custom.c	省电	超分档位名（dm_3d_profile_get 的「超分档位：」日志行），只拼进日志
+host/dm_custom.c	均衡	超分档位名（dm_3d_profile_get 的「超分档位：」日志行），只拼进日志
+host/dm_custom.c	高画质	超分档位名（dm_3d_profile_get 的「超分档位：」日志行），只拼进日志
+host/dm_custom.c	原版	超分档位名（dm_3d_profile_get 的「超分档位：」日志行），只拼进日志
