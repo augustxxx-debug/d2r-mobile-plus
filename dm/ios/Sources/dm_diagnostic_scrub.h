@@ -15,10 +15,30 @@ static NSData *dm_diagnostic_scrub_names(NSData *data, NSString *home, NSString 
         NSString *name = [text substringWithRange:[match rangeAtIndex:1]];
         if (![name isEqualToString:@"Settings"] && ![name hasPrefix:@"ModernSharedStash"]) [characters addObject:name];
     }
-    for (NSString *name in characters) {
-        NSString *pattern = [NSString stringWithFormat:@"(?<![\\p{L}\\p{N}_])%@(?![\\p{L}\\p{N}_])",[NSRegularExpression escapedPatternForString:name]];
+    // 边界：名字这一端是汉字 / 假名 / 注音 / 谚文（不靠空格分词）时按字面子串换；否则只有同为「空格分词的字母 / 数字 / 下划线」的邻字才挡（拉丁名挨着汉字算换文种）。
+    // 长名先换（「张三」先换会把「张三丰」变成「<character>丰」）。规则与安卓 sharelog_android.c 的 side_blocks 一致。一审 A1：原先汉字也算字母，「角色张三进入营地」不替换
+    // Boundaries: when the name's end is Han / kana / Bopomofo / Hangul (not space-delimited) the name is replaced as a literal substring; otherwise only a neighbouring space-delimited
+    // letter / digit / underscore blocks (a Latin name next to Han is a script change). Longer names go first (replacing 张三 first would turn 张三丰 into "<character>丰").
+    // Same rule as side_blocks in Android's sharelog_android.c. First audit A1: Han used to count as a letter, so 「角色张三进入营地」 was left as is
+    NSString *unspaced = @"\\p{Han}\\p{Hiragana}\\p{Katakana}\\p{Bopomofo}\\p{Hangul}";
+    NSString *word = [NSString stringWithFormat:@"[[\\p{L}\\p{N}_]--[%@]]", unspaced];
+    NSRegularExpression *cjk = [NSRegularExpression regularExpressionWithPattern:[NSString stringWithFormat:@"^[%@]$", unspaced] options:0 error:nil];
+    NSArray<NSString *> *ordered = [characters.allObjects sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+        if (a.length != b.length) return a.length > b.length ? NSOrderedAscending : NSOrderedDescending;
+        return [a compare:b];
+    }];
+    for (NSString *name in ordered) {
+        if (!name.length) continue;
+        NSString *head = [name substringWithRange:[name rangeOfComposedCharacterSequenceAtIndex:0]];
+        NSString *tail = [name substringWithRange:[name rangeOfComposedCharacterSequenceAtIndex:name.length - 1]];
+        BOOL head_cjk = [cjk numberOfMatchesInString:head options:0 range:NSMakeRange(0, head.length)] > 0;
+        BOOL tail_cjk = [cjk numberOfMatchesInString:tail options:0 range:NSMakeRange(0, tail.length)] > 0;
+        NSString *pattern = [NSString stringWithFormat:@"%@%@%@", head_cjk ? @"" : [NSString stringWithFormat:@"(?<!%@)", word],
+                             [NSRegularExpression escapedPatternForString:name], tail_cjk ? @"" : [NSString stringWithFormat:@"(?!%@)", word]];
         NSRegularExpression *r = [NSRegularExpression regularExpressionWithPattern:pattern options:0 error:nil];
-        text = [r stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0,text.length) withTemplate:@"<character>"];
+        // 正则编不出来时宁可多换，不漏名字 | if the pattern fails to compile, over-redact rather than leak the name
+        text = r && cjk ? [r stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0,text.length) withTemplate:@"<character>"]
+                        : [text stringByReplacingOccurrencesOfString:name withString:@"<character>"];
     }
     NSArray<NSString *> *patterns = @[
         @"/Users/[^/\\s]+", @"[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}",

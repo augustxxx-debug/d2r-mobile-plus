@@ -13,6 +13,10 @@ int main(void) { @autoreleasepool {
     if (!result || [result containsString:@"person@example.com"]) return 4;
     result=[[NSString alloc] initWithData:dm_diagnostic_scrub_names([@"角色 TestPerson MetalFX active=1" dataUsingEncoding:NSUTF8StringEncoding],@"",@"",@[@"TestPerson"]) encoding:NSUTF8StringEncoding];
     if ([result containsString:@"TestPerson"] || ![result containsString:@"active=1"]) return 10;
+    // 一审 A1：中文 / 日文 / 韩文名紧挨汉字也替换；拉丁名挨汉字算词边界；同文种字母相连不算；名字互为子串先换长的 | first audit A1: CJK names next to Han text, Latin names next to Han, same-script joins kept, longer names first
+    result=[[NSString alloc] initWithData:dm_diagnostic_scrub_names([@"角色张三进入营地\n张三abc 与 abc张三\n「张三」，张三：\n张三丰来了，张三走了\n角色Galkamir进入营地\n갈카미르가 마을에 / Anna stays, Ann goes / Иванов stays, Иван goes / ガルカミール" dataUsingEncoding:NSUTF8StringEncoding],@"",@"",@[@"张三",@"张三丰",@"Galkamir",@"갈카미르",@"Ann",@"Иван",@"ガルカ"]) encoding:NSUTF8StringEncoding];
+    for (NSString *want in @[@"角色<character>进入营地",@"<character>abc 与 abc<character>",@"「<character>」，<character>：",@"<character>来了，<character>走了",@"角色<character>进入营地",@"<character>가 마을에",@"Anna stays, <character> goes",@"Иванов stays, <character> goes",@"<character>ミール"]) if (![result containsString:want]) { printf("A1 missing: %s\n", want.UTF8String); return 12; }
+    for (NSString *leak in @[@"张三",@"丰",@"Galkamir"]) if ([result containsString:leak]) { printf("A1 leak: %s\n", leak.UTF8String); return 13; }
     result=[[NSString alloc] initWithData:dm_diagnostic_scrub([@"1 屏幕：Sample Monitor G8，2560x1440\n出图节拍（1 屏幕 Sample Monitor G8，刷新率 120）\n屏幕 2622x1206：签名工具开了，" dataUsingEncoding:NSUTF8StringEncoding],@"",@"") encoding:NSUTF8StringEncoding];
     if ([result containsString:@"Sample Monitor"] || ![result containsString:@"屏幕：<display>，2560x1440"] || ![result containsString:@"刷新率 120"] || ![result containsString:@"屏幕 2622x1206：签名工具开了，"]) return 11;
     NSString *dir=[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
