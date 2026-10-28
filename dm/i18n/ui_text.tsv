@@ -501,3 +501,8 @@ dmCommunityCopied	已复制	Copied	Copiado		Скопировано	복사됨	社
 dmCommunityCopyFail	复制失败	Copy failed	No se pudo copiar		Не удалось скопировать	복사 실패	社区提示框第三行：剪贴板写入失败
 dmCommunityCopyQq	复制群号	Copy number	Copiar número		Копировать	번호 복사	社区提示框左边的按钮（群号那种；原版前端中号按钮，字留 400 宽）
 dmCommunityCopyLink	复制链接	Copy link	Copiar enlace		Копировать	링크 복사	社区提示框左边的按钮（链接那种）
+dmCreditsTitle	鸣谢	Credits	Créditos		Благодарности	감사의 말	自定义页「关于」组社区行之后的「鸣谢」子块标题（标题级 GoldYellow；touch_layout.py _custom_about，名单由宿主 dm_community.c 按语言拼）
+dmCreditsSpecial	特别鸣谢	Special thanks	Agradecimiento especial		Особая благодарность	특별 감사	鸣谢子块第一行的标签（36 号 LightGold，名单 36 号 LightGray 由宿主写）
+dmCreditsThanks	鸣谢	Thanks	Agradecimientos		Благодарность	감사	鸣谢子块第二行的标签（名单为空时整行不显示）
+dmCreditsUpstreamNote	（d2r-mobile 原作者）	(author of d2r-mobile)	(autor de d2r-mobile)		(автор d2r-mobile)	(d2r-mobile 원작자)	特别鸣谢名单末尾的括号说明（名字不翻译，只翻译这段）
+dmCreditsSep	、	, 	, 		, 	, 	鸣谢名单里名字之间的分隔（中文顿号，其他语言逗号加空格；dm_community.c 拼行用）
