@@ -2,7 +2,10 @@
 // 构建：gradle -p dm/android/probe :app:assembleDebug（工具链同主 App：SDK 36、NDK 29.0.14206865、CMake 3.31.6）
 // Probe App: no game content, no permissions; it only runs the dm/android/probe probes under the app identity, writes the report to its own files dir and shows it.
 // Build: gradle -p dm/android/probe :app:assembleDebug (same toolchain as the main App: SDK 36, NDK 29.0.14206865, CMake 3.31.6)
+// -PdmVvlDir=<目录>：把 Khronos 验证层（<目录>/arm64-v8a/libVkLayer_khronos_validation.so，仓外）打进调试包，微场景会启用它
+// -PdmVvlDir=<dir>: packs the Khronos validation layer (<dir>/arm64-v8a/libVkLayer_khronos_validation.so, outside the repository) into the debug build; the micro-scenes enable it
 plugins { id 'com.android.application' }
+def vvl = project.findProperty('dmVvlDir')
 android {
     namespace 'com.xiaoboluo.d2r.probe'
     compileSdk 36
@@ -17,6 +20,7 @@ android {
         externalNativeBuild { cmake { targets 'dmprobe'; arguments '-DDM_PROBE_CLI=OFF' } }
     }
     externalNativeBuild { cmake { path '../CMakeLists.txt'; version '3.31.6' } }
+    if (vvl) sourceSets { main { jniLibs.srcDirs += [vvl] } }
     packaging { jniLibs { useLegacyPackaging false; keepDebugSymbols += ['**/*.so'] } }
     buildTypes { release { minifyEnabled false } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }

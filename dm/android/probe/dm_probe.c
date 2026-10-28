@@ -390,7 +390,7 @@ static void probe_image(void) {
     munmap(img, 0x10000);
 }
 
-int dm_probe_run(FILE *out, const char *scratch) {
+int dm_probe_run(FILE *out, const char *scratch, const char *ext) {
     g_out = out; g_fail = 0; setvbuf(out, NULL, _IONBF, 0);
     uint64_t t0 = now_ns();
     fprintf(out, "INFO  dm_probe v2（P1：CPU 与系统探针）\n");
@@ -405,6 +405,10 @@ int dm_probe_run(FILE *out, const char *scratch) {
     probe_vm();
     probe_image();
     dm_probe_vulkan(out);
+    // 真实着色器目录：先看内部 <scratch>/shaders（run-as 放进去的），再看外部 <ext>/shaders；标记文件跟着所选目录 | real shaders: internal <scratch>/shaders first (placed by run-as), then external <ext>/shaders; the marker files follow the chosen dir
+    { char sh[1100] = ""; struct stat st; if (scratch) { snprintf(sh, sizeof sh, "%s/shaders", scratch); if (stat(sh, &st) || !S_ISDIR(st.st_mode)) sh[0] = 0; }
+      if (!sh[0] && ext) snprintf(sh, sizeof sh, "%s/shaders", ext);
+      g_fail += dm_probe_vkmicro(out, sh[0] ? sh : NULL); g_out = out; }
     KV("probe_ms", "%llu", (unsigned long long)((now_ns() - t0) / 1000000));
     fprintf(out, g_fail ? "RESULT FAIL %d\n" : "RESULT OK\n", g_fail);
     return g_fail;

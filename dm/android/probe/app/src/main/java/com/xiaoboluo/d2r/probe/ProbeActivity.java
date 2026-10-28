@@ -14,13 +14,14 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import java.io.File;
 import java.io.FileInputStream;
+import java.nio.file.Files;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 public class ProbeActivity extends Activity {
     static { System.loadLibrary("dmprobe"); }
-    static native String nativeRun(String scratchDir);
+    static native int nativeRun(String scratchDir, String extDir, String reportPath);
     private TextView text;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
@@ -28,14 +29,16 @@ public class ProbeActivity extends Activity {
         ScrollView sv = new ScrollView(this); text = new TextView(this); text.setTextSize(11); text.setPadding(24, 48, 24, 48); sv.addView(text); setContentView(sv);
         text.setText("探针运行中…");
         new Thread(() -> {
-            String head = header();
-            String body;
-            try { body = nativeRun(getFilesDir().getAbsolutePath()); } catch (Throwable t) { body = "FAIL  nativeRun: " + t + "\nRESULT FAIL 1\n"; }
-            final String report = head + body;
-            for (String line : report.split("\n")) Log.i("dmprobe", line);
-            write(new File(getFilesDir(), "probe.txt"), report);
-            File ext = getExternalFilesDir(null); if (ext != null) write(new File(ext, "probe.txt"), report);
-            runOnUiThread(() -> text.setText(report));
+            // 报告直接写在外部私有目录（adb pull 拿得到），头部先写，原生逐行追加；驱动把进程弄崩也留得下已跑的项
+            // The report lives in the external private dir (adb pull reaches it): header first, native lines appended; a driver crash keeps what already ran
+            File extDir = getExternalFilesDir(null); File report = new File(extDir != null ? extDir : getFilesDir(), "probe.txt");
+            write(report, header());
+            int rc;
+            try { rc = nativeRun(getFilesDir().getAbsolutePath(), extDir != null ? extDir.getAbsolutePath() : null, report.getAbsolutePath()); } catch (Throwable t) { rc = 1; append(report, "FAIL  nativeRun: " + t + "\nRESULT FAIL 1\n"); }
+            String text; try { text = new String(Files.readAllBytes(report.toPath()), StandardCharsets.UTF_8); } catch (Exception e) { text = "rc=" + rc; }
+            write(new File(getFilesDir(), "probe.txt"), text);
+            final String shown = text;
+            runOnUiThread(() -> text_set(shown));
         }, "dm-probe").start();
     }
 
@@ -63,5 +66,7 @@ public class ProbeActivity extends Activity {
             StringBuilder s = new StringBuilder(); for (byte x : md.digest()) s.append(String.format("%02x", x)); return s.toString();
         } catch (Exception e) { return "?"; }
     }
+    private void text_set(String s) { text.setText(s); }
+    private static void append(File f, String s) { try (FileOutputStream out = new FileOutputStream(f, true)) { out.write(s.getBytes(StandardCharsets.UTF_8)); } catch (Exception e) { Log.w("dmprobe", "append " + f + ": " + e); } }
     private static void write(File f, String s) { try (FileOutputStream out = new FileOutputStream(f)) { out.write(s.getBytes(StandardCharsets.UTF_8)); } catch (Exception e) { Log.w("dmprobe", "write " + f + ": " + e); } }
 }

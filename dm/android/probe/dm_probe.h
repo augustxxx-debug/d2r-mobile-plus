@@ -7,5 +7,8 @@
 #include <stdio.h>
 // scratch：可写目录（App 的 files 目录 / 命令行的 /data/local/tmp），文件映射执行的探项在这里建临时文件；NULL 跳过
 // scratch: a writable directory (the App's files dir / /data/local/tmp for the command line) for the file-backed execution probe; NULL skips it
-int dm_probe_run(FILE *out, const char *scratch);
+// ext：外部私有目录（App 的 Android/data/<包>/files，adb push 得到）；其下 shaders/ 有 .xgs 时 Vulkan 微场景 M6 会逐个建模块与管线；NULL 跳过
+// ext: the external private dir (the App's Android/data/<pkg>/files, reachable by adb push); when shaders/ under it holds .xgs files the Vulkan micro-scene M6 creates every module and pipeline; NULL skips it
+int dm_probe_run(FILE *out, const char *scratch, const char *ext);
 void dm_probe_vulkan(FILE *out);   // probe_vk.c：设备 / 驱动身份与能力 | device / driver identity and capabilities
+int dm_probe_vkmicro(FILE *out, const char *shaders_dir);   // probe_vkmicro.c：P2 准入微场景；返回失败数 | P2 admission micro-scenes; returns the failure count

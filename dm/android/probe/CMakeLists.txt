@@ -6,10 +6,31 @@ get_filename_component(DM_PATH_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../.. ABSOLUT
 foreach(map "${CMAKE_BINARY_DIR}=build" "${CMAKE_ANDROID_NDK}=ndk" "${DM_PATH_ROOT}=src")
   add_compile_options("-ffile-prefix-map=${map}")
 endforeach()
-set(PROBE_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/dm_probe.c ${CMAKE_CURRENT_SOURCE_DIR}/probe_vk.c)
+# 微场景的 GLSL → SPIR-V（NDK 自带 glslc）→ C 数组头（spv2c.py）；ClipDistance 声明形状的那份去掉 capability 32 / 33
+# Micro-scene GLSL -> SPIR-V (the NDK's glslc) -> C array header (spv2c.py); the ClipDistance-declaration shape drops capabilities 32 / 33
+file(GLOB GLSLC ${CMAKE_ANDROID_NDK}/shader-tools/*/glslc)
+list(GET GLSLC 0 GLSLC)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+set(SPV_DIR ${CMAKE_CURRENT_BINARY_DIR}/spv)
+file(MAKE_DIRECTORY ${SPV_DIR})
+set(SPV_FILES)
+set(SPV_SPECS)
+foreach(g sg.comp fs.vert quad.frag clipdecl.vert clipwrite.vert depth.vert shadow.frag store.comp empty.frag)
+  string(REPLACE "." "_" n ${g})
+  add_custom_command(OUTPUT ${SPV_DIR}/${g}.spv COMMAND ${GLSLC} --target-env=vulkan1.1 -O -o ${SPV_DIR}/${g}.spv ${CMAKE_CURRENT_SOURCE_DIR}/glsl/${g} DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/glsl/${g} VERBATIM)
+  list(APPEND SPV_FILES ${SPV_DIR}/${g}.spv)
+  if(g STREQUAL "clipdecl.vert")
+    list(APPEND SPV_SPECS "spv_${n}=${SPV_DIR}/${g}.spv:nocap=32,33")
+  else()
+    list(APPEND SPV_SPECS "spv_${n}=${SPV_DIR}/${g}.spv")
+  endif()
+endforeach()
+add_custom_command(OUTPUT ${SPV_DIR}/probe_shaders.h COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/spv2c.py ${SPV_DIR}/probe_shaders.h ${SPV_SPECS} DEPENDS ${SPV_FILES} ${CMAKE_CURRENT_SOURCE_DIR}/spv2c.py VERBATIM)
+set(PROBE_SRCS ${CMAKE_CURRENT_SOURCE_DIR}/dm_probe.c ${CMAKE_CURRENT_SOURCE_DIR}/probe_vk.c ${CMAKE_CURRENT_SOURCE_DIR}/probe_vkmicro.c ${SPV_DIR}/probe_shaders.h)
 add_library(dmprobe_core STATIC ${PROBE_SRCS})
+target_include_directories(dmprobe_core PRIVATE ${SPV_DIR})
 target_compile_options(dmprobe_core PUBLIC -O1 -g -Wall -std=gnu17)
-target_link_libraries(dmprobe_core PUBLIC log dl)   # bionic 的 pthread 在 libc 里 | bionic has pthread inside libc
+target_link_libraries(dmprobe_core PUBLIC log dl m)   # bionic 的 pthread 在 libc 里 | bionic has pthread inside libc
 option(DM_PROBE_CLI "也编命令行 dmprobe（探针 App 的 Gradle 构建关掉它，AGP 只认共享库产物）| also build the command-line dmprobe (off in the probe App's Gradle build: AGP expects only the shared library)" ON)
 if(DM_PROBE_CLI)
   add_executable(dmprobe_cli ${CMAKE_CURRENT_SOURCE_DIR}/main.c)   # 目标名与共享库区分，产物仍叫 dmprobe | target name distinct from the shared library, the product is still dmprobe

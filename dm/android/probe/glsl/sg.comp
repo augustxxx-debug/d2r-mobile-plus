@@ -1,0 +1,17 @@
+// 子组语义：每个线程记 gl_SubgroupSize / ID / 调用号 / 子组数、ballot(true) 位数、跨 16 道的 shuffle 与 shuffleXor(16)、subgroupAll。LocalSize 由特化常量 0 给（32 / 64 / 128）。
+// Subgroup semantics: each invocation records gl_SubgroupSize / ID / invocation id / subgroup count, the bit count of ballot(true), a shuffle across 16 lanes and shuffleXor(16), subgroupAll. LocalSize from specialization constant 0 (32 / 64 / 128).
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_KHR_shader_subgroup_vote : require
+layout(local_size_x_id = 0) in;
+layout(std430, binding = 0) buffer Out { uvec4 o[]; };
+void main() {
+    uint i = gl_LocalInvocationIndex;
+    uvec4 b = subgroupBallot(true);
+    uint sh = subgroupShuffle(i + 1000u, (gl_SubgroupInvocationID + 16u) & 31u);
+    uint shx = subgroupShuffleXor(i + 1000u, 16u);
+    bool all32 = subgroupAll(i < 32u);
+    o[gl_WorkGroupID.x * gl_WorkGroupSize.x + i] = uvec4(gl_SubgroupSize | (gl_SubgroupID << 8) | (gl_SubgroupInvocationID << 16) | (gl_NumSubgroups << 24), subgroupBallotBitCount(b), sh, shx | (all32 ? 0x80000000u : 0u));
+}
