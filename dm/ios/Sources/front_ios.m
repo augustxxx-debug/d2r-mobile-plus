@@ -1045,6 +1045,9 @@ uint64_t front_game_res(int docked) {
         // 就把预留按当时「渲染分辨率」档的像素预算等比缩小；之后调高要下次启动才生效（图形页分辨率行副文）。窗口换尺寸时 window_px 照旧按预留等比缩进去。2 档不缩（0 副作用）
         // Memory tiers 1 / 0 (dm_custom.c dm_mem_tier, user 2026-10-29): the game builds render targets from the startup reserve and lowering mid-run returns no memory, so on low-memory tiers the reserve is shrunk here,
         // before the game creates its window, to the pixel budget of the render-resolution level at that moment; raising it later needs a restart (Graphics resolution-row subtext). window_px still fits new window sizes into the reserve. Tier 2 is not shrunk (no side effect)
+        // 这一刻（建视图）设置必须已读到、上限已交（main.m didFinishLaunching 的 custom_early_init）：否则下面按档位缩预留、光追降档都会按缺省判（十四审 Q14-01 / 02），记红防回退
+        // Settings must be read and the limit handed over by now (custom_early_init in main.m didFinishLaunching): otherwise the tier shrink below and the RT drop decide on defaults (review 14 Q14-01 / 02); log red as a regression guard
+        { int dm_custom_loaded(void); if (!dm_custom_loaded()) LOG("【红】画面：算启动预留时设置还没读到（内存档位 / 光追降档按缺省判）——custom_early_init 没在建视图之前调？"); }
         { int dm_mem_tier(void), dm_render_res_level(void); int tier = dm_mem_tier();
           if (tier < 2 && !e) { int lv = dm_render_res_level(); res_gpu_class();
               uint32_t bud = dm_res_cap_budget_screen(lv, g_cls_gen, g_cls_pro, g_cls_m, fw, fh); uint64_t was = g_res_cap;

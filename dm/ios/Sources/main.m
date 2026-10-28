@@ -627,6 +627,16 @@ static NSString *pack_check(void) {
 @end
 // boot 前提（main() 开头、UIApplicationMain 前做）：存档替换 / 目录 / 环境变量 / cwd——宿主提前装载（dm_host_preload_start）要读这些
 // boot prerequisites (done at the start of main(), before UIApplicationMain): save replacement / directories / environment variables / cwd -- the host's early load (dm_host_preload_start) needs to read these
+// 交给宿主本进程内存上限（mem_measure_early 启动最早量的那次）与设置目录（Documents）：必须早于第一次建游戏视图——front_ios_view → front_game_res 当场算启动预留、
+// 问「光追开启动降一档」和内存档位（十四审 Q14-01 / 02：原先在 boot_prepare，建视图时设置读不到、上限没量，判定被记死）。didFinishLaunching 调，boot_prepare 保底；只做一次
+// Hand the host this process's memory limit (the measurement mem_measure_early took first thing) and the settings directory (Documents): it must come before the game view is first built -
+// front_ios_view -> front_game_res computes the startup reserve right there and asks about "RT on drops one level" and the memory tier (review 14 Q14-01 / 02: this used to be in boot_prepare, so at view time the settings were unreadable, the limit unmeasured, and the decisions latched). Called from didFinishLaunching, boot_prepare as fallback; runs once
+static void custom_early_init(void) {
+    static int done; if (done) return; done = 1;
+    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+    { void dm_mem_measure_set(int, int, const char *); dm_mem_measure_set(g_mem_limit_mb, g_mem_phys_mb, g_mem_model); }
+    { void dm_custom_init(const char *dir); dm_custom_init(doc.fileSystemRepresentation); }
+}
 static void boot_prepare(void) {
     NSString *res = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"dm"];
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
@@ -680,8 +690,7 @@ static void boot_prepare(void) {
     }
     for (NSString *d in @[@"save", @"temp"])
         [fm createDirectoryAtPath:[doc stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
-    { void dm_mem_measure_set(int, int, const char *); dm_mem_measure_set(g_mem_limit_mb, g_mem_phys_mb, g_mem_model); }   // 内存档位：启动最早量的那一次（mem_measure_early） | memory tier: the measurement taken first thing at launch
-    { void dm_custom_init(const char *dir); dm_custom_init(doc.fileSystemRepresentation); }
+    custom_early_init();   // 已在 didFinishLaunching 做过（建视图之前）；这里只保底，重复调用不做事 | already done in didFinishLaunching (before any view); kept here as a fallback, repeat calls do nothing
     { int dm_crashfence_start(void); dm_crashfence_start(); }
     { void dm_community_load(void); dm_community_load(); }   // 社区入口：读缓存的群号 / 链接（dm_community.c；清单在选角页出现时随更新检查一起拉，dm_update.m） | community entry: read the cached group number / link (dm_community.c; the manifest is fetched with the update check when the character select page appears, dm_update.m)   // 崩溃围栏：设置目录定了就读残留运行标记、连续两次异常退出关实验项（要赶在宿主装载读设置之前；dm_crashfence.c） | crash fence: once the settings directory is known, read the leftover running marker; two abnormal exits in a row turn experimental features off (must run before host loading reads settings)
     if (getenv("DM_BENCH_DIR")) {   // 功耗基准（tools/power_bench.sh）：各采样文件都写进 Documents/<DM_BENCH_DIR>/，宿主起来前先把目录建好（DM_SOAK 打不开文件会直接退出） | Power benchmark (tools/power_bench.sh): all sampling files go under Documents/<DM_BENCH_DIR>/; create it before the host starts (DM_SOAK exits if it cannot open its file)
@@ -1271,6 +1280,7 @@ static void crash_subscribe(void) {
 }
 - (BOOL)application:(UIApplication *)a didFinishLaunchingWithOptions:(NSDictionary *)o {
     g_T[3] = since_start();
+    custom_early_init();   // 建视图（willConnect / 资源就绪就地起宿主）之前：设置可读、上限已交（十四审 Q14-01 / 02）| before any view (willConnect / host started in place once assets are ready): settings readable, limit handed over (review 14 Q14-01 / 02)
     crash_subscribe();   // 崩溃围栏：订 MetricKit 崩溃诊断 | crash fence: subscribe to MetricKit crash diagnostics
     if ([g_mode isEqualToString:@"blank"]) {   // 发热负对照：不锁屏，按 DM_HEAT 采样 | Heat negative control: do not lock the screen, sample per DM_HEAT
         UIApplication.sharedApplication.idleTimerDisabled = YES;

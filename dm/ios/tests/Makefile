@@ -66,6 +66,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_power_bench_e2e.py
 	python3 test_present_hud.py
 	python3 test_sharelog_summary.py
+	python3 test_boot_order.py
 	python3 test_metal_capture_default.py   # Metal 抓帧层缺省不带（光追内存 P1） | Metal capture layer off by default (ray-tracing memory P1)
 	python3 test_rts_variant.py   # 光追变体生成器（七审：原先没注册、直接跑不执行断言） | ray-traced variant generator (seventh review: was not registered, running it executed no assertion)
 	python3 test_font_sample_cache.py

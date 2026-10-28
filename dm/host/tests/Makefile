@@ -25,6 +25,7 @@ run: \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
 	$(B)/t_lock_stress \
+	$(B)/t_boot_order \
 	$(B)/t_lock_stress_old \
 	$(B)/t_custom_readlog \
 	$(B)/t_community \
@@ -132,6 +133,7 @@ run: \
 	$(B)/t_condvar
 	$(B)/t_condvar_old
 	$(B)/t_lock_stress
+	$(B)/t_boot_order
 	$(B)/t_lock_stress_old
 	$(B)/t_target_rank 2>/dev/null
 	$(B)/t_hud_dead
@@ -202,6 +204,8 @@ tsan: $(B)/t_audio_spsc_tsan
 	$(B)/t_audio_spsc_tsan
 $(B)/t_condvar: t_condvar.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_condvar.c t_condvar_stub.c ../hle_thread.c
+$(B)/t_boot_order: t_boot_order.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_boot_order.c
 $(B)/t_lock_stress: t_lock_stress.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_lock_stress.c t_condvar_stub.c ../hle_thread.c
 $(B)/t_lock_stress_old: t_lock_stress.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)

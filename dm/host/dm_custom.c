@@ -217,6 +217,7 @@ static void load_once(void) {
             mem_tier_env() >= 0 ? "DM_MEM_TIER 覆盖" : lim < 0 ? "没量到，按最高档" : "实测", mem_save ? "；套用本档缺省：" : "；", mem_save ? mem_what : "缺省不变");
         if (mem_save) save(); }
 }
+int dm_custom_loaded(void) { load_once(); return atomic_load(&g_loaded); }   // 设置文件读到了没有（iOS 壳在 didFinishLaunching 给目录之前一直是 0）| whether the settings file has been read (0 until the iOS shell gives the directory in didFinishLaunching)
 int dm_custom_get(const char *key) {
     load_once(); int i = key_index(key); if (i < 0) return 1;
     return atomic_load(&g_loaded) ? atomic_load(&g_val[i]) : tier_def(i, dm_mem_tier());
@@ -318,7 +319,11 @@ int dm_fps_setting(void) {
 }
 // 光追阴影（键 rt_shadow，实验性，缺省关，图形页）：图形层 nvn_rtshadow.inc rts_on 每帧读；机器不过门槛（mtl_rt_shadow_supported）时按关处理，图形页也不显示这一行
 // Ray-traced shadows (key rt_shadow, experimental, off by default, Graphics tab): read every frame by rts_on in nvn_rtshadow.inc; treated as off on machines that fail the gate (mtl_rt_shadow_supported), and the Graphics tab hides the row
+#ifdef DM_RT_GATE_TEST_HOOK   // 单测自己给强定义（同 DM_GFX_GATE_TEST_HOOK）| the unit test supplies the definition (as DM_GFX_GATE_TEST_HOOK)
+int mtl_rt_shadow_supported(void);
+#else
 __attribute__((weak)) int mtl_rt_shadow_supported(void) { return 0; }   // 弱定义 = 不支持；图形层 nvn_rtshadow.inc 的强定义覆盖它（只有弱引用时，不链图形层的单测在 macOS 上链接不过） | weak definition = unsupported; the strong definition in nvn_rtshadow.inc overrides it (with only a weak reference, unit tests that do not link the graphics layer fail to link on macOS)
+#endif
 static int rt_shadow_ok(void) { return mtl_rt_shadow_supported(); }
 // 超分（MetalFX 空间超分，键 upscale + q3d）与整帧输出分辨率档（键 render_res）只有 Apple 图形层 / iOS 前端实现：弱定义 = 支持（Apple 行为不变）；
 // Android 的 nvn_vk.c 强定义返回 0 → 图形页把这两组行藏起来、dm_3d_profile_get 固定原版档（方案：不能显示开着超分却只做普通 blit；render_res 在 Android 的 900p 输出下没有意义）
@@ -357,7 +362,11 @@ static int rt_res_drop_decide(const char *drop_env, const char *rt_env, int gate
 int dm_render_res_rt_drop(void) {
     static _Atomic int v = -1; int r = atomic_load(&v), on; if (r >= 0) return r;
     const char *d = getenv("DM_RT_RES_DROP"), *e = getenv("DM_RT_SHADOW"); int off = d && !atoi(d);
-    r = rt_res_drop_decide(d, e, e ? rt_shadow_ok() : 0, e ? 0 : dm_rt_shadow_setting(), &on); atomic_store(&v, r);
+    r = rt_res_drop_decide(d, e, e ? rt_shadow_ok() : 0, e ? 0 : dm_rt_shadow_setting(), &on);
+    // 设置还没读到（也没用测试开关钉住）：先按「不降」答，但不记死——等读到设置再定（十四审 Q14-01：原先在设置可读之前就记死，设置里开光追永远不降）
+    // Settings not read yet (and not pinned by the test switch): answer "no drop" without latching - decide once they are read (review 14 Q14-01: it used to latch before the settings were readable, so RT on in settings never dropped)
+    if (!e && !dm_custom_loaded()) { static int warned; if (!warned++) LOG("【红】光追降分辨率：设置还没读到就被问（先按不降答、不记死）"); return 0; }
+    atomic_store(&v, r);
     LOG("光追降分辨率：判定 %s（启动时光追%s%s；整局不变，改光追设置下次启动生效）", r ? "降一档" : "不降", on ? "开" : "关", off ? "，测试开关 DM_RT_RES_DROP=0 关掉" : "");
     return r;
 }
