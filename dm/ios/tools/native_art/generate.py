@@ -72,7 +72,8 @@ def main(romfs, output=None):
             f'const char dm_ta_binding_sha[]="{sha(binding.read_bytes())}";', 'static const struct { uint32_t id; int atlas,frame; } rows[]={']
     out += [' {%d,%d,%d},' % tuple(row) for row in rows]; out += ['};']
     out += [(HERE / 'implementation.c.inc').read_text()]
-    (destination / 'dm_touch_native_art.c').write_text('\n'.join(out) + '\n', encoding='utf-8', newline='\n')
+    # Path.write_text 的 newline 参数要 Python 3.10；用 open 写，3.9 也行（三审 A3-06）| Path.write_text(newline=) needs Python 3.10; open() works on 3.9 too (third audit A3-06)
+    with open(destination / 'dm_touch_native_art.c', 'w', encoding='utf-8', newline='\n') as f: f.write('\n'.join(out) + '\n')
     print(f'native_art：{len(rows)} 条技能索引、{len(atlases)} 张 PNG（原件 SHA256 + MD5、尺寸与 RGBA SHA256 都核过）→ {art}')
 
 
