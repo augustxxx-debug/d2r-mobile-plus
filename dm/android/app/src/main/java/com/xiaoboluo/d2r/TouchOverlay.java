@@ -34,6 +34,8 @@ public final class TouchOverlay extends View {
     private static native void nativeEvent(int phase, int slot, float x, float y);
     private static native void nativeResize(float width, float height, float left, float right, float bottom, boolean tablet);
     private static native void nativeLayout(float[] out);
+    private static native int nativeFpsHud();   // 「显示帧数」：要画的数，0 = 不画（fps_hud.h 每 0.5 秒更新）| "Show frame rate": the number to draw, 0 = none (fps_hud.h updates every 0.5 s)
+    private int fpsHud;
     private final float density;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private static final int GLYPHS=119, HUD=167, DRAW_FLOATS=185;
@@ -46,7 +48,7 @@ public final class TouchOverlay extends View {
     private final Choreographer.FrameCallback poll = new Choreographer.FrameCallback() {
         @Override public void doFrame(long frameTimeNanos) {
             if (!running) return;
-            if (inputEnabled && isShown()) { nativeLayout(probe); if (!drawnValid || !Arrays.equals(probe, drawn)) invalidate(); }
+            if (inputEnabled && isShown()) { nativeLayout(probe); int f=nativeFpsHud(); if (!drawnValid || f!=fpsHud || !Arrays.equals(probe, drawn)) { fpsHud=f; invalidate(); } }
             Choreographer.getInstance().postFrameCallback(this);
         }
     };
@@ -397,7 +399,9 @@ public final class TouchOverlay extends View {
             paint.setColor(0xff463a28);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(u);c.drawRect(x,y,x+w,y+h,paint);paint.setStyle(Paint.Style.FILL);
             paint.setColor(0xff16120e);for(int i=1;i<20;i++)c.drawRect(x+w*i/20,y+u,x+w*i/20+u,y+h-u,paint);
             JSONObject lv=hudUi.getJSONObject("lv"), vital=hudUi.getJSONObject("vital"),badge=hudUi.getJSONObject("badge");
-            hudText(c,String.format(Locale.ROOT,levelFormat,(int)layout[HUD+1],(int)layout[HUD+2]/10),lv.getJSONObject("glyphs"),lv.getDouble("x"),lv.getDouble("baseline"),false,u);
+            // 显示帧数（同 iOS DmTouchOverlay）：接在经验行末尾、同一套字形，不另起标签 | Show frame rate (as iOS DmTouchOverlay): appended to the experience line with the same glyphs, no separate label
+            String lvs=String.format(Locale.ROOT,levelFormat,(int)layout[HUD+1],(int)layout[HUD+2]/10); if(fpsHud>0) lvs=lvs+" · "+fpsHud+" FPS";
+            hudText(c,lvs,lv.getJSONObject("glyphs"),lv.getDouble("x"),lv.getDouble("baseline"),false,u);
             hudText(c,String.format(Locale.ROOT,lifeFormat,(int)layout[HUD+8],(int)layout[HUD+9]),vital.getJSONObject("glyphs"),vital.getDouble("left_x"),vital.getDouble("baseline"),false,u);
             hudText(c,String.format(Locale.ROOT,manaFormat,(int)layout[HUD+10],(int)layout[HUD+11]),vital.getJSONObject("glyphs"),vital.getDouble("right_x"),vital.getDouble("baseline"),false,u);
             for(int i=1;i<=4;i++) if(layout[HUD+2+i]>0) {

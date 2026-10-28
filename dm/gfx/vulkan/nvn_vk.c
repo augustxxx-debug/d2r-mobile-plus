@@ -90,7 +90,7 @@ double mtl_display_refresh(void) { double hz = front_display_refresh(NULL, 0); r
 int mtl_display_hz(void) { return (int)(mtl_display_refresh() + 0.5); }
 double dm_pace_hz(double screen_hz, double floor_hz) { return nvn_pace_hz(screen_hz, floor_hz); }
 __attribute__((weak)) int dm_fps_setting(void){return 60;}
-int mtl_fps_target(void){return dm_fps_setting()==30?30:60;}   // 120 档落到 60（Android 没有显示节拍器与 120 帧路径）| the 120 stop falls to 60 (no display pacer / 120 fps path on Android)
+int mtl_fps_target(void){int f=dm_fps_setting();return f==30?30:f==120?120:60;}   // 120 档放行：dm_fps_setting 只在屏幕最高刷新率 ≥ 120（front_android.c dm_display_max_hz）时给 120，hle_nvn.c 的节拍按屏幕刷新率取整除档（120 Hz 屏每节拍一帧），Java 侧把窗口切到 120 Hz 模式 | the 120 stop passes through: dm_fps_setting returns 120 only when the screen's maximum refresh rate is >= 120 (front_android.c dm_display_max_hz), hle_nvn.c paces by the screen refresh rate (one frame per tick on a 120 Hz screen), and the Java side switches the window to the 120 Hz mode
 // Plus 的超分（MetalFX）在 Android 没有实现：告诉设置页藏「超分」行、3D 画质档固定原版（dm_custom.c 的弱定义缺省为支持）；整帧输出分辨率档已由安卓前端实现（下一行）
 // Plus's upscaling (MetalFX) is not implemented on Android: the Graphics tab hides the upscale row and the 3D profile stays Original (dm_custom.c's weak definitions default to supported); the whole-frame output resolution level is implemented by the Android front end (next line)
 int mtl_upscale_supported(void){return 0;}

@@ -34,7 +34,7 @@
 #include <unistd.h>
 
 void front_android_set_window(void *win, int w, int h);
-void front_android_set_refresh(float hz);
+void front_android_set_refresh(float hz, float max_hz);
 int dm_main(int argc, char **argv);
 void front_android_boot_failed(int code);
 
@@ -358,9 +358,20 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
 }
 
 static ANativeWindow *g_win;
-JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeRefresh(JNIEnv *env, jclass cls, jfloat hz) {
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeRefresh(JNIEnv *env, jclass cls, jfloat hz, jfloat max_hz) {
     (void)env; (void)cls;
-    front_android_set_refresh(hz);
+    front_android_set_refresh(hz, max_hz);
+}
+// 帧率档的生效目标（30 / 60 / 120）：Java 侧每秒问一次，120 时把窗口的首选显示模式切到 120 Hz（见 DmActivity.applyPreferredMode）
+// Effective frame-rate target (30 / 60 / 120): the Java side asks once a second and switches the window's preferred display mode to 120 Hz when it is 120 (DmActivity.applyPreferredMode)
+int mtl_fps_target(void);
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeFpsTarget(JNIEnv *env, jclass cls) { (void)env; (void)cls; return mtl_fps_target(); }
+// 「显示帧数」（自定义页开关 fps_hud）：触控层每帧问，0 = 不画；采样见 fps_hud.h | "Show frame rate" (Custom tab switch fps_hud): the touch overlay asks every frame, 0 = do not draw; sampling in fps_hud.h
+#include "fps_hud.h"
+uint64_t dm_nvn_frame_count(void); int dm_custom_get(const char *key);
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeFpsHud(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls; static dm_fps_hud s; struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return dm_fps_hud_sample(&s, (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec, dm_nvn_frame_count(), dm_custom_get("fps_hud") > 0);
 }
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSurface(JNIEnv *env, jclass cls, jobject surface, jint w, jint h) {
     (void)cls;
