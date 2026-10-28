@@ -1874,7 +1874,7 @@ static int mv_allowed(int own, uint64_t w) {
         const char *gn=grand?(const char *)*(uint64_t *)(grand+8):NULL;
         int loading_parent=pn && (!strcmp(pn,"LoadScreenPanel") || (!strcmp(pn,"LoadingScreen") && gn && !strcmp(gn,"MainMenuLoadingPanel")));
         return loading_parent && (!strcmp(nm,"FullGlow") || !strcmp(nm,"Logo") || !strcmp(nm,"ResurrectedText") || !strcmp(nm,"BottomFlames")); }
-    case MV_FE_BOTTOM: return pn && ((!strcmp(pn,"MainMenuPanel") && (!strcmp(nm,"QuickPlayButton") || !strcmp(nm,"LegendBackground")))
+    case MV_FE_BOTTOM: return pn && ((!strcmp(pn,"MainMenuPanel") && (!strcmp(nm,"QuickPlayButton") || !strcmp(nm,"LegendBackground") || !strcmp(nm,"TouchCommunityFe")))
         || (!strcmp(pn,"CharacterCreatePanel") && (!strcmp(nm,"TouchNext") || !strcmp(nm,"TouchBack") || !strcmp(nm,"CharacterCreateLegend")))
         || (!strcmp(pn,"CharacterOptionsPanel") && !strcmp(nm,"CharacterOptionsLegend"))
         || (!strcmp(pn,"CharacterCreateNamePanel") && !strcmp(nm,"CharacterNameLegend")));
@@ -2269,7 +2269,7 @@ static void ui_window_edges_pump(uint64_t root) {
     int fe=native && !dm_uiscreen_ingame() && !(lp && *(uint8_t *)(lp+0x50)) ? dm_ui_bottom_offset(142) : 0;
     g_mv_want[MV_FE_BOTTOM]=fe!=0;
     if (fe) { static const struct { const char *panel,*widget; } items[]={
-        {"MainMenuPanel","QuickPlayButton"},{"MainMenuPanel","LegendBackground"},
+        {"MainMenuPanel","QuickPlayButton"},{"MainMenuPanel","LegendBackground"},{"MainMenuPanel","TouchCommunityFe"},   // 「加入社区讨论」跟「进入游戏」一起抬（同一行 / 正下方都要随它） | Join moves with Play
         {"CharacterCreatePanel","TouchNext"},{"CharacterCreatePanel","TouchBack"},{"CharacterCreatePanel","CharacterCreateLegend"},
         {"CharacterOptionsPanel","CharacterOptionsLegend"},{"CharacterCreateNamePanel","CharacterNameLegend"}};
         for (unsigned i=0;i<sizeof items/sizeof *items;i++) { uint64_t p=ui_panel(root,items[i].panel),t=p && *(uint8_t *)(p+0x50)?ui_find(p,items[i].widget,0):0;

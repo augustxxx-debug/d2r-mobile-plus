@@ -258,19 +258,17 @@ def _fe_btn(name, y, text, msg, up, down):   # 手柄版主菜单左列的一行
             '"onClickMessage": "%s", "fontType": "10ptE", "textColor": "$LightButtonTextColor", "text/style": "$StyleFEButtonText", '
             '"focusIndicatorFilename": "Controller/HoverImages/FrontEndButtonMed", "focusIndicatorOffset": { "x": -2, "y": 0 }, "hoveredFrame": 3, "disabledFrame": 2, '
             '"navigation": { "up": { "name": "%s" }, "down": { "name": "%s" }, "right": { "panelBoundary": true } } } },\n') % (name, y, text, msg, up, down)
-# 手柄版主菜单左列（用户 2026-10-28 定稿）：「选项」下面加「关于」（纯「关于」框：版本 + 鸣谢）与「加入社区讨论」（社区框，没有社区值时宿主挪出屏幕），原版「制作人员」保留、往下让两行；
-# 「电影动画」拿掉（缺省包不播过场）。行距 125（同手柄暂停菜单）：选项 1025 / 关于 1150 / 加入社区讨论 1275 / 制作人员 1400；焦点链 选项 ↔ 关于 ↔ 加入社区讨论 ↔ 制作人员
-# The controller main-menu column (user, 2026-10-28): under Options add About (the About-only box: version + credits) and Join the community (the community box; moved off screen by the host without a value); the original Credits stays, two rows lower;
-# Cinematics removed (the default build plays no movies). Pitch 125 (as the controller pause menu): Options 1025 / About 1150 / Join 1275 / Credits 1400; focus chain Options ↔ About ↔ Join ↔ Credits
-_FE_ROWS = (_fe_btn('TouchAboutFe', 1150, '@dmCommunityAbout', 'PanelManager:ClosePanel:TouchAbout', 'Settings', 'TouchCommunityFe')
-            + _fe_btn('TouchCommunityFe', 1275, '@dmCommunityFe', 'PanelManager:ClosePanel:TouchCommunityFe', 'TouchAboutFe', 'Credits'))
-def pad_ribbon(s, movies=False):   # 手柄版主菜单左侧按钮栏 = 原版布局 + 两行 + 崩溃围栏 / 社区两个框。编进过场解码（MOVIE_FFMPEG=1）的包保留原版「电影动画」、列已满不加两行，框照放
+# 手柄版主菜单左列（用户 2026-10-28 再定）：只加「加入社区讨论」一行（点开的是含「关于」段——版本 + 鸣谢——的同一个社区框，同暂停菜单；先前的「关于」行与纯「关于」框入口撤掉），
+# 放在原版「电影动画」那一格（缺省包不播过场，电影动画挪走）：选项 1025 / 加入社区讨论 1175 / 制作人员 1325（原版位置不动）；焦点链 选项 ↔ 加入社区讨论 ↔ 制作人员
+# The controller main-menu column (user, 2026-10-28, revised): only a "Join the community" row (it opens the same community box with the About section -- version + credits -- as the pause menu; the former About row and the About-only box entry are withdrawn),
+# placed in the original Cinematics slot (the default build plays no movies, Cinematics moved away): Options 1025 / Join 1175 / Credits 1325 (original position); focus chain Options ↔ Join ↔ Credits
+_FE_ROWS = _fe_btn('TouchCommunityFe', 1175, '@dmCommunityFe', 'PanelManager:ClosePanel:TouchCommunityFe', 'Settings', 'Credits')
+def pad_ribbon(s, movies=False):   # 手柄版主菜单左侧按钮栏 = 原版布局 + 一行 + 崩溃围栏 / 社区两个框。编进过场解码（MOVIE_FFMPEG=1）的包保留原版「电影动画」、列已满不加这一行，框照放
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
     if movies:
         return s[:i].rstrip(' ') + _SAFE_PAD + _COMM + '    ' + s[i:]
-    s = _sub1(s, '"rect": { "x": 164, "y": 1175 },', '"rect": { "x": 99999, "y": 99999 },')   # 电影动画挪走 | Cinematics away
-    s = _sub1(s, '"rect": { "x": 164, "y": 1325 },', '"rect": { "x": 164, "y": 1400 },')     # 制作人员下移两行 | Credits two rows down
-    s = _sub1(s, '"down": { "name": "Cinematics" }', '"down": { "name": "TouchAboutFe" }')
+    s = _sub1(s, '"rect": { "x": 164, "y": 1175 },', '"rect": { "x": 99999, "y": 99999 },')   # 电影动画挪走，那一格给「加入社区讨论」 | Cinematics away, its slot goes to Join
+    s = _sub1(s, '"down": { "name": "Cinematics" }', '"down": { "name": "TouchCommunityFe" }')
     s = _sub1(s, '"up": { "name": "Cinematics" }', '"up": { "name": "TouchCommunityFe" }')
     i = s.rstrip().rfind(']')
     return s[:i].rstrip(' ') + _FE_ROWS + _SAFE_PAD + _COMM + '    ' + s[i:]
@@ -336,9 +334,35 @@ def _pc_mainmenu(s):
     s, n = offscreen(s, types=(), names=('OnlinePlaySettingsButton', 'Divider', 'SecondaryContextButton'))
     if n != 3: raise SystemExit('touch_layout：键鼠版主菜单要挪走的控件应为 3 个，找到 %d 个' % n)
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
-    # 「关于」「加入社区讨论」（用户 2026-10-28 定稿）：触屏版首页没有左列（上面 _pc_ribbon 整块删了），两颗钮并排放在「进入游戏」正下方；社区框挂在同一面板下 | About / Join the community: the touch front page has no column (_pc_ribbon drops it), so the two buttons sit side by side right under Play; the box hangs under the same panel
-    return (s[:i].rstrip(' ') + _UPDATE + _SAFE + _btn('TouchAboutFe', 1995, '@dmCommunityAbout', 'PanelManager:ClosePanel:TouchAbout', x=-490)
-            + _btn('TouchCommunityFe', 1995, '@dmCommunityFe', 'PanelManager:ClosePanel:TouchCommunityFe', x=20) + _COMM + '    ' + s[i:], n + 4)
+    px, py, row = _fe_touch_row(FE_TOUCH_ROW)
+    if (px, py) != (-FE_PLAY_W // 2, FE_PLAY_Y): s = _sub1(s, '"rect": { "x": -303, "y": 1865 },', '"rect": { "x": %d, "y": %d },' % (px, py)); i = s.rstrip().rfind(']')
+    return (s[:i].rstrip(' ') + _UPDATE + _SAFE + row + _COMM + '    ' + s[i:], n + 3)
+# 触屏首页的「加入社区讨论」（用户 2026-10-28 再定：主菜单只留这一行，开含「关于」段的社区框）。触屏首页没有左列（_pc_ribbon 整块删了），钮放在「进入游戏」旁边，三种版式：
+#   below      = 「进入游戏」正下方、居中，前端中号按钮（缺省；用户最新一条要求）
+#   row_right  = 同一行：「进入游戏」原位原大不动，右边一颗小一号（中号）的次级钮，底边对齐，间隔 FE_GAP
+#   row_center = 同一行：两颗合起来整体居中，底边对齐，间隔 FE_GAP
+# 「进入游戏」是前端大号按钮（606×141，面板水平锚在屏中、x -303 居中），次级钮是中号（470×115）；底边对齐 = 中号钮 y 比大号多两张图的高差 26。
+# 间隔 80 = 我们前端页同类并排按钮的间隔（建角页「返回 / 创建」）。版式由 FE_TOUCH_ROW 定；测试开关 DM_TEST_FE_ROW 只给截图对比用
+# "Join the community" on the touch front page (user, 2026-10-28, revised: the main menu keeps only this row, opening the community box with the About section). The touch front page has no column (_pc_ribbon drops it), so the button sits beside Play, three layouts:
+#   below      = right under Play, centered, front-end medium button (default; the user's latest request)
+#   row_right  = same row: Play keeps its original place and size, a one-size-smaller (medium) secondary button to its right, bottoms aligned, gap FE_GAP
+#   row_center = same row: the two together centered, bottoms aligned, gap FE_GAP
+# Play is the large front-end button (606x141, panel anchored at the screen centre, x -303 centred); the secondary one is medium (470x115); bottoms aligned = the medium button's y is the 26-unit height difference more than the large one.
+# Gap 80 = the gap of our side-by-side front-end buttons of the same kind (Back / Create on the character creation page). The layout is FE_TOUCH_ROW; the test switch DM_TEST_FE_ROW is only for screenshot comparisons
+FE_PLAY_W, FE_PLAY_H, FE_MED_W, FE_MED_H, FE_GAP, FE_VGAP = 606, 141, 470, 115, 80, 20   # 按钮图尺寸：Mac 2868×1320 截图量（缩放 0.611：大号 370×86 像素、中号 286×70） | image sizes measured on a Mac 2868x1320 shot
+FE_PLAY_Y = 1865
+FE_TOUCH_ROW = os.environ.get('DM_TEST_FE_ROW') or 'below'
+def _fe_touch_row(mode):   # 返回 (「进入游戏」的 x, y, 「加入社区讨论」钮的控件) | returns (Play's x, y, the Join button widget)
+    msg, px, py = 'PanelManager:ClosePanel:TouchCommunityFe', -FE_PLAY_W // 2, FE_PLAY_Y
+    if mode == 'below':   # 「进入游戏」上移一颗中号钮加间隔，两颗整体的底边仍在原版「进入游戏」底边附近（原 1865 + 141 = 2006；先前 y 1995 与它叠 11） | Play moves up by one medium button plus the gap; the pair's bottom stays near Play's original bottom
+        py = FE_PLAY_Y - FE_MED_H - FE_VGAP
+        return px, py, _btn('TouchCommunityFe', py + FE_PLAY_H + FE_VGAP, '@dmCommunityFe', msg, x=-FE_MED_W // 2)
+    dy = FE_PLAY_H - FE_MED_H   # 底边对齐 | bottoms aligned
+    if mode == 'row_right': return px, py, _btn('TouchCommunityFe', py + dy, '@dmCommunityFe', msg, x=FE_PLAY_W // 2 + FE_GAP)
+    if mode == 'row_center':
+        px = -(FE_PLAY_W + FE_GAP + FE_MED_W) // 2
+        return px, py, _btn('TouchCommunityFe', py + dy, '@dmCommunityFe', msg, x=px + FE_PLAY_W + FE_GAP)
+    raise SystemExit('touch_layout：FE_TOUCH_ROW 只能是 below / row_right / row_center')
 def _pc_charselect(s):
     # 右侧存档列表：整块往里收 SAFE_X；「线上 / 离线」页签挪走（只有离线）；列表三行字用回原主机档字号（统一 40 的大字装不下三行）
     # Save list on the right: the whole block is pulled inward by SAFE_X; the 「线上 / 离线」(Online / Offline) tabs are moved away (offline only); the three text lines of the list go back to the original console profile font sizes (the uniform large size of 40 does not fit three lines)
@@ -384,6 +408,9 @@ PCFRONT = {
     'controller/console/mainmenulinkshd.json': ('mainmenulinkshd.json', None),
 }
 PCFRONT_PLAIN = ('mainmenubuttonribbonhd.json', 'mainmenulinkshd.json')
+# 触屏首页继承层要列出的子控件名：_pc_mainmenu 加的每一个都要列上（漏列的不建——社区入口那颗钮与提示框先前就漏了，触屏首页看不到钮、点了也找不到框）
+# Child names the touch front page's inheriting layer must list: every widget _pc_mainmenu adds (unlisted ones are not built -- the community button and box were missed before, so the touch front page showed no button and the box could not be found)
+_PCMAIN_STUB = _UPDATE_STUB + _SAFE_STUB + '        { "type": "ButtonWidget", "name": "TouchCommunityFe" },\n' + _COMM_STUB
 def build_pcfront(romfs, outdir):
     """键鼠版底层布局阉割后另放新目录 1touchbase_lay/<名>（原路径保持原版，手柄模式的原版页继承的是它）；手柄版（controller/console/<名>，生成器会搬进触屏目录）换成原包「键鼠界面 + 手柄焦点」那层（controller/<名>，继承键鼠版底层）——
     这样手柄键仍能在选角页上走（X 进选角页；冒烟与触屏脚本的进局键序用「X 进选角页 → LoadCharacter」）；那层里的键位提示控件照例挪走。
@@ -403,7 +430,7 @@ def build_pcfront(romfs, outdir):
             o = os.path.join(outdir, 'pcfront_base_' + pc); open(o, 'w', encoding='utf-8').write(text); repl[base] = o
             _, mid = read_layout(romfs, 'controller/' + pc); mid, _n = offscreen(mid)
             mid = _sub1(mid, '"basedOn": "%s"' % os.path.basename(ppath), '"basedOn": "1touchbase_lay/%s"' % pc)
-        if pc == 'mainmenupanelhd.json': i = mid.rstrip().rfind(']'); mid = mid[:i] + _UPDATE_STUB + _SAFE_STUB + mid[i:]   # 继承层要按名字逐个点到子控件才会建：新加的七个也列上 | The inheriting layer only builds child widgets that are named one by one: the seven newly added ones are listed too
+        if pc == 'mainmenupanelhd.json': i = mid.rstrip().rfind(']'); mid = mid[:i] + _PCMAIN_STUB + mid[i:]   # 继承层要按名字逐个点到子控件才会建：新加的七个也列上 | The inheriting layer only builds child widgets that are named one by one: the seven newly added ones are listed too
         o = os.path.join(outdir, 'pcfront_' + rel.replace('/', '_')); open(o, 'w', encoding='utf-8').write(mid); repl[cpath.lower()] = o
     return repl
 
