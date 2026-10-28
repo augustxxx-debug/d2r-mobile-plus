@@ -317,6 +317,16 @@ int main(void) { @autoreleasepool {
           [at setAddress:prev.gpuAddress atIndex:3]; [at setAddress:list.gpuAddress atIndex:4]; [ce dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)]; })) return 1;
       const int32_t *o = picks.contents; if (o[20] != 1 || o[0] != 9 || o[1] != -1 || o[21] != 4) FAIL("rts_pick excluding the player light: n=%d rec %d %d, player %d (want 1: 9, player 4)", o[20], o[0], o[1], o[21]);
       ((uint32_t *)pkb.contents)[17] = 1; }
+    // 只挑原版本来投影的灯（PK.player_on 位 2，RC1 双影）：火把（texel 9）记录第 +2 texel 的 .w 置非 0 = 原版不投影 → 只剩随身光（texel 4）；位 2 关掉（DM_RT_POINT_ALL=1）照旧两盏
+    // only lights the original shadows (PK.player_on bit 2, RC1 doubled shadows): the torch's (texel 9) record texel +2 .w set non-zero = unshadowed in the original → only the character's light (texel 4) is left; with bit 2 off (DM_RT_POINT_ALL=1) both as before
+    { int32_t *lw = (int32_t *)lrec.contents + (9 + 2) * 4 + 3; int32_t keep = *lw; *lw = 1; memset(prev.contents, 0, 64);
+      void (^pick)(id<MTL4ComputeCommandEncoder>) = ^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at]; [ce setComputePipelineState:ps_pick]; [at setAddress:lrec.gpuAddress atIndex:0]; [at setAddress:picks.gpuAddress atIndex:1]; [at setAddress:pkb.gpuAddress atIndex:2];
+          [at setAddress:prev.gpuAddress atIndex:3]; [at setAddress:list.gpuAddress atIndex:4]; [ce dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)]; };
+      ((uint32_t *)pkb.contents)[17] = 1 | 4; if (run(pick)) return 1;
+      const int32_t *o = picks.contents; if (o[20] != 1 || o[0] != 4 || o[1] != -1) FAIL("rts_pick original-shadowed only: n=%d rec %d %d (want 1: 4; the torch is unshadowed in the original)", o[20], o[0], o[1]);
+      ((uint32_t *)pkb.contents)[17] = 1; memset(prev.contents, 0, 64); if (run(pick)) return 1;
+      if (o[20] != 2 || o[0] != 4 || o[1] != 9) FAIL("rts_pick with bit 2 off: n=%d rec %d %d (want 2: 4 9)", o[20], o[0], o[1]);
+      *lw = keep; }
     if (px(pm, gx_of(19.5) / 2, gy_of(0) / 2, 0) > 0.01f) FAIL("point light: ground x≈19.5 should be shadowed (%g)", px(pm, gx_of(19.5) / 2, gy_of(0) / 2, 0));
     if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 0) < 0.99f) FAIL("point light: ground x=−35 should be lit");
     if (px(pm, gx_of(-35) / 2, gy_of(0) / 2, 2) < 0.99f) FAIL("point light: unused channels stay lit");

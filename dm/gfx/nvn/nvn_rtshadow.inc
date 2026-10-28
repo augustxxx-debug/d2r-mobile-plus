@@ -163,7 +163,7 @@ static struct {
     id<MTLTexture> mask_lit;   // 全分辨率全亮的太阳遮罩：不用遮罩的帧（迟滞等待、失败）绑它——_rt 变体按像素坐标读遮罩（rts_variant.py：rts_mask.read(gl_FragCoord)），1x1 白贴图越界读是 0 = 整屏太阳全影（6534ef4 起） | a full-resolution fully lit sun mask: bound on frames that do not use the mask (hysteresis hold, failure) - the _rt variants read the mask by pixel coordinates (rts_variant.py: rts_mask.read(gl_FragCoord)), and an out-of-bounds read of the 1x1 white texture is 0 = the whole screen in sun shadow (since 6534ef4)
     id<MTLTexture> mask, white, mask_raw, mask_tmp, pmask, pmaskf, mask_half; int sun_half, point_div; id<MTLBuffer> plidx_none, prev, lseen, llist;   // prev：上一次选中的位置（滞后）；lseen / llist：点光收集的位图与列表 | prev: last picked positions (hysteresis); lseen / llist: bitmap and list of the point-light gather
     int n_rt_loaded, n_rt_missing, n_pos_loaded, n_pos_missing;
-    int point_on, point_n; id<MTLBuffer> lbuf; uint64_t lbuf_off; uint32_t lbuf_texels; int lbuf_tid;
+    int point_on, point_n, point_all; id<MTLBuffer> lbuf; uint64_t lbuf_off; uint32_t lbuf_texels; int lbuf_tid;
     uint64_t s0_gpu, s1_gpu, s0_size, s1_size; const uint32_t *s0_cpu, *s1_cpu;   // 分簇表（簇头、槽位）；CPU 指针只给诊断 | cluster tables (headers, slots); the CPU pointers are for the diagnostic only
     float soft, soft_maxd; float player_scale; rts_player_track ptrack; int ptrack_logged; uint64_t n_player_scaled;
     int pl_done, lc_done; uint64_t n_ptraced; int last_npl;
@@ -266,6 +266,7 @@ static int rts_on(void) {
         const char *pl = getenv("DM_RT_PLAYER_LIGHT"); g_rts.player_scale = pl ? (float)atof(pl) : 0.8f; if (!(g_rts.player_scale >= 0 && g_rts.player_scale <= 1)) g_rts.player_scale = 1; g_rts.ptrack.rec = -1;   // 玩家随身光颜色倍率（1 = 不动） | player-light color factor (1 = untouched)
         { const char *pd = getenv("DM_RT_POINT_DIV"); g_rts.point_div = pd && (atoi(pd) == 2 || atoi(pd) == 4) ? atoi(pd) : 4; }   // 点光遮罩追踪分辨率：全分辨率的 1/4（缺省）或 1/2，之后深度感知上采样 | point-mask trace resolution: 1/4 (default) or 1/2 of full, then depth-aware upsampling
         { const char *sh = getenv("DM_RT_SUN_HALF"); g_rts.sun_half = sh ? atoi(sh) != 0 : 0; }   // 太阳射线半分辨率 + 深度感知上采样（七审三轮起缺省关：第 0、1 档全分辨率，第 2 档起自动半分辨率；1 = 一直半分辨率） | half-resolution sun rays + depth-aware upsampling (default on; 0 = full resolution)
+        { const char *pa = getenv("DM_RT_POINT_ALL"); g_rts.point_all = pa && atoi(pa) != 0; if (pa) MLOG("光追点光：%s（测试开关 DM_RT_POINT_ALL=%s）", g_rts.point_all ? "原版不投影的灯也挑（对照，会出双影）" : "只挑原版投影的灯", pa); }   // 缺省只挑原版投影的灯（RC1 双影） | by default only lights the original shadows are picked (RC1 doubled shadows)
         const char *pe = getenv("DM_RT_POINT"), *pn = getenv("DM_RT_POINT_N"); g_rts.point_on = pe ? atoi(pe) != 0 : 1; g_rts.point_n = pn ? atoi(pn) : 2; if (g_rts.point_n > 4) g_rts.point_n = 4; if (g_rts.point_n < 1) g_rts.point_on = 0;
         // 光追 AO（实验性，计划第 5 步）：缺省关，DM_RT_AO=1 开；半径（世界单位）、强度（0–1，HDR 乘 1 − 强度 × 遮挡）、每像素射线数 | ray-traced AO (experimental, plan step 5): off by default, DM_RT_AO=1 turns it on; radius (world units), strength (0–1, the HDR is multiplied by 1 − strength × occlusion), rays per pixel
         { const char *ao = getenv("DM_RT_AO"), *ar = getenv("DM_RT_AO_RADIUS"), *as = getenv("DM_RT_AO_STRENGTH"), *an = getenv("DM_RT_AO_RAYS");
@@ -426,6 +427,7 @@ static int rts_setup(void) {
           (unsigned long)(sz.accelerationStructureSize >> 10), (unsigned long)(g_rts.scratch_len >> 10), RTS_MAX_INST, (unsigned long long)(g_rts.budget >> 20), RTS_MAX_EXPORT, g_rts.point_on ? "开" : "关", g_rts.point_n, g_rts.soft > 0 ? "开" : "关（DM_RT_SOFT）", g_rts.soft > 0 ? "全分辨率（软阴影）" : g_rts.sun_half ? "半分辨率 + 上采样" : "全分辨率", g_rts.point_div ? g_rts.point_div : 2, g_rts.player_scale, nrt,
           g_rts.part ? "局部回退 开（进 TLAS 的太阳阴影绘制不画进阴影图，没进的照原版画；太阳取最大阴影图的光源）" : "局部回退 关（整帧清图，DM_RT_SHADOW_PART=0）"); }
     { char b[160]; MLOG("光追降档：自动 %s，当前第 %d 档（%s；0 = 全开、1 = 太阳全分辨率 + 点光 2 盏 + 关 AO、2 = 太阳半分辨率 + 点光 1 盏（排除随身光）、3 = 太阳半分辨率 + 关点光 + 镂空照原版；暂停只给 GPU 挂起保护；按光追通道与整帧 GPU 时间对出图节拍预算判）", g_rts.auto_on ? "开" : g_rts.lvl_pin >= 0 ? "关（DM_RT_LEVEL 钉住）" : "关（DM_RT_AUTO=0）", g_rts.gov.lvl, rts_lvl_desc(b, sizeof b)); }
+    if (g_rts.point_on) MLOG("光追点光：%s", g_rts.point_all ? "原版不投影的灯也挑（DM_RT_POINT_ALL=1 对照，会和原版叠出双影）" : "只挑原版本来投影的灯（记录第 +2 texel 的 .w 为 0），光追只替换原版的影，不给随身光 / 召唤物光圈加影");
     if (g_rts.ao_on) MLOG("光追 AO：开（实验性，DM_RT_AO=1）：半分辨率每像素 %d 条半球射线、半径 %.1f、强度 %.2f、5×5 深度感知模糊后上采样，主通道之后乘到画面上；自动降档 1 档起关", g_rts.ao_rays, g_rts.ao_radius, g_rts.ao_strength);
     else MLOG("光追 AO：关（实验性，DM_RT_AO=1 打开）");
     g_rts.mem_avail = rts_avail_bytes(); g_rts.plan_w = g_rts.plan_h = 0;   // 预算在第一次知道渲染尺寸时定（rts_mem_replan） | the budget plan is made the first time the render size is known (rts_mem_replan)
@@ -1324,7 +1326,7 @@ static void rts_build_and_trace(id<MTLTexture> depth) {
         lc = lc && fs->lcopy && fs->lctex;
         uint8_t *kb = fs->pk.contents;
         float *pk = (float *)kb; for (int i = 0; i < 16; i++) pk[i] = (float)ia[i];
-        uint32_t *pku = (uint32_t *)(kb + 64); pku[0] = (uint32_t)g_rts.eff.point_n; pku[1] = (uint32_t)(g_rts.ptrack.sure != 0) | (g_rts.ptrack.sure && g_rts.eff.excl_player ? 2u : 0u);   // 位 0 认玩家光、位 1 不选它（第 2 档起） | bit 0 recognizes the player light, bit 1 keeps it out of the picks (from level 2)
+        uint32_t *pku = (uint32_t *)(kb + 64); pku[0] = (uint32_t)g_rts.eff.point_n; pku[1] = (uint32_t)(g_rts.ptrack.sure != 0) | (g_rts.ptrack.sure && g_rts.eff.excl_player ? 2u : 0u) | (g_rts.point_all ? 0u : 4u);   // 位 0 认玩家光、位 1 不选它（第 2 档起） | bit 0 recognizes the player light, bit 1 keeps it out of the picks (from level 2)
         ((float *)pku)[2] = 0.5f + 0.02f * sqrtf((float)(g_rts.ptrack.off[0] * g_rts.ptrack.off[0] + g_rts.ptrack.off[1] * g_rts.ptrack.off[1] + g_rts.ptrack.off[2] * g_rts.ptrack.off[2])); pku[3] = RTS_LIGHT_CAP;
         float *po = (float *)(kb + 80); po[0] = (float)g_rts.ptrack.off[0]; po[1] = (float)g_rts.ptrack.off[1]; po[2] = (float)g_rts.ptrack.off[2]; po[3] = 0;
         { double v[16], iv[16]; for (int i = 0; i < 16; i++) v[i] = g_rts.view[i]; rts_inv4(v, iv); float *pv = (float *)(kb + 96); for (int i = 0; i < 16; i++) pv[i] = (float)iv[i]; }   // 逆视矩阵：记录位置 视空间 → 世界 | inverse view: record positions view space → world
