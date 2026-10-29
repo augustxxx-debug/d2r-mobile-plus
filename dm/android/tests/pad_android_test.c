@@ -69,10 +69,10 @@ int main(void) {
     // 失活清零 | reset on resign
     dm_android_pad_key(XBOX, DM_AVENDOR_MICROSOFT, 0x02ea, DM_ASRC_GAMEPAD, DM_AKEY_BUTTON_A, 1); dm_android_pad_motion(XBOX, DM_AVENDOR_MICROSOFT, 0x02ea, DM_ASRC_JOYSTICK, 1, 0, 0, 0, 0, 0, 0, 0);
     dm_android_pad_reset(); check(last_b == 0 && last_ax[0] == 0, "reset clears buttons and sticks");
-    // ZR 空格回城 | empty-ZR town portal
-    nav = 0; zr_free = 1; dm_android_pad_key(XBOX, DM_AVENDOR_MICROSOFT, 0x02ea, DM_ASRC_GAMEPAD, DM_AKEY_BUTTON_R2, 1); check(tp == 1 && !(last_b & DM_BTN_ZR), "empty ZR in game state -> town portal, ZR withheld");
+    // ZR 不再接管（缺陷台账 B031）：空着也整颗交给原版，不开免费回城 | ZR is no longer taken over (defect ledger B031): even when empty it goes to the game, no free town portal
+    nav = 0; zr_free = 1; dm_android_pad_key(XBOX, DM_AVENDOR_MICROSOFT, 0x02ea, DM_ASRC_GAMEPAD, DM_AKEY_BUTTON_R2, 1); check(tp == 0 && (last_b & DM_BTN_ZR), "empty ZR goes to the game, no town portal");
     dm_android_pad_key(XBOX, DM_AVENDOR_MICROSOFT, 0x02ea, DM_ASRC_GAMEPAD, DM_AKEY_BUTTON_R2, 0);
-    zr_free = 0; dm_android_pad_key(XBOX, DM_AVENDOR_MICROSOFT, 0x02ea, DM_ASRC_GAMEPAD, DM_AKEY_BUTTON_R2, 1); check(tp == 1 && (last_b & DM_BTN_ZR), "bound ZR goes to the game");
+    zr_free = 0; dm_android_pad_key(XBOX, DM_AVENDOR_MICROSOFT, 0x02ea, DM_ASRC_GAMEPAD, DM_AKEY_BUTTON_R2, 1); check(tp == 0 && (last_b & DM_BTN_ZR), "bound ZR goes to the game");
     // 触控层在手柄模式下只画文字（经验行 + 帧数、生命 / 法力数字），触屏模式全画 | the overlay draws only the texts in controller mode (experience line + fps, life / mana), everything in touch mode
     check(dm_android_pad_hud_mask(1) == DM_PAD_HUD_TEXT, "controller mode: texts only (no touch controls, no touch bar)");
     check(dm_android_pad_hud_mask(0) == (DM_PAD_HUD_CONTROLS | DM_PAD_HUD_BAR | DM_PAD_HUD_TEXT), "touch mode: everything");
