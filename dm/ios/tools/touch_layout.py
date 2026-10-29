@@ -1195,6 +1195,19 @@ def _boss_bar_top(text):
     ta['children'] = []
     return json.dumps(j, ensure_ascii=False, indent=1), 1
 PRESENT['controller/hudmonsterhealthhd.json'] = _boss_bar_top
+# 手柄版底栏（原版布局原样）里腰带下面的十字键提示（Belt 的 HotkeyLabelTemplate，原位 y 98）：字号档两种模式共用、我们放大了，键帽图跟着变大，
+# 在 417 高的底栏里往下长出屏幕、被底边截掉一半（缺陷台账 B030，iOS 同源 B017）。上提 36（16:9 下约 18 像素），与技能格下的 A / B / X / Y 提示同一条中线
+# The D-pad hints under the belt in the controller bottom bar (the original layout as is; Belt's HotkeyLabelTemplate, originally y 98): the font profiles are shared by both
+# modes and we enlarged them, so the key-cap glyphs grew and ran below the 417-high bar, cut in half by the screen edge (defect ledger B030, iOS twin B017). Raised by 36
+# (about 18 pixels at 16:9), on the same centre line as the A / B / X / Y hints under the skill slots
+PAD_BELT_HINT_Y = 62
+def pad_hud(text):
+    s, n = re.subn(r'("type"\s*:\s*"TextBoxWidget"\s*,\s*"name"\s*:\s*"HotkeyLabelTemplate"\s*,\s*"fields"\s*:\s*\{\s*"rect"\s*:\s*\{\s*"x"\s*:\s*8\s*,\s*"y"\s*:\s*)98\b',
+                   lambda m: m.group(1) + str(PAD_BELT_HINT_Y), text)
+    assert n == 1, n
+    return s
+
+
 def pad_boss_pct(text):   # 手柄版怪物血条 = 原版布局原样（条挂在目标头顶），只在进度条右边加同一个空字的 TouchBossPct，宿主每帧写「NN%」（同触屏版，dm_cursor.c ui_boss_pct_pump 按名字找，不分模式） | Controller layout monster health bar = the original layout as is (the bar hangs above the target's head), only adding the same empty-text TouchBossPct to the right of the progress bar, into which the host writes "NN%" every frame (same as the touch version; dm_cursor.c ui_boss_pct_pump finds it by name regardless of mode)
     j = json.loads(re.sub(r',(\s*[\]}])', r'\1', text))
     ta = next(c for c in j['children'] if c.get('name') == 'TargetAttached'); hp = next(c for c in ta['children'] if c.get('name') == 'Health')
