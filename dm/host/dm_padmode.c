@@ -219,24 +219,6 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
     if (m) { atomic_fetch_or(&g_pg_ev, down & m); atomic_store(&g_pg_held, bt & m); eat |= bt & m; return (bt & ~m) | pulse; }
     atomic_store(&g_pg_ev, 0); atomic_store(&g_pg_held, 0); eat &= bt; return (bt & ~eat) | pulse;
 }
-// 页接管了方向键时，左摇杆一起归页（缺陷台账 B019 / B006b）：原版用左摇杆也能移焦点——建角模式页只收了十字键，摇杆一推焦点就跑到挪出屏幕的「天梯」那一行；
-// 自定义 / 图形页只认十字键、左摇杆不导航。接管的那个方向上摇杆值不交给游戏，推过半程（回差到三成才算松开）折算成一次十字键按下沿记给页，同 dm_padmode_page_keys 的取法
-// When a page has taken over the directions, the left stick goes to the page as well (defect ledger B019 / B006b): the original game also moves focus with the left stick -- the
-// character-creation mode page only took the D-pad, so one push of the stick sent focus to the "Ladder" row that was moved off screen; the Custom / Graphics pages only knew the
-// D-pad and the left stick did not navigate. On a taken-over direction the stick value is not handed to the game; a push past half way (released below 30 %, hysteresis) counts as
-// one D-pad press edge for the page, fetched like dm_padmode_page_keys
-void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
-    static uint64_t held; uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) & (DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT) : 0;
-    if (!m) { held = 0; return; }
-    const int32_t on = 16384, off = 9830; uint64_t h = 0;   // 0.5 / 0.3 × 32767
-    if (*ly > on || (*ly > off && (held & DM_BTN_UP))) h |= DM_BTN_UP;
-    if (*ly < -on || (*ly < -off && (held & DM_BTN_DOWN))) h |= DM_BTN_DOWN;
-    if (*lx > on || (*lx > off && (held & DM_BTN_RIGHT))) h |= DM_BTN_RIGHT;
-    if (*lx < -on || (*lx < -off && (held & DM_BTN_LEFT))) h |= DM_BTN_LEFT;
-    atomic_fetch_or(&g_pg_ev, h & ~held & m); held = h;
-    if (m & (DM_BTN_UP | DM_BTN_DOWN)) *ly = 0;
-    if (m & (DM_BTN_LEFT | DM_BTN_RIGHT)) *lx = 0;
-}
 // 编年史仓库页开着时（手柄模式）把原版「按住 Y」那半句提示的字换成我们实际做的事：原版在储藏箱各页对背包物品的提示是「丢弃（按住移动到私人储藏箱）」，
 // 第六页上按住 Y 被我们接管成存入编年史仓库（dm_vault_ui.c）。这半句只写「存入」：原版那条本来就超宽、在限宽里滚动（截图对照），写短到不滚，人就在编年史页上。换法同上面的手柄 / 触屏说法：只换当前语言串表里这个键的串指针，离开那一页换回
 // 同一个换法现在有两条（一张小表）：编年史页的「存入」，和光标停在未鉴定物品上时把「捡起」换成「捡起（按住鉴定）」（手柄按住 A = 免费鉴定，dm_cursor.c；
@@ -544,16 +526,12 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
           for (int i = 0; i < g_nstr && i < 3; i++) { struct { const char *s; uint64_t n; } q = { g_str[i].key, g_str[i].klen }; const char *r = ((const char *(*)(void *))(b + 0x7f5630))(&q);
               L += (size_t)snprintf(o + L, L < sizeof o ? sizeof o - L : 0, "%s%s=「%s」", i ? "、" : "", g_str[i].key, r ? r : "(空)"); }
           LOG("DM_TEST_PADMODE：帧 %llu 模式 %s，原版取串 %s", (unsigned long long)frame, g_cur ? "手柄" : "触屏", o); } }
-    // 建角模式页「极乐世界」那行左边写死的手柄键帽（布局 touch_layout.py 的 TouchBlissKey，原位 x −1665）：同位还有 Xbox / PS 两张（TouchBlissKeyX / P），Mac 覆盖层再带一张
-    // 键盘键帽 TouchBlissKeyK；按当前键帽样式把对应那张放到原位、其余挪到屏外。以前只有 Mac 对调键盘那张，接 Xbox / PS 手柄时仍画 Switch 的「Y」（缺陷台账 B019）
-    // The hard-coded gamepad key cap to the left of the "Elysium" row on the character-creation mode page (TouchBlissKey in the layout touch_layout.py, original position x -1665):
-    // Xbox / PS versions sit at the same spot (TouchBlissKeyX / P), and the Mac overlay adds a keyboard key cap TouchBlissKeyK; the one matching the current key-cap style goes to the
-    // original position and the others off screen. Previously only the Mac keyboard one was swapped, so Xbox / PS controllers still saw Switch's "Y" (defect ledger B019)
-    { int dm_ingame_now(void); if (frame % 10 == 0 && !dm_ingame_now()) { static const char *const nm[DM_GLYPH_N] = { "TouchBlissKey", "TouchBlissKeyK", "TouchBlissKeyX", "TouchBlissKeyP" };   // 这一页只在前端：局内不找 | the page is front end only: no search in game
-        uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), w[DM_GLYPH_N] = {0}; if (root) w[0] = pm_find(root, nm[0], 0);
-        for (int i = 1; w[0] && i < DM_GLYPH_N; i++) w[i] = pm_find(root, nm[i], 0);
-        int pick = g_glyph >= 0 && g_glyph < DM_GLYPH_N && w[g_glyph] ? g_glyph : 0;   // 这一套没带（如非 Mac 的键盘）：用 Switch 那张 | that set is absent (e.g. keyboard outside Mac): use the Switch one
-        for (int i = 0; w[0] && i < DM_GLYPH_N; i++) if (w[i]) { int32_t *r = (int32_t *)(uintptr_t)(w[i] + 0x70), x = i == pick ? -1665 : 99999; if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))rd8(rd8(w[i]) + 0x10))(w[i]); } } } }
+#if TARGET_OS_OSX
+    // 建角模式页「极乐世界」那行左边写死的手柄键帽（布局 touch_layout.py 的 TouchBlissKey，原位 x −1665）：Mac 的覆盖层同位带了一个键盘键帽 TouchBlissKeyK，按当前键帽对调
+    // The hard-coded gamepad key cap to the left of the "Elysium" row on the character-creation mode page (TouchBlissKey in the layout touch_layout.py, original position x -1665): the Mac overlay carries a keyboard key cap TouchBlissKeyK at the same position, and the two are swapped according to the current key caps
+    if (g_glyph_have[DM_GLYPH_KBD] && frame % 10 == 0) { int kb = g_glyph == DM_GLYPH_KBD; uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), a = root ? pm_find(root, "TouchBlissKey", 0) : 0, k = a ? pm_find(root, "TouchBlissKeyK", 0) : 0;
+        for (int i = 0; i < 2 && a && k; i++) { uint64_t w = i ? k : a; int32_t *r = (int32_t *)(uintptr_t)(w + 0x70), x = (i ? kb : !kb) ? -1665 : 99999; if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))rd8(rd8(w) + 0x10))(w); } } }
+#endif
     // 测试开关 DM_TEST_GLYPH=<帧>:<样式>[,…]：到帧当作「这一种输入来了」请求键帽样式（0 Switch 手柄 / 1 键盘 / 2 Xbox 手柄 / 3 PlayStation 手柄；无人值守的局没有实体手柄与键盘）
     { static int n = -1, k; static struct { uint64_t f; int m; } ev[8];
       if (n < 0) { n = 0; const char *e = getenv("DM_TEST_GLYPH"); for (const char *q = e; q && *q && n < 8; ) { unsigned long long f; int m; if (sscanf(q, "%llu:%d", &f, &m) != 2) break; ev[n].f = f; ev[n].m = m; n++; q = strchr(q, ','); if (q) q++; } }
