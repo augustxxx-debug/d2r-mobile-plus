@@ -50,7 +50,13 @@ int main(int argc, char **argv) {
         expect("游戏切到 ruRU：表里的条目按俄语取（储藏箱 Тайник）", strstr(dm_ui("dmStoreStash"), "Тайник") ? "有" : "没有", "有");
         atomic_store(&g_dm_lang, 5); expect("游戏切到 koKR（韩语）", dm_ui("dmConfirm"), "확인");
         expect("游戏切到 koKR：表里的条目按韩语取（储藏箱 창고）", strstr(dm_ui("dmStoreStash"), "창고") ? "有" : "没有", "有");
-        expect("表里没有的键原样返回", dm_ui("dmNoSuchKey"), "dmNoSuchKey"); }
+        expect("表里没有的键原样返回", dm_ui("dmNoSuchKey"), "dmNoSuchKey");
+        // B014：有我们译文的语言才换原版提示串（dm_padmode.c 换串小表）：0 enUS 2 esES 5 koKR 7 ruRU 8 zhCN 9 zhTW 10 esMX 是，1 deDE 3 frFR 4 itIT 6 plPL 11 jaJP 12 ptBR 不是
+        // B014: only languages with our translation get the original hint strings swapped (dm_padmode.c): 0 2 5 7 8 9 10 yes, 1 3 4 6 11 12 no
+        for (int l = 0; l <= 12; l++) { char w[40], g[4]; int want = !(l == 1 || l == 3 || l == 4 || l == 6 || l == 11 || l == 12);
+            snprintf(w, sizeof w, "dm_lang_ours(%d)", l); snprintf(g, sizeof g, "%d", dm_lang_ours(l)); expect(w, g, want ? "1" : "0");
+            if (want && l != 0) { snprintf(w, sizeof w, "有译文的 %d 不归英文组", l); snprintf(g, sizeof g, "%d", dm_lang_group_of(l) != DM_LG_EN); expect(w, g, "1"); } }
+        expect("未设过语言（-1）不算有译文", dm_lang_ours(-1) ? "1" : "0", "0"); }
     else { fprintf(stderr, "用法：t_i18n en|zh|none|sysen|syses|systw|sysru|sysko|tags|game\n"); return 2; }
     return fails ? 1 : 0;
 }
