@@ -192,6 +192,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private static volatile String genFailTitle;   // 失败页标题：按失败类别（游戏文件不完整 / 版本不对 / 空间不够 / 生成出错），缺陷台账 B026 | failure screen title by kind (defect ledger B026)
     private static volatile String genLogText;     // 已脱敏的 gen_log 全文，「分享诊断日志」打包用 | the scrubbed gen_log text, packed by "Share Diagnostics"
     private static volatile boolean genShareOpen;  // 分享面板开着：回来时的 onResume 不清失败、不重新生成 | the share sheet is open: the onResume on return keeps the failure and does not regenerate
+    private static volatile long genStartMs = Long.MAX_VALUE;   // 这次生成开始的时刻：分享只附这之后写的步骤日志 | when this generation started: sharing attaches only step logs written since
     private final android.os.Handler genHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     private boolean generatorAvailable() {
@@ -229,7 +230,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             try {
                 File[] old = zip.getParentFile().listFiles((d, n) -> n.startsWith("D2R-Mobile-Plus-gen-")); if (old != null) for (File f : old) f.delete();
                 java.util.Map<String, byte[]> e = new java.util.LinkedHashMap<>(); e.put("gen_log.txt", text.getBytes(StandardCharsets.UTF_8));
-                for (File f : PackGenerator.stepLogs(gen)) {
+                for (File f : PackGenerator.stepLogs(gen, genStartMs)) {
                     String name = "logs/" + f.getParentFile().getName() + "_" + f.getName();
                     e.put(name, PackGenerator.scrubLog(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8), apkDir, appHome, appId).getBytes(StandardCharsets.UTF_8));
                 }
@@ -306,7 +307,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (BuildConfig.DEBUG && getIntent().hasExtra("dmTestFreeBytes")) free = getIntent().getLongExtra("dmTestFreeBytes", free);
         if (free < PackGenerator.SPACE_NEEDED) { String f = android.text.format.Formatter.formatShortFileSize(this, free);
             failEarly(base, data, getString(R.string.dmAndroidGenFailSpace), getString(R.string.dmAndroidGenNoSpace, f), String.format(Locale.ROOT, "剩余空间 %s，生成需要约 %d GB（缓存 + 中间产物 + 成品）", f, PackGenerator.SPACE_NEEDED >> 30)); return; }
-        generating = true; genState.reset(); genLogText = null; genFailTitle = null;
+        generating = true; genState.reset(); genLogText = null; genFailTitle = null; genStartMs = System.currentTimeMillis() - 2000;
         LoadPageView.begin(GEN_STAGES, PackGenerator.LOAD_WEIGHTS_MS); genHandler.post(genPoll);
         final File dataDir = data; final String nativeDir = getApplicationInfo().nativeLibraryDir;
         final String appHome = getFilesDir().getParent(), apkDir = new File(nativeDir).getParentFile().getParent(), appId = getPackageName();   // gen_log.txt 脱敏用 | for scrubbing gen_log.txt
@@ -375,7 +376,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // 开始生成之前就停下（缺 main / sdk / build_manifest、空间不够）：同样写 gen_log（结论 + 环境 + 输入文件）并给「分享诊断日志」| stopped before generating (missing
     // main / sdk / build_manifest, not enough space): write gen_log all the same (verdict + environment + input files) and offer "Share Diagnostics"
     private void failEarly(File base, File data, String title, String reason, String why) {
-        genState.reset(); genState.summary.add(why);
+        genState.reset(); genState.summary.add(why); genStartMs = Long.MAX_VALUE;   // 没跑生成：不附任何步骤日志 | nothing was generated: no step logs attached
         String nativeDir = getApplicationInfo().nativeLibraryDir;
         String text = PackGenerator.scrubLog(PackGenerator.genLog(title, reason, genState.summary, envReport(this, getFilesDir(), base, null),
                 PackGenerator.listInputs(new File(base, "ExeFS"), data), "（没有开始生成）\n"), new File(nativeDir).getParentFile().getParent(), getFilesDir().getParent(), getPackageName());
@@ -388,7 +389,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // next step, defect ledger B026): for file problems, list the sentences the generator's check produced
     private static String[] failureText(Context app, PackGenerator.Failure kind, int exit, java.util.List<String> tail, File gen) {
         StringBuilder files = new StringBuilder();
-        synchronized (genState.summary) { for (String s : genState.summary) if ((s.startsWith("游戏文件核对：") && !s.contains("都在")) || s.contains("内容不对")) files.append(s.replace("游戏文件核对：", "")).append('\n'); }
+        synchronized (genState.summary) { for (String s : genState.summary) if (((s.startsWith("游戏文件核对：") && !s.contains("都在")) || s.contains("内容不对")) && !s.contains("没有也不影响")) files.append(s.replace("游戏文件核对：", "")).append('\n'); }
         switch (kind) {
             case NEED_FILES: return new String[]{app.getString(R.string.dmAndroidGenFailFiles), app.getString(R.string.dmAndroidGenNeedFiles, PackGenerator.missingDetail(tail))};
             case BAD_FILES: return new String[]{app.getString(R.string.dmAndroidGenFailFiles), files + app.getString(R.string.dmAndroidGenFailFilesNext)};

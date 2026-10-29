@@ -44,6 +44,10 @@ class RootCauseTest(unittest.TestCase):
         self.assertGreaterEqual(b - a - 1, 80)
         self.assertIn('完整输出 /x/gen_overlay.log', r[a])
 
+    def test_bare_assert_carries_code_line(self):
+        out = 'Traceback (most recent call last):\n  File "patch_nso.py", line 30, in <module>\n    assert d[:4] == b\'NSO0\'\n           ^^^^^^^^^^^^^^^^\nAssertionError\n'
+        self.assertEqual(genfail.root_causes(out)[0], "AssertionError（assert d[:4] == b'NSO0'）")
+
     def test_no_error_line_still_says_so(self):
         r = genfail.fail_report('x', 9, 'just\nnoise\n')
         self.assertIn('输出里没有找到报错行', r)
