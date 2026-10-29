@@ -102,18 +102,19 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // 资源在玩家放的位置读（缺省 Download/S2X/D2R Mobile/data），要「所有文件访问」权限；没有就引导去系统设置页，回来再启动
     // Resources are read where the player put them (default Download/S2X/D2R Mobile/data), which needs "all files access"; without it, guide the player to the system settings page and start after returning
     private boolean ensureFileAccess() {
-        if (Environment.isExternalStorageManager()) return true;
-        TextView t = new TextView(this);
-        t.setText(R.string.dmAndroidPermission);
-        t.setTextSize(20); t.setPadding(64, 64, 64, 64);
-        t.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getPackageName()))));
-        // 手柄 A / START 也能打开设置（只有手柄的玩家；TextView 自己只认方向键中键与回车） | controller A / START open Settings too (controller-only players; the TextView itself takes only D-pad centre and Enter)
-        t.setFocusable(true); t.setDefaultFocusHighlightEnabled(false);   // 同加载页：手柄键后整屏不盖系统灰色焦点层 | as on the loading page: no system grey focus layer over the whole screen after a controller key
-        t.setOnKeyListener((v, code, ev) -> {
-            if (ev.getAction() != android.view.KeyEvent.ACTION_UP || (code != android.view.KeyEvent.KEYCODE_BUTTON_A && code != android.view.KeyEvent.KEYCODE_BUTTON_START)) return false;
-            v.performClick(); return true; });
-        setContentView(t); t.requestFocus();
+        if (Environment.isExternalStorageManager()) { prompting = false; return true; }
+        // 提示页与加载页同一套样子（用户 2026-10-29「权限页没改」）：背景、字标、标题 / 正文 / 副文；点屏幕任何地方（静音钮以外）或手柄 A / START 打开系统设置
+        // The prompt looks like the loading page (user 2026-10-29 "the permission page was not changed"): background, wordmark, title / body / sub; a tap anywhere (outside the mute button) or controller A / START opens system settings
+        LoadPageView v = new LoadPageView(this);
+        LoadPageView.prompt("dmLoadPermTitle", LoadPageView.ui("dmLoadPermBody"), "dmLoadPermHint");
+        v.setOnTap(this::openFileAccessSettings);
+        loadPage = v; prompting = true; setContentView(v);
         return false;
+    }
+    private boolean prompting;
+    private void openFileAccessSettings() {
+        try { startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getPackageName()))); }
+        catch (android.content.ActivityNotFoundException e) { startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)); }
     }
 
     // 导入包：玩家在电脑上用 dm/tools/d2rm_android.py 和自己的游戏文件做出 android 文件夹，拷到 Download/S2X/D2R Mobile/ 下；
@@ -407,7 +408,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private LoadPageView loadPage;
     private static boolean communityStarted;
     static volatile String communityLast = "";
-    private void showLoadPage() { loadPage = new LoadPageView(this); setContentView(loadPage); startCommunityFetch(); }
+    private void showLoadPage() { prompting = false; loadPage = new LoadPageView(this); setContentView(loadPage); startCommunityFetch(); }
     // 首启要生成 / 导入时尽早开始取（权限提示页那一刻就开始，玩家去系统设置的几秒里清单通常已经回来，加载页一出来页脚就在）；
     // 判据同 ensureImported：内部目录里还没有本版本的导入内容。普通启动不满足，不联网
     // Start fetching as early as possible when the first launch will generate / import (already at the permission prompt: the manifest is usually back during the seconds
@@ -646,6 +647,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // 首启生成 / 导入的加载页上吞掉返回与手柄 B（玩家按 B 习惯是「取消」，原来会把 App 切到后台、久了可能被系统清掉；离开仍可按 Home）
         // On the first-launch generation / import loading page, swallow BACK and controller B (players press B to cancel; it used to send the App to the
         // background, where the system may later clean it up; Home still leaves)
+        // 权限提示页：手柄 A / START 松开时打开系统设置（只有手柄的玩家） | permission prompt: controller A / START on release opens system settings (controller-only players)
+        if (!started && prompting && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_START)) {
+            if (e.getAction() == android.view.KeyEvent.ACTION_UP) openFileAccessSettings(); return true; }
         // 加载页上的手柄（§2.7）：切到手柄模式；页脚显示时 A 键 = 复制群号 / 链接 | controller on the loading page (§2.7): switch to controller mode; with the footer shown, A = copy the number / link
         if (!started && (generating || importing || loadPageDemo) && loadPage != null && loadPage.isAttachedToWindow() && loadPage.padKey(e)) return true;
         if (!started && (generating || importing || loadPageDemo) && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) return true;

@@ -33,6 +33,7 @@ public final class LoadPageView extends View {
     static native void nativeBegin(int[] kinds, int[] weightsMs);
     static native void nativeSet(int stage, double frac, long itemsDone, long itemsTotal, long bytesDone, long bytesTotal);
     static native void nativeNote(String text);
+    static native void nativePrompt(String titleKey, String body, String subKey);
     static native void nativeFail(String reason);
     static native void nativeFinish();
     static native int nativeState();
@@ -60,13 +61,17 @@ public final class LoadPageView extends View {
     public static final int DOWNLOAD = 0, IMPORT = 1, PATCH = 2, ASSETS = 3, OVERLAY = 4, PACKS = 5, SHADERS = 6, INSTALL = 7, VERIFY = 8, PREPARE = 9;
     public static final int IDLE = 0, RUNNING = 1, DONE = 2, FAILED = 3;
     // nativeLayout 数组下标 | nativeLayout array indices
-    private static final int L_LAND = 0, L_BGW = 1, L_BGH = 2, L_BGSRC = 3, L_BGDST = 7, L_BAR = 11, L_FILL = 15, L_TITLE = 19, L_PCT = 23, L_BODY = 27, L_SUB = 31, L_BRAND = 35, L_TITLEPT = 39, L_BODYPT = 40, L_SUBPT = 41, L_BRANDPT = 42, L_RADIUS = 43, L_LOGO = 44, L_LOGOW = 48, L_LOGOH = 49, L_MUTE = 50, L_COMM = 54, L_COMM1 = 55, L_COMM2 = 59, L_COPY = 63, L_COMMPT = 67, L_COMMALPHA = 68;
+    private static final int L_LAND = 0, L_BGW = 1, L_BGH = 2, L_BGSRC = 3, L_BGDST = 7, L_BAR = 11, L_FILL = 15, L_TITLE = 19, L_PCT = 23, L_BODY = 27, L_SUB = 31, L_BRAND = 35, L_TITLEPT = 39, L_BODYPT = 40, L_SUBPT = 41, L_BRANDPT = 42, L_RADIUS = 43, L_LOGO = 44, L_LOGOW = 48, L_LOGOH = 49, L_MUTE = 50, L_COMM = 54, L_COMM1 = 55, L_COMM2 = 59, L_COPY = 63, L_COMMPT = 67, L_COMMALPHA = 68, L_SHOWBAR = 69;
     private static final int C_TITLE = 0, C_BODY = 1, C_SUB = 2, C_PCT = 3, C_FILL = 4, C_TRACK = 5, C_EDGE = 6;
 
     // ---- 公共入口（任何线程；状态在原生侧） | public entry points (any thread; state is on the native side) ----
     public static void begin(int[] kinds, int[] weightsMs) { nativeBegin(kinds, weightsMs); }
     public static void set(int stage, double frac, long itemsDone, long itemsTotal, long bytesDone, long bytesTotal) { nativeSet(stage, frac, itemsDone, itemsTotal, bytesDone, bytesTotal); }
     public static void note(String text) { nativeNote(text); }
+    // 提示页（权限页与加载页同一套样子）：标题 / 副文是多语键，正文是串；点屏幕（静音钮以外）调 onTap | notice page (the permission page looks like the loading page): title / sub are i18n keys, the body a string; a tap (outside the mute button) calls onTap
+    public static void prompt(String titleKey, String body, String subKey) { nativePrompt(titleKey, body, subKey); }
+    public static String ui(String key) { return nativeUi(key); }
+    private Runnable onTap; public void setOnTap(Runnable r) { onTap = r; }
     public static void fail(String reason) { nativeFail(reason); }
     public static void finish() { nativeFinish(); }
     public static int state() { return nativeState(); }
@@ -117,7 +122,7 @@ public final class LoadPageView extends View {
             boolean m = nativeToggleMuted(); prefs.edit().putBoolean("muted", m).apply(); muteLabel(); musicTick(); invalidate(); performClick();
         } else if (L[L_COMM] > 0 && x >= L[L_COPY] - 8 && x <= L[L_COPY] + L[L_COPY + 2] + 8 && y >= L[L_COPY + 1] - 8 && y <= L[L_COPY + 1] + L[L_COPY + 3] + 8) {
             copy(false); performClick();
-        }
+        } else if (onTap != null) { onTap.run(); performClick(); }
         return true;
     }
     // 手柄（§2.7）：任一手柄键 = 手柄模式（复制钮画成焦点态、前面加 A 键图标），A 键松开时复制。返回 true = 吃掉这个键
@@ -175,14 +180,16 @@ public final class LoadPageView extends View {
         RectF bar = r(L, L_BAR, new RectF()), fill = r(L, L_FILL, new RectF());
         // 底部渐暗底板 | bottom darkening plate
         float y0 = title.top - 48; paint.setShader(new LinearGradient(0, y0, 0, h, 0x00000000, 0x9e000000, Shader.TileMode.CLAMP)); c.drawRect(0, y0, w, h, paint); paint.setShader(null);
-        // 进度条 | the bar
+        // 进度条（提示页不画） | the bar (not on a notice page)
         float rad = (float) L[L_RADIUS];
+        if (L[L_SHOWBAR] > 0) {
         paint.setStyle(Paint.Style.FILL); paint.setColor(rgb(nativeColor(C_TRACK))); paint.setAlpha(230); c.drawRoundRect(bar, rad, rad, paint);
         paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(1); paint.setColor(rgb(nativeColor(C_EDGE))); c.drawRoundRect(new RectF(bar.left - 0.5f, bar.top - 0.5f, bar.right + 0.5f, bar.bottom + 0.5f), rad + 0.5f, rad + 0.5f, paint);
         paint.setStyle(Paint.Style.FILL);
         if (fill.width() > 1) {
             paint.setColor(rgb(nativeColor(C_FILL))); paint.setShadowLayer(6, 0, 0, 0x99ff7319); c.drawRoundRect(fill, rad, rad, paint); paint.clearShadowLayer();
             paint.setColor(0x8cffc773); if (fill.width() > 4) c.drawRect(fill.left + 2, fill.top + 1, fill.right - 2, fill.top + 2, paint);
+        }
         }
         muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted());
         loadLogo();
