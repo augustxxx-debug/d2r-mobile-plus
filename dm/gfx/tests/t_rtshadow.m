@@ -321,6 +321,52 @@ int main(void) { @autoreleasepool {
             if (liso * 100 >= lcnt * 1) FAIL("back / lit boundary, 1/%d-res sun: %d of %d pixels are isolated (want < 1%%)", sc, liso, lcnt);
         }
     }
+    {   // 背光写 0 经降分辨率追踪 + rts_pup 上采样不漏到相邻受光面（十六审 Q16-01）：nlmin = 0；地面 y=0 旁一段坡 x∈[16.3, 41.1)（y = 1.5·(x − 16.3)，N·L ≈ −0.2，背对 45° 太阳 → 背光写 0；坡顶 x = 41.1 处断崖回到地面），
+        // 坡的两条边不对齐 2 / 4 像素块，同一低分辨率块里同时有背光坡与受光地两层深度。先全分辨率追一遍作基准，再 1/2、1/4 追踪 + rts_pup：坡内部（离边 > 2·sc 像素）全 0；
+        // 离坡边 > 2·sc 像素的地面与全分辨率逐像素一致；受光地被涂成影最多渗一个低分辨率块（sc 像素）；只看 x > 12 这一侧（方板与它的投影边由上面半分辨率用例管）
+        // back faces written 0 do not leak into adjacent lit surfaces through the reduced-resolution trace + rts_pup upsampling (16th review Q16-01): nlmin = 0; next to the ground y=0 a ramp x in [16.3, 41.1) (y = 1.5·(x − 16.3), N·L ≈ −0.2, facing away from the 45° sun → back face, written 0; a cliff back to the ground at its top x = 41.1);
+        // the ramp edges are not aligned to 2 / 4-pixel blocks, so one low-resolution block holds both depth layers. Full resolution first as the reference, then 1/2 and 1/4 traces + rts_pup: the ramp interior (more than 2·sc pixels from an edge) is all 0;
+        // ground more than 2·sc pixels from the ramp matches full resolution pixel for pixel; lit ground painted as shadow leaks at most one low-resolution block (sc pixels); only the x > 12 side is checked (the square and its cast-shadow edge are covered by the half-resolution case above)
+        enum { RW = 256, RH = 128 };   // 这一节自己用 256×128（64 宽时 1/4 分辨率下坡内部、远处地面都剩不下像素） | this section uses 256×128 of its own (at 64 wide nothing is left of the ramp interior or the far ground at 1/4 resolution)
+        const double r0 = 16.3, r1 = 41.1; float *dr = malloc(RW * RH * 4);
+        for (int y = 0; y < RH; y++) for (int x = 0; x < RW; x++) { double wx = ((x + 0.5) / RW * 2 - 1) * 50, wz = (1 - (y + 0.5) / RH * 2) * 50;
+            dr[y * RW + x] = fabs(wx) < 10 && fabs(wz) < 10 ? 0.4f : wx >= r0 && wx < r1 ? (float)(0.5 - 1.5 * (wx - r0) / 100) : 0.5f; }
+        id<MTLBuffer> drb = buf(dr, RW * RH * 4); free(dr);
+        MTLTextureDescriptor *rdd = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float width:RW height:RH mipmapped:NO]; rdd.usage = MTLTextureUsageShaderRead; rdd.storageMode = MTLStorageModePrivate;
+        id<MTLTexture> rdepth = [dev newTextureWithDescriptor:rdd]; [resident addAllocation:rdepth];
+        float KR[64]; memcpy(KR, KH, sizeof KR); KR[24] = 1; KR[25] = 0; ((uint32_t *)KR)[20] = RW; ((uint32_t *)KR)[21] = RH; id<MTLBuffer> kbr = buf(KR, sizeof KR);
+        id<MTLTexture> mr = tex(MTLPixelFormatR8Unorm, RW, RH, MTLStorageModeShared); [resident commit];
+        if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at];
+                [ce copyFromBuffer:drb sourceOffset:0 sourceBytesPerRow:RW * 4 sourceBytesPerImage:RW * RH * 4 sourceSize:MTLSizeMake(RW, RH, 1) toTexture:rdepth destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+                [ce barrierAfterEncoderStages:MTLStageBlit beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                [ce setComputePipelineState:ps_trace]; [at setTexture:rdepth.gpuResourceID atIndex:0]; [at setTexture:mr.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:kbr.gpuAddress atIndex:1];
+                [ce dispatchThreadgroups:MTLSizeMake(RW / 8, RH / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)]; })) return 1;
+        int rx0 = (int)floor((r0 / 50 + 1) / 2 * RW), rx1 = (int)ceil((r1 / 50 + 1) / 2 * RW);   // 坡在像素里的左右边 | the ramp's left / right edge in pixels
+        { int bad = 0, n = 0; for (int y = RH / 4; y < 3 * RH / 4; y++) for (int x = rx0 + 2; x < rx1 - 2; x++) { n++; bad += px(mr, x, y, 0) > 0.5f; }
+          printf("背光坡（全分辨率）：内部 %d 像素中判受光 %d | ramp at full resolution: lit pixels inside\n", n, bad); if (bad) FAIL("back-face ramp at full resolution: %d of %d interior pixels lit (want all 0)", bad, n); }
+        for (int sc = 2; sc <= 4; sc += 2) {
+            float KL[64]; memcpy(KL, KR, sizeof KL); KL[23] = sc == 2 ? 1 : 4; ((uint32_t *)KL)[20] = RW / sc; ((uint32_t *)KL)[21] = RH / sc; id<MTLBuffer> kbl = buf(KL, sizeof KL);
+            id<MTLTexture> ml = tex(MTLPixelFormatR8Unorm, RW / sc, RH / sc, MTLStorageModeShared), mu = tex(MTLPixelFormatR8Unorm, RW, RH, MTLStorageModeShared); uint32_t pl[4] = {RW, RH, RW / sc, RH / sc}; id<MTLBuffer> plb = buf(pl, 16);
+            id<MTLComputePipelineState> ps_pl = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_pup"] error:&e]; [resident commit];
+            if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at];
+                    [ce setComputePipelineState:ps_trace]; [at setTexture:rdepth.gpuResourceID atIndex:0]; [at setTexture:ml.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:kbl.gpuAddress atIndex:1];
+                    [ce dispatchThreadgroups:MTLSizeMake((RW / sc + 7) / 8, (RH / sc + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+                    [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                    [ce setComputePipelineState:ps_pl]; [at setTexture:ml.gpuResourceID atIndex:0]; [at setTexture:mu.gpuResourceID atIndex:1]; [at setTexture:rdepth.gpuResourceID atIndex:2]; [at setAddress:plb.gpuAddress atIndex:0];
+                    [ce dispatchThreadgroups:MTLSizeMake(RW / 8, RH / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)]; })) return 1;
+            int in_lit = 0, in_n = 0, far_diff = 0, far_n = 0, edge_diff = 0, leak_lit = 0, leak_max = 0;
+            for (int y = 2; y < RH - 2; y++) for (int x = 2; x < RW - 2; x++) {
+                double wx = ((x + 0.5) / RW * 2 - 1) * 50; if (wx < 12) continue;   // 只看坡这一侧（方板、方板投在地上的影边由上面半分辨率用例管） | only the ramp side (the square and its cast-shadow edge are covered by the half-resolution case above)
+                int dist = x < rx0 ? rx0 - x : x >= rx1 ? x - rx1 + 1 : 0, inside = x >= rx0 + 2 * sc && x < rx1 - 2 * sc, d = (px(mu, x, y, 0) > 0.5f) != (px(mr, x, y, 0) > 0.5f);
+                if (inside) { in_n++; in_lit += px(mu, x, y, 0) > 0.5f; }
+                else if (dist > 2 * sc) { far_n++; far_diff += d; }
+                else { edge_diff += d; if (dist > 0 && px(mu, x, y, 0) < 0.5f && px(mr, x, y, 0) > 0.5f) { leak_lit++; if (dist > leak_max) leak_max = dist; } } }
+            printf("背光坡（1/%d 分辨率 + 上采样）：内部 %d 像素判受光 %d；离坡 > %d 像素的地面 %d 像素与全分辨率不同 %d；坡边内不同 %d（其中受光地被涂成影 %d、最远渗出 %d 像素） | ramp, 1/%d-res sun\n", sc, in_n, in_lit, 2 * sc, far_n, far_diff, edge_diff, leak_lit, leak_max, sc);
+            if (leak_max > sc) FAIL("back-face ramp, 1/%d-res sun: the back-face 0 leaks %d px into the lit ground (want at most one low-resolution block = %d px)", sc, leak_max, sc);
+            if (in_lit) FAIL("back-face ramp, 1/%d-res sun: %d of %d interior pixels lit (want all 0)", sc, in_lit, in_n);
+            if (far_diff) FAIL("back-face ramp, 1/%d-res sun: %d ground pixels more than %d px from the ramp differ from full resolution (the back-face 0 leaked)", sc, far_diff, 2 * sc);
+        }
+    }
     {   // 软阴影最小模糊半径（RC1 背光面修复）：raw 里只有中心一个点在影里、命中距离 0（自遮挡 / 背光面），原先半径 = 0 → 原样留一个黑点；最小半径 2 → 两趟后中心明显变亮、四邻也被抹到
         // minimum soft blur radius (RC1 back-face fix): raw has one shadowed centre pixel with hit distance 0 (self-occlusion / back face); radius 0 used to keep a black dot; with minimum radius 2 the centre brightens clearly after two passes and its neighbours get some of it
         uint8_t *rb = malloc(W * H * 2); for (int i = 0; i < W * H; i++) { rb[i * 2] = 255; rb[i * 2 + 1] = 0; } int cx = W / 2 + 7, cy = H / 2 + 7; rb[(cy * W + cx) * 2] = 0;
