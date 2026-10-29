@@ -13,7 +13,7 @@ D2R Mobile 提供原生兼容层、Metal 渲染、触控与手柄支持，让玩
 ## 下载与认准正版
 
 - 官网：https://d2rplus.augustusplay.com/ · QQ 群 1129913678 · 本软件免费，任何收费渠道都是倒卖。
-- **安卓**：[Releases · android-v1.0.0](https://github.com/augustxxx-debug/d2r-mobile-plus/releases/tag/android-v1.0.0)（源码在分支 `android/v1.0.0`）。正式安装包的签名证书 SHA-256 固定为 `b4af06c165dd8699ab9f2b0dec8f6c2de05cd4d01f510fe63778eac6898a52da`，对不上的不是我们发的。
+- **安卓**：1.0.1 即将发布（1.0.0 已撤回，修复问题后重新发布）。正式安装包的签名证书 SHA-256 固定为 `b4af06c165dd8699ab9f2b0dec8f6c2de05cd4d01f510fe63778eac6898a52da`，对不上的不是我们发的。
 - **iOS**：只提供源码，按下文「自行构建」用你自己的游戏文件和 Xcode 构建。
 
 ## 即将推出（预告）
