@@ -197,16 +197,17 @@ final class PackGenerator {
     }
 
     // gen_log.txt 落在玩家的 Download 里、指南让玩家发到群里：写出前去掉本机路径与包名（四审 A4-09），规则同分享诊断日志（sharelog_android.c：应用数据目录与
-    // /storage/emulated/0 → ~，包名 → <app-id>），另把 APK 安装目录换成 <apk>。生成不读存档，日志里没有角色名
+    // /storage/emulated/<用户号> → ~，包名 → <app-id>），另把 APK 安装目录换成 <apk>。生成不读存档，日志里没有角色名
     // gen_log.txt lands in the player's Download folder and the guide asks players to post it in the group: local paths and the package name are removed before writing
-    // (fourth audit A4-09), by the share-diagnostics rules (sharelog_android.c: app data directory and /storage/emulated/0 -> ~, package name -> <app-id>), and the APK
+    // (fourth audit A4-09), by the share-diagnostics rules (sharelog_android.c: app data directory and /storage/emulated/<user id> -> ~, package name -> <app-id>), and the APK
     // install directory becomes <apk>. Generation reads no saves, so there are no character names in the log
     static String scrubLog(String text, String apkDir, String appHome, String appId) {
         String t = text;
         if (apkDir != null && apkDir.length() > 1) t = t.replace(apkDir, "<apk>");
         if (appHome != null && appHome.length() > 1) t = t.replace(appHome, "~");
         if (appId != null && !appId.isEmpty()) t = t.replace("/data/data/" + appId, "~").replace("/data/user/0/" + appId, "~");
-        t = t.replace("/storage/emulated/0", "~").replace("/sdcard/", "~/");
+        // 共享存储按用户号匹配（五审 A5-04：工作资料 / 多用户不是 0）| shared storage by user id (fifth audit A5-04: work profiles / other users are not 0)
+        t = t.replaceAll("/storage/emulated/[0-9]+", "~").replace("/sdcard/", "~/");
         if (appId != null && !appId.isEmpty()) t = t.replace(appId, "<app-id>");
         return t;
     }

@@ -84,6 +84,15 @@ static char *repl_lit(const char *t, size_t len, const char *pat, const char *re
     while (i < len) { if (i + pl <= len && !memcmp(t + i, pat, pl)) { sb_puts(&b, rep); i += pl; } else sb_put(&b, t + i++, 1); }
     *out_len = b.n; return b.p ? b.p : calloc(1, 1);
 }
+// 共享存储 /storage/emulated/<用户号> → ~（五审 A5-04：工作资料 / 多用户的用户号不是 0）| shared storage /storage/emulated/<user id> -> ~ (fifth audit A5-04: work profiles / other users are not 0)
+static char *repl_emulated(const char *t, size_t len, size_t *out_len) {
+    static const char P[] = "/storage/emulated/"; const size_t pl = sizeof P - 1; sb_t b = {0}; size_t i = 0;
+    while (i < len) {
+        if (i + pl < len && !memcmp(t + i, P, pl) && isdigit((unsigned char)t[i + pl])) { size_t j = i + pl; while (j < len && isdigit((unsigned char)t[j])) j++; sb_puts(&b, "~"); i = j; }
+        else sb_put(&b, t + i++, 1);
+    }
+    *out_len = b.n; return b.p ? b.p : calloc(1, 1);
+}
 // 标识扫描：/Users/<名>、邮箱、UUID（8-4-4-4-12）、8-16 位十六进制、「屏幕：<名字>，」| identifier scan
 static char *scan_ids(const char *t, size_t len, size_t *out_len) {
     sb_t b = {0}; size_t i = 0;
@@ -126,7 +135,7 @@ static char *scan_ids(const char *t, size_t len, size_t *out_len) {
 char *dm_sharelog_scrub(const char *text, size_t len, const char *home, const char *appid, const char *const *names, int nnames, size_t *out_len) {
     size_t n = len; char *cur = malloc(len + 1); if (!cur) return NULL; memcpy(cur, text, len); cur[len] = 0; char *nx;
     if (home && strlen(home) > 1) { nx = repl_lit(cur, n, home, "~", &n); free(cur); cur = nx; }
-    nx = repl_lit(cur, n, "/storage/emulated/0", "~", &n); free(cur); cur = nx;
+    nx = repl_emulated(cur, n, &n); free(cur); cur = nx;
     if (appid && *appid) { nx = repl_lit(cur, n, appid, "<app-id>", &n); free(cur); cur = nx; }
     char found[64][64]; int nf = 0; for (int i = 0; i < nnames && nf < 64; i++) if (names[i] && *names[i]) { snprintf(found[nf], sizeof found[nf], "%s", names[i]); nf++; }
     nf = dm_sharelog_names_in_text(cur, n, found, nf, 64);

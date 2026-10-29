@@ -13,6 +13,7 @@ int main(void) {
     char *o;
     o = scrub("path /data/user/0/com.xiaoboluo.d2r/files/dm/boot.log and /storage/emulated/0/Download/x", NULL, 0);
     assert(has(o, "path ~/files/dm/boot.log") && has(o, "~/Download/x") && !has(o, "xiaoboluo")); free(o);
+    o = scrub("work /storage/emulated/10/Download/x and /storage/emulated/0/a, keep /storage/emulated/legacy", NULL, 0); assert(has(o, "work ~/Download/x and ~/a, keep /storage/emulated/legacy") && !has(o, "emulated/10")); free(o);   // 五审 A5-04 | fifth audit A5-04
     o = scrub("save at /files/save/Hanna/Hanna.d2s then Hanna said hi; Hannah stays; /save.test.work/Bob/ Bob", NULL, 0);
     assert(has(o, "/files/save/<character>/<character>.d2s") && has(o, "<character> said hi") && has(o, "Hannah stays") && has(o, "/save.test.work/<character>/ <character>")); free(o);
     o = scrub("/save/Settings/x /save/ModernSharedStash1/y", NULL, 0); assert(has(o, "/save/Settings/x") && has(o, "ModernSharedStash1")); free(o);
