@@ -44,6 +44,7 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 ### Fixed
 
+- The Spanish credits label becomes the shorter "Gracias especiales": "Agradecimiento especial" ran into the names column in the About area on the iPhone Duo inner screen.
 - About layout (reported by the user on the iPhone Duo inner screen): on the Options "Custom" page "Credits" is now the same kind of section title as "About" -- left-aligned and with the same original divider under it (it used to be shifted right like a row and had no divider, so the two looked inconsistent); in the "Join the community" box the buttons move up to just below the About section, removing the large blank band (box height 760 → 700).
 - Three fixes picked from upstream d2r-mobile v2.1.0 (authors kept on the commits): **controller mode no longer crashes opening the mercenary inventory** — our key hints are removed from the game's bottom button legend when it hides, and no entry is added once it holds 8, since the original relayout reads a 9th slot out of bounds (upstream #134); **the widened stash no longer pushes the inventory further right each time the stash is closed with +** (upstream #152, with its regression test); **in touch mode the minimap comes back after the act-change cutscene** when "AutoMap Open On Load" is on (upstream #49).
 

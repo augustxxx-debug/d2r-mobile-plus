@@ -21,6 +21,10 @@ BTN_W = 400    # 原版前端中号按钮 470 宽，字留 400 | the original me
 PAUSE_BTN_W = 600   # 暂停菜单按钮上的字（「分享诊断日志」同一颗按钮；现有最长的西语「Compartir diagnóstico」按同一估算正好 588） | text on a pause-menu button (the same button as "Share Diagnostics"; the longest existing Spanish "Compartir diagnóstico" estimates to 588 by the same rule)
 
 
+# 鸣谢标签可用宽：标签起点 = 行缩进 40（DM_ROW_INDENT），名单列在 x 620，中间至少留 40——原先按 620 − 40 = 580 判，西语「Agradecimiento especial」估 580 刚好过线，
+# Duo 内屏截图上却压到名单（用户 2026-10-29 反馈「关于」区排版）
+# room for a credit label: it starts at the 40-unit row indent and the names column is at x 620, with at least 40 between -- the old 580 limit let the Spanish label (est. 580) through, and it overlapped the names on the Duo
+CREDIT_LABEL_W = 620 - 40 - 40
 def est_width(line, pt):
     return sum(pt if re.match(r'[ᄀ-ᇿ　-鿿가-힯＀-￯]', ch) else pt * 0.7 for ch in line)
 
@@ -228,7 +232,7 @@ class Text(unittest.TestCase):
         sample['dmAboutVersion'] = '1.0.0+123 · 0123456'
         for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityAbout', 40, BTN_W), ('dmCommunityFe', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
                                ('dmCommunityCopied', 28, BOX_W), ('dmCommunityCopyFail', 28, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
-                               ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, 620 - 40), ('dmCreditsMaker', 36, 620 - 40), ('dmCreditsThanks', 36, 620 - 40), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
+                               ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, CREDIT_LABEL_W), ('dmCreditsMaker', 36, CREDIT_LABEL_W), ('dmCreditsThanks', 36, CREDIT_LABEL_W), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
             texts = rows[key]
             for lang, t in zip(langs, texts):
                 self.assertEqual(t.count('\n'), 0, (key, lang))
