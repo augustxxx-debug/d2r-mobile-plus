@@ -407,8 +407,18 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private LoadPageView loadPage;
     private static boolean communityStarted;
     static volatile String communityLast = "";
-    private void showLoadPage() {
-        loadPage = new LoadPageView(this); setContentView(loadPage);
+    private void showLoadPage() { loadPage = new LoadPageView(this); setContentView(loadPage); startCommunityFetch(); }
+    // 首启要生成 / 导入时尽早开始取（权限提示页那一刻就开始，玩家去系统设置的几秒里清单通常已经回来，加载页一出来页脚就在）；
+    // 判据同 ensureImported：内部目录里还没有本版本的导入内容。普通启动不满足，不联网
+    // Start fetching as early as possible when the first launch will generate / import (already at the permission prompt: the manifest is usually back during the seconds
+    // the player spends in system settings, so the footer is there as soon as the loading page appears); same test as ensureImported: the internal directory has no content
+    // for this version yet. A normal start does not qualify and makes no network access
+    private void prefetchCommunity() {
+        if (communityStarted || libraryLoaded || started) return;
+        String have = readText(new File(getFilesDir(), "dm/pack_info.txt"));
+        if (!BuildConfig.DM_PRODUCT.equals(packProduct(have))) startCommunityFetch();
+    }
+    private void startCommunityFetch() {
         if (communityStarted) return; communityStarted = true;
         String cfg = BuildConfig.DEBUG && getIntent().getStringExtra("dmUpdateUrls") != null ? getIntent().getStringExtra("dmUpdateUrls") : BuildConfig.DM_UPDATE_URLS;
         final java.util.List<String> urls = CommunityFetch.urls(cfg); final File cache = new File(getFilesDir(), "community_manifest.json");
@@ -423,6 +433,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private void startHost() {
         if (bootFailure != 0) { showBootFailure(); return; }
         if (loadPageDemoRun()) return;
+        if (!started && !importing && resumed) prefetchCommunity();
         if (started || importing || !resumed || !ensureFileAccess()) return;
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         if (!libraryLoaded && !ensureImported(new File(downloads, "S2X/D2R Mobile/android"))) return;
