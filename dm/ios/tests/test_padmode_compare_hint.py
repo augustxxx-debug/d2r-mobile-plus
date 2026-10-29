@@ -1,11 +1,13 @@
 """B014（RC1.1）：手柄模式下物品类页面提示条 X 那条原版写「比较」，可比较实际要按住 X（原版只在比较键按下 / 松开时写「对比键按着」，dm_actions.c）。
-宿主换串小表（dm_padmode.c g_hint，与「捡起（按住鉴定）」「存入」同一套）把原版键 ControllerPromptItemCompare 的串在手柄模式下常换成 dmPadLegCompare，触屏模式写回原文。
-这里核：换串表有这一条且下标对得上 HINT_CMP；hint_pump 对它不看页声明、只看手柄模式；六语都是「按住」语义；宽度不超过已在同一条提示条上的「捡起（按住鉴定）」；生成头文件带上了；
+宿主换串小表（dm_padmode.c g_hint，与「捡起（按住鉴定）」「存入」同一套）把原版键 ControllerPromptItemCompare 的串在手柄模式下常换成 dmPadLegCompare，触屏模式写回原文；
+只在有我们译文的语言（dm_lang_ours）下换，德法意波日葡保留原版自己的译文（「捡起」那条同样处理，「存入」照旧各语言都换）。
+这里核：换串表有这一条且下标对得上 HINT_CMP；hint_pump 对它不看页声明、只看手柄模式与语言；无译文语言不换（比较 / 捡起）；六语都是「按住」语义；宽度不超过已在同一条提示条上的「捡起（按住鉴定）」；生成头文件带上了；
 有 RomFS 时再核原版 ui-controller.json 里确有这个键（没有就跳过这一项）。
 B014 (RC1.1): in controller mode the original legend's X entry on the item pages says "Compare", but comparing needs X held (the original writes "compare button held"
 only on the compare button's press / release, dm_actions.c). The host's string swap table (dm_padmode.c g_hint, the same one as "Pick Up (Hold to Identify)" and "Deposit")
-points the original key ControllerPromptItemCompare at dmPadLegCompare all the time in controller mode and writes the original back in touch mode.
-Checked here: the swap table has the entry at index HINT_CMP; hint_pump ignores page declarations for it and only looks at controller mode; all six languages say "hold";
+points the original key ControllerPromptItemCompare at dmPadLegCompare all the time in controller mode and writes the original back in touch mode;
+only in languages with our translation (dm_lang_ours) -- de / fr / it / pl / ja / pt keep the original's own text (same for "Pick Up"; "Deposit" is still swapped everywhere).
+Checked here: the swap table has the entry at index HINT_CMP; hint_pump ignores page declarations for it and looks at controller mode and language; untranslated languages are not swapped; all six languages say "hold";
 no wider than "Pick Up (Hold to Identify)", which already sits on the same legend; the generated header carries it; with a RomFS, the original ui-controller.json has the key (skipped otherwise)."""
 import os
 import re
@@ -39,8 +41,21 @@ class CompareHint(unittest.TestCase):
         pump = re.search(r'static void hint_pump\(void\) \{(.*?)\n\}', PADMODE, re.S)
         self.assertIsNotNone(pump)
         # 只看手柄模式（g_cur），不看页声明的倒数 | gated only by controller mode (g_cur), not by the page-declaration countdown
-        self.assertRegex(pump.group(1), r'int on = g_cur && \(h == HINT_CMP \|\| atomic_load\(&g_hint\[h\]\.on\) > 0\);')
+        self.assertRegex(pump.group(1), r'int on = g_cur && \(h == HINT_VAULT \|\| dm_lang_ours\(dm_lang_index\(\)\)\) && \(h == HINT_CMP \|\| atomic_load\(&g_hint\[h\]\.on\) > 0\);')
         self.assertNotIn('HINT_CMP].on', PADMODE)   # 没有谁去声明它 | nobody declares it
+
+    def test_untranslated_languages_not_swapped(self):
+        # 无译文语言不换串：dm_lang_ours 的语言号集合 = 我们表里有列的语言（enUS / esES / koKR / ruRU / zhCN / zhTW / esMX），德法意波日葡不在里面；
+        # 比较 / 捡起两条都受它管（上面的 hint_pump 断言），存入不受（编年史页是我们的页）
+        # untranslated languages are not swapped: dm_lang_ours = the languages that have a column of ours; de / fr / it / pl / ja / pt are not in it;
+        # both Compare and Pick Up are gated by it (hint_pump assertion above), Deposit is not (the Chronicle page is ours)
+        src = (DM / 'host' / 'dm_i18n.c').read_text(encoding='utf-8')
+        body = re.search(r'int dm_lang_ours\(int l\) \{ return ([^;]*); \}', src)
+        self.assertIsNotNone(body)
+        ours = {int(n) for n in re.findall(r'l == (\d+)', body.group(1))}
+        order = ('enUS', 'deDE', 'esES', 'frFR', 'itIT', 'koKR', 'plPL', 'ruRU', 'zhCN', 'zhTW', 'esMX', 'jaJP', 'ptBR')   # 原版语言号（dm_i18n.h g_dm_lang） | original language numbers
+        self.assertEqual({order[n] for n in ours}, {'enUS', 'esES', 'koKR', 'ruRU', 'zhCN', 'zhTW', 'esMX'})
+        self.assertEqual(set(order) - {order[n] for n in ours}, {'deDE', 'frFR', 'itIT', 'plPL', 'jaJP', 'ptBR'})
 
     def test_text_six_languages(self):
         rows = {r[0]: r for r in dm_i18n.rows()}
@@ -60,6 +75,10 @@ class CompareHint(unittest.TestCase):
         import touch_layout
         _, text = touch_layout.read_layout(root, None, suffix='/lng/strings/ui-controller.json')
         self.assertRegex(text, r'"Key":\s*"ControllerPromptItemCompare"')
+        import json
+        e = next(x for x in json.loads(text) if x.get('Key') == 'ControllerPromptItemCompare')
+        for lang in ('deDE', 'frFR', 'itIT', 'plPL', 'jaJP', 'ptBR'):   # 不换的语言原版自己有译文（不是英文） | the languages left alone have their own original translation (not English)
+            self.assertTrue(e.get(lang) and e[lang] != e['enUS'], lang)
 
 
 if __name__ == '__main__':

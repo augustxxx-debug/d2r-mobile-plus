@@ -73,6 +73,7 @@ int dm_lang_zh(void) { int l = dm_lang_index(); return l == 8 || l == 9; }   // 
 int dm_lang_group(void) { return dm_lang_group_of(dm_lang_index()); }
 
 const char *dm_ui(const char *key) { return dm_ui_group(key, dm_lang_group()); }
+int dm_lang_ours(int l) { return l == 0 || l == 2 || l == 5 || l == 7 || l == 8 || l == 9 || l == 10; }   // 与 dm_lang_group_of 的非英文分支 + enUS 同一组 | the same set as dm_lang_group_of's non-English branches + enUS
 int dm_lang_group_of(int l) { return l == 8 || l == 9 ? DM_LG_ZH : l == 2 ? DM_LG_ES : l == 10 ? DM_LG_MX : l == 7 ? DM_LG_RU : l == 5 ? DM_LG_KO : DM_LG_EN; }
 const char *dm_ui_group(const char *key, int group) {
     for (unsigned i = 0; i < sizeof k_dm_i18n / sizeof *k_dm_i18n; i++) if (!strcmp(k_dm_i18n[i].k, key)) {

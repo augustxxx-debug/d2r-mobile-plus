@@ -364,7 +364,7 @@ dmPadLegPrev	上一页	Previous Page	Página anterior		Предыдущая	이�
 dmPadLegNext	下一页	Next Page	Página siguiente		Следующая	다음	同上；英文 = 原版 ui[NPCNextPage]
 dmPadHintDeposit	存入	Deposit	Depositar		Внести	보관	编年史页「按住 Y」那半句（dm_padmode.c）；英文 = 原版 ui[strGoldDeposit]
 dmPadLegIdentify	捡起（按住鉴定）	Pick Up (Hold to Identify)	Recoger (mantén: identificar)	Recolectar (mantén: identificar)	Взять (держать — опознать)	감정	手柄模式光标在未鉴定物品上时，原版提示条 A 那条的「捡起」换成这句（dm_padmode.c 换串小表）；写法照原版「捡起(按住使用)」；英文：拟
-dmPadLegCompare	比较（按住）	Compare (hold)	Comparar (mantén)		Сравнить (держать)	길게 눌러 비교	手柄模式下原版提示条 X 那条的「比较」常换成这句（dm_padmode.c 换串小表 HINT_CMP，键 ControllerPromptItemCompare；B014：比较实际要按住 X）；写法照原版 comparisonTooltipController「按住 X 来比较」；比 dmPadLegIdentify 短，原版提示条放得下
+dmPadLegCompare	比较（按住）	Compare (hold)	Comparar (mantén)		Сравнить (держать)	길게 눌러 비교	手柄模式下原版提示条 X 那条的「比较」常换成这句（dm_padmode.c 换串小表 HINT_CMP，键 ControllerPromptItemCompare；B014：比较实际要按住 X）；写法照原版 comparisonTooltipController「按住 X 来比较」；比 dmPadLegIdentify 短，原版提示条放得下；只在有我们译文的语言换（dm_lang_ours），德法意波日葡保留原版自己的「比较」（dmPadLegIdentify 同样）
 dmDiffSection	难度	Difficulty	Dificultad	Dificultad	Сложность	난이도	「选项 → 游戏」页难度行的分节标题（touch_layout.py _diff_row，换掉原版「离线」）
 dmDiffRow	游戏难度	Game Difficulty	Dificultad de la partida	Dificultad de partida	Сложность игры	게임 난이도	「选项 → 游戏」页难度行的行名（touch_layout.py _diff_row）；英文 = 原版 ui[OptionsMenuGameDifficulty]「Game Difficulty」
 dmDiffRowNote	相当于同局人数 1–8 档，改了立刻生效	Same as 1–8 players in the game; takes effect at once	Equivale a 1–8 jugadores en la partida; surte efecto al instante	Equivale a 1–8 jugadores en la partida; surte efecto al instante	Как при 1–8 игроках в игре; действует сразу	같은 게임에 1–8명이 있는 것과 같으며 바로 적용됩니다	「选项 → 游戏」页难度行下的说明（touch_layout.py _diff_row，副文 28 号灰；宿主 dm_padmode.c 局内写这一句）

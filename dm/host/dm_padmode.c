@@ -241,6 +241,11 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
 // "Compare (hold)", after the original's own long sentence "Hold X to compare" (ui-controller comparisonTooltipController). This entry does not follow a page: swapped all the time in controller
 // mode (every original use of this key is hold-to-compare), the original written back in touch mode (no bottom legend there). The original inventory
 // adds the entry at main+0x3b61ec from this key's string, so swapping the string is enough; the legend entries are not touched
+// 「比较」「捡起」两条只在有我们译文的语言下换（dm_lang_ours：中 / 繁中按中文 / 英 / 西 / 拉美西 / 俄 / 韩）：德法意波日葡原版本来有自己的「比较」「捡起」，换成英文是倒退，保留原文
+// （提示里少了「按住」，行为照旧）。「存入」照旧各语言都换：编年史页本身是我们的页，原版那半句「按住移动到私人储藏箱」在这一页是错的
+// The "Compare" and "Pick Up" entries are swapped only in languages with our translation (dm_lang_ours: zh / zhTW as Chinese / en / es / esMX / ru / ko): de / fr / it /
+// pl / ja / pt have the original's own "Compare" / "Pick Up", and English there would be a step back, so the original stays (the hint lacks "hold", the behavior
+// is unchanged). "Deposit" is still swapped in every language: the Chronicle page is our own page and the original half-sentence (hold to move to private stash) is wrong there
 enum { HINT_VAULT, HINT_IDENT, HINT_CMP, NHINT };
 static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[48]; } g_hint[NHINT] = {
     { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" }, { "ControllerPromptItemPickUpFromInventory", "dmPadLegIdentify" },
@@ -273,7 +278,7 @@ static void hint_pump(void) {
         // Our half of the sentence goes through the Chinese-English table; the string pointer must stay resident (what is swapped into the string table
         // is the address of this buffer), so compare on every fetch and rewrite the buffer only when the language has changed
         { const char *w = dm_str(g_b, g_hint[h].ours_key); if (w && strcmp(ours, w)) { if (*nodep && ((uint64_t *)(uintptr_t)(*nodep + 0x20))[0] == (uint64_t)(uintptr_t)ours) ((uint64_t *)(uintptr_t)(*nodep + 0x20))[1] = strlen(w); strlcpy(ours, w, sizeof g_hint[h].ours); } }
-        int on = g_cur && (h == HINT_CMP || atomic_load(&g_hint[h].on) > 0); if (atomic_load(&g_hint[h].on) > 0) atomic_fetch_sub(&g_hint[h].on, 1);
+        int on = g_cur && (h == HINT_VAULT || dm_lang_ours(dm_lang_index())) && (h == HINT_CMP || atomic_load(&g_hint[h].on) > 0); if (atomic_load(&g_hint[h].on) > 0) atomic_fetch_sub(&g_hint[h].on, 1);
         uint64_t nd = str_node((uint64_t)(uintptr_t)(g_b + 0x2d71030), g_hint[h].key, strlen(g_hint[h].key)); if (!nd) continue;
         uint64_t *v = (uint64_t *)(uintptr_t)(nd + 0x20);
         if (nd != *nodep) { if (v[0] == (uint64_t)(uintptr_t)ours) continue; *nodep = nd; g_hint[h].orig = v[0]; g_hint[h].olen = v[1]; }   // 新节点（开机首次 / 切语言后串表重装）：记原文 | New node (first time after boot / string table reloaded after a language switch): record the original text
