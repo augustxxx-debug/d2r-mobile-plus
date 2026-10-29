@@ -448,6 +448,15 @@ static void co_divider(uint8_t *b, uint64_t w, int cx, int y) {
     uint64_t ref = *(uint64_t *)(w + 0x88), sp = ref ? *(uint64_t *)ref : 0; uint32_t wd = sp ? *(uint32_t *)(sp + 0xd0) : 0;
     co_place(w, cx - (int)(wd > 0 && wd < 4000 ? wd : 1500) / 2, y);
 }
+// 入口显隐：没有可显示的值就挪出屏幕（行在滚动区里，只挪 x），有值时放回**挪走前的 x**。RC1.1：先前放回写死的 x——触屏首页「加入社区讨论」布局里居中（x −235），
+// 却被放回旧版并排时的 20，新安装首启（清单还没到、先藏后显）时往右歪约 255 单位（用户 Duo 真机 80c0882）。还没挪过（home = 99999）就不动
+// Entry show / hide: without a value the entry moves off screen (x only, it may sit in a scroll area); with one it returns to **its x before the move**. RC1.1: it used to return to a hard-coded x --
+// the touch front page's Join button is centred in the layout (x −235) but went back to 20 from the old side-by-side layout, about 255 units right, on a fresh install's first run (hidden until the manifest arrived)
+static void co_entry_show(uint64_t w, int avail, int32_t *home) {
+    if (!w) return; int32_t *r = (int32_t *)(w + 0x70);
+    if (!avail && r[0] != 99999) { *home = r[0]; co_place(w, 99999, r[1]); }
+    else if (avail && r[0] == 99999 && *home != 99999) co_place(w, *home, r[1]);
+}
 const char *dm_update_label(void);   // dm_update.c：显示版本「1.0.0+N · 哈希」（没经外壳初始化时为空） | display version (empty when the shell has not initialized it)
 void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
     uint8_t *b = co_base(); if (!b) return;
@@ -455,10 +464,10 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     int avail = dm_community_available();
     // 入口显隐：暂停菜单行、主菜单第二行、自定义页「关于」组的社区行——没有可显示的值就挪出屏幕（行在滚动区里，只挪 x）；主菜单「关于」行总在。自定义页同时写鸣谢块
     // entry show / hide: the pause-menu row, the main menu's second row, the Custom page's community row - without a value they move off screen (the row sits in a scroll area, so only x moves); the main menu's About row stays. The Custom page also gets its credits block written
+    static int32_t home[N_HOSTS] = { 99999, 99999, 99999, 99999, 99999 };   // 各入口挪走前的 x（还没挪过 = 99999） | each entry's x before it was moved away (99999 = never moved)
     for (int i = 0; i < N_HOSTS; i++) { uint64_t p = dm_ui_top(root, k_hosts[i]); if (!p || !*(uint8_t *)(p + 0x50)) continue;
-        if (i == 0) { uint64_t w = co_find(p, "TouchAboutCommunityRow", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 0 : 99999, r[1]); } credits_render(b, p); }
-        else if (i < 3) { uint64_t w = co_find(p, "TouchCommunity", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? 564 : 99999, r[1]); } }
-        else { uint64_t w = co_find(p, "TouchCommunityFe", 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); int home = i == 3 ? 164 : 20; if (avail ? r[0] == 99999 : r[0] != 99999) co_place(w, avail ? home : 99999, r[1]); } } }
+        co_entry_show(co_find(p, i == 0 ? "TouchAboutCommunityRow" : i < 3 ? "TouchCommunity" : "TouchCommunityFe", 0), avail, &home[i]);
+        if (i == 0) credits_render(b, p); }
     int st = atomic_load(&g_show); if (!st) return;
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current(), mode = atomic_load(&g_mode);
     static int wait; int which = 0; uint64_t p = co_host(root, &which);

@@ -305,6 +305,18 @@ int main(void) {
         log_reset(); CHECK(dm_community_manifest(s9, strlen(s9)) == 1); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(strstr(log_text(), "官网=无")); }
       FILE *f = fopen(cache, "w"); fputs("qq_group=1129913678\ngithub=https://github.com/example/d2r-mobile-plus\n", f); fclose(f);   // 旧缓存（RC1 写的） | an RC1 cache
       restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); }
+    // 23. RC1.1（用户 Duo 真机 80c0882「加入社群讨论都歪到哪」）：入口先藏后显（新安装首启：清单还没到）时放回挪走前的 x，不放回写死的值——
+    //     触屏首页「加入社区讨论」布局里居中 x −235，旧代码放回旧并排版式的 20（往右歪约 255）；还没挪过（home = 99999）就不动
+    // 23. RC1.1 (user on the Duo, 80c0882: the Join button was off-centre): an entry hidden then shown (fresh install's first run, manifest not yet in) returns to its x before the move,
+    //     not to a hard-coded one -- the touch front page's Join is centred at x −235, the old code put it back at 20; never moved (home = 99999) means leave it alone
+    { static uint8_t wb2[0x200]; static void (*vt2[4])(uint64_t); vt2[2] = t_recalc; uint64_t w = (uint64_t)(uintptr_t)wb2; *(uint64_t *)w = (uint64_t)(uintptr_t)vt2; *(const char **)(w + 8) = "TouchCommunityFe";
+      int32_t *r = (int32_t *)(w + 0x70), home = 99999; r[0] = -235; r[1] = 1891;
+      co_entry_show(w, 1, &home); CHECK(r[0] == -235 && home == 99999);              // 有值、在屏上：不动 | shown already: unchanged
+      co_entry_show(w, 0, &home); CHECK(r[0] == 99999 && r[1] == 1891 && home == -235);   // 没值：挪出屏、记下原 x | no value: off screen, x remembered
+      co_entry_show(w, 0, &home); CHECK(r[0] == 99999 && home == -235);
+      co_entry_show(w, 1, &home); CHECK(r[0] == -235 && r[1] == 1891);              // 有值了：回到原位（旧代码是 20） | value arrives: back to its own x (old code: 20)
+      r[0] = 99999; home = 99999; co_entry_show(w, 1, &home); CHECK(r[0] == 99999);   // 没记过原位：不乱放 | no remembered x: not placed anywhere
+      co_entry_show(0, 1, &home); }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);
