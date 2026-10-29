@@ -54,10 +54,26 @@ static _Atomic int g_copied_row; static _Atomic uint64_t g_copied_at;   // 哪�
 static _Atomic uint64_t g_md_ev;   // 闸门攒给弹窗的按下沿（A / B / 上 / 下） | press edges collected for the box
 static _Atomic unsigned g_sw_touch, g_sw_key, g_sw_stick, g_leak;
 int dm_community_modal(void) { return atomic_load(&g_show) != 0; }
+// 关框后的压住窗口（RC1.1 终版审计 P2-1）：手柄 A / B 关框时，泵在取手柄处开头就把 g_show 置 0，同一拍末尾的闸门以为弹窗已关、把还按着的那一下交给了底层菜单。
+// 现在弹窗开着时记下按着的键与摇杆；关掉后，这些键全松开、两根摇杆都回到 1/4 以内之前，整只手柄都不交给游戏（压住的拍数在清零之前计数），窗口结束记一行。
+// 漏口计数（dm_community_input_leak）也覆盖这个窗口：原先只在 g_show 时计、又在闸门清零之后查，恒为 0、测不到这类漏口
+// Post-close hold window (RC1.1 final audit P2-1): a controller A / B that closes the box is handled by the pump at the start of the controller read, which clears g_show, so the gate at the
+// end of the same read thought the box was gone and handed the still-held press to the menu underneath. Now the gate remembers what was held while the box was up; after it closes, the whole
+// controller stays withheld until those keys are released and both sticks are back inside a quarter (withheld samples are counted before zeroing), with one log line when the window ends.
+// The leak counter (dm_community_input_leak) covers that window too: it used to count only while g_show was set and after the gate had zeroed everything, so it was always 0
+static _Atomic int g_after; static _Atomic unsigned g_after_n;
+static int stick_off(int32_t v) { return v > -8000 && v < 8000; }
 void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
-    static uint64_t prev, pdir; static dm_stick_nav nav;
-    if (!atomic_load(&g_show)) { prev = bt ? *bt : 0; pdir = 0; dm_stick_nav_reset(&nav); return; }
+    static uint64_t prev, pdir, held; static int stick; static dm_stick_nav nav;
+    if (!atomic_load(&g_show)) {
+        if (atomic_load(&g_after) && bt && lx && ly && rx && ry) {
+            int centred = stick_off(*lx) && stick_off(*ly) && stick_off(*rx) && stick_off(*ry);
+            held &= *bt; if (centred) stick = 0;
+            if (held || stick) { atomic_fetch_add(&g_after_n, 1); *bt = 0; *lx = *ly = *rx = *ry = 0; }   // 先计数再清零 | counted, then zeroed
+            else { atomic_store(&g_after, 0); LOG("社区入口：关框后压住按着的键 / 摇杆 %u 拍（松开前不交给底层），交给底层 %u", atomic_exchange(&g_after_n, 0), atomic_exchange(&g_leak, 0)); } }
+        prev = bt ? *bt : 0; pdir = 0; dm_stick_nav_reset(&nav); return; }
     if (!bt || !lx || !ly || !rx || !ry) return;
+    held = *bt; stick = !(stick_off(*lx) && stick_off(*ly) && stick_off(*rx) && stick_off(*ry)); atomic_store(&g_after, 1); atomic_store(&g_after_n, 0);   // 关掉时按着的东西 | what is held when it closes
     uint64_t down = *bt & ~prev; prev = *bt;
     int32_t vy = (*ly < 0 ? -*ly : *ly) >= (*ry < 0 ? -*ry : *ry) ? *ly : *ry;   // 两根摇杆取推得多的那根的上下 | up / down of whichever stick is pushed further
     uint64_t dir = dm_stick_nav_dirs(&nav, *lx, vy) & (DM_BTN_UP | DM_BTN_DOWN);   // 公共折算（dm_stick_nav.h：回滞、主轴）；左右在弹窗里无处可去 | shared conversion; left / right have nowhere to go in the box
@@ -68,7 +84,7 @@ void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx
     if (ev) atomic_fetch_or(&g_md_ev, ev);
     *bt = 0; *lx = *ly = *rx = *ry = 0;
 }
-void dm_community_input_leak(int leaked) { if (leaked && atomic_load(&g_show)) atomic_fetch_add(&g_leak, 1); }   // 取手柄处闸门之后还有非零输入交给游戏 | a non-zero input still reached the game after the gate
+void dm_community_input_leak(int leaked) { if (leaked && (atomic_load(&g_show) || atomic_load(&g_after))) atomic_fetch_add(&g_leak, 1); }   // 闸门之后（弹窗开着或关框后压住窗口里）还有非零输入交给游戏 | a non-zero input reached the game after the gate while the box was up or in the post-close window
 static int (*g_copy)(const char *);
 static _Atomic unsigned g_copies;
 static _Atomic int g_from;   // 从哪里点开（只进日志）：1 暂停菜单 / 2 主菜单 / 3 自定义页 | which entry opened it (log only): 1 pause menu / 2 main menu / 3 Custom page

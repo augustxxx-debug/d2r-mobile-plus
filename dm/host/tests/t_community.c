@@ -341,7 +341,22 @@ int main(void) {
       dm_community_input_leak(0); CHECK(atomic_load(&g_leak) == 0); dm_community_input_leak(1); CHECK(atomic_load(&g_leak) == 1);   // 闸门后还有输入 = 漏（计数） | input after the gate = leak (counted)
       dm_community_ui_tap(0, 100, 100); CHECK(atomic_load(&g_sw_touch) == 1);                        // 没有游戏界面：只计数 | no game UI: counted only
       CHECK(dm_community_modal()); atomic_store(&g_show, 0); CHECK(!dm_community_modal());
-      bt = DM_BTN_B; ly = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(bt == DM_BTN_B); atomic_store(&g_md_ev, 0); }
+      // RC1.1 终版审计 P2-1：手柄 B（或 A）关框的那一拍弹窗已关、键还按着——松开之前整只手柄都不交给底层，压住的拍数清零前计数；全松开后照常放过并记一行
+      // final audit P2-1: on the read where B (or A) closes the box the key is still held -- the whole controller is withheld until release, counted before zeroing; afterwards pass-through and one log line
+      atomic_store(&g_leak, 0); atomic_store(&g_after_n, 0);
+      bt = DM_BTN_B; lx = ly = rx = ry = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(bt == 0);   // 关框那一下的 B 还按着：不交 | the closing B still held: withheld
+      bt = DM_BTN_B | DM_BTN_A; lx = 20000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(bt == 0 && lx == 0);   // 窗口里新按的也不交 | fresh input inside the window withheld too
+      dm_community_input_leak(bt || lx || ly || rx || ry); CHECK(atomic_load(&g_leak) == 0);
+      dm_community_input_leak(1); CHECK(atomic_load(&g_leak) == 1); atomic_store(&g_leak, 0);   // 窗口里闸门后还有输入 = 漏（原先关框后恒不计） | input after the gate inside the window = leak (never counted before)
+      CHECK(atomic_load(&g_after_n) == 2 && atomic_load(&g_after));
+      log_reset(); bt = 0; lx = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(!atomic_load(&g_after)); CHECK(strstr(log_text(), "关框后压住按着的键 / 摇杆 2 拍"));   // 全松开：窗口结束 | all released: window ends
+      bt = DM_BTN_B; ly = 30000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(bt == DM_BTN_B && ly == 30000);   // 之后照常放过 | afterwards pass-through
+      dm_community_input_leak(1); CHECK(atomic_load(&g_leak) == 0);                                  // 窗口外不算漏 | outside the window not a leak
+      // 摇杆推着关框：回到 1/4 以内之前不交 | closing with a stick pushed: withheld until it is back inside a quarter
+      atomic_store(&g_show, 2); bt = 0; lx = 0; ly = -30000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); atomic_store(&g_show, 0);
+      bt = 0; ly = -12000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(ly == 0);
+      ly = -5000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(ly == -5000 && !atomic_load(&g_after));
+      atomic_store(&g_md_ev, 0); }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);
