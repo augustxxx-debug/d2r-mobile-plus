@@ -25,7 +25,7 @@ int main(){
 
     // 只有高通 740–799 这一族缺省关掉两个改写。
     // Only Qualcomm's 740-799 family defaults both rewrites off.
-    CHECK(xbg_adreno_rewrites_fault(0x5143,"Adreno (TM) 740"));
+    CHECK(!xbg_adreno_rewrites_fault(0x5143,"Adreno (TM) 740"));   // Plus：740 保留两个改写 | Plus: 740 keeps both rewrites
     CHECK(xbg_adreno_rewrites_fault(0x5143,"Adreno 750"));
     CHECK(xbg_adreno_rewrites_fault(0x5143,"Adreno (TM) 799"));
     CHECK(!xbg_adreno_rewrites_fault(0x5143,"Adreno (TM) 730"));
