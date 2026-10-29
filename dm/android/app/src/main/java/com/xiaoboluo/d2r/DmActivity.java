@@ -382,19 +382,21 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (f.exists() && !f.delete()) throw new IOException("delete " + f.getName());
     }
 
-    // 调试包：am start … --ez dmLoadPageDemo true 用模拟进度走一遍「导入 → 着色器缓存」两段连续推进的加载页（截图核对用）；不起宿主，走完 3 秒后退出
-    // Debug builds: am start … --ez dmLoadPageDemo true runs the loading page through the two stages "import → shader cache" with simulated progress (for the screenshot check); the host is not started, the activity exits 3 s after the end
+    // 调试包：am start … --ez dmLoadPageDemo true 用模拟进度走一遍手机端生成的六个阶段（改写程序 → 整理资源 → 界面覆盖层 → 着色器打包 → 着色器缓存 N/6931 → 安装，缺省权重按奥丁实测 371 秒分；演示压缩到约 45 秒）；不起宿主，走完 3 秒后退出。
+    // 真实接线（并线后）：PackGenerator.State 的 step / shadersMade 逐步调 LoadPageView.set(阶段, 几成, 已做, 总数)，第二次启动不报这些阶段
+    // Debug builds: am start … --ez dmLoadPageDemo true runs the loading page through the six on-phone generation stages (patch → assets → overlay → packs → shaders N/6931 → install, default weights by the 371 s Thor measurement; compressed to about 45 s for the demo); the host is not started, the activity exits 3 s after the end.
+    // Real wiring (after the merge): PackGenerator.State's step / shadersMade call LoadPageView.set(stage, fraction, done, total) step by step; a second launch does not report these stages
     private boolean loadPageDemo;
     private boolean loadPageDemoRun() {
         if (!BuildConfig.DEBUG || !getIntent().getBooleanExtra("dmLoadPageDemo", false)) return false;
         if (loadPageDemo) return true; loadPageDemo = true;
         setContentView(new LoadPageView(this));
-        LoadPageView.begin(new int[] {LoadPageView.IMPORT, LoadPageView.SHADERS}, new int[] {20000, 60000});
+        LoadPageView.begin(new int[] {LoadPageView.PATCH, LoadPageView.ASSETS, LoadPageView.OVERLAY, LoadPageView.PACKS, LoadPageView.SHADERS, LoadPageView.INSTALL}, null);
         new Thread(() -> {
             try {
-                long total = 690_000_000L;
-                for (int i = 0; i <= 200; i++) { LoadPageView.set(0, i / 200.0, 0, 0, total * i / 200, total); Thread.sleep(100); }
-                for (int i = 0; i <= 7062; i += 7) { LoadPageView.set(1, i / 7062.0, i, 7062, 0, 0); Thread.sleep(60); }
+                for (int st = 0; st < 4; st++) for (int i = 0; i <= 20; i++) { LoadPageView.set(st, i / 20.0, 0, 0, 0, 0); Thread.sleep(150); }   // 前四步各 3 秒 | the first four steps 3 s each
+                for (int i = 0; i <= 6931; i += 23) { LoadPageView.set(4, i / 6931.0, i, 6931, 0, 0); Thread.sleep(100); }                  // 着色器 6931 条，约 30 秒 | 6931 shaders, about 30 s
+                for (int i = 0; i <= 10; i++) { LoadPageView.set(5, i / 10.0, 0, 0, 0, 0); Thread.sleep(200); }
                 LoadPageView.finish(); Thread.sleep(3000);
             } catch (InterruptedException e) { /* 退出 | exiting */ }
             runOnUiThread(this::finish);

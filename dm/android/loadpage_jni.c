@@ -36,19 +36,24 @@ void F(nativeFail)(JNIEnv *env, jclass cls, jstring reason) {
 void F(nativeFinish)(JNIEnv *env, jclass cls) { (void)env; (void)cls; dm_loadpage_finish(now_ms()); }
 jint F(nativeState)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_state(); }
 jint F(nativePercent)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_percent(); }
+jboolean F(nativeMuted)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_muted() ? JNI_TRUE : JNI_FALSE; }
+void F(nativeSetMuted)(JNIEnv *env, jclass cls, jboolean m) { (void)env; (void)cls; dm_loadpage_set_muted(m); }
+jboolean F(nativeToggleMuted)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_toggle_muted() ? JNI_TRUE : JNI_FALSE; }
+jstring F(nativeUi)(JNIEnv *env, jclass cls, jstring key) { (void)cls; const char *k = (*env)->GetStringUTFChars(env, key, NULL); jstring r = (*env)->NewStringUTF(env, dm_loadpage_ui(k)); (*env)->ReleaseStringUTFChars(env, key, k); return r; }
 jboolean F(nativeMusicWanted)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_music_wanted() ? JNI_TRUE : JNI_FALSE; }
 jstring F(nativeMusicName)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_music_name()); }
 jstring F(nativeLogoName)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_logo_name(NULL, NULL)); }
 jstring F(nativeBgName)(JNIEnv *env, jclass cls, jfloat w, jfloat h) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_bg_name(w, h, NULL, NULL)); }
-// 布局摊平成 double[50]：landscape, bg_w, bg_h, bg_src×4, bg_dst×4, bar×4, bar_fill×4, title×4, percent×4, body×4, sub×4, brand×4, title_pt, body_pt, sub_pt, brand_pt, bar_radius, logo×4, logo_w, logo_h（顺序与 LoadPageView.java 的常量一致）
+// 布局摊平成 double[54]：…, logo×4, logo_w, logo_h, mute×4（landscape, bg_w, bg_h, bg_src×4, bg_dst×4, bar×4, bar_fill×4, title×4, percent×4, body×4, sub×4, brand×4, title_pt, body_pt, sub_pt, brand_pt, bar_radius, logo×4, logo_w, logo_h（顺序与 LoadPageView.java 的常量一致）
 // Layout flattened into double[50] (order matches the constants in LoadPageView.java)
 jdoubleArray F(nativeLayout)(JNIEnv *env, jclass cls, jfloat w, jfloat h, jfloat l, jfloat t, jfloat r, jfloat b) {
     (void)cls; dm_lp_screen s = { w, h, l, t, r, b }; dm_lp_layout L; dm_loadpage_layout(&s, &L);
     const dm_lp_rect *rects[] = { &L.bg_src, &L.bg_dst, &L.bar, &L.bar_fill, &L.title, &L.percent, &L.body, &L.sub, &L.brand };
-    double v[50]; int o = 0; v[o++] = L.landscape; v[o++] = L.bg_w; v[o++] = L.bg_h;
+    double v[54]; int o = 0; v[o++] = L.landscape; v[o++] = L.bg_w; v[o++] = L.bg_h;
     for (unsigned i = 0; i < sizeof rects / sizeof *rects; i++) { v[o++] = rects[i]->x; v[o++] = rects[i]->y; v[o++] = rects[i]->w; v[o++] = rects[i]->h; }
     v[o++] = L.title_pt; v[o++] = L.body_pt; v[o++] = L.sub_pt; v[o++] = L.brand_pt; v[o++] = L.bar_radius;
     v[o++] = L.logo.x; v[o++] = L.logo.y; v[o++] = L.logo.w; v[o++] = L.logo.h; v[o++] = L.logo_w; v[o++] = L.logo_h;
+    v[o++] = L.mute.x; v[o++] = L.mute.y; v[o++] = L.mute.w; v[o++] = L.mute.h;
     jdoubleArray a = (*env)->NewDoubleArray(env, o); (*env)->SetDoubleArrayRegion(env, a, 0, o, v); return a;
 }
 jobjectArray F(nativeText)(JNIEnv *env, jclass cls) {   // { 标题, 百分数, 正文, 副文, 字标 } | { title, percent, body, sub, brand }

@@ -26,6 +26,7 @@ enum {   // 阶段种类（文案键 dmLoadStage*、缺省权重见 dm_loadpage.
     DM_LP_SHADERS,    // 着色器缓存（安卓手机端生成的最长一步；iOS 壳包的源码着色器预编译也可用它） | shader cache (the longest step of Android on-phone generation; the iOS shell package's source-shader precompile can use it too)
     DM_LP_INSTALL,    // 安卓手机端生成：成品换进运行目录 | Android on-phone generation: move the result into the runtime directory
     DM_LP_VERIFY,     // 校验（romfs_validate） | verification (romfs_validate)
+    DM_LP_PREPARE,    // 导入之后进游戏前的秒级准备（安卓电脑出的导入包：着色器已翻译好，手机上只剩管线现编几秒；缺省权重按「导入 85% → 准备 15%」） | seconds of preparation between import and the game (Android pack made on a computer: shaders already translated, only a few seconds of pipeline builds; default weights follow "import 85% → prepare 15%")
     DM_LP_KIND_N
 };
 enum { DM_LP_MAX_STAGES = 8 };
@@ -71,18 +72,25 @@ typedef struct {
     dm_lp_rect bg_dst;             // 画到屏上的矩形（整屏） | destination on screen (full screen)
     dm_lp_rect bar, bar_fill;      // 进度条底与已走部分（bar_fill.w 按总进度） | bar track and filled part (bar_fill.w by overall)
     dm_lp_rect title, percent, body, sub, brand;   // 文字行的框（左对齐；percent 右对齐到条尾）；brand 只在字标图读不到时用 | text line boxes (left aligned; percent right aligned to the bar end); brand only when the wordmark image is unavailable
+    dm_lp_rect mute;   // 右上角静音开关（40×40 点圆钮，安全区内、与字标同一条上沿） | the mute toggle at the top right (40×40 pt round button, inside the safe area, on the same top line as the wordmark area)
     dm_lp_rect logo; const char *logo_name; int logo_w, logo_h;   // 页面中部的字标图（自制 loadpage_logo.png）：横向居中、等比缩放、在安全区与标题之间 | the wordmark image in the middle of the page (self-made loadpage_logo.png): centred, aspect kept, between the safe area and the title
     double title_pt, body_pt, sub_pt, brand_pt;    // 字号：24 / 18 / 14（相邻比 1.29–1.33，同 §2.6 的三级） | font sizes 24 / 18 / 14 (adjacent ratio 1.29–1.33, the three levels of §2.6)
     double bar_radius;
 } dm_lp_layout;
 void dm_loadpage_layout(const dm_lp_screen *s, dm_lp_layout *out);
+int dm_loadpage_hit_mute(const dm_lp_layout *L, double x, double y);       // 点在开关上（判定区比图标四周各大 12 点）| the tap is on the toggle (hit area 12 pt larger than the icon on each side)
 // 纯函数：图 iw×ih 铺满 dw×dh 的 cover 裁切；焦点 (fx, fy) 为图内 0..1 坐标，裁切框尽量以它为中心、不越界。返回 src（图内像素矩形）
 // Pure function: cover crop of an iw×ih image onto dw×dh; the focus (fx, fy) in 0..1 image coordinates is kept as the crop centre where possible without leaving the image. Returns src (image pixel rect)
 void dm_loadpage_cover(double iw, double ih, double dw, double dh, double fx, double fy, dm_lp_rect *src);
 const char *dm_loadpage_bg_name(double w, double h, int *bg_w, int *bg_h);   // 横 / 竖两张里选一张 | pick one of the landscape / portrait images
 const char *dm_loadpage_logo_name(int *w, int *h);                          // 字标图文件名与像素尺寸 | wordmark file name and pixel size
 const char *dm_loadpage_music_name(void);                                  // 循环音乐文件名（包内 loadpage/ 目录） | loop music file name (loadpage/ in the package)
-int dm_loadpage_music_wanted(void);                                        // 1 = 该放音乐（进行中）；完成 / 失败 / 没开始 = 0 | 1 = music should play (running); done / failed / idle = 0
+// 静音开关（页面右上角）：缺省有声音（用户 2026-10-29：右上角给开关，缺省放音乐）；平台记住玩家的选择，启动时用 set_muted 告诉核心。begin 不改它
+// Mute toggle (top right of the page): sound on by default (user 2026-10-29: a toggle at the top right, music on by default); the platform remembers the player's choice and tells the core with set_muted at start. begin leaves it alone
+void dm_loadpage_set_muted(int muted);
+int dm_loadpage_muted(void);
+int dm_loadpage_toggle_muted(void);                                        // 点一下：翻转并写一行日志，返回新值 | one tap: flip, log one line, return the new value
+int dm_loadpage_music_wanted(void);                                        // 1 = 该放音乐（页面在、没完成 / 失败、且没静音） | 1 = music should play (page up, not done / failed, not muted) | 1 = music should play (running); done / failed / idle = 0
 
 // 颜色（0xRRGGBB）：游戏外画不到原版色票，这里用其近似值——标题 ≈ 面板标题金黄 $FontColorGoldYellow，正文 ≈ 弹窗正文 $FontColorLightGold，副文 ≈ 说明小字 $FontColorLightGray；
 // 进度条用原版红 / 暗底。改颜色只改这里，两端同步

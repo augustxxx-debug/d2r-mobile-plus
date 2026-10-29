@@ -17,8 +17,8 @@ int main(int argc, char **argv) {
     const char *lang = argc > 3 ? argv[3] : "zh";
     setenv("DM_LANG", !strcmp(lang, "zh") ? "zh-Hans" : !strcmp(lang, "en") ? "en-US" : !strcmp(lang, "es") ? "es-ES" : !strcmp(lang, "ru") ? "ru-RU" : "ko-KR", 1); unsetenv("DM_SAVE");
     // 两段：导入（已完成）→ 着色器缓存 2612 / 7062，总进度 25% + 75% × 0.16 = 37%；第二阶段已走 40 秒，有「预计还要」 | two stages: import (done) → shaders 2612 / 7062, overall 25% + 75% × 0.16 = 37%; 40 s into stage two, so an ETA shows
-    int kinds[] = { DM_LP_IMPORT, DM_LP_SHADERS }; uint64_t t = 1000;
-    dm_loadpage_begin(kinds, 2, NULL, t);
+    int kinds[] = { DM_LP_IMPORT, DM_LP_SHADERS }; int weights[] = { 90000, 270000 }; uint64_t t = 1000;   // 手机端生成那条路的权重 | weights of the on-phone generation path
+    dm_loadpage_begin(kinds, 2, weights, t);
     dm_lp_detail d = { 0, 0, 0, 0 }; d.bytes_total = 690000000; d.bytes_done = 690000000; dm_loadpage_set(0, 1.0, &d, t + 60000);
     dm_lp_detail e = { 2612, 7062, 0, 0 }; dm_loadpage_set(1, 0.16, &e, t + 60000); dm_loadpage_set(1, 0.16, &e, t + 100000);
     uint64_t now = t + 100000;

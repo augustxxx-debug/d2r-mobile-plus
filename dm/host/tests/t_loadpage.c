@@ -21,10 +21,10 @@ static int rect_in(dm_lp_rect r, double x0, double y0, double x1, double y1) { r
 
 int main(void) {
     dm_lp_text t; dm_lp_detail d = { 0 };
-    // 1. 两段权重：导入 90 秒 + 着色器缓存 270 秒 → 导入占 25%。导入走到一半 = 12%，导入完成 = 25%，着色器一半 = 62%，全完 = 100%
-    // 1. Two weighted stages: import 90 s + shader cache 270 s → import is 25%. Import half way = 12%, import done = 25%, shaders half way = 62%, all done = 100%
-    int two[] = { DM_LP_IMPORT, DM_LP_SHADERS };
-    dm_loadpage_begin(two, 2, NULL, 1000);
+    // 1. 两段权重（手机端生成的路：导入 90 秒 + 着色器缓存 270 秒）→ 导入占 25%。导入走到一半 = 12%，导入完成 = 25%，着色器一半 = 62%，全完 = 100%
+    // 1. Two weighted stages (on-phone generation path: import 90 s + shader cache 270 s) → import is 25%. Import half way = 12%, import done = 25%, shaders half way = 62%, all done = 100%
+    int two[] = { DM_LP_IMPORT, DM_LP_SHADERS }; int w_two[] = { 90000, 270000 };
+    dm_loadpage_begin(two, 2, w_two, 1000);
     CHECK(dm_loadpage_state() == DM_LP_RUNNING); CHECK(dm_loadpage_percent() == 0); CHECK(dm_loadpage_stage() == -1);
     dm_loadpage_set(0, 0.5, NULL, 2000); CHECK(dm_loadpage_percent() == 12); CHECK(dm_loadpage_stage() == 0);
     dm_loadpage_set(0, 1.0, NULL, 3000); CHECK(dm_loadpage_percent() == 25);
@@ -42,8 +42,13 @@ int main(void) {
     // 2. 自定义权重：导入 60 秒 + 着色器 240 秒 → 导入 20%；给 0 的那项用缺省 | 2. Custom weights: import 60 s + shaders 240 s → import 20%; a 0 entry takes the default
     int w2[] = { 60000, 240000 };
     dm_loadpage_begin(two, 2, w2, 0); dm_loadpage_set(0, 1.0, NULL, 10); CHECK(dm_loadpage_percent() == 20);
-    int w3[] = { 0, 90000 };   // 导入缺省 90 秒 + 着色器 90 秒 → 50% | import default 90 s + shaders 90 s → 50%
+    int w3[] = { 0, 8500 };   // 导入缺省 8.5 秒 + 着色器 8.5 秒 → 50% | import default 8.5 s + shaders 8.5 s → 50%
     dm_loadpage_begin(two, 2, w3, 0); dm_loadpage_set(0, 1.0, NULL, 10); CHECK(dm_loadpage_percent() == 50);
+    // 2b. 电脑出的导入包那条路（缺省权重）：导入 → 准备 = 85 : 15；导入完成 85%，准备一半 92%，导入阶段副文不再说「几分钟」 | 2b. Computer-made pack path (default weights): import → prepare = 85 : 15; import done 85%, prepare half way 92%; the import hint no longer says "a few minutes"
+    int kp[] = { DM_LP_IMPORT, DM_LP_PREPARE }; dm_loadpage_begin(kp, 2, NULL, 0);
+    dm_loadpage_set(0, 0.5, NULL, 10); CHECK(dm_loadpage_percent() == 42); dm_loadpage_text(&t, 10); CHECK(!strcmp(t.title, "正在导入游戏内容")); CHECK(strstr(t.sub, "分钟") == NULL && strstr(t.sub, "请稍候") != NULL);
+    dm_loadpage_set(0, 1.0, NULL, 20); CHECK(dm_loadpage_percent() == 85);
+    dm_loadpage_set(1, 0.5, NULL, 30); CHECK(dm_loadpage_percent() == 92); dm_loadpage_text(&t, 30); CHECK(!strcmp(t.title, "正在准备进入游戏"));
 
     // 3. 单段退化（iOS 只有下载）：几成就是几成 | 3. Single-stage degenerate case (iOS has only the download): the fraction is the overall
     int one[] = { DM_LP_DOWNLOAD };
@@ -97,7 +102,7 @@ int main(void) {
     dm_loadpage_cover(0, 0, 100, 100, 0.5, 0.5, &r); CHECK(r.w == 1 && r.h == 1);   // 坏输入不除零 | bad input does not divide by zero
 
     // 7. 布局：条与四行字都在安全区内；竖屏条铺满内容宽；横屏条 62%；bar_fill 跟总进度；灵动岛 / 挖孔内缩生效 | 7. Layout: bar and text inside the safe area; portrait bar spans the content width; landscape bar 62%; bar_fill follows overall; island / cutout insets honoured
-    dm_loadpage_begin(two, 2, NULL, 0); dm_loadpage_set(0, 0.5, NULL, 1); dm_loadpage_set(1, 0.16, NULL, 2);   // 25% + 75%×0.16 = 37% | 25% + 75% × 0.16 = 37%
+    dm_loadpage_begin(two, 2, w_two, 0); dm_loadpage_set(0, 0.5, NULL, 1); dm_loadpage_set(1, 0.16, NULL, 2);   // 25% + 75%×0.16 = 37% | 25% + 75% × 0.16 = 37%
     CHECK(dm_loadpage_percent() == 37);
     dm_lp_layout L; dm_lp_screen duo = { 951, 669, 0, 0, 0, 0 }; dm_loadpage_layout(&duo, &L);
     CHECK(L.landscape && !strcmp(L.bg_name, "loadpage_bg_land.jpg") && NEAR(L.bg_dst.w, 951) && NEAR(L.bg_dst.h, 669));
@@ -120,7 +125,16 @@ int main(void) {
     dm_lp_screen tiny = { 100, 50, 0, 0, 0, 0 }; dm_loadpage_layout(&tiny, &L); CHECK(L.bar.w > 0 && L.bar.h > 0 && L.logo.w >= 0 && L.logo.h >= 0);   // 很小的屏不出负宽（字标缩到放得下或 0） | a tiny screen never yields negative widths (the wordmark shrinks to fit or to 0)
     dm_lp_screen big2 = { 2000, 1200, 0, 0, 0, 0 }; dm_loadpage_layout(&big2, &L); CHECK(NEAR(L.logo.w, 560));   // 大屏字标不超过 560 点 | on a big screen the wordmark stays within 560 pt
     dm_lp_screen landi = { 874, 402, 59, 0, 59, 21 }; dm_loadpage_layout(&landi, &L); CHECK(L.logo.y + L.logo.h <= L.title.y - 24 + 1e-6 && L.logo.y >= 28 - 1e-6);   // 矮横屏：字标压缩到标题之上 | short landscape: the wordmark is squeezed above the title
-    CHECK(!strcmp(dm_loadpage_music_name(), "loadpage_loop.m4a") && dm_loadpage_music_wanted() == 1);
+    // 静音开关：缺省有声音 → 进行中放；点一下静音就不放；begin 不改它；失败停；开关在右上角安全区内，不压字标 / 字标图；点击判定 | mute toggle: sound on by default → plays while running; one tap mutes; begin keeps it; failure stops; the button sits top right inside the safe area, clear of the wordmark; hit test
+    CHECK(!strcmp(dm_loadpage_music_name(), "loadpage_loop.m4a") && dm_loadpage_muted() == 0 && dm_loadpage_music_wanted() == 1);
+    CHECK(dm_loadpage_toggle_muted() == 1 && dm_loadpage_music_wanted() == 0);
+    dm_loadpage_begin(two, 2, w_two, 0); CHECK(dm_loadpage_muted() == 1 && dm_loadpage_music_wanted() == 0);
+    CHECK(dm_loadpage_toggle_muted() == 0 && dm_loadpage_music_wanted() == 1);
+    dm_loadpage_fail("x", 1); CHECK(dm_loadpage_music_wanted() == 0); dm_loadpage_set_muted(0);
+    dm_loadpage_layout(&duo, &L); CHECK(NEAR(L.mute.x + L.mute.w, 951 - 28) && NEAR(L.mute.y, 22) && L.mute.w == 40 && L.mute.y + L.mute.h <= L.logo.y && L.brand.x + L.brand.w <= L.mute.x);
+    CHECK(dm_loadpage_hit_mute(&L, L.mute.x + 20, L.mute.y + 20) && dm_loadpage_hit_mute(&L, L.mute.x - 10, L.mute.y - 10) && !dm_loadpage_hit_mute(&L, L.mute.x - 20, L.mute.y + 20) && !dm_loadpage_hit_mute(&L, 475, 400));
+    dm_loadpage_layout(&ip, &L); CHECK(NEAR(L.mute.x + L.mute.w, 402 - 28) && L.mute.y >= 59 - 6 && L.mute.y + L.mute.h <= L.logo.y);   // iPhone 竖屏：在灵动岛下方 | iPhone portrait: below the island
+    dm_loadpage_layout(&ipl, &L); CHECK(L.mute.x + L.mute.w <= 874 - 59 - 28 + 1e-6);                                                    // 横屏：避开右侧灵动岛 | landscape: clear of the island on the right
 
     // 8. 没开始就 finish / set：不崩、状态不变；begin 超过上限的阶段数被截 | 8. finish / set before begin: no crash, state unchanged; begin with too many stages is clamped
     dm_loadpage_begin(two, 0, NULL, 0); CHECK(dm_loadpage_state() == DM_LP_IDLE); dm_loadpage_set(0, 0.5, NULL, 1); dm_loadpage_finish(2); CHECK(dm_loadpage_state() == DM_LP_IDLE);
@@ -128,7 +142,7 @@ int main(void) {
     int many[12] = { DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT };
     dm_loadpage_begin(many, 12, NULL, 0); dm_loadpage_set(7, 1.0, NULL, 1); CHECK(dm_loadpage_percent() == 100); dm_loadpage_set(11, 0.5, NULL, 2); CHECK(dm_loadpage_percent() == 100);
     // 9. 其他语言列取得到（英文 / 韩文），占位符同序 | 9. Other language columns resolve (English / Korean) with matching placeholders
-    dm_loadpage_ui_set_group(DM_LG_EN); dm_loadpage_begin(two, 2, NULL, 0); memset(&d, 0, sizeof d); d.items_done = 5; d.items_total = 9; dm_loadpage_set(1, 0.5, &d, 1);
+    dm_loadpage_ui_set_group(DM_LG_EN); dm_loadpage_begin(two, 2, w_two, 0); memset(&d, 0, sizeof d); d.items_done = 5; d.items_total = 9; dm_loadpage_set(1, 0.5, &d, 1);
     dm_loadpage_text(&t, 1); CHECK(!strcmp(t.title, "Preparing the shader cache")); CHECK(strstr(t.body, "File 5 of 9") != NULL);
     dm_loadpage_ui_set_group(DM_LG_KO); dm_loadpage_text(&t, 1); CHECK(strstr(t.body, "5 / 9") != NULL); dm_loadpage_ui_set_group(-1);
 

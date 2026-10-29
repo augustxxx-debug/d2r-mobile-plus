@@ -12,11 +12,11 @@
 #include "dm.h"
 #endif
 
-// 阶段种类表：文案键、缺省权重（毫秒，按实测：安卓拷 690 MB 导入包约 90 秒、手机端生成在奥丁上 371 秒里着色器占大头；iOS 下载按 4 GB / 10 分钟）、缺省副文键
-// Stage kind table: text key, default weight (ms, by measurement: Android copying the 690 MB import pack ≈ 90 s; on-phone generation 371 s on the Thor, mostly shaders; iOS download 4 GB / 10 min), default sub-line key
+// 阶段种类表：文案键、缺省权重（毫秒，按实测：安卓拷 690 MB 导入包在奥丁上约 6 秒、之后管线现编合计约 2 秒（2026-10-29 实测，6e9e8e3）→ 导入 : 准备 ≈ 85 : 15；手机端生成在奥丁上 371 秒里着色器占大头；iOS 下载按 4 GB / 10 分钟）、缺省副文键
+// Stage kind table: text key, default weight (ms, by measurement: Android copying the 690 MB import pack ≈ 6 s on the Thor, then ≈ 2 s of pipeline builds (measured 2026-10-29, 6e9e8e3) → import : prepare ≈ 85 : 15; on-phone generation 371 s on the Thor, mostly shaders; iOS download 4 GB / 10 min), default sub-line key
 static const struct { const char *title, *hint; int weight_ms; } k_kind[DM_LP_KIND_N] = {
     [DM_LP_DOWNLOAD] = { "dmLoadStageDownload", "dmLoadHintStay", 600000 },
-    [DM_LP_IMPORT]   = { "dmLoadStageImport",   "dmLoadHintStay", 90000 },
+    [DM_LP_IMPORT]   = { "dmLoadStageImport",   "dmLoadHintImport", 8500 },
     [DM_LP_PATCH]    = { "dmLoadStagePatch",    "dmLoadHintStay", 20000 },
     [DM_LP_ASSETS]   = { "dmLoadStageAssets",   "dmLoadHintStay", 30000 },
     [DM_LP_OVERLAY]  = { "dmLoadStageOverlay",  "dmLoadHintStay", 20000 },
@@ -24,8 +24,9 @@ static const struct { const char *title, *hint; int weight_ms; } k_kind[DM_LP_KI
     [DM_LP_SHADERS]  = { "dmLoadStageShaders",  "dmLoadHintShaders", 270000 },
     [DM_LP_INSTALL]  = { "dmLoadStageInstall",  "dmLoadHintStay", 15000 },
     [DM_LP_VERIFY]   = { "dmLoadStageVerify",   "dmLoadHintStay", 5000 },
+    [DM_LP_PREPARE]  = { "dmLoadStagePrepare",  "dmLoadHintPrepare", 1500 },
 };
-static const char *const k_kind_zh[DM_LP_KIND_N] = { "下载", "导入", "改写程序", "整理资源", "界面覆盖层", "着色器打包", "着色器缓存", "安装", "校验" };   // 日志用 | for the log
+static const char *const k_kind_zh[DM_LP_KIND_N] = { "下载", "导入", "改写程序", "整理资源", "界面覆盖层", "着色器打包", "着色器缓存", "安装", "校验", "准备" };   // 日志用 | for the log
 
 typedef struct { int kind, weight_ms; double frac; uint64_t t0, t_last; int started, done; dm_lp_detail d; double rate_bps; uint64_t rate_t; int64_t rate_b; } lp_stage;
 static struct {
@@ -36,13 +37,14 @@ static struct {
     char note[320], fail[320];  // 平台给的正文 / 失败原因 | body override / failure reason from the platform
     const char *hint_key;
     int ui_group;               // -1 = dm_ui() | -1 = dm_ui()
-} g = { .cur = -1, .ui_group = -1 };
+    int muted;                  // 静音开关（缺省 0 = 有声音） | mute toggle (default 0 = sound on)
+} g = { .cur = -1, .ui_group = -1, .muted = 0 };
 
 const char *dm_loadpage_ui(const char *key) { return g.ui_group >= 0 ? dm_ui_group(key, g.ui_group) : dm_ui(key); }
 void dm_loadpage_ui_set_group(int group) { g.ui_group = group; }
 
 void dm_loadpage_begin(const int *kinds, int n, const int *weight_ms, uint64_t now_ms) {
-    int grp = g.ui_group; memset(&g, 0, sizeof g); g.ui_group = grp; g.cur = -1;
+    int grp = g.ui_group, mu = g.muted; memset(&g, 0, sizeof g); g.ui_group = grp; g.muted = mu; g.cur = -1;
     if (n > DM_LP_MAX_STAGES) n = DM_LP_MAX_STAGES;
     for (int i = 0; i < n; i++) {
         int k = kinds[i] >= 0 && kinds[i] < DM_LP_KIND_N ? kinds[i] : DM_LP_IMPORT;
@@ -170,7 +172,11 @@ const char *dm_loadpage_bg_name(double w, double h, int *bg_w, int *bg_h) {
 }
 const char *dm_loadpage_logo_name(int *w, int *h) { if (w) *w = 1600; if (h) *h = 600; return "loadpage_logo.png"; }   // dm/tools/gen_loadpage_logo.py | dm/tools/gen_loadpage_logo.py
 const char *dm_loadpage_music_name(void) { return "loadpage_loop.m4a"; }
-int dm_loadpage_music_wanted(void) { return g.state == DM_LP_RUNNING || g.state == DM_LP_IDLE; }   // 页面在就放（含等玩家拷资源的空闲态）；完成 / 失败停 | plays while the page is up (including idle, waiting for the player); stops on done / failure
+void dm_loadpage_set_muted(int muted) { g.muted = muted != 0; }
+int dm_loadpage_muted(void) { return g.muted; }
+int dm_loadpage_toggle_muted(void) { g.muted = !g.muted; LOG("加载页：玩家%s背景音乐", g.muted ? "关闭了" : "打开了"); return g.muted; }
+int dm_loadpage_hit_mute(const dm_lp_layout *L, double x, double y) { const double pad = 12; return x >= L->mute.x - pad && x <= L->mute.x + L->mute.w + pad && y >= L->mute.y - pad && y <= L->mute.y + L->mute.h + pad; }
+int dm_loadpage_music_wanted(void) { return (g.state == DM_LP_RUNNING || g.state == DM_LP_IDLE) && !g.muted; }   // 页面在就放（含等玩家拷资源的空闲态）；完成 / 失败停 | plays while the page is up (including idle, waiting for the player); stops on done / failure
 void dm_loadpage_cover(double iw, double ih, double dw, double dh, double fx, double fy, dm_lp_rect *src) {
     if (iw <= 0 || ih <= 0 || dw <= 0 || dh <= 0) { *src = (dm_lp_rect){ 0, 0, iw > 0 ? iw : 1, ih > 0 ? ih : 1 }; return; }
     double scale = dw / iw > dh / ih ? dw / iw : dh / ih;   // 短边对齐（放大到两边都盖住） | fit the short side (scale until both are covered)
@@ -201,12 +207,13 @@ void dm_loadpage_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     o->percent = (dm_lp_rect){ bx + bw * 0.72, y - title_h, bw * 0.28, title_h };
     double fill = g.overall < 0 ? 0 : g.overall > 1 ? 1 : g.overall;
     o->bar_fill = (dm_lp_rect){ o->bar.x, o->bar.y, o->bar.w * fill, o->bar.h };
-    o->brand = (dm_lp_rect){ cx0, T + m, cw, o->brand_pt * 1.4 };
+    o->brand = (dm_lp_rect){ cx0, T + m, cw - 56, o->brand_pt * 1.4 };   // 右边让出静音钮 | leave room for the mute button on the right
+    o->mute = (dm_lp_rect){ w - R - m - 40, T + m - 6, 40, 40 };
     // 字标图：宽取内容宽的 58%（横屏）/ 86%（竖屏），不超过 560 点、不矮于能放下的高度；中心在 0.36h（横）/ 0.30h（竖），夹在安全区上沿 + 边距与标题上方 24 点之间
     // Wordmark: width 58% of the content width (landscape) / 86% (portrait), at most 560 pt and never taller than the room available; centre at 0.36h (landscape) / 0.30h (portrait), clamped between the top safe edge + margin and 24 pt above the title
     o->logo_name = dm_loadpage_logo_name(&o->logo_w, &o->logo_h);
     { double lw = cw * (o->landscape ? 0.58 : 0.86); if (lw > 560) lw = 560; double lh = lw * o->logo_h / o->logo_w;
-      double top_lim = T + m, bot_lim = o->title.y - 24, room = bot_lim - top_lim;
+      double top_lim = T + m + 46, bot_lim = o->title.y - 24, room = bot_lim - top_lim;
       if (room > 0 && lh > room) { lh = room; lw = lh * o->logo_w / o->logo_h; }
       double cy = h * (o->landscape ? 0.36 : 0.30), ly = cy - lh / 2; if (ly + lh > bot_lim) ly = bot_lim - lh; if (ly < top_lim) ly = top_lim;
       o->logo = (dm_lp_rect){ cx0 + (cw - lw) / 2, ly, lw > 0 ? lw : 0, lh > 0 ? lh : 0 }; }

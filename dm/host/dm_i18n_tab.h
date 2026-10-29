@@ -528,4 +528,9 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmLoadFailTitle", "无法继续准备游戏内容", "Could not prepare the game content", "No se pudo preparar el contenido del juego", "No se pudo preparar el contenido del juego", "Не удалось подготовить игровое содержимое", "게임 콘텐츠를 준비할 수 없습니다" },
     { "dmLoadFailHint", "分享诊断日志有助于定位问题", "Sharing the diagnostic log helps find the cause", "Compartir el registro de diagnóstico ayuda a encontrar la causa", "Compartir el registro de diagnóstico ayuda a encontrar la causa", "Отправка журнала диагностики поможет найти причину", "진단 로그를 공유하면 원인을 찾는 데 도움이 됩니다" },
     { "dmLoadIdleTitle", "准备游戏内容", "Preparing game content", "Preparando el contenido del juego", "Preparando el contenido del juego", "Подготовка игрового содержимого", "게임 콘텐츠 준비" },
+    { "dmLoadStagePrepare", "正在准备进入游戏", "Preparing to enter the game", "Preparando la entrada al juego", "Preparando la entrada al juego", "Подготовка к запуску игры", "게임 진입 준비 중" },
+    { "dmLoadHintImport", "正在把游戏内容放到本机，请稍候", "Copying the game content to this device, please wait", "Copiando el contenido del juego a este dispositivo, espera", "Copiando el contenido del juego a este dispositivo, espera", "Копирование игрового содержимого на устройство, подождите", "게임 콘텐츠를 이 기기로 복사하는 중입니다. 잠시 기다려 주세요" },
+    { "dmLoadHintPrepare", "马上进入游戏，请稍候", "Entering the game shortly, please wait", "Entrando al juego en un momento, espera", "Entrando al juego en un momento, espera", "Игра скоро запустится, подождите", "곧 게임에 들어갑니다. 잠시 기다려 주세요" },
+    { "dmLoadMusicOn", "打开背景音乐", "Turn music on", "Activar la música", "Activar la música", "Включить музыку", "배경 음악 켜기" },
+    { "dmLoadMusicOff", "关闭背景音乐", "Turn music off", "Desactivar la música", "Desactivar la música", "Выключить музыку", "배경 음악 끄기" },
 };

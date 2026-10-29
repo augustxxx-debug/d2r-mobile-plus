@@ -61,6 +61,21 @@ static void text_line(CGContextRef c, const char *utf8, dm_lp_rect box, double p
     CGContextRestoreGState(c);
     CFRelease(line); CFRelease(as); CFRelease(attr); CGColorRelease(cg); CGColorSpaceRelease(cs); CFRelease(f); CFRelease(s);
 }
+// 右上角静音钮：暗色圆底 + 金色细边 + 喇叭；有声音画两道声波，静音画一个叉 | the mute button at the top right: dark round base + thin gold edge + speaker; two sound waves when on, a cross when muted
+static void mute_icon(CGContextRef c, dm_lp_rect r, int muted) {
+    double cx = r.x + r.w / 2, cy = r.y + r.h / 2, R = r.w / 2;
+    CGContextSaveGState(c);
+    CGContextSetRGBFillColor(c, 0, 0, 0, 0.45); CGContextFillEllipseInRect(c, CGRectMake(r.x, r.y, r.w, r.h));
+    set_rgb(c, DM_LP_COL_BAR_EDGE, 1, 1); CGContextSetLineWidth(c, 1.2); CGContextStrokeEllipseInRect(c, CGRectMake(r.x + 0.6, r.y + 0.6, r.w - 1.2, r.h - 1.2));
+    set_rgb(c, DM_LP_COL_TITLE, 1, 0); set_rgb(c, DM_LP_COL_TITLE, 1, 1);
+    double s = R / 20.0, x0 = cx - 9 * s;   // 图标按 40 点钮设计，s 缩放 | icon designed for a 40 pt button, scaled by s
+    CGContextMoveToPoint(c, x0, cy - 4 * s); CGContextAddLineToPoint(c, x0 + 5 * s, cy - 4 * s); CGContextAddLineToPoint(c, x0 + 11 * s, cy - 9.5 * s);
+    CGContextAddLineToPoint(c, x0 + 11 * s, cy + 9.5 * s); CGContextAddLineToPoint(c, x0 + 5 * s, cy + 4 * s); CGContextAddLineToPoint(c, x0, cy + 4 * s); CGContextClosePath(c); CGContextFillPath(c);
+    CGContextSetLineWidth(c, 2 * s); CGContextSetLineCap(c, kCGLineCapRound);
+    if (muted) { double a = x0 + 15 * s, b = 7 * s; CGContextMoveToPoint(c, a, cy - b / 2 * 1.2); CGContextAddLineToPoint(c, a + b, cy + b / 2 * 1.2); CGContextMoveToPoint(c, a + b, cy - b / 2 * 1.2); CGContextAddLineToPoint(c, a, cy + b / 2 * 1.2); CGContextStrokePath(c); }
+    else for (int k = 0; k < 2; k++) { double rr = (5.5 + k * 4.5) * s; CGContextAddArc(c, x0 + 11 * s, cy, rr, -0.85, 0.85, 0); CGContextStrokePath(c); }
+    CGContextRestoreGState(c);
+}
 void dm_loadpage_cg_flip(CGContextRef c, double h) { CGContextTranslateCTM(c, 0, h); CGContextScaleCTM(c, 1, -1); }   // 左下原点的上下文（Mac 位图）→ 左上原点 | bottom-left origin (Mac bitmap) → top-left origin
 // 整页：scr 为逻辑点尺寸与安全区；bg 可为 NULL | the whole page: scr in logical points with safe insets; bg may be NULL
 void dm_loadpage_cg_draw(CGContextRef c, CGImageRef bg, CGImageRef logo, const dm_lp_screen *scr, uint64_t now_ms) {
@@ -86,6 +101,7 @@ void dm_loadpage_cg_draw(CGContextRef c, CGImageRef bg, CGImageRef logo, const d
         set_rgb(c, DM_LP_COL_BAR_FILL, 1, 0); round_rect(c, L.bar_fill, L.bar_radius); CGContextFillPath(c); CGContextRestoreGState(c);
         CGContextSetRGBFillColor(c, 1, 0.78, 0.45, 0.55); CGContextFillRect(c, CGRectMake(L.bar_fill.x + 2, L.bar_fill.y + 1, L.bar_fill.w - 4 > 0 ? L.bar_fill.w - 4 : 0, 1)); CGColorSpaceRelease(cs);
     }
+    mute_icon(c, L.mute, dm_loadpage_muted());
     if (logo && L.logo.w > 0) { CGContextSaveGState(c); CGContextTranslateCTM(c, L.logo.x, L.logo.y + L.logo.h); CGContextScaleCTM(c, 1, -1);   // 字标图（透明 PNG）：等比居中 | wordmark (transparent PNG): aspect kept, centred
         CGContextSetInterpolationQuality(c, kCGInterpolationHigh); CGContextDrawImage(c, CGRectMake(0, 0, L.logo.w, L.logo.h), logo); CGContextRestoreGState(c); }
     else text_line(c, T.brand, L.brand, L.brand_pt, DM_LP_COL_TITLE, 0, 1, 1);   // 图读不到才退回文字字标 | text wordmark only when the image is unavailable
@@ -115,7 +131,7 @@ int dm_loadpage_cg_png(const char *path, CGImageRef bg, CGImageRef logo, const d
 #import <AVFoundation/AVFoundation.h>
 // iOS 视图：每 100 毫秒重画一次（进度条与「预计还要」才跟着走），进行中放音乐、完成 / 失败时淡出停掉。背景图只解码一次
 // iOS view: redraws every 100 ms (so the bar and "about … left" move), plays the music while running and fades it out on done / failure. The background is decoded once
-@interface DmLoadPageView : UIView @property (assign) CGImageRef bg; @property (assign) CGImageRef logo; @property (strong) NSTimer *timer; @property (strong) AVAudioPlayer *music; @property (assign) int musicOff; @end
+@interface DmLoadPageView : UIView @property (assign) CGImageRef bg; @property (assign) CGImageRef logo; @property (strong) NSTimer *timer; @property (strong) AVAudioPlayer *music; @property (assign) int musicOn; @property (strong) NSString *dir; @property (strong) UIButton *muteBtn; @end
 @implementation DmLoadPageView
 - (instancetype)initWithFrame:(CGRect)f {
     if (!(self = [super initWithFrame:f])) return nil;
@@ -126,22 +142,33 @@ int dm_loadpage_cg_png(const char *path, CGImageRef bg, CGImageRef logo, const d
     if (!self.bg) fprintf(stderr, "[dm] 【红】加载页：背景图 %s 读不到（包里没有 loadpage/ 目录？），画黑底\n", name);
     self.logo = dm_loadpage_cg_image([dir stringByAppendingPathComponent:@(dm_loadpage_logo_name(NULL, NULL))].fileSystemRepresentation);
     if (!self.logo) fprintf(stderr, "[dm] 【红】加载页：字标图读不到，退回文字字标\n");
+    self.dir = dir;
+    // 静音开关：玩家上次的选择（偏好 DMLoadPageMuted，缺省有声音）；透明按钮压在右上角的图标上，位置取公共布局 | mute toggle: the player's last choice (preference DMLoadPageMuted, sound on by default); a transparent button over the top-right icon, placed by the shared layout
+    dm_loadpage_set_muted([NSUserDefaults.standardUserDefaults boolForKey:@"DMLoadPageMuted"]);
+    self.muteBtn = [UIButton buttonWithType:UIButtonTypeCustom]; [self.muteBtn addTarget:self action:@selector(muteTap) forControlEvents:UIControlEventTouchUpInside]; [self addSubview:self.muteBtn]; [self muteLabel];
     __weak DmLoadPageView *w = self;
     self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *t) { DmLoadPageView *v = w; if (!v) { [t invalidate]; return; } [v tick]; }];
-    [self musicStart:dir];
+    [self tick];
     return self;
 }
-- (void)musicStart:(NSString *)dir {
-    if (getenv("DM_TEST_LOADPAGE_NOMUSIC")) return;
-    NSURL *u = [NSURL fileURLWithPath:[dir stringByAppendingPathComponent:@(dm_loadpage_music_name())]]; NSError *e = nil;
+- (dm_lp_layout)lay { UIEdgeInsets si = self.safeAreaInsets; dm_lp_screen s = { self.bounds.size.width, self.bounds.size.height, si.left, si.top, si.right, si.bottom }; dm_lp_layout L; dm_loadpage_layout(&s, &L); return L; }
+- (void)layoutSubviews { [super layoutSubviews]; dm_lp_layout L = [self lay]; self.muteBtn.frame = CGRectInset(CGRectMake(L.mute.x, L.mute.y, L.mute.w, L.mute.h), -12, -12); }
+- (void)muteLabel { self.muteBtn.accessibilityLabel = @(dm_loadpage_ui(dm_loadpage_muted() ? "dmLoadMusicOn" : "dmLoadMusicOff")); }
+- (void)muteTap { int m = dm_loadpage_toggle_muted(); [NSUserDefaults.standardUserDefaults setBool:m forKey:@"DMLoadPageMuted"]; [self muteLabel]; [self tick]; }
+- (AVAudioPlayer *)player {   // 第一次要放时才建 | created the first time music is wanted
+    if (self.music || getenv("DM_TEST_LOADPAGE_NOMUSIC")) return self.music;
+    NSURL *u = [NSURL fileURLWithPath:[self.dir stringByAppendingPathComponent:@(dm_loadpage_music_name())]]; NSError *e = nil;
     [AVAudioSession.sharedInstance setCategory:AVAudioSessionCategoryAmbient error:nil];   // 跟静音开关、不打断别的 App 的声音；进游戏后 front_ios.m 再改成游戏用的类别 | follows the mute switch and does not interrupt other apps' audio; front_ios.m switches to the game's category later
     self.music = [[AVAudioPlayer alloc] initWithContentsOfURL:u error:&e];
-    if (!self.music) { fprintf(stderr, "[dm] 加载页：音乐 %s 打不开（%s），不放\n", dm_loadpage_music_name(), e.localizedDescription.UTF8String ?: "?"); return; }
-    self.music.numberOfLoops = -1; self.music.volume = 0.55; [self.music prepareToPlay]; [self.music play];
+    if (!self.music) { fprintf(stderr, "[dm] 加载页：音乐 %s 打不开（%s），不放\n", dm_loadpage_music_name(), e.localizedDescription.UTF8String ?: "?"); return nil; }
+    self.music.numberOfLoops = -1; self.music.volume = 0; [self.music prepareToPlay]; return self.music;
 }
+// 音乐跟着「该不该放」走（进行中且没静音）：要放就淡入 0.6 秒，不要就淡出 0.6 秒后暂停（再打开从原处接着放） | the music follows "should it play" (running and not muted): fade in over 0.6 s when wanted, fade out over 0.6 s then pause when not (turning it on again resumes where it was)
 - (void)tick {
-    if (self.music && !self.musicOff && !dm_loadpage_music_wanted()) { self.musicOff = 1; [self.music setVolume:0 fadeDuration:1.2]; AVAudioPlayer *m = self.music;
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.4 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [m stop]; }); }
+    int want = dm_loadpage_music_wanted();
+    if (want && !self.musicOn) { AVAudioPlayer *m = [self player]; if (m) { self.musicOn = 1; [m play]; [m setVolume:0.55 fadeDuration:0.6]; } }
+    else if (!want && self.musicOn) { self.musicOn = 0; AVAudioPlayer *m = self.music; [m setVolume:0 fadeDuration:0.6];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ if (!self.musicOn) [m pause]; }); }
     [self setNeedsDisplay];
 }
 - (void)drawRect:(CGRect)r {
