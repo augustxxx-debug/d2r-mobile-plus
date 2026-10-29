@@ -5,6 +5,7 @@
 #include "dm_crashfence.h"
 #include "dm_uctx.h"
 #include "dm_hud.h"
+#include "dm_ingame.h"
 #include "dm_cursor.h"
 #include "dm_hud_exp.h"
 #include "dm_elysium.h"
@@ -1224,12 +1225,12 @@ static void c2s_obs(const uint64_t *regs) {
 // 没有活的局号 ⇒ 局已结束（存盘退出、致命错误踢出等任何路径），G 已不可读：清 g_lastG。离局后拍号是固定垃圾值
 // Whether we are in a run: the server run loop 0x5d5120 walks 1024 run-number slots starting at main+0x2d665d8 (0 / -1 = empty), looks up the run object by run number, and calls the tick entry 0x5d3bc0 with object+0x10 as G.
 // No live run number ⇒ the run has ended (save-and-exit, kicked by a fatal error, or any other path) and G is no longer readable: clear g_lastG. After leaving a run the tick number is a fixed garbage value
-static int game_live(void) {
+static const uint64_t *run_slots(void) {
     static const uint64_t *slots;
-    if (!slots) { for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) slots = (const uint64_t *)(g_mod[i].base + 0x2d665d8); if (!slots) return 1; }
-    for (int i = 0; i < 0x400; i++) if (slots[i] + 1 >= 2) return 1;
-    return 0;
+    if (!slots) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) slots = (const uint64_t *)(g_mod[i].base + 0x2d665d8);
+    return slots;
 }
+static int game_live(void) { return dm_run_live(run_slots()); }
 static int in_game(void) { if (g_lastG && !game_live()) g_lastG = 0; return g_lastG != 0; }
 // 让游戏现在就走一次它自己的定时自动存盘（前端进后台时调）：游戏每拍在拍入口函数（main+0x5d3bc0，G = 第一个参数）里判
 // 「现在 − 上次存盘时刻 [G+0x5800]（毫秒）> 300000」就把本局全部玩家序列化存盘并提交（main+0x5d4284–0x5d4c20）。原版没有「按 HOME / 进后台存盘」这条路
@@ -1554,7 +1555,7 @@ static void hold_on_uimsg(const char *cat, const char *act, const char *arg) {
 #include <sys/stat.h>
 #include <time.h>
 int dm_thermal_now(void);
-int dm_ingame_now(void) { dm_hud_info h; dm_hud_get(&h); return h.valid; }   // 当前是否在局内（读到受控玩家）：动态 3D 比例只在局内判 | Whether we are in a run right now (the controlled player was read): the dynamic 3D scale is only evaluated in a run
+int dm_ingame_now(void) { dm_hud_info h; dm_hud_get(&h); return dm_ingame_from(h.valid, run_slots()); }   // 快照有效且局号槽里有活局（dm_ingame.h：离局后快照不再更新） | snapshot valid and a live run in the run-number slots (dm_ingame.h: the snapshot stops updating after leaving a run)   // 当前是否在局内（读到受控玩家）：动态 3D 比例只在局内判 | Whether we are in a run right now (the controlled player was read): the dynamic 3D scale is only evaluated in a run
 // ---- 长帧日志：hle_nvn.c 在某帧 > 20 ms（或 GPU > 16.7 ms）时调一次；这里补上「读取画面是否盖着 / 当前面板 / 区域号」，
 // 写进 boot.txt（LOG）并追加到 perf.txt（行首「长帧」，与每 10 秒的汇总行同一文件，实玩后取回能直接看见卡在哪一帧、卡在什么上）----
 // ---- Long-frame log: hle_nvn.c calls this once when a frame is > 20 ms (or GPU > 16.7 ms); this adds "whether the loading screen is covering / current panel / area number",
