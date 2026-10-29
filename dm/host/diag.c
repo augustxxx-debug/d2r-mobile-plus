@@ -462,6 +462,7 @@ void probe_install(void) {
     if (gate_obs_present(OBS_SETLANG)) gate_obs_set(OBS_SETLANG, setlang_obs);
     if (gate_obs_present(OBS_EVENT_MSG)) gate_obs_set(OBS_EVENT_MSG, event_msg_obs);
     { void dm_ui_tooltip_obs(const uint64_t *regs); if (gate_obs_present(OBS_TOOLTIP)) gate_obs_set(OBS_TOOLTIP, dm_ui_tooltip_obs); }   // 说明框停靠（dm_cursor.c） | tooltip docking (dm_cursor.c)
+    { void render_gate_install(void); render_gate_install(); }   // 渲染每帧入口：冻结 + 界面当帧换算（见 render_obs） | render per-frame entry: freezing + same-frame UI conversion (see render_obs)
     const char *ui = getenv("DM_UIMSG");
     if (ui && strcmp(ui, "1") && !(g_uifp = fopen(ui, "w"))) die("DM_UIMSG 打不开 %s", ui);
     g_ui_print = ui != NULL;
@@ -1685,11 +1686,16 @@ void dm_freeze_frame(int want) { static int idle;
     if (!atomic_load(&g_dm_frozen) || !atomic_load(&g_frz_by_panel) || want) { idle = 0; return; }
     if (++idle < 10) return; idle = 0; atomic_store(&g_dm_frozen, 0); atomic_store(&g_frz_by_panel, 0); if (mtl_world_frozen) mtl_world_frozen(0);
     LOG("面板冻结：解冻（面板已不在屏上而拍入口没在走：原版暂停 / 退出 / 换角色）"); }
+// 门 13（渲染每帧入口）两家共用，常挂：冻结那一份只在冻着时动（freeze_render_obs 自己看 g_dm_frozen）；界面那一份把 NPC 对话菜单的位置换算赶在第一次上屏之前（dm_cursor.c ui_npcdlg_pump）
+// Gate 13 (render per-frame entry) is shared and always attached: the freezing part only acts while frozen (freeze_render_obs checks g_dm_frozen itself); the UI part gets the
+// NPC dialog menu's position conversion done before its first time on screen (dm_cursor.c ui_npcdlg_pump)
+static void render_obs(const uint64_t *rc) { freeze_render_obs(rc); void dm_ui_render_entry(void); dm_ui_render_entry(); }
+void render_gate_install(void) { if (gate_obs_present(OBS_FREEZE_RENDER)) gate_obs_set(OBS_FREEZE_RENDER, render_obs); }
 static int g_frz_on;   // 四个冻结入口门已挂上（freeze_attach） | The four freeze entry gates are attached (freeze_attach)
 static int freeze_attach(void) {   // 挂冻结用的四个入口门（产物里有门 10–13 才行），挂过就不再挂。返回 1 = 能冻 | Attach the four entry gates used for freezing (needs gates 10–13 in the product); attached only once. Returns 1 = can freeze
     static int tried; if (tried) return g_frz_on; tried = 1;
     g_frz_on = gate_obs_present(OBS_FREEZE_WORLD) && gate_obs_present(OBS_FREEZE_CLIENT) && gate_obs_present(OBS_FREEZE_ANIM) && gate_obs_present(OBS_FREEZE_RENDER);
-    if (g_frz_on) { gate_obs_set(OBS_FREEZE_WORLD, freeze_world_obs); gate_obs_set(OBS_FREEZE_CLIENT, freeze_client_obs); gate_obs_set(OBS_FREEZE_ANIM, freeze_anim_obs); gate_obs_set(OBS_FREEZE_RENDER, freeze_render_obs); }
+    if (g_frz_on) { gate_obs_set(OBS_FREEZE_WORLD, freeze_world_obs); gate_obs_set(OBS_FREEZE_CLIENT, freeze_client_obs); gate_obs_set(OBS_FREEZE_ANIM, freeze_anim_obs); gate_obs_set(OBS_FREEZE_RENDER, render_obs); }
     return g_frz_on;
 }
 // 暂停菜单开着进后台时存一次盘：原版单机暂停时游戏不走拍，前端请的那次存盘要等下一拍，进后台 2.5 秒等不到（10142104 日志 4 次），

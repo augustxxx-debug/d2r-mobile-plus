@@ -55,6 +55,7 @@ RC2 merges the iOS and Android lines: one tree, and both packages come from the 
 - **Touch: the "Join the community" box responds at all three entries** (RC1.1 on-device B058): main menu, pause menu and Options → Custom → About. View / Copy / OK are hit even where the original hit-test gives the box no size, and a small finger drift while the box is open no longer turns into front-end scrolling.
 - **Touch portal button: the badge counts only what pressing it can use** (B062): tomes with charges and scrolls in the first inventory page and the belt; stash and Horadric Cube contents are no longer counted, so the badge never shows a portal the button cannot open.
 - **Auto-potion no longer swallows a portal press in the same tick** (B063): when health and mana potions fire automatically on the tick you press the portal button, the portal request is kept and the potion waits for the next tick.
+- Fixed: on the iPhone Duo inner screen (and other screens narrower than 16:9), talking to an NPC (Warriv, Akara, ...) showed the dialog menu over the NPC for one frame before it jumped above the head, which looked like the dialog box flashing. The menu position is now converted before it is first shown. 16:9 and tall screens were never affected.
 
 ## [1.0.0-rc1.1] - 2026-10-30
 

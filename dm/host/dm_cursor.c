@@ -2483,7 +2483,19 @@ static void ui_trove_tabs_pump(module_t *m, uint64_t root, uint64_t fr) {
 // so the menu ends up lower relative to the NPC (above the NPC at 16:9, on top of its body in true fullscreen). Where it should be: x' = x·H/600 + (W − 800·H/600)/2, y' = y·H/600 − UI rect y;
 // what the game computes is x·h/600 + (W − 800·h/600)/2 and y·h/600. Replace the classic coordinates with values that "land exactly at the intended position after going through the game's algorithm": x → 400 + (x − 400)·H/h, y → (y·H/600 − UI rect y)·600/h.
 // The classic coordinates are written by the game only once when the menu opens (0x3d9e08 / 0x3d9e14); "the game just wrote it" is recognized as = the value is not what we last wrote. When the intended position is above the UI rect (negative y) the game clamps it back to 0, i.e. flush with the top edge of the UI rect.
-static void ui_npcdlg_pump(uint64_t root) {
+// 换算要赶在菜单第一次上屏之前：原版在同一帧里建对话请求 → 装内容（main+0x3d9d68，写经典坐标、置 +0x239、当场调 0x3dab64 按经典坐标算出面板矩形）→ 画。
+// 取手柄处（dm_ui_mouse_pump）在这一帧开头，那时请求和坐标都还没有，只能下一帧换算，第一帧菜单就落在原版位置、下一帧跳到 NPC 头顶（Duo 内屏上看着是对话框闪一下：
+// 瓦瑞夫、阿卡拉…所有 NPC 都有，16:9 / 长屏不走这里所以没有）。所以在渲染每帧入口（观测门 13，diag.c render_obs：界面已更新完、还没画）再跑一次，now = 1：
+// 换完当场调原版 0x3dab64 按新坐标重算矩形，第一帧就在头顶。OpenPanel 消息到达时面板和请求都还不在（实测），在那里换不了。取手柄处那一路留着兜底（没有门 13 的产物）
+// The conversion must land before the menu is first shown: in one frame the game builds the dialog request → fills the panel (main+0x3d9d68: writes the classic coordinates,
+// sets +0x239 and calls 0x3dab64 right there to compute the panel rect from them) → draws. The controller-fetch site (dm_ui_mouse_pump) runs at the start of the frame, before
+// the request and coordinates exist, so it could only convert on the next frame: the first frame showed the menu at the game's position and the next one jumped above the NPC
+// (on the Duo inner screen the dialog box seemed to flash: Warriv, Akara... every NPC; 16:9 / tall screens do not take this path). So it runs again at the render per-frame entry
+// (observation gate 13, diag.c render_obs: UI updated, not yet drawn) with now = 1: after converting it calls the game's 0x3dab64 to recompute the rect from the new
+// coordinates, so the first frame is already above the head. When the OpenPanel message arrives neither the panel nor the request exists yet (measured), so it cannot be done
+// there. The controller-fetch path stays as the fallback (builds without gate 13)
+static void (*g_npcdlg_place)(uint64_t);   // 只给单测换掉原版的按坐标摆位 0x3dab64（tests/t_npcdlg_first_frame.c）；产品里恒为空 | lets the unit test stand in for the game's 0x3dab64; always null in the product
+static void ui_npcdlg_pump(uint64_t root, int now) {
     static dm_wref pw; static int ox, oy; int rx, ry, rw, rh, W = 0, H = 0; dm_ui_rect(&rx, &ry, &rw, &rh);
     if (!dm_uiscreen_ingame() || !dm_screen_real(&W, &H) || rh <= 0 || rh >= H) { dm_wref_set(&pw, 0); return; }
     uint64_t ch = *(uint64_t *)(root + 0x58), n = *(uint64_t *)(root + 0x60), p = 0;
@@ -2491,7 +2503,13 @@ static void ui_npcdlg_pump(uint64_t root) {
     if (!p || *(uint8_t *)(p + 0x238)) { dm_wref_set(&pw, 0); return; }   // +0x238 = 给的已是屏幕坐标，不经这套换算 | +0x238 = the given values are already screen coordinates and do not go through this conversion
     int32_t *f = (int32_t *)(p + 0x220), off = *(int32_t *)(p + 0x228); if ((p == dm_wref_get(&pw) && f[0] == ox && f[1] == oy) || (!f[0] && !f[1])) return;   // 已换过；或还没给坐标（菜单没开） | Already converted; or no coordinates given yet (menu not open)
     double lx = f[0], ly = f[1] - off; int nx = (int)lround(400 + (lx - 400) * H / rh), ny = (int)lround((ly * H / 600.0 - ry) * 600.0 / rh) + off;
-    LOG("NPC 对话菜单：经典坐标 (%d,%d) → (%d,%d)（应有位置 真实画面 y %.0f）", f[0], f[1], nx, ny, ly * H / 600.0); f[0] = ox = nx; f[1] = oy = ny; dm_wref_set(&pw, p); *(uint8_t *)(p + 0x239) = 1;
+    LOG("NPC 对话菜单：经典坐标 (%d,%d) → (%d,%d)（应有位置 真实画面 y %.0f；%s）", f[0], f[1], nx, ny, ly * H / 600.0, now ? "渲染入口，当帧重算矩形" : "取手柄处，下一帧生效");
+    f[0] = ox = nx; f[1] = oy = ny; dm_wref_set(&pw, p); *(uint8_t *)(p + 0x239) = 1;
+    if (now) { module_t *m = main_module(); void (*place)(uint64_t) = g_npcdlg_place ? g_npcdlg_place : m ? (void (*)(uint64_t))(m->base + 0x3dab64) : 0; if (place) place(p); }
+}
+void dm_ui_render_entry(void) {   // 渲染每帧入口（观测门 13，游戏主线程；diag.c render_obs） | render per-frame entry (gate 13, game main thread; diag.c render_obs)
+    module_t *m = main_module(); uint64_t root = 0; if (m) memcpy(&root, m->base + 0x2f05458, 8);
+    if (root) ui_npcdlg_pump(root, 1);
 }
 // 游戏态点世界的入口（前端每次点世界都走这里）：先看这一下是不是点在左上角佣兵头像上——是 = 开佣兵页（新入口），这一下不再交给世界点选；
 // 开法 = 替玩家按 + 开功能页、再按 R 翻到佣兵页签（ui_mercpg_pump）。不调原版键鼠的「切换佣兵页」0x36a190：它开出来的是键鼠版独立面板，没有页签条、点面板外不关（本机实测）
@@ -3209,7 +3227,7 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
                 else fix = 0; }
             if (th) { ui_auto_key(th); tnext = fr + 8; } } } }
     { module_t *pm = main_module(); uint64_t proot = 0; if (pm) { memcpy(&proot, pm->base + 0x2f05458, 8); int32_t pw = *(int32_t *)(pm->base + 0x211da38), phh = *(int32_t *)(pm->base + 0x211da3c);
-        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_window_edges_pump(proot); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_trove_tabs_pump(pm, proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm, proot); ui_map_geom_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); ui_widestash_pump(proot); mv_audit_pump(proot, fr); ui_pages_pump(pm, proot); } } }
+        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_window_edges_pump(proot); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_trove_tabs_pump(pm, proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm, proot); ui_map_geom_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot, 0); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); ui_widestash_pump(proot); mv_audit_pump(proot, fr); ui_pages_pump(pm, proot); } } }
     if (atomic_load(&g_fe_name_open) && atomic_load(&g_ut_phase) == 2) {   // 起名页：点输入框（底板 / 文本框）= 重新弹系统键盘，不发鼠标点击 | naming page: tapping the input box (backplate / text box) = pop up the system keyboard again, no mouse click is sent
         module_t *nm = main_module(); uint64_t nroot = 0; if (nm) memcpy(&nroot, nm->base + 0x2f05458, 8); uint64_t pn = nroot ? ui_find(nroot, "CharacterCreateNamePanel", 0) : 0;
         if (pn && nm) { int32_t w = *(int32_t *)(nm->base + 0x211da38), h = *(int32_t *)(nm->base + 0x211da3c); uint64_t v = atomic_load(&g_ut_xy);

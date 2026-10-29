@@ -54,6 +54,7 @@ run: \
 	$(B)/t_pan \
 	$(B)/t_loadpage_race \
 	$(B)/t_minimap_lift \
+	$(B)/t_npcdlg_first_frame \
 	$(B)/t_loader_weak \
 	$(B)/t_mac_overlay \
 	$(B)/t_modetx \
@@ -200,6 +201,7 @@ run: \
 	$(B)/t_hud_dead
 	$(B)/t_namegen
 	$(B)/t_minimap_lift
+	$(B)/t_npcdlg_first_frame
 	$(B)/t_widestash_restore
 	$(B)/t_modetx
 	$(B)/t_b036
@@ -249,6 +251,8 @@ $(B)/t_padmap: t_padmap.c ../dm_padmap.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_padmap.c
 $(B)/t_minimap_lift: t_minimap_lift.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_minimap_lift.c
+$(B)/t_npcdlg_first_frame: t_npcdlg_first_frame.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_npcdlg_first_frame.c
 $(B)/t_widestash_restore: t_widestash_restore.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_widestash_restore.c
 $(B)/t_modetx: t_modetx.c ../dm_modetx.h | $(B)
