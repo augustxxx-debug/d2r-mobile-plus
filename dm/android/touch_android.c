@@ -406,10 +406,10 @@ void dm_android_touch_layout(float out[DM_ANDROID_TOUCH_DRAW_FLOATS]) {
         if (g.status==DM_TA_GLYPH && dm_ta_frame_at(g.atlas,held?g.pressed_frame:g.normal_frame,&frame)) {
             p[2]=frame.x; p[3]=frame.y; p[4]=frame.width; p[5]=frame.height;
             if (g.slot>=0) { int charges=0; p[6]=dm_swapskill_slot(g.slot,&charges); p[7]=charges; }
-            /* 免费回城关着（自定义页 free_tp，缺省关）：回城钮用身上的回城书 / 卷轴，右下角标剩余次数（书的次数 + 卷轴张数，HUD 的 portal），用完变灰——同充能技能那套画法（同 iOS DmTouchOverlay）
+            /* 免费回城关着（自定义页 free_tp，缺省关）：回城钮用身上的回城书 / 卷轴，右下角标剩余次数（背包里书的次数 + 背包和腰带的卷轴张数，HUD 的 portal_use），用完变灰——同充能技能那套画法（同 iOS DmTouchOverlay）
                Free town portal off (Custom page free_tp, off by default): the portal button uses the tome / scroll on the player, the badge shows what is left (tome charges +
-               scrolls, the HUD's portal) and the button greys out at zero, drawn like a charged skill (as iOS DmTouchOverlay) */
-            if (i==5) { int dm_freetp_enabled(void); if (!dm_freetp_enabled()) { p[6]=2; p[7]=h.portal; } }
+               scrolls in the inventory and belt, the HUD's portal_use) and the button greys out at zero, drawn like a charged skill (as iOS DmTouchOverlay) */
+            if (i==5) { int dm_freetp_enabled(void); if (!dm_freetp_enabled()) { p[6]=2; p[7]=h.portal_use; } }
         }
     }
     float *hud=out+DM_ANDROID_TOUCH_HUD;
