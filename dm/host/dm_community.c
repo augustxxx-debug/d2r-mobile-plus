@@ -385,8 +385,8 @@ static void co_origin(uint64_t p, int xr, int *ox, int *oy, float *s) {
 #define CO_GAP 60
 #define CO_ROWS 2
 #define CO_CARD_W 1480
-#define CO_BTN_W 256   // 原版前端小按钮 366×92 × 0.7 | the original small front-end button 366×92 × 0.7
-#define CO_BTN_H 64
+#define CO_BTN_W 293   // 原版前端小按钮 366×92 × 0.8（0.7 时俄文「Скопировано」贴满按钮） | the original small front-end button 366×92 × 0.8 (at 0.7 the Russian "Copied" filled it edge to edge)
+#define CO_BTN_H 74
 #define CO_LABEL_W 260
 #define CO_VALUE_X (-420)
 #define CO_VALUE_W (CO_CARD_W / 2 - 30 - CO_BTN_W - 30 - CO_VALUE_X)   // 值列：起点 −420，到小按钮左边留 30 | value column: from −420 to 30 left of the small button

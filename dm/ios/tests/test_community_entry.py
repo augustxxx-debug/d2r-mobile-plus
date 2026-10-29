@@ -54,7 +54,7 @@ def rect_y(text, name):
 BOX = (['TouchCommTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchCommTitle']
        + ['TouchComm%s%d' % (w, k) for k in range(2) for w in ('Label', 'Value', 'Copy', 'CopyText')] + ['TouchCommCard%d%s' % (k, e) for k in range(2) for e in 'TBLR']
        + ['TouchCommFree', 'TouchCommDivider', 'TouchCommFoot0', 'TouchCommFoot0R', 'TouchCommFoot1', 'TouchCommOk'] + ['TouchCommFocus%s' % e for e in 'TBLR'])
-CO_LABEL_W, CO_BTN_W, CO_CARD_W = 260, 256, 1480   # 同 dm_community.c | as dm_community.c
+CO_LABEL_W, CO_BTN_W, CO_CARD_W = 260, 293, 1480   # 同 dm_community.c | as dm_community.c
 
 
 def box_ok(tc, out, where):   # 社区 / 关于弹窗（RC1.1 重构）：42 个控件屏外起步、不带锚点；§2.6 三级——标题 48 GoldYellow / 值 36 LightGold / 标签、按钮字、声明、页脚 28 | RC1.1 box: 42 widgets off screen, no anchor; three levels per §2.6
@@ -71,7 +71,7 @@ def box_ok(tc, out, where):   # 社区 / 关于弹窗（RC1.1 重构）：42 个
     style('TouchCommTitle', 48, '$FontColorGoldYellow', 'center'); style('TouchCommFree', 28, '$FontColorGoldYellow', 'center')
     for k in range(2):
         style('TouchCommLabel%d' % k, 28, '$FontColorLightGray', 'left'); style('TouchCommValue%d' % k, 36, '$FontColorLightGold', 'left'); style('TouchCommCopyText%d' % k, 28, '$LightButtonTextColor', 'center')
-        tc.assertIn('"name": "TouchCommCopy%d", "fields": { "rect": { "x": 99999, "y": 99999, "scale": 0.7 }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonSmall"' % k, out)
+        tc.assertIn('"name": "TouchCommCopy%d", "fields": { "rect": { "x": 99999, "y": 99999, "scale": 0.8 }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonSmall"' % k, out)
         for e in 'TBLR': tc.assertIn('"name": "TouchCommCard%d%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 4, "height": 4 }, "filename": "Ztouch_comm/rule_%s" }' % (k, e, 'h' if e in 'TB' else 'v'), out)
     for e in 'TBLR': tc.assertIn('"name": "TouchCommFocus%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 4, "height": 4 }, "filename": "Ztouch_comm/focus_%s" }' % (e, 'h' if e in 'TB' else 'v'), out)
     for name in ('TouchCommFoot0', 'TouchCommFoot1'): style(name, 28, '$FontColorLightGray', 'left')
@@ -241,8 +241,8 @@ class Text(unittest.TestCase):
         rows = {r[0]: r[1:] for r in dm_i18n.rows()}
         langs = ('中文', 'English', 'Español', 'Español MX', 'Русский', '한국어')
         sample = {'dmAboutVersion': '1.0.0-rc1+1793254654 · a2bb5c3'}
-        # 弹窗（RC1.1 重构）按列宽核：标签列 260、小「复制」钮 256（字左右各留 10）、声明与标题框内 1560、页脚左 880（版本）/ 右 560（制作 + 名字）/ 第二行 1480（特别鸣谢 + 名字 + 说明）
-        # the redesigned box by column: label 260, small Copy 256 (10 margin each side), notice and title 1560, footer left 880 (version) / right 560 (maker + name) / second line 1480 (special + name + note)
+        # 弹窗（RC1.1 重构）按列宽核：标签列 260、小「复制」钮 293（字左右各留 10）、声明与标题框内 1560、页脚左 880（版本）/ 右 560（制作 + 名字）/ 第二行 1480（特别鸣谢 + 名字 + 说明）
+        # the redesigned box by column: label 260, small Copy 293 (10 margin each side), notice and title 1560, footer left 880 (version) / right 560 (maker + name) / second line 1480 (special + name + note)
         for key, pt, limit, tail in (('dmCommunityTitle', 48, BOX_W, ''), ('dmCommunityAbout', 48, BOX_W, ''), ('dmCommunityLabelQq', 28, CO_LABEL_W, ''), ('dmCommunityLabelSite', 28, CO_LABEL_W, ''), ('dmCommunityLabelGithub', 28, CO_LABEL_W, ''),
                                ('dmCommunityCopy', 28, CO_BTN_W - 20, ''), ('dmCommunityCopied', 28, CO_BTN_W - 20, ''), ('dmCommunityCopyFailShort', 28, CO_BTN_W - 20, ''), ('dmLoadCommFree', 28, BOX_W, ''),
                                ('dmAboutVersion', 28, 880, ''), ('dmCreditsMaker', 28, 560, ' Augustus'), ('dmCreditsSpecial', 28, CO_CARD_W, ' jhaizhou-ops'),

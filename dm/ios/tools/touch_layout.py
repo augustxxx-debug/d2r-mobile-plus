@@ -307,10 +307,10 @@ def _co_text(name, size, color, align='center', width=1700, height=60):   # 提�
             '"style": { "pointSize": %d, "fontColor": "%s", "alignment": { "h": "%s", "v": "center" }, "spacing": "$ReducedSpacing", "dropShadow": "$DefaultDropShadow" } } },\n') % (name, width, height, size, color, align)
 def _co_line(name, file):   # 线条片（卡片边框 / 手柄焦点框）：我们自己的单色单帧切片，宿主 co_line 改绘制尺寸 | line slice (card border / controller focus frame): our own one-colour slice, sized by the host's co_line
     return '        { "type": "ImageWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 4, "height": 4 }, "filename": "Ztouch_comm/%s" } },\n' % (name, file)
-def _co_copy(k):   # 每行渠道自己的小「复制」：原版前端小按钮 366×92 × 0.7 = 256×64，字由上面叠的文字框写（宿主换成「已复制 / 复制失败」2 秒） | each row's small Copy: the original small front-end button × 0.7; its text is the box on top (Copied / Copy failed for 2 s)
-    return ('        { "type": "ButtonWidget", "name": "TouchCommCopy%d", "fields": { "rect": { "x": 99999, "y": 99999, "scale": 0.7 }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonSmall", '
+def _co_copy(k):   # 每行渠道自己的小「复制」：原版前端小按钮 366×92 × 0.8 = 293×74，字由上面叠的文字框写（宿主换成「已复制 / 复制失败」2 秒） | each row's small Copy: the original small front-end button × 0.8; its text is the box on top (Copied / Copy failed for 2 s)
+    return ('        { "type": "ButtonWidget", "name": "TouchCommCopy%d", "fields": { "rect": { "x": 99999, "y": 99999, "scale": 0.8 }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonSmall", '
             '"onClickMessage": "PanelManager:ClosePanel:TouchCommCopy%d", "sound": "cursor_menu_select_hd", "pressedFrame": 1, "disabledFrame": 2, "hoveredFrame": 3 } },\n' % (k, k)
-            + _co_text('TouchCommCopyText%d' % k, 28, '$LightButtonTextColor', width=256, height=60))
+            + _co_text('TouchCommCopyText%d' % k, 28, '$LightButtonTextColor', width=293, height=60))
 # 社区 / 关于弹窗（RC1.1 重构，用户 2026-10-30「同意 很好」；设计说明 dm-work/run/xpline/design/）：边框 15 片 + 标题 48 → 渠道卡片两行（细边框 + 标签 28 LightGray / 值 36 LightGold /
 # 各自的小「复制」）→ 免费声明 28 GoldYellow → 分隔线 → 页脚两行 28 LightGray（版本 + 制作；特别鸣谢）→ 一颗「确定」；手柄焦点框（金色线条片）。全部屏外起步、字空着，宿主按渠道行数摆位（dm_community.c co_geom）
 # Community / About box (RC1.1 redesign): 15 frame tiles + title 48 → two channel cards (thin border + label 28 LightGray / value 36 LightGold / own small Copy) → free notice 28 GoldYellow

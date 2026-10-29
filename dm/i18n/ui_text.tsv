@@ -506,8 +506,8 @@ dmCommunityTitle	加入社区讨论	Join the community	Unirse a la comunidad		С
 dmCommunityLabelQq	QQ 群	QQ	QQ		QQ	QQ	社区 / 关于弹窗渠道卡片的标签列（28 号 LightGray；RC1.1 重构）：QQ 群（只在中文界面出现）
 dmCommunityLabelSite	官网	Website	Sitio web		Сайт	웹사이트	渠道卡片标签：项目官网（清单 community.site；值行去掉 https:// 与末尾 /，复制完整网址）
 dmCommunityLabelGithub	GitHub	GitHub	GitHub		GitHub	GitHub	渠道卡片标签：GitHub（清单 community.github；值行只显示仓库名，复制完整网址）
-dmCommunityCopy	复制	Copy	Copiar		Копировать	복사	渠道卡片各自的小「复制」按钮字（28 号，原版前端小按钮 × 0.7，宽 256；dm_community.c）
-dmCommunityCopyFailShort	复制失败	Failed	Error		Ошибка	실패	小「复制」按钮上复制失败时的字，留 2 秒（按钮宽 256，按 §2.6 估宽放得下的短词）
+dmCommunityCopy	复制	Copy	Copiar		Копировать	복사	渠道卡片各自的小「复制」按钮字（28 号，原版前端小按钮 × 0.8，宽 293；dm_community.c）
+dmCommunityCopyFailShort	复制失败	Failed	Error		Ошибка	실패	小「复制」按钮上复制失败时的字，留 2 秒（按钮宽 293，按 §2.6 估宽放得下的短词）
 dmLoadCommFree	本软件免费，付费购买均为倒卖	This app is free. If you paid for it, it was resold	Esta app es gratis; si pagaste por ella, es reventa		Приложение бесплатно; платные копии — перепродажа	이 앱은 무료이며, 유료 판매는 모두 재판매입니다	免费声明：社区 / 关于弹窗渠道卡片下一行（28 号 GoldYellow）；同键同文与加载页分支（feat/loadpage，加载页底部社区第二行）共用
 dmCommunityCopied	已复制	Copied	Copiado		Скопировано	복사됨	小「复制」按钮上复制成功后的字，留 2 秒（dm_community.c）
 dmCreditsTitle	鸣谢	Credits	Créditos		Благодарности	감사의 말	自定义页「关于」组社区行之后的「鸣谢」子块标题（标题级 GoldYellow；touch_layout.py _custom_about，名单由宿主 dm_community.c 按语言拼）
