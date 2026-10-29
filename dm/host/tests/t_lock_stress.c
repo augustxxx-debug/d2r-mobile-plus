@@ -5,6 +5,8 @@
 //   第 1 段：自然争抢 LOCK_STRESS_SEC 秒（缺省 3），要求互斥不破、全程不停顿；
 //   第 2 段：用钩子 dm_test_drop_wakes 让接下来 3 次唤醒「信号丢失」（系统丢信号的确定性复现），要求 1.5 秒内照样有进展（等待按时间片自查 woke，丢了也能自己醒）。
 // 两份构建：t_lock_stress（现行：必须全过）与 t_lock_stress_old（-DDM_TEST_NO_WAKE_SLICE 去掉时间片自查，第 2 段必须判出卡死 = 负对照有效）。
+// 第 2 段另起一个线程每 1 ms 不持锁读自愈计数 dm_hle_lost_wake_recoveries()（十五审 Q15-I01：计数原先是普通变量、持 G 加、不持 G 原子读 = 数据竞争）；
+// t_lock_stress_tsan 用 TSan 构建、报竞争即失败（halt_on_error=1）。
 // Lock handoff stress unit test (RC1 blocker: occasional in-run hang "stuck in MonsterHealth:ClearInfo").
 // Evidence (Mac 71b14f0 a-71-rt1, Duo 6c8d67e D/E_hint*_120): the lock word was handed to the waiter (0x40001001) and the waiter reads "running / not waiting" (woke=1, wkind=0),
 // yet it still sits in __psynch_cvwait (its own condition variable, host global lock G) - all host-side logic runs under G, so the OS layer lost that condition-variable signal and the waiter never wakes.
@@ -12,6 +14,8 @@
 //   part 1: natural contention for LOCK_STRESS_SEC seconds (default 3), mutual exclusion must hold and progress must never stall;
 //   part 2: the hook dm_test_drop_wakes makes the next 3 wake-ups "lose their signal" (a deterministic stand-in for the OS dropping it); progress must resume within 1.5 s (waits re-check woke every time slice, so a lost signal still wakes).
 // Two builds: t_lock_stress (current: must fully pass) and t_lock_stress_old (-DDM_TEST_NO_WAKE_SLICE removes the time-slice re-check; part 2 must detect the hang = the negative control is valid).
+// In part 2 a separate thread reads the recovery counter dm_hle_lost_wake_recoveries() every 1 ms without the lock (review 15 Q15-I01: the counter used to be a plain variable incremented under G and read atomically without G = a data race);
+// t_lock_stress_tsan builds this under TSan and fails on any race report (halt_on_error=1).
 #include "../dm.h"
 #include <pthread.h>
 #include <stdatomic.h>
@@ -56,6 +60,11 @@ static void *worker(void *a) {
     }
     return NULL;
 }
+static void *poller(void *a) {   // 不持锁轮询自愈计数（诊断接口的真实用法：别的线程随时读）| poll the recovery counter without the lock (the diagnostic interface's real use: any thread reads it at any time)
+    (void)a; uint64_t last = 0;
+    while (!atomic_load(&g_stop)) { uint64_t n = dm_hle_lost_wake_recoveries ? dm_hle_lost_wake_recoveries() : 0; if (n < last) atomic_fetch_add(&g_violations, 1); last = n; usleep(1000); }
+    return NULL;
+}
 // 观察 sec 秒：任何一段 stall_ms 毫秒没有进展就算卡死，返回 0 | watch for sec seconds: any stretch of stall_ms without progress is a hang, returns 0
 static int watch(double sec, int stall_ms, uint64_t *done) {
     uint64_t last = atomic_load(&g_progress); int idle = 0;
@@ -73,6 +82,7 @@ int main(void) {
     uint64_t n1 = 0, n2 = 0;
     int ok1 = watch(sec, 1500, &n1) && atomic_load(&g_violations) == 0;
     printf("%s 第 1 段 自然争抢 %.0f 秒：%d 线程共 %llu 次加解锁，互斥破坏 %d 次，%s\n", ok1 ? "✓" : "✗", sec, NW, (unsigned long long)n1, atomic_load(&g_violations), ok1 ? "全程有进展" : "出现 1.5 秒无进展");
+    pthread_t pl; pthread_create(&pl, NULL, poller, NULL);
     __atomic_store_n(&dm_test_drop_wakes, 3, __ATOMIC_RELEASE);
     int ok2 = watch(2, 1500, &n2) && __atomic_load_n(&dm_test_drop_wakes, __ATOMIC_ACQUIRE) == 0;
     uint64_t rec = dm_hle_lost_wake_recoveries ? dm_hle_lost_wake_recoveries() : 0;

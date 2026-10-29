@@ -20,6 +20,7 @@
 // All waits hang on one global lock G, with one condition variable per thread; correctness first, performance to be measured later.
 #include "dm.h"
 #include <errno.h>
+#include <stdatomic.h>
 #include <sched.h>
 #include <signal.h>
 #include <sys/mman.h>
@@ -155,8 +156,10 @@ static int64_t block(thr_t *t, int kind, int64_t ns) {   // 启动时间线：�
 // (monotonic seconds / N even = on).
 static uint64_t g_spin_ns; static int g_spin_init; static int64_t g_spin_ab;
 #define WAKE_SLICE_NS 100000000L   // 等待的时间片：100 ms（见 block_inner 循环）| wait time slice: 100 ms (see the block_inner loop)
-static uint64_t g_lost_wake_recov;   // 丢唤醒自愈次数（持 G 加；诊断与单测读）| lost-wakeup recoveries (incremented under G; read by diagnostics and unit tests)
-uint64_t dm_hle_lost_wake_recoveries(void) { return __atomic_load_n(&g_lost_wake_recov, __ATOMIC_RELAXED); }
+// 丢唤醒自愈次数：持 G 加、诊断与单测不持 G 读，所以读写都走原子（十五审 Q15-I01：原先普通变量 ++ 对原子读 = 数据竞争，t_lock_stress_tsan 钉住）
+// Lost-wakeup recoveries: incremented under G, read without G by diagnostics and unit tests, so both sides are atomic (review 15 Q15-I01: a plain ++ against an atomic read was a data race; pinned by t_lock_stress_tsan)
+static _Atomic uint64_t g_lost_wake_recov;
+uint64_t dm_hle_lost_wake_recoveries(void) { return atomic_load(&g_lost_wake_recov); }
 static int spin_phase_on(void) {
     if (g_spin_ab <= 0) return 1;
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ((ts.tv_sec / g_spin_ab) & 1) == 0;
@@ -199,7 +202,7 @@ static int64_t block_inner(thr_t *t, int kind, int64_t ns) {
         rc = pthread_cond_timedwait(&t->cv, &G, real_dl ? &dl : &sl);
         if (rc != ETIMEDOUT) continue;
         if (t->woke) {   // 片满醒来时已被唤醒：唤醒超过 20 ms 还没收到信号 = 丢了 | woken by the time the slice expired: woken over 20 ms ago without the signal arriving = it was lost
-            if (now_ns() - t->woke_ns > 20000000ull) { uint64_t n = ++g_lost_wake_recov;
+            if (now_ns() - t->woke_ns > 20000000ull) { uint64_t n = atomic_fetch_add(&g_lost_wake_recov, 1) + 1;
                 if (n <= 8 || !(n & 63)) LOG("【红】线程同步：丢唤醒自愈 第 %llu 次（线程 %#x 已被唤醒 %llu ms 没收到信号，时间片自查醒来；最近 svc %#x）",
                     (unsigned long long)n, t->handle, (unsigned long long)((now_ns() - t->woke_ns) / 1000000), (unsigned)t->last_svc); }
             break; }
