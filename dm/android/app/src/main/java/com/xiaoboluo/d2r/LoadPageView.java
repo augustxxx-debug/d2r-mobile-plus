@@ -187,7 +187,11 @@ public final class LoadPageView extends View {
         line(c, T[1], pct, (float) L[L_TITLEPT], nativeColor(C_PCT), true, serif);
         line(c, T[2], body, (float) L[L_BODYPT], nativeColor(C_BODY), false, sans);
         line(c, T[3], sub, (float) L[L_SUBPT], nativeColor(C_SUB), false, sans);
-        if (L[L_COMM] > 0) footer(c, L, T);
+        if (L[L_COMM] > 0) {   // 页脚 0.4 秒淡入（清单晚到时不「蹦」出来） | the footer fades in over 0.4 s (no pop when the manifest arrives late)
+            long now = android.os.SystemClock.uptimeMillis(); if (footerSince == 0) footerSince = now;
+            float fade = Math.min(1f, (now - footerSince) / 400f);
+            if (fade < 1f) { int sc = c.saveLayerAlpha(0, 0, w, h, (int) (255 * fade)); footer(c, L, T); c.restoreToCount(sc); } else footer(c, L, T);
+        } else footerSince = 0;
         c.restore();
     }
     // 社区页脚（不抢眼：12 点、半透明，用户 2026-10-29「太乱，字小一些、按钮小一些、文字加透明度」）：两行字左对齐，副文色；右边复制钮 = 一行高的小圆角框 + 淡金细边，
@@ -219,6 +223,7 @@ public final class LoadPageView extends View {
         text.setColor(rgb(nativeColor("-1".equals(T[8]) ? C_FILL : feedback ? C_TITLE : C_BODY))); text.setAlpha(pad || feedback ? 255 : alpha);
         Paint.FontMetrics fm = text.getFontMetrics(); c.drawText(label, x + glyph, b.centerY() - (fm.ascent + fm.descent) / 2, text);
     }
+    private long footerSince;   // 页脚第一次画出的时刻（淡入用） | when the footer was first drawn (for the fade-in)
     private int lineAlpha = 255;   // line() 画字的不透明度（页脚用半透明） | text opacity for line() (translucent for the footer)
     // 右上角静音钮：暗色圆底 + 金色细边 + 喇叭；有声音两道声波，静音一个叉（与 dm_loadpage_cg.m 同一画法） | top-right mute button: dark round base + thin gold edge + speaker; two waves when on, a cross when muted (same drawing as dm_loadpage_cg.m)
     private void muteIcon(Canvas c, RectF r, boolean muted) {
