@@ -213,6 +213,9 @@ uint64_t mtl_present_count(void);   // nvn_mtl.m：出图次数（与 DM_NVN_SHO
 // Normal offset and back-face threshold of the sun ray origin (rts_sun_origin, nvn_rtshadow_msl.h): DM_RT_SHADOW_NBIAS=<world units> (0 = no normal offset), DM_RT_SHADOW_NL=<cosine> (≤ −1 = trace back faces too, the old behaviour)
 // 缺省 背光阈值 0、法线偏移 1（Mac 血沼召熊同局翻转：熊身 / 人物比光追关暗 40% 以上的像素 阈值 0 = 3.75%、+偏移 1 = 1.33%、+偏移 3 = 2.13%；营地脚下接触影保留）
 // Defaults: back-face threshold 0, normal offset 1 (Mac Blood Moor bear same-run flips: pixels on the bear / characters more than 40% darker than RT off: threshold 0 = 3.75%, + offset 1 = 1.33%, + offset 3 = 2.13%; contact shadows at the camp kept)
+// 软阴影最小模糊半径（像素，第 0、1 档；RC1 背光面修复）：自遮挡 / 背光面的命中距离约 0、原先不模糊，毛发上留零碎黑点；给 2 像素把它们抹平，地上影子边缘也至少柔 2 像素
+// minimum soft blur radius (pixels, levels 0 and 1; RC1 back-face fix): self-occlusion / back faces have hit distance ~0 and were not blurred, leaving black specks on fur; 2 pixels smooth them, and ground shadow edges get at least 2 pixels of softness
+#define RTS_SOFT_RMIN 2.f
 #define RTS_NBIAS_DEF 1.f
 #define RTS_NL_DEF 0.f
 static void rts_sun_bias(float *nbias, float *nlmin) {
@@ -447,7 +450,7 @@ static int rts_setup(void) {
       float nb, nl; rts_sun_bias(&nb, &nl);
       MLOG("光追质量：太阳 %s、太阳射线 %s、点光 %s、射线偏移 %.2f、法线偏移 %.2f、背光面 %s、局部回退 %s、点光只替换原版投影的灯 %s、主菜单 / 选角 %s（分享诊断日志摘要键）", g_rts.soft > 0 ? [NSString stringWithFormat:@"软阴影（接触硬化，强度 %.1f、距离归一 %.0f）", g_rts.soft, g_rts.soft_maxd].UTF8String : "硬阴影",
            g_rts.soft > 0 ? "全分辨率" : g_rts.sun_half ? "1/2 分辨率" : "全分辨率（第 2 档起 1/2）", g_rts.point_on ? [NSString stringWithFormat:@"≤ %d 盏、1/%d 分辨率", g_rts.point_n, g_rts.point_div].UTF8String : "关", bias, nb,
-           nl > -1 ? [NSString stringWithFormat:@"N·L < %.2f 不追（交还原版光照）", nl].UTF8String : "也追", g_rts.part ? "开" : "关", g_rts.point_all ? "否（DM_RT_POINT_ALL=1）" : "是", getenv("DM_RT_FRONTEND") && atoi(getenv("DM_RT_FRONTEND")) ? "也光追（DM_RT_FRONTEND=1）" : "照原版"); }
+           nl > -1 ? [NSString stringWithFormat:@"N·L < %.2f 不追、记在影里（同原版阴影贴图）", nl].UTF8String : "也追", g_rts.part ? "开" : "关", g_rts.point_all ? "否（DM_RT_POINT_ALL=1）" : "是", getenv("DM_RT_FRONTEND") && atoi(getenv("DM_RT_FRONTEND")) ? "也光追（DM_RT_FRONTEND=1）" : "照原版"); }
     if (g_rts.point_on) MLOG("光追点光：%s", g_rts.point_all ? "原版不投影的灯也挑（DM_RT_POINT_ALL=1 对照，会和原版叠出双影）" : "只挑原版本来投影的灯（记录第 +2 texel 的 .w 为 0），光追只替换原版的影，不给随身光 / 召唤物光圈加影");
     if (g_rts.ao_on) MLOG("光追 AO：开（实验性，DM_RT_AO=1）：半分辨率每像素 %d 条半球射线、半径 %.1f、强度 %.2f、5×5 深度感知模糊后上采样，主通道之后乘到画面上；自动降档 1 档起关", g_rts.ao_rays, g_rts.ao_radius, g_rts.ao_strength);
     else MLOG("光追 AO：关（实验性，DM_RT_AO=1 打开）");
@@ -1303,7 +1306,7 @@ static void rts_build_and_trace(id<MTLTexture> depth) {
             enc_c_dispatch(ce, tg, tt); }
         if (soft) for (int pass = 0; pass < 2; pass++) {   // 横 raw → tmp，纵 tmp → R8 遮罩 | horizontal raw → tmp, vertical tmp → the R8 mask
             [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
-            uint32_t *bb = (uint32_t *)((uint8_t *)fs->bb.contents + pass * 32); bb[0] = (uint32_t)depth.width; bb[1] = (uint32_t)depth.height; ((int32_t *)bb)[2] = pass == 0; ((int32_t *)bb)[3] = pass == 1; ((float *)bb)[4] = g_rts.soft * 12.f; ((float *)bb)[5] = 0;
+            uint32_t *bb = (uint32_t *)((uint8_t *)fs->bb.contents + pass * 32); bb[0] = (uint32_t)depth.width; bb[1] = (uint32_t)depth.height; ((int32_t *)bb)[2] = pass == 0; ((int32_t *)bb)[3] = pass == 1; ((float *)bb)[4] = g_rts.soft * 12.f; ((float *)bb)[5] = RTS_SOFT_RMIN;
             [ce setArgumentTable:g_rts.at_blur]; enc_c_pso(ce, g_rts.ps_blur);
             [g_rts.at_blur setTexture:(pass == 0 ? g_rts.mask_raw : g_rts.mask_tmp).gpuResourceID atIndex:0]; [g_rts.at_blur setTexture:(pass == 0 ? g_rts.mask_tmp : g_rts.mask).gpuResourceID atIndex:1]; [g_rts.at_blur setTexture:depth.gpuResourceID atIndex:2];
             [g_rts.at_blur setAddress:fs->bb.gpuAddress + pass * 32 atIndex:0]; enc_c_dispatch(ce, tg, tt); }

@@ -65,18 +65,29 @@ static const char *k_rts_msl =
 // "Facing the camera" uses the camera centre: under a perspective projection the camera centre is (0,0,B,0) in clip space, i.e. the third column of the inverse view-projection after the homogeneous divide -
 // independent of the depth convention (the game uses reversed depth, near plane = 1: picking "the depth-0 side" flipped the ground normal underground in the game and the back-face test skipped the whole ground);
 // only an orthographic projection (third column w ≈ 0) falls back to the near-plane side zn (0 or 1, decided per frame on the CPU by rts_near_depth: the game camera is orthographic with reversed depth, zn = 1)
+// 一个轴上的切向量（RC1 背光面修复：法线逐像素的噪声让「背光写 0 / 受光去追」来回跳，毛发上出斑）：两侧 1 / 2 像素邻居深度都连续（同一平面）时取两侧 2 像素点相减（基线 4 像素），
+// 只一侧连续用那一侧的 2 像素点，都不连续（轮廓）退回原来的 1 像素近邻。连续 = 与本点、1 像素邻居之差不超过两侧 1 像素差较小者的 4 倍
+// tangent along one axis (RC1 back-face fix: per-pixel normal noise flipped "back → 0 / lit → trace" and left blotches on fur): when the 1- and 2-pixel neighbours on both sides are continuous (same plane), take the two 2-pixel points (a 4-pixel baseline);
+// with one continuous side use its 2-pixel point; with none (a silhouette) fall back to the old nearest 1-pixel neighbour. Continuous = differences to the point and to the 1-pixel neighbour within 4x the smaller 1-pixel difference
+"inline float3 rts_tan(depth2d<float, access::read> depth, float4x4 iv, uint2 fg, uint2 full, float z, float3 p, int2 d) {\n"
+"  int2 c = int2(fg), m = int2(full) - 1; uint2 a1 = uint2(clamp(c + d, int2(0), m)), b1 = uint2(clamp(c - d, int2(0), m)), a2 = uint2(clamp(c + 2 * d, int2(0), m)), b2 = uint2(clamp(c - 2 * d, int2(0), m));\n"
+"  float za1 = depth.read(a1), zb1 = depth.read(b1), za2 = depth.read(a2), zb2 = depth.read(b2); float t = 4.0 * min(abs(za1 - z), abs(zb1 - z)) + 1e-7;\n"
+"  bool ca = abs(za1 - z) <= t && abs(za2 - za1) <= t, cb = abs(zb1 - z) <= t && abs(zb2 - zb1) <= t;\n"
+"  if (ca && cb) return (rts_wp(iv, a2, full, za2) - rts_wp(iv, b2, full, zb2)) * 0.25;\n"
+"  if (ca) return (rts_wp(iv, a2, full, za2) - p) * 0.5;\n"
+"  if (cb) return (p - rts_wp(iv, b2, full, zb2)) * 0.5;\n"
+"  return abs(za1 - z) <= abs(zb1 - z) ? rts_wp(iv, a1, full, za1) - p : p - rts_wp(iv, b1, full, zb1); }\n"
 "inline float3 rts_nrm(depth2d<float, access::read> depth, float4x4 iv, uint2 fg, uint2 full, float z, float3 p, float zn) {\n"
-"  uint2 xa = uint2(min(fg.x + 1, full.x - 1), fg.y), xb = uint2(fg.x > 0 ? fg.x - 1 : 0, fg.y), ya = uint2(fg.x, min(fg.y + 1, full.y - 1)), yb = uint2(fg.x, fg.y > 0 ? fg.y - 1 : 0);\n"
-"  float za = depth.read(xa), zb = depth.read(xb), wa = depth.read(ya), wb = depth.read(yb);\n"
-"  float3 dx = abs(za - z) <= abs(zb - z) ? rts_wp(iv, xa, full, za) - p : p - rts_wp(iv, xb, full, zb);\n"
-"  float3 dy = abs(wa - z) <= abs(wb - z) ? rts_wp(iv, ya, full, wa) - p : p - rts_wp(iv, yb, full, wb);\n"
+"  float3 dx = rts_tan(depth, iv, fg, full, z, p, int2(1, 0)), dy = rts_tan(depth, iv, fg, full, z, p, int2(0, 1));\n"
 "  float3 n = cross(dx, dy); float nl = length(n); if (!(nl > 1e-12)) return float3(0); n /= nl;\n"
 "  float4 c = iv[2]; float3 cam = abs(c.w) > 1e-6 * length(c.xyz) ? c.xyz / c.w - p : rts_wp(iv, fg, full, zn) - p;\n"
 "  return dot(n, cam) < 0.0 ? -n : n; }\n"
-// 太阳射线起点（十三审后「黑脸 / 身上黑斑」：近距离自遮挡）：背光面（法线与太阳夹角余弦 < nlmin）不追、按受光写 1——那里原版靠自己的光照模型（N·L）暗下去，
-// 光追遮罩不该再判「被自己挡住」（熊背、脸侧的黑斑）；受光面沿法线挪 nbias × (1 − N·L)（掠射角挪得多），再沿太阳挪 bias。法线退化（0）时只沿太阳挪，同原来
-// Sun ray origin (after the 13th review, "black face / dark blotches on bodies": near-range self-occlusion): back-facing surfaces (cosine between normal and sun < nlmin) are not traced and written lit -
-// there the original darkens through its own lighting (N·L), and the RT mask must not also call them "blocked by themselves" (the blotches on the bear's back and face sides); lit surfaces move nbias × (1 − N·L) along the normal
+// 太阳射线起点（十三审后「黑脸 / 身上黑斑」：近距离自遮挡）：背光面（法线与太阳夹角余弦 < nlmin）不追、直接写 0（在影里）——
+// 原版背光面的暗是阴影贴图给的（光照模型不按 N·L 压暗），acbe808 写 1 让怪物 / NPC / 墙的背光面比原版亮；不追是为了不判「被自己挡住」的零碎黑斑（熊背、脸侧），
+// 分界上的斑靠 rts_tan 的 2 像素平滑法线与软阴影最小半径抹掉；受光面沿法线挪 nbias × (1 − N·L)（掠射角挪得多），再沿太阳挪 bias。法线退化（0）时只沿太阳挪，同原来
+// Sun ray origin (after the 13th review, "black face / dark blotches on bodies": near-range self-occlusion): back-facing surfaces (cosine between normal and sun < nlmin) are not traced and written 0 (shadowed) -
+// the original darkens back faces through its shadow map (its lighting does not darken by N·L), and acbe808 writing 1 made monster / NPC / wall back faces brighter than the original; they are not traced so no scattered "blocked by itself" specks appear (bear back, face sides),
+// and blotches along the boundary are smoothed by rts_tan's 2-pixel normal and the soft minimum radius; lit surfaces move nbias × (1 − N·L) along the normal
 // (more at grazing angles), then bias along the sun. A degenerate normal (0) moves along the sun only, as before
 "inline bool rts_sun_origin(depth2d<float, access::read> depth, float4x4 iv, uint2 fg, uint2 full, float z, float3 p, float3 sun, float bias, float nbias, float nlmin, float zn, thread float3 &o) {\n"
 "  float3 n = (nbias > 0.0 || nlmin > -1.0) ? rts_nrm(depth, iv, fg, full, z, p, zn) : float3(0); float ndl = dot(n, sun);\n"
@@ -88,7 +99,7 @@ static const char *k_rts_msl =
 "  if (z >= 1.0) { mask.write(float4(1), g); return; }\n"   // 远平面 = 没画东西（天空） | far plane = nothing drawn (sky)
 "  float2 ndc = float2((float(fg.x) + 0.5) / float(full.x) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(full.y) * 2.0);\n"
 "  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
-"  ray r; if (!rts_sun_origin(depth, k.invVP, fg, full, z, p, k.sun.xyz, k.bias, k.nbias, k.nlmin, k.zn, r.origin)) { mask.write(float4(1), g); return; } r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
+"  ray r; if (!rts_sun_origin(depth, k.invVP, fg, full, z, p, k.sun.xyz, k.bias, k.nbias, k.nlmin, k.zn, r.origin)) { mask.write(float4(0), g); return; } r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
 "  float d; bool hit = RTS_HIT(r, as, true, d);\n"
 "  mask.write(float4(hit ? 0.0 : 1.0), g); }\n"
 // 软阴影：最近命中 + 命中距离（按 maxd 归一）→ RG8；模糊：半径 = 周围 ±2 像素内最远遮挡距离 × 强度（≤ 12 像素），深度差大的邻居权重小 | soft shadows: nearest hit + hit distance (normalized by maxd) → RG8; blur: radius = widest blocker distance within ±2 px × strength (≤ 12 px), neighbours with a large depth difference weigh less
@@ -98,14 +109,14 @@ static const char *k_rts_msl =
 "  if (z >= 1.0) { mask.write(float4(1, 0, 0, 0), g); return; }\n"
 "  float2 ndc = float2((float(g.x) + 0.5) / float(k.size.x) * 2.0 - 1.0, 1.0 - (float(g.y) + 0.5) / float(k.size.y) * 2.0);\n"
 "  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
-"  ray r; if (!rts_sun_origin(depth, k.invVP, g, k.size, z, p, k.sun.xyz, k.bias, k.nbias, k.nlmin, k.zn, r.origin)) { mask.write(float4(1, 0, 0, 0), g); return; } r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
+"  ray r; if (!rts_sun_origin(depth, k.invVP, g, k.size, z, p, k.sun.xyz, k.bias, k.nbias, k.nlmin, k.zn, r.origin)) { mask.write(float4(0, 0, 0, 0), g); return; } r.direction = k.sun.xyz; r.min_distance = 0.0; r.max_distance = 20000.0;\n"
 "  float d; bool hit = RTS_HIT(r, as, false, d);\n"
 "  mask.write(float4(hit ? 0.0 : 1.0, hit ? min(d / k.maxd, 1.0) : 0.0, 0, 0), g); }\n"
-"struct B { uint2 size; int2 dir; float soft; float pad; };\n"
+"struct B { uint2 size; int2 dir; float soft; float rmin; };\n"
 "kernel void rts_blur(texture2d<float, access::read> src [[texture(0)]], texture2d<float, access::write> dst [[texture(1)]], depth2d<float, access::read> depth [[texture(2)]], constant B &b [[buffer(0)]], uint2 g [[thread_position_in_grid]]) {\n"
 "  if (g.x >= b.size.x || g.y >= b.size.y) return; float2 c = src.read(g).xy; float z0 = depth.read(g); float dm = c.y;\n"
 "  for (int k = -2; k <= 2; k++) { int2 q = clamp(int2(g) + b.dir * k, int2(0), int2(b.size) - 1); dm = max(dm, src.read(uint2(q)).y); }\n"
-"  int r = int(clamp(dm * b.soft, 0.0, 12.0)); if (r == 0) { dst.write(float4(c.x, dm, 0, 0), g); return; }\n"
+"  int r = max(int(clamp(dm * b.soft, 0.0, 12.0)), int(b.rmin)); if (r == 0) { dst.write(float4(c.x, dm, 0, 0), g); return; }\n"
 "  float sum = 0.0, wsum = 0.0; for (int k = -r; k <= r; k++) { int2 q = clamp(int2(g) + b.dir * k, int2(0), int2(b.size) - 1); float2 s = src.read(uint2(q)).xy; float z = depth.read(uint2(q)); float wgt = 1.0 / (1.0 + 4000.0 * abs(z - z0)); sum += s.x * wgt; wsum += wgt; }\n"
 "  dst.write(float4(sum / wsum, dm, 0, 0), g); }\n"
 // 点光（阶段零，Mac 实测后改）：光源记录不是按 4 texel 对齐排的，真正的点光要经分簇表找——簇头 hdr[簇] 的位 0–5 / 6–15 / 16–23 是前三类光在本簇槽位里的结束下标，

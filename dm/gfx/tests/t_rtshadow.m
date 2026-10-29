@@ -240,13 +240,15 @@ int main(void) { @autoreleasepool {
         if (px(mf, gx_of(-10), gy_of(0), 0) > 0.05f || px(mf, gx_of(35), gy_of(0), 0) < 0.95f) FAIL("quarter-res sun: shadow / lit spots wrong (%g, %g)", px(mf, gx_of(-10), gy_of(0), 0), px(mf, gx_of(35), gy_of(0), 0));
         if (diff > W * H / 20) FAIL("quarter-res sun: %d of %d pixels differ from the full-resolution mask", diff, W * H);
     }
-    {   // 太阳射线起点（rts_sun_origin）：地面法线由深度重建 = +y，N·L = 0.707。① 背光面阈值 0.8 > 0.707 → 一律按受光写 1（方板下的地面变亮）；
+    {   // 太阳射线起点（rts_sun_origin）：地面法线由深度重建 = +y，N·L = 0.707。① 背光面阈值 0.8 > 0.707 → 一律判在影里写 0；
         // ② 法线偏移 15 → 起点抬 15 × (1 − 0.707) ≈ 4.4 < 10，仍在方板下 → 仍有影；③ 偏移 40 → 抬 11.7 > 10 → 越过方板 → 亮（证明偏移按 (1 − N·L) 加在法线上）；
         // ④ 缺省式样（阈值 0、偏移 1）：四个探点与原做法一致（接触影不丢）
-        // Sun ray origin (rts_sun_origin): the ground normal rebuilt from depth = +y, N·L = 0.707. ① back-face threshold 0.8 > 0.707 → written lit everywhere (the ground under the square turns lit);
+        // Sun ray origin (rts_sun_origin): the ground normal rebuilt from depth = +y, N·L = 0.707. ① back-face threshold 0.8 > 0.707 → written shadowed (0) everywhere;
         // ② normal offset 15 → origin raised 15 × (1 − 0.707) ≈ 4.4 < 10, still under the square → still shadowed; ③ offset 40 → raised 11.7 > 10 → above the square → lit (the offset is applied along the normal, scaled by 1 − N·L);
         // ④ default style (threshold 0, offset 1): the four probe points match the old behaviour (contact shadows kept)
-        const float cfg[4][2] = {{0, 0.8f}, {15, -2}, {40, -2}, {1, 0}}; const float want[4][4] = {{1, 1, 1, 1}, {0, 1, 1, 1}, {1, 1, 1, 1}, {0, 1, 1, 1}};
+        // ① 背光面（N·L < 阈值）判为在影里（写 0）：阈值 0.8 > 地面 0.707，整片都是背光面 → 全 0（RC1 背光面修复：原先写 1 = 受光，把怪物 / NPC / 墙朝镜头的暗面全提亮了）
+        // ① back faces (N·L < threshold) count as shadowed (write 0): threshold 0.8 > ground 0.707, the whole ground is back-facing → all 0 (RC1 back-face fix: writing 1 = lit brightened the camera-facing dark sides of monsters / NPCs / walls)
+        const float cfg[4][2] = {{0, 0.8f}, {15, -2}, {40, -2}, {1, 0}}; const float want[4][4] = {{0, 0, 0, 0}, {0, 1, 1, 1}, {1, 1, 1, 1}, {0, 1, 1, 1}};
         for (int c = 0; c < 4; c++) {
             float KO[64]; memcpy(KO, KH, sizeof KO); KO[24] = cfg[c][0]; KO[25] = cfg[c][1]; id<MTLBuffer> kbo = buf(KO, sizeof KO);
             id<MTLTexture> mo = tex(MTLPixelFormatR8Unorm, W, H, MTLStorageModeShared); [resident commit];
@@ -278,10 +280,47 @@ int main(void) { @autoreleasepool {
         int sx = (int)((-16.0 / 60 + 1) / 2 * W), lx = (int)((30.0 / 60 + 1) / 2 * W), cy = H / 2;
         if (px(mp, sx, cy, 0) > 0.01f || px(mp, lx, cy, 0) < 0.99f) FAIL("perspective reversed depth: ground in the square's shadow %g (want 0), far ground %g (want 1)", px(mp, sx, cy, 0), px(mp, lx, cy, 0));
     }
+    {   // 背光 / 受光分界无孤立点（RC1 背光面修复）：地面深度加确定性噪声（±0.05 单位），太阳几乎贴地（N·L ≈ 0.03），逐像素的法线噪声会让「背光写 0 / 受光去追」来回跳；
+        // 法线按 2 像素步长取（同一平面才取）后，遮罩里与上下左右四邻都不同的孤立点要少于 1%（只写 0、1 像素步长时实测 3.0%，毛发上的斑块就是这个；平滑后 0.0%）
+        // no isolated points at the back / lit boundary (RC1 back-face fix): ground depth with deterministic noise (±0.05 units), sun almost grazing (N·L ≈ 0.03), per-pixel normal noise flips "back → 0 / lit → trace";
+        // with normals taken at a 2-pixel step (only on the same plane), pixels differing from all four neighbours must stay under 1% (measured 3.0% with write-0 alone at a 1-pixel step - the blotches on fur; 0.0% smoothed)
+        uint32_t rs = 12345u; float *dn = malloc(W * H * 4);
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) { rs = rs * 1664525u + 1013904223u; float nz = ((rs >> 8) / 16777216.f - 0.5f) * 0.1f; double wx = ((x + 0.5) / W * 2 - 1) * 50, wz = (1 - (y + 0.5) / H * 2) * 50;
+            dn[y * W + x] = fabs(wx) < 10 && fabs(wz) < 10 ? 0.4f : 0.5f - 0.01f * nz; }
+        id<MTLBuffer> dnb = buf(dn, W * H * 4); free(dn);
+        MTLTextureDescriptor *ndd = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float width:W height:H mipmapped:NO]; ndd.usage = MTLTextureUsageShaderRead; ndd.storageMode = MTLStorageModePrivate;
+        id<MTLTexture> ndepth = [dev newTextureWithDescriptor:ndd]; [resident addAllocation:ndepth];
+        float KN[64]; memcpy(KN, KH, sizeof KN); float gl = 0.03f, gx = sqrtf(1 - gl * gl); KN[16] = gx; KN[17] = gl; KN[18] = 0; KN[24] = 1; KN[25] = 0; id<MTLBuffer> kbn = buf(KN, sizeof KN);
+        id<MTLTexture> mn = tex(MTLPixelFormatR8Unorm, W, H, MTLStorageModeShared); [resident commit];
+        if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at];
+                [ce copyFromBuffer:dnb sourceOffset:0 sourceBytesPerRow:W * 4 sourceBytesPerImage:W * H * 4 sourceSize:MTLSizeMake(W, H, 1) toTexture:ndepth destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+                [ce barrierAfterEncoderStages:MTLStageBlit beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                [ce setComputePipelineState:ps_trace]; [at setTexture:ndepth.gpuResourceID atIndex:0]; [at setTexture:mn.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:kbn.gpuAddress atIndex:1];
+                [ce dispatchThreadgroups:tg threadsPerThreadgroup:tt]; })) return 1;
+        int iso = 0, cnt = 0;
+        for (int y = 2; y < H - 2; y++) for (int x = 2; x < W - 2; x++) { double wx = ((x + 0.5) / W * 2 - 1) * 50, wz = (1 - (y + 0.5) / H * 2) * 50; if (fabs(wx) < 14 && fabs(wz) < 14) continue;   // 方板及其边缘不算 | skip the square and its rim
+            int c = px(mn, x, y, 0) > 0.5f; cnt++; iso += c != (px(mn, x - 1, y, 0) > 0.5f) && c != (px(mn, x + 1, y, 0) > 0.5f) && c != (px(mn, x, y - 1, 0) > 0.5f) && c != (px(mn, x, y + 1, 0) > 0.5f); }
+        printf("背光 / 受光分界孤立点 %d / %d（%.1f%%） | isolated points at the back / lit boundary\n", iso, cnt, iso * 100.0 / cnt);
+        if (iso * 100 >= cnt * 1) FAIL("back / lit boundary: %d of %d pixels are isolated (want < 1%%)", iso, cnt);
+    }
+    {   // 软阴影最小模糊半径（RC1 背光面修复）：raw 里只有中心一个点在影里、命中距离 0（自遮挡 / 背光面），原先半径 = 0 → 原样留一个黑点；最小半径 2 → 两趟后中心明显变亮、四邻也被抹到
+        // minimum soft blur radius (RC1 back-face fix): raw has one shadowed centre pixel with hit distance 0 (self-occlusion / back face); radius 0 used to keep a black dot; with minimum radius 2 the centre brightens clearly after two passes and its neighbours get some of it
+        uint8_t *rb = malloc(W * H * 2); for (int i = 0; i < W * H; i++) { rb[i * 2] = 255; rb[i * 2 + 1] = 0; } int cx = W / 2 + 7, cy = H / 2 + 7; rb[(cy * W + cx) * 2] = 0;
+        id<MTLTexture> r2 = tex(MTLPixelFormatRG8Unorm, W, H, MTLStorageModeShared), t2 = tex(MTLPixelFormatRG8Unorm, W, H, MTLStorageModeShared), m2 = tex(MTLPixelFormatR8Unorm, W, H, MTLStorageModeShared);
+        [r2 replaceRegion:MTLRegionMake2D(0, 0, W, H) mipmapLevel:0 withBytes:rb bytesPerRow:W * 2]; free(rb);
+        uint32_t C0[8] = {W, H, 1, 0, 0, 0, 0, 0}, C1[8] = {W, H, 0, 1, 0, 0, 0, 0}; ((float *)C0)[4] = ((float *)C1)[4] = 24.f; ((float *)C0)[5] = ((float *)C1)[5] = 2.f; id<MTLBuffer> cb0 = buf(C0, 32), cb1 = buf(C1, 32); [resident commit];
+        if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at];
+                [ce setComputePipelineState:ps_blur]; [at setTexture:r2.gpuResourceID atIndex:0]; [at setTexture:t2.gpuResourceID atIndex:1]; [at setTexture:depth.gpuResourceID atIndex:2]; [at setAddress:cb0.gpuAddress atIndex:0]; [ce dispatchThreadgroups:tg threadsPerThreadgroup:tt];
+                [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                [at setTexture:t2.gpuResourceID atIndex:0]; [at setTexture:m2.gpuResourceID atIndex:1]; [at setAddress:cb1.gpuAddress atIndex:0]; [ce dispatchThreadgroups:tg threadsPerThreadgroup:tt]; })) return 1;
+        float ctr = px(m2, cx, cy, 0), nb = px(m2, cx + 1, cy, 0), far = px(m2, cx + 6, cy, 0);
+        printf("软阴影最小半径：中心 %.2f、右邻 %.2f、远处 %.2f | minimum soft radius: centre, right neighbour, far\n", ctr, nb, far);
+        if (!(ctr > 0.5f) || !(nb < 0.99f) || !(far > 0.99f)) FAIL("soft minimum radius: centre %g (want > 0.5), neighbour %g (want < 0.99), far %g (want ~1)", ctr, nb, far);
+    }
     {   // 正交 + 反向深度（游戏实测的约定）：z_ndc = 0.01·y + 0.5（越高越近）。近平面判定 rts_near_depth：本测试的正向深度场景 = 0、这里 = 1、按游戏实测矩阵数值 = 1；
-        // GPU：zn = 1 时方板影子里露出的地面（x = −16）暗、远处亮；故意传 zn = 0（旧做法）→ 法线翻到地下 → 背光阈值把整片跳过 → 影子里的地面也亮
+        // GPU：zn = 1 时方板影子里露出的地面（x = −16）暗、远处亮；故意传 zn = 0（旧做法）→ 法线翻到地下 → 整片成了背光面 → 远处本该亮的地面也判为在影里
         // Orthographic + reversed depth (the convention measured in the game): z_ndc = 0.01·y + 0.5 (higher is nearer). Near-plane decision rts_near_depth: this test's forward-depth scene = 0, here = 1, the game's measured matrix values = 1;
-        // GPU: with zn = 1 the visible ground inside the square's shadow (x = −16) is dark and far ground lit; passing zn = 0 on purpose (the old rule) → the normal flips underground → the back-face threshold skips everything → the shadowed ground turns lit too
+        // GPU: with zn = 1 the visible ground inside the square's shadow (x = −16) is dark and far ground lit; passing zn = 0 on purpose (the old rule) → the normal flips underground → everything is a back face → even far ground counts as shadowed
         if (rts_near_depth(IA) != 0) FAIL("rts_near_depth: forward-depth test scene should be 0");
         double VPr[16] = {0}; VPr[0] = 1.0 / 50; VPr[2 * 4 + 1] = 1.0 / 50; VPr[1 * 4 + 2] = 0.01; VPr[3 * 4 + 2] = 0.5; VPr[15] = 1; double IR[16]; rts_inv4(VPr, IR);
         if (rts_near_depth(IR) != 1) FAIL("rts_near_depth: reversed-depth orthographic should be 1");
@@ -300,7 +339,7 @@ int main(void) { @autoreleasepool {
                     [ce dispatchThreadgroups:tg threadsPerThreadgroup:tt]; })) return 1;
             float sh = px(mr, gx_of(-16), gy_of(0), 0), lit = px(mr, gx_of(35), gy_of(0), 0);
             if (c == 0 && (sh > 0.01f || lit < 0.99f)) FAIL("ortho reversed depth, zn = 1: shadowed ground %g (want 0), far ground %g (want 1)", sh, lit);
-            if (c == 1 && sh < 0.99f) FAIL("ortho reversed depth, zn = 0 (old rule): shadowed ground %g should turn lit (proves zn is used)", sh);
+            if (c == 1 && lit > 0.01f) FAIL("ortho reversed depth, zn = 0 (old rule): far ground %g should turn shadowed - the normal flips underground and back faces count as shadowed (proves zn is used)", lit);
         }
     }
     {   // 光追 AO（实验性）：方板（y=10）边外紧挨着的地面被半球射线打到方板 → 变暗；远处地面、方板顶上 → 不暗；模糊 + 上采样后同样 | ray-traced AO (experimental): ground right outside the square (y=10) has hemisphere rays hitting the square → darker; far ground and the square's top → not; same after blur + upsampling
