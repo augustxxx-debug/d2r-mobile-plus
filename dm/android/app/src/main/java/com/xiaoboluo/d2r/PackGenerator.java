@@ -48,10 +48,11 @@ final class PackGenerator {
         Step(int from, int to) { this.from = from; this.to = to; }
     }
 
-    // 加载页（DmActivity.GEN_STAGES）的阶段序号与权重：七步一一对应（FINISH 记作「安装」）；权重按两台真机首启总时长（奥丁 391 秒、OPPO 446 秒）与上面的百分比区间分
-    // Loading-page stage index and weights (DmActivity.GEN_STAGES): the seven steps one-to-one (FINISH shown as "install"); weights split the two phones' first-launch
-    // totals (Thor 391 s, OPPO 446 s) by the percentage ranges above
-    static final int[] LOAD_WEIGHTS_MS = {12000, 29000, 34000, 50000, 25000, 254000, 12000};
+    // 加载页（DmActivity.GEN_STAGES）的阶段序号与权重：七步一一对应（FINISH 记作「安装」）；权重 = 奥丁全新安装首启逐步实测（2026-10-29「加载页：完成」行：
+    // 准备 2.0 / 改写 31.1 / 整理 58.0 / 覆盖层 84.1 / 打包 52.6 / 着色器 168.1 / 安装 1.5 秒，合计约 397 秒；OPPO 首启总长 446 秒）
+    // Loading-page stage index and weights (DmActivity.GEN_STAGES): the seven steps one-to-one (FINISH shown as "install"); weights = the Thor's measured per-step
+    // first launch on a fresh install (2026-10-29 「加载页：完成」 line: 2.0 / 31.1 / 58.0 / 84.1 / 52.6 / 168.1 / 1.5 s, about 397 s; the OPPO's whole first launch 446 s)
+    static final int[] LOAD_WEIGHTS_MS = {2000, 31000, 58000, 84000, 53000, 168000, 2000};
     static int loadStage(Step step) { return step.ordinal(); }
 
     static final class State {
