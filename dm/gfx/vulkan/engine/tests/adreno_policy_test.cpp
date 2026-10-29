@@ -23,8 +23,8 @@ int main(){
     CHECK(xbg_adreno_model("Adreno 7400")==0);
     CHECK(xbg_adreno_model("Mali-G715")==0);
 
-    // 只有高通 740–799 这一族缺省关掉两个改写。
-    // Only Qualcomm's 740-799 family defaults both rewrites off.
+    // 只有高通 750–799 这一族缺省关掉两个改写（740 例外）。
+    // Only Qualcomm's 750-799 family defaults both rewrites off (740 excepted).
     CHECK(!xbg_adreno_rewrites_fault(0x5143,"Adreno (TM) 740"));   // Plus：740 保留两个改写 | Plus: 740 keeps both rewrites
     CHECK(xbg_adreno_rewrites_fault(0x5143,"Adreno 750"));
     CHECK(xbg_adreno_rewrites_fault(0x5143,"Adreno (TM) 799"));
@@ -36,8 +36,8 @@ int main(){
     CHECK(!xbg_adreno_rewrites_fault(0x10002,"Adreno (TM) 740"));
     CHECK(!xbg_adreno_rewrites_fault(0,"Adreno 750"));
 
-    // 载入时内联辅助函数的只有高通 750–799（编译器崩的那一族）；740 只关改写。
-    // Only Qualcomm's 750-799 family (whose compiler crashes) inlines the helpers at load; 740 only has the rewrites off.
+    // 载入时内联辅助函数的只有高通 750–799（编译器崩的那一族）；740 两个改写都保留。
+    // Only Qualcomm's 750-799 family (whose compiler crashes) inlines the helpers at load; 740 keeps both rewrites.
     CHECK(xbg_adreno_compiler_needs_inline(0x5143,"Adreno (TM) 750"));
     CHECK(xbg_adreno_compiler_needs_inline(0x5143,"Adreno 799"));
     CHECK(!xbg_adreno_compiler_needs_inline(0x5143,"Adreno (TM) 740"));
@@ -64,6 +64,6 @@ int main(){
     CHECK(xbg_adreno_rewrite_option(false,-1,"2",false));
 
     if(failures){printf("FAIL %d check(s)\n",failures);return 1;}
-    printf("PASS Adreno policy: 740/750 default off, 750-799 inline helpers, 730/830 and other vendors unchanged, marker file still wins\n");
+    printf("PASS Adreno policy: 750-799 default off (740 kept), 750-799 inline helpers, 730/830 and other vendors unchanged, marker file still wins\n");
     return 0;
 }

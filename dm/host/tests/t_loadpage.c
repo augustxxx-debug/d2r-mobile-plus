@@ -191,7 +191,7 @@ int main(void) {
         // 提示页（权限）：三层字、无百分数、不画条、标题整宽、不放音乐、不显示页脚；begin 清掉提示 | notice page (permission): three levels, no percent, no bar, full-width title, no music, no footer; begin clears it
         dm_loadpage_prompt("dmLoadPermTitle", "用来读取 X", "dmLoadPermHint"); CHECK(dm_loadpage_prompting() && dm_loadpage_state() == DM_LP_IDLE);
         dm_loadpage_text(&t, 13000); CHECK(!strcmp(t.title, "需要「所有文件访问」权限") && !strcmp(t.body, "用来读取 X") && strstr(t.sub, "打开系统设置") && !t.percent[0] && !t.comm1[0]);
-        dm_loadpage_layout(&oppo, &L1); CHECK(L1.show_bar == 0 && L1.comm == 0 && NEAR(L1.title.w, L1.bar.w)); CHECK(dm_loadpage_music_wanted() == 0);
+        dm_loadpage_layout(&oppo, &L1); CHECK(L1.show_bar == 0 && L1.comm == 0 && NEAR(L1.title.w, L1.bar.w) && L1.mute.w == 0 && !dm_loadpage_hit_mute(&L1, 0, 0)); CHECK(dm_loadpage_music_wanted() == 0);
         dm_loadpage_begin(two, 2, w_two, 13100); CHECK(!dm_loadpage_prompting()); dm_loadpage_layout(&oppo, &L1); CHECK(L1.show_bar == 1);
         { const int gs[5] = { DM_LG_ZH, DM_LG_EN, DM_LG_ES, DM_LG_RU, DM_LG_KO }; dm_loadpage_layout(&oppo, &L1);
           for (int k = 0; k < 5; k++) { dm_loadpage_ui_set_group(gs[k]); const char *ks[3] = { "dmLoadPermTitle", "dmLoadPermBody", "dmLoadPermHint" }; const double pts[3] = { 24, 18, 14 };

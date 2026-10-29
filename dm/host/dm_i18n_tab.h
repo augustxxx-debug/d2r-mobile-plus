@@ -535,7 +535,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmLoadMusicOff", "关闭背景音乐", "Turn music off", "Desactivar la música", "Desactivar la música", "Выключить музыку", "배경 음악 끄기" },
     { "dmLoadPermTitle", "需要「所有文件访问」权限", "All files access needed", "Permiso de acceso a archivos", "Permiso de acceso a archivos", "Нужен доступ ко всем файлам", "모든 파일 접근 권한 필요" },
     { "dmLoadPermBody", "用来读取 Download/S2X/D2R Mobile/data", "To read Download/S2X/D2R Mobile/data", "Para leer Download/S2X/D2R Mobile/data", "Para leer Download/S2X/D2R Mobile/data", "Для чтения Download/S2X/D2R Mobile/data", "Download/S2X/D2R Mobile/data 읽기에 필요" },
-    { "dmLoadPermHint", "点屏幕或按手柄 A 打开系统设置，允许后返回", "Tap or press A to open Settings, then come back", "Toca o pulsa A para abrir Ajustes y vuelve", "Toca o pulsa A para abrir Ajustes y vuelve", "Нажмите на экран или A и вернитесь из настроек", "화면을 누르거나 A로 설정을 연 뒤 돌아오세요" },
+    { "dmLoadPermHint", "点屏幕或按手柄 A 打开系统设置，允许后返回", "Tap or press A, allow access in Settings, come back", "Toca o pulsa A, permite el acceso y vuelve", "Toca o pulsa A, permite el acceso y vuelve", "Нажмите экран или A, разрешите доступ, вернитесь", "화면이나 A를 눌러 설정에서 허용한 뒤 돌아오세요" },
     { "dmLoadCommSiteQq", "官方免费渠道：官网 %s · QQ 群 %s", "Official free channels: %s · QQ group %s", "Canales oficiales gratis: %s · grupo QQ %s", "Canales oficiales gratis: %s · grupo QQ %s", "Бесплатные каналы: %s · группа QQ %s", "공식 무료 채널: %s · QQ 그룹 %s" },
     { "dmLoadCommSite", "官方免费渠道：官网 %s", "Official free channel: %s", "Canal oficial gratis: %s", "Canal oficial gratis: %s", "Бесплатный канал: %s", "공식 무료 채널: %s" },
     { "dmLoadCommCopySite", "复制官网", "Copy site", "Copiar web", "Copiar web", "Копировать", "사이트 복사" },
