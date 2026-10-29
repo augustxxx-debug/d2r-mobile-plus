@@ -230,9 +230,13 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
 // "Pick Up (hold to identify)" while the cursor rests on an unidentified item (controller hold A = free identify, dm_cursor.c;
 // for unidentified equipment the original game only hints "A Pick Up", and an entry added to the button legend would be overwritten when the
 // original game rebuilds it every frame from the item under the cursor, so the string it fetches is swapped instead)
-enum { HINT_VAULT, HINT_IDENT, NHINT };
+// 第三条：原版提示条的「比较」只在按住时才比（松开就收），原文却像短按——手柄模式下一直换成「比较（按住）」（缺陷台账 B014 / B029）
+// The third entry: the original legend's "Compare" only compares while held (released, it closes), yet reads like a short press -- in controller mode it is
+// always replaced with "Compare (hold)" (defect ledger B014 / B029)
+enum { HINT_VAULT, HINT_IDENT, HINT_COMPARE, NHINT };
 static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[48]; } g_hint[NHINT] = {
-    { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" }, { "ControllerPromptItemPickUpFromInventory", "dmPadLegIdentify" } };   // [0]「按住 Y」那半句、[1]「捡起」 | [0] the "hold Y" half of the sentence, [1] "Pick Up"
+    { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" }, { "ControllerPromptItemPickUpFromInventory", "dmPadLegIdentify" },
+    { "ControllerPromptItemCompare", "dmPadLegCompare" } };   // [0]「按住 Y」那半句、[1]「捡起」、[2]「比较」 | [0] the "hold Y" half of the sentence, [1] "Pick Up", [2] "Compare"
 void dm_padmode_vault_hint(int on) { atomic_store(&g_hint[HINT_VAULT].on, on ? 3 : 0); }   // 游戏主线程，页在屏上时每帧调（3 帧不调就算离开） | Game main thread; called every frame while the page is on screen (3 frames without a call counts as having left)
 void dm_padmode_ident_hint(int on) { atomic_store(&g_hint[HINT_IDENT].on, on ? 3 : 0); }   // 同上：光标停在未鉴定物品上时每帧调 | Same as above: called every frame while the cursor rests on an unidentified item
 // 切语言：原版把串表整张清空重装（SetLanguage，diag.c 的观测门在清空之前、游戏主线程调这里）。换串表与上面的提示小表都靠「节点地址变了」认重装，
@@ -261,7 +265,7 @@ static void hint_pump(void) {
         // Our half of the sentence goes through the Chinese-English table; the string pointer must stay resident (what is swapped into the string table
         // is the address of this buffer), so compare on every fetch and rewrite the buffer only when the language has changed
         { const char *w = dm_str(g_b, g_hint[h].ours_key); if (w && strcmp(ours, w)) { if (*nodep && ((uint64_t *)(uintptr_t)(*nodep + 0x20))[0] == (uint64_t)(uintptr_t)ours) ((uint64_t *)(uintptr_t)(*nodep + 0x20))[1] = strlen(w); strlcpy(ours, w, sizeof g_hint[h].ours); } }
-        int on = g_cur && atomic_load(&g_hint[h].on) > 0; if (atomic_load(&g_hint[h].on) > 0) atomic_fetch_sub(&g_hint[h].on, 1);
+        int on = g_cur && (h == HINT_COMPARE || atomic_load(&g_hint[h].on) > 0); if (atomic_load(&g_hint[h].on) > 0) atomic_fetch_sub(&g_hint[h].on, 1);   // 「比较」在手柄模式下常换 | "Compare" is always swapped in controller mode
         uint64_t nd = str_node((uint64_t)(uintptr_t)(g_b + 0x2d71030), g_hint[h].key, strlen(g_hint[h].key)); if (!nd) continue;
         uint64_t *v = (uint64_t *)(uintptr_t)(nd + 0x20);
         if (nd != *nodep) { if (v[0] == (uint64_t)(uintptr_t)ours) continue; *nodep = nd; g_hint[h].orig = v[0]; g_hint[h].olen = v[1]; }   // 新节点（开机首次 / 切语言后串表重装）：记原文 | New node (first time after boot / string table reloaded after a language switch): record the original text
