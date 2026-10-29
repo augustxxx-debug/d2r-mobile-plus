@@ -84,7 +84,7 @@ public final class LoadPageView extends View {
     public static void community(String qq, String github, String site) { nativeCommunity(qq, github, site); }
 
     private final float density;
-    private Bitmap bg; private String bgName; private Bitmap logo; private boolean logoTried;
+    private Bitmap bg; private String bgName; private int baseColor = 0xff050403; private Bitmap logo; private boolean logoTried;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final TextPaint text = new TextPaint(Paint.ANTI_ALIAS_FLAG);
     private final Typeface serif = Typeface.create(Typeface.SERIF, Typeface.BOLD), sans = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
@@ -162,6 +162,11 @@ public final class LoadPageView extends View {
         String name = nativeBgName(wdp, hdp); if (name.equals(bgName)) return;
         if (bg != null) bg.recycle(); bg = null; bgName = name;
         try (java.io.InputStream in = getContext().getAssets().open(name)) { bg = BitmapFactory.decodeStream(in); }
+        if (bg != null) {   // 底色取背景图四角的平均色：图不铺满时（图标背景按图标外框缩放）图边与底色接得上、看不出矩形 | base colour = the mean of the four corners, so where the image does not fill the screen its edges blend in
+            int[] px = { bg.getPixel(2, 2), bg.getPixel(bg.getWidth() - 3, 2), bg.getPixel(2, bg.getHeight() - 3), bg.getPixel(bg.getWidth() - 3, bg.getHeight() - 3) }; int rr = 0, gg = 0, bb = 0;
+            for (int p : px) { rr += Color.red(p); gg += Color.green(p); bb += Color.blue(p); }
+            baseColor = Color.rgb(rr / 4, gg / 4, bb / 4);
+        }
         catch (IOException e) { Log.e("dm", "加载页：背景图 " + name + " 读不到（APK 的 assets 里没有？）：" + e); }
     }
     private static RectF r(double[] L, int i, RectF out) { out.set((float) L[i], (float) L[i + 1], (float) (L[i] + L[i + 2]), (float) (L[i + 1] + L[i + 3])); return out; }
@@ -171,8 +176,8 @@ public final class LoadPageView extends View {
         float w = getWidth() / density, h = getHeight() / density; if (w <= 0 || h <= 0) return;
         c.save(); c.scale(density, density);   // 之后全用 dp | everything in dp from here
         double[] L = nativeLayout(w, h, insetL, insetT, insetR, insetB); String[] T = nativeText(); lastLayout = L;
-        c.drawColor(0xff050403);
         loadBg(w, h);
+        c.drawColor(baseColor);
         if (bg != null) {   // cover 裁切：图的实际像素尺寸与布局假定的不同也照样裁对 | cover crop: still right when the real pixel size differs from what the layout assumes
             double sx = (double) bg.getWidth() / L[L_BGW], sy = (double) bg.getHeight() / L[L_BGH];
             src.set((int) Math.round(L[L_BGSRC] * sx), (int) Math.round(L[L_BGSRC + 1] * sy), (int) Math.round((L[L_BGSRC] + L[L_BGSRC + 2]) * sx), (int) Math.round((L[L_BGSRC + 1] + L[L_BGSRC + 3]) * sy));
