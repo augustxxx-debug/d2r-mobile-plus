@@ -114,8 +114,8 @@ public final class LoadPageView extends View {
     }
     private void muteLabel() { setContentDescription(nativeUi(nativeMuted() ? "dmLoadMusicOn" : "dmLoadMusicOff")); }
     // 点右上角静音钮：翻转、记住；判定区由公共核心定（图标四周各大 12 dp） | tap on the top-right mute button: flip and remember; the hit area comes from the shared core (12 dp larger on each side)
-    // 点页脚的复制钮：把群号 / 链接放进剪贴板（判定区四周各大 8 dp）。摸屏幕 = 触屏模式（复制钮回到平常样子）
-    // tap on the footer's copy button: put the group number / link on the clipboard (hit area 8 dp larger each side). Touching the screen = touch mode (the copy button looks normal again)
+    // 点页脚的复制图标：把群号 / 链接放进剪贴板（判定区 copyHit，至少 48 dp）。摸屏幕 = 触屏模式（复制图标回到平常样子）
+    // tap on the footer's copy icon: put the group number / link on the clipboard (hit area copyHit, at least 48 dp). Touching the screen = touch mode (the copy button looks normal again)
     @Override public boolean onTouchEvent(android.view.MotionEvent e) {
         if (e.getActionMasked() == android.view.MotionEvent.ACTION_DOWN && nativePadMode()) { nativePad(false); invalidate(); }
         if (e.getActionMasked() != android.view.MotionEvent.ACTION_UP || lastLayout == null) return true;
@@ -199,7 +199,7 @@ public final class LoadPageView extends View {
         }
         }
         if (L[L_MUTE + 2] > 0) {   // 提示页没有静音钮；和页脚一样半透明（用户 2026-10-29） | no mute button on a notice page; translucent like the footer (user 2026-10-29)
-            int sc = c.saveLayerAlpha(r(L, L_MUTE, new RectF()), (int) L[L_COMMALPHA]); muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted()); c.restoreToCount(sc);
+            RectF mr = r(L, L_MUTE, new RectF()); mr.inset(-3, -3); int sc = c.saveLayerAlpha(mr, (int) L[L_COMMALPHA]);   // 图层边界放宽 3 dp，别裁掉圆的抗锯齿边 | layer bounds 3 dp wider so the circle's antialiased edge is not clipped muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted()); c.restoreToCount(sc);
         }
         if (L[L_LOGO + 2] > 0) loadLogo();   // 关字标时不读字标图 | the wordmark image is not read with the wordmark off
         if (logo != null && L[L_LOGO + 2] > 0) c.drawBitmap(logo, null, r(L, L_LOGO, new RectF()), paint);   // 字标图：等比居中（矩形由公共布局算） | wordmark: aspect kept, centred (rect from the shared layout)
@@ -216,25 +216,26 @@ public final class LoadPageView extends View {
         c.restore();
     }
     // 社区页脚（不抢眼：12 点、半透明，用户 2026-10-29「太乱，字小一些、按钮小一些、文字加透明度」）：两行字左对齐，副文色。
-    // 复制是一个小图标，紧跟在第一行字后面（用户 2026-10-29「复制按钮太偏，缩成小图标」），同样半透明；点它（判定区四周各大 10 dp）复制。
+    // 复制是一个小图标，紧跟在第一行字后面（用户 2026-10-29「复制按钮太偏，缩成小图标」），同样半透明；点它（判定区至少 48 dp）复制。
     // 手柄模式：图标不透明、带金色圈，后面一个 A 键圆标 + 「复制群号」；复制后图标后面写「已复制 / 复制失败」2 秒（核心给，六套语言）。T[5..8] = 第一行、第二行、钮上的字、复制状态
     // Community footer (unobtrusive: 12 pt, translucent; user 2026-10-29 "too busy - smaller text, smaller button, more transparent text"): two left-aligned lines in the sub colour.
-    // Copying is a small icon right after the first line (user 2026-10-29 "the copy button is too far off, make it a small icon"), equally translucent; tapping it (hit area 10 dp larger
+    // Copying is a small icon right after the first line (user 2026-10-29 "the copy button is too far off, make it a small icon"), equally translucent; tapping it (hit area at least 48 dp
     // each side) copies. Controller mode: the icon opaque with a gold ring, followed by an A disc + the "copy number" label; after copying, "Copied / Copy failed" follows the icon for 2 s
     // (from the core, six languages). T[5..8] = line 1, line 2, button label, copy state
     private final RectF copyHit = new RectF();
     private void footer(Canvas c, double[] L, String[] T) {
         float pt = (float) L[L_COMMPT]; int alpha = (int) L[L_COMMALPHA];
         RectF l1 = r(L, L_COMM1, new RectF());
+        RectF l1t = new RectF(l1.left, l1.top, Math.max(l1.left, l1.right - pt * 1.6f), l1.bottom);   // 第一行按「行宽减图标位」省略，与下面的图标定位同一个宽度（七审 Q7-13） | line 1 ellipsized to the width minus the icon room, the same width the icon is placed by (seventh review Q7-13)
         lineAlpha = alpha;
-        line(c, T[5], l1, pt, nativeColor(C_SUB), false, sans);
+        line(c, T[5], l1t, pt, nativeColor(C_SUB), false, sans);
         line(c, T[6], r(L, L_COMM2, new RectF()), pt, nativeColor(C_SUB), false, sans);
         lineAlpha = 255;
         text.setTypeface(sans); text.setTextSize(pt);
-        CharSequence shown = TextUtils.ellipsize(T[5], text, Math.max(0, l1.width() - pt * 1.6f), TextUtils.TruncateAt.END);   // 给图标留一个字宽多一点 | leave a little over one em for the icon
+        CharSequence shown = TextUtils.ellipsize(T[5], text, l1t.width(), TextUtils.TruncateAt.END);   // 与上面画出来的第一行同宽同省略 | the same width and ellipsis as the line drawn above
         float iconS = pt + 4, ix = l1.left + text.measureText(shown, 0, shown.length()) + pt * 0.6f, iy = l1.centerY() - iconS / 2;
         boolean pad = nativePadMode(), feedback = !"0".equals(T[8]);
-        copyHit.set(ix - 10, iy - 10, ix + iconS + 10, iy + iconS + 10);
+        float hp = Math.max(10, (48 - iconS) / 2); copyHit.set(ix - hp, iy - hp, ix + iconS + hp, iy + iconS + hp);   // 点击区至少 48 dp（七审 Q7-14） | hit area at least 48 dp (seventh review Q7-14)
         // 复制图标：两张错开的圆角纸 | copy icon: two offset rounded sheets
         paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(1.3f); paint.setColor(rgb(nativeColor(pad ? C_TITLE : C_BODY))); paint.setAlpha(pad || feedback ? 255 : alpha);
         float u = iconS / 16f, rr = 2 * u;
