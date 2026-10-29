@@ -18,6 +18,7 @@ typedef struct {
     int points;         // 未分配属性点 stat 4 + 技能点 stat 5（红方十字亮态） | Unassigned attribute points stat 4 + skill points stat 5 (lit state of the red square cross)
     int holding;        // 手上（光标上）物品的 id，0 = 空（拖放没放成、物品还在手上）：前端据此把「点空白处」当取消。来源是客户端玩家，见 dm_hud.c | Id of the item in hand (on the cursor), 0 = empty (drag-and-drop failed, item still in hand): the front end uses it to treat "tap on empty space" as cancel. The source is the client player, see dm_hud.c
     int quest_unread;   // 有新任务待读：原版 HUD 任务提示亮着（客户端界面状态字节 main+0x2d5ff58）；打开任务面板后清（底栏十字红态的另一个条件） | A new quest is waiting to be read: the original game's HUD quest hint is lit (client UI state byte main+0x2d5ff58); cleared after the quest panel is opened (the other condition for the red state of the bottom bar cross)
+    int portal_use;     // 回城钮能用的回城次数（免费回城关着时的角标）：只数背包第 0 页的回城书（次数）与回城卷轴 + 腰带里的回城卷轴，同 dm_freetp.c use_scroll 能用的范围；储藏箱 / 方块里的不算（八审 P2-2）| Town portals the portal button can use (the badge while free town portal is off): tomes (charges) and scrolls on inventory page 0 + scrolls in the belt, the same range dm_freetp.c use_scroll uses; stash / cube ones excluded (eighth review P2-2)
     int dead;           // 玩家死亡（模式 0 / 17）：前端隐藏 UIKit 底栏，免挡死亡画面 | Player dead (mode 0 / 17): the front end hides the UIKit bottom bar so it does not block the death screen
 } dm_hud_info;
 // 玩家「已死」判定 = 游戏自己的定义（main+0x6e5c48 / 0x6e5cc8 客户端命令分派：玩家单位 [+0xc] 模式为 0 或 0x11 即按已死处理；
