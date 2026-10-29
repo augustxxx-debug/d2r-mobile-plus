@@ -142,7 +142,6 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 - Click-to-walk was verified only in the camp. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. Clicking monsters with a ranged class, and the trove's auto-placement under mouse drags, are unverified. There is no right-click skill as on PC.
 - The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
 - "Prompts switch back to gamepad letters when a gamepad is used" was verified by simulation; no physical gamepad has been connected.
-- The free town portal on ZR + Space of a gamepad is not there.
 - The quest bar on the left in rifts is not there.
 - An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud").
 - The older-API build was played on macOS 15 by one player in our test group (Mac mini M4, macOS 15.7, using a package built elsewhere); building it from this repository on a Mac running macOS 15 has not been operated by a person.

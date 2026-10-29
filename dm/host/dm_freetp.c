@@ -19,15 +19,17 @@
 //     so during the call skill chain +0x10 (right-click skill) is temporarily pointed at 411 and put back after the call, leaving the right-click skill the player chose unchanged. Target point = at the feet.
 //   - In town (town standing mode 5), when dead, or while casting, the original game refuses the cast (tapping again while casting returns 1 and no second portal appears).
 // 开关：自定义页「免费回城」（键 free_tp，缺省关，用户 2026-10-30 定：按 RT 不扣东西随手开门不该是缺省）。测试可用 DM_TEST_FREETP_ON=0|1 盖过设置（不写设置文件）。
-//   开着：上面说的全部照旧（挂 411、ZR 空格 = 免费回城、回城钮 = 免费回城）。
-//   关着：不挂 411（技能树里没有它）；ZR 空格整颗交还原版（dm_freetp_zr_free 恒 0）；回城钮 = 原版「使用」身上的回城书（有次数的优先）→ 背包里的回城卷轴 → 腰带里的回城卷轴，
+//   开着：挂 411（技能树「综合技能」里可绑键）、回城钮 = 免费回城；回城书 / 卷轴照原版可用，只是不再需要。
+//   关着：完全原版——不挂 411（技能树里没有它）；回城钮 = 原版「使用」身上的回城书（有次数的优先）→ 背包里的回城卷轴 → 腰带里的回城卷轴，
 //   走 dm_item_use 那条原版使用路径（扣数、城里不让用等全由原版判）；一样都没有就弹一句系统提示、不开门。
-//   开着时挂上的 411 只在本局技能链里（不进存档）：局中关掉，这一局里它还在（技能树 / 绑定键照常能放），下一局进局起就没有了；RT 与回城钮立即按关处理。
+//   两种设置下都不再接管手柄 ZR（原先「ZR 空着 = 免费回城」，用户 2026-10-30 去掉）：ZR 永远是普通技能格。
+//   局中开 → 关：玩家身上已挂的 411 用原版删技能 main+0x5aeed0 摘掉（客户端 / 服务端各一次，施法中 / 死亡时等下一拍），绑着它的键清成空格；关 → 开：下一拍就挂上（立即生效）。
 // Switch: the Custom page's "Free Town Portal" (key free_tp, off by default; user 2026-10-30: free portals on RT that consume nothing should not be the default). Tests can override the setting with DM_TEST_FREETP_ON=0|1 (the settings file is not written).
-//   On: everything above as before (411 attached, empty ZR = free town portal, the portal button = free town portal).
-//   Off: 411 is not attached (it does not appear in the skill tree); an empty ZR goes back to the original game entirely (dm_freetp_zr_free is always 0); the portal button = the original game "uses" the Tome of Town Portal (one with charges first) -> a Scroll of Town Portal in the inventory -> one in the belt,
+//   On: 411 is attached (bindable under "General Skills" in the skill tree), the portal button = free town portal; tomes / scrolls still work as in the original game, they are just no longer needed.
+//   Off: fully original -- 411 is not attached (it does not appear in the skill tree); the portal button = the original game "uses" the Tome of Town Portal (one with charges first) -> a Scroll of Town Portal in the inventory -> one in the belt,
 //   through the original use path of dm_item_use (charges deducted, refused in town, etc., all judged by the original game); with none of them, one system notice and no portal.
-//   A 411 attached while on lives only in this run's skill chain (it is not saved): turned off mid-run it stays for the rest of this run (the skill tree / a bound key still cast it) and is gone from the next run on; RT and the portal button follow "off" immediately.
+//   Under both settings the controller ZR is no longer taken over (formerly "empty ZR = free town portal", removed by the user 2026-10-30): ZR is always an ordinary skill slot.
+//   On -> off mid-run: a 411 already on the player is removed with the original remove-skill main+0x5aeed0 (once on the client and once on the server; while casting / dead it waits for the next tick) and keys bound to it are cleared; off -> on: attached on the next tick (immediate).
 #include "hle.h"
 #include "dm_custom.h"
 #include <stdatomic.h>
@@ -55,36 +57,19 @@ static int tp_skill_id(uint8_t *mb, uint64_t player) {
     return -1;
 }
 
-// 手柄玩家照原版手柄方案：免费回城不再占住 ZR 整颗键，改成一个原版技能——进局后把 411 挂上玩家的技能链
-// （服务端 + 客户端各挂一次），它就出现在原版自己的选技能界面「综合技能 → 普通技能」里，玩家用原版的绑定操作绑到任意一格，按那一格 = 原版自己施放，
-// 不查卷轴、不扣东西；绑定照原版存进存档，下一局挂上后照常可用（Mac 上 iOS 包实跑：出现在列表 / 绑到 B / 野外按 B 开门 / 存档重进仍在）。
-// ZR 这一格空着时（没绑任何技能）仍照旧当免费回城用（dm_gamepad.m）：老玩家「ZR = 回城」的习惯不变，也不占掉什么；绑了技能就整颗还给原版。
-// 2.x 时代的存档那套数据里没有 411：列表里不会出现，只有「ZR 空着 = 免费回城」这一个手柄入口。
-// Controller players follow the original controller scheme: the free town portal no longer occupies the whole ZR button and becomes an
-// original skill instead -- after joining a run, 411 is attached to the player's skill chain
-// (once on the server side and once on the client side), so it shows up in the original game's own skill selection screen under
-// "General Skills -> Normal Skills"; the player binds it to any slot with the original binding operation, and pressing that slot = the original
-// game casts it itself,
-// without checking for scrolls or deducting anything; the binding is stored in the save as in the original game and works as usual once the
-// skill is attached in the next run (real run of the iOS app on Mac: appears in the list / bound to B / pressing B in the wilderness opens a
-// portal / still there after saving and re-entering).
-// While the ZR slot is empty (no skill bound) it still serves as the free town portal as before (dm_gamepad.m): the existing players' habit of
-// "ZR = town portal" stays unchanged and nothing is taken up; once a skill is bound the whole button goes back to the original game.
-// The data set of 2.x era saves has no 411: it will not appear in the list, and "ZR empty = free town portal" is the only controller entry.
+// 开着时免费回城是一个原版技能：进局后把 411 挂上玩家的技能链（服务端 + 客户端各挂一次），它就出现在原版自己的选技能界面「综合技能 → 普通技能」里，
+// 玩家用原版的绑定操作绑到任意一格（如 LT + A），按那一格 = 原版自己施放，不查卷轴、不扣东西；绑定照原版存进存档（411 本身不进存档，下一局开着时再挂上）。
+// 2.x 时代的存档那套数据里没有 411：列表里不会出现，只有触屏回城钮这一个入口（下面直接建门 + 连门）。
+// While on, free town portal is an original skill: after joining a run 411 is attached to the player's skill chain (once on the server side and once on the client side), so it shows up in the
+// original skill selection screen under "General Skills -> Normal Skills"; the player binds it to any slot with the original binding operation (e.g. LT + A), and pressing that slot = the original
+// game casts it, without checking for scrolls or deducting anything; the binding is saved as in the original game (411 itself is not saved and is attached again in the next run while on).
+// The data set of 2.x era saves has no 411: it does not appear in the list, and the touch portal button is the only entry (portal created + linked directly below).
 static void grant(uint8_t *mb, uint64_t unit, int srv) {   // 这个单位的技能链上没有 411 就挂上（原版不扣技能点的加技能 main+0x7bf010） | If this unit's skill chain has no 411, attach it (the original add-skill routine that does not deduct skill points, main+0x7bf010)
     int sk = tp_skill_id(mb, unit); if (sk < 0) return;
     uint64_t sl = *(uint64_t *)(unit + 0x100); for (uint64_t n = sl ? *(uint64_t *)sl : 0, k = 0; n && k < 512; n = *(uint64_t *)(n + 8), k++) { uint64_t rec = *(uint64_t *)n; if (rec && *(int16_t *)rec == sk) return; }
     uint64_t nd = ((uint64_t (*)(uint64_t, int))(mb + 0x7bf010))(unit, sk); static int lg; if (lg++ < 8) LOG("免费回城：%s玩家技能链挂上回城技能 %d → %s", srv ? "服务端" : "客户端", sk, nd ? "成" : "【红】失败");
 }
-// ZR 这一格现在是不是空的：面 → 格表 main+0x2d13cbc（6 × {逻辑键, 普通格, 替代格}，ZR 的逻辑键 0x800）、格 → 技能表 main+0x2d5f0c0（每格 28 字节，首 4 字节技能号；武器第二组在 +16 格），
-// 读法同前端的技能格快照（dm/ios/Sources/dm_touch_game_bridge.c）。[0] = 没按 ZL 时 ZR 用的那格，[1] = 按着 ZL 时的那格
-// Whether the ZR slot is empty right now: face button -> slot table main+0x2d13cbc (6 x {logical key, normal slot, alternate slot}, the logical key
-// of ZR is 0x800), slot -> skill table main+0x2d5f0c0 (28 bytes per slot, the first 4 bytes are the skill number; the second weapon set is at
-// +16 slots),
-// read the same way as the front end's skill slot snapshot (dm/ios/Sources/dm_touch_game_bridge.c). [0] = the slot ZR uses when ZL is not held,
-// [1] = the slot used while ZL is held
-static _Atomic int g_zr_free[2];
-int dm_freetp_zr_free(int zl) { return atomic_load(&g_zr_free[zl != 0]); }
+int dm_freetp_zr_free(int zl) { (void)zl; return 0; }   // ZR 不再接管（见文件头）；留着给还没并线的安卓壳调 | ZR is no longer taken over (see the header); kept for the Android shell that has not been merged yet
 // 关着时的回城钮：照原版用身上的回城书 / 卷轴。物品链读法同 diag.c hud_tick（玩家 +0x90 物品栏 → +0x10 首件；物品 +4 类号、+8 id、+0xc 模式（0 物品栏里、2 腰带）、
 // +0x10 数据块（+0x55 页：0 = 背包）、下一件 [数据块 +0xb0]；书的次数 = 属性 70（属性表 [+0x88] +0x30 起 {statId<<16 | 层, 值}，+0x38 个数））。
 // 用：交给 dm_item_use，本帧稍后同一个主线程拍里由 dm_actions.c 走原版使用（背包 0x3c0098、腰带 0x2cecf0 分支），原版判不能用（城里等）就不发
@@ -115,11 +100,11 @@ static void use_scroll(uint8_t *mb, uint64_t pl) {
 }
 // 关着时的老绑定：开着时玩家可能把回城技能 411 绑在了某个键上（绑定照原版进存档）。关着进局后玩家身上没有 411，原版把那一格画成红色的「技能不可用」图标、按了什么也不做，
 // 图标一直留在技能栏上（Mac 宿主实测 dm-work/run/freetp/runs/off_oldbind_pad）。所以关着且玩家技能链里没有它时，把绑着它的格（手柄技能绑定表 main+0x2d5f0c0，32 格 × 28 字节，
-// 首 4 字节技能号，空格 = 0xffffffff，同 DM_TEST_BINDTBL）清成空格：那个键回到「没绑技能」，ZR 空格交还原版、触屏技能钮显示空槽。局中刚关掉（这一局里 411 还在链上）不清，照常能放到退出。
+// 首 4 字节技能号，空格 = 0xffffffff，同 DM_TEST_BINDTBL）清成空格：那个键回到「没绑技能」，触屏技能钮显示空槽。局中关掉时下面 revoke 先把 411 从链上摘掉，这里再清键。
 // Stale bindings while off: while on, the player may have bound town portal skill 411 to a key (the binding is saved as in the original game). Entering a run while off, the player has no 411, so the original
 // game draws that slot as a red "skill unavailable" icon that does nothing when pressed and stays on the skill bar (measured on the Mac host, dm-work/run/freetp/runs/off_oldbind_pad). So while off and the player's
 // skill chain does not have it, the slots bound to it (controller skill binding table main+0x2d5f0c0, 32 slots x 28 bytes, first 4 bytes the skill id, empty = 0xffffffff, as DM_TEST_BINDTBL) are cleared to empty:
-// that key goes back to "no skill bound", an empty ZR goes to the original game, the touch skill button shows an empty slot. Just turned off mid-run (411 still on the chain this run): not cleared, it works until leaving.
+// that key goes back to "no skill bound" and the touch skill button shows an empty slot. Turned off mid-run, revoke() below first removes 411 from the chain, then this clears the keys.
 static int has_skill(uint64_t unit, int sk) {
     uint64_t sl = *(uint64_t *)(unit + 0x100); for (uint64_t n = sl ? *(uint64_t *)sl : 0, k = 0; n && k < 512; n = *(uint64_t *)(n + 8), k++) { uint64_t rec = *(uint64_t *)n; if (rec && *(int16_t *)rec == sk) return 1; }
     return 0;
@@ -129,20 +114,26 @@ static void unbind_stale(uint8_t *mb, uint64_t pl) {
     int n = 0; for (int i = 0; i < 32; i++) { uint8_t *e = mb + 0x2d5f0c0 + (uint64_t)i * 28; uint32_t id; memcpy(&id, e, 4); if (id == SK_TP_V3) { id = ZR_EMPTY; memcpy(e, &id, 4); n++; } }
     if (n) LOG("免费回城（关）：%d 个技能格还绑着回城技能 %d（开着时绑的），玩家身上没有它 → 清成空格", n, SK_TP_V3);
 }
+// 局中开 → 关：把已挂上的 411 摘掉，用原版删技能 main+0x5aeed0(单位, 技能号, 0)（D2 的 SKILLS_RemoveSkill：左 / 右手技能正指着它就先改回普通攻击，再从链上摘下节点、
+// 还回技能节点池（带锁），最后调 0x5ae040 刷新）。施法中（模式 10）/ 正在死、已死（0 / 17）不动，等下一拍
+// On -> off mid-run: remove the attached 411 with the original remove-skill main+0x5aeed0(unit, skill id, 0) (D2's SKILLS_RemoveSkill: if the left / right skill points at it, it is first reset to
+// the normal attack, then the node is unlinked and returned to the skill node pool (under a lock), and finally 0x5ae040 refreshes). Not while casting (mode 10) / dying or dead (0 / 17): wait for the next tick
+static void revoke(uint8_t *mb, uint64_t unit, int srv) {
+    if (!has_skill(unit, SK_TP_V3)) return;
+    uint32_t m = *(uint32_t *)(unit + 0xc); if (m == 10 || m == 0 || m == 17) return;
+    ((void (*)(uint64_t, int, int))(mb + 0x5aeed0))(unit, SK_TP_V3, 0);
+    LOG("免费回城：关了，%s玩家技能链摘掉回城技能 %d → %s", srv ? "服务端" : "客户端", SK_TP_V3, has_skill(unit, SK_TP_V3) ? "【红】还在" : "已摘");
+}
 void dm_freetp_client_step(uint8_t *mb, uint64_t pl) {   // 游戏主线程每帧（dm_actions.c），pl = 客户端玩家；不在局里传 0 | Every frame on the game main thread (dm_actions.c), pl = the client player; pass 0 when not in a run
-    if (!mb || !pl) { atomic_store(&g_zr_free[0], 0); atomic_store(&g_zr_free[1], 0); if (!dm_freetp_enabled()) atomic_store(&g_req, 0); return; }   // 关着时不在局里点的回城钮不留到进局后才生效 | while off, a portal tap outside a run is not carried into the next run
-    int on = dm_freetp_enabled(); static int was = -1; if (on != was) { was = on; LOG("免费回城：%s", on ? "开（自定义页 free_tp）" : "关（缺省）：ZR 交还原版、不挂回城技能、回城钮用回城书 / 卷轴"); }
-    if (!on) { atomic_store(&g_zr_free[0], 0); atomic_store(&g_zr_free[1], 0); unbind_stale(mb, pl); if (atomic_exchange(&g_req, 0)) use_scroll(mb, pl); return; }
+    if (!mb || !pl) { if (!dm_freetp_enabled()) atomic_store(&g_req, 0); return; }   // 关着时不在局里点的回城钮不留到进局后才生效 | while off, a portal tap outside a run is not carried into the next run
+    int on = dm_freetp_enabled(); static int was = -1; if (on != was) { was = on; LOG("免费回城：%s", on ? "开（自定义页 free_tp）：挂回城技能、回城钮免费" : "关（缺省）：不挂回城技能、回城钮用回城书 / 卷轴"); }
+    if (!on) { revoke(mb, pl, 0); unbind_stale(mb, pl); if (atomic_exchange(&g_req, 0)) use_scroll(mb, pl); return; }
     grant(mb, pl, 0);
-    int dm_swapskill_wset(void); int bank = dm_swapskill_wset() ? 16 : 0, fr[2] = { 0, 0 }; uint32_t ids[2] = { 0, 0 };
-    for (int i = 0; i < 6; i++) { const uint8_t *e = mb + 0x2d13cbc + 12 * i; uint32_t lg, sl[2]; memcpy(&lg, e, 4); memcpy(sl, e + 4, 8); if (lg != 0x800) continue;
-        for (int k = 0; k < 2; k++) if (sl[k] < 12) { memcpy(&ids[k], mb + 0x2d5f0c0 + (uint64_t)(bank + sl[k]) * 28, 4); fr[k] = ids[k] == ZR_EMPTY; } }
-    static uint32_t last[2] = { 1, 1 }; if (ids[0] != last[0] || ids[1] != last[1]) { last[0] = ids[0]; last[1] = ids[1]; LOG("免费回城：ZR 这一格绑的技能 %u（按着 ZL：%u）→ %s", ids[0], ids[1], fr[0] ? "空着，ZR 仍当免费回城" : "已绑技能，ZR 交还原版"); }
-    atomic_store(&g_zr_free[0], fr[0]); atomic_store(&g_zr_free[1], fr[1]);
 }
 void dm_freetp_server_step(uint8_t *mb, uint64_t G, uint64_t player) {   // 服务端拍里调（diag.c） | Called in the server tick (diag.c)
     int on = dm_freetp_enabled();
     if (on && mb && player) grant(mb, player, 1);
+    if (!on && mb && player) revoke(mb, player, 1);
     // 测试开关 DM_TEST_FREETP=<拍>[,<拍>…]：到拍当作点了一次回城钮（裸宿主没有前端；复现公开仓库 「回城后点自己的蓝门第一次仍落城内」用）
     // Test switch DM_TEST_FREETP=<tick>[,<tick>…]: at each tick, act as if the Town Portal button was tapped (the bare host has no front end; used to reproduce the public repo report "after returning to town, the first click on your own blue portal still lands in town")
     { static char q[128]; static int init; if (!init) { init = 1; const char *e = getenv("DM_TEST_FREETP"); if (e) strlcpy(q, e, sizeof q); }
