@@ -320,11 +320,11 @@ def _safe(anchor):
             + ''.join(_upd_text('TouchSafeDesc%d' % k, 99999, 99999, 1700, 36, (232, 228, 214), 'center', a) for k in range(3))
             + _btn('TouchSafeOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchSafeOk', x=99999, anchor=anchor))
 _SAFE = _safe(True); _SAFE_PAD = _safe(False)
-# 社区入口的游戏内提示框（dm/host/dm_community.c）：与崩溃围栏提示框同一套做法——边框 15 片（自己一套切片 Ztouch_comm）+ 标题 + 六行正文（社区段：值 / 提示或「已复制」；「关于」段：子标题 / 版本 / 鸣谢两行；主菜单「关于」行开的纯「关于」框只用其中三行）
-# + 「复制群号」「复制链接」（同一条消息，宿主按语言只露出一颗）+ 「确定」。全部屏外起步、字空着，不带锚点：挂在暂停菜单面板（两份）与自定义页面板末尾，
-# 这两个面板都按屏宽一半锚定且带主机档缩放，宿主按面板矩形与缩放算出整屏居中的位置。点「确定」/ 手柄 B 收起；复制走外壳剪贴板回调
-# In-game notice box of the community entry (dm/host/dm_community.c): same approach as the crash-fence box - 15 frame tiles (its own slices Ztouch_comm) + title + three body lines (value / hint / "Copied")
-# + "Copy number" / "Copy link" (one message; the host shows one by language) + "OK". All start off screen with empty text and carry no anchor: hung at the end of the pause menu panel (both) and of the Custom page panel,
+# 社区入口的游戏内提示框（dm/host/dm_community.c）：与崩溃围栏提示框同一套做法——边框 15 片（自己一套切片 Ztouch_comm）+ 标题 + 渠道卡片 0–2 张（标签 / 值 / 各自的小「复制」）
+# + 免费声明 + 分隔线 + 页脚两行 + 「确定」（RC1.1 重构，控件清单见下面 _community）。全部屏外起步、字空着，不带锚点：挂在暂停菜单面板（两份）、前端主菜单（手柄版 pad_ribbon / 触屏版）与自定义页面板末尾，
+# 这些面板都按屏宽一半锚定且带主机档缩放，宿主按面板矩形与缩放算出整屏居中的位置。点「确定」/ 手柄 B 收起；复制走外壳剪贴板回调
+# In-game notice box of the community entry (dm/host/dm_community.c): same approach as the crash-fence box - 15 frame tiles (its own slices Ztouch_comm) + title + 0-2 channel cards (label / value / own small Copy)
+# + free notice + divider + two footer lines + "OK" (RC1.1 redesign, widget list in _community below). All start off screen with empty text and carry no anchor: hung at the end of the pause menu panel (both), the front-end main menu (controller pad_ribbon / touch) and the Custom page panel,
 # which are anchored at half the screen width and carry the console-profile scale; the host computes the screen-centered position from the panel's rect and scale. OK / controller B dismisses; copy goes through the shell's clipboard callback
 def _co_text(name, size, color, align='center', width=1700, height=60):   # 提示框文字行：原版色票 + ReducedSpacing（同 _upd_text 的其余字段） | a text line of the box: original colour token + ReducedSpacing (otherwise as _upd_text)
     return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": %d, "height": %d }, "text": "", '

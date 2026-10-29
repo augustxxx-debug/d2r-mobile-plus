@@ -1,9 +1,9 @@
-// 游戏内「社区入口」：中文界面给 QQ 群号、其他语言给 GitHub 仓库地址，一键复制到剪贴板。入口在选项「自定义」页末尾的「关于」组和暂停菜单「分享诊断日志」旁，两处点开同一个游戏内提示框。
-// 群号与链接不写在代码里：来自外壳每次拉的远端版本文件（iOS latest.json / Mac latest_mac.json）里的 community 字段，缓存在设置目录的 community.txt；
-// 清单没有这个字段 = 入口整体不显示（旧清单、旧包兼容）；这次拉不到 = 沿用缓存；没有缓存 = 不显示。只放群号和仓库地址，不放任何个人联系方式。
-// In-game community entry: the Chinese UI shows a QQ group number, other languages a GitHub repository address, with one-tap copy to the clipboard. Entries: the About group at the end of the Custom options page and the pause menu next to Share Diagnostics; both open the same in-game notice box.
-// The number and link are not in the code: they come from the community field of the remote version file the shell already fetches (iOS latest.json / Mac latest_mac.json), cached as community.txt in the settings directory;
-// no such field in the manifest = the entry is hidden altogether (old manifests and old packages stay compatible); fetch failed this time = keep the cache; no cache = hidden. Only the group and the repository address, never any personal contact.
+// 游戏内「社区入口」：提示框里是渠道卡片（RC1.1 重构）——中文界面 QQ 群 / 官网 / GitHub、其他语言 官网 / GitHub，取有值的前两张，每张卡片有自己的「复制」（复制到剪贴板）。入口在暂停菜单「分享诊断日志」旁、前端主菜单和选项「自定义」页末尾的「关于」组，几处点开同一个游戏内提示框。
+// 群号、官网与 GitHub 地址都不写在代码里：来自外壳每次拉的远端版本文件（iOS latest.json / Mac latest_mac.json）里的 community 字段（qq_group / site / github），缓存在设置目录的 community.txt；
+// 清单没有这个字段 = 入口整体不显示（旧清单、旧包兼容）；这次拉不到 = 沿用缓存；没有缓存 = 不显示。只放群号、官网和仓库地址，不放任何个人联系方式。
+// In-game community entry: the box shows channel cards (RC1.1 redesign) -- Chinese QQ group / website / GitHub, other languages website / GitHub, the first two present, each card with its own Copy (to the clipboard). Entries: the pause menu next to Share Diagnostics, the front-end main menu and the About group at the end of the Custom options page; all open the same in-game notice box.
+// The number, website and GitHub address are not in the code: they come from the community field (qq_group / site / github) of the remote version file the shell already fetches (iOS latest.json / Mac latest_mac.json), cached as community.txt in the settings directory;
+// no such field in the manifest = the entry is hidden altogether (old manifests and old packages stay compatible); fetch failed this time = keep the cache; no cache = hidden. Only the group, the website and the repository address, never any personal contact.
 #pragma once
 #include <stddef.h>
 #include <stdint.h>

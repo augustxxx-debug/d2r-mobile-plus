@@ -288,13 +288,14 @@ int main(void) {
         CHECK(dm_community_manifest(s10, strlen(s10)) == 1); CHECK(dm_community_channels(DM_LG_ZH, c) == 2 && c[1] == DM_CH_GITHUB); CHECK(dm_community_channels(DM_LG_EN, c) == 1 && c[0] == DM_CH_GITHUB);
         log_reset(); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy1"); CHECK(strstr(log_text(), "【红】社区入口：复制失败（第 2 行"));   // 外文只有一行：第二行的复制不该有 | other languages have one row
         atomic_store(&g_show, 0); t_group = DM_LG_ZH; }
-      // RC1.1 增量审计 Q11.1-01 / 02：site 收紧——拒绝 userinfo（@）、? 与 #、空 / 坏主机名；主机名只许 [A-Za-z0-9.-]、要有点、不以点或横线开头结尾；可选 :端口 与路径；总长 ≤ 60（值行 36 号估宽）
-      // RC1.1 review Q11.1-01 / 02: site tightened -- rejects userinfo (@), ? and #, empty / bad hosts; host [A-Za-z0-9.-] with a dot, not starting or ending with . or -; optional :port and path; at most 60 characters
+      // RC1.1 增量审计 Q11.1-01 / 02：site 收紧——拒绝 userinfo（@）、? 与 #、空 / 坏主机名；主机名只许 [A-Za-z0-9.-]、要有点、不以点或横线开头结尾；可选路径；B024 起不收端口（主机名后只能是串尾或 /，整串不许 :）；总长 ≤ 60（值行 36 号估宽）
+      // RC1.1 review Q11.1-01 / 02: site tightened -- rejects userinfo (@), ? and #, empty / bad hosts; host [A-Za-z0-9.-] with a dot, not starting or ending with . or -; optional path; from B024 no port (host followed only by end or /, no : anywhere); at most 60 characters
       { static const char *const bad[] = { "https://?x", "https://#", "https://d2rplus.example.com@evil.example/", "https://a.b@c.d/", "https://a.example/x?y=1", "https://a.example/#top",
             "https://localhost/", "https://.a.example/", "https://a.example./", "https://-a.example/", "https://a.example-/", "https://a_b.example/", "https://a.example:/", "https://a.example:123456/",
-            "https://a.example:80x/", "https://:443/", "https://a.example:443?x" };
+            "https://a.example:80x/", "https://:443/", "https://a.example:443?x",
+            "https://a.example:443/", "https://a.example:443", "https://a-b.example.com:8443/d2r/v1/", "https://a.example/x:y", "https://a.example:" };   // B024：端口 / 路径里的 : 都拒 | B024: a port or a : in the path is rejected
         for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) CHECK(!site_ok(bad[i]));
-        static const char *const good[] = { "https://d2rplus.augustusplay.com/", "https://a.example", "https://a-b.example.com:8443/d2r/v1/", "https://A1.Example.com/p_a-t.h~/(x)" };
+        static const char *const good[] = { "https://d2rplus.augustusplay.com/", "https://a.example", "https://a-b.example.com/d2r/v1/", "https://A1.Example.com/p_a-t.h~/(x)" };
         for (size_t i = 0; i < sizeof good / sizeof *good; i++) CHECK(site_ok(good[i]));
         char u[80]; snprintf(u, sizeof u, "https://a.example/%0*d", SITE_MAX - 18, 0); CHECK(strlen(u) == SITE_MAX && site_ok(u));   // 恰 60 收 | exactly 60 accepted
         snprintf(u, sizeof u, "https://a.example/%0*d", SITE_MAX - 17, 0); CHECK(strlen(u) == SITE_MAX + 1 && !site_ok(u));       // 61 拒 | 61 rejected
@@ -302,7 +303,18 @@ int main(void) {
         log_reset(); CHECK(dm_community_manifest(m, strlen(m)) == 1); CHECK(strstr(log_text(), "另一项格式坏"));   // 超长：丢这一项、退回 GitHub | too long: dropped, GitHub fallback
         CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(!cache_has("site="));
         static const char *const s9 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https://d2rplus.example.com@evil.example/\"}}";
-        log_reset(); CHECK(dm_community_manifest(s9, strlen(s9)) == 1); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(strstr(log_text(), "官网=无")); }
+        log_reset(); CHECK(dm_community_manifest(s9, strlen(s9)) == 1); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(strstr(log_text(), "官网=无"));
+        // B024：带端口的官网——清单里丢这一项（记红、退回 GitHub、不进缓存）；手写进缓存的也不认 | B024: a website with a port -- dropped from the manifest (red, GitHub fallback, not cached); not accepted from a hand-written cache either
+        static const char *const s11 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https://a.example:443/\"}}";
+        log_reset(); CHECK(dm_community_manifest(s11, strlen(s11)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(strstr(log_text(), "官网=无"));
+        CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(!cache_has("site="));
+        static const char *const s12 = "{\"community\": {\"site\": \"https://a.example:443/\"}}";   // 只有它：整个字段当格式错 | the only key: the whole field is malformed
+        log_reset(); CHECK(dm_community_manifest(s12, strlen(s12)) == 0); CHECK(!dm_community_available());
+        FILE *fp = fopen(cache, "w"); fputs("github=https://github.com/example/d2r-mobile-plus\nsite=https://a.example:443/\n", fp); fclose(fp);
+        restart(); log_reset(); dm_community_load(); CHECK(strstr(log_text(), "社区入口：缓存 ")); CHECK(strstr(log_text(), "官网=无")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB);
+        CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus"));
+        fp = fopen(cache, "w"); fputs("site=https://d2rplus.example.com/\n", fp); fclose(fp);   // 对照：同路径不带端口的缓存照读 | control: the same cache without a port loads
+        restart(); dm_community_load(); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_SITE); }
       FILE *f = fopen(cache, "w"); fputs("qq_group=1129913678\ngithub=https://github.com/example/d2r-mobile-plus\n", f); fclose(f);   // 旧缓存（RC1 写的） | an RC1 cache
       restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); }
     // 23. RC1.1（用户 Duo 真机 80c0882「加入社群讨论都歪到哪」）：入口先藏后显（新安装首启：清单还没到）时放回挪走前的 x，不放回写死的值——

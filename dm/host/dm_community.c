@@ -1,7 +1,7 @@
 // 社区入口，接口见 dm_community.h。
 // 清单字段（版本文件里与 build / note / urgent 并列）：  "community": { "qq_group": "1129913678", "github": "https://github.com/<fork>/d2r-mobile-plus" }
 //   qq_group：5–12 位数字；github：以 https://github.com/ 开头、≤ 160 个 URL 字符；site 见下。三项都可省；一项不合规就当这一项没有并记红；三项都没有 = 当无字段。
-//   site（项目官网，用户 2026-10-29；RC1.1 审计后定）：https:// + 主机名 + 可选端口 / 路径、≤ 60 字符（site_ok）；有它时外文的值行与「复制链接」用官网，GitHub 挪到「关于」段一行；没有退回 github、与 RC1 相同。旧客户端忽略它。
+//   site（项目官网，用户 2026-10-29；RC1.1 审计后定）：https:// + 主机名 + 可选 /路径、不带端口、≤ 60 字符（site_ok）；有它时渠道卡片多一张官网卡（中文排在群号后、外文排第一，见 dm_community_channels），链接一项（dm_community_value）取官网；没有官网退回 github、与 RC1 同值。旧客户端忽略它。
 //   解析在这里用 C 做（严格的最小 JSON 解析器，十一审 Q11-01：整段必须是合法根对象，只认根对象直接子级 community 及其直接子级；语法错 / 重复 / 嵌套同名 / 转义都当格式错），外壳只把原文交过来；单测 t_community.c 覆盖有 / 无 / 坏 / 缓存回退与这些坏形状。
 // 缓存 community.txt（与 sw_custom.txt 同目录）：一行一个「键=值」，先写临时文件再换名；清单明确没有字段时删掉（旧值不留）。
 // 画面（用户：「不要用原生的弹窗，用游戏内弹窗」；RC1.1 重构，用户 2026-10-30）：边框 15 片 TouchCommTile + 标题 + 渠道卡片 0–2 行（标签 / 值 / 各自的小「复制」）+ 免费声明 + 分隔线 + 页脚两行（版本 + 制作；特别鸣谢）+ 一颗「确定」，
@@ -11,7 +11,7 @@
 // Community entry; the interface is in dm_community.h.
 // Manifest field (next to build / note / urgent in the version file):  "community": { "qq_group": "1129913678", "github": "https://github.com/<fork>/d2r-mobile-plus" }
 //   qq_group: 5-12 digits; github: starts with https://github.com/, at most 160 URL characters; site: see below. All three are optional; an invalid one counts as absent and is logged red; all absent = no field.
-//   site (project website, user 2026-10-29; settled after the RC1.1 review): https:// + host + optional port / path, at most 60 characters (site_ok); when present the value line and Copy link in other languages use it and GitHub moves to an About line; otherwise github, same as RC1. Older clients ignore it.
+//   site (project website, user 2026-10-29; settled after the RC1.1 review): https:// + host + optional /path, no port, at most 60 characters (site_ok); when present it adds a website card (after the QQ card in Chinese, first in other languages, see dm_community_channels) and the link (dm_community_value) is the website; otherwise github, the same value as RC1. Older clients ignore it.
 //   Parsing is done here in C (a strict minimal JSON parser, Q11-01: the whole text must be a valid root object; only the root object's direct child community and its direct children count; syntax errors / duplicates / nested same-name keys / escapes are format errors); the shells only hand over the raw text; t_community.c covers present / absent / malformed / cache fallback and these bad shapes.
 // Cache community.txt (next to sw_custom.txt): one "key=value" per line, written to a temporary file then renamed; deleted when the manifest explicitly has no field (no stale value is kept).
 // Picture (user: "do not use a native popup, use an in-game one"; RC1.1 redesign, user 2026-10-30): 15 frame tiles + title + 0-2 channel cards (label / value / own small Copy) + free notice + divider + two footer lines (version + maker; special thanks) + one OK,
@@ -83,19 +83,18 @@ static int gh_ok(const char *s) {
     return 1;
 }
 // 官网（用户 2026-10-29：「关于弹窗里网址改成新的官网」）：地址只从清单 / 缓存来，代码里不写死。RC1.1 增量审计 Q11.1-01 / 02 收紧：
-//   https:// + 主机名（只许 [A-Za-z0-9.-]、至少一个点、不以点或横线开头结尾）+ 可选 :端口（1–5 位数字）+ 可选 /路径；拒绝 @（userinfo，浏览器会打开 @ 后面的主机）、? 与 #；
+//   https:// + 主机名（只许 [A-Za-z0-9.-]、至少一个点、不以点或横线开头结尾）+ 可选 /路径；主机名后面只能是串尾或 /，不收端口（B024：接口约定第 13 节没有端口，整串不许出现 :）；拒绝 @（userinfo，浏览器会打开 @ 后面的主机）、? 与 #；
 //   总长 ≤ SITE_MAX = 60：值行 36 号按 §2.6 估宽（拉丁 0.7 × 字号 ≈ 25.2 单位 / 字）在框内可用 1560 里最多约 61 字。超了当这一项没有（退回 GitHub）
 // The website: only from the manifest / cache, never hard-coded. Tightened in the RC1.1 review (Q11.1-01 / 02): https:// + host ([A-Za-z0-9.-], at least one dot, not starting or ending with . or -)
-//   + optional :port (1-5 digits) + optional /path; rejects @ (userinfo -- a browser opens the host after @), ? and #; at most SITE_MAX = 60 characters (the 36-pt value line fits about 61 in the box's 1560 by the §2.6 estimate). Longer = absent (GitHub fallback)
+//   + optional /path; the host is followed only by end-of-string or / and no port is accepted (B024: the interface contract §13 has no port, no : anywhere); rejects @ (userinfo -- a browser opens the host after @), ? and #; at most SITE_MAX = 60 characters (the 36-pt value line fits about 61 in the box's 1560 by the §2.6 estimate). Longer = absent (GitHub fallback)
 #define SITE_MAX 60
 static int site_ok(const char *s) {
     static const char pre[] = "https://"; size_t n = strlen(s);
     if (n <= sizeof pre - 1 || n > SITE_MAX || strncmp(s, pre, sizeof pre - 1)) return 0;
     const char *h = s + sizeof pre - 1, *e = h; int dot = 0;
-    while (*e && *e != ':' && *e != '/') { unsigned char c = (unsigned char)*e; if (!(isalnum(c) || c == '.' || c == '-')) return 0; dot |= c == '.'; e++; }
+    while (*e && *e != '/') { unsigned char c = (unsigned char)*e; if (!(isalnum(c) || c == '.' || c == '-')) return 0; dot |= c == '.'; e++; }
     if (e == h || !dot || h[0] == '.' || h[0] == '-' || e[-1] == '.' || e[-1] == '-') return 0;
-    if (*e == ':') { const char *d = ++e; while (*e >= '0' && *e <= '9') e++; if (e == d || e - d > 5 || (*e && *e != '/')) return 0; }
-    for (; *e; e++) { unsigned char c = (unsigned char)*e; if (!(isalnum(c) || strchr("-._~:/!$&'()*+,;=%", c))) return 0; }   // 路径：不含 ? # @ | path: no ? # @
+    for (; *e; e++) { unsigned char c = (unsigned char)*e; if (!(isalnum(c) || strchr("-._~/!$&'()*+,;=%", c))) return 0; }   // 路径：不含 ? # @ :（B024） | path: no ? # @ : (B024)
     return 1;
 }
 static void set_values(const char *qq, const char *gh, const char *site) { pthread_mutex_lock(&g_cm_mu); snprintf(g_qq, sizeof g_qq, "%s", qq ? qq : ""); snprintf(g_gh, sizeof g_gh, "%s", gh ? gh : ""); snprintf(g_site, sizeof g_site, "%s", site ? site : ""); pthread_mutex_unlock(&g_cm_mu); }
@@ -157,7 +156,7 @@ static int js_object(jp_t *j, int depth, int ctx) {
     if (depth > 16 || j->p >= j->e || *j->p != '{') return 0; j->p++; js_ws(j);
     if (j->p < j->e && *j->p == '}') { j->p++; return 1; }
     for (;;) { char key[24]; int kesc = 0, kover = 0;
-        if (!js_string(j, key, sizeof key, &kesc, &kover)) return 0; if (kesc || kover) key[0] = 0;   // 带转义 / 超长的键不会是我们认的那三个 | an escaped / long key is never one of ours
+        if (!js_string(j, key, sizeof key, &kesc, &kover)) return 0; if (kesc || kover) key[0] = 0;   // 带转义 / 超长的键不会是我们认的任何一个（community / qq_group / github / site / credits / special / thanks） | an escaped / long key is never one of ours (community / qq_group / github / site / credits / special / thanks)
         js_ws(j); if (j->p >= j->e || *j->p != ':') return 0; j->p++; js_ws(j);
         if (ctx == 1 && !strcmp(key, "community")) { j->n_comm++;
             if (j->p < j->e && *j->p == '{') { if (!js_object(j, depth + 1, 2)) return 0; } else { j->bad_type = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
