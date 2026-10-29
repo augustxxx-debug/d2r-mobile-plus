@@ -202,6 +202,13 @@ class OptionsPage(unittest.TestCase):
         self.assertEqual(block.count('"fontColor": "$FontColorLightGold"'), 3); self.assertEqual(block.count('"fontColor": "$FontColorLightGray"'), 6); self.assertEqual(block.count('"pointSize": 36'), 9); self.assertIn('"name": "TouchCreditLabel2"', block)   # 「制作」标签（用户 2026-10-29） | the maker label
         self.assertGreater(out.index('"name": "TouchCreditsTitle"'), out.index('"name": "TouchCommunityOpt"'))
         self.assertEqual(touch_layout._ABOUT_H, 3 * touch_layout._CUSTOM_LINE_H + 2 * touch_layout._CREDIT_LINE_H)   # 缺省两行：制作 + 特别鸣谢 | two default lines: maker + special
+        # 「鸣谢」与「关于」同一种分节标题（用户 2026-10-29）：同样式、同 x 0、同样带原版分隔线子控件（宿主 indent_rows 不缩进带子控件的标题）
+        # "Credits" is the same kind of section title as "About" (user, 2026-10-29): same style, x 0, and the same original divider child (indent_rows leaves titles with children unindented)
+        div = '"type": "ImageWidget", "name": "%s", "fields": { "rect": "$OptionsDividerRect", "filename": "PauseMenu\\\\Divider" }'
+        self.assertIn(div % 'TouchAboutDivider', out); self.assertIn(div % 'TouchCreditsDivider', out)
+        for t, d in (('TouchAboutTitle', 'TouchAboutDivider'), ('TouchCreditsTitle', 'TouchCreditsDivider')):
+            m = re.search(r'"name": "%s", "fields": \{ "rect": \{ "x": (\d+), "y": \d+, "width": (\d+), "height": (\d+) \}, "text": "@\w+", "style": "\$StyleSettingsTitle" \}, "children": \[\s*\{ [^\n]*"name": "%s"' % (t, d), out)
+            self.assertIsNotNone(m, t); self.assertEqual(m.groups(), ('0', '1730', str(touch_layout._CUSTOM_LINE_H)), t)
         self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityOpt"', out)
         rows = out.index('"name": "TouchCustomRows"'); about = out.index('"name": "TouchAboutTitle"'); box = out.index('"name": "TouchCommTile00"'); scroll_end = out.index('"name": "TouchCustomSel"')
         self.assertLess(rows, about); self.assertLess(about, scroll_end, 'the About group scrolls with the rows')

@@ -169,8 +169,8 @@ int main(void) {
           *(uint64_t *)((parent) + 0x58) = (uint64_t)(uintptr_t)kids[i_]; *(uint64_t *)((parent) + 0x60) = sizeof ks_ / sizeof *ks_; } while (0)
       MKW(rows, "TouchCustomRows", 0, 0); MKW(toggle_text, "TouchCustom_x_Text", 0, 0); MKW(about, "TouchAboutRow", 0, 1800); MKW(title, "TouchAboutTitle", 0, 0); MKW(div, "TouchAboutDivider", 0, 90);
       MKW(comm, "TouchAboutCommunityRow", 0, 180); MKW(ctext, "TouchAboutCommunityText", 0, 0); MKW(opt, "TouchCommunityOpt", 1110, 30);
-      MKW(ctitle, "TouchCreditsTitle", 0, 360); MKW(l0, "TouchCreditLabel0", 99999, 540); MKW(l1, "TouchCreditLabel1", 99999, 540); MKW(l2, "TouchCreditLabel2", 99999, 540); MKW(ln0, "TouchCreditLine0", 99999, 540); MKW(ln1, "TouchCreditLine1", 99999, 540);
-      KIDS(rows, toggle_text, about); KIDS(about, title, comm, ctitle, l0, l1, l2, ln0, ln1); KIDS(title, div); KIDS(comm, ctext, opt);
+      MKW(ctitle, "TouchCreditsTitle", 0, 360); MKW(cdiv, "TouchCreditsDivider", 0, 90); MKW(l0, "TouchCreditLabel0", 99999, 540); MKW(l1, "TouchCreditLabel1", 99999, 540); MKW(l2, "TouchCreditLabel2", 99999, 540); MKW(ln0, "TouchCreditLine0", 99999, 540); MKW(ln1, "TouchCreditLine1", 99999, 540);
+      KIDS(rows, toggle_text, about); KIDS(about, title, comm, ctitle, l0, l1, l2, ln0, ln1); KIDS(title, div); KIDS(ctitle, cdiv); KIDS(comm, ctext, opt);
       #undef MKW
       #undef KIDS
       uint8_t fake_base[16]; t_group = DM_LG_ZH;
@@ -187,7 +187,9 @@ int main(void) {
       CHECK(((int32_t *)(l0 + 0x70))[1] == 630 && ((int32_t *)(ln1 + 0x70))[0] == 620 && ((int32_t *)(ln1 + 0x70))[1] == 630);
       CHECK(((int32_t *)(l1 + 0x70))[0] == 99999);                      // 「鸣谢」名单空：整行不显示 | empty thanks list: no line
       CHECK(((int32_t *)(ln0 + 0x70))[0] == 620);                        // 名单列不动 | the names column stays
-      CHECK(((int32_t *)(ctitle + 0x70))[0] == DM_ROW_INDENT);
+      // 「鸣谢」与「关于」同一种分节标题（用户 2026-10-29：「鸣谢和那个关于 title 一看就不一致，也没有分割线」）：带分隔线子控件 → 不当叶子缩进，与「关于」同在 x 0
+      // "Credits" is the same kind of section title as "About" (user, 2026-10-29: they looked inconsistent and Credits had no divider): with its divider child it is not indented as a leaf and sits at x 0 like About
+      CHECK(((int32_t *)(ctitle + 0x70))[0] == ((int32_t *)(title + 0x70))[0] && ((int32_t *)(ctitle + 0x70))[0] == 0);
       CHECK(((int32_t *)(title + 0x70))[0] == 0);                        // 分节标题（带分隔线）不缩进，同原版分节 | the section title (with divider) is not indented, like the original sections
       CHECK(t_recalcs == 0);                                             // 稳定：不来回拉扯 | stable: no tug-of-war
     }
@@ -202,6 +204,14 @@ int main(void) {
       n = credits_all(k_maker_default, 1, k_special_default, 1, th, 1, ", ", "", ln, 2, &tr); CHECK(n == 2 && tr && strstr(ln[1].text, "…"));
       n = credits_all(NULL, 0, k_special_default, 1, NULL, 0, ", ", "", ln, CR_LINES, &tr); CHECK(n == 1 && ln[0].kind == 1);   // 没有制作名单：不出那一行 | no maker list: no line
       CHECK(!strstr(log_text(), "Augustus")); }   // 名字不进日志（日志只记行数 / 人数） | the name never goes to the log (counts only)
+    // 21. 社区框 / 纯「关于」框的纵向节奏（用户 2026-10-29：Duo 内屏上「关于」段与按钮之间一大块空白）：末行文字下沿到按钮顶 ≤ 分隔线到版本行的间距（60），
+    //     框高 = 按钮顶 + 按钮高 115 + 下边距 45；各行自上而下不重叠
+    // 21. Vertical rhythm of the community box / About-only box (user, 2026-10-29: a large blank between the About section and the buttons on the Duo inner screen): last text line bottom to button top <= 60
+    //     (the divider-to-version gap); box height = button top + button 115 + bottom margin 45; lines do not overlap top to bottom
+    for (int mode = 1; mode <= 2; mode++) { co_geom_t g = co_geom(mode); int last = -1, prev_bottom = 0;
+        for (int k = 0; k < CO_DESC; k++) if (g.dy[k]) { CHECK(g.dy[k] + 30 - g.sz[k] / 2 >= prev_bottom); prev_bottom = g.dy[k] + 30 + g.sz[k] / 2; last = k; }
+        CHECK(last >= 2); CHECK(g.btn_y - prev_bottom <= CO_GAP && g.btn_y - prev_bottom >= 40); CHECK(g.h == g.btn_y + 115 + 45);
+        if (mode == 1) { CHECK(g.div_y > g.dy[1] + 30 + g.sz[1] / 2 && g.div_y < g.dy[3] + 30 - g.sz[3] / 2); CHECK(g.dy[3] + 30 - g.sz[3] / 2 - g.div_y <= CO_GAP); } }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);

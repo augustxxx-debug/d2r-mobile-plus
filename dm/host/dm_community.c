@@ -324,6 +324,19 @@ static void co_origin(uint64_t p, int xr, int *ox, int *oy, float *s) {
     *ox = (int)(ax * xr) + r[0]; *oy = (int)(ay * 2160) + r[1]; *s = sc;
 }
 #define CO_DESC 6   // 正文行：社区框 0 群号或链接 / 1 提示或「已复制」/ 2 空（分隔线占这一行）/ 3 版本 / 4–5 鸣谢；纯「关于」框 0 版本 / 1–2 鸣谢，其余空 | body lines: community box 0 number or link / 1 hint or Copied / 2 empty (the divider takes this line) / 3 version / 4-5 credits; About-only box 0 version / 1-2 credits, the rest blank
+// 两种框的纵向排版（框内面板单位，自框顶算）：各行 y / 字号、分隔线 y、按钮顶、框高。按钮顶 = 末行文字下沿 + CO_GAP（与分隔线到版本行同一个间距），
+// 框高 = 按钮顶 + 按钮高 115 + 下边距 45。原先按钮固定在 600、框高 760：「关于」段末行下面空出约 120 单位一整条（用户 2026-10-29，Duo 内屏上很显眼）
+// Vertical layout of both boxes (panel units from the box top): line y / point size, divider y, button top, box height. Button top = last text line bottom + CO_GAP (the same gap as divider to version line),
+// box height = button top + button height 115 + bottom margin 45. Previously the buttons sat fixed at 600 in a 760-high box, leaving a band of about 120 units under the About section (user, 2026-10-29, very visible on the Duo inner screen)
+#define CO_GAP 60
+typedef struct { int h, btn_y, div_y; int dy[CO_DESC], sz[CO_DESC]; } co_geom_t;
+static co_geom_t co_geom(int mode) {   // 1 社区框（§2.6：36 / 28 / 分隔线 / 28 × 3）；2 纯「关于」框（36 / 28 / 28） | 1 community box; 2 About-only box
+    co_geom_t g = { 0 }; static const int dy_c[CO_DESC] = { 130, 192, 272, 340, 388, 436 }, sz_c[CO_DESC] = { 36, 28, 36, 28, 28, 28 }, dy_a[CO_DESC] = { 130, 200, 248, 0, 0, 0 }, sz_a[CO_DESC] = { 36, 28, 28, 0, 0, 0 };
+    memcpy(g.dy, mode == 1 ? dy_c : dy_a, sizeof g.dy); memcpy(g.sz, mode == 1 ? sz_c : sz_a, sizeof g.sz); g.div_y = mode == 1 ? 296 : 0;   // 分隔线在原「关于」行（y 272，高 60）的中线 | divider at the middle of the former About line
+    int bottom = 0; for (int k = 0; k < CO_DESC; k++) if (g.dy[k]) bottom = g.dy[k] + 30 + g.sz[k] / 2;   // 文字框高 60、竖直居中 | text boxes are 60 high, vertically centred
+    g.btn_y = bottom + CO_GAP; g.h = g.btn_y + 115 + 45;
+    return g;
+}
 static void co_hide_all(uint8_t *b, uint64_t p) {
     for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); uint64_t t = co_find(p, nm, 0); if (t) { int32_t *r = (int32_t *)(t + 0x70); r[0] = r[1] = 99999; } }   // 边框片挪出屏幕（尺寸不动） | tiles off screen (size unchanged)
     uint64_t w = co_find(p, "TouchCommTitle", 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); }
@@ -368,7 +381,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     { int ack = atomic_exchange(&g_ack, 0); if (ack) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：收起（%s）", ack == 2 ? "手柄 B" : "点确定"); return; } }
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
     int ox, oy; float s; co_origin(p, xr, &ox, &oy, &s);
-    int H = mode == 1 ? 760 : 520;   // 社区框：标题 + 社区两行 + 「关于」段四行 + 按钮；纯「关于」框：标题 + 三行 + 确定 | community box: title + two community lines + the four-line About section + buttons; About-only box: title + three lines + OK
+    const co_geom_t gm_ = co_geom(mode); int H = gm_.h;   // 社区框：标题 + 社区两行 + 「关于」段 + 按钮；纯「关于」框：标题 + 三行 + 确定（co_geom） | community box: title + two community lines + the About section + buttons; About-only box: title + three lines + OK
     int cx = (int)((xr / 2 - ox) / s), y0 = (int)((1080 - oy) / s) - H / 2;   // 整屏居中：框 1800×H（面板单位） | centered on the screen: box 1800×H (panel units)
     // 文字：版本（外壳给的显示版本，没有就空行）、鸣谢（代码缺省名单，最多两行，带标签）、社区值 + 提示 / 「已复制」
     // Text: version (the shell's display version, blank line if none), credits (default list in code, at most two lines, labelled), community value + hint / Copied
@@ -378,8 +391,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     if (g != grp) { int trunc; grp = g; ncr = credits_all(k_maker_default, (int)(sizeof k_maker_default / sizeof *k_maker_default), k_special_default, (int)(sizeof k_special_default / sizeof *k_special_default), NULL, 0, dm_str(b, "dmCreditsSep"), dm_str(b, "dmCreditsUpstreamNote"), cr, 2, &trunc);
         LOG("社区入口：提示框鸣谢 %d 行（制作 %d 名，特别鸣谢 %d 名，鸣谢 0 名）%s", ncr, (int)(sizeof k_maker_default / sizeof *k_maker_default), (int)(sizeof k_special_default / sizeof *k_special_default), trunc ? "，超过两行已在末尾加「…」" : ""); }
     char crt[2][224]; for (int k = 0; k < 2; k++) { if (k < ncr) snprintf(crt[k], sizeof crt[k], "%s%s%s", cr[k].kind == 3 ? dm_str(b, "dmCreditsMaker") : cr[k].kind == 1 ? dm_str(b, "dmCreditsSpecial") : cr[k].kind == 2 ? dm_str(b, "dmCreditsThanks") : "", cr[k].kind ? " " : "", cr[k].text); else crt[k][0] = 0; }
-    static const int dy_c[CO_DESC] = { 130, 192, 272, 340, 388, 436 }, dy_a[CO_DESC] = { 130, 200, 248, 0, 0, 0 };   // 社区框 / 纯「关于」框各行的 y（§2.6：36 / 28 / 36 子标题 / 28 × 3；36 / 28 / 28） | line y per box
-    const int *dy = mode == 1 ? dy_c : dy_a; int btn_y = mode == 1 ? 600 : 380;
+    const int *dy = gm_.dy; int btn_y = gm_.btn_y;
     if (mode == 1) {
         snprintf(line, sizeof line, dm_str(b, kind == 1 ? "dmCommunityQq" : "dmCommunityLink"), v);
         co_text(b, ti, dm_str(b, "dmCommunityTitle")); co_text(b, de[0], line);
@@ -390,7 +402,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
       for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + gm[k][0], y0 + gm[k][1] - top, gm[k][2], gm[k][3] + (k / 3 < 4 ? 2 : 0) }; co_tile(b, tl[k], r); } }
     co_place(ti, cx - 850, y0 + 40);
     for (int k = 0; k < CO_DESC; k++) { if (dy[k]) co_place(de[k], cx - 850, y0 + dy[k]); else co_place(de[k], 99999, 99999); }
-    { uint64_t dv = co_find(p, "TouchCommDivider", 0); if (mode == 1) co_divider(b, dv, cx, y0 + 296); else co_place(dv, 99999, 99999); }   // 原「关于」行（y 272，高 60）的中线 | the middle of the former About line
+    { uint64_t dv = co_find(p, "TouchCommDivider", 0); if (mode == 1) co_divider(b, dv, cx, y0 + gm_.div_y); else co_place(dv, 99999, 99999); }
     if (mode == 1) { co_place(kind == 1 ? cq : cl, cx - 490, y0 + btn_y); co_place(kind == 1 ? cl : cq, 99999, 99999); co_place(ok, cx + 20, y0 + btn_y); }   // 两颗按钮各 470 宽，左复制、右确定 | two 470-wide buttons: Copy left, OK right
     else { co_place(cq, 99999, 99999); co_place(cl, 99999, 99999); co_place(ok, cx - 235, y0 + btn_y); }   // 纯「关于」框：只有「确定」，居中 | About-only box: OK only, centered
     if (st == 1) { atomic_store(&g_show, 2); int32_t *pr = (int32_t *)(p + 0x70);
