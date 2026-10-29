@@ -117,6 +117,14 @@ make -C dm/host/tests build/t_minimap_lift build/t_uiscreen_frontend
 
 测量用 `DM_DIAG_SAMPLING=1 dm/ios/run.sh build` 出包（或在任意包的 `Documents/diag_sampling.txt` 放一个文件）。启动时 App 设置 `DM_NVN_PASSGPU`、`DM_THRCPU`（5 秒）、`DM_HEAT`（5 秒），写出 `Documents/diag/passgpu.tsv`、`thrcpu.tsv`、`heat.tsv`。逐通道计时会让提交线程等待 8 次提交之前的 GPU 完成，只作相对比较；`passgpu.tsv` 每个渲染通道一行，几分钟可达几十 MB。测量要拔线、固定亮度；充电状态下的读数不能用于功耗结论。
 
+### 光追阴影（实验性）真机表现
+
+iPhone 17 Pro 实测（RC1 候选包，光追开、AO 关）：
+- **降档原因**：按整帧 GPU 时间，不是内存。光追内存预算约 180 MB，实际估算约 82 MB，没有内存告警降档。整帧 GPU 超过出图预算的 92%、且光追超过预算的 12%，持续 1 秒降一档；整帧低于预算 70% 持续 8 秒升一档。
+- **120 帧**：预算 8.33 ms，游戏本身约 14 ms；光追开时整帧 21–24 ms，几秒内降到第 3 档（太阳半分辨率硬阴影、关点光、镂空照原版）。所以 120 帧下只有硬阴影，加上光追开启动时降一档的渲染分辨率，软阴影不生效。
+- **60 帧**：营地等轻场景停在第 0 档、软阴影生效（光追 3.3–4.0 ms，整帧 7.5–8.6 ms）。大规模战斗时光追本身涨到 10–14 ms，降到第 2–3 档；读图卡顿也可能触发降档。场景变轻后整帧回到预算 70% 以下持续 8 秒，才逐档升回。
+- 常驻比光追关多约 125–160 MB（五幕定帧局）。0 红线、0 内存告警，存档前后一致。
+
 ### 本机调试：在 Mac 上跑 iOS 包（代替模拟器）
 
 iOS 模拟器 SDK 里没有 MetalFX 框架，图形后端编不过，着色器库也只有真机目标，所以模拟器这条路走不通。可行的本机路径是把 iphoneos 的 `DmIOS.app` 按“Designed for iPad”在 Apple 芯片 Mac 上原样启动（同 `tools/smoke_mac.sh` 的做法）：把构建产物包成 `<名>.app/Wrapper/DmIOS.app` 加 `WrappedBundle` 软链，`open -n <名>.app --env … --args -mode boot` 启动；描述文件要包含这台 Mac。容器在 `~/Library/Containers/<UUID>/Data`（按 `.com.apple.containermanagerd.metadata.plist` 或 `Documents/boot.txt` 找），把 RomFS 的 `data/` 克隆进 `Library/Application Support/romfs/`、测试存档放进 `Documents/save.test`。常用环境：`DM_TEST_SCREEN=2622x1206` 把屏幕当成 iPhone 16 Pro（配 `DM_TEST_SAFE_L/R` 安全区），`DM_SAVE_TEST=1`、`DM_TEST_ICLOUD_OFF=1`、`DM_KEYS` 进局、`DM_SCREEN_SHOT=<秒>:<文件名>` 整窗截图到 Documents。能验的是外壳、布局、分辨率与比例逻辑、进局；验不了真机触点、热态与 A 系列 GPU 时间。
