@@ -239,6 +239,10 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
     // BC textures sampled in their own formats where the device can (the engine's gfx-native-bc; a marker file still wins):
     // on the Redmi K50 Ultra camp GPU -0.5 ms and live image memory 827 -> 320 MB.
     setenv("DM_GFX_NATIVE_BC", "1", 0);
+    // 没有 BC 的设备（Mali）上 BC3 转成 ASTC 4x4 上传（引擎的 gfx-bc-astc；设备支持 ASTC 时；标记文件仍优先）：OPPO 上软解图像 604 MB 里 BC3 占 547 MB，转后约省 410 MB。
+    // On devices without BC (Mali) BC3 uploads as ASTC 4x4 (the engine's gfx-bc-astc; where the device has ASTC; a marker file still wins):
+    // BC3 was 547 of the 604 MB of decoded images on the OPPO; about 410 MB less.
+    setenv("DM_GFX_BC_ASTC", "1", 0);
     // 片元着色器的四元组邻居交换改用精细导数（引擎的 gfx-quad-derivatives；标记文件仍优先）：Adreno 上辅助调用在子组洗牌里取到垃圾，
     // 罪恶洞穴打斗时单位周围出现黑方块。
     // Fragment-shader quad-neighbour shuffles go through fine derivatives (the engine's gfx-quad-derivatives; a marker file
