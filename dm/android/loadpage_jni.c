@@ -42,6 +42,7 @@ void F(nativeFail)(JNIEnv *env, jclass cls, jstring reason) {
     (void)cls; const char *t = reason ? (*env)->GetStringUTFChars(env, reason, NULL) : NULL; dm_loadpage_fail(t ? t : "", now_ms()); if (t) (*env)->ReleaseStringUTFChars(env, reason, t);
 }
 void F(nativeFinish)(JNIEnv *env, jclass cls) { (void)env; (void)cls; dm_loadpage_finish(now_ms()); }
+void F(nativeSetWordmark)(JNIEnv *env, jclass cls, jboolean on) { (void)env; (void)cls; dm_loadpage_set_wordmark(on); }   // 安卓关字标（PLUS 图标背景） | Android turns the wordmark off (PLUS icon background)
 jint F(nativeState)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_state(); }
 jint F(nativePercent)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_percent(); }
 jboolean F(nativeMuted)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_muted() ? JNI_TRUE : JNI_FALSE; }

@@ -50,6 +50,7 @@ public final class LoadPageView extends View {
     static native String[] nativeText();
     static native int nativeColor(int which);
     static native String nativeLastLine();
+    static native void nativeSetWordmark(boolean on);
     static native String[] nativeManifest(byte[] body);
     static native void nativeCommunity(String qq, String github, String site);
     static native String nativeCopyValue();
@@ -97,6 +98,7 @@ public final class LoadPageView extends View {
         super(ctx);
         density = ctx.getResources().getDisplayMetrics().density;
         nativeLang(Locale.getDefault().toLanguageTag());
+        nativeSetWordmark(false);   // 背景是 App 图标美术（带 MOBILE PLUS），不再画金色字标（用户 2026-10-29） | the background is the App icon art (reads MOBILE PLUS), so no gold wordmark (user 2026-10-29)
         setOnApplyWindowInsetsListener((v, insets) -> {
             android.graphics.Insets s = insets.getInsets(WindowInsets.Type.displayCutout());
             insetL = s.left / density; insetT = s.top / density; insetR = s.right / density; insetB = s.bottom / density; invalidate(); return insets;
@@ -192,7 +194,7 @@ public final class LoadPageView extends View {
         }
         }
         muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted());
-        loadLogo();
+        if (L[L_LOGO + 2] > 0) loadLogo();   // 关字标时不读字标图 | the wordmark image is not read with the wordmark off
         if (logo != null && L[L_LOGO + 2] > 0) c.drawBitmap(logo, null, r(L, L_LOGO, new RectF()), paint);   // 字标图：等比居中（矩形由公共布局算） | wordmark: aspect kept, centred (rect from the shared layout)
         else line(c, T[4], brand, (float) L[L_BRANDPT], nativeColor(C_TITLE), false, serif);
         line(c, T[0], title, (float) L[L_TITLEPT], nativeColor(C_TITLE), false, serif);

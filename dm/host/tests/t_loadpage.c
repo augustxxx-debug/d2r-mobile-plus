@@ -199,6 +199,20 @@ int main(void) {
               for (const unsigned char *c = (const unsigned char *)s; *c; ) { if (*c < 0x80) { est += 0.55; c++; } else if (*c < 0xe0) { est += 0.6; c += 2; } else { est += 1.0; c += 3; } }
               est *= pts[q]; if (est > L1.bar.w) printf("  宽度：组 %d 键 %s 估 %.0f > %.0f\n", gs[k], ks[q], est, L1.bar.w); CHECK(est <= L1.bar.w); } }
           dm_loadpage_ui_set_group(-1); }
+        // 关字标（安卓，PLUS 图标背景）：不画字标、文字字标为空；图标外框落在安全区顶与标题之间、在内容宽内；有没有页脚进度组位置不变；iOS（开）不受影响
+        // wordmark off (Android, PLUS icon background): no wordmark image, empty text wordmark; the icon box sits between the safe top and the title, within the content width; the progress group does not move with or without a footer; on (iOS) unaffected
+        { dm_lp_screen scr2[2] = { thor, oppo }; dm_loadpage_set_wordmark(0);
+          for (int k = 0; k < 2; k++) { dm_lp_layout A, B; double W = scr2[k].w;
+            dm_loadpage_begin(two, 2, w_two, 14000); dm_loadpage_community(NULL, NULL, NULL); dm_loadpage_layout(&scr2[k], &A);
+            dm_loadpage_community("1129913678", NULL, "https://d2rplus.augustusplay.com/"); dm_loadpage_layout(&scr2[k], &B);
+            CHECK(A.logo.w == 0 && A.logo_name == NULL && NEAR(A.title.y, B.title.y) && NEAR(A.bg_dst.y, B.bg_dst.y) && NEAR(A.bg_dst.h, B.bg_dst.h));
+            double iy0 = B.bg_dst.y + B.bg_dst.h * 0.030, iy1 = B.bg_dst.y + B.bg_dst.h * 0.824, ix0 = B.bg_dst.x + B.bg_dst.w * 0.274, ix1 = B.bg_dst.x + B.bg_dst.w * 0.727;
+            CHECK(iy0 >= scr2[k].inset_t + 28 - 0.5 && iy1 <= B.title.y - 18 + 0.5); CHECK(ix0 >= scr2[k].inset_l + 28 - 0.5 && ix1 <= W - scr2[k].inset_r - 28 + 0.5);
+            CHECK(iy1 - iy0 > 120);   // 图标别缩得太小 | the icon must not shrink too far
+            CHECK(B.bg_src.w == B.bg_w && B.bg_src.h == B.bg_h);
+            dm_loadpage_text(&t, 14100); CHECK(t.brand[0] == 0); }
+          dm_loadpage_set_wordmark(1); dm_loadpage_layout(&thor, &L1); CHECK(L1.logo.w > 0 && L1.logo_name != NULL); dm_loadpage_text(&t, 14200); CHECK(t.brand[0] != 0);
+          dm_loadpage_community(NULL, NULL, NULL); }
         // 六套文字：第一行估宽（拉丁 / 西里尔 0.55 个字号、汉字 / 韩文 1.0 个字号）放得进 OPPO 的行宽，按钮字放得进 108 点（左右各留 6 点，手柄 A 图标另占一个字号 + 6 点）
         // six text sets: the first line's estimated width (Latin / Cyrillic 0.55 em, CJK / Hangul 1.0 em) fits OPPO's line width; button labels fit 128 pt (the controller A glyph takes 22 more)
         dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus", "https://d2rplus.augustusplay.com/"); dm_loadpage_layout(&oppo, &L1);
