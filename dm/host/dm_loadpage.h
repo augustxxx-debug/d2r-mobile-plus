@@ -39,6 +39,12 @@ typedef struct {   // 一次进度回报的细节（不知道的填 0） | detai
 
 // 开始：kinds[n] 按发生顺序；weight_ms 可为 NULL（缺省权重）或逐项给（0 = 该项用缺省）。再调一次 = 重新开始（状态清零）
 // Begin: kinds[n] in the order they happen; weight_ms may be NULL (default weights) or per stage (0 = default for that one). Calling again = start over (state reset)
+// 线程：所有函数都可在任意线程调（内部一把递归锁）。返回内部缓冲指针的函数（dm_loadpage_ui、copy_value、last_line）只在锁内有效——要跨调用拿一致快照
+// 或用这些指针，先 dm_loadpage_lock()，用完 dm_loadpage_unlock()（外审 EXT6-01）
+// Threads: every function may be called from any thread (one recursive lock inside). Pointers into internal buffers (dm_loadpage_ui, copy_value, last_line) are valid only under the
+// lock - to take a consistent snapshot across calls or to use those pointers, call dm_loadpage_lock() first and dm_loadpage_unlock() after (external review EXT6-01)
+void dm_loadpage_lock(void);
+void dm_loadpage_unlock(void);
 void dm_loadpage_begin(const int *kinds, int n, const int *weight_ms, uint64_t now_ms);
 // 第 stage 个阶段走到 frac（0..1）；d 可为 NULL。报到后面的阶段 = 前面的阶段算完成；报回前面的阶段不让总进度倒退
 // Stage `stage` is at frac (0..1); d may be NULL. Reporting a later stage marks the earlier ones complete; reporting an earlier one again never moves overall backwards
