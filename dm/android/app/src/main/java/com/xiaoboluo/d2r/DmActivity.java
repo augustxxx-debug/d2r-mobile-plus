@@ -326,7 +326,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
                 // 脚本要的目录形状：<游戏>/ExeFS、<游戏>/RomFS/data，用符号链接指到玩家放的地方（只读，清理时不跟链接） | the layout the script wants: <game>/ExeFS, <game>/RomFS/data, as symlinks to where the player put them (read only; cleaning never follows links)
                 File game = new File(gen, "game"); PackGenerator.deleteTree(game); new File(game, "RomFS").mkdirs();
                 Os.symlink(new File(base, "ExeFS").getPath(), new File(game, "ExeFS").getPath());
-                Os.symlink(dataDir.getPath(), new File(game, "RomFS/data").getPath());
+                linkData(dataDir, new File(game, "RomFS/data"));   // 逐个文件链接，不带点的 build.config 链成 .build.config（八审 P1-1） | per-file links; an undotted build.config is linked as .build.config
                 File out = new File(gen, "out"); PackGenerator.deleteTree(out);
                 int exit = PackGenerator.run(PackGenerator.command(new File(nativeDir), gen, game, out), PackGenerator.environment(new File(nativeDir), gen, jobs), new File(gen, "src"), log, genState, tail);
                 PackGenerator.Failure kind = PackGenerator.classify(exit, new java.util.ArrayList<>(tail), genState.failKind);
@@ -359,6 +359,20 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         }, "dm-generate").start();
     }
 
+    // 生成器看到的 <游戏>/RomFS/data：玩家 data 里每个文件链一个同名链接（只读，清理时不跟链接）；只有不带点的 build.config 时链成 .build.config
+    // （电脑上常被存成无点名，运行时也认它，见 jni_android.c；生成器只读带点的，八审 P1-1）
+    // <game>/RomFS/data as the generator sees it: one link per file in the player's data (read only; cleaning never follows links); when there is only an undotted
+    // build.config it is linked as .build.config (often saved without the dot on a computer; the runtime accepts it too, see jni_android.c; the generator reads only the dotted name, eighth review P1-1)
+    private static void linkData(File data, File into) throws IOException, ErrnoException {
+        if (!into.mkdirs() && !into.isDirectory()) throw new IOException("mkdir " + into);
+        String[] names = data.list(); if (names == null) return;
+        boolean dotted = new File(data, ".build.config").isFile();
+        for (String n : names) {
+            String as = !dotted && n.equals("build.config") ? ".build.config" : n;
+            Os.symlink(new File(data, n).getPath(), new File(into, as).getPath());
+        }
+    }
+
     private static String stepLabelFor(android.content.Context c, PackGenerator.Step step) {
         int id;
         switch (step) {
@@ -389,7 +403,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // next step, defect ledger B026): for file problems, list the sentences the generator's check produced
     private static String[] failureText(Context app, PackGenerator.Failure kind, int exit, java.util.List<String> tail, File gen) {
         StringBuilder files = new StringBuilder();
-        synchronized (genState.summary) { for (String s : genState.summary) if (((s.startsWith("游戏文件核对：") && !s.contains("都在")) || s.contains("内容不对")) && !s.contains("没有也不影响")) files.append(s.replace("游戏文件核对：", "")).append('\n'); }
+        synchronized (genState.summary) { for (String s : genState.summary) if (((s.startsWith("游戏文件核对：") && !s.contains("都在")) || s.contains("内容不对")) && !s.contains("不影响")) files.append(s.replace("游戏文件核对：", "")).append('\n'); }
         switch (kind) {
             case NEED_FILES: return new String[]{app.getString(R.string.dmAndroidGenFailFiles), app.getString(R.string.dmAndroidGenNeedFiles, PackGenerator.missingDetail(tail))};
             case BAD_FILES: return new String[]{app.getString(R.string.dmAndroidGenFailFiles), files + app.getString(R.string.dmAndroidGenFailFilesNext)};
