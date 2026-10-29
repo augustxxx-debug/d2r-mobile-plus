@@ -233,9 +233,18 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
 // "Pick Up (hold to identify)" while the cursor rests on an unidentified item (controller hold A = free identify, dm_cursor.c;
 // for unidentified equipment the original game only hints "A Pick Up", and an entry added to the button legend would be overwritten when the
 // original game rebuilds it every frame from the item under the cursor, so the string it fetches is swapped instead)
-enum { HINT_VAULT, HINT_IDENT, NHINT };
+// 第三条（B014，RC1.1）：原版物品类页面（物品栏等）提示条 X 那条写「比较」，可比较实际要按住 X（原版只在比较键按下 / 松开时写「对比键按着」，dm_actions.c），
+// 松手就收起——提示照原版自己的长句「按住 X 来比较」（ui-controller comparisonTooltipController）改成「比较（按住）」。这一条不跟页：手柄模式下常换（原版所有用到这个键的地方都是按住比较），触屏模式写回原文
+// (触屏没有底部提示条)。原版物品栏加这一条的地方是 main+0x3b61ec，取的就是这个键的串，所以换串即可，不用动提示条条目
+// Third entry (B014, RC1.1): the original legend's X entry on the item pages (inventory etc.) says "Compare", but comparing actually needs X
+// held (the original writes "compare button held" only on the compare button's press / release, dm_actions.c) and closes on release -- the hint becomes
+// "Compare (hold)", after the original's own long sentence "Hold X to compare" (ui-controller comparisonTooltipController). This entry does not follow a page: swapped all the time in controller
+// mode (every original use of this key is hold-to-compare), the original written back in touch mode (no bottom legend there). The original inventory
+// adds the entry at main+0x3b61ec from this key's string, so swapping the string is enough; the legend entries are not touched
+enum { HINT_VAULT, HINT_IDENT, HINT_CMP, NHINT };
 static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[48]; } g_hint[NHINT] = {
-    { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" }, { "ControllerPromptItemPickUpFromInventory", "dmPadLegIdentify" } };   // [0]「按住 Y」那半句、[1]「捡起」 | [0] the "hold Y" half of the sentence, [1] "Pick Up"
+    { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" }, { "ControllerPromptItemPickUpFromInventory", "dmPadLegIdentify" },
+    { "ControllerPromptItemCompare", "dmPadLegCompare" } };   // [0]「按住 Y」那半句、[1]「捡起」、[2]「比较」（手柄模式常换） | [0] the "hold Y" half of the sentence, [1] "Pick Up", [2] "Compare" (always in controller mode)
 void dm_padmode_vault_hint(int on) { atomic_store(&g_hint[HINT_VAULT].on, on ? 3 : 0); }   // 游戏主线程，页在屏上时每帧调（3 帧不调就算离开） | Game main thread; called every frame while the page is on screen (3 frames without a call counts as having left)
 void dm_padmode_ident_hint(int on) { atomic_store(&g_hint[HINT_IDENT].on, on ? 3 : 0); }   // 同上：光标停在未鉴定物品上时每帧调 | Same as above: called every frame while the cursor rests on an unidentified item
 // 切语言：原版把串表整张清空重装（SetLanguage，diag.c 的观测门在清空之前、游戏主线程调这里）。换串表与上面的提示小表都靠「节点地址变了」认重装，
@@ -264,7 +273,7 @@ static void hint_pump(void) {
         // Our half of the sentence goes through the Chinese-English table; the string pointer must stay resident (what is swapped into the string table
         // is the address of this buffer), so compare on every fetch and rewrite the buffer only when the language has changed
         { const char *w = dm_str(g_b, g_hint[h].ours_key); if (w && strcmp(ours, w)) { if (*nodep && ((uint64_t *)(uintptr_t)(*nodep + 0x20))[0] == (uint64_t)(uintptr_t)ours) ((uint64_t *)(uintptr_t)(*nodep + 0x20))[1] = strlen(w); strlcpy(ours, w, sizeof g_hint[h].ours); } }
-        int on = g_cur && atomic_load(&g_hint[h].on) > 0; if (atomic_load(&g_hint[h].on) > 0) atomic_fetch_sub(&g_hint[h].on, 1);
+        int on = g_cur && (h == HINT_CMP || atomic_load(&g_hint[h].on) > 0); if (atomic_load(&g_hint[h].on) > 0) atomic_fetch_sub(&g_hint[h].on, 1);
         uint64_t nd = str_node((uint64_t)(uintptr_t)(g_b + 0x2d71030), g_hint[h].key, strlen(g_hint[h].key)); if (!nd) continue;
         uint64_t *v = (uint64_t *)(uintptr_t)(nd + 0x20);
         if (nd != *nodep) { if (v[0] == (uint64_t)(uintptr_t)ours) continue; *nodep = nd; g_hint[h].orig = v[0]; g_hint[h].olen = v[1]; }   // 新节点（开机首次 / 切语言后串表重装）：记原文 | New node (first time after boot / string table reloaded after a language switch): record the original text

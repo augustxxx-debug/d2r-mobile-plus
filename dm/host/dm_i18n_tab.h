@@ -366,6 +366,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmPadLegNext", "下一页", "Next Page", "Página siguiente", "Página siguiente", "Следующая", "다음" },
     { "dmPadHintDeposit", "存入", "Deposit", "Depositar", "Depositar", "Внести", "보관" },
     { "dmPadLegIdentify", "捡起（按住鉴定）", "Pick Up (Hold to Identify)", "Recoger (mantén: identificar)", "Recolectar (mantén: identificar)", "Взять (держать — опознать)", "감정" },
+    { "dmPadLegCompare", "比较（按住）", "Compare (hold)", "Comparar (mantén)", "Comparar (mantén)", "Сравнить (держать)", "길게 눌러 비교" },
     { "dmDiffSection", "难度", "Difficulty", "Dificultad", "Dificultad", "Сложность", "난이도" },
     { "dmDiffRow", "游戏难度", "Game Difficulty", "Dificultad de la partida", "Dificultad de partida", "Сложность игры", "게임 난이도" },
     { "dmDiffRowNote", "相当于同局人数 1–8 档，改了立刻生效", "Same as 1–8 players in the game; takes effect at once", "Equivale a 1–8 jugadores en la partida; surte efecto al instante", "Equivale a 1–8 jugadores en la partida; surte efecto al instante", "Как при 1–8 игроках в игре; действует сразу", "같은 게임에 1–8명이 있는 것과 같으며 바로 적용됩니다" },
