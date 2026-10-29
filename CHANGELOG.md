@@ -6,6 +6,14 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Unreleased]
 
+## [Android 1.0.1] - unreleased
+
+Upgrade over 1.0.0 (same package name and signing certificate; saves and the game files on the phone stay). After the upgrade the first launch rebuilds its touch resources once.
+
+- **First-launch failures explain themselves**: the app checks your game files against the Switch 3.3.94012 list (49 files) before building and names what is wrong ("missing data/.build.config (a hidden file, copy it too)", "data/05-00000001.data has the wrong size: should be X bytes, is Y (probably not fully copied)"); after any other failure it checks the file contents too. The failure screen title says what kind of problem it is (incomplete files, wrong version, not enough space, internal error) with the next step, and a "Share Diagnostics" button (touch, or A on a controller) shares a scrubbed zip of the full logs. gen_log.txt starts with the verdict, then the device, free space and the file list.
+- **Free Town Portal is now an option, off by default** (Options → Custom). Off is the original game: the touch portal button uses your Tome of Town Portal or a scroll, shows how many are left and greys out at zero. RT is never turned into a free portal.
+- **Controller**: the Elysium checkbox on the new-character mode page shows the right button for Xbox / PlayStation controllers; the inventory hint reads "Compare (Hold)"; the character list on the controller front page no longer cuts off the level line.
+
 ## [Android 1.0.0] - 2026-10-30
 
 First Android release (`android-v1.0.0` = `5b226fd`, shown as `1.0.0+170 · 5b226fd`). Download and checksums: [Releases](https://github.com/augustxxx-debug/d2r-mobile-plus/releases/tag/android-v1.0.0).
