@@ -199,7 +199,10 @@ public final class LoadPageView extends View {
         }
         }
         if (L[L_MUTE + 2] > 0) {   // 提示页没有静音钮；和页脚一样半透明（用户 2026-10-29） | no mute button on a notice page; translucent like the footer (user 2026-10-29)
-            RectF mr = r(L, L_MUTE, new RectF()); mr.inset(-3, -3); int sc = c.saveLayerAlpha(mr, (int) L[L_COMMALPHA]);   // 图层边界放宽 3 dp，别裁掉圆的抗锯齿边 | layer bounds 3 dp wider so the circle's antialiased edge is not clipped muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted()); c.restoreToCount(sc);
+            RectF mr = r(L, L_MUTE, new RectF()); mr.inset(-3, -3);   // 图层边界放宽 3 dp，别裁掉圆的抗锯齿边 | layer bounds 3 dp wider so the circle's antialiased edge is not clipped
+            int sc = c.saveLayerAlpha(mr, (int) L[L_COMMALPHA]);
+            muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted());
+            c.restoreToCount(sc);
         }
         if (L[L_LOGO + 2] > 0) loadLogo();   // 关字标时不读字标图 | the wordmark image is not read with the wordmark off
         if (logo != null && L[L_LOGO + 2] > 0) c.drawBitmap(logo, null, r(L, L_LOGO, new RectF()), paint);   // 字标图：等比居中（矩形由公共布局算） | wordmark: aspect kept, centred (rect from the shared layout)
