@@ -47,7 +47,7 @@ jstring F(nativeMusicName)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->
 jstring F(nativeLogoName)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_logo_name(NULL, NULL)); }
 jstring F(nativeBgName)(JNIEnv *env, jclass cls, jfloat w, jfloat h) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_bg_name(w, h, NULL, NULL)); }
 // 布局摊平成 double[72]：landscape, bg_w, bg_h, bg_src×4, bg_dst×4, bar×4, bar_fill×4, title×4, percent×4, body×4, sub×4, brand×4, title_pt, body_pt, sub_pt, brand_pt, bar_radius,
-//   logo×4, logo_w, logo_h, mute×4, comm, comm1×4, comm2×4, copy×4（顺序对应 LoadPageView.java 的常量）
+//   logo×4, logo_w, logo_h, mute×4, comm, comm1×4, comm2×4, copy×4, comm_pt, comm_alpha（顺序对应 LoadPageView.java 的常量）
 // Layout flattened into double[72] (order matches the constants in LoadPageView.java)
 jdoubleArray F(nativeLayout)(JNIEnv *env, jclass cls, jfloat w, jfloat h, jfloat l, jfloat t, jfloat r, jfloat b) {
     (void)cls; dm_lp_screen s = { w, h, l, t, r, b }; dm_lp_layout L; dm_loadpage_layout(&s, &L);
@@ -59,6 +59,7 @@ jdoubleArray F(nativeLayout)(JNIEnv *env, jclass cls, jfloat w, jfloat h, jfloat
     v[o++] = L.mute.x; v[o++] = L.mute.y; v[o++] = L.mute.w; v[o++] = L.mute.h;
     v[o++] = L.comm; const dm_lp_rect *cr[] = { &L.comm1, &L.comm2, &L.copy };   // 社区页脚：标志 + comm1×4 + comm2×4 + copy×4 | community footer: flag + comm1×4 + comm2×4 + copy×4
     for (unsigned i = 0; i < 3; i++) { v[o++] = cr[i]->x; v[o++] = cr[i]->y; v[o++] = cr[i]->w; v[o++] = cr[i]->h; }
+    v[o++] = L.comm_pt; v[o++] = L.comm_alpha;
     jdoubleArray a = (*env)->NewDoubleArray(env, o); (*env)->SetDoubleArrayRegion(env, a, 0, o, v); return a;
 }
 jobjectArray F(nativeText)(JNIEnv *env, jclass cls) {   // { 标题, 百分数, 正文, 副文, 字标, 社区第一行, 社区第二行, 复制钮, 复制状态 } | { title, percent, body, sub, brand, community 1, community 2, copy button, copy state }

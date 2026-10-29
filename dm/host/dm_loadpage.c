@@ -231,20 +231,22 @@ void dm_loadpage_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     o->bg_name = dm_loadpage_bg_name(w, h, &o->bg_w, &o->bg_h);
     dm_loadpage_cover(o->bg_w, o->bg_h, w, h, LP_FOCUS_X, LP_FOCUS_Y, &o->bg_src);
     o->bg_dst = (dm_lp_rect){ 0, 0, w, h };
-    o->title_pt = 24; o->body_pt = 18; o->sub_pt = 14; o->brand_pt = 20; o->bar_radius = 3;
+    o->title_pt = 24; o->body_pt = 18; o->sub_pt = 14; o->brand_pt = 20; o->bar_radius = 3; o->comm_pt = 12; o->comm_alpha = DM_LP_COMM_ALPHA;
     double L = s->inset_l, R = s->inset_r, T = s->inset_t, B = s->inset_b, m = 28;   // 安全区之内再留 28 点边距 | 28 pt margin inside the safe area
     double cx0 = L + m, cw = w - L - R - 2 * m; if (cw < 120) cw = 120;
     double bw = o->landscape ? (cw * 0.62 > 320 ? cw * 0.62 : 320) : cw; if (bw > cw) bw = cw; if (bw > 900) bw = 900;   // 横屏条宽 62%（最宽 900）、竖屏铺满内容宽 | landscape bar 62% wide (900 max), portrait the full content width
     double bx = cx0 + (cw - bw) / 2, bh = 8;
     double sub_h = o->sub_pt * 1.4, body_h = o->body_pt * 1.4, title_h = o->title_pt * 1.35;
     double y = h - B - 44;   // 从底往上排：（社区两行 + 复制钮）/ 副文 / 正文 / 条 / 标题 + 百分数 | stacked from the bottom: (community lines + copy button) / sub / body / bar / title + percent
-    if ((o->comm = dm_loadpage_community_shown())) {   // 社区两行做成页脚：贴底、占满内容宽（安全区 + 边距之内），字左对齐、复制钮靠右跨两行高；进度那一组整体上移
-                                                        // community lines as a footer: at the bottom across the full content width (inside the safe area + margin), text left aligned, the copy button on the right spanning both lines; the progress group moves up
-        double cb_w = 144, cb_h = 2 * sub_h + 2, cy = h - B - 20 - cb_h;
-        o->copy = (dm_lp_rect){ cx0 + cw - cb_w, cy, cb_w, cb_h };
-        o->comm1 = (dm_lp_rect){ cx0, cy, cw - cb_w - 12, sub_h };
-        o->comm2 = (dm_lp_rect){ cx0, cy + sub_h + 2, cw - cb_w - 12, sub_h };
-        y = cy - 18;
+    if ((o->comm = dm_loadpage_community_shown())) {   // 社区两行做成不抢眼的页脚（用户 2026-10-29：「太乱，字小一些、按钮小一些、文字加透明度」）：12 点字、半透明，贴底占满内容宽（安全区 + 边距之内），
+                                                        // 字左对齐；复制钮是一行高的小钮，靠右、与两行字竖向居中；进度那一组整体上移
+                                                        // community lines as an unobtrusive footer (user 2026-10-29: "too busy - smaller text, smaller button, more transparent text"): 12 pt, translucent, at the bottom across
+                                                        // the full content width (inside the safe area + margin), text left aligned; the copy button is a small one-line pill on the right, centred on the two lines; the progress group moves up
+        double ch = o->comm_pt * 1.4, cb_w = 108, cb_h = 24, cy = h - B - 16 - 2 * ch;
+        o->comm1 = (dm_lp_rect){ cx0, cy, cw - cb_w - 12, ch };
+        o->comm2 = (dm_lp_rect){ cx0, cy + ch, cw - cb_w - 12, ch };
+        o->copy = (dm_lp_rect){ cx0 + cw - cb_w, cy + ch - cb_h / 2, cb_w, cb_h };
+        y = cy - 14;
     }
     o->sub = (dm_lp_rect){ bx, y - sub_h, bw, sub_h }; y -= sub_h + 6;
     o->body = (dm_lp_rect){ bx, y - body_h, bw, body_h }; y -= body_h + 10;

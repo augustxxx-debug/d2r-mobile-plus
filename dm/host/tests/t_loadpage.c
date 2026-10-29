@@ -161,9 +161,9 @@ int main(void) {
         dm_lp_screen scr[2] = { thor, oppo };
         for (int k = 0; k < 2; k++) { dm_loadpage_layout(&scr[k], &L1); double W = scr[k].w, H = scr[k].h;
             CHECK(L1.comm == 1); CHECK(rect_in(L1.comm1, scr[k].inset_l, 0, W - scr[k].inset_r, H - scr[k].inset_b) && rect_in(L1.comm2, 0, 0, W, H - scr[k].inset_b) && rect_in(L1.copy, 0, 0, W - scr[k].inset_r, H - scr[k].inset_b));
-            CHECK(L1.sub.y + L1.sub.h <= L1.comm1.y - 12); CHECK(L1.comm1.y + L1.comm1.h <= L1.comm2.y); CHECK(L1.comm1.x + L1.comm1.w <= L1.copy.x - 8);
-            CHECK(NEAR(L1.copy.x + L1.copy.w, W - scr[k].inset_r - 28)); CHECK(NEAR(L1.comm1.x, scr[k].inset_l + 28)); CHECK(L1.copy.h >= 30 && L1.copy.w >= 140);
-            CHECK(L1.logo.y + L1.logo.h <= L1.title.y - 24 + 1e-6); CHECK(L1.comm2.y + L1.comm2.h <= H - scr[k].inset_b - 16); }
+            CHECK(L1.sub.y + L1.sub.h <= L1.comm1.y - 10); CHECK(L1.comm1.y + L1.comm1.h <= L1.comm2.y); CHECK(L1.comm1.x + L1.comm1.w <= L1.copy.x - 8);
+            CHECK(NEAR(L1.copy.x + L1.copy.w, W - scr[k].inset_r - 28)); CHECK(NEAR(L1.comm1.x, scr[k].inset_l + 28)); CHECK(L1.copy.h >= 22 && L1.copy.w >= 100 && L1.comm_pt == 12 && L1.comm_alpha > 0 && L1.comm_alpha < 255); CHECK(L1.copy.y >= L1.comm1.y && L1.copy.y + L1.copy.h <= L1.comm2.y + L1.comm2.h);
+            CHECK(L1.logo.y + L1.logo.h <= L1.title.y - 24 + 1e-6); CHECK(L1.comm2.y + L1.comm2.h <= H - scr[k].inset_b - 16 + 1e-6); }
         dm_loadpage_layout(&thor, &L1); CHECK(L1.title.y < L0.title.y && L1.bar.y < L0.bar.y);
         CHECK(dm_loadpage_hit_copy(&L1, L1.copy.x + 5, L1.copy.y + 5) && dm_loadpage_hit_copy(&L1, L1.copy.x - 6, L1.copy.y) && !dm_loadpage_hit_copy(&L1, L1.copy.x - 12, L1.copy.y + 5) && !dm_loadpage_hit_mute(&L1, L1.copy.x + 5, L1.copy.y + 5));
         dm_loadpage_text(&t, 30); CHECK(!strcmp(t.comm1, "官方免费渠道：QQ 群 1129913678 · GitHub")); CHECK(!strcmp(t.comm2, "本软件免费，付费购买均为倒卖")); CHECK(!strcmp(t.copy, "复制群号") && t.copy_state == 0);
@@ -181,7 +181,7 @@ int main(void) {
         dm_loadpage_begin(two, 2, w_two, 9000); dm_loadpage_finish(9100); CHECK(!dm_loadpage_community_shown()); dm_loadpage_layout(&thor, &L1); CHECK(L1.comm == 0);
         dm_loadpage_copied(1, 0, 9200); dm_loadpage_text(&t, 9300); CHECK(!t.copy[0]);   // 不显示时复制不记 | no copy recorded when hidden
         dm_loadpage_begin(two, 2, w_two, 9400); dm_loadpage_community(NULL, NULL); CHECK(!dm_loadpage_community_shown());
-        // 六套文字：第一行估宽（拉丁 / 西里尔 0.55 个字号、汉字 / 韩文 1.0 个字号）放得进 OPPO 的行宽，按钮字放得进 144 点（手柄 A 图标另占 22 点）
+        // 六套文字：第一行估宽（拉丁 / 西里尔 0.55 个字号、汉字 / 韩文 1.0 个字号）放得进 OPPO 的行宽，按钮字放得进 108 点（左右各留 6 点，手柄 A 图标另占一个字号 + 6 点）
         // six text sets: the first line's estimated width (Latin / Cyrillic 0.55 em, CJK / Hangul 1.0 em) fits OPPO's line width; button labels fit 128 pt (the controller A glyph takes 22 more)
         dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus"); dm_loadpage_layout(&oppo, &L1);
         int groups[5] = { DM_LG_ZH, DM_LG_EN, DM_LG_ES, DM_LG_RU, DM_LG_KO };
@@ -189,7 +189,7 @@ int main(void) {
             const char *keys[4] = { "dmLoadCommQqGh", "dmLoadCommFree", "dmLoadCommCopyQq", "dmLoadCommCopyGh" };
             for (int q = 0; q < 4; q++) { char s[256]; snprintf(s, sizeof s, dm_loadpage_ui(keys[q]), "1129913678"); double est = 0;
                 for (const unsigned char *c = (const unsigned char *)s; *c; ) { if (*c < 0x80) { est += 0.55; c++; } else if (*c < 0xe0) { est += 0.6; c += 2; } else { est += 1.0; c += 3; } }
-                est *= L1.sub_pt; double room = q < 2 ? L1.comm1.w : L1.copy.w - 16 - 22;
+                est *= L1.comm_pt; double room = q < 2 ? L1.comm1.w : L1.copy.w - 12 - (L1.comm_pt + 6);
                 if (est > room) printf("  宽度：组 %d 键 %s 估 %.0f > %.0f\n", groups[k], keys[q], est, room);
                 CHECK(est <= room); } }
         dm_loadpage_ui_set_group(-1); dm_loadpage_community(NULL, NULL);

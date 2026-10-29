@@ -77,7 +77,7 @@ int dm_loadpage_pad_mode(void);
 
 typedef struct {   // 四行字 + 百分数。层级：标题（阶段动词短语）/ 正文（事实：文件数、字节、速度、剩余）/ 副文（一句祈使句的提示 / 状态） | four lines + percent. Levels: title (stage verb phrase) / body (facts) / sub (one imperative hint / status)
     char title[160], body[320], sub[256], percent[8];
-    char comm1[224], comm2[160], copy[64];   // 社区两行（副文样式）与复制钮上的字；不显示时为空 | the two community lines (sub style) and the copy button label; empty when not shown
+    char comm1[224], comm2[160], copy[64];   // 社区两行（页脚：12 点、半透明）与复制钮上的字；不显示时为空 | the two community lines (sub style) and the copy button label; empty when not shown
     int copy_state;                          // 0 平常 / 1 已复制 / -1 复制失败（2 秒内） | 0 normal / 1 copied / -1 copy failed (within 2 s)
     const char *brand;   // 页面左上角的字标（不翻译） | the wordmark at the top left (not translated)
 } dm_lp_text;
@@ -97,6 +97,7 @@ typedef struct {
     int comm;                      // 1 = 画社区两行与复制钮（这时进度那一组整体上移） | 1 = draw the community lines and copy button (the progress group moves up as a whole)
     dm_lp_rect comm1, comm2, copy; // 页脚：社区两行（左对齐到内容左沿）与复制钮（右对齐到内容右沿、跨两行高） | footer: the two community lines (left aligned to the content edge) and the copy button (right aligned to the content edge, two lines tall)
     dm_lp_rect logo; const char *logo_name; int logo_w, logo_h;   // 页面中部的字标图（自制 loadpage_logo.png）：横向居中、等比缩放、在安全区与标题之间 | the wordmark image in the middle of the page (self-made loadpage_logo.png): centred, aspect kept, between the safe area and the title
+    double comm_pt; int comm_alpha;   // 页脚字号 12、字的不透明度（0–255，DM_LP_COMM_ALPHA）：比副文再退一级，不抢进度信息 | footer font size 12 and text opacity (0-255): one step below the sub line, so it does not compete with the progress
     double title_pt, body_pt, sub_pt, brand_pt;    // 字号：24 / 18 / 14（相邻比 1.29–1.33，同 §2.6 的三级） | font sizes 24 / 18 / 14 (adjacent ratio 1.29–1.33, the three levels of §2.6)
     double bar_radius;
 } dm_lp_layout;
@@ -120,6 +121,7 @@ int dm_loadpage_music_wanted(void);                                        // 1 
 // 进度条用原版红 / 暗底。改颜色只改这里，两端同步
 // Colours (0xRRGGBB): outside the game the original colour tokens cannot be referenced, so their approximations are used - title ≈ panel-title gold $FontColorGoldYellow, body ≈ modal body $FontColorLightGold,
 // sub ≈ hint grey $FontColorLightGray; the bar uses the original red / dark track. Change colours only here; both platforms follow
+enum { DM_LP_COMM_ALPHA = 140 };   // 页脚字约 55% 不透明（复制反馈「已复制 / 复制失败」画满不透明） | footer text about 55% opaque (the copy feedback is drawn fully opaque)
 enum { DM_LP_COL_TITLE = 0xC8A850, DM_LP_COL_BODY = 0xE3D29B, DM_LP_COL_SUB = 0xA9A49A, DM_LP_COL_PERCENT = 0xE3D29B,
        DM_LP_COL_BAR_FILL = 0xB8401A, DM_LP_COL_BAR_TRACK = 0x2A1A12, DM_LP_COL_BAR_EDGE = 0x5A4020, DM_LP_COL_SHADOW = 0x000000 };
 
