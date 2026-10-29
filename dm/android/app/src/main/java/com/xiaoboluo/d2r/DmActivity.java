@@ -108,7 +108,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         t.setTextSize(20); t.setPadding(64, 64, 64, 64);
         t.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getPackageName()))));
         // 手柄 A / START 也能打开设置（只有手柄的玩家；TextView 自己只认方向键中键与回车） | controller A / START open Settings too (controller-only players; the TextView itself takes only D-pad centre and Enter)
-        t.setFocusable(true); t.setOnKeyListener((v, code, ev) -> {
+        t.setFocusable(true); t.setDefaultFocusHighlightEnabled(false);   // 同加载页：手柄键后整屏不盖系统灰色焦点层 | as on the loading page: no system grey focus layer over the whole screen after a controller key
+        t.setOnKeyListener((v, code, ev) -> {
             if (ev.getAction() != android.view.KeyEvent.ACTION_UP || (code != android.view.KeyEvent.KEYCODE_BUTTON_A && code != android.view.KeyEvent.KEYCODE_BUTTON_START)) return false;
             v.performClick(); return true; });
         setContentView(t); t.requestFocus();
