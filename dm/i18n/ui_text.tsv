@@ -518,4 +518,5 @@ dmCreditsMaker	制作	Made by	Hecho por	Hecho por	Автор	제작	鸣谢区署
 dmCreditsUpstreamNote	（d2r-mobile 原作者）	 (author of d2r-mobile)	 (autor de d2r-mobile)		 (автор d2r-mobile)	 (d2r-mobile 원작자)	特别鸣谢名单末尾的括号说明（名字不翻译，只翻译这段）
 dmCreditsSep	、	, 	, 		, 	, 	鸣谢名单里名字之间的分隔（中文顿号，其他语言逗号加空格；dm_community.c 拼行用）
 dmAboutVersion	版本 %s	Version %s	Versión %s		Версия %s	버전 %s	提示框「关于」段的版本行：显示版本「1.0.0+N · 哈希」（dm_community.c，取 dm_update_label）
+dmAboutSite	官网 %s	Website %s	Sitio web %s		Сайт %s	웹사이트 %s	提示框「关于」段版本行下的官网行（用户 2026-10-29：「关于弹窗里网址改成新的官网」）：地址来自清单 community.site，去掉 https:// 与末尾 / 显示（dm_community.c dm_community_site_label）；没有官网整行不显示
 dmCommunityFe	加入社区讨论	Community	Comunidad		Сообщество	커뮤니티	主菜单第二行「加入社区讨论」（原版前端中号按钮 470 宽，西 / 俄文的长句放不下，这里用短词；暂停菜单那行仍用 dmCommunityJoin）

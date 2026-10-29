@@ -208,10 +208,44 @@ int main(void) {
     //     框高 = 按钮顶 + 按钮高 115 + 下边距 45；各行自上而下不重叠
     // 21. Vertical rhythm of the community box / About-only box (user, 2026-10-29: a large blank between the About section and the buttons on the Duo inner screen): last text line bottom to button top <= 60
     //     (the divider-to-version gap); box height = button top + button 115 + bottom margin 45; lines do not overlap top to bottom
-    for (int mode = 1; mode <= 2; mode++) { co_geom_t g = co_geom(mode); int last = -1, prev_bottom = 0;
+    for (int t = 0; t < 4; t++) { int mode = 1 + t / 2, site = t & 1; co_geom_t g = co_geom(mode, site); int last = -1, prev_bottom = 0;
         for (int k = 0; k < CO_DESC; k++) if (g.dy[k]) { CHECK(g.dy[k] + 30 - g.sz[k] / 2 >= prev_bottom); prev_bottom = g.dy[k] + 30 + g.sz[k] / 2; last = k; }
         CHECK(last >= 2); CHECK(g.btn_y - prev_bottom <= CO_GAP && g.btn_y - prev_bottom >= 40); CHECK(g.h == g.btn_y + 115 + 45);
-        if (mode == 1) { CHECK(g.div_y > g.dy[1] + 30 + g.sz[1] / 2 && g.div_y < g.dy[3] + 30 - g.sz[3] / 2); CHECK(g.dy[3] + 30 - g.sz[3] / 2 - g.div_y <= CO_GAP); } }
+        if (mode == 1) { CHECK(g.div_y > g.dy[1] + 30 + g.sz[1] / 2 && g.div_y < g.dy[3] + 30 - g.sz[3] / 2); CHECK(g.dy[3] + 30 - g.sz[3] / 2 - g.div_y <= CO_GAP); }
+        int ks = mode == 1 ? 4 : 1; CHECK(site ? g.dy[ks] > 0 : g.dy[ks] == 0); }   // 官网行：有官网才占位，没有时下面两行鸣谢上移、框跟着变矮 | website line: only takes a slot with a website
+    { co_geom_t a = co_geom(1, 0), b2 = co_geom(1, 1); CHECK(b2.h == a.h + 48 && b2.dy[5] == a.dy[5] + 48); CHECK(a.h == 700); }
+    // 22. 官网（用户 2026-10-29：「关于弹窗里网址改成新的官网」）：清单 community.site（https:// 开头）进内存与缓存；链接一项优先官网、没有退回 GitHub；
+    //     「关于」段官网行去掉 https:// 与末尾 /；site 不合规当这一项没有并记红；重复当格式错；只有 site 也算有字段；旧缓存（没有 site=）照读
+    // 22. Website (user, 2026-10-29): manifest community.site (https://) goes to memory and cache; the link prefers it and falls back to GitHub; the About line drops https:// and the trailing /;
+    //     an invalid site counts as absent with a red line; a duplicate is a format error; site alone is a field; old caches without site= still load
+    { static const char *const s1 = "{\"community\": {\"qq_group\": \"1129913678\", \"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https://d2rplus.example.com/\"}}";
+      char lb[200];
+      log_reset(); CHECK(dm_community_manifest(s1, strlen(s1)) == 1); CHECK(strstr(log_text(), "官网=https://d2rplus.example.com/"));
+      CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 1 && !strcmp(v, "1129913678"));
+      CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/"));   // 外文：链接 = 官网 | other languages: link = website
+      CHECK(dm_community_site_label(lb, sizeof lb) == 1 && !strcmp(lb, "d2rplus.example.com")); CHECK(cache_has("site=https://d2rplus.example.com/\n"));
+      restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_RU, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/")); CHECK(strstr(log_text(), "官网=https://d2rplus.example.com/"));
+      static const char *const s2 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"http://d2rplus.example.com/\"}}";   // 不是 https | not https
+      log_reset(); CHECK(dm_community_manifest(s2, strlen(s2)) == 1); CHECK(strstr(log_text(), "另一项格式坏"));
+      CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus"));   // 退回 GitHub | falls back to GitHub
+      CHECK(dm_community_site_label(lb, sizeof lb) == 0 && !lb[0]); CHECK(!cache_has("site="));
+      static const char *const s3 = "{\"community\": {\"site\": \"https://a.example\", \"site\": \"https://b.example\"}}";
+      log_reset(); CHECK(dm_community_manifest(s3, strlen(s3)) == 0); CHECK(strstr(log_text(), "site 重复")); CHECK(!dm_community_available());
+      static const char *const s4 = "{\"community\": {\"site\": \"https://d2rplus.example.com/path\"}}";   // 只有官网：外文显示、中文也显示链接 | site only: every language shows it
+      CHECK(dm_community_manifest(s4, strlen(s4)) == 1); CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/path"));
+      CHECK(dm_community_site_label(lb, sizeof lb) == 1 && !strcmp(lb, "d2rplus.example.com/path"));
+      static const char *const s5 = "{\"community\": {\"site\": \"https:///x\"}}";   // 没有主机名 | no host
+      CHECK(dm_community_manifest(s5, strlen(s5)) == 0);
+      // Q11-01 口径：带转义的 site 当这一项没有（链接退回 GitHub）；嵌套更深的同名 site 不认；site 不是字符串当格式坏 | Q11-01: an escaped site counts as absent (link falls back); a deeper same-name site is ignored; a non-string site is malformed
+      static const char *const s6 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https:\\/\\/d2rplus.example.com\"}}";
+      log_reset(); CHECK(dm_community_manifest(s6, strlen(s6)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(dm_community_site_label(lb, sizeof lb) == 0);
+      CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus"));
+      static const char *const s7 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"extra\": {\"site\": \"https://deep.example\"}}, \"site\": \"https://root.example\"}";
+      CHECK(dm_community_manifest(s7, strlen(s7)) == 1); CHECK(dm_community_site_label(lb, sizeof lb) == 0); CHECK(!cache_has("site="));
+      static const char *const s8 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": 42}}";
+      log_reset(); CHECK(dm_community_manifest(s8, strlen(s8)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(dm_community_site_label(lb, sizeof lb) == 0);
+      FILE *f = fopen(cache, "w"); fputs("qq_group=1129913678\ngithub=https://github.com/example/d2r-mobile-plus\n", f); fclose(f);   // 旧缓存（RC1 写的） | an RC1 cache
+      restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(dm_community_site_label(lb, sizeof lb) == 0); }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);

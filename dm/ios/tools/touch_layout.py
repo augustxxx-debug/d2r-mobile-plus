@@ -315,7 +315,7 @@ def _community():
             + _co_text('TouchCommDesc0', 36, '$FontColorLightGold')                                     # 群号 / 链接（纯「关于」框：版本） | number / link (About-only box: version)
             + _co_text('TouchCommDesc1', 28, '$FontColorLightGray')                                     # 提示 / 「已复制」 | hint / Copied
             + _co_text('TouchCommDesc2', 36, '$FontColorGoldYellow')                                    # 纯「关于」框的鸣谢第二行；社区框里这一行空着（「关于」子标题已换成下面的分隔线） | About-only box: second credits line; empty in the community box
-            + ''.join(_co_text('TouchCommDesc%d' % k, 28, '$FontColorLightGray') for k in (3, 4, 5))   # 版本、鸣谢两行 | version, two credit lines
+            + ''.join(_co_text('TouchCommDesc%d' % k, 28, '$FontColorLightGray') for k in (3, 4, 5, 6))   # 版本、官网（用户 2026-10-29，清单有 site 才写）、鸣谢两行 | version, website (user, 2026-10-29; only when the manifest has site), two credit lines
             # 社区段与「关于」段之间的分隔线（用户 2026-10-29：「关于」两字换成分隔线，视觉更舒服）：原版设置页分节同一张图 PauseMenu\\Divider，原尺寸（共享精灵，不改尺寸），宿主按图宽居中
             # divider between the community and About sections (user, 2026-10-29: replaces the 'About' sub-title): the original settings-section image, native size (a shared sprite, never resized), centred by the host from its width
             + '        { "type": "ImageWidget", "name": "TouchCommDivider", "fields": { "rect": { "x": 99999, "y": 99999 }, "filename": "PauseMenu\\\\Divider" } },\n'
@@ -324,7 +324,7 @@ def _community():
             + _btn('TouchCommOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchCommOk', x=99999, anchor=False))
 _COMM = _community()
 _COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchComm\w+)"', _COMM))
-assert _COMM_STUB.count('\n') == 26   # 边框 15 片、标题、正文六行、分隔线、复制群号、复制链接、确定 | 15 tiles, title, six body lines, divider, Copy number, Copy link, OK
+assert _COMM_STUB.count('\n') == 27   # 边框 15 片、标题、正文七行、分隔线、复制群号、复制链接、确定 | 15 tiles, title, seven body lines, divider, Copy number, Copy link, OK
 _COMM_ROW = (('TouchCommunity', '@dmCommunityJoin', 1028),)   # 暂停菜单「加入社区讨论」行（借「保存并退出」按钮的图和字，消息空操作，宿主当信号收）；没有可显示的值时宿主把它挪出屏幕 | the pause menu's "Join the community" row (Save-and-Exit's image and font, a no-op message the host takes as a signal); without a value the host moves it off screen
 _SAFE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchSafe\w+)"', _SAFE))
 assert _SAFE_STUB.count('\n') == 20   # 边框 15 片、标题、正文三行、确定 | 15 frame tiles, title, three body lines, OK

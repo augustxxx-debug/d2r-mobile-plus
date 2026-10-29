@@ -12,6 +12,7 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 
 ### Added
 
+- The "Join the community" box links the **project website** (user, 2026-10-29): the version manifest's `community` gains an optional `site` (an https address); when present, the link line and "Copy link" in other languages use the website (GitHub otherwise, as before), and the box's About section adds a "Website …" line under the version, in all six languages. The address comes only from the manifest / cache, never from code; older clients ignore the field.
 - Font licence shipped with every package (13th review Q13-02): the build writes `UIFonts/FONT_LICENSE.txt` next to the generated font, holding a provenance and modification note (name, version, file, SHA-256; subset and merged with the game font under the game font's registration name) followed by the unmodified licence found beside `DM_UI_FONT`. A font under a `public` directory must have its licence file beside it or the build fails; a font under a `private` directory is accepted only with `DM_PRIVATE_FONT=1` and ships no licence. Three unit tests.
 
 - The pause menu now uses **one row order for both input modes**: save and exit / quick restart / deposit / options / chronicle / share diagnostics / join the community (the upstream baseline had separate controller and touch menus; Options stays on the row where the controller cursor lands; under touch the deposit row is the same entry as the inventory button).

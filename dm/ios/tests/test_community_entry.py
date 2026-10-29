@@ -51,7 +51,7 @@ def rect_y(text, name):
     return int(m.group(1)) if m else None
 
 
-BOX = ['TouchCommTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchCommTitle'] + ['TouchCommDesc%d' % k for k in range(6)] + ['TouchCommDivider', 'TouchCommCopyQq', 'TouchCommCopyLink', 'TouchCommOk']
+BOX = ['TouchCommTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchCommTitle'] + ['TouchCommDesc%d' % k for k in range(7)] + ['TouchCommDivider', 'TouchCommCopyQq', 'TouchCommCopyLink', 'TouchCommOk']
 
 
 def box_ok(tc, out, where):   # 提示框：22 + 3 个控件屏外起步、不带锚点；正文六行按 §2.6 三级：群号 / 链接 36 LightGold、提示 28 LightGray、子标题「关于」36 GoldYellow、版本与鸣谢两行 28 LightGray
@@ -229,8 +229,8 @@ class Text(unittest.TestCase):
         rows = {r[0]: r[1:] for r in dm_i18n.rows()}
         langs = ('中文', 'English', 'Español', 'Español MX', 'Русский', '한국어')
         sample = {'dmCommunityQq': '1129913678', 'dmCommunityLink': 'https://github.com/example-owner/d2r-mobile-plus/discussions'}
-        sample['dmAboutVersion'] = '1.0.0+123 · 0123456'
-        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityAbout', 40, BTN_W), ('dmCommunityFe', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
+        sample['dmAboutVersion'] = '1.0.0+123 · 0123456'; sample['dmAboutSite'] = 'd2rplus.augustusplay.com'   # 官网行（用户 2026-10-29） | the website line
+        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmAboutSite', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityAbout', 40, BTN_W), ('dmCommunityFe', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
                                ('dmCommunityCopied', 28, BOX_W), ('dmCommunityCopyFail', 28, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
                                ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, CREDIT_LABEL_W), ('dmCreditsMaker', 36, CREDIT_LABEL_W), ('dmCreditsThanks', 36, CREDIT_LABEL_W), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
             texts = rows[key]
@@ -238,7 +238,7 @@ class Text(unittest.TestCase):
                 self.assertEqual(t.count('\n'), 0, (key, lang))
                 line = t.replace('%s', sample.get(key, ''))
                 self.assertLessEqual(est_width(line, pt), limit, (key, lang, line, est_width(line, pt)))
-        self.assertEqual(rows['dmCommunityQq'][1].count('%s'), 1); self.assertEqual(rows['dmCommunityLink'][1].count('%s'), 1); self.assertEqual(rows['dmAboutVersion'][1].count('%s'), 1)
+        self.assertEqual(rows['dmCommunityQq'][1].count('%s'), 1); self.assertEqual(rows['dmCommunityLink'][1].count('%s'), 1); self.assertEqual(rows['dmAboutVersion'][1].count('%s'), 1); self.assertEqual([t.count('%s') for t in rows['dmAboutSite']], [1] * 6)
 
 
 class Maker(unittest.TestCase):
@@ -273,7 +273,7 @@ class Host(unittest.TestCase):
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss
         self.assertNotIn('co_text(b, de[2], dm_str(b, "dmCommunityAbout"))', c)   # 社区框不再写「关于」子标题 | the community box no longer writes the About sub-title
-        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 26)
+        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 27)
         self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))
