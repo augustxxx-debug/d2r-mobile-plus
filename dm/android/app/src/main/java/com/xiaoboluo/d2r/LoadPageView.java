@@ -99,6 +99,11 @@ public final class LoadPageView extends View {
         setKeepScreenOn(true);
         prefs = ctx.getSharedPreferences("dm_loadpage", Context.MODE_PRIVATE); nativeSetMuted(prefs.getBoolean("muted", false)); muteLabel();
         setClickable(true);
+        // 关掉系统缺省焦点高亮：可点的整屏视图在按了手柄键（离开触摸模式）后会被系统盖一层半透明灰，整页看着「泛白」，再摸屏才消失（用户 2026-10-29 反馈）。
+        // 手柄模式下哪里有焦点由页脚复制钮自己的焦点态表示
+        // Turn off the system default focus highlight: after a controller key (leaving touch mode) the system lays a translucent grey over a clickable full-screen view,
+        // so the whole page "washes out" until the next touch (user report 2026-10-29). In controller mode the footer copy button shows focus by its own focused look
+        setDefaultFocusHighlightEnabled(false);
     }
     private void muteLabel() { setContentDescription(nativeUi(nativeMuted() ? "dmLoadMusicOn" : "dmLoadMusicOff")); }
     // 点右上角静音钮：翻转、记住；判定区由公共核心定（图标四周各大 12 dp） | tap on the top-right mute button: flip and remember; the hit area comes from the shared core (12 dp larger on each side)
