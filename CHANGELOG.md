@@ -12,7 +12,7 @@ Changes since 1.0.0-rc1 (2026-10-29, `v1.0.0-rc1` = `a2bb5c3`):
 
 - Redone "Join the community / About" box: one card each for the QQ group and the website (or GitHub), each with its own Copy; free-software notice; version and credits in the footer; a single OK. The Chinese UI shows both the group number and the website.
 - The website address now comes from the update manifest's `community.site` (strictly checked: `https://` plus a valid host name, at most 60 characters, no `@ ? #`); without it the box behaves as in RC1.
-- Fixed: the large blank area in About / Credits on the iPhone Duo inner screen; the Spanish credits label overlapping the names.
+- Fixed: the large blank area in About / Credits on the iPhone Duo inner screen; the Spanish credits label overlapping the names; on a fresh install the touch main menu's "Join the community" button sat off to the right (it was hidden until the manifest arrived and did not return to its place).
 - Known issue: in touch mode the experience line may occasionally not show; toggling "Show frame rate" once in Options → Graphics brings it back.
 
 Everything below lists all changes in 1.0.0-rc1 and earlier relative to the upstream baseline (it also applies to 1.0.0-rc1.1).
