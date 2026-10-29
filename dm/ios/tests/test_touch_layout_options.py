@@ -45,6 +45,7 @@ for voice in (False, True):
     assert ('voice' in keys) == voice
     defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
+    assert defaults[keys.index('free_tp')] == 0   # 免费回城缺省关（用户 2026-10-30） | free town portal off by default (user 2026-10-30)
 os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
 # 平台限制：DM_TARGET=android 的自定义页没有 icloud 行，其余行序不变（宿主 dm_custom.c custom_row 在没有 iCloud 的平台同样跳过）| per-platform: under DM_TARGET=android the Custom page has no icloud row, the other rows keep their order (the host's custom_row skips it likewise)
 os.environ['DM_TARGET'] = 'android'; layout = importlib.reload(layout)

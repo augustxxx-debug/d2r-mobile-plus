@@ -147,7 +147,7 @@ Se entra por el portal rojo de Harrogath tras completar Infierno. Hay 100 nivele
 | Avisos de botín valioso | Las runas de alto nivel y los objetos únicos levantan un haz de luz y caen con un sonido distinto; el teléfono vibra con una de tres intensidades —suave, media o fuerte— según su valor |
 | Asistente de palabras rúnicas | Mantén pulsada una base con engarces para ver las palabras rúnicas que puede formar y sus atributos; cuando tengas las runas, engárzalas todas con un solo toque |
 | Guía en el minimapa | Cada mapa marca su Waypoint y sus salidas; cada objetivo de misión aparece en el mapa; cuando un objetivo está fuera de la pantalla, su nombre se escribe a lo largo del borde |
-| Tareas tediosas eliminadas | Identificación gratuita, Town Portal gratuito sin necesidad de pergaminos, aparición justo al lado del Waypoint, Quick Restart, mercancía de los vendedores renovable |
+| Tareas tediosas eliminadas | Identificación gratuita, Town Portal gratuito sin necesidad de pergaminos (opcional en las opciones, desactivado por defecto), aparición justo al lado del Waypoint, Quick Restart, mercancía de los vendedores renovable |
 | Partidas guardadas | Se guardan de inmediato al cambiar de app, al cerrarla deslizando o al salir; sincronización por iCloud entre dispositivos (requiere firmar con una cuenta de desarrollador de pago) |
 
 La mayoría de las funciones se pueden activar o desactivar una por una en el juego, en Options → Custom.

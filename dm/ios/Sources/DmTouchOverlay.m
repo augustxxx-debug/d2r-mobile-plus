@@ -259,7 +259,10 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
             icon=[self skillImage:g held:held];
             showCaption=g.status!=DM_TA_EMPTY && !icon;
         } else if(!self.navigationMode && i==DM_TC_PORTAL) {
-            icon=[self skillImage:dm_ta_skill(359) held:held]; // 原版回城技能图（技能描述表 Town Portal：通用技能页第 18 格，219 / 220 / 411 同一张），不显示次数 | the original game's town portal skill image (skill description table Town Portal: cell 18 of the generic skill page, 219 / 220 / 411 share one image), count not shown
+            icon=[self skillImage:dm_ta_skill(359) held:held]; // 原版回城技能图（技能描述表 Town Portal：通用技能页第 18 格，219 / 220 / 411 同一张）；免费回城开着时不显示次数 | the original game's town portal skill image (skill description table Town Portal: cell 18 of the generic skill page, 219 / 220 / 411 share one image); no count while free town portal is on
+            // 免费回城关着（自定义页 free_tp，缺省关）：钮用身上的回城书 / 卷轴，右下角标剩余次数（书的次数 + 卷轴张数，宿主 hud_tick 的 portal），用完变灰——同充能技能那套画法
+            // Free town portal off (Custom page free_tp, off by default): the button uses the tome / scroll on the player, the bottom-right badge shows what is left (tome charges + scrolls, the host hud_tick's portal) and the button greys out at zero, drawn like a charged skill
+            { int dm_freetp_enabled(void); if(!dm_freetp_enabled()) { ssKind=2; ssCharges=self.hud.portal; } }
         } else if(!self.navigationMode && (i==DM_TC_MENU || i==DM_TC_MAP)) {
             icon=[self frameImage:i==DM_TC_MAP?_map:_menu key:[NSString stringWithFormat:@"fixed:%d:%d",i,held] rect:CGRectMake(held?36:0,0,36,36)];
         }
