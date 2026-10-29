@@ -33,8 +33,8 @@ class RootCauseTest(unittest.TestCase):
 
     def test_marks_and_plain_error_lines(self):
         c = genfail.root_causes('写到一半\n[x] 写覆盖层（casc_overlay.py）退出码 1，它的输出见上\nOSError: [Errno 28] No space left on device\n')
-        self.assertEqual(c[0], '[x] 写覆盖层（casc_overlay.py）退出码 1，它的输出见上')
-        self.assertIn('OSError: [Errno 28] No space left on device', c)
+        self.assertEqual(c[0], 'OSError: [Errno 28] No space left on device')   # 转述行排在真原因之后（八审 P2-4） | the relay line ranks after the real cause (eighth review P2-4)
+        self.assertEqual(c[-1], '[x] 写覆盖层（casc_overlay.py）退出码 1，它的输出见上')
 
     def test_report_carries_at_least_80_tail_lines(self):
         r = genfail.fail_report('生成覆盖层', 1, NESTED, '/x/gen_overlay.log').splitlines()
@@ -65,7 +65,7 @@ class FilesTest(unittest.TestCase):
 
     def test_all_good(self):
         r = genfail.check_files(self.game, self.rows)
-        self.assertEqual(genfail.kind_of(r), ''); self.assertEqual(genfail.describe(r, 6), ['游戏文件 6 个都在，大小都对'])
+        self.assertEqual(genfail.kind_of(r), ''); self.assertEqual(genfail.describe(r, 6), ['需要的游戏文件 5 个都在，大小都对'])
         self.assertEqual(genfail.verify_hashes(self.game, self.rows)[0], [])
 
     def test_missing_build_config(self):
@@ -90,15 +90,62 @@ class FilesTest(unittest.TestCase):
     def test_optional_missing_is_not_incomplete(self):
         os.remove(os.path.join(self.game, 'ExeFS/subsdk0'))
         r = genfail.check_files(self.game, self.rows); self.assertEqual(genfail.kind_of(r), '')
-        self.assertIn('（ExeFS/subsdk0 没有也不影响）', genfail.describe(r, 6))
+        self.assertIn('（另有 1 个可选文件没放或大小不同：配音档案、提取清单等，生成用不到，不影响）', genfail.describe(r, 6))
 
     def test_only_manifest_size_differs_is_version(self):
         put(os.path.join(self.game, 'RomFS/data/build_manifest.psv'), b'B' * 120)
         self.assertEqual(genfail.kind_of(genfail.check_files(self.game, self.rows)), 'version')
 
+    def test_undotted_build_config_asks_to_rename(self):
+        os.rename(os.path.join(self.game, 'RomFS/data/.build.config'), os.path.join(self.game, 'RomFS/data/build.config'))
+        r = genfail.check_files(self.game, self.rows)
+        self.assertEqual(genfail.kind_of(r), 'files'); self.assertIn('data/build.config 要改名为 .build.config（前面加一个点）', genfail.describe(r, 6))
+        self.assertNotIn('缺 data/.build.config（隐藏文件，要一起拷）', genfail.describe(r, 6))
+
+    def test_zero_stripped_archive_named_as_such(self):
+        put(os.path.join(self.game, 'RomFS/data/05-00000001.data'), b'D' * 100); put(os.path.join(self.game, 'RomFS/data/05-00000001.data.holes'), b'size 4096\n100 3996\n')
+        r = genfail.check_files(self.game, self.rows); d = genfail.describe(r, 6)
+        self.assertEqual(genfail.kind_of(r), 'files'); self.assertTrue(any('是剔零档案' in x for x in d)); self.assertFalse(any('可能没拷完' in x for x in d))
+
+    def test_other_version_main_is_version(self):
+        head = bytearray(b'NSO0' + b'\0' * 0x5c); head[0x40:0x54] = bytes.fromhex('11' * 20)
+        put(os.path.join(self.game, 'ExeFS/main'), bytes(head))
+        r = genfail.check_files(self.game, self.rows); self.assertEqual(genfail.kind_of(r), 'version')
+        self.assertTrue(genfail.describe(r, 6)[0].startswith('ExeFS/main 不是 Switch 版 3.3.94012 的主程序'))
+
+    def test_sizes_generally_larger_is_version(self):
+        put(os.path.join(self.game, 'RomFS/data/05-00000001.data'), b'D' * 5000); put(os.path.join(self.game, 'ExeFS/sdk'), b'S' * 40)
+        self.assertEqual(genfail.kind_of(genfail.check_files(self.game, self.rows)), 'version')
+
     def test_manifest_file_shipped_matches_49(self):
         rows = genfail.load_manifest(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'game_files_3.3.94012.tsv'))
         self.assertEqual(len(rows), 49); self.assertIn('RomFS/data/.build.config', [p for p, _, _ in rows])
+
+
+class DocumentedMinimumTest(unittest.TestCase):
+    """八审 P1-1（审计方 check18.py 场景）：按文档只放 ExeFS/{main,sdk} + 18 个档案 + .build.config + build_manifest.psv，大小都对 → 能生成（kind ''），
+    其余 26 个只在最后一句记个数 | eighth review P1-1 (the auditor's check18.py scene): as the docs say, only ExeFS/{main,sdk} + the 18 archives + .build.config +
+    build_manifest.psv at the right sizes -> generation may proceed (kind ''), the other 26 only counted in the last sentence"""
+    def test_eighteen_archives_pass(self):
+        rows = genfail.load_manifest(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'game_files_3.3.94012.tsv'))
+        self.assertEqual(len([p for p, _, _ in rows if p in genfail.REQUIRED]), 22)
+        with tempfile.TemporaryDirectory() as g:
+            for p, n, _ in rows:
+                if p not in genfail.REQUIRED: continue
+                f = os.path.join(g, p); os.makedirs(os.path.dirname(f), exist_ok=True)
+                with open(f, 'wb') as h: h.truncate(n)   # 稀疏文件，只占目录项 | sparse, directory entries only
+            r = genfail.check_files(g, rows)
+            self.assertEqual(genfail.kind_of(r), ''); self.assertEqual(len(r['optional']), 27)
+            d = genfail.describe(r, len(rows)); self.assertEqual(d[0], '需要的游戏文件 22 个都在，大小都对'); self.assertIn('不影响', d[-1])
+
+
+class RootCauseFilterTest(unittest.TestCase):
+    def test_relays_and_warnings_do_not_crowd_out_the_cause(self):
+        # 审计方 rc.py：外层「[x] … 没成功」、写覆盖层转述行、警告，加子进程自己的原因 | the auditor's rc.py: outer relay lines, a warning, and the child's own cause
+        msg = ('[x] 生成触屏资源 没成功（退出码 1）\n根因（最里层的报错）：\nUserWarning: fallback font\n[x] 字体合成：超过 15 MiB\n'
+               '[x] 写覆盖层（casc_overlay.py）退出码 1，它的输出见上\n')
+        self.assertEqual(genfail.root_causes(msg, limit=3)[0], '[x] 字体合成：超过 15 MiB')
+        self.assertNotIn('UserWarning: fallback font', genfail.root_causes(msg))
 
 
 class PhoneMarkersTest(unittest.TestCase):

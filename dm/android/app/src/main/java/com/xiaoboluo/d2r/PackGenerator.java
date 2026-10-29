@@ -227,6 +227,14 @@ final class PackGenerator {
     // sharing adds every step's full log ----
     // 玩家放的游戏文件：ExeFS 与 data 里每个文件的字节数（含隐藏的 .build.config），单独一句说 .build.config 在不在 | the player's game files: the bytes of every file
     // in ExeFS and data (the hidden .build.config included), with one sentence on whether .build.config is there
+    // 只列游戏文件模样的名字（主程序三件、NN-NNNNNNNN.data 档案与它的 .holes、两种写法的 build.config、提取工具的几张清单）；别的文件只记个数与总大小，
+    // 不写名字——玩家放在这两个文件夹里的备份、截图之类的文件名可能带个人信息，分享包会进群 / GitHub（八审 P2-5）
+    // Only game-file-shaped names are listed (the three program files, NN-NNNNNNNN.data archives and their .holes, build.config in either spelling, the extraction
+    // tool's manifests); other files are only counted with their total size, without names -- names of backups, screenshots and the like that players keep in
+    // these folders may carry personal information, and the shared zip goes to the group / GitHub (eighth review P2-5)
+    private static final java.util.regex.Pattern GAME_NAME = java.util.regex.Pattern.compile(
+            "(main|sdk|subsdk0|\\d{2}-\\d{8}\\.data(\\.holes)?|\\.?build\\.config|build_key\\.txt|(archive|base|build|equivalent)_manifest\\.psv)");
+    static boolean gameName(String n) { return GAME_NAME.matcher(n).matches(); }
     static String listInputs(File exefs, File data) {
         StringBuilder b = new StringBuilder();
         for (File dir : new File[]{exefs, data}) {
@@ -234,7 +242,11 @@ final class PackGenerator {
             b.append(dir == exefs ? "ExeFS" : "data").append('：');
             if (names == null) { b.append("（没有这个文件夹）\n"); continue; }
             Arrays.sort(names); b.append(names.length).append(" 个\n");
-            for (String n : names) { File f = new File(dir, n); b.append("  ").append(n).append('\t').append(f.isDirectory() ? "（文件夹）" : Long.toString(f.length())).append('\n'); }
+            int other = 0; long otherBytes = 0;
+            for (String n : names) { File f = new File(dir, n);
+                if (!gameName(n)) { other++; otherBytes += f.isFile() ? f.length() : 0; continue; }
+                b.append("  ").append(n).append('\t').append(f.isDirectory() ? "（文件夹）" : Long.toString(f.length())).append('\n'); }
+            if (other > 0) b.append("  另有 ").append(other).append(" 个其他文件（共 ").append(otherBytes).append(" 字节，名字不记）\n");
         }
         b.append(new File(data, ".build.config").isFile() ? "data/.build.config：有\n" : "data/.build.config：没有（隐藏文件，要一起拷）\n");
         return b.toString();

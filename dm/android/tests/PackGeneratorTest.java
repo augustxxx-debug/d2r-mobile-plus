@@ -157,6 +157,12 @@ public class PackGeneratorTest {
         write(new File(inBase, "data/.build.config"), "cfg");
         equal(true, PackGenerator.listInputs(new File(inBase, "ExeFS"), new File(inBase, "data")).contains("data/.build.config：有"));
         equal(true, PackGenerator.listInputs(new File(inBase, "nope"), new File(inBase, "data")).contains("ExeFS：（没有这个文件夹）"));
+        // 别的文件只记个数和总大小、不写名字（八审 P2-5） | other files only counted with their total size, no names (eighth review P2-5)
+        write(new File(inBase, "ExeFS/main.orig-backup"), "xyz"); write(new File(inBase, "data/我的截图.png"), "12345"); write(new File(inBase, "data/00-00000004.data.holes"), "h");
+        String in2 = PackGenerator.listInputs(new File(inBase, "ExeFS"), new File(inBase, "data"));
+        equal(false, in2.contains("main.orig-backup")); equal(false, in2.contains("我的截图")); equal(true, in2.contains("00-00000004.data.holes"));
+        equal(true, in2.contains("  另有 1 个其他文件（共 3 字节，名字不记）")); equal(true, in2.contains("  另有 1 个其他文件（共 5 字节，名字不记）"));
+        equal(true, PackGenerator.gameName("build.config")); equal(true, PackGenerator.gameName("17-00000002.data")); equal(false, PackGenerator.gameName("main.bak"));
         // gen_log：结论在第一屏，再环境、输入文件、生成输出 | gen_log: the verdict on the first screen, then environment, input files, generator output
         String g = PackGenerator.genLog("游戏文件不完整", "请重新拷", List.of("游戏文件核对：缺 data/.build.config"), "机型：X", in, "[12:00] 生成覆盖层\n");
         equal(true, g.startsWith("==== 结论 ====\n游戏文件不完整\n· 游戏文件核对：缺 data/.build.config\n请重新拷\n"));

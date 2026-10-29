@@ -131,7 +131,7 @@ def after_failure(msg):
         except OSError: pass
         fail_kind('space'); return
     if on_phone() and GAME_CHECK:
-        bad, n, total, secs = genfail.verify_hashes(GAME_CHECK['game'], GAME_CHECK['rows'], only=set(GAME_CHECK['res']['ok']))
+        bad, n, total, secs = genfail.verify_hashes(GAME_CHECK['game'], GAME_CHECK['rows'], only=set(GAME_CHECK['res']['ok']) & genfail.REQUIRED)
         for s in genfail.describe_hashes(bad, n, total, secs): summary(s)
         if bad: fail_kind('files'); return
     fail_kind('internal')
