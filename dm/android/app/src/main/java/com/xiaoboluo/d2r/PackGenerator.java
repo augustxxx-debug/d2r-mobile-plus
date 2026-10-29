@@ -224,6 +224,15 @@ final class PackGenerator {
 
     // 开发时直接推进来的导入内容：有改写后的主程序、没有 pack_info.txt，且不是一次没做完的换上 | import content pushed directly during development: a patched main
     // program, no pack_info.txt, and not an unfinished swap
+    // 把 pack_info.txt 的 PRODUCT 行改成「过期」：下次启动 ensureImported 认为导入的是给别的版本做的，带生成器的包就自动重新生成（触屏资源与这版不配套时用）
+    // Rewrite the PRODUCT line of pack_info.txt to "stale": the next start's ensureImported then treats the pack as made for another version and a package with the generator regenerates it (used when the touch overlay does not match this version)
+    static final String STALE_PRODUCT = "stale-overlay";
+    static String markStale(String info) {
+        StringBuilder out = new StringBuilder(); boolean done = false;
+        for (String line : info.split("\n", -1)) { if (!done && line.startsWith("PRODUCT=")) { out.append("PRODUCT=").append(STALE_PRODUCT); done = true; } else out.append(line); out.append('\n'); }
+        String r = out.substring(0, out.length() - 1);
+        return done ? r : "PRODUCT=" + STALE_PRODUCT + "\n" + info;
+    }
     static boolean pushedByDeveloper(String have, File runtime, File extRuntime) {
         if (have != null || installPending(runtime)) return false;
         return new File(runtime, "out/main.patched.bin").canRead() || (extRuntime != null && new File(extRuntime, "out/main.patched.bin").canRead());
