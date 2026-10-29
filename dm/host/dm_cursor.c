@@ -1661,6 +1661,7 @@ static void ui_ptr_pump(module_t *m, uint64_t root, int width, int height) {
 static _Atomic int g_dg_kind; static _Atomic uint64_t g_dg_o, g_dg_c; static _Atomic unsigned g_dg_seq; static _Atomic uint32_t g_dg_tol;
 static uint64_t dg_pack(float nx, float ny) { nx = nx < 0 ? 0 : nx > 1 ? 1 : nx; ny = ny < 0 ? 0 : ny > 1 ? 1 : ny; return ((uint64_t)(uint32_t)(nx * 65535 + .5f) << 16) | (uint32_t)(ny * 65535 + .5f); }
 void dm_ui_drag_begin(int kind, float ox, float oy, float tol_ny) {
+    { int dm_community_modal(void); if (dm_community_modal()) return; }   // 社区 / 关于弹窗开着：不起拖动 / 滚动（RC1.1，触点全归弹窗） | community / About box up: no drag / scroll (RC1.1, every touch belongs to the box)
     uint64_t o = dg_pack(ox, oy); atomic_store(&g_dg_o, o); atomic_store(&g_dg_c, o); atomic_store(&g_dg_tol, (uint32_t)((tol_ny < 0 ? 0 : tol_ny > 0.5f ? 0.5f : tol_ny) * 65535));
     atomic_store(&g_dg_kind, kind == 2 ? 2 : 1); atomic_fetch_add(&g_dg_seq, 1);
 }
@@ -3012,6 +3013,12 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
     if (width <= 0 || height <= 0 || !root) return;
     uint64_t r = atomic_load(&g_ut_xy);
     int x = (int)(((r >> 16) & 0xffff) / 65535.0 * width), y = (int)((r & 0xffff) / 65535.0 * height); if (x >= width) x = width - 1; if (y >= height) y = height - 1;
+    // 社区 / 关于弹窗开着（RC1.1 阻塞：点弹窗下半部穿透到底下暂停菜单、「确定」点不到）：不给游戏发任何鼠标消息（连悬停也不发，底层选中框不动），
+    // 抬起那一下交给弹窗用控件自己的命中判断（dm_community_ui_tap），没命中的吞掉
+    // community / About box up (RC1.1 blocker: taps on its lower half went through to the pause menu, OK could not be hit): no mouse message to the game at all (not even hover, the menu's selection stays put);
+    // the lift goes to the box's own hit test (dm_community_ui_tap), anything that misses is swallowed
+    { int dm_community_modal(void); void dm_community_ui_tap(uint64_t, int, int);
+      if (dm_community_modal()) { if (ph == 2) { atomic_store(&g_ut_phase, 0); dm_community_ui_tap(root, x, y); } return; } }
     int fe_extended = !dm_uiscreen_ingame() && atomic_load(&g_fe_touch_extended);
     if (fe_extended) y = (int)(dm_ui_point_y(atomic_load(&g_fe_touch_point)) * height);
     int class_scene = atomic_load(&g_cc_open) && !atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_name_open) && !atomic_load(&g_fe_confirm_open)

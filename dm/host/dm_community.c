@@ -45,6 +45,30 @@ static char g_qq[QQ_MAX + 1], g_gh[GH_MAX + 1], g_site[GH_MAX + 1];   // g_site�
 static _Atomic int g_loaded_cm;
 static _Atomic int g_show, g_ack, g_copied;   // g_show：0 不显示 / 1 要显示 / 2 显示着；g_copied：0 / 1 已复制 / -1 复制失败 | g_show: 0 none / 1 pending / 2 shown; g_copied: 0 / 1 copied / -1 failed
 static _Atomic int g_copied_row; static _Atomic uint64_t g_copied_at;   // 哪一行的「复制」刚按过、何时（按钮字变「已复制 / 复制失败」2 秒） | which row's Copy was just pressed and when (the button reads Copied / Copy failed for 2 s)
+// 弹窗吞输入（RC1.1 阻塞，用户 Duo 真机 80c0882：触屏点弹窗下半部穿透到底下暂停菜单、「确定」点不到；手柄左摇杆还在动左边的菜单）：弹窗开着（g_show ≠ 0）时
+//   触屏：dm_cursor.c 不再给游戏发鼠标消息，抬起那一下由 dm_community_ui_tap 用控件自己的命中判断只认两颗「复制」与「确定」，其余吞掉；拖动 / 滚动也不起；
+//   手柄：hle_hid.c 取手柄处最后经 dm_community_input_gate，键与两根摇杆全清零，方向键 / 左右摇杆上下变成焦点移动、A / B 留给弹窗。各自计数，收起时记一行（交给底层的应为 0）
+// Modal input (RC1.1 blocker, user on the Duo 80c0882: taps on the lower half of the box went through to the pause menu, OK could not be hit; the left stick still moved the menu on the left): while the box is up
+//   touch: dm_cursor.c sends the game no mouse messages; on lift dm_community_ui_tap hit-tests only the two Copy buttons and OK with the widgets' own hit test, everything else is swallowed; no drag / scroll either;
+//   controller: hle_hid.c runs dm_community_input_gate last, which zeroes every key and both sticks, turns D-pad / stick up-down into focus moves and keeps A / B for the box. Counted; one log line on dismiss (passed to the game should be 0)
+static _Atomic uint64_t g_md_ev;   // 闸门攒给弹窗的按下沿（A / B / 上 / 下） | press edges collected for the box
+static _Atomic unsigned g_sw_touch, g_sw_key, g_sw_stick, g_leak;
+int dm_community_modal(void) { return atomic_load(&g_show) != 0; }
+void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
+    static uint64_t prev; static int sdir;
+    if (!atomic_load(&g_show)) { prev = bt ? *bt : 0; sdir = 0; return; }
+    if (!bt || !lx || !ly || !rx || !ry) return;
+    uint64_t down = *bt & ~prev; prev = *bt;
+    int32_t v = (*ly < 0 ? -*ly : *ly) >= (*ry < 0 ? -*ry : *ry) ? *ly : *ry;   // 两根摇杆取推得多的那根的上下 | up / down of whichever stick is pushed further
+    int dir = v > 16000 ? 1 : v < -16000 ? -1 : (v > -8000 && v < 8000) ? 0 : sdir;   // 回滞：推过一半算一下，回到四分之一以内才复位 | hysteresis: half way counts, back inside a quarter resets
+    uint64_t ev = down & (DM_BTN_A | DM_BTN_B | DM_BTN_UP | DM_BTN_DOWN);
+    if (dir && dir != sdir) { ev |= dir > 0 ? DM_BTN_UP : DM_BTN_DOWN; atomic_fetch_add(&g_sw_stick, 1); }   // Horizon 摇杆上为正 | Horizon stick: up is positive
+    sdir = dir;
+    if (down) atomic_fetch_add(&g_sw_key, 1);
+    if (ev) atomic_fetch_or(&g_md_ev, ev);
+    *bt = 0; *lx = *ly = *rx = *ry = 0;
+}
+void dm_community_input_leak(int leaked) { if (leaked && atomic_load(&g_show)) atomic_fetch_add(&g_leak, 1); }   // 取手柄处闸门之后还有非零输入交给游戏 | a non-zero input still reached the game after the gate
 static int (*g_copy)(const char *);
 static _Atomic unsigned g_copies;
 static _Atomic int g_from;   // 从哪里点开（只进日志）：1 暂停菜单 / 2 主菜单 / 3 自定义页 | which entry opened it (log only): 1 pause menu / 2 main menu / 3 Custom page
@@ -257,6 +281,7 @@ int dm_community_fit(char *s, size_t cap, int pt, int maxw) {
 int dm_community_available(void) { return dm_community_value(dm_lang_group(), NULL, 0) != 0; }
 void dm_community_open(int from) {   // from：1 暂停菜单 / 2 主菜单 / 3 自定义页按钮 / 4 自定义页手柄 A | from: 1 pause menu / 2 main menu / 3 Custom page button / 4 Custom page controller A
     if (!dm_community_available()) { LOG("【红】社区入口：点了「加入社区讨论」（%s）但当前语言没有可显示的值", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页"); return; }
+    atomic_store(&g_sw_touch, 0); atomic_store(&g_sw_key, 0); atomic_store(&g_sw_stick, 0); atomic_store(&g_leak, 0); atomic_store(&g_md_ev, 0);
     atomic_store(&g_copied, 0); atomic_store(&g_copied_at, 0); atomic_store(&g_from, from >= 3 ? 3 : from); atomic_store(&g_mode, 1); atomic_store(&g_show, 1); LOG("社区入口：点了「加入社区讨论」（%s%s）", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页", from == 4 ? "手柄 A" : "");
 }
 void dm_community_open_about(void) {   // 主菜单「关于」行：只有版本 + 鸣谢的框，没有社区值也开 | the main menu's About row: the version + credits box, opens without a community value too
@@ -458,6 +483,19 @@ static void co_entry_show(uint64_t w, int avail, int32_t *home) {
     else if (avail && r[0] == 99999 && *home != 99999) co_place(w, *home, r[1]);
 }
 const char *dm_update_label(void);   // dm_update.c：显示版本「1.0.0+N · 哈希」（没经外壳初始化时为空） | display version (empty when the shell has not initialized it)
+// 触屏点在弹窗上（dm_cursor.c 在弹窗开着时不发鼠标消息，抬起那一下转到这里）：用控件自己的命中判断（虚表 +0x48，同 dm_cursor.c 删除角色弹窗的「是」）只认两颗「复制」与「确定」；
+// x / y = 游戏窗口像素（与 dm_cursor.c 发鼠标消息同一坐标）。其余位置一律吞掉。游戏主线程
+// A tap while the box is up (dm_cursor.c sends no mouse messages then and hands the lift here): the widgets' own hit test (vtable +0x48, as the delete-character Yes in dm_cursor.c) for the two Copy buttons and OK only;
+// x / y = game window pixels (the coordinates dm_cursor.c sends mouse messages in). Anything else is swallowed. Game main thread
+void dm_community_ui_tap(uint64_t root, int x, int y) {
+    atomic_fetch_add(&g_sw_touch, 1);
+    int which = 0; uint64_t p = root ? co_host(root, &which) : 0; if (!p || atomic_load(&g_show) != 2) return;
+    uint64_t xy = (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)y << 32;
+    static const char *const nm[3] = { "TouchCommCopy0", "TouchCommCopy1", "TouchCommOk" };
+    for (int k = 0; k < 3; k++) { uint64_t w = co_find(p, nm[k], 0); if (!w || ((int32_t *)(w + 0x70))[0] == 99999) continue;
+        if (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, xy) & 1) { LOG("社区入口：弹窗开着时点按 (%d,%d) → %s", x, y, k == 2 ? "确定" : k ? "第 2 行复制" : "第 1 行复制"); if (k < 2) do_copy(1, k); else atomic_store(&g_ack, 1); return; } }
+    LOG("社区入口：弹窗开着时点按 (%d,%d) → 没点在按钮上，吞掉", x, y);
+}
 void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
     uint8_t *b = co_base(); if (!b) return;
     uint64_t root = *(uint64_t *)(b + 0x2f05458); if (!root) return;
@@ -466,7 +504,9 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     // entry show / hide: the pause-menu row, the main menu's second row, the Custom page's community row - without a value they move off screen (the row sits in a scroll area, so only x moves); the main menu's About row stays. The Custom page also gets its credits block written
     static int32_t home[N_HOSTS] = { 99999, 99999, 99999, 99999, 99999 };   // 各入口挪走前的 x（还没挪过 = 99999） | each entry's x before it was moved away (99999 = never moved)
     for (int i = 0; i < N_HOSTS; i++) { uint64_t p = dm_ui_top(root, k_hosts[i]); if (!p || !*(uint8_t *)(p + 0x50)) continue;
-        co_entry_show(co_find(p, i == 0 ? "TouchAboutCommunityRow" : i < 3 ? "TouchCommunity" : "TouchCommunityFe", 0), avail, &home[i]);
+        // 弹窗开着时把暂停菜单 / 主菜单上点开它的那一行挪开（它的悬停 / 焦点光圈露在弹窗外，像还能点；关掉后回到原位、焦点还在这一行）；自定义页那行在滚动区里，冻结不挪
+        // while the box is up, the pause / main menu row that opened it moves away (its hover / focus glow showed outside the box as if still active; it comes back with focus on close); the Custom page row is frozen
+        co_entry_show(co_find(p, i == 0 ? "TouchAboutCommunityRow" : i < 3 ? "TouchCommunity" : "TouchCommunityFe", 0), i == 0 ? avail : avail && !atomic_load(&g_show), &home[i]);
         if (i == 0) credits_render(b, p); }
     int st = atomic_load(&g_show); if (!st) return;
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current(), mode = atomic_load(&g_mode);
@@ -483,11 +523,12 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     if (mode == 1 && !n) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：没有可显示的值了，提示框收起"); return; }
     static int foc; if (st == 1) foc = 0;   // 缺省焦点：第一行「复制」（没有渠道行时是「确定」） | default focus: row 1's Copy (OK when there are no rows)
     if (foc > n) foc = n;
-    if (pad && st == 2) { uint64_t ev = dm_padmode_page_keys(DM_BTN_A | DM_BTN_B | DM_BTN_UP | DM_BTN_DOWN);   // 手柄：焦点链 复制₁ → 复制₂ → 确定（上下移、不循环），A 触发、B 收起 | controller focus chain, A activates, B dismisses
+    if (st == 2) { uint64_t ev = atomic_exchange(&g_md_ev, 0); if (!pad) ev = 0;   // 键已在取手柄处闸门截下（dm_community_input_gate），这里只用；触屏模式不走焦点 | keys were taken at the controller gate; touch mode does not use focus   // 手柄：焦点链 复制₁ → 复制₂ → 确定（上下移、不循环），A 触发、B 收起 | controller focus chain, A activates, B dismisses
         if ((ev & DM_BTN_UP) && foc > 0) foc--; if ((ev & DM_BTN_DOWN) && foc < n) foc++;
         if (ev & DM_BTN_A) { if (foc < n) do_copy(2, foc); else atomic_store(&g_ack, 3); }
         if (ev & DM_BTN_B) atomic_store(&g_ack, 2); }
-    { int ack = atomic_exchange(&g_ack, 0); if (ack) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：收起（%s）", ack == 2 ? "手柄 B" : ack == 3 ? "手柄 A 确定" : "点确定"); return; } }
+    { int ack = atomic_exchange(&g_ack, 0); if (ack) { co_hide_all(b, p); atomic_store(&g_show, 0); unsigned t0 = atomic_exchange(&g_sw_touch, 0), k0 = atomic_exchange(&g_sw_key, 0), s0 = atomic_exchange(&g_sw_stick, 0), l0 = atomic_exchange(&g_leak, 0); atomic_store(&g_md_ev, 0);
+        LOG("社区入口：打开期间吞掉 触点 %u / 手柄键 %u / 摇杆 %u，交给底层 %u", t0, k0, s0, l0); LOG("社区入口：收起（%s）", ack == 2 ? "手柄 B" : ack == 3 ? "手柄 A 确定" : "点确定"); return; } }
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
     int ox, oy; float s; co_origin(p, xr, &ox, &oy, &s);
     const co_geom_t gm_ = co_geom(n); int H = gm_.h;

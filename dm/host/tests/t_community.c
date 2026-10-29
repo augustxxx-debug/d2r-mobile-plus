@@ -317,6 +317,29 @@ int main(void) {
       co_entry_show(w, 1, &home); CHECK(r[0] == -235 && r[1] == 1891);              // 有值了：回到原位（旧代码是 20） | value arrives: back to its own x (old code: 20)
       r[0] = 99999; home = 99999; co_entry_show(w, 1, &home); CHECK(r[0] == 99999);   // 没记过原位：不乱放 | no remembered x: not placed anywhere
       co_entry_show(0, 1, &home); }
+    // 24. RC1.1 阻塞（用户 Duo 真机 80c0882：触屏穿透到暂停菜单、左摇杆还在动左边菜单）：弹窗开着时取手柄处闸门把键与两根摇杆全清零，方向键与左 / 右摇杆的上下
+    //     都变成焦点移动（摇杆带回滞，推住不连发），A / B 留给弹窗，其余吞掉并计数；关着时原样放过；点按（无游戏模块时）只计数不崩
+    // 24. RC1.1 blocker: while the box is up the controller gate zeroes every key and both sticks; D-pad and either stick's up / down become focus moves (stick with hysteresis, no repeat while held),
+    //     A / B go to the box, the rest is swallowed and counted; closed = pass-through; a tap without a game module only counts and does not crash
+    { uint64_t bt; int32_t lx, ly, rx, ry; atomic_store(&g_md_ev, 0); atomic_store(&g_sw_key, 0); atomic_store(&g_sw_stick, 0); atomic_store(&g_sw_touch, 0); atomic_store(&g_leak, 0);
+      atomic_store(&g_show, 0); bt = DM_BTN_A | DM_BTN_LEFT; lx = 100; ly = 30000; rx = ry = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry);
+      CHECK(bt == (DM_BTN_A | DM_BTN_LEFT) && ly == 30000 && lx == 100 && !atomic_load(&g_md_ev));   // 关着：原样放过 | closed: untouched
+      atomic_store(&g_show, 2);
+      bt = DM_BTN_A | DM_BTN_PLUS | DM_BTN_L | DM_BTN_ZR | DM_BTN_LEFT; lx = 20000; ly = 0; rx = 5000; ry = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry);
+      CHECK(!bt && !lx && !ly && !rx && !ry); CHECK(atomic_load(&g_md_ev) == 0);   // 全清零；打开时就按着的 A（点开弹窗的那一下）不算新按下 | all zero; the A held since opening (the press that opened it) is not a new press
+      bt = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); bt = DM_BTN_A; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(atomic_load(&g_md_ev) == DM_BTN_A && !bt);   // 松开再按：A 攒给弹窗 | release then press: A for the box
+      bt = DM_BTN_A; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(atomic_exchange(&g_md_ev, 0) == DM_BTN_A);   // 按住不算新的按下 | held is not a new press
+      bt = 0; ly = 30000; lx = ry = rx = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(atomic_load(&g_md_ev) == DM_BTN_UP && !ly);   // 左摇杆上 = 焦点上移 | left stick up = focus up
+      ly = 30000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); ly = 12000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(atomic_exchange(&g_md_ev, 0) == DM_BTN_UP);   // 推住 / 回到半中间：不连发 | held / half back: no repeat
+      ly = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); ly = -30000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(atomic_exchange(&g_md_ev, 0) == DM_BTN_DOWN);   // 回中再下推 | centre then down
+      ly = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); ry = 30000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(atomic_exchange(&g_md_ev, 0) == DM_BTN_UP && !ry);   // 右摇杆同样 | right stick likewise
+      ry = 0; lx = 30000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(!atomic_load(&g_md_ev) && !lx);   // 左右：吞掉，无处可去 | left / right: swallowed, nowhere to go
+      bt = DM_BTN_DOWN | DM_BTN_B; lx = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(atomic_exchange(&g_md_ev, 0) == (DM_BTN_DOWN | DM_BTN_B) && !bt);
+      CHECK(atomic_load(&g_sw_key) == 3 && atomic_load(&g_sw_stick) == 3);
+      dm_community_input_leak(0); CHECK(atomic_load(&g_leak) == 0); dm_community_input_leak(1); CHECK(atomic_load(&g_leak) == 1);   // 闸门后还有输入 = 漏（计数） | input after the gate = leak (counted)
+      dm_community_ui_tap(0, 100, 100); CHECK(atomic_load(&g_sw_touch) == 1);                        // 没有游戏界面：只计数 | no game UI: counted only
+      CHECK(dm_community_modal()); atomic_store(&g_show, 0); CHECK(!dm_community_modal());
+      bt = DM_BTN_B; ly = 0; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(bt == DM_BTN_B); atomic_store(&g_md_ev, 0); }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);

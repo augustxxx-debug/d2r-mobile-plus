@@ -423,6 +423,10 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     { static uint64_t prev; if ((s->buttons & DM_BTN_L) && !(prev & DM_BTN_L)) { int n = atomic_fetch_add(&g_dm_l_presses, 1) + 1; if (n <= 3) LOG("取手柄处：「显示物品」键（L）交给了游戏，本进程第 %d 次", n); } prev = s->buttons; }   // 「显示物品」键（L）交给游戏的按下次数（首领掉落读数用，dm_bossrush.c） | number of presses of the 「显示物品」(Show Items) key (L) delivered to the game (used by the boss drop readout, dm_bossrush.c)
     if (km & PK_LSL) s->lx = -32767; if (km & PK_LSR) s->lx = 32767;   // 脚本摇杆伪键：推满（Horizon 摇杆 ±32767，上为正） | script stick pseudo-keys: push to full (Horizon stick ±32767, up is positive)
     if (km & PK_LSU) s->ly = 32767;  if (km & PK_LSD) s->ly = -32767;
+    // 社区 / 关于弹窗开着：键与两根摇杆全截给弹窗、一律不交给游戏（RC1.1，dm_community.c）；放在所有改写之后，再核一次交给游戏的是不是全零（计数，应为 0）
+    // community / About box up: every key and both sticks go to the box, none to the game (RC1.1, dm_community.c); placed after every rewrite, then checks what reaches the game is all zero (counted, should be 0)
+    { void dm_community_input_gate(uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *), dm_community_input_leak(int);
+      dm_community_input_gate(&s->buttons, &s->lx, &s->ly, &s->rx, &s->ry); dm_community_input_leak(s->buttons || s->lx || s->ly || s->rx || s->ry); }
     s->attributes = ATTR_CONNECTED;
     atomic_store_explicit(&g_sampled_right,(uint32_t)s->rx|((uint64_t)(uint32_t)s->ry<<32),memory_order_release);
     receipt(s, id, style, km, read_start_ns);

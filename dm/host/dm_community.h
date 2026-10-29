@@ -6,6 +6,7 @@
 // no such field in the manifest = the entry is hidden altogether (old manifests and old packages stay compatible); fetch failed this time = keep the cache; no cache = hidden. Only the group and the repository address, never any personal contact.
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
 int dm_community_manifest(const char *json, size_t len);   // 外壳每次拉完清单调（任意线程）：json / len = 原文（NULL = 这次没拉到）。返回 1 有字段（已写缓存）/ 0 无字段或格式坏（入口不显示，缓存已删）/ -1 没拉到或不是完整 JSON（沿用缓存） | called by the shell after every fetch (any thread): json / len = raw text (NULL = fetch failed). Returns 1 field present (cache written) / 0 absent or malformed (entry hidden, cache deleted) / -1 not fetched or not complete JSON (cache kept)
 void dm_community_load(void);                              // 宿主入口调一次（可重入）：读缓存；测试局另认 DM_TEST_COMMUNITY=<清单文件> | called once at host entry (idempotent): read the cache; test runs also honor DM_TEST_COMMUNITY=<manifest file>
 int dm_community_value(int lang_group, char *out, size_t n);   // 按语言组（DM_LG_*）选要显示 / 复制的值：0 没有 / 1 群号 / 2 链接。中文：群号，没有群号才给链接；其他语言只给链接。链接 = 官网（清单 site），没有官网退回 GitHub | the value to show / copy for a language group (DM_LG_*): 0 none / 1 group number / 2 link. Chinese: the number, the link only without one; other languages: the link only. The link = the website (manifest site), else GitHub
@@ -21,3 +22,8 @@ unsigned dm_community_copy_count(void);                    // 复制成功次数
 int dm_community_shown(void);                              // 提示框正显示着（手柄模式下自定义页此时不再接管十字键 / A，免得一下 A 既复制又翻勾选） | the box is showing (in controller mode the Custom page then stops taking over the D-pad / A, so one A does not both copy and toggle)
 void dm_community_on_uimsg(const char *cat, const char *act, const char *arg);   // 界面消息（diag.c）：两个入口按钮、提示框的复制 / 确定 | UI messages (diag.c): the two entry buttons, the box's Copy / OK
 void dm_community_pump(void);                              // 取手柄处每帧调（hle_hid.c）：入口显隐、写字、摆位置、手柄 A 复制 / B 收起 | every frame at the controller poll (hle_hid.c): entry show / hide, text, placement, controller A copies / B dismisses
+// 弹窗吞输入（RC1.1）：开着时触屏点按只认弹窗的按钮、手柄键与摇杆全截给弹窗 | modal input (RC1.1): while the box is up, taps only reach its buttons and every controller key / stick goes to it
+int dm_community_modal(void);                                 // 弹窗开着（含将要显示） | the box is up (or about to show)
+void dm_community_ui_tap(uint64_t root, int x, int y);        // dm_cursor.c：弹窗开着时的一次点按（游戏窗口像素） | dm_cursor.c: a tap while the box is up (game window pixels)
+void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);   // hle_hid.c 取手柄处最后调 | called last in hle_hid.c's controller read
+void dm_community_input_leak(int leaked);                       // 闸门之后仍有非零输入交给游戏（计数，应为 0） | a non-zero input still reached the game after the gate (counted, should be 0)
