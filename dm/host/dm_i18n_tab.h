@@ -533,4 +533,13 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmLoadHintPrepare", "马上进入游戏，请稍候", "Entering the game shortly, please wait", "Entrando al juego en un momento, espera", "Entrando al juego en un momento, espera", "Игра скоро запустится, подождите", "곧 게임에 들어갑니다. 잠시 기다려 주세요" },
     { "dmLoadMusicOn", "打开背景音乐", "Turn music on", "Activar la música", "Activar la música", "Включить музыку", "배경 음악 켜기" },
     { "dmLoadMusicOff", "关闭背景音乐", "Turn music off", "Desactivar la música", "Desactivar la música", "Выключить музыку", "배경 음악 끄기" },
+    { "dmLoadCommQqGh", "官方免费渠道：QQ 群 %s · GitHub", "Official free channels: QQ group %s · GitHub", "Canales oficiales gratis: grupo QQ %s · GitHub", "Canales oficiales gratis: grupo QQ %s · GitHub", "Бесплатные каналы: группа QQ %s · GitHub", "공식 무료 채널: QQ 그룹 %s · GitHub" },
+    { "dmLoadCommQq", "官方免费渠道：QQ 群 %s", "Official free channel: QQ group %s", "Canal oficial gratis: grupo QQ %s", "Canal oficial gratis: grupo QQ %s", "Бесплатный канал: группа QQ %s", "공식 무료 채널: QQ 그룹 %s" },
+    { "dmLoadCommGh", "官方免费渠道：GitHub", "Official free channel: GitHub", "Canal oficial gratis: GitHub", "Canal oficial gratis: GitHub", "Бесплатный канал: GitHub", "공식 무료 채널: GitHub" },
+    { "dmLoadCommFree", "本软件免费，付费购买均为倒卖", "This app is free. If you paid for it, it was resold", "Esta app es gratis; si pagaste por ella, es reventa", "Esta app es gratis; si pagaste por ella, es reventa", "Приложение бесплатно; платные копии — перепродажа", "이 앱은 무료이며, 유료 판매는 모두 재판매입니다" },
+    { "dmLoadCommCopyQq", "复制群号", "Copy number", "Copiar número", "Copiar número", "Копировать", "번호 복사" },
+    { "dmLoadCommCopyGh", "复制链接", "Copy link", "Copiar enlace", "Copiar enlace", "Копировать", "링크 복사" },
+    { "dmLoadCommCopied", "已复制", "Copied", "Copiado", "Copiado", "Скопировано", "복사됨" },
+    { "dmLoadCommCopyFail", "复制失败", "Copy failed", "Error al copiar", "Error al copiar", "Ошибка", "복사 실패" },
+    { "dmLoadCommPrefer", "qq", "github", "github", "github", "github", "github" },
 };

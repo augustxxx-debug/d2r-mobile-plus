@@ -147,6 +147,54 @@ int main(void) {
     dm_loadpage_text(&t, 1); CHECK(!strcmp(t.title, "Preparing the shader cache")); CHECK(strstr(t.body, "File 5 of 9") != NULL);
     dm_loadpage_ui_set_group(DM_LG_KO); dm_loadpage_text(&t, 1); CHECK(strstr(t.body, "5 / 9") != NULL); dm_loadpage_ui_set_group(-1);
 
+    // 10. 社区信息：没给 = 不显示、布局不变；给了（进行中）= 两行 + 复制钮贴底、在安全区内、进度组整体上移、不重叠；完成后不显示；失败仍显示；
+    //     复制值按语言（中文先群号、英文先链接、只有一项用那一项）；复制反馈 2 秒；手柄模式；判定区；begin 不清社区信息
+    // 10. Community info: not given = not shown, layout unchanged; given (running) = two lines + copy button at the bottom, inside the safe area, the progress group moved up, no overlap;
+    //     not shown after done; still shown on failure; the copy value by language (Chinese prefers the number, English the link, a single item is used as is); 2 s copy feedback; controller mode; hit area; begin keeps the info
+    {
+        dm_lp_screen thor = { 832.5, 468.3, 0, 0, 0, 0 }, oppo = { 792, 363.4, 30, 0, 0, 0 }; dm_lp_layout L0, L1;   // 奥丁 1920×1080 @369 dpi、OPPO 2772×1272 @560 dpi（左侧挖孔约 30 点） | Thor 1920×1080 @369 dpi, OPPO 2772×1272 @560 dpi (left cutout about 30 pt)
+        dm_loadpage_begin(two, 2, w_two, 0); dm_loadpage_set(0, 0.3, NULL, 10);
+        dm_loadpage_layout(&thor, &L0); CHECK(L0.comm == 0 && !dm_loadpage_community_shown()); CHECK(!strcmp(dm_loadpage_copy_value(), ""));
+        dm_loadpage_text(&t, 20); CHECK(!t.comm1[0] && !t.comm2[0] && !t.copy[0]); CHECK(!dm_loadpage_hit_copy(&L0, L0.sub.x + 10, L0.sub.y + 5));
+        dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus");
+        CHECK(dm_loadpage_community_shown()); CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678"));
+        dm_lp_screen scr[2] = { thor, oppo };
+        for (int k = 0; k < 2; k++) { dm_loadpage_layout(&scr[k], &L1); double W = scr[k].w, H = scr[k].h;
+            CHECK(L1.comm == 1); CHECK(rect_in(L1.comm1, scr[k].inset_l, 0, W - scr[k].inset_r, H - scr[k].inset_b) && rect_in(L1.comm2, 0, 0, W, H - scr[k].inset_b) && rect_in(L1.copy, 0, 0, W - scr[k].inset_r, H - scr[k].inset_b));
+            CHECK(L1.sub.y + L1.sub.h <= L1.comm1.y - 12); CHECK(L1.comm1.y + L1.comm1.h <= L1.comm2.y); CHECK(L1.comm1.x + L1.comm1.w <= L1.copy.x - 8);
+            CHECK(NEAR(L1.copy.x + L1.copy.w, W - scr[k].inset_r - 28)); CHECK(NEAR(L1.comm1.x, scr[k].inset_l + 28)); CHECK(L1.copy.h >= 30 && L1.copy.w >= 140);
+            CHECK(L1.logo.y + L1.logo.h <= L1.title.y - 24 + 1e-6); CHECK(L1.comm2.y + L1.comm2.h <= H - scr[k].inset_b - 16); }
+        dm_loadpage_layout(&thor, &L1); CHECK(L1.title.y < L0.title.y && L1.bar.y < L0.bar.y);
+        CHECK(dm_loadpage_hit_copy(&L1, L1.copy.x + 5, L1.copy.y + 5) && dm_loadpage_hit_copy(&L1, L1.copy.x - 6, L1.copy.y) && !dm_loadpage_hit_copy(&L1, L1.copy.x - 12, L1.copy.y + 5) && !dm_loadpage_hit_mute(&L1, L1.copy.x + 5, L1.copy.y + 5));
+        dm_loadpage_text(&t, 30); CHECK(!strcmp(t.comm1, "官方免费渠道：QQ 群 1129913678 · GitHub")); CHECK(!strcmp(t.comm2, "本软件免费，付费购买均为倒卖")); CHECK(!strcmp(t.copy, "复制群号") && t.copy_state == 0);
+        dm_loadpage_copied(1, 0, 1000); dm_loadpage_text(&t, 1500); CHECK(!strcmp(t.copy, "已复制") && t.copy_state == 1);
+        dm_loadpage_text(&t, 3001); CHECK(!strcmp(t.copy, "复制群号") && t.copy_state == 0);
+        dm_loadpage_copied(0, 1, 4000); dm_loadpage_text(&t, 4100); CHECK(!strcmp(t.copy, "复制失败") && t.copy_state == -1); dm_loadpage_text(&t, 6100); CHECK(t.copy_state == 0);
+        CHECK(dm_loadpage_pad_mode() == 0); dm_loadpage_pad(1); CHECK(dm_loadpage_pad_mode() == 1); dm_loadpage_pad(0); CHECK(dm_loadpage_pad_mode() == 0);
+        dm_loadpage_ui_set_group(DM_LG_EN); CHECK(!strcmp(dm_loadpage_copy_value(), "https://github.com/augustxxx-debug/d2r-mobile-plus"));
+        dm_loadpage_text(&t, 7000); CHECK(!strcmp(t.copy, "Copy link") && strstr(t.comm1, "QQ group 1129913678 · GitHub"));
+        dm_loadpage_community("1129913678", NULL); CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678")); dm_loadpage_text(&t, 7000); CHECK(!strcmp(t.copy, "Copy number") && !strstr(t.comm1, "GitHub"));
+        dm_loadpage_ui_set_group(-1); dm_loadpage_community("", "https://github.com/a/b"); CHECK(!strcmp(dm_loadpage_copy_value(), "https://github.com/a/b"));
+        dm_loadpage_text(&t, 7000); CHECK(!strcmp(t.comm1, "官方免费渠道：GitHub") && !strcmp(t.copy, "复制链接"));
+        dm_loadpage_begin(two, 2, w_two, 8000); CHECK(dm_loadpage_community_shown());   // begin 不清 | begin keeps it
+        dm_loadpage_fail("x", 8100); CHECK(dm_loadpage_community_shown());
+        dm_loadpage_begin(two, 2, w_two, 9000); dm_loadpage_finish(9100); CHECK(!dm_loadpage_community_shown()); dm_loadpage_layout(&thor, &L1); CHECK(L1.comm == 0);
+        dm_loadpage_copied(1, 0, 9200); dm_loadpage_text(&t, 9300); CHECK(!t.copy[0]);   // 不显示时复制不记 | no copy recorded when hidden
+        dm_loadpage_begin(two, 2, w_two, 9400); dm_loadpage_community(NULL, NULL); CHECK(!dm_loadpage_community_shown());
+        // 六套文字：第一行估宽（拉丁 / 西里尔 0.55 个字号、汉字 / 韩文 1.0 个字号）放得进 OPPO 的行宽，按钮字放得进 144 点（手柄 A 图标另占 22 点）
+        // six text sets: the first line's estimated width (Latin / Cyrillic 0.55 em, CJK / Hangul 1.0 em) fits OPPO's line width; button labels fit 128 pt (the controller A glyph takes 22 more)
+        dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus"); dm_loadpage_layout(&oppo, &L1);
+        int groups[5] = { DM_LG_ZH, DM_LG_EN, DM_LG_ES, DM_LG_RU, DM_LG_KO };
+        for (int k = 0; k < 5; k++) { dm_loadpage_ui_set_group(groups[k]);
+            const char *keys[4] = { "dmLoadCommQqGh", "dmLoadCommFree", "dmLoadCommCopyQq", "dmLoadCommCopyGh" };
+            for (int q = 0; q < 4; q++) { char s[256]; snprintf(s, sizeof s, dm_loadpage_ui(keys[q]), "1129913678"); double est = 0;
+                for (const unsigned char *c = (const unsigned char *)s; *c; ) { if (*c < 0x80) { est += 0.55; c++; } else if (*c < 0xe0) { est += 0.6; c += 2; } else { est += 1.0; c += 3; } }
+                est *= L1.sub_pt; double room = q < 2 ? L1.comm1.w : L1.copy.w - 16 - 22;
+                if (est > room) printf("  宽度：组 %d 键 %s 估 %.0f > %.0f\n", groups[k], keys[q], est, room);
+                CHECK(est <= room); } }
+        dm_loadpage_ui_set_group(-1); dm_loadpage_community(NULL, NULL);
+    }
+
     printf("t_loadpage：%d 项检查，%d 项失败\n", checks, fails);
     return fails ? 1 : 0;
 }

@@ -52,6 +52,11 @@ cp "$O/ref/native_art/dm_touch_native_art.c" "$G/" && cp "$G/dm_vault_tab.h" "$G
 eval "$(bash "$DM/tools/version.sh")"; [ -z "${DM_VERSION_ERROR:-}" ] || die "version.sh：$DM_VERSION_ERROR"; [ -z "${DM_VERSION_WARN:-}" ] || t "version.sh：$DM_VERSION_WARN"
 t "版本 $DM_VERSION 构建号 $DM_BUILD（$DM_BUILD_SOURCE）显示 $DM_VERSION_LABEL"
 VER=(-PdmVersionName="$DM_VERSION" -PdmBuildNumber="$DM_BUILD" -PdmVersionLabel="$DM_VERSION_LABEL")
+# 更新清单地址（加载页页脚的官方免费渠道，按顺序试：自己的服务器 → GitHub raw）：出包时由 DM_UPDATE_URLS 给（空格分隔，只许 https://），不进源码；没给 = 包里不联网
+# Update manifest addresses (official free channels in the loading page footer, tried in order: own server → GitHub raw): given at packaging time by DM_UPDATE_URLS
+# (space separated, https:// only), never in the source; none = the package makes no network access
+if [ -n "${DM_UPDATE_URLS:-}" ]; then VER+=(-PdmUpdateUrls="$DM_UPDATE_URLS"); t "清单地址 $(echo $DM_UPDATE_URLS | wc -w | tr -d ' ') 个，按顺序：$(for u in $DM_UPDATE_URLS; do printf '%s ' "$(echo "$u" | sed -E 's#^https://([^/]+).*#\1#')"; done)"
+else t "没给 DM_UPDATE_URLS：包里不联网，加载页不显示官方免费渠道"; fi
 # 手机端生成器缺省编进主包（同一个 App：没有导入包就自己生成）。运行时 = gen_runtime.sh 的输出，脚本与翻译工具源码都没变就复用，否则重编（约 5 分钟，要网）；
 #   DM_GEN_RUNTIME=<目录> 指定输出位置，DM_GEN_RUNTIME=none 出不带生成器的包（只认电脑做的导入包）；工作目录 DM_GEN_WORK 要 ASCII 路径
 # The on-phone generator goes into the main package by default (one App: it makes the import pack itself when there is none). The runtime is the output of gen_runtime.sh,
