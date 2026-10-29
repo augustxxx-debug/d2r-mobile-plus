@@ -27,6 +27,7 @@
 #include "dm_notice_geometry.h"
 #include "dm_cursor.h"
 #include "dm_sel_frame.h"
+#include "dm_stick_nav.h"
 #include "hle.h"
 #include <ctype.h>
 #include <pthread.h>
@@ -55,15 +56,15 @@ static _Atomic uint64_t g_md_ev;   // 闸门攒给弹窗的按下沿（A / B / �
 static _Atomic unsigned g_sw_touch, g_sw_key, g_sw_stick, g_leak;
 int dm_community_modal(void) { return atomic_load(&g_show) != 0; }
 void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
-    static uint64_t prev; static int sdir;
-    if (!atomic_load(&g_show)) { prev = bt ? *bt : 0; sdir = 0; return; }
+    static uint64_t prev, pdir; static dm_stick_nav nav;
+    if (!atomic_load(&g_show)) { prev = bt ? *bt : 0; pdir = 0; nav.hx = nav.hy = 0; return; }
     if (!bt || !lx || !ly || !rx || !ry) return;
     uint64_t down = *bt & ~prev; prev = *bt;
-    int32_t v = (*ly < 0 ? -*ly : *ly) >= (*ry < 0 ? -*ry : *ry) ? *ly : *ry;   // 两根摇杆取推得多的那根的上下 | up / down of whichever stick is pushed further
-    int dir = v > 16000 ? 1 : v < -16000 ? -1 : (v > -8000 && v < 8000) ? 0 : sdir;   // 回滞：推过一半算一下，回到四分之一以内才复位 | hysteresis: half way counts, back inside a quarter resets
+    int32_t vy = (*ly < 0 ? -*ly : *ly) >= (*ry < 0 ? -*ry : *ry) ? *ly : *ry;   // 两根摇杆取推得多的那根的上下 | up / down of whichever stick is pushed further
+    uint64_t dir = dm_stick_nav_dirs(&nav, *lx, vy) & (DM_BTN_UP | DM_BTN_DOWN);   // 公共折算（dm_stick_nav.h：回滞、主轴）；左右在弹窗里无处可去 | shared conversion; left / right have nowhere to go in the box
     uint64_t ev = down & (DM_BTN_A | DM_BTN_B | DM_BTN_UP | DM_BTN_DOWN);
-    if (dir && dir != sdir) { ev |= dir > 0 ? DM_BTN_UP : DM_BTN_DOWN; atomic_fetch_add(&g_sw_stick, 1); }   // Horizon 摇杆上为正 | Horizon stick: up is positive
-    sdir = dir;
+    if (dir & ~pdir) { ev |= dir; atomic_fetch_add(&g_sw_stick, 1); }
+    pdir = dir;
     if (down) atomic_fetch_add(&g_sw_key, 1);
     if (ev) atomic_fetch_or(&g_md_ev, ev);
     *bt = 0; *lx = *ly = *rx = *ry = 0;
