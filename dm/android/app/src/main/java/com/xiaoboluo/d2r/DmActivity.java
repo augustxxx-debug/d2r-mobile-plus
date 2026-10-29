@@ -489,6 +489,11 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         try { if (!communityLast.isEmpty()) Os.setenv("DM_COMMUNITY_LAST", communityLast, true); } catch (ErrnoException ignored) {}   // 社区信息拉取的最后一行，同上进 boot.log | the community fetch's last line, into boot.log likewise
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
         if (result < 0) {
+            // 触屏资源缺失 / 与这版不配套（App 升级后覆盖层的输入变了）：带生成器的包把已生成内容标成过期、重启进程，重启后自动在加载页重新生成。
+            // 每个版本只自动重试一次，再不行才显示原提示（免得循环）
+            // Touch overlay missing / not matching this version (the overlay inputs changed with an app update): a package with the generator marks the generated content stale and restarts
+            // the process, which then regenerates it on the loading page. At most one automatic retry per version; after that the original message shows (no loop)
+            if ((result == -9 || result == -10) && regenerateAfterUpdate()) return;
             int resource = switch (result) {
                 case -2 -> R.string.dmAndroidMissingData;
                 case -3 -> R.string.dmAndroidMissingModules;
@@ -504,6 +509,20 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         touchOverlay.setInputEnabled(true);
         nativeFocus(3);
         modeHandler.removeCallbacks(modePoll); modeHandler.post(modePoll);
+    }
+
+    private boolean regenerateAfterUpdate() {
+        File info = new File(getFilesDir(), "dm/pack_info.txt"); String have = readText(info);
+        android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE); long tried = sp.getLong("overlay_regen_for", 0);
+        if (have == null || !generatorAvailable() || tried == BuildConfig.VERSION_CODE) return false;
+        try { Files.write(info.toPath(), PackGenerator.markStale(have).getBytes(StandardCharsets.UTF_8)); }
+        catch (IOException e) { android.util.Log.w("dm", "触屏资源与这版不配套，标记过期失败：" + e); return false; }
+        sp.edit().putLong("overlay_regen_for", BuildConfig.VERSION_CODE).commit();
+        android.util.Log.i("dm", "触屏资源与这版 App 不配套（App 升级过）：已标记过期，重启后自动重新生成");
+        Intent i = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (i != null) { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK); startActivity(i); }
+        finishAffinity(); Runtime.getRuntime().exit(0);   // 原生库已加载，生成要在加载之前做：换一个干净进程 | the native library is loaded and generation must run before that: start a clean process
+        return true;
     }
 
     private void showStartError(String message) {

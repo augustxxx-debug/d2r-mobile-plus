@@ -25,6 +25,9 @@ public class PackGeneratorTest {
     private static void write(File f, String text) throws IOException { f.getParentFile().mkdirs(); Files.write(f.toPath(), text.getBytes(StandardCharsets.UTF_8)); }
 
     public static void main(String[] args) throws Exception {
+        // 过期标记：只改 PRODUCT 行，其余原样；没有 PRODUCT 行就补一行 | stale marking: only the PRODUCT line changes; without one, one is added
+        equal("A=1\nPRODUCT=stale-overlay\nB=2\n", PackGenerator.markStale("A=1\nPRODUCT=3.3.94012-r44\nB=2\n"));
+        equal("PRODUCT=stale-overlay\nX=1", PackGenerator.markStale("X=1"));
         File base = temp();
         equal(Arrays.asList("ExeFS/main", "ExeFS/sdk", "data/build_manifest.psv"), PackGenerator.missingInputs(base));
         write(new File(base, "ExeFS/main"), "m"); write(new File(base, "data/build_manifest.psv"), "b");
