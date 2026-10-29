@@ -33,6 +33,7 @@
 // The read-only data segment is writable by the host (loader.c only seals the code region and the patch region); the original value of each string is
 // verified one by one, and nothing is written on a mismatch (wrong game version).
 #include "dm_stick_nav.h"
+#include "dm_custom_scroll.h"
 #include "hle.h"
 #include "dm_hud.h"
 #include "dm_widget.h"
@@ -231,8 +232,9 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
     static uint64_t prev, eat; uint64_t vb = bt | atomic_load(&g_pg_stick), down = vb & ~prev; prev = vb;   // 摇杆折出的方向位只用来算页的按下沿 / 按着，不交给游戏 | stick-derived bits only feed the page's edges / held state, never the game
     uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
     uint64_t pulse = 0; { int n = atomic_load(&g_pg_pulse_n); if (n > 0) { atomic_store(&g_pg_pulse_n, n - 1); pulse = atomic_load(&g_pg_pulse); } }
-    if (m) { atomic_fetch_or(&g_pg_ev, down & m); atomic_store(&g_pg_held, vb & m); eat |= bt & m; return (bt & ~m) | pulse; }
-    atomic_store(&g_pg_ev, 0); atomic_store(&g_pg_held, 0); eat &= bt; return (bt & ~eat) | pulse;
+    eat &= bt;   // 声明换了键（如难度行按下 = 焦点交回原版表格、只剩「上」）时，前一份声明里还按着的键同样松开前不交原版（否则这一下下键又让原版焦点再走一格，B015） | keys still held from a previous, different declaration are withheld until released too (B015)
+    if (m) { atomic_fetch_or(&g_pg_ev, down & m); atomic_store(&g_pg_held, vb & m); eat |= bt & m; return (bt & ~eat) | pulse; }
+    atomic_store(&g_pg_ev, 0); atomic_store(&g_pg_held, 0); return (bt & ~eat) | pulse;
 }
 // 编年史仓库页开着时（手柄模式）把原版「按住 Y」那半句提示的字换成我们实际做的事：原版在储藏箱各页对背包物品的提示是「丢弃（按住移动到私人储藏箱）」，
 // 第六页上按住 Y 被我们接管成存入编年史仓库（dm_vault_ui.c）。这半句只写「存入」：原版那条本来就超宽、在限宽里滚动（截图对照），写短到不滚，人就在编年史页上。换法同上面的手柄 / 触屏说法：只换当前语言串表里这个键的串指针，离开那一页换回
@@ -468,14 +470,14 @@ static void legend_pump(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧
 // 「选项 → 游戏」页的「游戏难度」行（用户 2026-10-28：从暂停菜单挪来；布局 touch_layout.py _diff_row，两种模式同一份）：我们自己的滑块 TouchDiffSlider（0..7 = 1..8 档）。
 // 原版这页的离线难度行在本版被面板代码按行名无条件藏起、刻度从不设，不用它（见 _diff_row）。游戏主线程每帧，游戏页开着时：
 //   刚看见滑块（页刚开 / 重建）设刻度、拨到当前档（原版 setter main+0xad7028，同图形页的滑块）；之后值变了（触屏点两端箭头）就走底栏难度格同一条路 dm_hud_request_players；
-//   手柄模式接管 Y（原版焦点导航够不着我们的控件）：每按一次 +1 档、8 后回 1，说明行写「按 Y 键调整…」；
+//   手柄模式：焦点在原版表格第一行时按上，焦点进难度行（下面「手柄焦点链」一段），左 / 右 / A 改档，同其它行；
 //   不在局内：说明行改成「进入游戏后可调整」，滑块被拨了就拨回去（照底栏难度格：只在局内可调）。
 // 请求在下一个服务端拍落地（dm_hud.c 在服务端拍入口取；Mac 实测选项页开着时照常走拍，按一下当拍就落地）；万一没走拍，连改时从「上一次请求的档」接着算、滑块与行名也显示它；
 // 档位真落地那一拍由 diag.c 记「游戏难度：当前 N 档」，分享日志摘要取最后一行「游戏难度：」。
 // The "Game Difficulty" row on the Options → Gameplay page (user, 2026-10-28: moved from the pause menu; layout touch_layout.py _diff_row, one copy for both modes): our own slider TouchDiffSlider (0..7 = levels 1..8).
 // This page's original offline difficulty row is hidden unconditionally by row name by the panel code in this build and its scale is never set, so it is not used (see _diff_row). Game main thread, every frame while the Gameplay page is open:
 //   when the slider is first seen (page just opened / rebuilt) set its scale and move it to the current level (original setter main+0xad7028, same as the Graphics page sliders); after that a changed value (touch taps on the end arrows) goes the same way as the bottom-bar difficulty cell, dm_hud_request_players;
-//   in controller mode take over Y (the original focus navigation cannot reach our widgets): +1 level per press, back to 1 after 8, and the note reads "Press Y to change…";
+//   in controller mode: Up on the original table's first row moves the focus onto the difficulty row ("controller focus chain" below), where Left / Right / A change the level like any other row;
 //   outside a run: the note becomes "available once you are in a game" and a moved slider is moved back (like the bottom-bar cell: adjustable only in a run).
 // A request lands on the next server tick (dm_hud.c takes it at the server tick entry; measured on the Mac, ticks keep running with the options page open, so each press lands at once); should no tick run, repeated changes continue from "the last requested level", which the slider and label show too;
 // the tick on which the level really lands is logged by diag.c as 「游戏难度：当前 N 档」, and the share-log summary takes the last 「游戏难度：」 line.
@@ -486,7 +488,6 @@ static void diff_set_text(uint8_t *b, uint64_t w, const char *t) {   // 只写�
     ((void (*)(uint64_t, const char *, uint64_t))(b + 0x136e5c))(w + 0x88, t, L); ((void (*)(uint64_t))(b + 0xadc434))(w);
 }
 static void diff_pump(uint8_t *b, uint64_t frame) {
-    (void)frame;
     uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), gp = root ? dm_ui_top(root, "GameplayOptionsPanel") : 0;
     if (!gp || !*(uint8_t *)(uintptr_t)(gp + 0x50)) { g_diff_w.w = 0; g_diff_last = -1; return; }
     uint64_t w = pm_find(gp, "TouchDiffSlider", 0); if (!w || !DM_WIDGET_OK(b, w, DM_VT_SLIDER, "游戏难度行")) return;
@@ -504,15 +505,42 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
         else { int n = dm_hud_slider_players(0, 7, v); if (n != shown) { dm_hud_request_players(n); g_diff_pend = n; shown = n; LOG("游戏难度：选项页滑块 → %d 档（下一拍生效）", n); } }
     }
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current();
-    if (pad && shown && !dm_ui_modal_active(root) && (dm_padmode_page_keys(DM_BTN_Y) & DM_BTN_Y)) {
-        int n = shown % 8 + 1; dm_hud_request_players(n); g_diff_pend = n; LOG("游戏难度：选项页手柄 Y %d → %d 档（下一拍生效）", shown, n); shown = n; setv = dm_hud_slider_value(0, 7, n); }
+    // 手柄焦点链（RC1.1 B015）：原版这页的焦点只在原版表格里走，第一行再按上什么也不做（不循环）。焦点在表格第一个可见行上按上 = 焦点交给难度行：
+    // 把焦点管理器的焦点控件（[界面根+0xd0]+0x190）换成我们的滑块——原版的焦点金框照这个指针画，就画到难度行上（dm_actions.c 腰带补满也是这样摆焦点）。
+    // 难度行上：左 / 右 = −1 / +1 档（1、8 到头不动），A = +1 档（8 后回 1），同其它行一样改了立刻生效；下 = 焦点交回刚才那一行；上不动。
+    // 焦点被别处改走（页重建、触屏点了别的行）就算离开难度行。表格滚下去时焦点回到难度行，让原版滚动区自己滚回顶（同自定义页，发滚轮，只读不写原版控件）
+    // Controller focus chain (RC1.1 B015): the original focus on this page only walks the original table, and Up on its first row does nothing (no wrap). Up with the focus on the
+    // table's first visible row = the focus goes to the difficulty row: the focus manager's focused widget ([UI root+0xd0]+0x190) becomes our slider -- the original gold focus frame is
+    // drawn from that pointer, so it lands on the difficulty row (dm_actions.c's belt fill sets the focus the same way). On the difficulty row: Left / Right = −1 / +1 level (stops at 1 and 8),
+    // A = +1 level (back to 1 after 8), taking effect at once like the other rows; Down = the focus goes back to the row it came from; Up does nothing.
+    // The focus moved elsewhere (page rebuilt, a touch on another row) counts as leaving the row. If the table was scrolled down, the original scroll area is made to scroll back to the
+    // top by itself (as on the Custom page: wheel notches, reading only, never writing original widgets)
+    { static int on_row, last_dir, last_off = -1; static uint64_t back, wheel_at; uint64_t fm = rd8(root + 0xd0), F = fm ? rd8(fm + 0x190) : 0;
+      if (!pad || !fm || dm_ui_modal_active(root)) on_row = 0;
+      else if (on_row && F != w) { on_row = 0; LOG("游戏难度：手柄焦点离开难度行（被改到 %s）", F ? (const char *)rd8(F + 8) : "-"); }
+      else if (on_row) {
+          uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A);
+          if (ev & DM_BTN_DOWN) { const char *bn = back ? (const char *)rd8(back + 8) : NULL; uint64_t tb = pm_find(gp, "OptionsTable", 0);
+              if (bn && tb && pm_find(tb, bn, 0) == back) *(uint64_t *)(uintptr_t)(fm + 0x190) = back;   // 还在这页的表格里才交回 | hand back only if it is still in this page's table
+              on_row = 0; LOG("游戏难度：手柄焦点下移回 %s", bn ? bn : "-"); }
+          else if (shown && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A))) {
+              int n = (ev & DM_BTN_A) ? shown % 8 + 1 : shown + ((ev & DM_BTN_RIGHT) ? 1 : -1);
+              if (n >= 1 && n <= 8 && n != shown) { dm_hud_request_players(n); g_diff_pend = n; LOG("游戏难度：选项页手柄 %d → %d 档（下一拍生效）", shown, n); shown = n; setv = dm_hud_slider_value(0, 7, n); } }
+          uint64_t rows = pm_find(gp, "TouchDiffRows", 0), view = rows ? rd8(rows + 0x30) : 0, sv = view ? rd8(view + 0x30) : 0;   // +0x30 = 父控件 | +0x30 = parent widget
+          if (on_row && sv && frame - wheel_at >= 4) { int off = -*(int32_t *)(uintptr_t)(view + 0x74), vh = *(int32_t *)(uintptr_t)(sv + 0x7c); if (vh <= 0) vh = 1260;
+              int dir = dm_custom_scroll_step(0, 460, off, vh, last_dir, last_off); if (dir) { void dm_ui_wheel_on(uint64_t, int); wheel_at = frame; last_dir = dir; last_off = off; dm_ui_wheel_on(sv, dir); } } }
+      else { uint64_t tb = pm_find(gp, "OptionsTable", 0), ch = tb ? rd8(tb + 0x58) : 0, n = tb ? rd8(tb + 0x60) : 0, first = 0;
+          for (uint64_t i = 1; ch && i < n && i < 64 && !first; i++) { uint64_t r = rd8(ch + 8 * i); if (r && *(uint8_t *)(uintptr_t)(r + 0x50)) first = r; }   // 第 0 行是分节标题「游戏选项」 | row 0 is the "Gameplay Options" section header
+          const char *fn = F ? (const char *)rd8(F + 8) : NULL;
+          if (first && fn && pm_find(first, fn, 0) == F && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
+              back = F; *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：手柄焦点上移到难度行（从 %s）", fn); } } }
     if (setv >= 0 && setv != v) ((void (*)(uint64_t, int, int, int))(b + 0xad7028))(w, setv, 0, 0);
     g_diff_last = *(int32_t *)(uintptr_t)(w + 0x5c4);
-    // 滑块自己不显示数字：行名写「游戏难度：N」；说明行局外写「进入游戏后可调整」，手柄模式写「按 Y 键调整…」（原版选项页的底部提示条是它自己的那条，我们的提示条条目加不进去）
-    // The slider shows no number by itself: the label reads "Game Difficulty: N"; the note reads "available once in a game" outside a run and "Press Y to change…" in controller mode (the original options page's bottom legend is its own, our legend entries cannot be added there)
+    // 滑块自己不显示数字：行名写「游戏难度：N」；说明行局外写「进入游戏后可调整」，局内两种模式同一句（RC1.1 B015 起手柄也走焦点链，不再有「按 Y」那句）
+    // The slider shows no number by itself: the label reads "Game Difficulty: N"; the note reads "available once in a game" outside a run and the same sentence in both modes in a run (from RC1.1 B015 the controller uses the focus chain, no "press Y" sentence any more)
     char t[64]; if (shown) snprintf(t, sizeof t, dm_str(b, "dmDiffRowValue"), shown);
     diff_set_text(b, pm_find(gp, "TouchDiffText", 0), shown ? t : dm_str(b, "dmDiffRow"));
-    diff_set_text(b, pm_find(gp, "TouchDiffNote", 0), dm_str(b, !shown ? "dmDiffOutOfRun" : pad ? "dmDiffRowNotePad" : "dmDiffRowNote"));
+    diff_set_text(b, pm_find(gp, "TouchDiffNote", 0), dm_str(b, !shown ? "dmDiffOutOfRun" : "dmDiffRowNote"));
 }
 // 测试（触点脚本 padcur 步，没有实体手柄时造现场用）：把原版手柄光标直接放到视口归一化坐标处并让游戏当场重算悬停（dm_ui_hover_now）。
 // 只是摆光标——摇杆推光标有加速、跟帧率走，按时长推落不准格子；之后的 A / Y 仍走手柄键那条路

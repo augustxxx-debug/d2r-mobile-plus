@@ -1712,7 +1712,7 @@ PAD_ROOT = {
 # 要用就得改写原版控件的可见位，违反「不写原版控件」的守卫（native_write_scan.py），所以原版那三行原样不动，放我们自己的一块：
 # 滚动区里、原版表格之前放 TouchDiffRows（分节标题「难度」+ 分隔线、行名「游戏难度」+ 滑块 TouchDiffSlider、说明一行），原版表格整体下移 DIFF_H。
 # 同图形页的做法：原版面板只登记自己表格里的行，新加进表格的行不显示，所以我们的控件放表格旁边；触屏直接点滑块两端箭头，
-# 手柄的焦点导航够不着我们的控件——宿主 dm_padmode.c diff_pump 在这一页接管 Y（每按一次 +1 档，8 后回 1），行名写「游戏难度：N」、说明行写「按 Y 键调整…」。
+# 原版手柄焦点导航只走原版表格——宿主 dm_padmode.c diff_pump 在表格第一行按上时把焦点交给我们的滑块（RC1.1 B015，左 / 右 / A 改档、下回表格），行名写「游戏难度：N」。
 # 文字层级照 §2.6：分节标题 = 原版设置页标题样式，行名 = 设置页文字样式，说明 = 副文 28 号 $FontColorLightGray + $ReducedSpacing；手柄 / 触屏两份页同样处理
 # The "Game Difficulty" row on the Options → Gameplay page (user, 2026-10-28: moved from the pause menu; both modes change difficulty here).
 # The original page does carry three "Offline / offline difficulty" rows (the OfflineDifficultyScaling slider), but in this build the panel code (around main+0xbb6d9c) hides them
@@ -1720,7 +1720,7 @@ PAD_ROOT = {
 # "never write original widgets" guard (native_write_scan.py), so those three rows stay untouched and we add a block of our own:
 # inside the scroll view, before the original table, TouchDiffRows (section title "Difficulty" + divider, row label "Game Difficulty" + slider TouchDiffSlider, one note line); the original table moves down by DIFF_H.
 # Same as the Graphics page: the original panel registers only the rows of its own table and rows added to the table are not shown, so our widgets sit beside the table; touch taps the slider's end arrows,
-# and the controller's focus navigation cannot reach our widgets -- the host's dm_padmode.c diff_pump takes over Y on this page (+1 level per press, back to 1 after 8), writes "Game Difficulty: N" into the label and "Press Y to change…" into the note.
+# and the original controller focus navigation only walks the original table -- the host's dm_padmode.c diff_pump hands the focus to our slider on Up from the table's first row (RC1.1 B015; Left / Right / A change the level, Down goes back), and writes "Game Difficulty: N" into the label.
 # Text levels per §2.6: section title = the original settings title style, row label = settings text style, note = secondary text 28 pt $FontColorLightGray + $ReducedSpacing; controller / touch pages alike
 DIFF_H = 480
 def _diff_row(fn):

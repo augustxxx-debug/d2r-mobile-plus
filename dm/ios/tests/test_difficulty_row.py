@@ -1,12 +1,12 @@
 """「游戏难度」从暂停菜单挪到「选项 → 游戏」页（用户 2026-10-28）：暂停菜单两种模式统一后 7 行、没有难度行、「选项」仍在 y 653（手柄光标初始落点那一行）；
 游戏页的难度行是我们自己的一块（原版这页的「离线难度」三行在本版被面板代码按行名无条件藏起、滑块刻度从不设——要用就得改写原版控件可见位，违反守卫）：
 滚动区里、原版表格之前放 TouchDiffRows（分节标题 / 行名 + 滑块 TouchDiffSlider / 说明），原版表格下移；原版三行原样不动；触屏版与手柄版两份页都一样；
-宿主每帧读滑块、手柄接管 Y（+1 档），行名写当前档、说明行写手柄提示，变了即走底栏难度格同一条路（dm_hud_request_players）立刻生效；分享日志摘要带「游戏难度：」行。
+宿主每帧读滑块，手柄在原版表格第一行按上进难度行（RC1.1 B015，左右 / A 改档，下回表格），行名写当前档，变了即走底栏难度格同一条路（dm_hud_request_players）立刻生效；分享日志摘要带「游戏难度：」行。
 "Game Difficulty" moved from the pause menu to the Options → Gameplay page (user, 2026-10-28): the unified pause menu has 7 rows, no difficulty row, and Options still sits at y 653
 (the row where the controller cursor lands); the Gameplay page's difficulty row is a block of our own (the page's original three "offline difficulty" rows are hidden unconditionally by
 row name by the panel code in this build and the slider scale is never set -- using them would mean writing original widgets' visible flags, which the guard forbids):
 TouchDiffRows (section title / label + slider TouchDiffSlider / note) inside the scroll view before the original table, which moves down; the original three rows untouched; touch and
-controller pages alike; the host reads the slider every frame, takes over Y (+1 level) on the controller, writes the current level into the label and a controller hint into the note, and on change goes the same way as the bottom-bar
+controller pages alike; the host reads the slider every frame, lets the controller move up from the original table's first row onto the difficulty row (RC1.1 B015; Left / Right / A change the level, Down goes back), writes the current level into the label, and on change goes the same way as the bottom-bar
 difficulty cell (dm_hud_request_players) so it takes effect at once; the share-log summary carries a 「游戏难度：」 line."""
 import os
 import re
@@ -114,7 +114,8 @@ class Text(unittest.TestCase):
         rows = {r[0]: r[1:] for r in dm_i18n.rows()}
         langs = ('中文', 'English', 'Español', 'Español MX', 'Русский', '한국어')
         self.assertTrue('dmPadDiffLine' not in rows)   # 暂停菜单那行的字不再用 | the pause-row text is gone
-        for key, pt, limit in (('dmDiffSection', 40, 1000), ('dmDiffRow', 36, 1000), ('dmDiffRowNote', 28, 1670), ('dmDiffOutOfRun', 28, 1670), ('dmDiffRowNotePad', 28, 1670), ('dmDiffRowValue', 36, 1000)):
+        self.assertTrue('dmDiffRowNotePad' not in rows)   # RC1.1 B015：手柄走焦点链，「按 Y」那句删了 | B015: the controller uses the focus chain, the "press Y" note is gone
+        for key, pt, limit in (('dmDiffSection', 40, 1000), ('dmDiffRow', 36, 1000), ('dmDiffRowNote', 28, 1670), ('dmDiffOutOfRun', 28, 1670), ('dmDiffRowValue', 36, 1000)):
             self.assertTrue(key in rows, key); texts = rows[key]; self.assertEqual(len(texts), 6, key)
             for lang, t in zip(langs, texts):
                 self.assertTrue(t.strip(), (key, lang)); self.assertEqual(t.count('\n'), 0, (key, lang)); self.assertEqual(t.count('%d'), 1 if key == 'dmDiffRowValue' else 0, (key, lang))
@@ -127,7 +128,9 @@ class Host(unittest.TestCase):
         pm = (DM / 'host' / 'dm_padmode.c').read_text(encoding='utf-8')
         self.assertTrue('TouchPadDiff' not in pm and 'dmPadDiffLine' not in pm)   # 暂停菜单难度行的宿主代码删掉 | host code of the pause-menu difficulty row removed
         for s in ('"GameplayOptionsPanel"', '"TouchDiffSlider"', '"TouchDiffNote"', 'DM_VT_SLIDER', 'dm_hud_request_players(', 'dm_hud_slider_players(', 'dm_hud_slider_value(', '游戏难度：',
-                  'dm_padmode_page_keys(DM_BTN_Y)', '"TouchDiffText"', '"dmDiffRowValue"', '"dmDiffRowNote"', '"dmDiffRowNotePad"', '"dmDiffOutOfRun"', 'diff_pump(b, frame);'): self.assertTrue(s in pm, s)
+                  '"TouchDiffText"', '"dmDiffRowValue"', '"dmDiffRowNote"', '"dmDiffOutOfRun"', 'diff_pump(b, frame);',
+                  '"OptionsTable"', '"TouchDiffRows"', 'fm + 0x190) = w', 'dm_custom_scroll_step(0, 460'): self.assertTrue(s in pm, s)   # B015 焦点链：表格第一行按上进难度行、滚回顶 | B015 focus chain
+        self.assertTrue('dm_padmode_page_keys(DM_BTN_Y)' not in pm and 'dmDiffRowNotePad' not in pm)   # 不再接管 Y | Y is no longer taken over
         self.assertTrue('"OfflineDifficultyScaling"' not in pm)   # 不碰原版藏着的那颗滑块 | never touches the original hidden slider
         hud = (DM / 'host' / 'dm_hud.h').read_text(encoding='utf-8')
         self.assertTrue('int dm_hud_slider_players(int lo, int hi, int v);' in hud and 'int dm_hud_slider_value(int lo, int hi, int n);' in hud)
