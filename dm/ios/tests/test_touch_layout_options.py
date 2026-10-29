@@ -45,6 +45,7 @@ for voice in (False, True):
     assert ('voice' in keys) == voice
     defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
+    assert defaults[keys.index('free_tp')] == 0   # 免费回城缺省关（用户 2026-10-30） | free town portal off by default (user 2026-10-30)
 os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
 host = host_src
 assert 'TouchCustom_touch_swap_above_near' in host

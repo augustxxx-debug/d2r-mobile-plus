@@ -6,6 +6,8 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Unreleased]
 
+- **Free Town Portal is now an option, off by default** (user, 2026-10-30): Options → Custom → "Free Town Portal (no tome/scroll)". Off: an empty ZR slot goes back to the game, the town portal skill is no longer added to the skill tree, and the touch portal button uses the Tome of Town Portal (or a scroll) on the character, consumed as in the original game; with none it shows "No Town Portal tome or scroll" and opens no portal. On: exactly the previous behaviour. Settings files from earlier versions count as off. If you turn it off during a run, a portal skill already bound to a button keeps working until you leave the game.
+
 ## [1.0.0-rc1.1] - 2026-10-30
 
 Changes since 1.0.0-rc1 (2026-10-29, `v1.0.0-rc1` = `a2bb5c3`):

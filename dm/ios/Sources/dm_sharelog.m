@@ -86,7 +86,7 @@ static NSURL *build_file(void) {
       [h appendFormat:@"Memory tier=%d limitMB=%d physMB=%d model=%s | atLaunch renderRes=%d profile=%s | now renderRes=%d profile=%s\n", tier, lim, phys, dm_mem_model(), r0,
           q0 >= 0 && q0 < 5 ? profiles[q0] : "unknown", dm_render_res_level(), up ? (qn >= 0 && qn < 4 ? profiles[qn] : "unknown") : profiles[4]]; }
     [h appendString:@"Enhanced preferences (applied):"];
-    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above" };
+    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above", "free_tp" };
     for (unsigned i=0;i<sizeof custom/sizeof *custom;i++) [h appendFormat:@" %s=%d",custom[i],dm_custom_get(custom[i])];
     [h appendString:@"\n"];
     [h appendFormat:@"Log export: at most %lu bytes per log; omitted prefix bytes current=%llu previous=%llu. Original log files are unchanged.\n", (unsigned long)log_limit,cur_omitted,prev_omitted];
