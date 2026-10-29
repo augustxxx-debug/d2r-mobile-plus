@@ -216,6 +216,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     static final int[] GEN_STAGES = {LoadPageView.PREPARE, LoadPageView.PATCH, LoadPageView.ASSETS, LoadPageView.OVERLAY, LoadPageView.PACKS, LoadPageView.SHADERS, LoadPageView.INSTALL};
     private final Runnable genPoll = new Runnable() {
         @Override public void run() {
+            if (isDestroyed()) return;   // 已销毁的实例不再处理完成 / 失败，也不再投递（外审 EXT6-05） | a destroyed instance no longer handles finish / failure nor reposts (external review EXT6-05)
             if (genFailure != null) { LoadPageView.fail(genFailure); showGenScreen(getString(R.string.dmAndroidGenFailed), genFailure, null); return; }
             if (!generating) { LoadPageView.finish(); if (resumed) startHost(); return; }
             PackGenerator.State s = genState;
@@ -730,6 +731,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         } catch (Throwable t) { android.util.Log.w("dm", "exit reasons: " + t); }
     }
     @Override protected void onDestroy() {
+        genHandler.removeCallbacks(genPoll);   // 生成轮询跟着这个 Activity 走：重建后由新实例接回（generate），旧实例不再投递（外审 EXT6-05） | the generation poll belongs to this Activity: a recreated one takes over (generate), the old one stops posting (external review EXT6-05)
         modeHandler.removeCallbacks(modePoll);
         if (started && isFinishing()) nativeShutdown();   /* 不返回：宿主 _exit(0) | does not return: the host _exit(0)s */
         if (displays != null) displays.unregisterDisplayListener(this); { android.hardware.input.InputManager im = getSystemService(android.hardware.input.InputManager.class); if (im != null) im.unregisterInputDeviceListener(this); } if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
