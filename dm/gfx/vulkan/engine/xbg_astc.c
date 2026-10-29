@@ -17,17 +17,26 @@
  * Bit layout per the Khronos ASTC specification: 11-bit block mode (4x4 grid, 4-level weights; 0x042 single / 0x442 dual plane), 2-bit
  * partition count, 4-bit CEM, endpoints from bit 17, weights reversed downward from bit 127, the dual-plane CCS just below the weights. */
 #include "xbg_astc.h"
+#include <pthread.h>
 #include <string.h>
 
-static void put(uint8_t *o, unsigned pos, unsigned n, uint32_t v) {
-    for(unsigned i=0;i<n;i++) if((v>>i)&1u) o[(pos+i)>>3]|=(uint8_t)(1u<<((pos+i)&7));
-}
 static unsigned get(const uint8_t *o, unsigned pos, unsigned n) {
     unsigned v=0; for(unsigned i=0;i<n;i++) v|=((o[(pos+i)>>3]>>((pos+i)&7))&1u)<<i; return v;
 }
+/* 编码按 128 位整块拼（lo = 第 0–63 位，hi = 第 64–127 位），一次放一段，不逐位写 | the encoder builds the 128-bit block in two words, one field at a time */
+typedef struct { uint64_t lo, hi; } blk128;
+static inline void put128(blk128 *b, unsigned pos, unsigned n, uint64_t v) {   /* n <= 32 */
+    if(pos>=64){b->hi|=v<<(pos-64);return;}
+    b->lo|=v<<pos; if(pos+n>64)b->hi|=v>>(64-pos);
+}
+static inline uint64_t rev64(uint64_t x) {
+    x=((x>>1)&0x5555555555555555ull)|((x&0x5555555555555555ull)<<1); x=((x>>2)&0x3333333333333333ull)|((x&0x3333333333333333ull)<<2);
+    x=((x>>4)&0x0F0F0F0F0F0F0F0Full)|((x&0x0F0F0F0F0F0F0F0Full)<<4); x=((x>>8)&0x00FF00FF00FF00FFull)|((x&0x00FF00FF00FF00FFull)<<8);
+    x=((x>>16)&0x0000FFFF0000FFFFull)|((x&0x0000FFFF0000FFFFull)<<16); return (x>>32)|(x<<32);
+}
 
-/* 5 个三进制位 ↔ 8 位 T（规范的 trit 解码；编码取解码结果相同的最小 T，未用到的高位因此为 0）
- * 5 trits <-> 8-bit T (the specification's trit decode; encoding takes the smallest T decoding to the tuple, so unused high bits are 0) */
+/* 5 个三进制位 ↔ 8 位 T（规范的 trit 解码；编码表取解码结果相同的最小 T，未用到的高位因此为 0）
+ * 5 trits <-> 8-bit T (the specification's trit decode; the encode table keeps the smallest T decoding to each tuple, so unused high bits are 0) */
 static void trits_from_T(unsigned T, unsigned t[5]) {
     unsigned C;
     if(((T>>2)&7)==7){C=(((T>>5)&7)<<2)|(T&3);t[4]=2;t[3]=2;}
@@ -36,25 +45,24 @@ static void trits_from_T(unsigned T, unsigned t[5]) {
     else if(((C>>2)&3)==3){t[2]=2;t[1]=2;t[0]=C&3;}
     else{t[2]=(C>>4)&1;t[1]=(C>>2)&3;t[0]=(((C>>1)&1)<<1)|(C&1&~(C>>1)&1);}
 }
-static unsigned T_from_trits(const unsigned t[5]) {
-    for(unsigned T=0;T<256;T++){unsigned d[5];trits_from_T(T,d);if(!memcmp(d,t,sizeof d))return T;}
-    return 0;   /* 每个组合都能编到（单测核过） | every tuple is reachable (checked by the tests) */
-}
 /* 规范的「颜色反量化」：48 级 = 1 个三进制位 + 4 位 dcba；B = dcb000dcb，C = 22 | the specification's colour unquantisation: 48 levels */
 uint8_t xbg_astc_unquant48(unsigned trit, unsigned m) {
     unsigned a=m&1,b=(m>>1)&1,c=(m>>2)&1,d=(m>>3)&1;
     unsigned A=a?0x1FFu:0u, B=(d<<8)|(c<<7)|(b<<6)|(d<<2)|(c<<1)|b;
     unsigned T=trit*22u+B; T^=A; return (uint8_t)((A&0x80u)|(T>>2));
 }
-static struct { uint8_t trit,bits; } q48[256];
-static int q48_ready;
-static void q48_init(void) {   /* 每个 8 位值最近的 48 级码 | nearest 48-level code for every 8-bit value */
+/* 查表一次建好（pthread_once，翻译线程与预热线程都可能先到）：每个 8 位值最近的 48 级码与其反量化值；5 个三进制位 → T
+ * Tables built once (pthread_once; the translation and warm-up threads may both get here first): nearest 48-level code per 8-bit value
+ * with its unquantised value; 5 trits -> T */
+static uint8_t q48_trit[256], q48_bits[256], q48_val[256], t_enc[243];
+static pthread_once_t tables_once=PTHREAD_ONCE_INIT;
+static void tables_init(void) {
     for(unsigned v=0;v<256;v++){int best=1000;for(unsigned t=0;t<3;t++)for(unsigned m=0;m<16;m++){int e=(int)xbg_astc_unquant48(t,m)-(int)v;if(e<0)e=-e;
-        if(e<best){best=e;q48[v].trit=(uint8_t)t;q48[v].bits=(uint8_t)m;}}}
-    q48_ready=1;
+        if(e<best){best=e;q48_trit[v]=(uint8_t)t;q48_bits[v]=(uint8_t)m;q48_val[v]=xbg_astc_unquant48(t,m);}}}
+    for(int T=255;T>=0;T--){unsigned t[5];trits_from_T((unsigned)T,t);t_enc[t[0]+3*t[1]+9*t[2]+27*t[3]+81*t[4]]=(uint8_t)T;}
 }
 static const unsigned weight4[4]={0,21,43,64};   /* 2 位权重的反量化 | unquantised 2-bit weights */
-static unsigned interp(unsigned e0, unsigned e1, unsigned w, int srgb) {   /* LDR：端点展开到 16 位后插值，取高 8 位 | LDR interpolation at 16 bits, top 8 bits */
+static inline unsigned interp(unsigned e0, unsigned e1, unsigned w, int srgb) {   /* LDR：端点展开到 16 位后插值，取高 8 位 | LDR interpolation at 16 bits, top 8 bits */
     unsigned c0=srgb?(e0<<8)|0x80u:e0*257u, c1=srgb?(e1<<8)|0x80u:e1*257u;
     return ((c0*(64-w)+c1*w+32)>>6)>>8;
 }
@@ -72,37 +80,37 @@ static void bc3_decode(const uint8_t *b, uint8_t px[16][4], unsigned c565[2][3])
 }
 
 int xbg_bc3_to_astc(const uint8_t bc3[16], uint8_t out[16]) {
-    if(!q48_ready)q48_init();
+    pthread_once(&tables_once,tables_init);
     uint8_t px[16][4]; unsigned c[2][3]; bc3_decode(bc3,px,c);
     unsigned amin=255,amax=0; for(unsigned i=0;i<16;i++){if(px[i][3]<amin)amin=px[i][3];if(px[i][3]>amax)amax=px[i][3];}
     const int dual=amin!=amax;
     /* 端点 v[0..7] = r0 r1 g0 g1 b0 b1 a0 a1（反量化后的值）；双平面另记 48 级码 | endpoints (unquantised); 48-level codes for dual plane */
     unsigned v[8], tr[8]={0}, bi[8]={0};
-    unsigned raw[8]={c[0][0],c[1][0],c[0][1],c[1][1],c[0][2],c[1][2],dual?amin:amin,dual?amax:amin};
-    for(unsigned k=0;k<8;k++){if(dual){tr[k]=q48[raw[k]].trit;bi[k]=q48[raw[k]].bits;v[k]=xbg_astc_unquant48(tr[k],bi[k]);}else v[k]=raw[k];}
+    const unsigned raw[8]={c[0][0],c[1][0],c[0][1],c[1][1],c[0][2],c[1][2],amin,amax};
+    for(unsigned k=0;k<8;k++){if(dual){tr[k]=q48_trit[raw[k]];bi[k]=q48_bits[raw[k]];v[k]=q48_val[raw[k]];}else v[k]=raw[k];}
     if(v[1]+v[3]+v[5]<v[0]+v[2]+v[4])   /* 第二端点 RGB 和更小会触发蓝色收缩：两端点对调 | a smaller second-endpoint sum triggers blue contraction: swap */
         for(unsigned k=0;k<8;k+=2){unsigned x=v[k];v[k]=v[k+1];v[k+1]=x;x=tr[k];tr[k]=tr[k+1];tr[k+1]=x;x=bi[k];bi[k]=bi[k+1];bi[k+1]=x;}
-    unsigned wc[16], wa[16];
+    int pal[4][3], apal[4];   /* 四个权重对应的颜色 / 透明度，每块算一次 | the colour / alpha for each of the four weights, once per block */
+    for(unsigned w=0;w<4;w++){for(unsigned j=0;j<3;j++)pal[w][j]=(int)interp(v[j*2],v[j*2+1],weight4[w],0);apal[w]=(int)interp(v[6],v[7],weight4[w],0);}
+    uint64_t W=0;   /* 权重流：单平面每像素 2 位，双平面每像素 颜色 2 位 + 透明度 2 位 | weight stream */
     for(unsigned i=0;i<16;i++){
-        unsigned best=~0u;wc[i]=0;
-        for(unsigned w=0;w<4;w++){unsigned e=0;for(unsigned j=0;j<3;j++){int d=(int)interp(v[j*2],v[j*2+1],weight4[w],0)-(int)px[i][j];e+=(unsigned)(d*d);}
-            if(e<best){best=e;wc[i]=w;}}
-        best=~0u;wa[i]=0;
-        if(dual)for(unsigned w=0;w<4;w++){int d=(int)interp(v[6],v[7],weight4[w],0)-(int)px[i][3];unsigned e=(unsigned)(d*d);if(e<best){best=e;wa[i]=w;}}
+        unsigned bw=0,best=~0u;
+        for(unsigned w=0;w<4;w++){int d0=pal[w][0]-px[i][0],d1=pal[w][1]-px[i][1],d2=pal[w][2]-px[i][2];unsigned e=(unsigned)(d0*d0+d1*d1+d2*d2);if(e<best){best=e;bw=w;}}
+        if(!dual){W|=(uint64_t)bw<<(i*2);continue;}
+        unsigned aw=0;best=~0u;
+        for(unsigned w=0;w<4;w++){int d=apal[w]-px[i][3];unsigned e=(unsigned)(d*d);if(e<best){best=e;aw=w;}}
+        W|=(uint64_t)(bw|aw<<2)<<(i*4);
     }
-    memset(out,0,16);
-    put(out,0,11,dual?0x442u:0x042u); put(out,11,2,0); put(out,13,4,12);
-    unsigned wbits;
-    if(!dual){for(unsigned k=0;k<8;k++)put(out,17+8*k,8,v[k]);wbits=32;}
+    blk128 b={0,0};
+    put128(&b,0,11,dual?0x442u:0x042u); put128(&b,13,4,12);   /* 分区数位 11–12 = 0 | partition-count bits 11-12 = 0 */
+    if(!dual){for(unsigned k=0;k<8;k++)put128(&b,17+8*k,8,v[k]);b.hi|=rev64(W);}   /* 32 位权重倒放在第 96–127 位 | 32 weight bits reversed into bits 96-127 */
     else{   /* ISE：每 5 个值一组，组内 m0 T[1:0] m1 T[3:2] m2 T[4] m3 T[6:5] m4 T[7] | ISE: groups of five values */
         static const unsigned tb[5]={2,2,1,2,1}; unsigned pos=17;
-        for(unsigned g=0;g<8;g+=5){unsigned t[5]={0},n=8-g<5?8-g:5;for(unsigned i=0;i<n;i++)t[i]=tr[g+i];unsigned T=T_from_trits(t),sh=0;
-            for(unsigned i=0;i<n;i++){put(out,pos,4,bi[g+i]);pos+=4;put(out,pos,tb[i],(T>>sh)&((1u<<tb[i])-1));pos+=tb[i];sh+=tb[i];}}
-        wbits=64; put(out,128-wbits-2,2,3);   /* CCS = 3：第二平面是透明度 | CCS = 3: plane 2 is alpha */
+        for(unsigned g=0;g<8;g+=5){unsigned n=8-g<5?8-g:5,ti=0,mul=1;for(unsigned i=0;i<n;i++){ti+=tr[g+i]*mul;mul*=3;}unsigned T=t_enc[ti],sh=0;
+            for(unsigned i=0;i<n;i++){put128(&b,pos,4,bi[g+i]);pos+=4;put128(&b,pos,tb[i],(T>>sh)&((1u<<tb[i])-1));pos+=tb[i];sh+=tb[i];}}
+        b.lo|=3ull<<62; b.hi=rev64(W);   /* CCS = 3（第二平面是透明度）在第 62–63 位；64 位权重倒放在第 64–127 位 | CCS = 3 at bits 62-63; 64 weight bits reversed into 64-127 */
     }
-    uint8_t ws[16]={0}; unsigned p=0;
-    for(unsigned i=0;i<16;i++){put(ws,p,2,wc[i]);p+=2;if(dual){put(ws,p,2,wa[i]);p+=2;}}
-    for(unsigned i=0;i<wbits;i++)if(get(ws,i,1))out[(127-i)>>3]|=(uint8_t)(1u<<((127-i)&7));
+    for(unsigned k=0;k<8;k++){out[k]=(uint8_t)(b.lo>>(8*k));out[8+k]=(uint8_t)(b.hi>>(8*k));}
     return dual?2:1;
 }
 
