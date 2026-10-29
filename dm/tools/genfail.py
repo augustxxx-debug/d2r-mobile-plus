@@ -40,9 +40,9 @@ def root_causes(text, limit=6):
     """从一步的完整输出里挑出原因行，最里层的在前 | pick the cause lines out of a step's full output, innermost first
 
     次序：① 回溯的异常行里不是外层包装（CalledProcessError 等）的，按出现先后（子进程先打印，所以里层在前）；② 「[x] …」行与「【红】」行；
-    ③ 其余像异常名开头的行；④ 外层包装的异常行（只在前面什么都没有时才有用）。去重，最多 limit 行。
+    ③ 其余像异常名开头的行；④ 外层包装与转述行——只在①–③一条都没有时才给。去重，最多 limit 行。
     Order: (1) traceback exception lines that are not an outer wrapper, in order of appearance (child processes print first, so the inner ones come first);
-    (2) "[x] ..." lines and lines with 【红】; (3) other lines that start like an exception name; (4) wrapper exception lines (useful only when nothing came before). Deduplicated, at most limit lines."""
+    (2) "[x] ..." lines and lines with 【红】; (3) other lines that start like an exception name; (4) wrapper and relay lines -- given only when (1)-(3) found nothing. Deduplicated, at most limit lines."""
     lines = text.splitlines(); tb, mark, exc, wrap = [], [], [], []
     i = 0
     while i < len(lines):
@@ -65,7 +65,7 @@ def root_causes(text, limit=6):
         elif _EXC.match(s): (wrap if s.split(':', 1)[0].split('.')[-1] in WRAPPERS else exc).append(s)
         i += 1
     out = []
-    for s in tb + mark + exc + wrap:
+    for s in (tb + mark + exc) or wrap:   # 包装 / 转述行只在什么别的都没找到时才给（八审 P2-4） | wrapper / relay lines only when nothing else was found (eighth review P2-4)
         s = _clip(s)
         if s not in out: out.append(s)
     return out[:limit]

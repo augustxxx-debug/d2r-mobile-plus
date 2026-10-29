@@ -29,12 +29,13 @@ class RootCauseTest(unittest.TestCase):
     def test_innermost_first_wrapper_last(self):
         c = genfail.root_causes(NESTED)
         self.assertEqual(c[0], "KeyError: 'data.005'")
-        self.assertTrue(c[-1].startswith('subprocess.CalledProcessError'))
+        self.assertFalse(any(x.startswith('subprocess.CalledProcessError') for x in c))
 
     def test_marks_and_plain_error_lines(self):
         c = genfail.root_causes('写到一半\n[x] 写覆盖层（casc_overlay.py）退出码 1，它的输出见上\nOSError: [Errno 28] No space left on device\n')
         self.assertEqual(c[0], 'OSError: [Errno 28] No space left on device')   # 转述行排在真原因之后（八审 P2-4） | the relay line ranks after the real cause (eighth review P2-4)
-        self.assertEqual(c[-1], '[x] 写覆盖层（casc_overlay.py）退出码 1，它的输出见上')
+        self.assertNotIn('[x] 写覆盖层（casc_overlay.py）退出码 1，它的输出见上', c)   # 有真原因时转述行不出现 | relay lines are left out when a real cause exists
+        self.assertEqual(genfail.root_causes('[x] 生成覆盖层 没成功（退出码 1）\n'), ['[x] 生成覆盖层 没成功（退出码 1）'])   # 什么都没有时才给 | given only when nothing else
 
     def test_report_carries_at_least_80_tail_lines(self):
         r = genfail.fail_report('生成覆盖层', 1, NESTED, '/x/gen_overlay.log').splitlines()
