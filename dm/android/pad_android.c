@@ -11,7 +11,7 @@
 #else
 #include "../host/dm.h"
 #endif
-void dm_padmode_request(int pad); void dm_tp_request(void); int dm_front_navigation(void), dm_freetp_zr_free(int zl);
+void dm_padmode_request(int pad);
 
 enum { NSLOT = 6 };
 static struct { int dev, used, vendor, product, nintendo, glyph; int a, b, x, y; uint64_t keys, trig, hat; int32_t ax[4]; } g_s[NSLOT];
@@ -47,9 +47,9 @@ static void apply(void) {
     if ((b & ~g_prev_b) || ((g_on[0] || g_on[1]) && !g_need_center)) { dm_padmode_request_glyph(g_glyph); set_mode(1); }
     g_prev_b = b;
     if (!g_pad_mode || !g_on[0]) ax[0] = ax[1] = 0; if (!g_pad_mode || !g_on[1]) ax[2] = ax[3] = 0;
-    { static uint64_t prev; static int mine;   // ZR 空格 = 免费回城（同 iOS）| empty ZR = free town portal (as iOS)
-      if ((b & DM_BTN_ZR) && !(prev & DM_BTN_ZR)) { mine = !dm_front_navigation() && dm_freetp_zr_free((b & DM_BTN_ZL) != 0); if (mine) { dm_tp_request(); LOG("手柄：ZR（这一格空着）→ 免费回城"); } }
-      prev = b; if (mine) b &= ~(uint64_t)DM_BTN_ZR; if (!(b & DM_BTN_ZR) && !(prev & DM_BTN_ZR)) mine = 0; }
+    // ZR 是原版六个技能格之一，不接管（用户 2026-10-30，同 iOS dm_gamepad.m）：原先「ZR 空着 = 免费回城」让按 RT 不扣东西随手开门，现在两种设置下都整颗交给原版（缺陷台账 B031）
+    // ZR is one of the six original skill slots and is not taken over (user 2026-10-30, as iOS dm_gamepad.m): "empty ZR = free town portal" let RT open portals without
+    // consuming anything; under both settings it now goes entirely to the original game (defect ledger B031)
     dm_pad_set(b, ax[0], ax[1], ax[2], ax[3]);
 }
 static void clear_input(int i) { int32_t z[4] = {0}; g_s[i].a = g_s[i].b = g_s[i].x = g_s[i].y = 0; g_s[i].keys = g_s[i].trig = g_s[i].hat = 0; memcpy(g_s[i].ax, z, sizeof z); }
