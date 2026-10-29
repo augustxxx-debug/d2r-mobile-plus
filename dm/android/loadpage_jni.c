@@ -1,0 +1,64 @@
+// 加载页的安卓胶水：把 dm/host/dm_loadpage.c（两端共用的状态机 / 进度合成 / 文案 / 布局）包成一个很小的独立库 libdmload.so，给 LoadPageView.java 用。
+// 为什么单独一个库：导入包还没拷进来之前宿主库 libdm.so 装不了（它加载时读 derived.tsv），而加载页正是在那之前显示的。
+// 时间用 CLOCK_MONOTONIC 毫秒；语言由 Java 按系统语言给（dm_lang_from_tag → 语言组），不读存档设置。
+// Android glue for the loading page: wraps dm/host/dm_loadpage.c (state machine / progress / text / layout shared by both platforms) into a tiny standalone library libdmload.so for LoadPageView.java.
+// Why a separate library: the host library libdm.so cannot be loaded before the import pack is copied in (it reads derived.tsv at load time), and the loading page is shown exactly before that.
+// Time is CLOCK_MONOTONIC milliseconds; the language is given by Java from the system locale (dm_lang_from_tag → language group), the save's settings are not read.
+#include <jni.h>
+#include <time.h>
+#include <string.h>
+#include "dm_loadpage.h"
+#include "dm_i18n.h"
+
+static uint64_t now_ms(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (uint64_t)ts.tv_sec * 1000ull + ts.tv_nsec / 1000000ull; }
+#define F(name) JNIEXPORT JNICALL Java_com_xiaoboluo_d2r_LoadPageView_##name
+
+void F(nativeLang)(JNIEnv *env, jclass cls, jstring tag) {
+    (void)cls; const char *t = tag ? (*env)->GetStringUTFChars(env, tag, NULL) : NULL;
+    dm_loadpage_ui_set_group(dm_lang_group_of(dm_lang_from_tag(t ? t : "")));
+    if (t) (*env)->ReleaseStringUTFChars(env, tag, t);
+}
+void F(nativeBegin)(JNIEnv *env, jclass cls, jintArray kinds, jintArray weights) {
+    (void)cls; int k[DM_LP_MAX_STAGES], w[DM_LP_MAX_STAGES]; int n = kinds ? (*env)->GetArrayLength(env, kinds) : 0; if (n > DM_LP_MAX_STAGES) n = DM_LP_MAX_STAGES;
+    if (n) (*env)->GetIntArrayRegion(env, kinds, 0, n, k);
+    int hw = weights && (*env)->GetArrayLength(env, weights) >= n; if (hw && n) (*env)->GetIntArrayRegion(env, weights, 0, n, w);
+    dm_loadpage_begin(k, n, hw ? w : NULL, now_ms());
+}
+void F(nativeSet)(JNIEnv *env, jclass cls, jint stage, jdouble frac, jlong items_done, jlong items_total, jlong bytes_done, jlong bytes_total) {
+    (void)env; (void)cls; dm_lp_detail d = { items_done, items_total, bytes_done, bytes_total }; dm_loadpage_set(stage, frac, &d, now_ms());
+}
+void F(nativeNote)(JNIEnv *env, jclass cls, jstring text) {
+    (void)cls; const char *t = text ? (*env)->GetStringUTFChars(env, text, NULL) : NULL; dm_loadpage_note(t); if (t) (*env)->ReleaseStringUTFChars(env, text, t);
+}
+void F(nativeFail)(JNIEnv *env, jclass cls, jstring reason) {
+    (void)cls; const char *t = reason ? (*env)->GetStringUTFChars(env, reason, NULL) : NULL; dm_loadpage_fail(t ? t : "", now_ms()); if (t) (*env)->ReleaseStringUTFChars(env, reason, t);
+}
+void F(nativeFinish)(JNIEnv *env, jclass cls) { (void)env; (void)cls; dm_loadpage_finish(now_ms()); }
+jint F(nativeState)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_state(); }
+jint F(nativePercent)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_percent(); }
+jboolean F(nativeMusicWanted)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_music_wanted() ? JNI_TRUE : JNI_FALSE; }
+jstring F(nativeMusicName)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_music_name()); }
+jstring F(nativeLogoName)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_logo_name(NULL, NULL)); }
+jstring F(nativeBgName)(JNIEnv *env, jclass cls, jfloat w, jfloat h) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_bg_name(w, h, NULL, NULL)); }
+// 布局摊平成 double[50]：landscape, bg_w, bg_h, bg_src×4, bg_dst×4, bar×4, bar_fill×4, title×4, percent×4, body×4, sub×4, brand×4, title_pt, body_pt, sub_pt, brand_pt, bar_radius, logo×4, logo_w, logo_h（顺序与 LoadPageView.java 的常量一致）
+// Layout flattened into double[50] (order matches the constants in LoadPageView.java)
+jdoubleArray F(nativeLayout)(JNIEnv *env, jclass cls, jfloat w, jfloat h, jfloat l, jfloat t, jfloat r, jfloat b) {
+    (void)cls; dm_lp_screen s = { w, h, l, t, r, b }; dm_lp_layout L; dm_loadpage_layout(&s, &L);
+    const dm_lp_rect *rects[] = { &L.bg_src, &L.bg_dst, &L.bar, &L.bar_fill, &L.title, &L.percent, &L.body, &L.sub, &L.brand };
+    double v[50]; int o = 0; v[o++] = L.landscape; v[o++] = L.bg_w; v[o++] = L.bg_h;
+    for (unsigned i = 0; i < sizeof rects / sizeof *rects; i++) { v[o++] = rects[i]->x; v[o++] = rects[i]->y; v[o++] = rects[i]->w; v[o++] = rects[i]->h; }
+    v[o++] = L.title_pt; v[o++] = L.body_pt; v[o++] = L.sub_pt; v[o++] = L.brand_pt; v[o++] = L.bar_radius;
+    v[o++] = L.logo.x; v[o++] = L.logo.y; v[o++] = L.logo.w; v[o++] = L.logo.h; v[o++] = L.logo_w; v[o++] = L.logo_h;
+    jdoubleArray a = (*env)->NewDoubleArray(env, o); (*env)->SetDoubleArrayRegion(env, a, 0, o, v); return a;
+}
+jobjectArray F(nativeText)(JNIEnv *env, jclass cls) {   // { 标题, 百分数, 正文, 副文, 字标 } | { title, percent, body, sub, brand }
+    (void)cls; dm_lp_text t; dm_loadpage_text(&t, now_ms());
+    const char *parts[5] = { t.title, t.percent, t.body, t.sub, t.brand };
+    jobjectArray a = (*env)->NewObjectArray(env, 5, (*env)->FindClass(env, "java/lang/String"), NULL);
+    for (int i = 0; i < 5; i++) (*env)->SetObjectArrayElement(env, a, i, (*env)->NewStringUTF(env, parts[i]));
+    return a;
+}
+jint F(nativeColor)(JNIEnv *env, jclass cls, jint which) {   // 颜色统一取自 dm_loadpage.h 的枚举 | colours come from the enum in dm_loadpage.h
+    (void)env; (void)cls; static const int c[] = { DM_LP_COL_TITLE, DM_LP_COL_BODY, DM_LP_COL_SUB, DM_LP_COL_PERCENT, DM_LP_COL_BAR_FILL, DM_LP_COL_BAR_TRACK, DM_LP_COL_BAR_EDGE };
+    return which >= 0 && which < (int)(sizeof c / sizeof *c) ? c[which] : 0xffffff;
+}

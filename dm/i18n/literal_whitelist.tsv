@@ -128,3 +128,13 @@ host/dm_crashfence.c	=原因不明	崩溃围栏原因名（k_cf_name），只进
 host/dm_crashfence.c	=闪退	同上
 host/dm_crashfence.c	=卡死	同上
 host/dm_crashfence.c	=内存不足	同上
+host/dm_loadpage.c	=下载	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=导入	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=改写程序	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=整理资源	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=界面覆盖层	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=着色器打包	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=着色器缓存	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=安装	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=校验	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	@snprintf	dm_loadpage_summary 拼「加载页：」汇总日志行（分享诊断日志摘要取它），不上屏

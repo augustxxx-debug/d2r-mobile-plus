@@ -109,6 +109,15 @@ add_executable(dmhost ${HOST}/main.c)
 target_link_libraries(dmhost PRIVATE -Wl,--whole-archive dmcore -Wl,--no-whole-archive)
 target_link_options(dmhost PRIVATE -Wl,--no-undefined -Wl,-z,nostart-stop-gc -Wl,--export-dynamic)   # 导出符号：崩溃回溯里 dladdr 能认出宿主函数 | export symbols: dladdr in crash backtraces can name host functions
 
+# 加载页小库 libdmload.so：只含公共加载页核心 + 多语表 + JNI 胶水，不依赖宿主库（导入包拷进来之前 libdm.so 装不了，见 loadpage_jni.c）
+# Loading page library libdmload.so: only the shared loading page core + i18n table + JNI glue, independent of the host library (libdm.so cannot load before the import pack is copied in, see loadpage_jni.c)
+add_library(dmload SHARED ${HOST}/dm_loadpage.c ${HOST}/dm_i18n.c ${CMAKE_CURRENT_SOURCE_DIR}/loadpage_jni.c)
+target_compile_definitions(dmload PRIVATE DM_LOADPAGE_STANDALONE=1)
+target_compile_options(dmload PRIVATE -O1 -g -Wall -std=gnu17)
+target_include_directories(dmload PRIVATE ${HOST} ${CMAKE_CURRENT_SOURCE_DIR}/compat/include)   # compat：dm_i18n.c 的 TargetConditionals.h 替身 | compat: the stand-in TargetConditionals.h for dm_i18n.c
+target_link_libraries(dmload PRIVATE log m)
+target_link_options(dmload PRIVATE -Wl,--no-undefined)
+
 # App 用的共享库：main.c 以 -Dmain=dm_main 编（同 iOS），JNI 入口 jni_android.c
 # Shared library for the App: main.c built with -Dmain=dm_main (as on iOS), JNI entry jni_android.c
 # 独立目标只重命名 App 入口，避免影响同目录的命令行目标。

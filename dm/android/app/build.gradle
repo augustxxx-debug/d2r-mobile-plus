@@ -75,12 +75,12 @@ android {
         if (!prebuilt) externalNativeBuild { cmake {
             arguments "-DDM_GEN_DIR=${project.findProperty('dmGenDir') ?: ''}"
             if (project.findProperty('dmPython')) arguments "-DPython3_EXECUTABLE=${project.property('dmPython')}"
-            targets 'dm', 'dmdeswizzle'
+            targets 'dm', 'dmdeswizzle', 'dmload'
         } }
     }
     if (!prebuilt) externalNativeBuild { cmake { path '../CMakeLists.txt'; version '3.31.6' } }
     if (prebuilt) sourceSets { main { jniLibs.srcDirs = [prebuilt] } }
-    sourceSets { main { res.srcDir(startupStrings.get().asFile); res.srcDir(launcherIcon.get().asFile) } }
+    sourceSets { main { res.srcDir(startupStrings.get().asFile); res.srcDir(launcherIcon.get().asFile); assets.srcDir('../../assets/loadpage') } }   // 加载页自制素材（背景图 + 循环音乐）进 assets 根 | self-made loading page assets (backgrounds + loop music) at the assets root
     packaging { jniLibs { useLegacyPackaging false; keepDebugSymbols += ['**/*.so'] } }
     buildFeatures { buildConfig true }
     // 正式版签名：钥匙不进仓库，路径与密码从环境变量来（tools/shell_apk.sh release 读本机 ~/.config/dm-android/release.env）；没设就不签
