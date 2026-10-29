@@ -32,6 +32,7 @@
 //   when a node has changed.
 // The read-only data segment is writable by the host (loader.c only seals the code region and the patch region); the original value of each string is
 // verified one by one, and nothing is written on a mismatch (wrong game version).
+#include "dm_stick_nav.h"
 #include "hle.h"
 #include "dm_hud.h"
 #include "dm_input.h"
@@ -209,11 +210,25 @@ uint64_t dm_padmode_page_keys(uint64_t mask) {   // 声明本帧要接管这些�
 }
 uint64_t dm_padmode_page_held(void) { return atomic_load(&g_pg_held); }   // 接管的键里此刻还按着的 | Those of the taken-over buttons that are still held right now
 void dm_padmode_page_pulse(uint64_t mask) { atomic_store(&g_pg_pulse, mask); atomic_store(&g_pg_pulse_n, 4); }
+// 页接管方向键时连左摇杆一起接管（RC1.1 B006b；同根因 B018 / B019：建角页左摇杆把原版焦点推到看不见的「天梯」行）：页声明了上 / 下就把左摇杆纵轴清零、
+// 声明了左 / 右就把横轴清零（原版收不到，不会被摇杆把焦点推走），推过一半（回滞：回到四分之一以内才复位，取推得多的那个轴）折算成那个方向键的「按着」，
+// 由下面的过滤器和真按键一样算按下沿交给页——我们的页（图形 / 自定义 / 积分牌 / 大秘境 / 建角页等）左摇杆与十字键行为一致。取手柄处（hle_hid.c fill）在过滤器前调
+// When a page takes the directions, it takes the left stick too (RC1.1 B006b; same root cause as B018 / B019: on the class-creation page the stick pushed the original focus to the hidden Ladder row):
+// a page that declared up / down gets the stick's vertical axis zeroed, left / right its horizontal one (the original game no longer sees it), and a push past half (hysteresis: resets inside a quarter;
+// the dominant axis only) becomes that direction key "held", from which the filter below derives press edges exactly as for real keys -- on our pages the stick behaves like the D-pad. Called before the filter
+static _Atomic uint64_t g_pg_stick;   // 左摇杆折算出的方向键位 | direction bits derived from the left stick
+void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
+    static dm_stick_nav nav; const uint64_t V = DM_BTN_UP | DM_BTN_DOWN, H = DM_BTN_LEFT | DM_BTN_RIGHT;
+    uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
+    if (!lx || !ly || !(m & (V | H))) { nav.hx = nav.hy = 0; atomic_store(&g_pg_stick, 0); return; }
+    atomic_store(&g_pg_stick, dm_stick_nav_dirs(&nav, *lx, *ly) & m);   // 公共折算（dm_stick_nav.h） | shared conversion
+    if (m & V) *ly = 0; if (m & H) *lx = 0;
+}
 uint64_t dm_padmode_page_filter(uint64_t bt) {
-    static uint64_t prev, eat; uint64_t down = bt & ~prev; prev = bt;
+    static uint64_t prev, eat; uint64_t vb = bt | atomic_load(&g_pg_stick), down = vb & ~prev; prev = vb;   // 摇杆折出的方向位只用来算页的按下沿 / 按着，不交给游戏 | stick-derived bits only feed the page's edges / held state, never the game
     uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
     uint64_t pulse = 0; { int n = atomic_load(&g_pg_pulse_n); if (n > 0) { atomic_store(&g_pg_pulse_n, n - 1); pulse = atomic_load(&g_pg_pulse); } }
-    if (m) { atomic_fetch_or(&g_pg_ev, down & m); atomic_store(&g_pg_held, bt & m); eat |= bt & m; return (bt & ~m) | pulse; }
+    if (m) { atomic_fetch_or(&g_pg_ev, down & m); atomic_store(&g_pg_held, vb & m); eat |= bt & m; return (bt & ~m) | pulse; }
     atomic_store(&g_pg_ev, 0); atomic_store(&g_pg_held, 0); eat &= bt; return (bt & ~eat) | pulse;
 }
 // 编年史仓库页开着时（手柄模式）把原版「按住 Y」那半句提示的字换成我们实际做的事：原版在储藏箱各页对背包物品的提示是「丢弃（按住移动到私人储藏箱）」，
