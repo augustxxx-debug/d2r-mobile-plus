@@ -233,13 +233,26 @@ int dm_community_channel_value(int ch, char *full, size_t nf, char *shown, size_
         snprintf(shown, ns, "%.*s", (int)L, a); }
     return 1;
 }
-// 估宽（§2.6：拉丁 0.7、其他 1.0 个字号）超过 maxw 就截断加「…」；只截显示，复制仍是完整值 | estimated width (§2.6) over maxw: cut and add "…"; display only, copy keeps the full value
-int dm_community_fit(char *s, int pt, int maxw) {
-    int w = 0, cut = -1; size_t i = 0, ell = (size_t)(pt);   // 「…」按一个字号宽算 | "…" counts as one point size
-    for (; s[i]; ) { unsigned char c = (unsigned char)s[i]; int cw = c < 0x80 ? pt * 7 / 10 : pt; size_t step = c < 0x80 ? 1 : c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : 2;
-        if (cut < 0 && w + cw + (int)ell > maxw) cut = (int)i; w += cw; i += step; }
-    if (w <= maxw || cut < 0) return 0;
-    strcpy(s + cut, "…"); return 1;
+// 估宽（§2.6：拉丁 0.7、其他 1.0 个字号）超过 maxw 就截断加「…」；只截显示，复制仍是完整值。RC1.1 补审 Q11.1-08：带目标容量 cap，只走合法 UTF-8 前缀
+// （首字节定长度、续字节必须 10xxxxxx、不越过 cap − 1；遇坏字节就在那里截断），「…」只在放得下时加，保证 NUL 结尾；返回是否改了串
+// Estimated width (§2.6) over maxw: cut and add "…"; display only, copy keeps the full value. RC1.1 follow-up review Q11.1-08: takes the buffer capacity cap and walks only a valid UTF-8 prefix
+// (lead byte gives the length, continuation bytes must be 10xxxxxx, never past cap − 1; a bad byte truncates there); "…" only when it fits; always NUL-terminated; returns whether the string changed
+int dm_community_fit(char *s, size_t cap, int pt, int maxw) {
+    if (!s || !cap) return 0;
+    size_t i = 0, cut = 0, lim = cap - 1; int w = 0, over = 0, bad = 0;
+    while (i < lim && s[i]) { unsigned char c = (unsigned char)s[i]; size_t step = c < 0x80 ? 1 : (c & 0xe0) == 0xc0 ? 2 : (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 0;
+        if (!step || (step > 1 && c < 0xc2) || c > 0xf4 || i + step > lim) { bad = 1; break; }   // 孤立续字节 / 非法首字节 / 过长编码 / 多字节越过容量 | stray continuation / invalid lead / overlong / past capacity
+        for (size_t k = 1; k < step; k++) if (((unsigned char)s[i + k] & 0xc0) != 0x80) { bad = 1; break; }
+        if (bad) break;
+        int cw = c < 0x80 ? pt * 7 / 10 : pt;
+        if (w + cw > maxw) { over = 1; break; }
+        if (w + cw + pt <= maxw) cut = i + step;   // 「…」按一个字号宽算：记下最后一个还放得下「…」的字边界 | "…" counts as one point size: the last boundary that still fits it
+        w += cw; i += step; }
+    if (!over && !bad && i == lim && s[i]) over = 1;   // 串比容量长（没在 cap − 1 前结束）：同超宽，加「…」 | string longer than the capacity: treated like too wide, gets "…"
+    if (!over) { int changed = bad || s[i]; s[i] = 0; return changed; }   // 放得下：只按合法前缀收尾 | fits: end at the valid prefix
+    while (cut > 0 && cut + 4 > cap) { cut--; while (cut > 0 && ((unsigned char)s[cut] & 0xc0) == 0x80) cut--; }   // 「…」3 字节 + NUL 放不下就往前退到字边界 | step back to a character boundary until "…" + NUL fit
+    if (cut + 4 <= cap) memcpy(s + cut, "\xe2\x80\xa6", 4); else s[cut] = 0;   // 「…」+ NUL | "…" + NUL
+    return 1;
 }
 int dm_community_available(void) { return dm_community_value(dm_lang_group(), NULL, 0) != 0; }
 void dm_community_open(int from) {   // from：1 暂停菜单 / 2 主菜单 / 3 自定义页按钮 / 4 自定义页手柄 A | from: 1 pause menu / 2 main menu / 3 Custom page button / 4 Custom page controller A
@@ -476,7 +489,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     if (g != grp) { int trunc; grp = g; ncr = credits_all(k_maker_default, (int)(sizeof k_maker_default / sizeof *k_maker_default), k_special_default, (int)(sizeof k_special_default / sizeof *k_special_default), NULL, 0, dm_str(b, "dmCreditsSep"), dm_str(b, "dmCreditsUpstreamNote"), cr, 2, &trunc);
         LOG("社区入口：提示框鸣谢 %d 行（制作 %d 名，特别鸣谢 %d 名，鸣谢 0 名）%s", ncr, (int)(sizeof k_maker_default / sizeof *k_maker_default), (int)(sizeof k_special_default / sizeof *k_special_default), trunc ? "，超过两行已在末尾加「…」" : ""); }
     char crt[2][224]; for (int k = 0; k < 2; k++) { if (k < ncr) snprintf(crt[k], sizeof crt[k], "%s%s%s", cr[k].kind == 3 ? dm_str(b, "dmCreditsMaker") : cr[k].kind == 1 ? dm_str(b, "dmCreditsSpecial") : cr[k].kind == 2 ? dm_str(b, "dmCreditsThanks") : "", cr[k].kind ? " " : "", cr[k].text); else crt[k][0] = 0; }
-    dm_community_fit(ver, 28, 880); dm_community_fit(crt[0], 28, 560); dm_community_fit(crt[1], 28, CO_CARD_W);
+    dm_community_fit(ver, sizeof ver, 28, 880); dm_community_fit(crt[0], sizeof crt[0], 28, 560); dm_community_fit(crt[1], sizeof crt[1], 28, CO_CARD_W);
     { int gm[15][4], h = dm_notice_geometry(1800 - 128, H - 24, 1800, gm), top = (244 - h) / 2;   // 边框几何同崩溃围栏提示框（dm_crashfence.c） | frame geometry as the crash-fence box
       for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + gm[k][0], y0 + gm[k][1] - top, gm[k][2], gm[k][3] + (k / 3 < 4 ? 2 : 0) }; co_tile(b, tl[k], r); } }
     co_text(b, W("TouchCommTitle"), dm_str(b, mode == 1 ? "dmCommunityTitle" : "dmCommunityAbout")); co_place(W("TouchCommTitle"), cx - 850, y0 + 40);
@@ -486,7 +499,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
         uint64_t lb, vl, cp, ct; snprintf(nm, sizeof nm, "TouchCommLabel%d", k); lb = W(nm); snprintf(nm, sizeof nm, "TouchCommValue%d", k); vl = W(nm);
         snprintf(nm, sizeof nm, "TouchCommCopy%d", k); cp = W(nm); snprintf(nm, sizeof nm, "TouchCommCopyText%d", k); ct = W(nm); snprintf(nm, sizeof nm, "TouchCommCard%d", k);
         if (k >= n || !dm_community_channel_value(ch[k], full, sizeof full, shown, sizeof shown)) { co_place(lb, 99999, 99999); co_place(vl, 99999, 99999); co_place(cp, 99999, 99999); co_place(ct, 99999, 99999); co_rect_hide(p, nm); continue; }
-        int top = y0 + gm_.card_y[k]; dm_community_fit(shown, 36, CO_VALUE_W);
+        int top = y0 + gm_.card_y[k]; dm_community_fit(shown, sizeof shown, 36, CO_VALUE_W);
         co_rect_lines(b, p, nm, "rule_h", "rule_v", cl, top, CO_CARD_W, 100, 2);
         co_text(b, lb, dm_str(b, ch[k] == DM_CH_QQ ? "dmCommunityLabelQq" : ch[k] == DM_CH_SITE ? "dmCommunityLabelSite" : "dmCommunityLabelGithub")); co_place(lb, cl + 40, top);
         co_text(b, vl, shown); co_place(vl, cx + CO_VALUE_X, top);

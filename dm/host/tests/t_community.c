@@ -217,10 +217,28 @@ int main(void) {
     CHECK(40 + CO_LABEL_W <= CO_CARD_W / 2 + CO_VALUE_X - 20);                                    // 标签列右缘在值列左边 | label column ends left of the value column
     CHECK(CO_VALUE_X + CO_VALUE_W + 30 == CO_CARD_W / 2 - 30 - CO_BTN_W && CO_VALUE_W >= 800);     // 值列到小按钮留 30 | value column ends 30 left of the small button
     // 截断：按 §2.6 估宽超了列宽就截断加「…」，复制不受影响 | truncation: over the column by the §2.6 estimate → cut with "…"; copy unaffected
-    { char t[200]; snprintf(t, sizeof t, "d2rplus.augustusplay.com"); CHECK(!dm_community_fit(t, 36, CO_VALUE_W) && !strcmp(t, "d2rplus.augustusplay.com"));
-      snprintf(t, sizeof t, "a-very-long-subdomain-name.example-website.com/path"); CHECK(dm_community_fit(t, 36, CO_VALUE_W)); CHECK(strstr(t, "…"));
+    { char t[200]; snprintf(t, sizeof t, "d2rplus.augustusplay.com"); CHECK(!dm_community_fit(t, sizeof t, 36, CO_VALUE_W) && !strcmp(t, "d2rplus.augustusplay.com"));
+      snprintf(t, sizeof t, "a-very-long-subdomain-name.example-website.com/path"); CHECK(dm_community_fit(t, sizeof t, 36, CO_VALUE_W)); CHECK(strstr(t, "…"));
       int w = 0; for (const char *q = t; *q; ) { unsigned char c = (unsigned char)*q; w += c < 0x80 ? 36 * 7 / 10 : 36; q += c < 0x80 ? 1 : c >= 0xe0 ? 3 : 2; } CHECK(w <= CO_VALUE_W);
-      snprintf(t, sizeof t, "特别鸣谢 甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥"); CHECK(dm_community_fit(t, 28, 560)); CHECK(strstr(t, "…")); }
+      snprintf(t, sizeof t, "特别鸣谢 甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥"); CHECK(dm_community_fit(t, sizeof t, 28, 560)); CHECK(strstr(t, "…")); }
+    // RC1.1 补审 Q11.1-08：dm_community_fit 带目标容量、只走合法 UTF-8 前缀、保证 NUL 结尾（ASan 下也要过：make … CFLAGS 加 -fsanitize=address,undefined）
+    // RC1.1 follow-up Q11.1-08: dm_community_fit takes the buffer capacity, walks only a valid UTF-8 prefix and always NUL-terminates (also under ASan)
+    { char t[64];
+      snprintf(t, sizeof t, "abcde"); CHECK(!dm_community_fit(t, sizeof t, 10, 35) && !strcmp(t, "abcde"));               // 恰好放下（5 × 7 = 35）：不动 | exactly fits: unchanged
+      snprintf(t, sizeof t, "abcdef"); CHECK(dm_community_fit(t, sizeof t, 10, 35) && !strcmp(t, "abc\xe2\x80\xa6"));     // 超一个字：退到放得下「…」的边界（21 + 10 ≤ 35） | one over: back to where "…" fits
+      snprintf(t, sizeof t, "abcdefghij"); CHECK(dm_community_fit(t, 6, 10, 50) && !strcmp(t, "ab\xe2\x80\xa6"));        // 容量 6：「…」+ NUL 放得下的最远处 | capacity 6: as far as "…" + NUL fit
+      snprintf(t, sizeof t, "abcdefghij"); CHECK(dm_community_fit(t, 4, 10, 50) && !strcmp(t, "\xe2\x80\xa6"));            // 容量 4：只剩「…」 | capacity 4: only "…"
+      snprintf(t, sizeof t, "abcdefghij"); CHECK(dm_community_fit(t, 3, 10, 50) && !t[0]);                                  // 容量 3：「…」都放不下，空串 | capacity 3: not even "…", empty
+      snprintf(t, sizeof t, "abc"); CHECK(dm_community_fit(t, 1, 10, 1000) && !t[0]);                                      // 容量 1：只剩 NUL | capacity 1: NUL only
+      snprintf(t, sizeof t, "abc"); CHECK(!dm_community_fit(t, 0, 10, 1000) && !strcmp(t, "abc"));                         // 容量 0：不碰 | capacity 0: untouched
+      memset(t, 'a', 8); CHECK(dm_community_fit(t, 8, 10, 1000) && !strcmp(t, "aaaa\xe2\x80\xa6"));                     // 没有 NUL 的缓冲：在容量内收尾并加「…」 | buffer without NUL: ends at cap − 1
+      snprintf(t, sizeof t, "abc\xe4\xb8"); CHECK(dm_community_fit(t, sizeof t, 10, 1000) && !strcmp(t, "abc"));           // 截断的多字节序列 | truncated multibyte sequence
+      snprintf(t, sizeof t, "ab\x80" "cd"); CHECK(dm_community_fit(t, sizeof t, 10, 1000) && !strcmp(t, "ab"));                // 孤立续字节 | stray continuation byte
+      snprintf(t, sizeof t, "a\xc0\xaf" "b"); CHECK(dm_community_fit(t, sizeof t, 10, 1000) && !strcmp(t, "a"));              // 过长编码 | overlong encoding
+      snprintf(t, sizeof t, "a\xf8\x88\x80\x80\x80"); CHECK(dm_community_fit(t, sizeof t, 10, 1000) && !strcmp(t, "a"));  // 非法首字节 | invalid lead byte
+      snprintf(t, sizeof t, "a\xe4\xb8\x80"); CHECK(dm_community_fit(t, 4, 10, 1000) && !strcmp(t, "a"));                 // 多字节越过容量：不读界外、在字前截 | a multibyte character past capacity: no read beyond, cut before it
+      snprintf(t, sizeof t, "\xe4\xb8\x80\xe4\xb8\x80"); CHECK(!dm_community_fit(t, sizeof t, 10, 20) && !strcmp(t, "\xe4\xb8\x80\xe4\xb8\x80"));   // 两个中文字恰好 20 | two CJK characters exactly fit
+      snprintf(t, sizeof t, "\xe4\xb8\x80\xe4\xb8\x80\xe4\xb8\x80"); CHECK(dm_community_fit(t, sizeof t, 10, 20) && !strcmp(t, "\xe4\xb8\x80\xe2\x80\xa6")); }   // 多一字：一字 + 「…」 | one more: one character + "…"
     // 22. 官网（用户 2026-10-29：「关于弹窗里网址改成新的官网」）：清单 community.site（https:// 开头）进内存与缓存；链接一项优先官网、没有退回 GitHub；
     //     有官网时「关于」段出 GitHub 行（Q11.1-03：外文界面官网只出现一次），去掉 https:// 与末尾 /；site 不合规当这一项没有并记红；重复当格式错；只有 site 也算有字段；旧缓存（没有 site=）照读
     // 22. Website (user, 2026-10-29): manifest community.site (https://) goes to memory and cache; the link prefers it and falls back to GitHub; with a website the About section shows a GitHub line (Q11.1-03), without https:// and the trailing /;

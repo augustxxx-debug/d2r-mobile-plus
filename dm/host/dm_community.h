@@ -12,7 +12,7 @@ int dm_community_value(int lang_group, char *out, size_t n);   // 按语言组�
 enum { DM_CH_QQ = 1, DM_CH_SITE = 2, DM_CH_GITHUB = 3 };
 int dm_community_channels(int lang_group, int out[2]);       // 框里的渠道行（最多两行）：中文 [QQ 群, 官网, GitHub]、其他语言 [官网, GitHub] 取有值的前两个；返回行数 | the box's channel rows (at most two); returns the count
 int dm_community_channel_value(int ch, char *full, size_t nf, char *shown, size_t ns);   // 完整值（复制）与显示值（官网去 https:// 与末尾 /，GitHub 只留仓库名） | full value (copy) and shown value
-int dm_community_fit(char *s, int pt, int maxw);              // 按 §2.6 估宽超过 maxw 就截断加「…」，返回是否截了 | cut with "…" when the §2.6 estimate exceeds maxw; returns whether it cut
+int dm_community_fit(char *s, size_t cap, int pt, int maxw); // 按 §2.6 估宽超过 maxw 就截断加「…」；cap = 缓冲区容量，只走合法 UTF-8 前缀、保证 NUL 结尾；返回是否改了串 | cut with "…" over maxw; cap = buffer size, valid UTF-8 prefix only, always NUL-terminated
 int dm_community_available(void);                          // 当前语言下入口该不该显示 | whether the entry shows in the current language
 void dm_community_open(int from);                          // 玩家点了「加入社区讨论」（from 只进日志：1 暂停菜单 / 2 主菜单 / 3 自定义页按钮 / 4 自定义页手柄 A）：有值就挂上社区框（社区段 + 「关于」段） | the player used Join the community (from goes to the log only: 1 pause menu / 2 main menu / 3 Custom page button / 4 Custom page controller A): queue the community box (community + About section) when there is a value
 void dm_community_open_about(void);                        // 主菜单「关于」行：纯「关于」框（版本 + 鸣谢），没有社区值也开 | the main menu's About row: the About-only box (version + credits), opens without a community value too
