@@ -50,7 +50,7 @@ public final class LoadPageView extends View {
     static native int nativeColor(int which);
     static native String nativeLastLine();
     static native String[] nativeManifest(byte[] body);
-    static native void nativeCommunity(String qq, String github);
+    static native void nativeCommunity(String qq, String github, String site);
     static native String nativeCopyValue();
     static native void nativeCopied(boolean ok, boolean pad);
     static native void nativePad(boolean on);
@@ -75,7 +75,7 @@ public final class LoadPageView extends View {
     // 社区信息（dm_loadpage.h）：清单校验走原生 dm_manifest_parse；拿到合法清单后交社区两项，页面底部显示官方免费渠道与复制钮
     // community info (dm_loadpage.h): manifests are validated by native dm_manifest_parse; once valid, the two items go to the page, which shows the official free channels and a copy button at the bottom
     public static String[] manifest(byte[] body) { return nativeManifest(body); }
-    public static void community(String qq, String github) { nativeCommunity(qq, github); }
+    public static void community(String qq, String github, String site) { nativeCommunity(qq, github, site); }
 
     private final float density;
     private Bitmap bg; private String bgName; private Bitmap logo; private boolean logoTried;
@@ -123,7 +123,12 @@ public final class LoadPageView extends View {
     // 手柄（§2.7）：任一手柄键 = 手柄模式（复制钮画成焦点态、前面加 A 键图标），A 键松开时复制。返回 true = 吃掉这个键
     // Controller (§2.7): any controller key = controller mode (the copy button drawn focused with an A glyph in front); A copies on release. Returns true = the key is consumed
     public boolean padKey(android.view.KeyEvent e) {
-        if ((e.getSource() & (android.view.InputDevice.SOURCE_GAMEPAD | android.view.InputDevice.SOURCE_JOYSTICK)) == 0 && !android.view.KeyEvent.isGamepadButton(e.getKeyCode())) return false;
+        // 来源要整组位都对上：SOURCE_GAMEPAD 含 SOURCE_CLASS_BUTTON 这一位，键盘也有，按位与非零会把音量键、键盘当成手柄（六审 Q6-01）
+        // the whole source mask must match: SOURCE_GAMEPAD includes the SOURCE_CLASS_BUTTON bit that keyboards also carry, so a non-zero AND would treat volume keys and keyboards as a controller (sixth review Q6-01)
+        int src = e.getSource();
+        boolean pad = (src & android.view.InputDevice.SOURCE_GAMEPAD) == android.view.InputDevice.SOURCE_GAMEPAD || (src & android.view.InputDevice.SOURCE_JOYSTICK) == android.view.InputDevice.SOURCE_JOYSTICK
+                || android.view.KeyEvent.isGamepadButton(e.getKeyCode());
+        if (!pad) return false;
         if (!nativePadMode()) { nativePad(true); invalidate(); }
         if (e.getKeyCode() != android.view.KeyEvent.KEYCODE_BUTTON_A || lastLayout == null || lastLayout[L_COMM] <= 0) return false;
         if (e.getAction() == android.view.KeyEvent.ACTION_UP) copy(true);

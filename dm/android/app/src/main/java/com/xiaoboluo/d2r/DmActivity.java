@@ -425,7 +425,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         final String ua = "D2RMobilePlus-Android/" + BuildConfig.VERSION_NAME;
         new Thread(() -> {
             try { new CommunityFetch(urls, cache, CommunityFetch.urlConnection(ua), LoadPageView::manifest, line -> { android.util.Log.i("dm", line); communityLast = line; }, Thread::sleep)
-                    .run((qq, gh, from) -> LoadPageView.community(qq, gh)); }
+                    .run((qq, gh, site, from) -> LoadPageView.community(qq, gh, site)); }
             catch (InterruptedException | RuntimeException e) { android.util.Log.w("dm", "社区信息：拉取线程出错，不显示：" + e); }
         }, "dm-community").start();
     }

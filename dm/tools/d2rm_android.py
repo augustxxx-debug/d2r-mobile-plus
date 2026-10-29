@@ -129,7 +129,7 @@ def main():
         try: rec = open(os.path.join(out, 'build_src.sha256')).read().split()[0]
         except (OSError, IndexError): return False
         return rec == src and all(os.path.isfile(os.path.join(out, m + '.patched.bin')) and os.path.isfile(os.path.join(out, m + '.gates.tsv')) for m in MODS)
-    step('改写游戏程序', patched, patch)
+    step('处理游戏文件', patched, patch)   # 日志里的步骤名用中性措辞（玩家会把 gen_log 发到群里；六审 Q6-06） | neutral step name in the log (players post gen_log in the group; sixth review Q6-06)
     os.makedirs(os.path.join(stage, 'out'))
     for f in sorted(os.listdir(out)):
         if not f.endswith('.log'): shutil.copyfile(os.path.join(out, f), os.path.join(stage, 'out', f))

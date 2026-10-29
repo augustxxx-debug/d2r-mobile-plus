@@ -531,6 +531,9 @@ dmLoadHintImport	正在把游戏内容放到本机，请稍候	Copying the game 
 dmLoadHintPrepare	马上进入游戏，请稍候	Entering the game shortly, please wait	Entrando al juego en un momento, espera		Игра скоро запустится, подождите	곧 게임에 들어갑니다. 잠시 기다려 주세요	加载页副文：准备阶段 | loading page sub line: prepare stage
 dmLoadMusicOn	打开背景音乐	Turn music on	Activar la música		Включить музыку	배경 음악 켜기	加载页右上角静音钮的无障碍标签（当前静音时）| accessibility label of the loading page mute button (when muted)
 dmLoadMusicOff	关闭背景音乐	Turn music off	Desactivar la música		Выключить музыку	배경 음악 끄기	加载页右上角静音钮的无障碍标签（当前在放时）| accessibility label of the loading page mute button (when playing)
+dmLoadCommSiteQq	官方免费渠道：官网 %s · QQ 群 %s	Official free channels: %s · QQ group %s	Canales oficiales gratis: %s · grupo QQ %s		Бесплатные каналы: %s · группа QQ %s	공식 무료 채널: %s · QQ 그룹 %s	加载页底部社区第一行（有官网 community.site 与群号；第一个 %s = 官网主机名，第二个 = 群号；服务端说明第 13 节）
+dmLoadCommSite	官方免费渠道：官网 %s	Official free channel: %s	Canal oficial gratis: %s		Бесплатный канал: %s	공식 무료 채널: %s	加载页底部社区第一行（只有官网）
+dmLoadCommCopySite	复制官网	Copy site	Copiar web		Копировать	사이트 복사	加载页复制钮（复制官网地址；有官网时优先）
 dmLoadCommQqGh	官方免费渠道：QQ 群 %s · GitHub	Official free channels: QQ group %s · GitHub	Canales oficiales gratis: grupo QQ %s · GitHub		Бесплатные каналы: группа QQ %s · GitHub	공식 무료 채널: QQ 그룹 %s · GitHub	加载页底部社区第一行（副文 14 号字，群号与 GitHub 都有；值来自远端清单 community，拉不到不显示；dm_loadpage.c community_text）
 dmLoadCommQq	官方免费渠道：QQ 群 %s	Official free channel: QQ group %s	Canal oficial gratis: grupo QQ %s		Бесплатный канал: группа QQ %s	공식 무료 채널: QQ 그룹 %s	加载页底部社区第一行（只有群号）
 dmLoadCommGh	官方免费渠道：GitHub	Official free channel: GitHub	Canal oficial gratis: GitHub		Бесплатный канал: GitHub	공식 무료 채널: GitHub	加载页底部社区第一行（只有 GitHub 链接）
