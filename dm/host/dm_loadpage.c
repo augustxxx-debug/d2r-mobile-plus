@@ -83,18 +83,25 @@ void dm_loadpage_set(int stage, double frac, const dm_lp_detail *d, uint64_t now
 }
 void dm_loadpage_note(const char *text) { if (text) snprintf(g.note, sizeof g.note, "%s", text); else g.note[0] = 0; }
 void dm_loadpage_hint(const char *key) { g.hint_key = key; }
+// 最近一次完成 / 失败那一行（安卓：加载页在宿主库之前跑，日志只进 logcat；DmActivity 进游戏前把它交给宿主写进 boot.log，分享诊断日志才看得到）
+// The latest finish / failure line (Android: the loading page runs before the host library, so its log reaches only logcat; DmActivity hands it to the host
+// before entering the game, which writes it into boot.log where share diagnostics can see it)
+static char g_last_line[512];
+const char *dm_loadpage_last_line(void) { return g_last_line; }
 void dm_loadpage_fail(const char *reason, uint64_t now_ms) {
     if (g.state == DM_LP_IDLE) { g.state = DM_LP_RUNNING; g.t_begin = now_ms; }
     g.state = DM_LP_FAILED; g.t_end = now_ms; snprintf(g.fail, sizeof g.fail, "%s", reason ? reason : "");
     if (g.cur >= 0) g.s[g.cur].t_last = now_ms;
-    LOG("加载页：失败于阶段 %d/%d %s（%.0f%%）：%s", g.cur + 1, g.n, g.cur >= 0 ? k_kind_zh[g.s[g.cur].kind] : "-", g.overall * 100, g.fail);
+    snprintf(g_last_line, sizeof g_last_line, "加载页：失败于阶段 %d/%d %s（%.0f%%）：%s", g.cur + 1, g.n, g.cur >= 0 ? k_kind_zh[g.s[g.cur].kind] : "-", g.overall * 100, g.fail);
+    LOG("%s", g_last_line);
 }
 void dm_loadpage_finish(uint64_t now_ms) {
     if (g.state != DM_LP_RUNNING) return;
     for (int i = 0; i < g.n; i++) { if (!g.s[i].started) { g.s[i].started = 1; g.s[i].t0 = now_ms; } if (!g.s[i].done) { g.s[i].done = 1; g.s[i].frac = 1; g.s[i].t_last = now_ms; } }
     g.cur = g.n - 1; g.overall = 1; g.state = DM_LP_DONE; g.t_end = now_ms;
     char sum[384]; dm_loadpage_summary(sum, sizeof sum, now_ms);
-    LOG("加载页：完成，%s", sum);   // 分享诊断日志摘要取「加载页：」的最后一行 | the share-log summary takes the last 「加载页：」 line
+    snprintf(g_last_line, sizeof g_last_line, "加载页：完成，%s", sum);
+    LOG("%s", g_last_line);   // 分享诊断日志摘要取「加载页：」的最后一行 | the share-log summary takes the last 「加载页：」 line
 }
 int dm_loadpage_state(void) { return g.state; }
 double dm_loadpage_overall(void) { return g.overall; }

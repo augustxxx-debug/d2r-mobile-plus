@@ -47,6 +47,7 @@ void dm_loadpage_note(const char *text);                     // 平台给的正�
 void dm_loadpage_hint(const char *key);                      // 副文的多语键替换（NULL = 按阶段种类的缺省提示） | sub-line i18n key override (NULL = the default hint of the stage kind)
 void dm_loadpage_fail(const char *reason, uint64_t now_ms);  // 失败：标题换「无法继续」，正文 = reason（平台已取好语言） | failure: title becomes "could not continue", body = reason (already localised by the platform)
 void dm_loadpage_finish(uint64_t now_ms);                    // 全部完成：总进度到 1，写一行「加载页：」汇总日志（分享诊断日志摘要取这一行） | all done: overall = 1, one 「加载页：」 summary log line (the share-log summary picks it up)
+const char *dm_loadpage_last_line(void);   // 最近一次「加载页：完成 / 失败」那一行，没有时为空串 | the latest 「加载页：」 finish / failure line, empty when none
 int dm_loadpage_state(void);
 double dm_loadpage_overall(void);                            // 0..1，只增不减 | 0..1, never decreasing
 int dm_loadpage_percent(void);                               // 向下取整的百分数 0..100 | floor percentage 0..100

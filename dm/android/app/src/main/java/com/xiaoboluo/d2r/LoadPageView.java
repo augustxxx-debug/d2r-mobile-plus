@@ -48,6 +48,7 @@ public final class LoadPageView extends View {
     static native double[] nativeLayout(float w, float h, float l, float t, float r, float b);
     static native String[] nativeText();
     static native int nativeColor(int which);
+    static native String nativeLastLine();
 
     // 阶段种类（同 dm_loadpage.h 的枚举顺序） | stage kinds (same order as the enum in dm_loadpage.h)
     public static final int DOWNLOAD = 0, IMPORT = 1, PATCH = 2, ASSETS = 3, OVERLAY = 4, PACKS = 5, SHADERS = 6, INSTALL = 7, VERIFY = 8, PREPARE = 9;
@@ -64,6 +65,7 @@ public final class LoadPageView extends View {
     public static void finish() { nativeFinish(); }
     public static int state() { return nativeState(); }
     public static int percent() { return nativePercent(); }
+    public static String lastLine() { return nativeLastLine(); }   // 最近一次完成 / 失败那一行 | the latest finish / failure line
 
     private final float density;
     private Bitmap bg; private String bgName; private Bitmap logo; private boolean logoTried;
