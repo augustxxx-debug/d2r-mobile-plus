@@ -34,3 +34,13 @@ static inline void dm_stick_nav_withhold(uint64_t declared, int32_t *x, int32_t 
     if ((*y > 0 && (declared & DM_BTN_UP)) || (*y < 0 && (declared & DM_BTN_DOWN))) *y = 0;
     if ((*x > 0 && (declared & DM_BTN_RIGHT)) || (*x < 0 && (declared & DM_BTN_LEFT))) *x = 0;
 }
+// 推着跨过声明变化（P1-1 补，Mac 宿主回归「游戏」页时发现：一推走两格）：页收过的方向，推着期间一直归页、松开前不交还原版——同 dm_padmode_page_filter 对按键的 eat。
+// 例：难度行上往下推 → 页把焦点交回表格、改成只声明「上」，还推着的「下」不再声明，原版接着又走一格。返回本拍要扣下的方向（声明的 ∪ 推着期间收过的）；eat 由调用处跨拍保存
+// Held across a declaration change (P1-1 follow-up, found in the Mac host regression of the Gameplay page: one push moved two rows): a direction the page took stays the page's while the stick is
+// held and is not handed back to the game before release -- like dm_padmode_page_filter's eat for keys. E.g. pushing down on the difficulty row: the page hands the focus back to the table and now
+// declares only Up, so the still-held Down is no longer declared and the game moved one more row. Returns the directions to withhold this sample (declared ∪ taken while held); the caller keeps eat
+static inline uint64_t dm_stick_nav_take(uint64_t *eat, uint64_t dirs, uint64_t declared) {
+    if (!eat) return declared;
+    *eat = (*eat & dirs) | (dirs & declared);
+    return declared | *eat;
+}

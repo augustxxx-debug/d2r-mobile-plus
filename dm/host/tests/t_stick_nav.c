@@ -45,6 +45,15 @@ int main(void) {
       x = 30000; y = 30000; dm_stick_nav_withhold(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT, &x, &y); CHECK(x == 0 && y == 0);
       x = 5; y = -5; dm_stick_nav_withhold(0, &x, &y); CHECK(x == 5 && y == -5);
       dm_stick_nav_withhold(DM_BTN_UP, NULL, &y); }
+    // 推着跨过声明变化（P1-1 补）：页收过的方向推着期间一直扣下；松开后才放 | held across a declaration change (P1-1 follow-up): a taken direction stays withheld until release
+    { uint64_t eat = 0;
+      CHECK(dm_stick_nav_take(&eat, DM_BTN_DOWN, DM_BTN_UP | DM_BTN_DOWN) == (DM_BTN_UP | DM_BTN_DOWN));   // 难度行：上下都声明，下推归页 | difficulty row: both declared, the down push is the page's
+      CHECK(dm_stick_nav_take(&eat, DM_BTN_DOWN, DM_BTN_UP) == (DM_BTN_UP | DM_BTN_DOWN));                 // 焦点交回表格、只声明上：还推着的下仍扣下 | focus back to the table, only Up: the held Down still withheld
+      CHECK(dm_stick_nav_take(&eat, 0, DM_BTN_UP) == DM_BTN_UP && eat == 0);                               // 松开：放掉 | released: let go
+      CHECK(dm_stick_nav_take(&eat, DM_BTN_DOWN, DM_BTN_UP) == DM_BTN_UP);                                 // 新推的下没声明：交原版 | a fresh, undeclared Down goes to the game
+      CHECK(dm_stick_nav_take(&eat, DM_BTN_UP, 0) == 0);                                                   // 原版推上来、页还没声明：不扣 | the game moves up, page not declaring yet: nothing withheld
+      CHECK(dm_stick_nav_take(&eat, DM_BTN_UP, DM_BTN_UP) == DM_BTN_UP && eat == DM_BTN_UP);               // 页开始声明上：之后扣下 | the page starts declaring Up: withheld from now on
+      CHECK(dm_stick_nav_take(NULL, DM_BTN_UP, DM_BTN_LEFT) == DM_BTN_LEFT); }
     printf("t_stick_nav: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

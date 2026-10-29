@@ -224,9 +224,14 @@ static _Atomic uint64_t g_pg_stick;   // 左摇杆折算出的方向键位 | dir
 void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
     static dm_stick_nav nav; const uint64_t V = DM_BTN_UP | DM_BTN_DOWN, H = DM_BTN_LEFT | DM_BTN_RIGHT;
     uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
-    if (!lx || !ly || !(m & (V | H))) { dm_stick_nav_reset(&nav); atomic_store(&g_pg_stick, 0); return; }
-    atomic_store(&g_pg_stick, dm_stick_nav_dirs(&nav, *lx, *ly) & m);   // 公共折算（dm_stick_nav.h） | shared conversion
-    dm_stick_nav_withhold(m, lx, ly);   // 只扣声明了的那个方向（审计 P1-1） | withhold only the declared directions (audit P1-1)
+    // 手柄模式每拍都折算、不随声明清零（P1-1 补）：方向位不按声明裁，过滤器拿它连续算按下沿——推着跨过声明变化（原版刚把焦点推到表格第一行、页才开始声明「上」）不算新按下
+    // In controller mode convert on every sample, not reset by the declaration (P1-1 follow-up): the direction bits are not masked, so the filter derives edges continuously -- a push held across a
+    // declaration change (the game has just moved the focus to the table's first row and only now does the page declare Up) is not a new press
+    static uint64_t eat;
+    if (!g_cur || !lx || !ly) { dm_stick_nav_reset(&nav); eat = 0; atomic_store(&g_pg_stick, 0); return; }
+    uint64_t d = dm_stick_nav_dirs(&nav, *lx, *ly);   // 公共折算（dm_stick_nav.h） | shared conversion
+    atomic_store(&g_pg_stick, d);
+    dm_stick_nav_withhold(dm_stick_nav_take(&eat, d, m & (V | H)), lx, ly);   // 只扣声明了的方向（审计 P1-1）与推着期间页收过的方向（P1-1 补） | withhold the declared directions (audit P1-1) and those the page took while held (follow-up)
 }
 uint64_t dm_padmode_page_filter(uint64_t bt) {
     static uint64_t prev, eat; uint64_t vb = bt | atomic_load(&g_pg_stick), down = vb & ~prev; prev = vb;   // 摇杆折出的方向位只用来算页的按下沿 / 按着，不交给游戏 | stick-derived bits only feed the page's edges / held state, never the game
