@@ -224,7 +224,7 @@ static _Atomic uint64_t g_pg_stick;   // 左摇杆折算出的方向键位 | dir
 void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
     static dm_stick_nav nav; const uint64_t V = DM_BTN_UP | DM_BTN_DOWN, H = DM_BTN_LEFT | DM_BTN_RIGHT;
     uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
-    if (!lx || !ly || !(m & (V | H))) { nav.hx = nav.hy = 0; atomic_store(&g_pg_stick, 0); return; }
+    if (!lx || !ly || !(m & (V | H))) { dm_stick_nav_reset(&nav); atomic_store(&g_pg_stick, 0); return; }
     atomic_store(&g_pg_stick, dm_stick_nav_dirs(&nav, *lx, *ly) & m);   // 公共折算（dm_stick_nav.h） | shared conversion
     if (m & V) *ly = 0; if (m & H) *lx = 0;
 }

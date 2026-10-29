@@ -56,7 +56,7 @@ static _Atomic unsigned g_sw_touch, g_sw_key, g_sw_stick, g_leak;
 int dm_community_modal(void) { return atomic_load(&g_show) != 0; }
 void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     static uint64_t prev, pdir; static dm_stick_nav nav;
-    if (!atomic_load(&g_show)) { prev = bt ? *bt : 0; pdir = 0; nav.hx = nav.hy = 0; return; }
+    if (!atomic_load(&g_show)) { prev = bt ? *bt : 0; pdir = 0; dm_stick_nav_reset(&nav); return; }
     if (!bt || !lx || !ly || !rx || !ry) return;
     uint64_t down = *bt & ~prev; prev = *bt;
     int32_t vy = (*ly < 0 ? -*ly : *ly) >= (*ry < 0 ? -*ry : *ry) ? *ly : *ry;   // 两根摇杆取推得多的那根的上下 | up / down of whichever stick is pushed further
