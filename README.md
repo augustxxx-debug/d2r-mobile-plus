@@ -20,7 +20,7 @@ This is a development preview. Improvements have been tested locally on an iOS d
 
 Both features below are in development and **expected to open for testing in early November**; dates and scope follow the actual release notes, and test builds may be unstable.
 
-- **Frame generation (experimental, iOS)**: built on Apple MetalFX frame interpolation — the game renders at 60 fps and the screen shows 120 fps, for smoother motion on 120 Hz displays. Only on iPhones that support MetalFX frame interpolation; off by default, enabled from the Graphics tab.
+- **AI frame generation (experimental, iOS)**: built on Apple MetalFX machine-learning frame interpolation — the game renders at 60 fps and the screen shows 120 fps, for smoother motion on 120 Hz displays. Only on iPhones that support MetalFX frame interpolation; off by default, enabled from the Graphics tab.
 - **Cross-platform co-op (beta)**: iOS, Android and Mac together — up to 4 players in one world, fighting, using portals, picking up loot and saving; runs on our own servers over encrypted connections and does not use any official online service. The first round opens by invitation and widens once it is stable.
 
 ## What changes from upstream
