@@ -141,7 +141,7 @@ Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gf
 
 ## 致谢与许可
 
-基于 [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile)，感谢原作者及贡献者。保留既有版权声明及 [MIT 许可证](LICENSE)。《暗黑破坏神 II：狱火重生》及其资源的权利归相应权利人所有。本项目为独立社区项目。 加载页（导入 / 准备游戏内容）的背景图、字标图与循环音乐为本项目自制、程序化生成（`dm/tools/gen_loadpage_*.py`，CC0 1.0），字标用 [Cinzel Decorative](https://github.com/google/fonts/tree/main/ofl/cinzeldecorative)（Natanael Gama，SIL Open Font License 1.1）排版；安装包不含任何原版素材。
+基于 [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile)，感谢原作者及贡献者。保留既有版权声明及 [MIT 许可证](LICENSE)。《暗黑破坏神 II：狱火重生》及其资源的权利归相应权利人所有。本项目为独立社区项目。 加载页（导入 / 准备游戏内容）的背景图由 App 图标合成（上游 D2R Mobile 的图标加上我们的 PLUS 字样，字形为 Cormorant Garamond，SIL Open Font License 1.1）：图标居中、四周渐隐到黑。字标图（iOS 仍在用）与循环音乐为本项目自制、程序化生成（`dm/tools/gen_loadpage_logo.py`、`dm/tools/gen_loadpage_music.py`，CC0 1.0），字标用 [Cinzel Decorative](https://github.com/google/fonts/tree/main/ofl/cinzeldecorative)（Natanael Gama，SIL Open Font License 1.1）排版；安装包不含任何原版素材。
 
 安卓安装包随附霞鹜文楷（LXGW WenKai）Medium v1.530，作者 LXGW，按 [SIL Open Font License 1.1](https://openfontlicense.org) 授权（许可证随包在 `assets/dmgen/font/OFL.txt`；来源 https://github.com/lxgw/LxgwWenKai）。手机端生成导入包时用它替换界面字体里的中日文字形；包里的字体文件未作改动。
 

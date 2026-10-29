@@ -141,7 +141,7 @@ if unzip -l "$A" | grep -q 'assets/dmgen/runtime.zip'; then
   for kv in $(sed -n '1,2p' "$Z/assets/dmgen/runtime.txt"); do grep -qF "version: $kv" "$N" || die "THIRD_PARTY_NOTICES.txt 没写 $kv（改了运行时组件就重跑 dm/android/tools/third_party_notices.py）"; done
   t "带手机端生成器：assets/dmgen 核过（查询核 $(echo $QK | wc -w | tr -d ' ') 个、运行时只有 lib/ py/、无本机路径；第三方许可证清单在、$(sed -n '1,2p' "$Z/assets/dmgen/runtime.txt" | wc -w | tr -d ' ') 个组件版本对得上）"
 fi
-# 加载页素材四件（自制 CC0，dm/assets/loadpage）是唯一许可的 assets/ 顶层文件 | the four loading-page assets (self-made, CC0, dm/assets/loadpage) are the only allowed top-level assets/ files
+# 加载页素材四件（dm/assets/loadpage：背景两张由 App 图标合成，字标图与音乐自制 CC0）是唯一许可的 assets/ 顶层文件 | the four loading-page assets (self-made, CC0, dm/assets/loadpage) are the only allowed top-level assets/ files
 bad=$(unzip -l "$A" | awk '{print $4}' | grep -v '^assets/dmgen/' | grep -vxE 'assets/loadpage_(bg_land\.jpg|bg_port\.jpg|logo\.png|loop\.m4a)' | grep -E '\.(xgs|patched\.bin|data)$|^assets/|overlay|derived\.tsv' | head -3)
 [ -z "$bad" ] || die "APK 里带了不该有的文件：$bad"
 BT2=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1); vc=$("$BT2/aapt" dump badging "$A" 2>/dev/null | sed -n "s/.*versionCode='\([0-9]*\)'.*versionName='\([^']*\)'.*/\1 \2/p" | head -1); [ "$vc" = "$DM_BUILD $DM_VERSION" ] || die "APK 版本号不对：$vc（应 $DM_BUILD $DM_VERSION）"

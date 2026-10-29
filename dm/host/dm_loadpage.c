@@ -41,6 +41,8 @@ static struct {
     const char *prompt_title, *prompt_sub;   // 提示页的标题 / 副文键（非空 = 提示页） | notice page title / sub keys (non-NULL = notice page)
 } g = { .cur = -1, .ui_group = -1, .muted = 0 };
 
+static int g_wordmark = 1;   // 见 dm_loadpage_set_wordmark | see dm_loadpage_set_wordmark
+void dm_loadpage_set_wordmark(int on) { g_wordmark = on != 0; }
 const char *dm_loadpage_ui(const char *key) { return g.ui_group >= 0 ? dm_ui_group(key, g.ui_group) : dm_ui(key); }
 void dm_loadpage_ui_set_group(int group) { g.ui_group = group; }
 
@@ -143,7 +145,7 @@ static int cat(char *b, size_t n, int o, const char *sep, const char *piece) {
 }
 static void community_text(dm_lp_text *t, uint64_t now_ms);
 static void text_main(dm_lp_text *t, uint64_t now_ms);
-void dm_loadpage_text(dm_lp_text *t, uint64_t now_ms) { memset(t, 0, sizeof *t); t->brand = "D2R Mobile Plus"; text_main(t, now_ms); community_text(t, now_ms); }
+void dm_loadpage_text(dm_lp_text *t, uint64_t now_ms) { memset(t, 0, sizeof *t); t->brand = g_wordmark ? "D2R Mobile Plus" : ""; text_main(t, now_ms); community_text(t, now_ms); }
 static void text_main(dm_lp_text *t, uint64_t now_ms) {
     snprintf(t->percent, sizeof t->percent, "%d%%", dm_loadpage_percent());
     if (g.state == DM_LP_FAILED) {
@@ -233,6 +235,8 @@ const char *dm_loadpage_bg_name(double w, double h, int *bg_w, int *bg_h) {
     return land ? LP_BG_LAND : LP_BG_PORT;
 }
 const char *dm_loadpage_logo_name(int *w, int *h) { if (w) *w = 1600; if (h) *h = 600; return "loadpage_logo.png"; }   // dm/tools/gen_loadpage_logo.py | dm/tools/gen_loadpage_logo.py
+// 两张背景里图标（含 MOBILE PLUS 字样）的外框，图内 0..1 坐标：量自 dm/assets/loadpage 的两张图（亮度 > 45 的外接框） | the icon box (MOBILE PLUS included) in the two backgrounds, 0..1 image coordinates (bounding box of luminance > 45)
+static const double k_icon_land[4] = { 0.274, 0.030, 0.727, 0.824 }, k_icon_port[4] = { 0.076, 0.150, 0.927, 0.622 };
 const char *dm_loadpage_music_name(void) { return "loadpage_loop.m4a"; }
 void dm_loadpage_set_muted(int muted) { g.muted = muted != 0; }
 int dm_loadpage_muted(void) { return g.muted; }
@@ -262,7 +266,8 @@ void dm_loadpage_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     double bx = cx0 + (cw - bw) / 2, bh = 8;
     double sub_h = o->sub_pt * 1.4, body_h = o->body_pt * 1.4, title_h = o->title_pt * 1.35;
     double y = h - B - 44;   // 从底往上排：（社区两行 + 复制钮）/ 副文 / 正文 / 条 / 标题 + 百分数 | stacked from the bottom: (community lines + copy button) / sub / body / bar / title + percent
-    if ((o->comm = dm_loadpage_community_shown())) {   // 社区两行做成不抢眼的页脚（用户 2026-10-29：「太乱，字小一些、按钮小一些、文字加透明度」）：12 点字、半透明，贴底占满内容宽（安全区 + 边距之内），
+    o->comm = dm_loadpage_community_shown();
+    if (o->comm || !g_wordmark) {   // 关字标时总按有页脚排（见 dm_loadpage_set_wordmark） | with the wordmark off, always laid out as with a footer (see dm_loadpage_set_wordmark)   // 社区两行做成不抢眼的页脚（用户 2026-10-29：「太乱，字小一些、按钮小一些、文字加透明度」）：12 点字、半透明，贴底占满内容宽（安全区 + 边距之内），
                                                         // 字左对齐；复制钮是一行高的小钮，靠右、与两行字竖向居中；进度那一组整体上移
                                                         // community lines as an unobtrusive footer (user 2026-10-29: "too busy - smaller text, smaller button, more transparent text"): 12 pt, translucent, at the bottom across
                                                         // the full content width (inside the safe area + margin), text left aligned; the copy button is a small one-line pill on the right, centred on the two lines; the progress group moves up
@@ -285,6 +290,19 @@ void dm_loadpage_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     o->mute = (dm_lp_rect){ w - R - m - 40, T + m - 6, 40, 40 };
     // 字标图：宽取内容宽的 58%（横屏）/ 86%（竖屏），不超过 560 点、不矮于能放下的高度；中心在 0.36h（横）/ 0.30h（竖），夹在安全区上沿 + 边距与标题上方 24 点之间
     // Wordmark: width 58% of the content width (landscape) / 86% (portrait), at most 560 pt and never taller than the room available; centre at 0.36h (landscape) / 0.30h (portrait), clamped between the top safe edge + margin and 24 pt above the title
+    if (!g_wordmark) {   // 背景按图标外框放进「安全区顶 + 边距」到「标题上方 18 点」之间，不比 cover 更大；图外是底色（图边本来就渐隐到黑） | fit the icon box between the safe top + margin and 18 pt above the title, never larger than cover; outside the image is the base colour (the image edges already fade to black)
+        const double *ib = o->landscape ? k_icon_land : k_icon_port; double iw = o->bg_w, ih = o->bg_h;
+        double top = T + m, bot = o->title.y - 18, ah = bot - top, aw = cw;
+        double cover = w / iw > h / ih ? w / iw : h / ih, sc = cover;
+        if (ah > 0 && sc * ih * (ib[3] - ib[1]) > ah) sc = ah / (ih * (ib[3] - ib[1]));
+        if (sc * iw * (ib[2] - ib[0]) > aw) sc = aw / (iw * (ib[2] - ib[0]));
+        double icx = iw * (ib[0] + ib[2]) / 2 * sc, icy = ih * (ib[1] + ib[3]) / 2 * sc;   // 图标中心在缩放后图里的位置 | icon centre within the scaled image
+        double cx = cx0 + cw / 2, cy = (ah > 0 ? top + ah / 2 : h * 0.3);
+        o->bg_src = (dm_lp_rect){ 0, 0, iw, ih };
+        o->bg_dst = (dm_lp_rect){ cx - icx, cy - icy, iw * sc, ih * sc };
+        o->logo_name = NULL; o->logo = (dm_lp_rect){ 0, 0, 0, 0 };
+        return;
+    }
     o->logo_name = dm_loadpage_logo_name(&o->logo_w, &o->logo_h);
     { double lw = cw * (o->landscape ? 0.58 : 0.86); if (lw > 560) lw = 560; double lh = lw * o->logo_h / o->logo_w;
       double top_lim = T + m + 46, bot_lim = o->title.y - 24, room = bot_lim - top_lim;

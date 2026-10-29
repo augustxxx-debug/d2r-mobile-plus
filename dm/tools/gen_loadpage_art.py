@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""加载页背景图（自绘，程序化生成；不含任何原版素材）：深色石纹 + 哥特尖拱 + 中下方火光 + 飘散火星 + 暗角 + 细金线花纹。
+"""【旧背景，已不用】2026-10-29 起 dm/assets/loadpage 的两张背景改为 App 图标美术合成（图标居中、四周渐隐到黑、底部压暗；源图 dm/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png），
+本脚本只留着重现旧图，缺省不再写进 dm/assets/loadpage（要写得显式给目录并加 --overwrite-shipped）。
+[Old backgrounds, no longer used] Since 2026-10-29 the two backgrounds in dm/assets/loadpage are composites of the App icon art; this script only reproduces the old art and no longer
+writes into dm/assets/loadpage by default (give the directory explicitly and add --overwrite-shipped to do so).
+
+加载页背景图（自绘，程序化生成；不含任何原版素材）：深色石纹 + 哥特尖拱 + 中下方火光 + 飘散火星 + 暗角 + 细金线花纹。
 两张：横 2048×1152（loadpage_bg_land.jpg）、竖 1152×2048（loadpage_bg_port.jpg），焦点（火光中心）在 (0.5, 0.58)，与 dm/host/dm_loadpage.c 的 LP_FOCUS 一致。
 固定随机种子，重跑得到同一张图。输出 JPEG 质量 82，每张控制在 1 MB 以内。
 用法：python3 dm/tools/gen_loadpage_art.py [输出目录=dm/assets/loadpage]（要 Pillow + numpy，项目 venv 里有）
@@ -113,7 +118,11 @@ def render(w, h, seed):
     return out
 
 def main():
-    dest = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'loadpage')
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    shipped = os.path.realpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'assets', 'loadpage'))
+    if not args: sys.exit('用法：gen_loadpage_art.py <输出目录>（旧背景；随包的两张背景已改为 App 图标合成，见本文件开头） | usage: gen_loadpage_art.py <output dir>')
+    dest = args[0]
+    if os.path.realpath(dest) == shipped and '--overwrite-shipped' not in sys.argv: sys.exit('不覆盖 dm/assets/loadpage 里随包的图标背景；确实要覆盖请加 --overwrite-shipped | refusing to overwrite the shipped icon backgrounds; add --overwrite-shipped')
     os.makedirs(dest, exist_ok=True)
     for name, w, h, seed in (('loadpage_bg_land.jpg', 2048, 1152, 20261029), ('loadpage_bg_port.jpg', 1152, 2048, 20261030)):
         img = render(w, h, seed); p = os.path.join(dest, name)
