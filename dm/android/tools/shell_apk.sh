@@ -37,10 +37,10 @@ W=$O/tree
 rm -rf "$G" "$O/ref" "$O/D2RMobile-android.apk" && mkdir -p "$G" "$O/ref" "$W" || die "建不了 $O"
 # 原生编译缓存每次清掉：源码副本用 tar 拷、保留了文件修改时间，上一次出包的 .o 可能比刚改过的源文件还新，增量编译会漏掉它（2026-10-30 实测：
 # 正式包里的加载页核心比源码旧一个提交）。全量编译慢几分钟，换包与源码一致
-# Clear the native build caches every time: the source copy is made with tar, which keeps file modification times, so an object file from the previous build can be
+# Clear the native build caches (the whole source copy, see below) every time: the source copy is made with tar, which keeps file modification times, so an object file from the previous build can be
 # newer than a source file just edited and the incremental build skips it (seen 2026-10-30: the release package's loading page core was one commit behind the source).
 # A full native build takes a few minutes longer; the package then matches the source
-rm -rf "$W/dm/android/app/.cxx" "$W/dm/android/app/build" "$W/dm/android/build" || die "清不掉原生编译缓存"
+rm -rf "$W" && mkdir -p "$W" || die "清不掉源码副本"   # 整个副本重拷：git 里删掉的文件不会留在副本里、被 CMake 的通配规则编进包（七审 Q7-17） | recopy the whole tree: files deleted in git do not linger and get globbed into the build (seventh review Q7-17)
 # 用 tar 拷（不用 rsync：macOS 自带的 openrsync 没有 --files-from=- 配 -0 / --ignore-missing-args 这几项，Linux 的 rsync 才有；bsdtar 与 GNU tar 都认 --null -T -）
 # Copy with tar (not rsync: the openrsync that ships with macOS lacks --files-from=- with -0 / --ignore-missing-args, only Linux's rsync has them; bsdtar and GNU tar both accept --null -T -)
 (cd "$DM/.." && git ls-files -z -co --exclude-standard dm | tar -c --null -T - -f - | tar -x -f - -C "$W") || die "拷源码副本失败"
