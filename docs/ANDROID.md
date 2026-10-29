@@ -1,6 +1,6 @@
 # Playing on an Android phone
 
-The Android version works like the iOS shell: the release page has an **APK that contains no game content**, you make an **import pack** on a computer from your own game files, copy it to the phone, and the App imports it when you open it. No adb, no Android Studio, and no need to build the APK yourself. You can also skip the computer entirely: put the game files on the phone and the App makes the pack itself (see "No computer").
+The Android version works like the iOS shell: the release page has an **APK that contains no game content**. The simplest route needs no computer: put your own game files on the phone and the App makes the **import pack** itself on first launch (see "No computer"). You can still make the import pack on a computer from your own game files and copy it to the phone; the App imports it when you open it. No adb, no Android Studio, and no need to build the APK yourself.
 
 中文：[ANDROID.zh-CN.md](ANDROID.zh-CN.md)
 
@@ -24,7 +24,7 @@ Download/S2X/D2R Mobile/data/    the game resources, as in step 2 below
 
 Open the App. When it finds no import pack it says it is building the shader cache and starts by itself: it makes, on the phone and from your game files, the same content a computer would, byte for byte. It takes about 5–15 minutes, only once; stay on that screen. It needs about 3 GB of free space (the intermediate files are deleted afterwards, leaving about 0.7 GB). If files are missing, space runs out or a step fails, the screen says why, and the log is in `Download/S2X/D2R Mobile/gen_log.txt`. After installing a new APK it builds again by itself.
 
-`ExeFS` and `data` come from the same extraction (see [GAME_FILES.md](GAME_FILES.md)). On-phone generation uses the original font; for another UI font, make the import pack on a computer as below.
+`ExeFS` and `data` come from the same extraction (see [GAME_FILES.md](GAME_FILES.md)). On-phone generation uses the font bundled in the APK, LXGW WenKai (霞鹜文楷, SIL OFL 1.1), for the Chinese / Japanese glyphs of the UI, the same as the computer route by default; for another UI font, make the import pack on a computer as below.
 
 To make it on a computer instead (faster, or when the phone is short of space), follow the three steps below; when an `android` import pack is on the phone, the App uses it first.
 

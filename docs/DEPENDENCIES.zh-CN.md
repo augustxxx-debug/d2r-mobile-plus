@@ -51,7 +51,7 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 
 ## 安卓安装包随附的组件
 
-安卓 APK 带着在手机上生成导入包要用的工具（`assets/dmgen/runtime.zip` 与 `lib/arm64-v8a/libdmgen_*.so`，由 `dm/android/tools/gen_runtime.sh` 编出）和一款开源界面字体，都不是游戏内容。许可证原文随包在 `assets/dmgen/THIRD_PARTY_NOTICES.txt`（与 [`dm/android/THIRD_PARTY_NOTICES.txt`](../dm/android/THIRD_PARTY_NOTICES.txt) 同一份，由 `dm/android/tools/third_party_notices.py` 生成）；下表是 APK 里的实际版本，与上面电脑上装的 Python 包版本不同。
+安卓 APK 带着在手机上生成导入包要用的工具（`assets/dmgen/runtime.zip` 与 `lib/arm64-v8a/libdmgen_*.so`，由 `dm/android/tools/gen_runtime.sh` 编出）、一款开源界面字体，以及 App 本身编入的第三方代码，都不是游戏内容。许可证原文随包在 `assets/dmgen/THIRD_PARTY_NOTICES.txt`（与 [`dm/android/THIRD_PARTY_NOTICES.txt`](../dm/android/THIRD_PARTY_NOTICES.txt) 同一份，由 `dm/android/tools/third_party_notices.py` 生成）；下表是 APK 里的实际版本，与上面电脑上装的 Python 包版本不同。
 
 | 组件 | APK 里的版本 | 许可证 |
 |---|---|---|
@@ -66,6 +66,8 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 | SPIRV-Tools / SPIRV-Headers | 提交 `28f99f74` / `86f980c7` | Apache-2.0 / MIT |
 | .NET NativeAOT 运行时（着色器翻译工具），含 Ryujinx 着色器翻译器 | 10.0.13；Ryujinx 1.3.2 | MIT |
 | 霞鹜文楷（LXGW WenKai）Medium | v1.530 | SIL Open Font License 1.1 |
+| Kotlin 标准库与 JetBrains annotations（Android Gradle 插件自动带入，在 `classes.dex`） | 2.2.10；13.0 | Apache-2.0 |
+| libdeflate、bcdec、`nvn.h`、deko3d 布局算法（编入 `libdm.so` / `libdmdeswizzle.so`，见下一节） | 1.26；v0.985；—；— | MIT；MIT（MIT / Unlicense 二选一）；MIT；Zlib |
 
 ## 可选
 
