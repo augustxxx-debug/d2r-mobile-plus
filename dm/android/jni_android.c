@@ -138,7 +138,10 @@ static void *sharelog_worker(void *arg) {
     const char *ver = getenv("DM_VERSION_LABEL"); char vs[64] = "", tsb[32]; { const char *v = ver ? ver : ""; size_t n = 0; for (; *v && n < sizeof vs - 1; v++) if ((*v >= '0' && *v <= '9') || *v == '.' || *v == '+') vs[n++] = *v; vs[n] = 0; }
     time_t now = time(NULL); strftime(tsb, sizeof tsb, "%Y%m%d_%H%M%S", localtime(&now));
     snprintf(out, sizeof out, "%s/D2RMobile_diagnostics_%s_%s.txt", dir, vs[0] ? vs : "dev", tsb);
-    long n = dm_sharelog_build(g_runtime, g_files, out, ver, dev, "com.xiaoboluo.d2r");
+    // 包名从内部目录取（/data/user/<n>/<包名>/files）：包名换过（com.xiaoboluo.d2r → com.augustusplay.d2rmobileplus），-PdmAppId 也会换，不写死
+    // the package name comes from the internal directory (/data/user/<n>/<package>/files): it changed once (com.xiaoboluo.d2r → com.augustusplay.d2rmobileplus) and -PdmAppId changes it too, so it is not hard-coded
+    char app_id[256] = ""; { char t[1024]; snprintf(t, sizeof t, "%s", g_files); char *e = strrchr(t, '/'); if (e && !strcmp(e, "/files")) { *e = 0; e = strrchr(t, '/'); if (e && e[1]) snprintf(app_id, sizeof app_id, "%s", e + 1); } }
+    long n = dm_sharelog_build(g_runtime, g_files, out, ver, dev, app_id[0] ? app_id : "com.augustusplay.d2rmobileplus");
     if (n < 0) { LOG("【红】诊断日志：打包失败"); atomic_store(&g_share_busy, 0); return NULL; }
     LOG("诊断日志：已打包 %s（%ld 字节）", strrchr(out, '/') + 1, n);
     const char *tc = getenv("DM_TEST_SHARELOG_CLOSE");
