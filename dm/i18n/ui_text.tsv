@@ -361,6 +361,7 @@ dmPadLegPrev	上一页	Previous Page	Página anterior		Предыдущая	이�
 dmPadLegNext	下一页	Next Page	Página siguiente		Следующая	다음	同上；英文 = 原版 ui[NPCNextPage]
 dmPadHintDeposit	存入	Deposit	Depositar		Внести	보관	编年史页「按住 Y」那半句（dm_padmode.c）；英文 = 原版 ui[strGoldDeposit]
 dmPadLegIdentify	捡起（按住鉴定）	Pick Up (Hold to Identify)	Recoger (mantén: identificar)	Recolectar (mantén: identificar)	Взять (держать — опознать)	감정	手柄模式光标在未鉴定物品上时，原版提示条 A 那条的「捡起」换成这句（dm_padmode.c 换串小表）；写法照原版「捡起(按住使用)」；英文：拟
+dmPadLegCompare	比较（按住）	Compare (Hold)	Comparar (mantén)	Comparar (mantén)	Сравнить (держать)	비교 (길게 누르기)	手柄模式原版提示条「比较」一直换成这句（dm_padmode.c 换串小表）：比较只在按住时显示，松开就收；写法照原版「捡起(按住使用)」（缺陷台账 B014 / B029）| controller mode: the original legend's "Compare" is always replaced with this (dm_padmode.c swap table): it only compares while held; worded like the original "Pick Up (Hold to Use)" (defect ledger B014 / B029)
 dmPadDiffLine	游戏难度：%d	Game Difficulty: %d	Dificultad de la partida: %d	Dificultad de partida: %d	Сложность игры: %d	게임 난이도: %d	手柄版暂停菜单的难度行（dm_padmode.c）；英文 = 原版 ui[OptionsMenuGameDifficulty]「Game Difficulty」
 dmRiftGamAfterEn	通关本层后	After This Level	Tras este nivel		После уровня	이 층 이후	大秘境面板赌博区英文版的小标题行（中文界面不用：中文是「通关后暗金 / 通关后套装」两行）
 dmRiftMsNEn	每档另得 符文 · 赦免之证 · 打孔	+ Rune, Token of Absolution, Sockets	+ Runa, Muestra de absolución, Huecos	+Runa, Insignia de absolución, Engarce	+ руна, Талисман очищения, гнездо	단계마다 룬 · 사면 증표 · 소켓 추가	大秘境面板右上那句的英文版控件（物品名 = 暗黑 2 原版 item-modifiers[toa]「Token of Absolution」、ui[Addsocketsui]「Add sockets」）
