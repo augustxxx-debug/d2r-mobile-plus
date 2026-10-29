@@ -16,6 +16,8 @@ t_dirty_race: t_dirty_race.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_di
 	clang $(CFLAGS) -o $@ t_dirty_race.c ../../host/crash.c
 t_rtshadow: t_rtshadow.m ../nvn/nvn_rtshadow_msl.h ../nvn/nvn_rtshadow_util.h
 	clang -O1 -g -Wall -fobjc-arc -o $@ t_rtshadow.m -framework Metal -framework Foundation
+t_rts_upsample: t_rts_upsample.m ../nvn/nvn_rtshadow_msl.h ../nvn/nvn_rtshadow_util.h
+	clang -O1 -g -Wall -fobjc-arc -o $@ t_rts_upsample.m -framework Metal -framework Foundation
 t_builtin: t_builtin.m ../nvn/nvn_builtin.h
 	clang -O1 -g -Wall -fobjc-arc -o $@ t_builtin.m -framework Metal -weak_framework MetalFX -framework Foundation
 t_deswz_gpu: t_deswz_gpu.m ../tex/nvn_deswizzle.c ../tex/nvn_deswizzle_gpu.m ../tex/nvn_deswizzle.h ../tex/nvn_deswizzle_gpu.h ../nvn/nvn_tex.c ../nvn/nvn_tex.h
@@ -139,6 +141,7 @@ run: \
 	t_rts_span \
 	t_rts_span_asan \
 	t_rts_state \
+	t_rts_upsample \
 	t_rtshadow \
 	t_rt_depth_ro \
 	t_rt_range \
@@ -190,7 +193,7 @@ run: \
 	./t_memwarn   # 系统内存告警累计不封顶，进每 300 帧内存行 | uncapped system memory-warning total on the every-300-frames memory line
 	@for a in "" --off; do ./t_cmdalloc $$a; s=$$?; if [ $$s = 77 ]; then echo "SKIP t_cmdalloc"; break; elif [ $$s != 0 ]; then exit $$s; fi; done   # 命令分配器超阈值换新；--off 证明分得出；77 = 旧接口版 | command allocators replaced above a threshold; --off proves it discriminates; 77 = older-API build
 	./t_gcap   # GPU 抓帧（DM_GPU_CAPTURE）；测试自己设 METAL_CAPTURE_ENABLED | GPU capture (DM_GPU_CAPTURE); the test sets METAL_CAPTURE_ENABLED itself
-	@for t in t_rts_gate t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
+	@for t in t_rts_gate t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rts_upsample t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
 	python3 test_tbdr_budget.py
 	./t_mp_grid
 	python3 test_present_line.py   # 上屏行全程带 footprint（真机长测 7500 帧后断） | the present line carries footprint throughout (cut after frame 7500 in the device long test)

@@ -94,8 +94,10 @@ static const char *k_rts_msl =
 "  if (dot(n, n) > 0.5 && ndl < nlmin) return false;\n"
 "  o = p + n * (nbias * (1.0 - saturate(ndl))) + sun * bias; return true; }\n"
 "struct K { float4x4 invVP; float4 sun; uint2 size; float bias; float pad; float nbias; float nlmin; float zn; float pad2; };\n"
+// 降分辨率（第 2 / 3 档）在块中心取样：rts_pup 按块中心深度给权重，原先取块左上，背光写 0 后 0 沿轮廓漏到相邻受光面（十六审 Q16-02，t_rts_upsample）
+// reduced resolution (levels 2 / 3) samples the block centre: rts_pup weights by the block-centre depth, and the old top-left sample let back-face 0 leak along silhouettes onto adjacent lit surfaces (16th review Q16-02, t_rts_upsample)
 "kernel void rts_trace(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> mask [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant K &k [[buffer(1)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 full = uint2(depth.get_width(), depth.get_height()); uint sc = k.pad > 3.0 ? 4u : k.pad > 0.5 ? 2u : 1u; uint2 fg = min(g * sc, full - 1); float z = depth.read(fg);\n"
+"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 full = uint2(depth.get_width(), depth.get_height()); uint sc = k.pad > 3.0 ? 4u : k.pad > 0.5 ? 2u : 1u; uint2 fg = min(g * sc + sc / 2u, full - 1); float z = depth.read(fg);\n"
 "  if (z >= 1.0) { mask.write(float4(1), g); return; }\n"   // 远平面 = 没画东西（天空） | far plane = nothing drawn (sky)
 "  float2 ndc = float2((float(fg.x) + 0.5) / float(full.x) * 2.0 - 1.0, 1.0 - (float(fg.y) + 0.5) / float(full.y) * 2.0);\n"
 "  float4 w = k.invVP * float4(ndc, z, 1.0); float3 p = w.xyz / w.w;\n"
