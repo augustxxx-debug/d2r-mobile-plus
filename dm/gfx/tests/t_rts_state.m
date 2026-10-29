@@ -122,6 +122,18 @@ int main(void) { @autoreleasepool {
       main_pass(); hdr_again(); ok = frame_close();
       EXPECT("同一矩阵画两次（两级级联）：只进一次", 1, n_same); EXPECT("同一矩阵画两次：记一次重复", 1, d_same);
       EXPECT("同网格同朝向、平移不同：第二个单位也进 TLAS", 2, n_moved); EXPECT("去重标签：GPU 无错", 1, ok); }
+    // 10. 蒙皮实例槽不越过网格缓存上限（十六审）：上限只够再建 2 个槽，第 3 个（第 N+1 只同模型单位）不建、返回 NULL（调用处照原版阴影图），已建的槽照常复用
+    // 10. skinned instance slots do not cross the mesh cache cap (16th review): with room for 2 more slots, the 3rd (the N+1-th unit of the same model) is not created and returns NULL (the caller uses the original shadow map); existing slots are reused as before
+    { rts_mesh *m = mesh_of(0); EXPECT("网格 0 已建好（槽测试用）", 1, m && RTS_MESH_READY(m));
+      if (m) { uint64_t keep = g_rts.budget, one = m->as_size + (uint64_t)m->nverts * 28 + RTS_SLOTS_MAX * 256, b0 = g_rts.cache_bytes; g_rts.budget = b0 + one * 5 / 2;
+        int got = 0; while (got < 8 && rts_slot_take(m, 1)) got++;
+        EXPECT("上限只够 2 个槽：建了 2 个", 2, got); EXPECT("第 3 个没建：网格缓存没越过上限（估算口径）", 1, b0 + one * got <= g_rts.budget);
+        m->used = 0; EXPECT("已建的槽照常复用（下一帧从头取）", 1, rts_slot_take(m, 1) != NULL);
+        g_rts.budget = keep; }
+#ifdef RTS_SLOTCAP_HAVE
+      EXPECT("「蒙皮槽超限回退」有计数", 1, g_rts.n_slot_cap >= 1);
+#endif
+    }
 #ifdef RTS_MAX_ALPHA
     // 导出绘制的顶点参数块（第四阶段 Mac 实测）：补画原版会把顶点阶段标成干净，同一通道里同一变体、绑定不变时会复用上一份参数块 → 各部件写进第一个部件的槽；切到导出状态必须重新标脏
     // the export draw's vertex argument block (measured on the Mac in phase 4): the original re-encode marks the vertex stage clean, and with the same variant and unchanged bindings in one pass the previous block is reused → every part writes into the first part's slot; switching to the export state must mark it dirty again

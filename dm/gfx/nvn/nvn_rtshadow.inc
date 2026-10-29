@@ -83,9 +83,9 @@ typedef struct { float lvp[16]; float vp[4]; float dr[2]; uint32_t fs, stride; u
 _Static_assert(sizeof(rts_ai) == 144, "rts_ai layout");
 enum { RA_OK, RA_NOLIB, RA_COMPILING, RA_NOFS, RA_NOVAR, RA_LOC, RA_ARGS, RA_NONIDX, RA_SLOT, RA_CAP, RA_QUOTA, RA_FSLOT, RA_MSLOT, RA_LEVEL, RA_N };
 static const char *const k_ra_why[RA_N] = {"", "无判定库", "判定库在编", "片元不在库", "顶点无_var", "插值对不上", "参数块过长", "非索引绘制", "网格未就绪", "参数块没抓到", "导出配额满", "每帧槽忙", "网格槽满", "降档照原版"};
-enum { RM_PASS, RM_NODEPTH, RM_SMAPFULL, RM_PRIM, RM_SMALL, RM_ATTR, RM_FMT, RM_ITYPE, RM_INSTANCED, RM_CB0, RM_IDX, RM_VRANGE, RM_VPOOL, RM_QUOTA, RM_ALLOC, RM_MESH, RM_NOTRT, RM_NOTREADY, RM_FULL, RM_POSE, RM_ALPHA, RM_CACHE, RM_N };   // 阴影绘制没进 TLAS 的原因（本帧阴影图因此不清） | why a shadow draw stayed out of the TLAS (so this frame's maps are not cleared)
+enum { RM_PASS, RM_NODEPTH, RM_SMAPFULL, RM_PRIM, RM_SMALL, RM_ATTR, RM_FMT, RM_ITYPE, RM_INSTANCED, RM_CB0, RM_IDX, RM_VRANGE, RM_VPOOL, RM_QUOTA, RM_ALLOC, RM_MESH, RM_NOTRT, RM_NOTREADY, RM_FULL, RM_POSE, RM_ALPHA, RM_CACHE, RM_SLOTCAP, RM_N };   // 阴影绘制没进 TLAS 的原因（本帧阴影图因此不清） | why a shadow draw stayed out of the TLAS (so this frame's maps are not cleared)
 static const char *const k_rm_why[RM_N] = {"通道没登记", "通道没挂深度", "阴影图登记满", "图元不认（不是三角形列表 / 带 / 四边形）", "顶点不足 3（不画，不挡清图）", "无位置属性", "位置格式不认", "索引宽度不认", "实例化", "无 cb0",
-    "索引段不在内存池", "顶点范围越界", "顶点不在内存池", "本帧新建配额满", "网格对象建不出", "网格取不到", "非光追帧", "网格待建 / 刚提交", "实例满", "蒙皮只有绑定姿势", "镂空", "网格缓存满（工作集比上限大，不新建，免得每帧淘汰重建）"};
+    "索引段不在内存池", "顶点范围越界", "顶点不在内存池", "本帧新建配额满", "网格对象建不出", "网格取不到", "非光追帧", "网格待建 / 刚提交", "实例满", "蒙皮只有绑定姿势", "镂空", "网格缓存满（工作集比上限大，不新建，免得每帧淘汰重建）", "蒙皮槽超限回退（网格缓存到上限，照原版阴影图）"};
 // 单测用（审计分支 d42c8ee / 2fec943 的口径）：光追帧里没进 TLAS 的绘制按原因累计 | for the unit tests (the audit branch's d42c8ee / 2fec943 convention): draws outside the TLAS in ray-traced frames, by reason
 #define RTS_UNC(r) ((long long)g_rts.n_unc[r])
 #define RTS_UNC_PASS RM_PASS
@@ -117,6 +117,7 @@ static int g_rts_lit_inject;   // RTS_LIT_FAIL_SET 的开关，生产恒 0 | the
 #define RTS_PART_SET(v) (g_rts.part = (v))   // 单测用：局部回退开关（生产缺省开，DM_RT_SHADOW_PART=0 关） | for the unit tests: the partial-fallback switch (on in production, DM_RT_SHADOW_PART=0 turns it off)
 #define RTS_PAUSE_SET(s) (g_rts.pause_until = (s) > 0 ? rts_now() + (s) : 0, rts_lvl_update())   // 单测用：GPU 挂起保护的暂停（秒；0 = 结束） | for the unit tests: the hang-protection pause (seconds; 0 = end)
 #define RTS_HAS_NOTE_PASS 1
+#define RTS_SLOTCAP_HAVE 1   // 单测用：有「蒙皮槽超限回退」计数（g_rts.n_slot_cap） | for the unit tests: the "skinned slot over the cap" count exists
 // 每帧槽：fence = 最后一次用它的提交；GPU 做完那次提交（g_done ≥ fence）才复用 | per-frame slot: fence = the last submission that used it; reused only once the GPU finished that submission (g_done >= fence)
 typedef struct { id<MTLBuffer> inst, k, d, pk, picks, bb, lcopy, ai, aargs; id<MTLTexture> lctex; uint32_t lcopy_texels, btris; uint64_t fence, frame; int picked; id<MTL4CounterHeap> ts; int ts_state; } rts_fslot;   // btris：这一帧在光追通道里新建 BLAS 的三角形数（自动降档不计建网格的帧） | btris: triangles of the BLAS built in this frame's ray-tracing pass (the automatic downgrade skips frames that built meshes)   // ts：光追计算通道起止两个时间戳（自动降档用；ts_state 1 = 写了起点、2 = 起止都写了） | ts: start / end timestamps of the ray-tracing compute pass (for the automatic downgrade; ts_state 1 = start written, 2 = both)
 #define RTS_HOLD_MIN 30     // 第一次从光追切回原版后要求的连续完整帧数 | consecutive complete frames required after the first switch back to original
@@ -168,7 +169,7 @@ static struct {
     float soft, soft_maxd; float player_scale; rts_player_track ptrack; int ptrack_logged; uint64_t n_player_scaled;
     int pl_done, lc_done; uint64_t n_ptraced; int last_npl;
     int trace_pending; id<MTLTexture> trace_depth; uint64_t n_rt_draws, n_recv_skip, n_late_trace;
-    uint64_t n_frames, n_builds, n_traced, n_skipped_draws, n_refit, n_evict_budget, n_slot_busy, key_ns; double build_tris;
+    uint64_t n_frames, n_builds, n_traced, n_skipped_draws, n_refit, n_evict_budget, n_slot_busy, n_slot_cap, key_ns; double build_tris;
     id<MTLComputePipelineState> ps_trace_a, ps_trace_soft_a, ps_ptrace_a; NSDictionary *alpha_idx; int alpha_nfs, alpha_logged; double alpha_ms;   // 判定库版追踪管线（异步编好后置上）；键 → @[序号, locn 位图] | judge-library trace pipelines (set when the async compile lands); key → @[index, locn bitmap]
     uint64_t miss[RM_N];   // 累计 | cumulative
     uint64_t n_unc[RM_N]; int f_unc[RM_N]; uint64_t n_unc_log, n_kept_frames, n_carry, n_off_frames; int unc_why, pass_why; uint32_t prim_mask; uint64_t n_empty, key_bytes; char why[220];   // 光追帧里没进 TLAS 的：按原因累计 / 本帧、记过几帧；本次绘制 / 本通道的原因；不认的图元掩码；空绘制数；键摘要字节；本帧没做完整（或保留了哪张图）的原因 | outside the TLAS in ray-traced frames: cumulative / this frame by reason, frames logged; this draw's / pass's reason; unknown primitive mask; empty draws; key digest bytes; why this frame was not complete (or which map it kept)
@@ -794,6 +795,9 @@ static rts_islot *rts_slot_take(rts_mesh *m, uint32_t stride) {
     if (m->nslots && m->vstride != stride) return NULL;
     if (m->used < m->nslots) return &m->slots[m->used++];
     if (m->nslots >= RTS_MAX_SLOTS) return NULL;
+    // 新槽也算进网格缓存：建了会越过上限就不建，这次绘制照原版阴影图（十六审：同种怪不再被去重后，30 只沉沦魔让缓存 64 → 83 MB，槽只增不减、怪越多越涨）
+    // a new slot counts toward the mesh cache: if it would cross the cap it is not created and this draw goes to the original shadow map (16th review: with same-type monsters no longer deduped, 30 Fallen took the cache from 64 to 83 MB; slots only grow)
+    if (g_rts.cache_bytes + m->as_size + (uint64_t)m->nverts * (16 * stride + 12) + RTS_SLOTS_MAX * 256 > g_rts.budget) { g_rts.n_slot_cap++; return NULL; }
     rts_islot *s = &m->slots[m->nslots]; memset(s, 0, sizeof *s); m->vstride = stride;
     MTLResourceOptions so = getenv("DM_RT_SHADOW_CHECK") ? MTLResourceStorageModeShared : MTLResourceStorageModePrivate;   // 核对时可回读 | readable back during the check
     s->pos4 = [g_dev newBufferWithLength:(NSUInteger)m->nverts * 16 * stride options:so]; s->pos3 = [g_dev newBufferWithLength:(NSUInteger)m->nverts * 12 options:so];
@@ -1011,6 +1015,7 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
             r = 2;
         } else if (alpha) { awhy = !(g_rts.nexp < RTS_MAX_EXPORT && g_rts.nai < RTS_MAX_ALPHA) ? RA_QUOTA : fs < 0 ? RA_FSLOT : RA_MSLOT; RTS_MISS(RM_ALPHA); }
         else if (prepass) return 0;   // 预渲染：没导出就不进（绑定姿势会挡错地方） | prepass: no export means no entry (the bind pose would block the wrong places)
+        else if (s == NULL && fs >= 0 && m->nslots < RTS_MAX_SLOTS && (!m->nslots || m->vstride == stride)) RTS_MISS(RM_SLOTCAP);   // 槽因上限（或分配失败）没建：照原版，不拿绑定姿势进 TLAS | slot refused by the cap (or a failed allocation): original map, no bind pose in the TLAS
         else { g_rts.nskin_pose++; if (shadow) { g_rts.nuncov++; g_rts.miss[RM_POSE]++; if (g_rts.rt_frame) { g_rts.n_unc[RM_POSE]++; g_rts.f_unc[RM_POSE]++; } } }
     }
     if (r != 2) for (int c = 0; c < 4; c++) { d->transformationMatrix.columns[c].x = M[c * 4 + 0]; d->transformationMatrix.columns[c].y = M[c * 4 + 1]; d->transformationMatrix.columns[c].z = M[c * 4 + 2]; }   // 行向量 3x4 的第 c 行 = 列主序的第 c 列 | row c of the row-vector 3x4 = column c in column-major
