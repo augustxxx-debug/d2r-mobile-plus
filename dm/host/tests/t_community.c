@@ -28,6 +28,7 @@ void dm_ui_wheel_on(uint64_t w, int notches) { (void)w; (void)notches; }
 uint64_t dm_wref_get(dm_wref *r) { return r ? r->w : 0; }
 void dm_ui_top_chk(uint64_t r, const char *n, uint64_t g) { (void)r; (void)n; (void)g; }
 static int checks, fails;
+static int chs(int lg, char *first) { int c[2]; int n = dm_community_channels(lg, c); first[0] = n ? (char)c[0] : 0; return n; }   // 渠道行数，first[0] = 第一行渠道 | channel rows; first[0] = the first row's channel
 static int t_recalcs; static void t_recalc(uint64_t w) { (void)w; t_recalcs++; }   // 假控件虚表 +0x10（重算）：只计数 | fake widget vtable +0x10 (recompute): counts only
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
 static char dir[64], cache[128], logp[128];
@@ -93,7 +94,7 @@ int main(void) {
     log_reset(); atomic_store(&g_show, 2); t_group = DM_LG_ZH; dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy");
     CHECK(copies == 1); CHECK(dm_community_copy_count() == 1); CHECK(!strcmp(copied, "1129913678")); CHECK(atomic_load(&g_copied) == 1); CHECK(strstr(log_text(), "社区入口：复制 群号"));
     log_reset(); t_group = DM_LG_EN; dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy");
-    CHECK(copies == 2); CHECK(!strcmp(copied, "https://github.com/example/d2r-mobile-plus/discussions")); CHECK(strstr(log_text(), "社区入口：复制 链接"));
+    CHECK(copies == 2); CHECK(!strcmp(copied, "https://github.com/example/d2r-mobile-plus/discussions")); CHECK(strstr(log_text(), "社区入口：复制 GitHub"));
     atomic_store(&g_show, 0); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy"); CHECK(copies == 2);
     // 11. 剪贴板回调失败 / 没登记：记失败、不计数 | 11. Clipboard callback fails / not registered: failure recorded, not counted
     dm_community_copy_init(copy_bad); atomic_store(&g_show, 2); log_reset(); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy"); CHECK(atomic_load(&g_copied) == -1); CHECK(dm_community_copy_count() == 2); CHECK(strstr(log_text(), "【红】社区入口：复制失败"));
@@ -204,16 +205,22 @@ int main(void) {
       n = credits_all(k_maker_default, 1, k_special_default, 1, th, 1, ", ", "", ln, 2, &tr); CHECK(n == 2 && tr && strstr(ln[1].text, "…"));
       n = credits_all(NULL, 0, k_special_default, 1, NULL, 0, ", ", "", ln, CR_LINES, &tr); CHECK(n == 1 && ln[0].kind == 1);   // 没有制作名单：不出那一行 | no maker list: no line
       CHECK(!strstr(log_text(), "Augustus")); }   // 名字不进日志（日志只记行数 / 人数） | the name never goes to the log (counts only)
-    // 21. 社区框 / 纯「关于」框的纵向节奏（用户 2026-10-29：Duo 内屏上「关于」段与按钮之间一大块空白）：末行文字下沿到按钮顶 ≤ 分隔线到版本行的间距（60），
-    //     框高 = 按钮顶 + 按钮高 115 + 下边距 45；各行自上而下不重叠
-    // 21. Vertical rhythm of the community box / About-only box (user, 2026-10-29: a large blank between the About section and the buttons on the Duo inner screen): last text line bottom to button top <= 60
-    //     (the divider-to-version gap); box height = button top + button 115 + bottom margin 45; lines do not overlap top to bottom
-    for (int t = 0; t < 4; t++) { int mode = 1 + t / 2, site = t & 1; co_geom_t g = co_geom(mode, site); int last = -1, prev_bottom = 0;
-        for (int k = 0; k < CO_DESC; k++) if (g.dy[k]) { CHECK(g.dy[k] + 30 - g.sz[k] / 2 >= prev_bottom); prev_bottom = g.dy[k] + 30 + g.sz[k] / 2; last = k; }
-        CHECK(last >= 2); CHECK(g.btn_y - prev_bottom <= CO_GAP && g.btn_y - prev_bottom >= 40); CHECK(g.h == g.btn_y + 115 + 45);
-        if (mode == 1) { CHECK(g.div_y > g.dy[1] + 30 + g.sz[1] / 2 && g.div_y < g.dy[3] + 30 - g.sz[3] / 2); CHECK(g.dy[3] + 30 - g.sz[3] / 2 - g.div_y <= CO_GAP); }
-        int ks = mode == 1 ? 4 : 1; CHECK(site ? g.dy[ks] > 0 : g.dy[ks] == 0); }   // GitHub 行：有官网才占位，没有时下面两行鸣谢上移、框跟着变矮 | GitHub line: only takes a slot with a website
-    { co_geom_t a = co_geom(1, 0), b2 = co_geom(1, 1); CHECK(b2.h == a.h + 48 && b2.dy[5] == a.dy[5] + 48); CHECK(a.h == 700 && b2.h == 748); }   // 框高：无官网 700 / 有官网 748（Q11.1-05） | box height 700 / 748
+    // 21. 社区 / 关于弹窗（RC1.1 重构）的纵向排版：渠道 0–2 行，卡片高 100、行距 120 不重叠；免费声明在卡片下、分隔线在声明与页脚之间；页脚两行；
+    //     末行文字下沿到「确定」顶 = CO_GAP；框高 = 按钮顶 + 115 + 45，按行数算（2 / 1 / 0 行 → 802 / 682 / 562）；横向 标签列 | 值列 | 小「复制」三列不重叠
+    // 21. Vertical layout of the redesigned box: 0-2 channel rows, cards 100 high at 120 pitch without overlap; free notice under the cards, divider between it and the footer; two footer lines;
+    //     last text bottom to OK top = CO_GAP; height = button top + 115 + 45 by row count (802 / 682 / 562); horizontally label | value | small Copy do not overlap
+    for (int n = 0; n <= CO_ROWS; n++) { co_geom_t g = co_geom(n); int bottom = 100;   // 标题文字框 40–100 | title box 40-100
+        for (int k = 0; k < n; k++) { CHECK(g.card_y[k] >= bottom + 20); bottom = g.card_y[k] + 100; }
+        CHECK(g.free_y >= bottom + 20); CHECK(g.div_y > g.free_y + 60 && g.foot_y[0] > g.div_y); CHECK(g.foot_y[1] == g.foot_y[0] + 48);
+        CHECK(g.btn_y - (g.foot_y[1] + 30 + 14) == CO_GAP); CHECK(g.h == g.btn_y + 115 + 45); }
+    CHECK(co_geom(2).h == 802 && co_geom(1).h == 682 && co_geom(0).h == 562 && co_geom(5).h == 802);
+    CHECK(40 + CO_LABEL_W <= CO_CARD_W / 2 + CO_VALUE_X - 20);                                    // 标签列右缘在值列左边 | label column ends left of the value column
+    CHECK(CO_VALUE_X + CO_VALUE_W + 30 == CO_CARD_W / 2 - 30 - CO_BTN_W && CO_VALUE_W >= 800);     // 值列到小按钮留 30 | value column ends 30 left of the small button
+    // 截断：按 §2.6 估宽超了列宽就截断加「…」，复制不受影响 | truncation: over the column by the §2.6 estimate → cut with "…"; copy unaffected
+    { char t[200]; snprintf(t, sizeof t, "d2rplus.augustusplay.com"); CHECK(!dm_community_fit(t, 36, CO_VALUE_W) && !strcmp(t, "d2rplus.augustusplay.com"));
+      snprintf(t, sizeof t, "a-very-long-subdomain-name.example-website.com/path"); CHECK(dm_community_fit(t, 36, CO_VALUE_W)); CHECK(strstr(t, "…"));
+      int w = 0; for (const char *q = t; *q; ) { unsigned char c = (unsigned char)*q; w += c < 0x80 ? 36 * 7 / 10 : 36; q += c < 0x80 ? 1 : c >= 0xe0 ? 3 : 2; } CHECK(w <= CO_VALUE_W);
+      snprintf(t, sizeof t, "特别鸣谢 甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥"); CHECK(dm_community_fit(t, 28, 560)); CHECK(strstr(t, "…")); }
     // 22. 官网（用户 2026-10-29：「关于弹窗里网址改成新的官网」）：清单 community.site（https:// 开头）进内存与缓存；链接一项优先官网、没有退回 GitHub；
     //     有官网时「关于」段出 GitHub 行（Q11.1-03：外文界面官网只出现一次），去掉 https:// 与末尾 /；site 不合规当这一项没有并记红；重复当格式错；只有 site 也算有字段；旧缓存（没有 site=）照读
     // 22. Website (user, 2026-10-29): manifest community.site (https://) goes to memory and cache; the link prefers it and falls back to GitHub; with a website the About section shows a GitHub line (Q11.1-03), without https:// and the trailing /;
@@ -223,27 +230,46 @@ int main(void) {
       log_reset(); CHECK(dm_community_manifest(s1, strlen(s1)) == 1); CHECK(strstr(log_text(), "官网=https://d2rplus.example.com/"));
       CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 1 && !strcmp(v, "1129913678"));
       CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/"));   // 外文：链接 = 官网 | other languages: link = website
-      CHECK(dm_community_about_github(lb, sizeof lb) == 1 && !strcmp(lb, "github.com/example/d2r-mobile-plus")); CHECK(cache_has("site=https://d2rplus.example.com/\n"));
+      CHECK(cache_has("site=https://d2rplus.example.com/\n"));
       restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_RU, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/")); CHECK(strstr(log_text(), "官网=https://d2rplus.example.com/"));
       static const char *const s2 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"http://d2rplus.example.com/\"}}";   // 不是 https | not https
       log_reset(); CHECK(dm_community_manifest(s2, strlen(s2)) == 1); CHECK(strstr(log_text(), "另一项格式坏"));
       CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus"));   // 退回 GitHub | falls back to GitHub
-      CHECK(dm_community_about_github(lb, sizeof lb) == 0 && !lb[0]); CHECK(!cache_has("site="));
+      CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(!cache_has("site="));
       static const char *const s3 = "{\"community\": {\"site\": \"https://a.example\", \"site\": \"https://b.example\"}}";
       log_reset(); CHECK(dm_community_manifest(s3, strlen(s3)) == 0); CHECK(strstr(log_text(), "site 重复")); CHECK(!dm_community_available());
       static const char *const s4 = "{\"community\": {\"site\": \"https://d2rplus.example.com/path\"}}";   // 只有官网：外文显示、中文也显示链接 | site only: every language shows it
       CHECK(dm_community_manifest(s4, strlen(s4)) == 1); CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/path"));
-      CHECK(dm_community_about_github(lb, sizeof lb) == 0);   // 只有官网没有 GitHub：不出 GitHub 行 | website without GitHub: no GitHub line
+      CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_SITE && chs(DM_LG_ZH, lb) == 1 && lb[0] == DM_CH_SITE);   // 只有官网：中外文都是一行官网 | website only: one website row in every language
       static const char *const s5 = "{\"community\": {\"site\": \"https:///x\"}}";   // 没有主机名 | no host
       CHECK(dm_community_manifest(s5, strlen(s5)) == 0);
       // Q11-01 口径：带转义的 site 当这一项没有（链接退回 GitHub）；嵌套更深的同名 site 不认；site 不是字符串当格式坏 | Q11-01: an escaped site counts as absent (link falls back); a deeper same-name site is ignored; a non-string site is malformed
       static const char *const s6 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https:\\/\\/d2rplus.example.com\"}}";
-      log_reset(); CHECK(dm_community_manifest(s6, strlen(s6)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(dm_community_about_github(lb, sizeof lb) == 0);
+      log_reset(); CHECK(dm_community_manifest(s6, strlen(s6)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB);
       CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus"));
       static const char *const s7 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"extra\": {\"site\": \"https://deep.example\"}}, \"site\": \"https://root.example\"}";
-      CHECK(dm_community_manifest(s7, strlen(s7)) == 1); CHECK(dm_community_about_github(lb, sizeof lb) == 0); CHECK(!cache_has("site="));
+      CHECK(dm_community_manifest(s7, strlen(s7)) == 1); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(!cache_has("site="));
       static const char *const s8 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": 42}}";
-      log_reset(); CHECK(dm_community_manifest(s8, strlen(s8)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(dm_community_about_github(lb, sizeof lb) == 0);
+      log_reset(); CHECK(dm_community_manifest(s8, strlen(s8)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB);
+      // RC1.1 弹窗重构 / 补审 Q11.1-06：渠道行——中文 [QQ 群, 官网, GitHub] 取前两个有值的，外文 [官网, GitHub]；显示值去 https:// 与末尾 /、GitHub 只留仓库名；每行的「复制」复制那一行的完整值
+      // RC1.1 box redesign / follow-up Q11.1-06: channel rows -- Chinese the first two of [QQ, website, GitHub], other languages [website, GitHub]; shown values trimmed, GitHub as repo name; each row's Copy copies that row's full value
+      { CHECK(dm_community_manifest(s1, strlen(s1)) == 1); int c[2]; char full[200], shown[200];
+        CHECK(dm_community_channels(DM_LG_ZH, c) == 2 && c[0] == DM_CH_QQ && c[1] == DM_CH_SITE);                 // 中文：群号 + 官网（Q11.1-06：中文看得到官网） | Chinese: number + website
+        CHECK(dm_community_channels(DM_LG_EN, c) == 2 && c[0] == DM_CH_SITE && c[1] == DM_CH_GITHUB);             // 外文：官网 + GitHub，不显示群号 | other languages: website + GitHub, no number
+        CHECK(dm_community_channels(DM_LG_KO, c) == 2 && c[0] == DM_CH_SITE);
+        CHECK(dm_community_channel_value(DM_CH_SITE, full, sizeof full, shown, sizeof shown) && !strcmp(full, "https://d2rplus.example.com/") && !strcmp(shown, "d2rplus.example.com"));
+        CHECK(dm_community_channel_value(DM_CH_GITHUB, full, sizeof full, shown, sizeof shown) && !strcmp(full, "https://github.com/example/d2r-mobile-plus") && !strcmp(shown, "d2r-mobile-plus"));
+        CHECK(dm_community_channel_value(DM_CH_QQ, full, sizeof full, shown, sizeof shown) && !strcmp(full, "1129913678") && !strcmp(shown, "1129913678"));
+        dm_community_copy_init(copy_ok); atomic_store(&g_show, 2); unsigned c0 = dm_community_copy_count();
+        t_group = DM_LG_ZH; log_reset(); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy1"); CHECK(!strcmp(copied, "https://d2rplus.example.com/")); CHECK(strstr(log_text(), "社区入口：复制 官网"));
+        dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy0"); CHECK(!strcmp(copied, "1129913678")); CHECK(atomic_load(&g_copied_row) == 0);
+        t_group = DM_LG_EN; dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy1"); CHECK(!strcmp(copied, "https://github.com/example/d2r-mobile-plus")); CHECK(atomic_load(&g_copied_row) == 1);
+        CHECK(dm_community_copy_count() == c0 + 3);
+        dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy2"); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy10"); CHECK(dm_community_copy_count() == c0 + 3);   // 没有第三行 | no third row
+        static const char *const s10 = "{\"community\": {\"qq_group\": \"1129913678\", \"github\": \"https://github.com/example/d2r-mobile-plus\"}}";   // 没有官网：中文 群号 + GitHub、外文 GitHub 一行（与 RC1 同值） | no website
+        CHECK(dm_community_manifest(s10, strlen(s10)) == 1); CHECK(dm_community_channels(DM_LG_ZH, c) == 2 && c[1] == DM_CH_GITHUB); CHECK(dm_community_channels(DM_LG_EN, c) == 1 && c[0] == DM_CH_GITHUB);
+        log_reset(); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy1"); CHECK(strstr(log_text(), "【红】社区入口：复制失败（第 2 行"));   // 外文只有一行：第二行的复制不该有 | other languages have one row
+        atomic_store(&g_show, 0); t_group = DM_LG_ZH; }
       // RC1.1 增量审计 Q11.1-01 / 02：site 收紧——拒绝 userinfo（@）、? 与 #、空 / 坏主机名；主机名只许 [A-Za-z0-9.-]、要有点、不以点或横线开头结尾；可选 :端口 与路径；总长 ≤ 60（值行 36 号估宽）
       // RC1.1 review Q11.1-01 / 02: site tightened -- rejects userinfo (@), ? and #, empty / bad hosts; host [A-Za-z0-9.-] with a dot, not starting or ending with . or -; optional :port and path; at most 60 characters
       { static const char *const bad[] = { "https://?x", "https://#", "https://d2rplus.example.com@evil.example/", "https://a.b@c.d/", "https://a.example/x?y=1", "https://a.example/#top",
@@ -258,9 +284,9 @@ int main(void) {
         log_reset(); CHECK(dm_community_manifest(m, strlen(m)) == 1); CHECK(strstr(log_text(), "另一项格式坏"));   // 超长：丢这一项、退回 GitHub | too long: dropped, GitHub fallback
         CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(!cache_has("site="));
         static const char *const s9 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https://d2rplus.example.com@evil.example/\"}}";
-        log_reset(); CHECK(dm_community_manifest(s9, strlen(s9)) == 1); CHECK(dm_community_about_github(lb, sizeof lb) == 0); CHECK(strstr(log_text(), "官网=无")); }
+        log_reset(); CHECK(dm_community_manifest(s9, strlen(s9)) == 1); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(strstr(log_text(), "官网=无")); }
       FILE *f = fopen(cache, "w"); fputs("qq_group=1129913678\ngithub=https://github.com/example/d2r-mobile-plus\n", f); fclose(f);   // 旧缓存（RC1 写的） | an RC1 cache
-      restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(dm_community_about_github(lb, sizeof lb) == 0); }
+      restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);

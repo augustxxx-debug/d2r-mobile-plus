@@ -77,6 +77,26 @@ def build_notice_slices(romfs, outdir, width, folder='ztouch_notification', pref
     return replacements
 
 
+# 社区 / 关于弹窗（RC1.1 重构）的线条片：卡片细边框（原版分隔线的暗金）与手柄焦点框（亮金），各一张横、一张竖的单色单帧切片，宿主 co_line 只改绘制尺寸。
+# 横竖分开、卡片与焦点分开：同一张切片的控件共用一个绘制尺寸（dm_community.c co_line）
+# Line slices of the community / About box (RC1.1 redesign): the cards' thin border (the original divider's dark gold) and the controller focus frame (bright gold), one horizontal and
+# one vertical single-colour single-frame slice each; the host's co_line only changes the draw size. Kept apart because widgets on one slice share its draw size
+COMM_LINES = {'rule_h': ((126, 104, 66), 16, 4), 'rule_v': ((126, 104, 66), 4, 16), 'focus_h': ((236, 196, 112), 16, 4), 'focus_v': ((236, 196, 112), 4, 16)}
+def build_line_slices(romfs, outdir, folder='ztouch_comm', prefix='comm_'):
+    from pathlib import Path
+    from PIL import Image
+    import romfs_art
+    import gen_notification_frame as frame
+    import gen_widestash_art as codec
+    source = romfs_art.read(romfs, frame.SOURCE)
+    replacements = {}
+    for name, (rgb, w, h) in COMM_LINES.items():
+        part = Image.new('RGBA', (w, h), rgb + (255,))
+        output = Path(outdir) / (prefix + name + '.sprite')
+        output.write_bytes(codec.pack(codec.lib(), source, codec.bc3(part), w, h, w))
+        replacements['data/hd/global/ui/%s/%s.sprite' % (folder, name)] = str(output)
+    return replacements
+
 def modal_priority(text):
     """Only change root stacking; keep every native field/action/child intact."""
     import re

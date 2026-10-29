@@ -51,19 +51,31 @@ def rect_y(text, name):
     return int(m.group(1)) if m else None
 
 
-BOX = ['TouchCommTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchCommTitle'] + ['TouchCommDesc%d' % k for k in range(7)] + ['TouchCommDivider', 'TouchCommCopyQq', 'TouchCommCopyLink', 'TouchCommOk']
+BOX = (['TouchCommTile%d%d' % (r, c) for r in range(5) for c in range(3)] + ['TouchCommTitle']
+       + ['TouchComm%s%d' % (w, k) for k in range(2) for w in ('Label', 'Value', 'Copy', 'CopyText')] + ['TouchCommCard%d%s' % (k, e) for k in range(2) for e in 'TBLR']
+       + ['TouchCommFree', 'TouchCommDivider', 'TouchCommFoot0', 'TouchCommFoot0R', 'TouchCommFoot1', 'TouchCommOk'] + ['TouchCommFocus%s' % e for e in 'TBLR'])
+CO_LABEL_W, CO_BTN_W, CO_CARD_W = 260, 256, 1480   # 同 dm_community.c | as dm_community.c
 
 
-def box_ok(tc, out, where):   # 提示框：22 + 3 个控件屏外起步、不带锚点；正文六行按 §2.6 三级：群号 / 链接 36 LightGold、提示 28 LightGray、子标题「关于」36 GoldYellow、版本与鸣谢两行 28 LightGray
+def box_ok(tc, out, where):   # 社区 / 关于弹窗（RC1.1 重构）：42 个控件屏外起步、不带锚点；§2.6 三级——标题 48 GoldYellow / 值 36 LightGold / 标签、按钮字、声明、页脚 28 | RC1.1 box: 42 widgets off screen, no anchor; three levels per §2.6
     for w in BOX: tc.assertIn('"name": "%s"' % w, out, (where, w))
-    tc.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommCopy"', out); tc.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommOk"', out)
-    # 「关于」段的子标题换成原版设置页同款分隔线（用户 2026-10-29：视觉更舒服）：原版图 PauseMenu\\Divider 原尺寸（共享精灵不改尺寸），屏外起步 | the About sub-title becomes the original settings divider, native size, off screen at start
+    for k in range(2): tc.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommCopy%d"' % k, out)
+    tc.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommOk"', out)
+    tc.assertNotIn('TouchCommCopyQq', out); tc.assertNotIn('TouchCommDesc', out)   # 旧的大「复制」与正文行没了 | the old big Copy and body lines are gone
     tc.assertIn('"type": "ImageWidget", "name": "TouchCommDivider", "fields": { "rect": { "x": 99999, "y": 99999 }, "filename": "PauseMenu\\\\Divider" } }', out, where)
     body = out[out.index('TouchCommTile00'):]
     tc.assertNotIn('"x": 9', re.sub(r'"x": 99999', '', body), 'the box starts off screen: ' + where)
     tc.assertNotIn('"anchor"', body, 'the box carries no anchor: the host places it from the panel rect: ' + where)
-    for k, pt, col in ((0, 36, 'LightGold'), (1, 28, 'LightGray'), (2, 36, 'GoldYellow'), (3, 28, 'LightGray'), (4, 28, 'LightGray'), (5, 28, 'LightGray')):
-        tc.assertIn('"name": "TouchCommDesc%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1700, "height": 60 }, "text": "", "style": { "pointSize": %d, "fontColor": "$FontColor%s"' % (k, pt, col), out, (where, k))
+    def style(name, pt, col, align):
+        tc.assertRegex(out, r'"name": "%s", "fields": \{ "rect": \{ "x": 99999, "y": 99999, "width": \d+, "height": \d+ \}, "text": "", "style": \{ "pointSize": %d, "fontColor": "%s", "alignment": \{ "h": "%s"' % (name, pt, re.escape(col), align), (where, name))
+    style('TouchCommTitle', 48, '$FontColorGoldYellow', 'center'); style('TouchCommFree', 28, '$FontColorGoldYellow', 'center')
+    for k in range(2):
+        style('TouchCommLabel%d' % k, 28, '$FontColorLightGray', 'left'); style('TouchCommValue%d' % k, 36, '$FontColorLightGold', 'left'); style('TouchCommCopyText%d' % k, 28, '$LightButtonTextColor', 'center')
+        tc.assertIn('"name": "TouchCommCopy%d", "fields": { "rect": { "x": 99999, "y": 99999, "scale": 0.7 }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonSmall"' % k, out)
+        for e in 'TBLR': tc.assertIn('"name": "TouchCommCard%d%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 4, "height": 4 }, "filename": "Ztouch_comm/rule_%s" }' % (k, e, 'h' if e in 'TB' else 'v'), out)
+    for e in 'TBLR': tc.assertIn('"name": "TouchCommFocus%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 4, "height": 4 }, "filename": "Ztouch_comm/focus_%s" }' % (e, 'h' if e in 'TB' else 'v'), out)
+    for name in ('TouchCommFoot0', 'TouchCommFoot1'): style(name, 28, '$FontColorLightGray', 'left')
+    style('TouchCommFoot0R', 28, '$FontColorLightGray', 'right')
 
 
 def fake_ribbon():   # 手柄版主菜单左列骨架：选项 / 电影动画 / 制作人员（原版位置与焦点链） | skeleton of the controller main-menu column: Options / Cinematics / Credits (original positions and focus links)
@@ -228,17 +240,22 @@ class Text(unittest.TestCase):
     def test_six_languages_fit(self):
         rows = {r[0]: r[1:] for r in dm_i18n.rows()}
         langs = ('中文', 'English', 'Español', 'Español MX', 'Русский', '한국어')
-        sample = {'dmCommunityQq': '1129913678', 'dmCommunityLink': 'https://github.com/example-owner/d2r-mobile-plus/discussions'}
-        sample['dmAboutVersion'] = '1.0.0+123 · 0123456'; sample['dmAboutGithub'] = 'github.com/augustxxx-debug/d2r-mobile-plus'   # 「关于」段 GitHub 行（Q11.1-03） | the About GitHub line
-        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmAboutGithub', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityAbout', 40, BTN_W), ('dmCommunityFe', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
-                               ('dmCommunityCopied', 28, BOX_W), ('dmCommunityCopyFail', 28, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
-                               ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, CREDIT_LABEL_W), ('dmCreditsMaker', 36, CREDIT_LABEL_W), ('dmCreditsThanks', 36, CREDIT_LABEL_W), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
+        sample = {'dmAboutVersion': '1.0.0-rc1+1793254654 · a2bb5c3'}
+        # 弹窗（RC1.1 重构）按列宽核：标签列 260、小「复制」钮 256（字左右各留 10）、声明与标题框内 1560、页脚左 880（版本）/ 右 560（制作 + 名字）/ 第二行 1480（特别鸣谢 + 名字 + 说明）
+        # the redesigned box by column: label 260, small Copy 256 (10 margin each side), notice and title 1560, footer left 880 (version) / right 560 (maker + name) / second line 1480 (special + name + note)
+        for key, pt, limit, tail in (('dmCommunityTitle', 48, BOX_W, ''), ('dmCommunityAbout', 48, BOX_W, ''), ('dmCommunityLabelQq', 28, CO_LABEL_W, ''), ('dmCommunityLabelSite', 28, CO_LABEL_W, ''), ('dmCommunityLabelGithub', 28, CO_LABEL_W, ''),
+                               ('dmCommunityCopy', 28, CO_BTN_W - 20, ''), ('dmCommunityCopied', 28, CO_BTN_W - 20, ''), ('dmCommunityCopyFailShort', 28, CO_BTN_W - 20, ''), ('dmLoadCommFree', 28, BOX_W, ''),
+                               ('dmAboutVersion', 28, 880, ''), ('dmCreditsMaker', 28, 560, ' Augustus'), ('dmCreditsSpecial', 28, CO_CARD_W, ' jhaizhou-ops'),
+                               ('dmCommunityAbout', 40, BTN_W, ''), ('dmCommunityFe', 40, BTN_W, ''), ('dmCommunityOpen', 40, BTN_W, ''),
+                               ('dmCommunityJoin', 40, PAUSE_BTN_W, ''), ('dmCommunityRow', 40, 1000, ''), ('dmCommunityAbout', 40, 1000, ''), ('dmCreditsTitle', 40, 1000, ''), ('dmCreditsSpecial', 36, CREDIT_LABEL_W, ''), ('dmCreditsMaker', 36, CREDIT_LABEL_W, ''), ('dmCreditsThanks', 36, CREDIT_LABEL_W, ''), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25, '')):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops on the same line
             texts = rows[key]
             for lang, t in zip(langs, texts):
                 self.assertEqual(t.count('\n'), 0, (key, lang))
-                line = t.replace('%s', sample.get(key, ''))
+                line = t.replace('%s', sample.get(key, '')) + tail
+                if key == 'dmCreditsSpecial' and pt == 28: line += rows['dmCreditsUpstreamNote'][langs.index(lang)]
                 self.assertLessEqual(est_width(line, pt), limit, (key, lang, line, est_width(line, pt)))
-        self.assertEqual(rows['dmCommunityQq'][1].count('%s'), 1); self.assertEqual(rows['dmCommunityLink'][1].count('%s'), 1); self.assertEqual(rows['dmAboutVersion'][1].count('%s'), 1); self.assertEqual([t.count('%s') for t in rows['dmAboutGithub']], [1] * 6)
+        self.assertEqual([t.count('%s') for t in rows['dmAboutVersion']], [1] * 6)
+        self.assertEqual(rows['dmLoadCommFree'][0], '本软件免费，付费购买均为倒卖')   # 与加载页分支同键同文 | same key and text as the loading-page branch
 
 
 class Maker(unittest.TestCase):
@@ -266,14 +283,14 @@ class Maker(unittest.TestCase):
 class Host(unittest.TestCase):
     def test_host_wiring(self):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
-        for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_padmode_page_keys(DM_BTN_A | DM_BTN_B)', 'dm_update_label()', '"dmAboutVersion"',
-                  '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : "链接"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
+        for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_padmode_page_keys(DM_BTN_A | DM_BTN_B | DM_BTN_UP | DM_BTN_DOWN)', 'dm_update_label()', '"dmAboutVersion"',
+                  '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : ch[row] == DM_CH_SITE ? "官网" : "GitHub"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
                   '"TouchAboutCommunityRow"', 'TouchCreditLine%d', '"dmCreditsSpecial"', '"dmCreditsMaker"', 'k_maker_default[] = { "Augustus" }', 'TouchCreditLabel2', 'co_place(l0, ys >= 0 ? DM_ROW_INDENT : 99999', 'dm_sel_frame.h', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss
         self.assertNotIn('co_text(b, de[2], dm_str(b, "dmCommunityAbout"))', c)   # 社区框不再写「关于」子标题 | the community box no longer writes the About sub-title
-        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 27)
+        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 42)
         self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))

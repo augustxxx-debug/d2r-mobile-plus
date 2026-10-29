@@ -302,29 +302,36 @@ _SAFE = _safe(True); _SAFE_PAD = _safe(False)
 # In-game notice box of the community entry (dm/host/dm_community.c): same approach as the crash-fence box - 15 frame tiles (its own slices Ztouch_comm) + title + three body lines (value / hint / "Copied")
 # + "Copy number" / "Copy link" (one message; the host shows one by language) + "OK". All start off screen with empty text and carry no anchor: hung at the end of the pause menu panel (both) and of the Custom page panel,
 # which are anchored at half the screen width and carry the console-profile scale; the host computes the screen-centered position from the panel's rect and scale. OK / controller B dismisses; copy goes through the shell's clipboard callback
-def _co_text(name, size, color):   # 提示框文字行：原版色票 + ReducedSpacing（同 _upd_text 的其余字段） | a text line of the box: original colour token + ReducedSpacing (otherwise as _upd_text)
-    return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1700, "height": 60 }, "text": "", '
-            '"style": { "pointSize": %d, "fontColor": "%s", "alignment": { "h": "center", "v": "center" }, "spacing": "$ReducedSpacing", "dropShadow": "$DefaultDropShadow" } } },\n') % (name, size, color)
+def _co_text(name, size, color, align='center', width=1700, height=60):   # 提示框文字行：原版色票 + ReducedSpacing（同 _upd_text 的其余字段） | a text line of the box: original colour token + ReducedSpacing (otherwise as _upd_text)
+    return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": %d, "height": %d }, "text": "", '
+            '"style": { "pointSize": %d, "fontColor": "%s", "alignment": { "h": "%s", "v": "center" }, "spacing": "$ReducedSpacing", "dropShadow": "$DefaultDropShadow" } } },\n') % (name, width, height, size, color, align)
+def _co_line(name, file):   # 线条片（卡片边框 / 手柄焦点框）：我们自己的单色单帧切片，宿主 co_line 改绘制尺寸 | line slice (card border / controller focus frame): our own one-colour slice, sized by the host's co_line
+    return '        { "type": "ImageWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 4, "height": 4 }, "filename": "Ztouch_comm/%s" } },\n' % (name, file)
+def _co_copy(k):   # 每行渠道自己的小「复制」：原版前端小按钮 366×92 × 0.7 = 256×64，字由上面叠的文字框写（宿主换成「已复制 / 复制失败」2 秒） | each row's small Copy: the original small front-end button × 0.7; its text is the box on top (Copied / Copy failed for 2 s)
+    return ('        { "type": "ButtonWidget", "name": "TouchCommCopy%d", "fields": { "rect": { "x": 99999, "y": 99999, "scale": 0.7 }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonSmall", '
+            '"onClickMessage": "PanelManager:ClosePanel:TouchCommCopy%d", "sound": "cursor_menu_select_hd", "pressedFrame": 1, "disabledFrame": 2, "hoveredFrame": 3 } },\n' % (k, k)
+            + _co_text('TouchCommCopyText%d' % k, 28, '$LightButtonTextColor', width=256, height=60))
+# 社区 / 关于弹窗（RC1.1 重构，用户 2026-10-30「同意 很好」；设计说明 dm-work/run/xpline/design/）：边框 15 片 + 标题 48 → 渠道卡片两行（细边框 + 标签 28 LightGray / 值 36 LightGold /
+# 各自的小「复制」）→ 免费声明 28 GoldYellow → 分隔线 → 页脚两行 28 LightGray（版本 + 制作；特别鸣谢）→ 一颗「确定」；手柄焦点框（金色线条片）。全部屏外起步、字空着，宿主按渠道行数摆位（dm_community.c co_geom）
+# Community / About box (RC1.1 redesign): 15 frame tiles + title 48 → two channel cards (thin border + label 28 LightGray / value 36 LightGold / own small Copy) → free notice 28 GoldYellow
+# → divider → two footer lines 28 LightGray (version + maker; special thanks) → one OK; controller focus frame (gold line slices). All start off screen with empty text; the host lays them out by row count
 def _community():
     return (''.join('        { "type": "ImageWidget", "name": "TouchCommTile%d%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 52, "height": 24 }, "filename": "Ztouch_comm/tile%d%d" } },\n' % (r, c, r, c) for r in range(5) for c in range(3))
             + _co_text('TouchCommTitle', 48, '$FontColorGoldYellow')
-            # 正文 / 副文分字号（用户：「都一个字体丑死了」）：第一行群号 / 链接 36 号；第二行提示句、第三行「已复制」28 号。颜色与字距照原版样式表（_profileHD.json）：
-            # 标题 = 面板标题色 GoldYellow，正文 = 原版弹窗正文 / 按钮字色 LightGold，副文 = 图形页说明小字同款 LightGray；字距 ReducedSpacing（原版弹窗正文、设置页文字都带）
-            # main / secondary text in different sizes (user): line 1 number / link at 36; line 2 hint and line 3 "Copied" at 28. Colours and spacing follow the original style sheet (_profileHD.json):
-            # title = panel title GoldYellow, body = the original modal body / button text LightGold, secondary = the Graphics tab hint's LightGray; ReducedSpacing as the original modal body and settings text
-            + _co_text('TouchCommDesc0', 36, '$FontColorLightGold')                                     # 群号 / 链接（纯「关于」框：版本） | number / link (About-only box: version)
-            + _co_text('TouchCommDesc1', 28, '$FontColorLightGray')                                     # 提示 / 「已复制」 | hint / Copied
-            + _co_text('TouchCommDesc2', 36, '$FontColorGoldYellow')                                    # 纯「关于」框的鸣谢第二行；社区框里这一行空着（「关于」子标题已换成下面的分隔线） | About-only box: second credits line; empty in the community box
-            + ''.join(_co_text('TouchCommDesc%d' % k, 28, '$FontColorLightGray') for k in (3, 4, 5, 6))   # 版本、GitHub（清单有官网 site 时才写，Q11.1-03）、鸣谢两行 | version, GitHub (only when the manifest has a website, Q11.1-03), two credit lines
-            # 社区段与「关于」段之间的分隔线（用户 2026-10-29：「关于」两字换成分隔线，视觉更舒服）：原版设置页分节同一张图 PauseMenu\\Divider，原尺寸（共享精灵，不改尺寸），宿主按图宽居中
-            # divider between the community and About sections (user, 2026-10-29: replaces the 'About' sub-title): the original settings-section image, native size (a shared sprite, never resized), centred by the host from its width
+            + ''.join(''.join(_co_line('TouchCommCard%d%s' % (k, e), 'rule_h' if e in 'TB' else 'rule_v') for e in 'TBLR')
+                      + _co_text('TouchCommLabel%d' % k, 28, '$FontColorLightGray', 'left', 260, 100)
+                      + _co_text('TouchCommValue%d' % k, 36, '$FontColorLightGold', 'left', 844, 100)
+                      + _co_copy(k) for k in range(2))
+            + _co_text('TouchCommFree', 28, '$FontColorGoldYellow')   # 免费声明（dmLoadCommFree，同加载页） | free notice (dmLoadCommFree, as the loading page)
+            # 声明与页脚之间的分隔线：原版设置页分节同一张图 PauseMenu\\Divider，原尺寸（共享精灵，不改尺寸），宿主按图宽居中 | divider: the original settings-section image, native size, centred by the host
             + '        { "type": "ImageWidget", "name": "TouchCommDivider", "fields": { "rect": { "x": 99999, "y": 99999 }, "filename": "PauseMenu\\\\Divider" } },\n'
-            + _btn('TouchCommCopyQq', 99999, '@dmCommunityCopyQq', 'PanelManager:ClosePanel:TouchCommCopy', x=99999, anchor=False)
-            + _btn('TouchCommCopyLink', 99999, '@dmCommunityCopyLink', 'PanelManager:ClosePanel:TouchCommCopy', x=99999, anchor=False)
-            + _btn('TouchCommOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchCommOk', x=99999, anchor=False))
+            + _co_text('TouchCommFoot0', 28, '$FontColorLightGray', 'left', 880) + _co_text('TouchCommFoot0R', 28, '$FontColorLightGray', 'right', 880)
+            + _co_text('TouchCommFoot1', 28, '$FontColorLightGray', 'left', 1480)
+            + _btn('TouchCommOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchCommOk', x=99999, anchor=False)
+            + ''.join(_co_line('TouchCommFocus%s' % e, 'focus_h' if e in 'TB' else 'focus_v') for e in 'TBLR'))
 _COMM = _community()
 _COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchComm\w+)"', _COMM))
-assert _COMM_STUB.count('\n') == 27   # 边框 15 片、标题、正文七行、分隔线、复制群号、复制链接、确定 | 15 tiles, title, seven body lines, divider, Copy number, Copy link, OK
+assert _COMM_STUB.count('\n') == 42   # 边框 15 片、标题、两行渠道（边框 4 + 标签 + 值 + 复制钮 + 钮上的字）× 2、免费声明、分隔线、页脚 3、确定、焦点框 4 | 15 tiles, title, 2 × (4 border + label + value + copy + its text), free, divider, 3 footer, OK, 4 focus
 _COMM_ROW = (('TouchCommunity', '@dmCommunityJoin', 1028),)   # 暂停菜单「加入社区讨论」行（借「保存并退出」按钮的图和字，消息空操作，宿主当信号收）；没有可显示的值时宿主把它挪出屏幕 | the pause menu's "Join the community" row (Save-and-Exit's image and font, a no-op message the host takes as a signal); without a value the host moves it off screen
 _SAFE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchSafe\w+)"', _SAFE))
 assert _SAFE_STUB.count('\n') == 20   # 边框 15 片、标题、正文三行、确定 | 15 frame tiles, title, three body lines, OK

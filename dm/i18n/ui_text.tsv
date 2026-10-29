@@ -503,14 +503,13 @@ dmCommunityAbout	关于	About	Acerca de		О программе	정보	自定义�
 dmCommunityRow	社区讨论	Community	Comunidad		Сообщество	커뮤니티	自定义页「关于」组那一行的标签
 dmCommunityOpen	查看	View	Ver		Открыть	보기	自定义页「关于」组那一行右侧的按钮（原版前端中号按钮，打开社区提示框）
 dmCommunityTitle	加入社区讨论	Join the community	Unirse a la comunidad		Сообщество игроков	커뮤니티 참여	社区提示框标题（48 号字，框内可用宽 1560）
-dmCommunityQq	QQ 群：%s	QQ group: %s	Grupo QQ: %s		Группа QQ: %s	QQ 그룹: %s	社区提示框第一行（中文界面：群号来自远端清单 community.qq_group）
-dmCommunityLink	%s	%s	%s		%s	%s	社区提示框第一行（其他语言：链接 = 远端清单 community.site 官网，没有官网退回 community.github；整行就是地址，不加前缀以免超宽）
-dmCommunityQqHint	复制群号后在 QQ 里搜索加入	Copy the number and search for it in QQ	Copia el número y búscalo en QQ		Скопируйте номер и найдите группу в QQ	번호를 복사해 QQ에서 검색하세요	社区提示框第二行（群号那种）
-dmCommunityLinkHint	复制链接后在浏览器打开	Copy the link and open it in a browser	Copia el enlace y ábrelo en el navegador		Скопируйте ссылку и откройте в браузере	링크를 복사해 브라우저에서 여세요	社区提示框第二行（链接那种）
-dmCommunityCopied	已复制	Copied	Copiado		Скопировано	복사됨	社区提示框第三行：复制成功后（游戏内文字，不用系统弹窗）
-dmCommunityCopyFail	复制失败	Copy failed	No se pudo copiar		Не удалось скопировать	복사 실패	社区提示框第三行：剪贴板写入失败
-dmCommunityCopyQq	复制群号	Copy number	Copiar número		Копировать	번호 복사	社区提示框左边的按钮（群号那种；原版前端中号按钮，字留 400 宽）
-dmCommunityCopyLink	复制链接	Copy link	Copiar enlace		Копировать	링크 복사	社区提示框左边的按钮（链接那种）
+dmCommunityLabelQq	QQ 群	QQ	QQ		QQ	QQ	社区 / 关于弹窗渠道卡片的标签列（28 号 LightGray；RC1.1 重构）：QQ 群（只在中文界面出现）
+dmCommunityLabelSite	官网	Website	Sitio web		Сайт	웹사이트	渠道卡片标签：项目官网（清单 community.site；值行去掉 https:// 与末尾 /，复制完整网址）
+dmCommunityLabelGithub	GitHub	GitHub	GitHub		GitHub	GitHub	渠道卡片标签：GitHub（清单 community.github；值行只显示仓库名，复制完整网址）
+dmCommunityCopy	复制	Copy	Copiar		Копировать	복사	渠道卡片各自的小「复制」按钮字（28 号，原版前端小按钮 × 0.7，宽 256；dm_community.c）
+dmCommunityCopyFailShort	复制失败	Failed	Error		Ошибка	실패	小「复制」按钮上复制失败时的字，留 2 秒（按钮宽 256，按 §2.6 估宽放得下的短词）
+dmLoadCommFree	本软件免费，付费购买均为倒卖	This app is free. If you paid for it, it was resold	Esta app es gratis; si pagaste por ella, es reventa		Приложение бесплатно; платные копии — перепродажа	이 앱은 무료이며, 유료 판매는 모두 재판매입니다	免费声明：社区 / 关于弹窗渠道卡片下一行（28 号 GoldYellow）；同键同文与加载页分支（feat/loadpage，加载页底部社区第二行）共用
+dmCommunityCopied	已复制	Copied	Copiado		Скопировано	복사됨	小「复制」按钮上复制成功后的字，留 2 秒（dm_community.c）
 dmCreditsTitle	鸣谢	Credits	Créditos		Благодарности	감사의 말	自定义页「关于」组社区行之后的「鸣谢」子块标题（标题级 GoldYellow；touch_layout.py _custom_about，名单由宿主 dm_community.c 按语言拼）
 dmCreditsSpecial	特别鸣谢	Special thanks	Gracias especiales		Особая благодарность	특별 감사	鸣谢子块第一行的标签（36 号 LightGold，名单 36 号 LightGray 由宿主写）；西语用「Gracias especiales」：原「Agradecimiento especial」在 Duo 内屏压到名单列（用户 2026-10-29 反馈「关于」区排版）
 dmCreditsThanks	鸣谢	Thanks	Agradecimientos		Благодарность	감사	鸣谢子块第二行的标签（名单为空时整行不显示）
@@ -518,5 +517,4 @@ dmCreditsMaker	制作	Made by	Hecho por	Hecho por	Автор	제작	鸣谢区署
 dmCreditsUpstreamNote	（d2r-mobile 原作者）	 (author of d2r-mobile)	 (autor de d2r-mobile)		 (автор d2r-mobile)	 (d2r-mobile 원작자)	特别鸣谢名单末尾的括号说明（名字不翻译，只翻译这段）
 dmCreditsSep	、	, 	, 		, 	, 	鸣谢名单里名字之间的分隔（中文顿号，其他语言逗号加空格；dm_community.c 拼行用）
 dmAboutVersion	版本 %s	Version %s	Versión %s		Версия %s	버전 %s	提示框「关于」段的版本行：显示版本「1.0.0+N · 哈希」（dm_community.c，取 dm_update_label）
-dmAboutGithub	GitHub %s	GitHub %s	GitHub %s		GitHub %s	GitHub %s	提示框「关于」段版本行下的 GitHub 行（RC1.1 增量审计 Q11.1-03，用户定：有官网时值行给官网、GitHub 留在「关于」段，外文界面官网不重复）：地址来自清单 community.github，去掉 https:// 与末尾 /（dm_community.c dm_community_about_github）；没有官网时整行不显示，与 RC1 相同
 dmCommunityFe	加入社区讨论	Community	Comunidad		Сообщество	커뮤니티	主菜单第二行「加入社区讨论」（原版前端中号按钮 470 宽，西 / 俄文的长句放不下，这里用短词；暂停菜单那行仍用 dmCommunityJoin）

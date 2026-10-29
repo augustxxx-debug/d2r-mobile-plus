@@ -55,6 +55,7 @@ with tempfile.TemporaryDirectory() as t:
     REPL.update(notification_layout.build_notice_slices(romfs,t,nw))
     REPL.update(notification_layout.build_notice_slices(romfs,t,nw,folder='ztouch_safe',prefix='safe_'))
     REPL.update(notification_layout.build_notice_slices(romfs,t,nw,folder='ztouch_comm',prefix='comm_'))   # 社区入口提示框的边框（同一套美术，自己一套切片；dm_community.c） | frame of the community entry's notice box (same art, its own slices; dm_community.c)   # 崩溃围栏主菜单提示框的边框（同一套美术，自己一套切片） | frame of the crash fence's main-menu notice box (same art, its own slices)
+    REPL.update(notification_layout.build_line_slices(romfs,t,folder='ztouch_comm',prefix='comm_'))   # 社区 / 关于弹窗的卡片边框与手柄焦点框（RC1.1 重构） | card border and controller focus frame of the community box (RC1.1 redesign)
     MODAL_LAYERS=notification_layout.build_modal_layers(romfs,t)
     REPL.update(MODAL_LAYERS)
     json.dump(note,open(os.path.join(t,'notification.json'),'w'),indent=1)

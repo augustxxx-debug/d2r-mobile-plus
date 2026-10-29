@@ -4,20 +4,20 @@
 //   site（项目官网，用户 2026-10-29；RC1.1 审计后定）：https:// + 主机名 + 可选端口 / 路径、≤ 60 字符（site_ok）；有它时外文的值行与「复制链接」用官网，GitHub 挪到「关于」段一行；没有退回 github、与 RC1 相同。旧客户端忽略它。
 //   解析在这里用 C 做（严格的最小 JSON 解析器，十一审 Q11-01：整段必须是合法根对象，只认根对象直接子级 community 及其直接子级；语法错 / 重复 / 嵌套同名 / 转义都当格式错），外壳只把原文交过来；单测 t_community.c 覆盖有 / 无 / 坏 / 缓存回退与这些坏形状。
 // 缓存 community.txt（与 sw_custom.txt 同目录）：一行一个「键=值」，先写临时文件再换名；清单明确没有字段时删掉（旧值不留）。
-// 画面（用户：「不要用原生的弹窗，用游戏内弹窗」）：边框 15 片 TouchCommTile（我们通知框同一套美术、自己一套切片 Ztouch_comm）+ 标题 + 三行正文（值 / 提示 / 「已复制」）+ 两颗原版前端按钮（复制群号 或 复制链接 二选一显示、确定），
+// 画面（用户：「不要用原生的弹窗，用游戏内弹窗」；RC1.1 重构，用户 2026-10-30）：边框 15 片 TouchCommTile + 标题 + 渠道卡片 0–2 行（标签 / 值 / 各自的小「复制」）+ 免费声明 + 分隔线 + 页脚两行（版本 + 制作；特别鸣谢）+ 一颗「确定」，
 //   布局 touch_layout.py _community，挂在暂停菜单面板（两份）和自定义页面板末尾，平时在屏外、字空着；这里每帧在游戏主线程写字、按面板矩形与缩放算出居中位置。
-//   触屏点按钮；手柄接管 A = 复制、B = 收起；Mac 鼠标点按钮或键盘同手柄。复制走外壳登记的剪贴板回调，成功后第三行写「已复制」（游戏内文字，不用系统弹窗）。
-// 日志固定前缀（分享诊断日志摘要取最后一行）：「社区入口：清单有字段 / 清单无字段 / 清单拉取失败」「社区入口：已显示」「社区入口：复制 群号 / 链接」。
+//   触屏点按钮；手柄焦点链 复制₁ → 复制₂ → 确定（上下移、A 触发、B 收起）；Mac 鼠标点按钮或键盘同手柄。复制走外壳登记的剪贴板回调，按钮字变「已复制 / 复制失败」2 秒（游戏内文字，不用系统弹窗）。
+// 日志固定前缀（分享诊断日志摘要取最后一行）：「社区入口：清单有字段 / 清单无字段 / 清单拉取失败」「社区入口：已显示」「社区入口：复制 群号 / 官网 / GitHub」。
 // Community entry; the interface is in dm_community.h.
 // Manifest field (next to build / note / urgent in the version file):  "community": { "qq_group": "1129913678", "github": "https://github.com/<fork>/d2r-mobile-plus" }
 //   qq_group: 5-12 digits; github: starts with https://github.com/, at most 160 URL characters; site: see below. All three are optional; an invalid one counts as absent and is logged red; all absent = no field.
 //   site (project website, user 2026-10-29; settled after the RC1.1 review): https:// + host + optional port / path, at most 60 characters (site_ok); when present the value line and Copy link in other languages use it and GitHub moves to an About line; otherwise github, same as RC1. Older clients ignore it.
 //   Parsing is done here in C (a strict minimal JSON parser, Q11-01: the whole text must be a valid root object; only the root object's direct child community and its direct children count; syntax errors / duplicates / nested same-name keys / escapes are format errors); the shells only hand over the raw text; t_community.c covers present / absent / malformed / cache fallback and these bad shapes.
 // Cache community.txt (next to sw_custom.txt): one "key=value" per line, written to a temporary file then renamed; deleted when the manifest explicitly has no field (no stale value is kept).
-// Picture (user: "do not use a native popup, use an in-game one"): 15 frame tiles TouchCommTile (same art as our notification box, its own slices Ztouch_comm) + title + three body lines (value / hint / "Copied") + two original front-end buttons (Copy number or Copy link, one shown; OK),
+// Picture (user: "do not use a native popup, use an in-game one"; RC1.1 redesign, user 2026-10-30): 15 frame tiles + title + 0-2 channel cards (label / value / own small Copy) + free notice + divider + two footer lines (version + maker; special thanks) + one OK,
 //   layout touch_layout.py _community, hung at the end of the pause menu panel (both) and the Custom page panel, off screen with empty text; here, every frame on the game main thread, the text is written and the centered position computed from the panel's rect and scale.
-//   Touch taps the buttons; the controller takes over A = copy, B = dismiss; the Mac clicks the buttons or uses the controller keys. Copy goes through the shell's clipboard callback; on success the third line says "Copied" (in-game text, no system popup).
-// Fixed log prefixes (the share-log summary takes the last line): "社区入口：清单有字段 / 清单无字段 / 清单拉取失败", "社区入口：已显示", "社区入口：复制 群号 / 链接".
+//   Touch taps the buttons; controller focus chain Copy1 → Copy2 → OK (up / down, A activates, B dismisses); the Mac clicks or uses the controller keys. Copy goes through the shell's clipboard callback; the button reads Copied / Copy failed for 2 s (in-game text).
+// Fixed log prefixes (the share-log summary takes the last line): "社区入口：清单有字段 / 清单无字段 / 清单拉取失败", "社区入口：已显示", "社区入口：复制 群号 / 官网 / GitHub".
 #include "dm_community.h"
 #include "dm_custom.h"
 #include "dm_crashfence.h"
@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define QQ_MAX 12
@@ -43,6 +44,7 @@ static pthread_mutex_t g_cm_mu = PTHREAD_MUTEX_INITIALIZER;   // 护 g_qq / g_gh
 static char g_qq[QQ_MAX + 1], g_gh[GH_MAX + 1], g_site[GH_MAX + 1];   // g_site：项目官网（清单 community.site，用户 2026-10-29） | g_site: the project website (manifest community.site)
 static _Atomic int g_loaded_cm;
 static _Atomic int g_show, g_ack, g_copied;   // g_show：0 不显示 / 1 要显示 / 2 显示着；g_copied：0 / 1 已复制 / -1 复制失败 | g_show: 0 none / 1 pending / 2 shown; g_copied: 0 / 1 copied / -1 failed
+static _Atomic int g_copied_row; static _Atomic uint64_t g_copied_at;   // 哪一行的「复制」刚按过、何时（按钮字变「已复制 / 复制失败」2 秒） | which row's Copy was just pressed and when (the button reads Copied / Copy failed for 2 s)
 static int (*g_copy)(const char *);
 static _Atomic unsigned g_copies;
 static _Atomic int g_from;   // 从哪里点开（只进日志）：1 暂停菜单 / 2 主菜单 / 3 自定义页 | which entry opened it (log only): 1 pause menu / 2 main menu / 3 Custom page
@@ -209,31 +211,54 @@ int dm_community_value(int lang_group, char *out, size_t n) {
     if (out && n) snprintf(out, n, "%s", v);
     return k;
 }
-// 「关于」段的 GitHub 行（RC1.1 增量审计 Q11.1-03，用户定：接口说明 §13「GitHub 留在『关于』框」）：有官网时值行与「复制链接」给官网，GitHub 挪到「关于」段，
-// 外文界面官网只出现一次；去掉 https:// 与末尾的 /，只为好读。没有官网（或没有 GitHub）返回 0、不出这一行——与 RC1 相同
-// The About section's GitHub line (RC1.1 review Q11.1-03, user's call: spec §13 "GitHub stays in the About box"): with a website the value line and Copy link give the website and GitHub moves to
-// the About section, so the website shows once in other languages; https:// and the trailing / dropped for reading. Without a website (or without GitHub) returns 0 and no line -- same as RC1
-int dm_community_about_github(char *out, size_t n) {
-    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; get_values(qq, gh, site); if (!site[0] || !gh[0]) { if (out && n) out[0] = 0; return 0; }
-    const char *s = gh + strlen("https://"); size_t L = strlen(s); if (L > 1 && s[L - 1] == '/') L--;
-    if (out && n) snprintf(out, n, "%.*s", (int)L, s); return 1;
+// 渠道（RC1.1 弹窗重构，用户 2026-10-30「同意 很好」；补审 Q11.1-06：中文也要看得到官网）：框里最多两行渠道卡片——
+//   中文按 [QQ 群, 官网, GitHub] 取前两个有值的，其他语言按 [官网, GitHub]（不显示群号）。显示值：群号原样、官网去掉 https:// 与末尾 /、GitHub 只显示仓库名；复制的永远是完整内容
+// Channels (RC1.1 box redesign, user 2026-10-30; follow-up review Q11.1-06: Chinese must see the website too): at most two channel cards --
+//   Chinese takes the first two present of [QQ group, website, GitHub], other languages [website, GitHub] (no QQ). Shown value: the number as is, the website without https:// and the
+//   trailing /, GitHub as the repository name only; copy always takes the full value
+int dm_community_channels(int lang_group, int out[2]) {
+    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; get_values(qq, gh, site); int n = 0;
+    const int order_zh[3] = { DM_CH_QQ, DM_CH_SITE, DM_CH_GITHUB }, order_xx[2] = { DM_CH_SITE, DM_CH_GITHUB };
+    const int *o = lang_group == DM_LG_ZH ? order_zh : order_xx; int no = lang_group == DM_LG_ZH ? 3 : 2;
+    for (int i = 0; i < no && n < 2; i++) if ((o[i] == DM_CH_QQ && qq[0]) || (o[i] == DM_CH_SITE && site[0]) || (o[i] == DM_CH_GITHUB && gh[0])) out[n++] = o[i];
+    return n;
+}
+int dm_community_channel_value(int ch, char *full, size_t nf, char *shown, size_t ns) {   // 完整值（复制用）与显示值；没有返回 0 | full value (for copy) and shown value; 0 when absent
+    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; get_values(qq, gh, site);
+    const char *v = ch == DM_CH_QQ ? qq : ch == DM_CH_SITE ? site : ch == DM_CH_GITHUB ? gh : ""; if (!v[0]) { if (full && nf) full[0] = 0; if (shown && ns) shown[0] = 0; return 0; }
+    if (full && nf) snprintf(full, nf, "%s", v);
+    if (shown && ns) { const char *a = v; size_t L = strlen(v);
+        if (ch != DM_CH_QQ) { a = v + strlen("https://"); L = strlen(a); if (L > 1 && a[L - 1] == '/') L--; }
+        if (ch == DM_CH_GITHUB) { const char *e = a + L, *q = e; while (q > a && q[-1] != '/') q--; if (q < e) { L = (size_t)(e - q); a = q; } }   // 仓库名 = 路径最后一段 | repository name = last path segment
+        snprintf(shown, ns, "%.*s", (int)L, a); }
+    return 1;
+}
+// 估宽（§2.6：拉丁 0.7、其他 1.0 个字号）超过 maxw 就截断加「…」；只截显示，复制仍是完整值 | estimated width (§2.6) over maxw: cut and add "…"; display only, copy keeps the full value
+int dm_community_fit(char *s, int pt, int maxw) {
+    int w = 0, cut = -1; size_t i = 0, ell = (size_t)(pt);   // 「…」按一个字号宽算 | "…" counts as one point size
+    for (; s[i]; ) { unsigned char c = (unsigned char)s[i]; int cw = c < 0x80 ? pt * 7 / 10 : pt; size_t step = c < 0x80 ? 1 : c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : 2;
+        if (cut < 0 && w + cw + (int)ell > maxw) cut = (int)i; w += cw; i += step; }
+    if (w <= maxw || cut < 0) return 0;
+    strcpy(s + cut, "…"); return 1;
 }
 int dm_community_available(void) { return dm_community_value(dm_lang_group(), NULL, 0) != 0; }
 void dm_community_open(int from) {   // from：1 暂停菜单 / 2 主菜单 / 3 自定义页按钮 / 4 自定义页手柄 A | from: 1 pause menu / 2 main menu / 3 Custom page button / 4 Custom page controller A
     if (!dm_community_available()) { LOG("【红】社区入口：点了「加入社区讨论」（%s）但当前语言没有可显示的值", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页"); return; }
-    atomic_store(&g_copied, 0); atomic_store(&g_from, from >= 3 ? 3 : from); atomic_store(&g_mode, 1); atomic_store(&g_show, 1); LOG("社区入口：点了「加入社区讨论」（%s%s）", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页", from == 4 ? "手柄 A" : "");
+    atomic_store(&g_copied, 0); atomic_store(&g_copied_at, 0); atomic_store(&g_from, from >= 3 ? 3 : from); atomic_store(&g_mode, 1); atomic_store(&g_show, 1); LOG("社区入口：点了「加入社区讨论」（%s%s）", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页", from == 4 ? "手柄 A" : "");
 }
 void dm_community_open_about(void) {   // 主菜单「关于」行：只有版本 + 鸣谢的框，没有社区值也开 | the main menu's About row: the version + credits box, opens without a community value too
-    atomic_store(&g_copied, 0); atomic_store(&g_from, 2); atomic_store(&g_mode, 2); atomic_store(&g_show, 1); LOG("社区入口：点了「关于」（主菜单）");
+    atomic_store(&g_copied, 0); atomic_store(&g_copied_at, 0); atomic_store(&g_from, 2); atomic_store(&g_mode, 2); atomic_store(&g_show, 1); LOG("社区入口：点了「关于」（主菜单）");
 }
 void dm_community_copy_init(int (*cb)(const char *)) { g_copy = cb; }
 unsigned dm_community_copy_count(void) { return atomic_load(&g_copies); }
 int dm_community_shown(void) { return atomic_load(&g_show) == 2; }
-static void do_copy(int by) {   // by：1 点按钮 / 2 手柄 A | by: 1 button / 2 controller A
-    char v[GH_MAX + 1]; int k = dm_community_value(dm_lang_group(), v, sizeof v);
-    if (!k) { atomic_store(&g_copied, -1); LOG("【红】社区入口：复制失败（没有可复制的值）"); return; }
+static uint64_t co_now(void) { return clock_gettime_nsec_np(CLOCK_MONOTONIC); }
+static void do_copy(int by, int row) {   // by：1 点按钮 / 2 手柄 A；row：第几行渠道 | by: 1 button / 2 controller A; row: channel row
+    int ch[2], n = dm_community_channels(dm_lang_group(), ch); char v[GH_MAX + 1] = "";
+    atomic_store(&g_copied_row, row); atomic_store(&g_copied_at, co_now());
+    if (row < 0 || row >= n || !dm_community_channel_value(ch[row], v, sizeof v, NULL, 0)) { atomic_store(&g_copied, -1); LOG("【红】社区入口：复制失败（第 %d 行没有可复制的值）", row + 1); return; }
     int ok = g_copy ? g_copy(v) : 0;
-    if (ok) { atomic_fetch_add(&g_copies, 1); atomic_store(&g_copied, 1); LOG("社区入口：复制 %s %s（%s）", k == 1 ? "群号" : "链接", v, by == 2 ? "手柄 A" : "点按钮"); }
+    if (ok) { atomic_fetch_add(&g_copies, 1); atomic_store(&g_copied, 1); LOG("社区入口：复制 %s %s（%s）", ch[row] == DM_CH_QQ ? "群号" : ch[row] == DM_CH_SITE ? "官网" : "GitHub", v, by == 2 ? "手柄 A" : "点按钮"); }
     else { atomic_store(&g_copied, -1); LOG("【红】社区入口：复制失败（%s；%s）", g_copy ? "剪贴板回调返回失败" : "外壳没登记剪贴板回调", by == 2 ? "手柄 A" : "点按钮"); }
 }
 void dm_community_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c 转来，游戏主线程） | UI message callback (forwarded from diag.c, game main thread)
@@ -242,7 +267,7 @@ void dm_community_on_uimsg(const char *cat, const char *act, const char *arg) { 
     else if (!strcmp(arg, "TouchCommunityFe")) dm_community_open(2);    // 主菜单行 | main-menu row
     else if (!strcmp(arg, "TouchCommunityOpt")) dm_community_open(3);   // 自定义页「查看」 | Custom page View
     else if (!strcmp(arg, "TouchAbout")) dm_community_open_about();      // 主菜单「关于」 | main-menu About
-    else if (!strcmp(arg, "TouchCommCopy") && atomic_load(&g_show) == 2) do_copy(1);
+    else if (!strncmp(arg, "TouchCommCopy", 13) && (!arg[13] || ((arg[13] == '0' || arg[13] == '1') && !arg[14])) && atomic_load(&g_show) == 2) do_copy(1, arg[13] ? arg[13] - '0' : 0);   // 各行的小「复制」（不带行号 = 第一行） | each row's Copy (no index = row 1)
     else if (!strcmp(arg, "TouchCommOk") && atomic_load(&g_show) == 2) atomic_store(&g_ack, 1);   // 1 点按钮 / 2 手柄 B（只进日志） | 1 button / 2 controller B (log only)
 }
 
@@ -352,28 +377,55 @@ static void co_origin(uint64_t p, int xr, int *ox, int *oy, float *s) {
     if (!(ax >= 0 && ax <= 1)) ax = 0; if (!(ay >= 0 && ay <= 1)) ay = 0; if (!(sc > 0.05f && sc < 10)) sc = 1;
     *ox = (int)(ax * xr) + r[0]; *oy = (int)(ay * 2160) + r[1]; *s = sc;
 }
-#define CO_DESC 7   // 正文行：社区框 0 群号或链接 / 1 提示或「已复制」/ 2 空（分隔线占这一行）/ 3 版本 / 4 GitHub（有官网时）/ 5–6 鸣谢；纯「关于」框 0 版本 / 1 GitHub / 2–3 鸣谢；没有那一行时不占位、下面上移。框高：无官网 700、有官网 748 | body lines: community box 0 value / 1 hint or Copied / 2 empty (divider) / 3 version / 4 GitHub (with a website) / 5-6 credits; About-only box 0 version / 1 GitHub / 2-3 credits; an absent line takes no slot. Box height 700 without a website, 748 with one
-// 两种框的纵向排版（框内面板单位，自框顶算）：各行 y / 字号、分隔线 y、按钮顶、框高。按钮顶 = 末行文字下沿 + CO_GAP（与分隔线到版本行同一个间距），
-// 框高 = 按钮顶 + 按钮高 115 + 下边距 45。原先按钮固定在 600、框高 760：「关于」段末行下面空出约 120 单位一整条（用户 2026-10-29，Duo 内屏上很显眼）
-// Vertical layout of both boxes (panel units from the box top): line y / point size, divider y, button top, box height. Button top = last text line bottom + CO_GAP (the same gap as divider to version line),
-// box height = button top + button height 115 + bottom margin 45. Previously the buttons sat fixed at 600 in a 760-high box, leaving a band of about 120 units under the About section (user, 2026-10-29, very visible on the Duo inner screen)
+// 社区 / 关于弹窗（RC1.1 重构，用户 2026-10-30「同意 很好」，设计说明 dm-work/run/xpline/design/）：自上而下 标题 48 → 渠道卡片 0–2 行（标签 28 / 值 36 / 各自的小「复制」）
+// → 免费声明 28 → 分隔线 → 页脚两行 28（版本 + 制作；特别鸣谢）→ 一颗「确定」。纵向（框内面板单位，自框顶算）按渠道行数 n 排：卡片高 100、行距 120，各段间距照 §2.6 层级；
+// 末行文字下沿到按钮顶 CO_GAP，框高 = 按钮顶 + 按钮高 115 + 下边距 45（n = 2 / 1 / 0 → 802 / 682 / 562）。纯「关于」框（主菜单「关于」行，现无入口）= 同一结构、0 行渠道，原先 Q11.1-04 的字号错位随之消失
+// Community / About box (RC1.1 redesign): title 48 → 0-2 channel cards (label 28 / value 36 / own small Copy) → free notice 28 → divider → two footer lines 28 (version + maker; special thanks) → one OK.
+// Vertical layout by channel count n: card 100 high, 120 pitch; last text bottom to button top CO_GAP; box height = button top + 115 + 45 (802 / 682 / 562). The About-only box (no entry now) is the same structure with 0 channel rows, which also removes the Q11.1-04 size mismatch
 #define CO_GAP 60
-typedef struct { int h, btn_y, div_y; int dy[CO_DESC], sz[CO_DESC]; } co_geom_t;
-static co_geom_t co_geom(int mode, int site) {   // 1 社区框（§2.6：36 / 28 / 分隔线 / 28 × 4）；2 纯「关于」框（36 / 28 × 3）；site = 有官网行 | 1 community box; 2 About-only box; site = the website line is shown
-    co_geom_t g = { 0 }; int k0 = mode == 1 ? 3 : 0, y = mode == 1 ? 340 : 130;
-    if (mode == 1) { g.dy[0] = 130; g.sz[0] = 36; g.dy[1] = 192; g.sz[1] = 28; g.dy[2] = 272; g.sz[2] = 36; g.div_y = 296; }   // 分隔线在原「关于」行（y 272，高 60）的中线 | divider at the middle of the former About line
-    for (int k = k0; k < k0 + 4; k++) { if (k == k0 + 1 && !site) continue; g.dy[k] = y; g.sz[k] = mode == 2 && k == k0 ? 36 : 28; y += mode == 2 && k == k0 ? 70 : 48; }   // 版本 / 官网 / 鸣谢两行，行距 48（纯「关于」框版本行 36 号，下面空 70） | version / website / two credit lines, 48 apart
-    int bottom = 0; for (int k = 0; k < CO_DESC; k++) if (g.dy[k]) bottom = g.dy[k] + 30 + g.sz[k] / 2;   // 文字框高 60、竖直居中 | text boxes are 60 high, vertically centred
-    g.btn_y = bottom + CO_GAP; g.h = g.btn_y + 115 + 45;
+#define CO_ROWS 2
+#define CO_CARD_W 1480
+#define CO_BTN_W 256   // 原版前端小按钮 366×92 × 0.7 | the original small front-end button 366×92 × 0.7
+#define CO_BTN_H 64
+#define CO_LABEL_W 260
+#define CO_VALUE_X (-420)
+#define CO_VALUE_W (CO_CARD_W / 2 - 30 - CO_BTN_W - 30 - CO_VALUE_X)   // 值列：起点 −420，到小按钮左边留 30 | value column: from −420 to 30 left of the small button
+typedef struct { int n, h, btn_y, div_y, free_y, foot_y[2], card_y[CO_ROWS]; } co_geom_t;
+static co_geom_t co_geom(int n) {
+    co_geom_t g = { 0 }; if (n < 0) n = 0; if (n > CO_ROWS) n = CO_ROWS; g.n = n;
+    for (int k = 0; k < n; k++) g.card_y[k] = 130 + 120 * k;
+    g.free_y = 140 + 120 * n; g.div_y = g.free_y + 80; g.foot_y[0] = g.div_y + 30; g.foot_y[1] = g.foot_y[0] + 48;
+    g.btn_y = g.foot_y[1] + 30 + 28 / 2 + CO_GAP; g.h = g.btn_y + 115 + 45;
     return g;
 }
+static const char *const k_co_names[] = { "TouchCommTitle", "TouchCommLabel0", "TouchCommLabel1", "TouchCommValue0", "TouchCommValue1", "TouchCommCopy0", "TouchCommCopy1",
+    "TouchCommCopyText0", "TouchCommCopyText1", "TouchCommCard0T", "TouchCommCard0B", "TouchCommCard0L", "TouchCommCard0R", "TouchCommCard1T", "TouchCommCard1B", "TouchCommCard1L", "TouchCommCard1R",
+    "TouchCommFree", "TouchCommDivider", "TouchCommFoot0", "TouchCommFoot0R", "TouchCommFoot1", "TouchCommOk", "TouchCommFocusT", "TouchCommFocusB", "TouchCommFocusL", "TouchCommFocusR" };
+#define CO_NNAMES (int)(sizeof k_co_names / sizeof *k_co_names)
 static void co_hide_all(uint8_t *b, uint64_t p) {
     for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); uint64_t t = co_find(p, nm, 0); if (t) { int32_t *r = (int32_t *)(t + 0x70); r[0] = r[1] = 99999; } }   // 边框片挪出屏幕（尺寸不动） | tiles off screen (size unchanged)
-    uint64_t w = co_find(p, "TouchCommTitle", 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); }
-    for (int k = 0; k < CO_DESC; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommDesc%d", k); w = co_find(p, nm, 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); } }
-    static const char *const bt[] = { "TouchCommCopyQq", "TouchCommCopyLink", "TouchCommOk", "TouchCommDivider" };
-    for (int k = 0; k < 4; k++) co_place(co_find(p, bt[k], 0), 99999, 99999);
+    for (int k = 0; k < CO_NNAMES; k++) { uint64_t w = co_find(p, k_co_names[k], 0); if (!w) continue; int32_t *r = (int32_t *)(w + 0x70); if (r[0] != 99999) { r[0] = r[1] = 99999; } co_text(b, w, ""); }
 }
+// 线条片（卡片边框、手柄焦点框）：我们自己的单色单帧切片 Ztouch_comm/<file>，同 co_tile 只改精灵的绘制尺寸（同名切片的控件尺寸相同才共用：横线一组、竖线一组）
+// Line slices (card border, controller focus frame): our own one-colour single-frame slices Ztouch_comm/<file>; like co_tile only the sprite's draw size changes (widgets sharing a slice have the same size)
+static void co_line(uint8_t *b, uint64_t w, const char *file, int x, int y, int wd, int ht) {
+    const char *name = w ? *(const char **)(w + 8) : NULL; if (!name || strncmp(name, "TouchComm", 9) || !dm_widget_is(b, w, DM_VT_IMAGE) || wd < 1 || ht < 1 || wd > 4000 || ht > 800) return;
+    char expect[40]; snprintf(expect, sizeof expect, "Ztouch_comm/%s", file);
+    const char *f = *(const char **)(w + 0x108); uint64_t len = *(uint64_t *)(w + 0x110);
+    if (!f || len != strlen(expect) || memcmp(f, expect, len) || *(int32_t *)(w + 0x90) != 0) return;
+    uint64_t ref = *(uint64_t *)(w + 0x88), sp = ref ? *(uint64_t *)ref : 0; if (!sp) return;
+    uint32_t *atlas = (uint32_t *)(sp + 0xbc), *height = (uint32_t *)(sp + 0xc0), *frames = (uint32_t *)(sp + 0xcc), *width = (uint32_t *)(sp + 0xd0);
+    if (*frames != 1 || *atlas != *width || !*width || *width > 4000 || !*height || *height > 800) return;
+    *atlas = *width = (uint32_t)wd; *height = (uint32_t)ht;
+    int32_t *r = (int32_t *)(w + 0x70); if (r[0] != x || r[1] != y || r[2] != wd || r[3] != ht) { r[0] = x; r[1] = y; r[2] = wd; r[3] = ht; }
+}
+static void co_rect_lines(uint8_t *b, uint64_t p, const char *pre, const char *fh, const char *fv, int x, int y, int wd, int ht, int t) {   // 四条线围一个矩形 | four lines around a rectangle
+    char nm[32]; snprintf(nm, sizeof nm, "%sT", pre); co_line(b, co_find(p, nm, 0), fh, x, y, wd, t);
+    snprintf(nm, sizeof nm, "%sB", pre); co_line(b, co_find(p, nm, 0), fh, x, y + ht - t, wd, t);
+    snprintf(nm, sizeof nm, "%sL", pre); co_line(b, co_find(p, nm, 0), fv, x, y, t, ht);
+    snprintf(nm, sizeof nm, "%sR", pre); co_line(b, co_find(p, nm, 0), fv, x + wd - t, y, t, ht);
+}
+static void co_rect_hide(uint64_t p, const char *pre) { static const char sfx[4] = { 'T', 'B', 'L', 'R' }; for (int k = 0; k < 4; k++) { char nm[32]; snprintf(nm, sizeof nm, "%s%c", pre, sfx[k]); uint64_t w = co_find(p, nm, 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); r[0] = r[1] = 99999; } } }
 // 社区段与「关于」段之间的分隔线（用户 2026-10-29：「关于」子标题换成分隔线）：原版设置页分节同一张图 PauseMenu\Divider，共享精灵不改尺寸——
 // 只读它的图宽（精灵 +0xd0，同 co_tile 的偏移）按框中线居中；读不到就按 1500 估。核过是图片控件、名字对才摆
 // Divider between the community and About sections (user, 2026-10-29: replaces the About sub-title): the original settings-section image PauseMenu\Divider, a shared sprite never resized --
@@ -401,43 +453,56 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
               else if (st == 2) { atomic_store(&g_show, 0); LOG("社区入口：所在面板已关，提示框作废"); }
               return; }
     wait = 0;
-    uint64_t ti = co_find(p, "TouchCommTitle", 0), ok = co_find(p, "TouchCommOk", 0), cq = co_find(p, "TouchCommCopyQq", 0), cl = co_find(p, "TouchCommCopyLink", 0), de[CO_DESC], tl[15]; int all = ti && ok && cq && cl;
-    for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); tl[k] = co_find(p, nm, 0); all &= tl[k] != 0; }
-    for (int k = 0; k < CO_DESC; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommDesc%d", k); de[k] = co_find(p, nm, 0); all &= de[k] != 0; }
+    int all = 1; for (int k = 0; k < CO_NNAMES; k++) all &= co_find(p, k_co_names[k], 0) != 0;
+    uint64_t tl[15]; for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); tl[k] = co_find(p, nm, 0); all &= tl[k] != 0; }
     if (!all) { atomic_store(&g_show, 0); LOG("【红】社区入口：%s 里的提示框控件不全，不显示", k_hosts[which]); return; }
-    char v[GH_MAX + 1]; int kind = mode == 1 ? dm_community_value(dm_lang_group(), v, sizeof v) : 0;
-    if (mode == 1 && !kind) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：没有可显示的值了，提示框收起"); return; }
-    if (pad && st == 2) { uint64_t ev = dm_padmode_page_keys(DM_BTN_A | DM_BTN_B); if ((ev & DM_BTN_A) && kind) do_copy(2); if (ev & DM_BTN_B) atomic_store(&g_ack, 2); }   // 手柄：显示着时接管 A 复制（社区框）、B 收起 | controller: while shown, A copies (community box) and B dismisses
-    { int ack = atomic_exchange(&g_ack, 0); if (ack) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：收起（%s）", ack == 2 ? "手柄 B" : "点确定"); return; } }
+#define W(nm) co_find(p, nm, 0)
+    int ch[CO_ROWS], n = mode == 1 ? dm_community_channels(dm_lang_group(), ch) : 0;
+    if (mode == 1 && !n) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：没有可显示的值了，提示框收起"); return; }
+    static int foc; if (st == 1) foc = 0;   // 缺省焦点：第一行「复制」（没有渠道行时是「确定」） | default focus: row 1's Copy (OK when there are no rows)
+    if (foc > n) foc = n;
+    if (pad && st == 2) { uint64_t ev = dm_padmode_page_keys(DM_BTN_A | DM_BTN_B | DM_BTN_UP | DM_BTN_DOWN);   // 手柄：焦点链 复制₁ → 复制₂ → 确定（上下移、不循环），A 触发、B 收起 | controller focus chain, A activates, B dismisses
+        if ((ev & DM_BTN_UP) && foc > 0) foc--; if ((ev & DM_BTN_DOWN) && foc < n) foc++;
+        if (ev & DM_BTN_A) { if (foc < n) do_copy(2, foc); else atomic_store(&g_ack, 3); }
+        if (ev & DM_BTN_B) atomic_store(&g_ack, 2); }
+    { int ack = atomic_exchange(&g_ack, 0); if (ack) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：收起（%s）", ack == 2 ? "手柄 B" : ack == 3 ? "手柄 A 确定" : "点确定"); return; } }
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
     int ox, oy; float s; co_origin(p, xr, &ox, &oy, &s);
-    char ghl[GH_MAX + 1]; int has_site = dm_community_about_github(ghl, sizeof ghl);   // 有官网时「关于」段多一行 GitHub | with a website the About section gains a GitHub line
-    const co_geom_t gm_ = co_geom(mode, has_site); int H = gm_.h;   // 社区框：标题 + 社区两行 + 「关于」段 + 按钮；纯「关于」框：标题 + 三行 + 确定（co_geom） | community box: title + two community lines + the About section + buttons; About-only box: title + three lines + OK
+    const co_geom_t gm_ = co_geom(n); int H = gm_.h;
     int cx = (int)((xr / 2 - ox) / s), y0 = (int)((1080 - oy) / s) - H / 2;   // 整屏居中：框 1800×H（面板单位） | centered on the screen: box 1800×H (panel units)
-    // 文字：版本（外壳给的显示版本，没有就空行）、鸣谢（代码缺省名单，最多两行，带标签）、社区值 + 提示 / 「已复制」
-    // Text: version (the shell's display version, blank line if none), credits (default list in code, at most two lines, labelled), community value + hint / Copied
-    char line[GH_MAX + 64], ver[96]; const char *label = dm_update_label(); int cp = atomic_load(&g_copied);
-    if (label && *label) snprintf(ver, sizeof ver, dm_str(b, "dmAboutVersion"), label); else ver[0] = 0;
-    char sl[GH_MAX + 64]; if (has_site) snprintf(sl, sizeof sl, dm_str(b, "dmAboutGithub"), ghl); else sl[0] = 0;   // GitHub 行（Q11.1-03） | GitHub line
+    // 页脚：版本（外壳给的显示版本，没有就空）、制作（右）、特别鸣谢（第二行）——名单是代码缺省常量，按语言拼两行 | footer: version, maker (right), special thanks (second line)
+    char ver[96]; const char *label = dm_update_label(); if (label && *label) snprintf(ver, sizeof ver, dm_str(b, "dmAboutVersion"), label); else ver[0] = 0;
     static int grp = -1, ncr; static cr_line_t cr[2]; int g = dm_lang_group();
     if (g != grp) { int trunc; grp = g; ncr = credits_all(k_maker_default, (int)(sizeof k_maker_default / sizeof *k_maker_default), k_special_default, (int)(sizeof k_special_default / sizeof *k_special_default), NULL, 0, dm_str(b, "dmCreditsSep"), dm_str(b, "dmCreditsUpstreamNote"), cr, 2, &trunc);
         LOG("社区入口：提示框鸣谢 %d 行（制作 %d 名，特别鸣谢 %d 名，鸣谢 0 名）%s", ncr, (int)(sizeof k_maker_default / sizeof *k_maker_default), (int)(sizeof k_special_default / sizeof *k_special_default), trunc ? "，超过两行已在末尾加「…」" : ""); }
     char crt[2][224]; for (int k = 0; k < 2; k++) { if (k < ncr) snprintf(crt[k], sizeof crt[k], "%s%s%s", cr[k].kind == 3 ? dm_str(b, "dmCreditsMaker") : cr[k].kind == 1 ? dm_str(b, "dmCreditsSpecial") : cr[k].kind == 2 ? dm_str(b, "dmCreditsThanks") : "", cr[k].kind ? " " : "", cr[k].text); else crt[k][0] = 0; }
-    const int *dy = gm_.dy; int btn_y = gm_.btn_y;
-    if (mode == 1) {
-        snprintf(line, sizeof line, dm_str(b, kind == 1 ? "dmCommunityQq" : "dmCommunityLink"), v);
-        co_text(b, ti, dm_str(b, "dmCommunityTitle")); co_text(b, de[0], line);
-        co_text(b, de[1], cp > 0 ? dm_str(b, "dmCommunityCopied") : cp < 0 ? dm_str(b, "dmCommunityCopyFail") : dm_str(b, kind == 1 ? "dmCommunityQqHint" : "dmCommunityLinkHint"));
-        co_text(b, de[2], ""); co_text(b, de[3], ver); co_text(b, de[4], sl); co_text(b, de[5], crt[0]); co_text(b, de[6], crt[1]); }   // 第 2 行空：「关于」子标题换成分隔线 | line 2 empty: the About sub-title became the divider
-    else { co_text(b, ti, dm_str(b, "dmCommunityAbout")); co_text(b, de[0], ver); co_text(b, de[1], sl); co_text(b, de[2], crt[0]); co_text(b, de[3], crt[1]); for (int k = 4; k < CO_DESC; k++) co_text(b, de[k], ""); }
+    dm_community_fit(ver, 28, 880); dm_community_fit(crt[0], 28, 560); dm_community_fit(crt[1], 28, CO_CARD_W);
     { int gm[15][4], h = dm_notice_geometry(1800 - 128, H - 24, 1800, gm), top = (244 - h) / 2;   // 边框几何同崩溃围栏提示框（dm_crashfence.c） | frame geometry as the crash-fence box
       for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + gm[k][0], y0 + gm[k][1] - top, gm[k][2], gm[k][3] + (k / 3 < 4 ? 2 : 0) }; co_tile(b, tl[k], r); } }
-    co_place(ti, cx - 850, y0 + 40);
-    for (int k = 0; k < CO_DESC; k++) { if (dy[k]) co_place(de[k], cx - 850, y0 + dy[k]); else co_place(de[k], 99999, 99999); }
-    { uint64_t dv = co_find(p, "TouchCommDivider", 0); if (mode == 1) co_divider(b, dv, cx, y0 + gm_.div_y); else co_place(dv, 99999, 99999); }
-    if (mode == 1) { co_place(kind == 1 ? cq : cl, cx - 490, y0 + btn_y); co_place(kind == 1 ? cl : cq, 99999, 99999); co_place(ok, cx + 20, y0 + btn_y); }   // 两颗按钮各 470 宽，左复制、右确定 | two 470-wide buttons: Copy left, OK right
-    else { co_place(cq, 99999, 99999); co_place(cl, 99999, 99999); co_place(ok, cx - 235, y0 + btn_y); }   // 纯「关于」框：只有「确定」，居中 | About-only box: OK only, centered
+    co_text(b, W("TouchCommTitle"), dm_str(b, mode == 1 ? "dmCommunityTitle" : "dmCommunityAbout")); co_place(W("TouchCommTitle"), cx - 850, y0 + 40);
+    int cl = cx - CO_CARD_W / 2, bx = cl + CO_CARD_W - 30 - CO_BTN_W; uint64_t now = co_now(); int crow = atomic_load(&g_copied_row), cst = atomic_load(&g_copied);
+    int recent = now - atomic_load(&g_copied_at) < 2000000000ull;   // 按钮字「已复制 / 复制失败」留 2 秒 | Copied / Copy failed stays 2 s
+    for (int k = 0; k < CO_ROWS; k++) { char nm[32], full[GH_MAX + 1], shown[GH_MAX + 4];
+        uint64_t lb, vl, cp, ct; snprintf(nm, sizeof nm, "TouchCommLabel%d", k); lb = W(nm); snprintf(nm, sizeof nm, "TouchCommValue%d", k); vl = W(nm);
+        snprintf(nm, sizeof nm, "TouchCommCopy%d", k); cp = W(nm); snprintf(nm, sizeof nm, "TouchCommCopyText%d", k); ct = W(nm); snprintf(nm, sizeof nm, "TouchCommCard%d", k);
+        if (k >= n || !dm_community_channel_value(ch[k], full, sizeof full, shown, sizeof shown)) { co_place(lb, 99999, 99999); co_place(vl, 99999, 99999); co_place(cp, 99999, 99999); co_place(ct, 99999, 99999); co_rect_hide(p, nm); continue; }
+        int top = y0 + gm_.card_y[k]; dm_community_fit(shown, 36, CO_VALUE_W);
+        co_rect_lines(b, p, nm, "rule_h", "rule_v", cl, top, CO_CARD_W, 100, 2);
+        co_text(b, lb, dm_str(b, ch[k] == DM_CH_QQ ? "dmCommunityLabelQq" : ch[k] == DM_CH_SITE ? "dmCommunityLabelSite" : "dmCommunityLabelGithub")); co_place(lb, cl + 40, top);
+        co_text(b, vl, shown); co_place(vl, cx + CO_VALUE_X, top);
+        co_place(cp, bx, top + (100 - CO_BTN_H) / 2); co_place(ct, bx, top + (100 - CO_BTN_H) / 2 + 2);
+        co_text(b, ct, recent && crow == k ? dm_str(b, cst > 0 ? "dmCommunityCopied" : "dmCommunityCopyFailShort") : dm_str(b, "dmCommunityCopy")); }
+    co_text(b, W("TouchCommFree"), dm_str(b, "dmLoadCommFree")); co_place(W("TouchCommFree"), cx - 850, y0 + gm_.free_y);
+    co_divider(b, W("TouchCommDivider"), cx, y0 + gm_.div_y);
+    co_text(b, W("TouchCommFoot0"), ver); co_place(W("TouchCommFoot0"), cl, y0 + gm_.foot_y[0]);
+    co_text(b, W("TouchCommFoot0R"), crt[0]); co_place(W("TouchCommFoot0R"), cl + CO_CARD_W - 880, y0 + gm_.foot_y[0]);
+    co_text(b, W("TouchCommFoot1"), crt[1]); co_place(W("TouchCommFoot1"), cl, y0 + gm_.foot_y[1]);
+    co_place(W("TouchCommOk"), cx - 235, y0 + gm_.btn_y);   // 只留一颗「确定」，居中 | one OK only, centered
+    if (pad) { if (foc < n) co_rect_lines(b, p, "TouchCommFocus", "focus_h", "focus_v", bx - 8, y0 + gm_.card_y[foc] + (100 - CO_BTN_H) / 2 - 8, CO_BTN_W + 16, CO_BTN_H + 16, 4);
+               else co_rect_lines(b, p, "TouchCommFocus", "focus_h", "focus_v", cx - 235 - 8, y0 + gm_.btn_y - 8, 470 + 16, 115 + 16, 4); }   // 手柄焦点框贴合按钮、不压字 | controller focus frame hugs the button
+    else co_rect_hide(p, "TouchCommFocus");
+#undef W
     if (st == 1) { atomic_store(&g_show, 2); int32_t *pr = (int32_t *)(p + 0x70);
-        LOG("社区入口：已显示（%s，%s，%s，版本%s，鸣谢 %d 行%s；面板 %s 锚 %.2f/%.2f 矩形 %d,%d %dx%d 缩放 %.2f → 框中心 %d 顶 %d）", atomic_load(&g_from) == 1 ? "暂停菜单" : atomic_load(&g_from) == 2 ? "主菜单" : "自定义页", mode == 2 ? "关于框" : pad ? "手柄模式，A 复制 B 收起" : "触屏 / 鼠标点按钮", mode == 2 ? "版本 + 鸣谢" : kind == 1 ? "群号" : "链接",
-            ver[0] ? "有" : "无", ncr, has_site ? "，GitHub 行有" : "", k_hosts[which], *(float *)(p + 0x48), *(float *)(p + 0x4c), pr[0], pr[1], pr[2], pr[3], s, cx, y0); }
+        LOG("社区入口：已显示（%s，%s，%s，渠道 %d 行%s%s，版本%s，鸣谢 %d 行；面板 %s 锚 %.2f/%.2f 矩形 %d,%d %dx%d 缩放 %.2f → 框中心 %d 顶 %d 高 %d）", atomic_load(&g_from) == 1 ? "暂停菜单" : atomic_load(&g_from) == 2 ? "主菜单" : "自定义页", mode == 2 ? "关于框" : pad ? "手柄模式，焦点链 复制 → 确定" : "触屏 / 鼠标点按钮", mode == 2 ? "版本 + 鸣谢" : "社区", n, n < 1 ? "" : ch[0] == DM_CH_QQ ? "：群号" : ch[0] == DM_CH_SITE ? "：官网" : "：GitHub", n < 2 ? "" : ch[1] == DM_CH_SITE ? " + 官网" : " + GitHub", ver[0] ? "有" : "无", ncr,
+            k_hosts[which], *(float *)(p + 0x48), *(float *)(p + 0x4c), pr[0], pr[1], pr[2], pr[3], s, cx, y0, H); }
 }
