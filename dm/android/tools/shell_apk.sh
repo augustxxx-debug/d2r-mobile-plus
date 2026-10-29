@@ -56,6 +56,12 @@ cp "$O/ref/native_art/dm_touch_native_art.c" "$G/" && cp "$G/dm_vault_tab.h" "$G
 # 版本号在 git 检出里算（源码副本没有 git 会退回 0.0.0 / 20000）：整套传给 gradle；version.sh 说不能出包就停
 # The version is computed in the git checkout (the source copy has no git and would fall back to 0.0.0 / 20000) and passed to gradle as a set; stop when version.sh says the package must not be built
 eval "$(bash "$DM/tools/version.sh")"; [ -z "${DM_VERSION_ERROR:-}" ] || die "version.sh：$DM_VERSION_ERROR"; [ -z "${DM_VERSION_WARN:-}" ] || t "version.sh：$DM_VERSION_WARN"
+# 安卓独立的版本号（安卓是独立列车，到 RC2 并线为止）：dm/android/VERSION 写着 x.y.z 就用它当 versionName，显示成「x.y.z · <提交>」（工作区有改动照旧带 *）；
+# 构建号照旧按提交历史单调递增（覆盖升级只增不减）。没有这个文件 = 跟 version.sh（最高的 vX.Y.Z 标签）
+# Android's own version (Android is a separate train until the RC2 merge): when dm/android/VERSION holds x.y.z it becomes versionName, shown as "x.y.z · <commit>" (a trailing * for
+# uncommitted changes as before); the build number still increases along the commit history. Without the file the version follows version.sh (the highest vX.Y.Z tag)
+if [ -f "$DM/android/VERSION" ]; then AV=$(tr -d ' \r\n' < "$DM/android/VERSION"); [[ "$AV" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "dm/android/VERSION 不是 x.y.z：$AV"
+  star=; case "$DM_VERSION_LABEL" in *\*) star='*';; esac; DM_VERSION=$AV; DM_VERSION_LABEL="$AV · $(git -C "$DM/.." rev-parse --short=7 HEAD)$star"; fi
 t "版本 $DM_VERSION 构建号 $DM_BUILD（$DM_BUILD_SOURCE）显示 $DM_VERSION_LABEL"
 VER=(-PdmVersionName="$DM_VERSION" -PdmBuildNumber="$DM_BUILD" -PdmVersionLabel="$DM_VERSION_LABEL")
 # 更新清单地址（加载页页脚的官方免费渠道，按顺序试：自己的服务器 → GitHub raw）：出包时由 DM_UPDATE_URLS 给（空格分隔，只许 https://），不进源码；没给 = 包里不联网
