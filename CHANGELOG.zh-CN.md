@@ -10,6 +10,7 @@
 
 ### Android
 
+- 图标改为「MOBILE PLUS」（与 iOS、Mac 同一张 `AppIcon1024.png`）；App 改名 **D2R Mobile Plus**，用自己的包名 `com.augustusplay.d2rmobileplus` 安装。它和早先的包（`com.xiaoboluo.d2r`）并排装，不会覆盖；早先 App 里的存档留在那个 App 里，暂时不能转过来（安卓不让一个 App 读另一个 App 的内部目录，早先的版本也没有存档导出）。存档导出 / 导入已排期。
 - 支持 Arm Mali（在天玑 9600 Pro、Mali-G2 Ultra、Android 17 的手机上验过）：按显卡需要在载入时改写着色器（16 道子组上给 32 道线程束的 shuffle 加越界保护、去掉没用到的 ClipDistance / CullDistance、只读顶点缓冲补 NonWritable），宿主页大小改为运行时读（16 KB 页），不支持 BC 贴图的显卡在载入时把 BC3 贴图转成 ASTC 4x4（那台手机上解码后的图像内存 837 → 407 MB；透明度有渐变的贴图透明精度略有损失）。高通手机照旧直接采样 BC。
 - 安卓性能提示（ADPF）覆盖最忙的游戏线程，性能记录里加系统温控状态；两台测试机上测下来对帧率没有可测影响。
 - 来自上游 v2.1.0：安卓上遵守 30 帧省电档（之前实际跑 60）；16 位 R / RG 不能线性过滤时 BC4 / BC5 解成 8 位（部分 Mali 手机会崩）；驱动着色器编译器崩溃或失败的计算 / 图形管线从下次启动起跳过，不再每次启动都崩；Adreno 750–799 载入时内联着色器辅助函数（SPIRV-Tools 库编进 App，许可证已写进第三方说明）。Adreno 740 保留 quad 导数与 warp32 两个改写（上游在那里看到的挂起，本分支已修）。
