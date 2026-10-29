@@ -53,6 +53,14 @@ int main(void) {
     CHECK(no("{" BASE ", \"community\": {\"github\": \"https://github.com/a b\"}}")); CHECK(no("{" BASE ", \"community\": {\"github\": \"https://github.com/a\\/b\"}}"));
     { char s[400]; snprintf(s, sizeof s, "{" BASE ", \"community\": {\"github\": \"https://github.com/%0142d\"}}", 0); CHECK(no(s)); }   // 19 + 142 = 161 字符 | 161 characters
     { char s[400]; snprintf(s, sizeof s, "{" BASE ", \"community\": {\"github\": \"https://github.com/%0141d\"}}", 0); CHECK(ok(s)); }   // 160 字符 | 160 characters
+    // community.site（服务端说明第 13 节）与线上清单的样子 | community.site (server notes section 13) and the live manifest's shape
+    { const char *live = "{\"build\":1793254654,\"version\":\"1.0.0\",\"note\":\"1.0.0 RC1\",\"urgent\":false,\"community\":{\"qq_group\":\"1129913678\",\"github\":\"https://github.com/augustxxx-debug/d2r-mobile-plus\",\"site\":\"https://d2rplus.augustusplay.com/\"}}";
+      CHECK(dm_manifest_parse(live, strlen(live), &m, why, sizeof why) == 1); CHECK(!strcmp(m.site, "https://d2rplus.augustusplay.com/")); CHECK(!strcmp(m.qq, "1129913678")); }
+    CHECK(ok("{" BASE ", \"community\": {\"site\": \"https://example.org/x?y=1\"}}"));
+    CHECK(no("{" BASE ", \"community\": {\"site\": \"http://example.org/\"}}")); CHECK(no("{" BASE ", \"community\": {\"site\": \"https://\"}}"));
+    CHECK(no("{" BASE ", \"community\": {\"site\": \"https://a b/\"}}")); CHECK(no("{" BASE ", \"community\": {\"site\": \"https:\\/\\/a\"}}"));
+    CHECK(no("{" BASE ", \"community\": {\"site\": 1}}")); CHECK(no("{" BASE ", \"community\": {\"site\": \"https://a/\", \"site\": \"https://b/\"}}"));
+    CHECK(ok("{" BASE ", \"community\": {\"qq_group\": \"12345\", \"discord\": \"x\", \"min_build\": 3}, \"min_build\": 5}"));   // 未知键忽略 | unknown keys ignored
     // 重复键 | duplicate keys
     CHECK(no("{" BASE ", \"build\": 2}")); CHECK(no("{" BASE ", \"urgent\": true}"));
     CHECK(no("{" BASE ", \"community\": {}, \"community\": {}}")); CHECK(no("{" BASE ", \"community\": {\"qq_group\": \"12345\", \"qq_group\": \"67890\"}}"));

@@ -59,12 +59,12 @@ int dm_loadpage_summary(char *buf, size_t n, uint64_t now_ms);
 
 // 社区信息（官方免费渠道，加载页底部两行 + 一个复制钮）：只在首次导入 / 生成这段长等待里显示——平台只在这条路上起拉取（dm_manifest.h 校验过的清单），
 // 拿到后调 dm_loadpage_community；没调、或两项都空 = 不显示，不内置缺省值。状态不随 begin 清零（清单可能在页面开始之前就到了）。
-// 页面进行中 / 失败时显示，完成后不显示。复制钮放进剪贴板的串按语言取：dmLoadCommPrefer 为 qq 的语言（中文）先群号，其余先链接；只有一项就用那一项。
+// 页面进行中 / 失败时显示，完成后不显示。复制钮放进剪贴板的串：有官网时显示官网 + 群号、复制群号（没有群号才复制官网）；没有官网时按语言取——dmLoadCommPrefer 为 qq 的语言（中文）先群号，其余先链接；只有一项就用那一项。
 // Community info (official free channels, two lines + one copy button at the bottom of the page): shown only during the first import / generation wait - the platform starts
 // the fetch only on that path (a manifest validated by dm_manifest.h) and calls dm_loadpage_community once it has one; never called, or both empty = not shown, no built-in default.
 // The state is not reset by begin (the manifest may arrive before the page starts). Shown while running / failed, not after done. The string the copy button puts on the clipboard
 // depends on the language: languages whose dmLoadCommPrefer is qq (Chinese) prefer the group number, the others the link; with only one item, that one.
-void dm_loadpage_community(const char *qq, const char *github);   // NULL / 空串 = 没有这一项 | NULL / empty = no such item
+void dm_loadpage_community(const char *qq, const char *github, const char *site);   // NULL / 空串 = 没有这一项；site = 项目官网（有就与群号一起显示） | NULL / empty = no such item; site = project site (shown next to the group number when present)
 int dm_loadpage_community_shown(void);                            // 1 = 现在画社区两行与复制钮 | 1 = the community lines and copy button are drawn now
 const char *dm_loadpage_copy_value(void);                         // 复制钮要放进剪贴板的串；不显示时为空串 | what the copy button puts on the clipboard; empty when not shown
 // 平台写完剪贴板调：ok = 写成没有，pad = 手柄 A 还是触屏点的；按钮字换成「已复制 / 复制失败」2 秒，写一行「加载页：复制…」日志

@@ -169,18 +169,27 @@ static void text_main(dm_lp_text *t, uint64_t now_ms) {
 }
 
 // ---- 社区信息（接口说明见 dm_loadpage.h） | community info (see dm_loadpage.h) ----
-static struct { char qq[16], gh[168]; int pad, copy_state; uint64_t copy_t; } cm;   // 不随 begin 清零 | not reset by begin
-void dm_loadpage_community(const char *qq, const char *github) {
-    snprintf(cm.qq, sizeof cm.qq, "%s", qq ? qq : ""); snprintf(cm.gh, sizeof cm.gh, "%s", github ? github : "");
-    LOG("加载页：社区信息 群号%s、GitHub %s", cm.qq[0] ? "有" : "无", cm.gh[0] ? "有" : "无");
+static struct { char qq[16], gh[168], site[168]; int pad, copy_state; uint64_t copy_t; } cm;   // 不随 begin 清零 | not reset by begin
+void dm_loadpage_community(const char *qq, const char *github, const char *site) {
+    snprintf(cm.qq, sizeof cm.qq, "%s", qq ? qq : ""); snprintf(cm.gh, sizeof cm.gh, "%s", github ? github : ""); snprintf(cm.site, sizeof cm.site, "%s", site ? site : "");
+    LOG("加载页：社区信息 官网%s、群号%s、GitHub %s", cm.site[0] ? "有" : "无", cm.qq[0] ? "有" : "无", cm.gh[0] ? "有" : "无");
 }
-int dm_loadpage_community_shown(void) { return (cm.qq[0] || cm.gh[0]) && (g.state == DM_LP_RUNNING || g.state == DM_LP_FAILED); }
-static int prefer_qq(void) { return cm.qq[0] && (!cm.gh[0] || !strcmp(dm_loadpage_ui("dmLoadCommPrefer"), "qq")); }
-const char *dm_loadpage_copy_value(void) { return !dm_loadpage_community_shown() ? "" : prefer_qq() ? cm.qq : cm.gh; }
+int dm_loadpage_community_shown(void) { return (cm.qq[0] || cm.gh[0] || cm.site[0]) && (g.state == DM_LP_RUNNING || g.state == DM_LP_FAILED); }
+// 复制哪一项（用户 2026-10-29）：有官网时页脚同时显示官网与群号，复制钮复制群号（各语言都是），没有群号才复制官网；
+// 没有官网时按语言（dmLoadCommPrefer：中文先群号、其余先链接），只有一项就用那一项
+// what to copy (user 2026-10-29): with a site the footer shows the site and the group number, and the button copies the number (every language), the site only when there is no number;
+// without a site by language (dmLoadCommPrefer: Chinese the number, others the link); a single item is used as is
+enum { CP_SITE, CP_QQ, CP_GH };
+static int copy_kind(void) {
+    if (cm.site[0]) return cm.qq[0] ? CP_QQ : CP_SITE;
+    return cm.qq[0] && (!cm.gh[0] || !strcmp(dm_loadpage_ui("dmLoadCommPrefer"), "qq")) ? CP_QQ : CP_GH;
+}
+static int prefer_qq(void) { return copy_kind() == CP_QQ; }
+const char *dm_loadpage_copy_value(void) { if (!dm_loadpage_community_shown()) return ""; int k = copy_kind(); return k == CP_SITE ? cm.site : k == CP_QQ ? cm.qq : cm.gh; }
 void dm_loadpage_copied(int ok, int pad, uint64_t now_ms) {
     if (!dm_loadpage_community_shown()) return;
     cm.copy_state = ok ? 1 : -1; cm.copy_t = now_ms;
-    LOG("加载页：复制%s%s（%s）", prefer_qq() ? "群号" : "链接", ok ? "" : "失败", pad ? "手柄 A" : "触屏");
+    LOG("加载页：复制%s%s（%s）", copy_kind() == CP_SITE ? "官网" : prefer_qq() ? "群号" : "链接", ok ? "" : "失败", pad ? "手柄 A" : "触屏");
 }
 void dm_loadpage_pad(int on) { if ((on != 0) != cm.pad) { cm.pad = on != 0; LOG("加载页：输入换成%s", cm.pad ? "手柄" : "触屏"); } }
 int dm_loadpage_pad_mode(void) { return cm.pad; }
@@ -189,12 +198,16 @@ int dm_loadpage_hit_copy(const dm_lp_layout *L, double x, double y) {
 }
 static void community_text(dm_lp_text *t, uint64_t now_ms) {
     if (!dm_loadpage_community_shown()) return;
-    if (cm.qq[0]) snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui(cm.gh[0] ? "dmLoadCommQqGh" : "dmLoadCommQq"), cm.qq);
+    if (cm.site[0]) {   // 官网只显示主机与路径（去掉 https:// 与结尾斜杠） | the site shows host and path only (no https://, no trailing slash)
+        char disp[168]; snprintf(disp, sizeof disp, "%s", cm.site + (strncmp(cm.site, "https://", 8) ? 0 : 8)); size_t n = strlen(disp); if (n > 1 && disp[n - 1] == '/') disp[n - 1] = 0;
+        if (cm.qq[0]) snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui("dmLoadCommSiteQq"), disp, cm.qq);
+        else snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui("dmLoadCommSite"), disp);
+    } else if (cm.qq[0]) snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui(cm.gh[0] ? "dmLoadCommQqGh" : "dmLoadCommQq"), cm.qq);
     else snprintf(t->comm1, sizeof t->comm1, "%s", dm_loadpage_ui("dmLoadCommGh"));
     snprintf(t->comm2, sizeof t->comm2, "%s", dm_loadpage_ui("dmLoadCommFree"));
     if (cm.copy_state && now_ms - cm.copy_t > 2000) cm.copy_state = 0;   // 反馈留 2 秒 | feedback stays for 2 s
     t->copy_state = cm.copy_state;
-    snprintf(t->copy, sizeof t->copy, "%s", dm_loadpage_ui(cm.copy_state > 0 ? "dmLoadCommCopied" : cm.copy_state < 0 ? "dmLoadCommCopyFail" : prefer_qq() ? "dmLoadCommCopyQq" : "dmLoadCommCopyGh"));
+    snprintf(t->copy, sizeof t->copy, "%s", dm_loadpage_ui(cm.copy_state > 0 ? "dmLoadCommCopied" : cm.copy_state < 0 ? "dmLoadCommCopyFail" : copy_kind() == CP_SITE ? "dmLoadCommCopySite" : prefer_qq() ? "dmLoadCommCopyQq" : "dmLoadCommCopyGh"));
 }
 
 // ---- 素材与布局 ----

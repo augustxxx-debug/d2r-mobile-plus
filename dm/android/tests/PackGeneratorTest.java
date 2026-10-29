@@ -37,7 +37,7 @@ public class PackGeneratorTest {
         equal(PackGenerator.Step.PREPARE, s.step); equal(0, s.percent());
         equal(true, s.accept("@progress product 3.3.94012-r44"));
         equal(true, s.accept("@progress patch")); equal(PackGenerator.Step.PATCH, s.step); equal(3, s.percent());
-        equal(false, s.accept("[21:33:58] 改写游戏程序 完成（22 秒）"));
+        equal(false, s.accept("[21:33:58] 处理游戏文件 完成（22 秒）"));
         s.accept("@progress shaders /data/x/shaders"); equal(PackGenerator.Step.SHADERS, s.step); equal("/data/x/shaders", s.shaderDir);
         equal(36, s.percent()); s.shadersMade = 6931; equal(97, s.percent()); s.shadersMade = 9999; equal(97, s.percent());
         s.shadersMade = 3465; equal(66, s.percent());
