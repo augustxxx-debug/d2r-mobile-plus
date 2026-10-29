@@ -53,22 +53,11 @@ static void apply(void) {
     if ((b & ~prev_b) || ((on[0] || on[1]) && !g_need_center)) { dm_padmode_request_glyph(g_glyph); set_mode(1); }   // 先报键帽样式再要手柄版：同一次切换里就换成这只手柄的键帽（Mac App 上也是从键盘键帽换回手柄键帽） | Report the glyph style before asking for the controller layout, so the same switch already uses this controller's glyphs (on the Mac App this is also the switch from keyboard glyphs back to controller glyphs)
     prev_b = b;
     if (!g_pad_mode || !on[0]) ax[0] = ax[1] = 0; if (!g_pad_mode || !on[1]) ax[2] = ax[3] = 0;   // 触屏模式不交摇杆；手柄模式下没推出来的给 0 | Sticks are not delivered in touch mode; in controller mode a stick that is not pushed out gives 0
-    // ZR：原版六个技能格之一。这一格空着（没绑技能）时按它 = 免费回城（手柄玩家也免费回城，与触屏回城钮一致）；绑了技能就整颗交还原版（不再整颗占用）。
-    // 想把回城放在别的键上：原版选技能界面「综合技能」里有回城技能可绑（宿主进局时挂上的，dm_freetp.c），那条走原版自己的施放，不经这里。
-    // 以上只在自定义页「免费回城」开着时（free_tp，缺省关）：关着时 dm_freetp_zr_free 恒 0，ZR 整颗交还原版，也不挂回城技能。
-    // 只在游戏态接管：面板开着时 ZR 照常交给原版（储藏箱 / 编年史用 ZL / ZR 翻页签）；按下时在游戏态接管的那一下，到松开前都不交给游戏
-    // ZR: one of the six original skill slots. While this slot is empty (no skill bound), pressing it = free town portal (controller players get
-    // the free town portal too, consistent with the touch town portal button); once a skill is bound the whole button is handed back to the
-    // original game (we no longer claim the whole button).
-    // To put town portal on another key: the original skill selection screen has a town portal skill under "General Skills" that can be bound
-    // (attached by the host on joining a run, dm_freetp.c); that one goes through the original game's own cast and does not pass through here.
-    // All of the above only while the Custom page's "Free Town Portal" is on (free_tp, off by default): while off dm_freetp_zr_free is always 0,
-    // ZR goes back to the original game entirely and the town portal skill is not attached.
-    // Taken over only in game state: with a panel open ZR goes to the original game as usual (the stash / Chronicle use ZL / ZR to switch tabs);
-    // a press that was taken over in game state is not handed to the game until it is released
-    { static uint64_t prev; static int mine; void dm_tp_request(void); int dm_front_navigation(void), dm_freetp_zr_free(int zl);
-      if ((b & DM_BTN_ZR) && !(prev & DM_BTN_ZR)) { mine = !dm_front_navigation() && dm_freetp_zr_free((b & DM_BTN_ZL) != 0); if (mine) { dm_tp_request(); LOG("手柄：ZR（这一格空着）→ 免费回城"); } }
-      prev = b; if (mine) b &= ~(uint64_t)DM_BTN_ZR; if (!(b & DM_BTN_ZR) && !(prev & DM_BTN_ZR)) mine = 0; }
+    // ZR 是原版六个技能格之一，不再接管（用户 2026-10-30）：原先「ZR 空着 = 免费回城」会让按 RT 不扣东西随手开门，现在两种设置下都整颗交给原版，空着按了什么都不发生。
+    // 免费回城开着时，回城技能在原版选技能界面「综合技能」里，玩家自己绑键（dm_freetp.c）
+    // ZR is one of the six original skill slots and is no longer taken over (user 2026-10-30): "empty ZR = free town portal" let RT open portals
+    // without consuming anything; under both settings it now goes entirely to the original game, and pressing it empty does nothing.
+    // With free town portal on, the town portal skill is under "General Skills" in the original skill selection screen and the player binds it (dm_freetp.c)
     dm_pad_set(b, ax[0], ax[1], ax[2], ax[3]);
 }
 static void put(const void *who, uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry, int glyph) {
