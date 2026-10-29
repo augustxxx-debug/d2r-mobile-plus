@@ -81,7 +81,7 @@ The 18 archives are listed in [GAME_FILES.md](GAME_FILES.md) in the section The 
 2. Open the App. It needs "All files access" to read the game resources in `Download`: tap the screen to open the system setting, turn it on and come back.
 3. The App finds the `android` import pack and imports it into its internal storage with a progress screen (a minute or two the first time; stay on that screen), then starts the game.
 
-Network: only on that first import / generation screen the App reads one small file (the update manifest, `latest.json`) to show the official free channels at the bottom (QQ group · GitHub, with a copy button). It tries our own server first and GitHub when that fails; if neither answers, nothing is shown. A normal start and the game itself never use the network.
+Network: only on the first launch that has to prepare the game content (from the permission screen on, until the update manifest `latest.json` is fetched once) the App reads that one small file to show the official free channels at the bottom of the loading page (project site · QQ group, with a button that copies the group number). It tries our own server first and GitHub when that fails; if none answers, nothing is shown. Later starts do not use the network; on that first launch the fetch may still be finishing for a few seconds after the game starts.
 
 After the import you can delete the `android` folder on the phone; keep the `data` folder, the game reads its resources from there.
 
