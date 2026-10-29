@@ -125,11 +125,11 @@ cd d2r-mobile-plus
 
 ## Android（高通 Adreno 候选）
 
-Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gfx/vulkan/`），第一个候选包只面向高通 Adreno（在 Adreno 740 掌机上验过：营地与战斗 60 FPS、120 帧档、手柄）。Mali（联发科 / 三星 Exynos）另有子组 16 道、ClipDistance 等缺口，暂不出包。安装包不含游戏内容：用自己的游戏文件在电脑上做导入包（`dm/tools/d2rm_android.py`），拷到手机 `Download/S2X/D2R Mobile/`，打开 App 导入；游戏资源 `data` 放同一处。详见 `dm/android/README.zh-CN.md`。
+Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gfx/vulkan/`），第一个候选包只面向高通 Adreno（在 Adreno 740 掌机上验过：营地与战斗 60 FPS、120 帧档、手柄）。Mali（联发科 / 三星 Exynos）另有子组 16 道、ClipDistance 等缺口，暂不出包。安装包不含游戏内容：把自己的游戏文件（`ExeFS` 与 `data`）放进手机 `Download/S2X/D2R Mobile/`，打开 App，第一次会在手机上自己生成导入包（骁龙 8 Gen 2 约 7 分钟），界面楷体用随包的霞鹜文楷。仍可在电脑上做导入包（`dm/tools/d2rm_android.py`）。详见 [docs/ANDROID.zh-CN.md](docs/ANDROID.zh-CN.md)。
 
 本轮 Android 适配（相对上游 Android 后端）：崩溃围栏接入后台 / 前台 / 内存告警；暂停菜单「分享诊断日志」（脱敏、系统分享面板）；显示版本与构建号同源；原生出图尺寸 + 图形页「渲染分辨率」档；120 帧档（屏幕 ≥ 120 Hz 时出现，自动切高刷模式）；「显示帧数」；实体手柄（Xbox 键位、B / BACK 不退出、手柄 / 触屏模式切换）；3D 画面加亮上限 2；Adreno 740 驱动绕法（warp32 掩码按车道号算、lane 号自检）。
 
-**已知问题（安卓）：长时间游戏内存缓慢上涨。** 在 Adreno 740 掌机上每 90 秒换一关、五幕轮流跑了 31.5 分钟（60 帧），内存一直在缓涨（后半程约每分钟 8 MB），App 没有被系统关掉、也没收到内存告警；一小时以上的表现还没验证。连续玩 1–2 小时后建议重启一次 App。
+**已知问题（安卓）：玩的头一个小时里内存会上涨。** 在 Adreno 740 掌机上每 90 秒换一关、五幕轮流跑了 65 分钟（60 帧档，中途进后台 3 次）：加载新区域时内存上涨，之后趋平——12 关第一轮约每秒 0.55 MB，第四轮约每秒 0.03 MB；App 没有被系统关掉、也没收到内存告警。一小时以上、8 GB 及以下内存的手机还没测；玩久了变卡就重开一次 App。
 
 ## 验证与限制
 
@@ -145,4 +145,4 @@ Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gf
 
 安卓安装包随附霞鹜文楷（LXGW WenKai）Medium v1.530，作者 LXGW，按 [SIL Open Font License 1.1](https://openfontlicense.org) 授权（许可证随包在 `assets/dmgen/font/OFL.txt`；来源 https://github.com/lxgw/LxgwWenKai）。手机端生成导入包时用它替换界面字体里的中日文字形；包里的字体文件未作改动。
 
-安卓安装包还随附在手机上生成导入包用的工具：CPython 3.13（Chaquopy 的安卓构建，含 OpenSSL、SQLite 及 CPython 内含的各库）、NumPy、OpenBLAS、python-lz4、fontTools、Capstone、Pillow（含 FreeType、HarfBuzz、zlib-ng）、zlib、SPIRV-Tools，以及用 .NET NativeAOT 从 Ryujinx 着色器翻译器编出的翻译工具，感谢各位作者。版本与许可证见 [docs/DEPENDENCIES.zh-CN.md](docs/DEPENDENCIES.zh-CN.md#安卓安装包随附的组件)；许可证原文随包在 `assets/dmgen/THIRD_PARTY_NOTICES.txt`（与 [dm/android/THIRD_PARTY_NOTICES.txt](dm/android/THIRD_PARTY_NOTICES.txt) 同一份）。
+安卓安装包还随附在手机上生成导入包用的工具：CPython 3.13（Chaquopy 的安卓构建，含 OpenSSL、SQLite 及 CPython 内含的各库）、NumPy、OpenBLAS、python-lz4、fontTools、Capstone、Pillow（含 FreeType、HarfBuzz、zlib-ng）、zlib、SPIRV-Tools，以及用 .NET NativeAOT 从 Ryujinx 着色器翻译器编出的翻译工具；App 本身还编入了 Kotlin 标准库、libdeflate、bcdec、nvn.h 声明和移植自 deko3d 的算法，感谢各位作者。版本与许可证见 [docs/DEPENDENCIES.zh-CN.md](docs/DEPENDENCIES.zh-CN.md#安卓安装包随附的组件)；许可证原文随包在 `assets/dmgen/THIRD_PARTY_NOTICES.txt`（与 [dm/android/THIRD_PARTY_NOTICES.txt](dm/android/THIRD_PARTY_NOTICES.txt) 同一份）。

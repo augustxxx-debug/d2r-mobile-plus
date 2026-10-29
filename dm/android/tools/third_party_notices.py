@@ -25,10 +25,30 @@ EXTRA = {
     'openssl-LICENSE.txt': 'https://raw.githubusercontent.com/openssl/openssl/openssl-3.5.0/LICENSE.txt',
     'xz-COPYING': 'https://raw.githubusercontent.com/tukaani-project/xz/v5.4.6/COPYING',
     'bzip2-LICENSE': 'https://sourceware.org/git/?p=bzip2.git;a=blob_plain;f=LICENSE;hb=refs/tags/bzip2-1.0.8',
+    'gcc-COPYING3': 'https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-4.9.4/COPYING3',
+    'gcc-COPYING.RUNTIME': 'https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-4.9.4/COPYING.RUNTIME',
+    'kotlin-LICENSE.txt': 'https://raw.githubusercontent.com/JetBrains/kotlin/v2.2.10/license/LICENSE.txt',
+    'kotlin-NOTICE.txt': 'https://raw.githubusercontent.com/JetBrains/kotlin/v2.2.10/license/NOTICE.txt',
 }
 
+ZLIB_DEKO3D = '''Copyright (C) 2018-2020 fincs
+
+This software is provided 'as-is', without any express or implied warranty. In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose, including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+(Only the layout algorithm is ported, altered, into dm/gfx/nvn/nvn_tex.c; the file header marks it as such.)'''
+
+
 # (名称, 版本, 许可证, 在 APK 里, 来源, 原文来源) | (name, version, licence, where in the APK, source, text source)
-# 原文来源：('tar', 包, 成员) / ('whl', 轮子前缀, 成员) / ('extra', 文件) / ('file', 路径键) / ('note', 文字)
+# 原文来源：('tar', 包, 成员) / ('whl', 轮子前缀, 成员) / ('extra', 文件) / ('file', 路径键) / ('note', 文字) / ('multi', [以上几种])
 COMPONENTS = [
     ('CPython (Android build by Chaquopy)', 'python=3.13.16-0', 'PSF-2.0 (Python Software Foundation License)', 'runtime.zip lib/libpython3.13.so, py/lib/python3.13; lib/arm64-v8a/libdmgen_py.so',
      'https://repo.maven.apache.org/maven2/com/chaquo/python/target/3.13.16-0/', ('extra', 'cpython-LICENSE')),
@@ -46,8 +66,13 @@ COMPONENTS = [
     ('zlib (Python zlib module, statically linked)', 'zlib(python)=1.3.1', 'Zlib', 'runtime.zip py/lib/python3.13/lib-dynload/zlib*.so', 'https://zlib.net', ('tar', 'zlib-1.3.1.tar.gz', 'zlib-1.3.1/LICENSE')),
     ('NumPy', 'numpy=1.26.2', 'BSD-3-Clause (with bundled components listed in its notice)', 'runtime.zip py/lib/python3.13/site-packages/numpy', 'https://numpy.org',
      ('whl', 'numpy-1.26.2', ['numpy-1.26.2.dist-info/LICENSE.txt', 'numpy-1.26.2.dist-info/LICENSES_bundled.txt'])),
-    ('OpenBLAS', '0.2.20', 'BSD-3-Clause', 'runtime.zip lib/libopenblas.so', 'https://www.openblas.net', ('whl', 'chaquopy_openblas-0.2.20', ['chaquopy_openblas-0.2.20.dist-info/LICENSE'])),
-    ('libgfortran (GCC runtime)', '4.9', 'GPL-3.0 WITH GCC-exception-3.1', 'runtime.zip lib/libgfortran.so.3', 'https://gcc.gnu.org', ('whl', 'chaquopy_libgfortran-4.9', ['chaquopy_libgfortran-4.9.dist-info/LICENSE.txt'])),
+    ('OpenBLAS', '0.2.20', 'BSD-3-Clause', 'runtime.zip lib/libopenblas.so',
+     'https://www.openblas.net; binary from the Chaquopy wheel chaquopy-openblas 0.2.20-5 (build scripts: https://github.com/chaquo/chaquopy, server/pypi/packages/chaquopy-openblas)',
+     ('whl', 'chaquopy_openblas-0.2.20', ['chaquopy_openblas-0.2.20.dist-info/LICENSE'])),
+    ('libgfortran (GCC 4.9 runtime library, loaded by OpenBLAS)', '4.9', 'GPL-3.0 WITH GCC-exception-3.1 (full texts of both below)', 'runtime.zip lib/libgfortran.so.3',
+     'GCC 4.9 libgfortran (https://gcc.gnu.org); binary from the Chaquopy wheel chaquopy-libgfortran 4.9-0 (build scripts: https://github.com/chaquo/chaquopy, server/pypi/packages/chaquopy-libgfortran); '
+     'corresponding source: the GCC 4.9.4 release (https://gcc.gnu.org/releases.html, tag releases/gcc-4.9.4)',
+     ('multi', [('whl', 'chaquopy_libgfortran-4.9', ['chaquopy_libgfortran-4.9.dist-info/LICENSE.txt']), ('extra', 'gcc-COPYING3'), ('extra', 'gcc-COPYING.RUNTIME')])),
     ('LLVM libc++ (shared from Chaquopy; also statically linked from the Android NDK into Pillow\'s _imagingft and spirv-opt / spirv-val)', '18 (Chaquopy 180000); NDK 29.0.14206865',
      'Apache-2.0 WITH LLVM-exception', 'runtime.zip lib/libc++_shared.so; lib/arm64-v8a/libdmgen_spvopt.so, libdmgen_spvval.so', 'https://libcxx.llvm.org',
      ('whl', 'chaquopy_libcxx-180000', ['chaquopy_libcxx-180000.dist-info/LICENSE.TXT'])),
@@ -69,6 +94,15 @@ COMPONENTS = [
      ('file', 'dotnet')),
     ('Ryujinx shader translator (compiled into the translator)', 'Ryujinx 1.3.2 (vendored unmodified in dm/third_party/ryujinx)', 'MIT', 'lib/arm64-v8a/libdmgen_xlate.so', 'https://github.com/Ryubing',
      ('file', 'ryujinx')),
+    ('Kotlin standard library (added by the Android Gradle plugin, in classes.dex) with JetBrains annotations', 'kotlin-stdlib 2.2.10; org.jetbrains:annotations 13.0',
+     'Apache-2.0 (Copyright 2010-2024 JetBrains s.r.o and respective authors and developers; NOTICE below)', 'classes.dex (kotlin/*, org/jetbrains/annotations/*, org/intellij/*), kotlin/*.kotlin_builtins',
+     'https://github.com/JetBrains/kotlin', ('multi', [('extra', 'kotlin-LICENSE.txt'), ('extra', 'kotlin-NOTICE.txt')])),
+    ('libdeflate (decompression, compiled into the host)', '1.26 (commit 92e6a0d, unmodified)', 'MIT', 'lib/arm64-v8a/libdm.so', 'https://github.com/ebiggers/libdeflate', ('file', 'libdeflate')),
+    ('bcdec (BC texture decoding, compiled into the host and the Vulkan graphics layer)', 'v0.985 (commit 80859ed)', 'MIT (chosen of its MIT / Unlicense dual licence)', 'lib/arm64-v8a/libdm.so',
+     'https://github.com/iOrange/bcdec', ('file', 'bcdec')),
+    ('nvn.h (graphics interface declarations)', 'as in dm/gfx/nvn/include/nvn.h', 'MIT (Copyright (c) 2020 h1k421)', 'lib/arm64-v8a/libdm.so', 'author named in the file header', ('file', 'nvn')),
+    ('deko3d texture layout algorithm (ported into dm/gfx/nvn/nvn_tex.c)', 'source/dk_image.cpp', 'Zlib (Copyright (C) 2018-2020 fincs)', 'lib/arm64-v8a/libdmdeswizzle.so, libdm.so',
+     'https://github.com/devkitPro/deko3d', ('note', ZLIB_DEKO3D)),
     ('LXGW WenKai (霞鹜文楷) Medium', 'v1.530', 'SIL Open Font License 1.1 (shipped unmodified, licence also at assets/dmgen/font/OFL.txt)', 'assets/dmgen/font/LXGWWenKai-Medium.ttf',
      'https://github.com/lxgw/LxgwWenKai', ('file', 'ofl')),
 ]
@@ -79,6 +113,24 @@ def member(archive, name):
         return t.extractfile(name).read().decode('utf-8', 'replace')
 
 
+def emit(out, kind, a, files):
+    if kind[0] == 'tar':
+        for m in ([kind[2]] if isinstance(kind[2], str) else kind[2]): out.write('[%s]\n%s\n' % (m.split('/', 1)[1], member(a.dl / kind[1], m)))
+    elif kind[0] == 'whl':
+        whl = next(a.dl.glob(kind[1] + '*.whl'))
+        with zipfile.ZipFile(whl) as z:
+            for m in kind[2]: out.write('[%s]\n%s\n' % (m.split('/')[-1], z.read(m).decode('utf-8', 'replace')))
+    elif kind[0] == 'extra':
+        out.write('[%s]\n%s\n' % (kind[1], (a.extra / kind[1]).read_text(encoding='utf-8', errors='replace')))
+    elif kind[0] == 'file':
+        for p in files[kind[1]]:
+            text = p.read_text(encoding='utf-8', errors='replace')
+            if p.name == 'nvn.h': text = text[:text.index('*/') + 2]   # 只取文件头的许可证注释 | only the licence comment of the header
+            out.write('[%s]\n%s\n' % (p.name, text))
+    else:
+        out.write(kind[1] + '\n')
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--dl', type=Path, required=True); ap.add_argument('--spirv', type=Path, required=True); ap.add_argument('--dotnet-pack', type=Path, required=True)
@@ -86,32 +138,23 @@ def main():
     a = ap.parse_args()
     dm = Path(__file__).resolve().parents[2]
     files = {'spirv-tools': [a.spirv / 'LICENSE'], 'spirv-headers': [a.spirv / 'external/spirv-headers/LICENSE'],
-             'dotnet': [a.dotnet_pack / 'LICENSE.TXT', a.dotnet_pack / 'THIRD-PARTY-NOTICES.TXT'], 'ryujinx': [dm / 'third_party/ryujinx/LICENSE.txt'], 'ofl': [a.font_license]}
+             'dotnet': [a.dotnet_pack / 'LICENSE.TXT', a.dotnet_pack / 'THIRD-PARTY-NOTICES.TXT'], 'ryujinx': [dm / 'third_party/ryujinx/LICENSE.txt'], 'ofl': [a.font_license],
+             'libdeflate': [dm / 'third_party/libdeflate/COPYING'], 'bcdec': [dm / 'third_party/bcdec/LICENSE'], 'nvn': [dm / 'gfx/nvn/include/nvn.h']}
     for f in EXTRA:
         if not (a.extra / f).is_file(): raise SystemExit('缺 %s（%s）' % (a.extra / f, EXTRA[f]))
     out = io.StringIO()
     out.write('THIRD-PARTY SOFTWARE NOTICES — D2R Mobile Plus, Android package\n\n'
               'The Android package bundles the tools below so that the app can build the import pack on the phone from the player\'s own game files\n'
-              '(assets/dmgen/runtime.zip, lib/arm64-v8a/libdmgen_*.so) and an open-licence UI font (assets/dmgen/font/). None of them is game content.\n'
+              '(assets/dmgen/runtime.zip, lib/arm64-v8a/libdmgen_*.so), an open-licence UI font (assets/dmgen/font/), and third-party code compiled into the app\n'
+              'itself (libdm.so, libdmdeswizzle.so, classes.dex). None of them is game content.\n'
               'Each component is listed with its version, licence, location in the APK and source, followed by the full licence texts.\n'
               'This file is generated by dm/android/tools/third_party_notices.py; versions match assets/dmgen/runtime.txt.\n\n')
     for i, c in enumerate(COMPONENTS, 1):
         out.write('%2d. %s\n    version: %s\n    licence: %s\n    in APK:  %s\n    source:  %s\n' % (i, c[0], c[1], c[2], c[3], c[4]))
     for i, c in enumerate(COMPONENTS, 1):
         out.write('\n' + '=' * 78 + '\n%d. %s — %s\n' % (i, c[0], c[2]) + '=' * 78 + '\n\n')
-        kind = c[5]
-        if kind[0] == 'tar':
-            for m in ([kind[2]] if isinstance(kind[2], str) else kind[2]): out.write('[%s]\n%s\n' % (m.split('/', 1)[1], member(a.dl / kind[1], m)))
-        elif kind[0] == 'whl':
-            whl = next(a.dl.glob(kind[1] + '*.whl'))
-            with zipfile.ZipFile(whl) as z:
-                for m in kind[2]: out.write('[%s]\n%s\n' % (m.split('/')[-1], z.read(m).decode('utf-8', 'replace')))
-        elif kind[0] == 'extra':
-            out.write((a.extra / kind[1]).read_text(encoding='utf-8', errors='replace') + '\n')
-        elif kind[0] == 'file':
-            for p in files[kind[1]]: out.write('[%s]\n%s\n' % (p.name, p.read_text(encoding='utf-8', errors='replace')))
-        else:
-            out.write(kind[1] + '\n')
+        for kind in (c[5][1] if c[5][0] == 'multi' else [c[5]]):
+            emit(out, kind, a, files)
     text = out.getvalue().replace('\r\n', '\n')
     with open(a.output, 'w', encoding='utf-8', newline='\n') as f: f.write(text)
     print('%s：%d 个组件，%d 字节' % (a.output, len(COMPONENTS), len(text.encode('utf-8'))))
