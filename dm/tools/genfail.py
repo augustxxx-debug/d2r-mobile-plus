@@ -40,7 +40,11 @@ def root_causes(text, limit=6):
             j = i + 1
             while j < len(lines) and (lines[j][:1] in (' ', '\t') or not lines[j].strip()): j += 1
             if j < len(lines):
-                e = lines[j].strip(); (wrap if e.split(':', 1)[0].split('.')[-1] in WRAPPERS else tb).append(e)
+                e = lines[j].strip()
+                # 只有异常名、没有消息（如 assert 失败的 AssertionError）：带上触发它的那行代码 | a bare exception name with no message (e.g. AssertionError from a failed assert): add the code line that raised it
+                if ':' not in e and j - 1 > i and lines[j - 1].strip() and not set(lines[j - 1].strip()) <= set('^~ '): e += '（' + lines[j - 1].strip() + '）'
+                elif ':' not in e and j - 2 > i and set(lines[j - 1].strip()) <= set('^~ '): e += '（' + lines[j - 2].strip() + '）'
+                (wrap if e.split(':', 1)[0].split('（')[0].split('.')[-1] in WRAPPERS else tb).append(e)
             i = j + 1; continue
         s = lines[i].strip()
         if s.startswith('[x]') or '【红】' in s: mark.append(s)

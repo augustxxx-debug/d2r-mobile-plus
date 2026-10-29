@@ -160,12 +160,16 @@ public class PackGeneratorTest {
         // gen_log：结论在第一屏，再环境、输入文件、生成输出 | gen_log: the verdict on the first screen, then environment, input files, generator output
         String g = PackGenerator.genLog("游戏文件不完整", "请重新拷", List.of("游戏文件核对：缺 data/.build.config"), "机型：X", in, "[12:00] 生成覆盖层\n");
         equal(true, g.startsWith("==== 结论 ====\n游戏文件不完整\n· 游戏文件核对：缺 data/.build.config\n请重新拷\n"));
+        equal(true, PackGenerator.genLog("t", "缺 data/.build.config\n请重新拷", List.of("游戏文件核对：缺 data/.build.config"), "e", "i", "o").startsWith("==== 结论 ====\nt\n缺 data/.build.config\n"));   // 正文有的不重复 | not repeated when the body has it
         equal(true, g.indexOf("==== 环境 ====") < g.indexOf("==== 输入文件 ====") && g.indexOf("==== 输入文件 ====") < g.indexOf("==== 生成输出 ===="));
         // 分享附的各步骤日志与打包 | the per-step logs attached when sharing, and the packing
         File logGen = temp(); write(new File(logGen, "gen.log"), "main"); write(new File(logGen, "root/build/pack/android/gen_overlay.log"), "ov");
         write(new File(logGen, "root/build/pack/android/note.txt"), "x"); write(new File(logGen, "root/build/cache/dm/out/3.3.94012-r44-android/main.patch.log"), "p");
         List<File> logs = PackGenerator.stepLogs(logGen);
         equal(Arrays.asList("gen.log", "gen_overlay.log", "main.patch.log"), logs.stream().map(File::getName).collect(java.util.stream.Collectors.toList()));
+        new File(logGen, "root/build/pack/android/gen_overlay.log").setLastModified(1000);   // 上一次运行留下的 | left over from an earlier run
+        equal(Arrays.asList("gen.log", "main.patch.log"), PackGenerator.stepLogs(logGen, 5000).stream().map(File::getName).collect(java.util.stream.Collectors.toList()));
+        equal(0, PackGenerator.stepLogs(logGen, Long.MAX_VALUE).size());
         File zip = new File(temp(), "share/x.zip"); Map<String, byte[]> ent = new java.util.LinkedHashMap<>();
         ent.put("gen_log.txt", "a".getBytes(StandardCharsets.UTF_8)); ent.put("logs/android_gen_overlay.log", "ov".getBytes(StandardCharsets.UTF_8));
         PackGenerator.writeZip(zip, ent);

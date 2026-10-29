@@ -246,13 +246,20 @@ final class PackGenerator {
     // generator's @summary sentences, next step) -> environment -> input files -> generator output (the full text, beyond the last 40 lines)
     static String genLog(String title, String body, List<String> summary, String env, String inputs, String output) {
         StringBuilder v = new StringBuilder(title).append('\n');
-        synchronized (summary) { for (String s : summary) v.append("· ").append(s).append('\n'); }
+        synchronized (summary) { for (String s : summary) if (!body.contains(s.replace("游戏文件核对：", ""))) v.append("· ").append(s).append('\n'); }   // 正文已有的句子不再重复 | sentences already in the body are not repeated
         v.append(body).append('\n');
         return section("结论", v.toString()) + section("环境", env) + section("输入文件", inputs) + section("生成输出", output);
     }
 
     // 分享时附的各步骤完整日志：生成输出、每一步写的 *.log（改写 / 素材 / 覆盖层 / 着色器）| the full per-step logs attached when sharing: the generator output and every
     // *.log a step wrote (rewrite / art / overlay / shaders)
+    // since：只收这次运行写过的（修改时间不早于这次开始），不带上一次留下的旧日志；开始生成之前就停下的传 Long.MAX_VALUE（一个都不收）
+    // since: only the logs this run wrote (modified no earlier than this run's start), never stale ones from an earlier run; a stop before generation starts passes Long.MAX_VALUE (none)
+    static List<File> stepLogs(File gen, long since) {
+        List<File> out = new ArrayList<>();
+        for (File f : stepLogs(gen)) if (f.lastModified() >= since) out.add(f);
+        return out;
+    }
     static List<File> stepLogs(File gen) {
         List<File> out = new ArrayList<>();
         File main = new File(gen, "gen.log"); if (main.isFile()) out.add(main);
