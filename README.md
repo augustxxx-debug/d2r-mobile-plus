@@ -10,6 +10,19 @@ D2R Mobile provides the native compatibility layer, Metal renderer, touch contro
 
 This is a development preview. Improvements have been tested locally on an iOS device and in automated tests; comprehensive device, controller and folding-transition coverage is still in progress. “Full screen” describes scene coverage and adaptive layout, not a guarantee that every original game panel has been redesigned.
 
+## Download and verify
+
+- Website: https://d2rplus.augustusplay.com/ · QQ group 1129913678 · This software is free; any paid channel is a resale.
+- **Android**: [Releases · android-v1.0.0](https://github.com/augustxxx-debug/d2r-mobile-plus/releases/tag/android-v1.0.0) (source on branch `android/v1.0.0`). Official packages are always signed with the certificate SHA-256 `b4af06c165dd8699ab9f2b0dec8f6c2de05cd4d01f510fe63778eac6898a52da`; anything else is not from us.
+- **iOS**: source only — build it with your own game files and Xcode as described under "Build your own copy".
+
+## Coming soon (preview)
+
+Both features below are in development and **expected to open for testing in early November**; dates and scope follow the actual release notes, and test builds may be unstable.
+
+- **Frame generation (experimental, iOS)**: built on Apple MetalFX frame interpolation — the game renders at 60 fps and the screen shows 120 fps, for smoother motion on 120 Hz displays. Only on iPhones that support MetalFX frame interpolation; off by default, enabled from the Graphics tab.
+- **Cross-platform co-op (beta)**: iOS, Android and Mac together — up to 4 players in one world, fighting, using portals, picking up loot and saving; runs on our own servers over encrypted connections and does not use any official online service. The first round opens by invitation and widens once it is stable.
+
 ## What changes from upstream
 
 | Area | Plus changes | Status |
