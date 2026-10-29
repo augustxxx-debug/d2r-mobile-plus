@@ -33,6 +33,7 @@ run: \
 	$(B)/t_hid_script \
 	$(B)/t_hud_dead \
 	$(B)/t_i18n \
+	$(B)/t_loadpage \
 	$(B)/t_minimap_lift \
 	$(B)/t_loader_weak \
 	$(B)/t_mac_overlay \
@@ -102,6 +103,7 @@ run: \
 	$(B)/t_crashfence 2>/dev/null
 	$(B)/t_res_cap
 	$(B)/t_bright_cap
+	$(B)/t_loadpage
 	$(B)/t_custom_scroll
 	$(B)/t_sel_frame
 	$(B)/t_hud_mask
@@ -255,6 +257,15 @@ $(B)/t_res_cap: t_res_cap.c ../dm_res_cap.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_res_cap.c -lm
 $(B)/t_bright_cap: t_bright_cap.c ../dm_bright_cap.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_bright_cap.c -lm
+$(B)/t_loadpage: t_loadpage.c ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.h ../dm_i18n_tab.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_loadpage.c -lm
+# 加载页出图核对（不在 run 里：写 PNG 到指定目录）：make render-loadpage OUT=<目录> [LANG=zh]
+# Loading page render check (not part of run: writes PNGs to a given directory): make render-loadpage OUT=<dir> [LANG=zh]
+$(B)/t_loadpage_render: t_loadpage_render.m ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.c ../dm_i18n_tab.h ../../ios/Sources/dm_loadpage_cg.m | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -fobjc-arc -I.. -o $@ t_loadpage_render.m ../dm_loadpage.c ../dm_i18n.c ../../ios/Sources/dm_loadpage_cg.m -framework Foundation -framework CoreGraphics -framework CoreText -framework ImageIO -lm
+.PHONY: render-loadpage
+render-loadpage: $(B)/t_loadpage_render
+	mkdir -p $(OUT) && $(B)/t_loadpage_render ../../assets/loadpage $(OUT) $(or $(LANG),zh)
 $(B)/t_custom_scroll: t_custom_scroll.c ../dm_custom_scroll.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_custom_scroll.c
 $(B)/t_sel_frame: t_sel_frame.c ../dm_sel_frame.h | $(B)

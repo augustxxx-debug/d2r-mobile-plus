@@ -53,6 +53,7 @@ SRC=\
 	dm_hud.c \
 	dm_i18n.c \
 	dm_kills.c \
+	dm_loadpage.c \
 	dm_lootfilter.c \
 	dm_movie_decode.c \
 	dm_namegen.c \

@@ -141,18 +141,18 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             String product = packProduct(want);
             if (!BuildConfig.DM_PRODUCT.equals(product)) { showStartError(getString(R.string.dmAndroidImportVersion, product)); return false; }
             importing = true;
-            TextView t = new TextView(this);
-            t.setTextSize(20); t.setPadding(64, 64, 64, 64); t.setText(getString(R.string.dmAndroidImporting, 0));
-            setContentView(t);
+            // 加载页（LoadPageView，核心在 dm/host/dm_loadpage.c）：单阶段「导入」，进度按字节报，页面自己算速度与剩余时间 | the loading page (LoadPageView, core in dm/host/dm_loadpage.c): the single stage "import", progress in bytes, the page computes speed and ETA itself
+            setContentView(new LoadPageView(this));
+            LoadPageView.begin(new int[] {LoadPageView.IMPORT}, null);
             new Thread(() -> {
                 String error = null;
-                try { importPack(source, runtime, percent -> runOnUiThread(() -> t.setText(getString(R.string.dmAndroidImporting, percent)))); }
+                try { importPack(source, runtime, (done, total) -> LoadPageView.set(0, total > 0 ? (double) done / total : 0, 0, 0, done, total)); }
                 catch (IOException e) { error = e.getMessage() == null ? e.toString() : e.getMessage(); }
                 String failure = error;
                 runOnUiThread(() -> {
                     importing = false;
-                    if (failure != null) showStartError(getString(R.string.dmAndroidImportFailed, failure));
-                    else startHost();
+                    if (failure != null) { LoadPageView.fail(failure); showStartError(getString(R.string.dmAndroidImportFailed, failure)); }
+                    else { LoadPageView.finish(); startHost(); }
                 });
             }, "dm-import").start();
             return false;
@@ -173,7 +173,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         return true;
     }
 
-    private interface Progress { void percent(int p); }
+    private interface Progress { void bytes(long done, long total); }
 
     // ---- 手机端生成导入包（PackGenerator）：自动开始，进度与失败原因显示在这一页；生成线程不持有 Activity，界面每半秒从静态状态取一次 ----
     // ---- On-phone import pack generation (PackGenerator): starts by itself, progress and failure reasons on this screen; the generation thread holds no Activity and the screen polls the static state every half second ----
@@ -338,12 +338,11 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         long sum = 0;
         for (String item : IMPORT_ITEMS) sum += treeSize(new File(source, item));
         final long total = sum;
-        long[] done = {0}; int[] shown = {-1};
+        long[] done = {0, 0};   // 已拷字节、上次回报时的字节 | bytes copied, bytes at the last report
         byte[] buffer = new byte[1 << 20];
         for (String item : IMPORT_ITEMS) copyTree(new File(source, item), new File(part, item), buffer, bytes -> {
             done[0] += bytes;
-            int p = (int) (done[0] * 100 / Math.max(1, total));
-            if (p != shown[0]) { shown[0] = p; progress.percent(p); }
+            if (done[0] - done[1] >= (4L << 20) || done[0] == total) { done[1] = done[0]; progress.bytes(done[0], total); }   // 每 4 MB 报一次（页面按字节算速度与剩余） | report every 4 MB (the page computes speed and ETA from bytes)
         });
         for (String item : IMPORT_ITEMS) {
             File from = new File(part, item), to = new File(runtime, item);
@@ -383,8 +382,29 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (f.exists() && !f.delete()) throw new IOException("delete " + f.getName());
     }
 
+    // 调试包：am start … --ez dmLoadPageDemo true 用模拟进度走一遍「导入 → 着色器缓存」两段连续推进的加载页（截图核对用）；不起宿主，走完 3 秒后退出
+    // Debug builds: am start … --ez dmLoadPageDemo true runs the loading page through the two stages "import → shader cache" with simulated progress (for the screenshot check); the host is not started, the activity exits 3 s after the end
+    private boolean loadPageDemo;
+    private boolean loadPageDemoRun() {
+        if (!BuildConfig.DEBUG || !getIntent().getBooleanExtra("dmLoadPageDemo", false)) return false;
+        if (loadPageDemo) return true; loadPageDemo = true;
+        setContentView(new LoadPageView(this));
+        LoadPageView.begin(new int[] {LoadPageView.IMPORT, LoadPageView.SHADERS}, new int[] {20000, 60000});
+        new Thread(() -> {
+            try {
+                long total = 690_000_000L;
+                for (int i = 0; i <= 200; i++) { LoadPageView.set(0, i / 200.0, 0, 0, total * i / 200, total); Thread.sleep(100); }
+                for (int i = 0; i <= 7062; i += 7) { LoadPageView.set(1, i / 7062.0, i, 7062, 0, 0); Thread.sleep(60); }
+                LoadPageView.finish(); Thread.sleep(3000);
+            } catch (InterruptedException e) { /* 退出 | exiting */ }
+            runOnUiThread(this::finish);
+        }, "dm-loadpage-demo").start();
+        return true;
+    }
+
     private void startHost() {
         if (bootFailure != 0) { showBootFailure(); return; }
+        if (loadPageDemoRun()) return;
         if (started || importing || !resumed || !ensureFileAccess()) return;
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         if (!libraryLoaded && !ensureImported(new File(downloads, "S2X/D2R Mobile/android"))) return;
