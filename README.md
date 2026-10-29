@@ -137,7 +137,7 @@ See [build and verification notes](docs/PLUS.md) for other checks and limitation
 
 ## Community entry and About
 
-"Join the community" in the pause menu, on the front-end main menu and at the end of the Custom options page opens one in-game box: the Chinese UI shows a QQ group number (copyable), every other language the GitHub repository address (copyable), with an About section (display version and credits); "About" on the main menu shows the version and credits only. Both come from the `community` field of the remote version file (sample: `docs/community_manifest.sample.json`); without that field the entry is hidden. Only the group and the repository address are shown, never any personal contact.
+"Join the community" in the pause menu, on the front-end main menu and at the end of the Custom options page opens one in-game box: one card per channel, each with its own Copy: the Chinese UI shows the QQ group and the website, other languages the website and GitHub; the footer holds the version and credits. All of them come from the `community` field of the remote version file (sample: `docs/community_manifest.sample.json`); without that field the entry is hidden. Only the group and the repository address are shown, never any personal contact.
 
 ## Notification example
 
