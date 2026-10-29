@@ -531,3 +531,12 @@ dmLoadHintImport	正在把游戏内容放到本机，请稍候	Copying the game 
 dmLoadHintPrepare	马上进入游戏，请稍候	Entering the game shortly, please wait	Entrando al juego en un momento, espera		Игра скоро запустится, подождите	곧 게임에 들어갑니다. 잠시 기다려 주세요	加载页副文：准备阶段 | loading page sub line: prepare stage
 dmLoadMusicOn	打开背景音乐	Turn music on	Activar la música		Включить музыку	배경 음악 켜기	加载页右上角静音钮的无障碍标签（当前静音时）| accessibility label of the loading page mute button (when muted)
 dmLoadMusicOff	关闭背景音乐	Turn music off	Desactivar la música		Выключить музыку	배경 음악 끄기	加载页右上角静音钮的无障碍标签（当前在放时）| accessibility label of the loading page mute button (when playing)
+dmLoadCommQqGh	官方免费渠道：QQ 群 %s · GitHub	Official free channels: QQ group %s · GitHub	Canales oficiales gratis: grupo QQ %s · GitHub		Бесплатные каналы: группа QQ %s · GitHub	공식 무료 채널: QQ 그룹 %s · GitHub	加载页底部社区第一行（副文 14 号字，群号与 GitHub 都有；值来自远端清单 community，拉不到不显示；dm_loadpage.c community_text）
+dmLoadCommQq	官方免费渠道：QQ 群 %s	Official free channel: QQ group %s	Canal oficial gratis: grupo QQ %s		Бесплатный канал: группа QQ %s	공식 무료 채널: QQ 그룹 %s	加载页底部社区第一行（只有群号）
+dmLoadCommGh	官方免费渠道：GitHub	Official free channel: GitHub	Canal oficial gratis: GitHub		Бесплатный канал: GitHub	공식 무료 채널: GitHub	加载页底部社区第一行（只有 GitHub 链接）
+dmLoadCommFree	本软件免费，付费购买均为倒卖	This app is free. If you paid for it, it was resold	Esta app es gratis; si pagaste por ella, es reventa		Приложение бесплатно; платные копии — перепродажа	이 앱은 무료이며, 유료 판매는 모두 재판매입니다	加载页底部社区第二行（副文 14 号字）
+dmLoadCommCopyQq	复制群号	Copy number	Copiar número		Копировать	번호 복사	加载页底部右侧复制钮（复制群号；按钮 144 点宽，手柄模式前面还有 A 键图标）
+dmLoadCommCopyGh	复制链接	Copy link	Copiar enlace		Копировать	링크 복사	加载页底部右侧复制钮（复制 GitHub 链接）
+dmLoadCommCopied	已复制	Copied	Copiado		Скопировано	복사됨	加载页复制钮：复制成功后 2 秒
+dmLoadCommCopyFail	复制失败	Copy failed	Error al copiar		Ошибка	복사 실패	加载页复制钮：剪贴板写入失败后 2 秒
+dmLoadCommPrefer	qq	github	github		github	github	不显示：加载页复制钮先复制哪一项（qq = 群号，github = 链接；只有一项时用那一项）

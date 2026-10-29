@@ -134,8 +134,10 @@ static int cat(char *b, size_t n, int o, const char *sep, const char *piece) {
     if (o >= (int)n) return o;
     return o + snprintf(b + o, n - o, "%s%s", o && sep ? sep : "", piece);
 }
-void dm_loadpage_text(dm_lp_text *t, uint64_t now_ms) {
-    memset(t, 0, sizeof *t); t->brand = "D2R Mobile Plus";
+static void community_text(dm_lp_text *t, uint64_t now_ms);
+static void text_main(dm_lp_text *t, uint64_t now_ms);
+void dm_loadpage_text(dm_lp_text *t, uint64_t now_ms) { memset(t, 0, sizeof *t); t->brand = "D2R Mobile Plus"; text_main(t, now_ms); community_text(t, now_ms); }
+static void text_main(dm_lp_text *t, uint64_t now_ms) {
     snprintf(t->percent, sizeof t->percent, "%d%%", dm_loadpage_percent());
     if (g.state == DM_LP_FAILED) {
         snprintf(t->title, sizeof t->title, "%s", dm_loadpage_ui("dmLoadFailTitle"));
@@ -164,6 +166,35 @@ void dm_loadpage_text(dm_lp_text *t, uint64_t now_ms) {
     else if (eta >= 90000) snprintf(piece, sizeof piece, dm_loadpage_ui("dmLoadDetailEtaMin"), (int)ceil(eta / 60000.0));
     else snprintf(piece, sizeof piece, dm_loadpage_ui("dmLoadDetailEtaSec"), (int)(ceil(eta / 5000.0) * 5));   // 5 秒一档，免得数字每帧跳 | in steps of 5 s so the number does not jitter every frame
     cat(t->body, sizeof t->body, o, sep, piece);
+}
+
+// ---- 社区信息（接口说明见 dm_loadpage.h） | community info (see dm_loadpage.h) ----
+static struct { char qq[16], gh[168]; int pad, copy_state; uint64_t copy_t; } cm;   // 不随 begin 清零 | not reset by begin
+void dm_loadpage_community(const char *qq, const char *github) {
+    snprintf(cm.qq, sizeof cm.qq, "%s", qq ? qq : ""); snprintf(cm.gh, sizeof cm.gh, "%s", github ? github : "");
+    LOG("加载页：社区信息 群号%s、GitHub %s", cm.qq[0] ? "有" : "无", cm.gh[0] ? "有" : "无");
+}
+int dm_loadpage_community_shown(void) { return (cm.qq[0] || cm.gh[0]) && (g.state == DM_LP_RUNNING || g.state == DM_LP_FAILED); }
+static int prefer_qq(void) { return cm.qq[0] && (!cm.gh[0] || !strcmp(dm_loadpage_ui("dmLoadCommPrefer"), "qq")); }
+const char *dm_loadpage_copy_value(void) { return !dm_loadpage_community_shown() ? "" : prefer_qq() ? cm.qq : cm.gh; }
+void dm_loadpage_copied(int ok, int pad, uint64_t now_ms) {
+    if (!dm_loadpage_community_shown()) return;
+    cm.copy_state = ok ? 1 : -1; cm.copy_t = now_ms;
+    LOG("加载页：复制%s%s（%s）", prefer_qq() ? "群号" : "链接", ok ? "" : "失败", pad ? "手柄 A" : "触屏");
+}
+void dm_loadpage_pad(int on) { if ((on != 0) != cm.pad) { cm.pad = on != 0; LOG("加载页：输入换成%s", cm.pad ? "手柄" : "触屏"); } }
+int dm_loadpage_pad_mode(void) { return cm.pad; }
+int dm_loadpage_hit_copy(const dm_lp_layout *L, double x, double y) {
+    const double pad = 8; return L->comm && x >= L->copy.x - pad && x <= L->copy.x + L->copy.w + pad && y >= L->copy.y - pad && y <= L->copy.y + L->copy.h + pad;
+}
+static void community_text(dm_lp_text *t, uint64_t now_ms) {
+    if (!dm_loadpage_community_shown()) return;
+    if (cm.qq[0]) snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui(cm.gh[0] ? "dmLoadCommQqGh" : "dmLoadCommQq"), cm.qq);
+    else snprintf(t->comm1, sizeof t->comm1, "%s", dm_loadpage_ui("dmLoadCommGh"));
+    snprintf(t->comm2, sizeof t->comm2, "%s", dm_loadpage_ui("dmLoadCommFree"));
+    if (cm.copy_state && now_ms - cm.copy_t > 2000) cm.copy_state = 0;   // 反馈留 2 秒 | feedback stays for 2 s
+    t->copy_state = cm.copy_state;
+    snprintf(t->copy, sizeof t->copy, "%s", dm_loadpage_ui(cm.copy_state > 0 ? "dmLoadCommCopied" : cm.copy_state < 0 ? "dmLoadCommCopyFail" : prefer_qq() ? "dmLoadCommCopyQq" : "dmLoadCommCopyGh"));
 }
 
 // ---- 素材与布局 ----
@@ -206,7 +237,15 @@ void dm_loadpage_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     double bw = o->landscape ? (cw * 0.62 > 320 ? cw * 0.62 : 320) : cw; if (bw > cw) bw = cw; if (bw > 900) bw = 900;   // 横屏条宽 62%（最宽 900）、竖屏铺满内容宽 | landscape bar 62% wide (900 max), portrait the full content width
     double bx = cx0 + (cw - bw) / 2, bh = 8;
     double sub_h = o->sub_pt * 1.4, body_h = o->body_pt * 1.4, title_h = o->title_pt * 1.35;
-    double y = h - B - 44;   // 从底往上排：副文 / 正文 / 条 / 标题 + 百分数 | stacked from the bottom: sub / body / bar / title + percent
+    double y = h - B - 44;   // 从底往上排：（社区两行 + 复制钮）/ 副文 / 正文 / 条 / 标题 + 百分数 | stacked from the bottom: (community lines + copy button) / sub / body / bar / title + percent
+    if ((o->comm = dm_loadpage_community_shown())) {   // 社区两行做成页脚：贴底、占满内容宽（安全区 + 边距之内），字左对齐、复制钮靠右跨两行高；进度那一组整体上移
+                                                        // community lines as a footer: at the bottom across the full content width (inside the safe area + margin), text left aligned, the copy button on the right spanning both lines; the progress group moves up
+        double cb_w = 144, cb_h = 2 * sub_h + 2, cy = h - B - 20 - cb_h;
+        o->copy = (dm_lp_rect){ cx0 + cw - cb_w, cy, cb_w, cb_h };
+        o->comm1 = (dm_lp_rect){ cx0, cy, cw - cb_w - 12, sub_h };
+        o->comm2 = (dm_lp_rect){ cx0, cy + sub_h + 2, cw - cb_w - 12, sub_h };
+        y = cy - 18;
+    }
     o->sub = (dm_lp_rect){ bx, y - sub_h, bw, sub_h }; y -= sub_h + 6;
     o->body = (dm_lp_rect){ bx, y - body_h, bw, body_h }; y -= body_h + 10;
     o->bar = (dm_lp_rect){ bx, y - bh, bw, bh }; y -= bh + 12;

@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 只要一个权限：所有文件访问（读玩家放在 Download/S2X/D2R Mobile/data 的游戏资源）。不联网、不要别的权限。 -->
-<!-- Only one permission: all files access (to read the game resources the player puts in Download/S2X/D2R Mobile/data). No network, no other permissions. -->
+<!-- 两个权限：所有文件访问（读玩家放在 Download/S2X/D2R Mobile/data 的游戏资源）；网络（只在首次导入 / 生成的加载页上读一次远端的小清单 latest.json，
+     给页脚的官方免费渠道用，CommunityFetch.java；只用 https、包里没配地址就不联网；普通启动、游戏里都不联网）。不要别的权限。 -->
+<!-- Two permissions: all files access (to read the game resources the player puts in Download/S2X/D2R Mobile/data); network (only on the first import / generation
+     loading page, to read one small remote manifest latest.json for the footer's official free channels, CommunityFetch.java; https only, and no network access when the
+     package has no address; never on a normal start or in game). No other permissions. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
     <application
         android:label="@string/dmAndroidName"

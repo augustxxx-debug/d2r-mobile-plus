@@ -57,8 +57,28 @@ int dm_loadpage_stage_ms(int stage);                         // 该阶段用了�
 // 一行汇总：「导入 12.3 秒 · 着色器缓存 371.0 秒 · 合计 383.3 秒」（日志用，中文）；返回写入长度 | one summary line for the log (Chinese); returns the length written
 int dm_loadpage_summary(char *buf, size_t n, uint64_t now_ms);
 
+// 社区信息（官方免费渠道，加载页底部两行 + 一个复制钮）：只在首次导入 / 生成这段长等待里显示——平台只在这条路上起拉取（dm_manifest.h 校验过的清单），
+// 拿到后调 dm_loadpage_community；没调、或两项都空 = 不显示，不内置缺省值。状态不随 begin 清零（清单可能在页面开始之前就到了）。
+// 页面进行中 / 失败时显示，完成后不显示。复制钮放进剪贴板的串按语言取：dmLoadCommPrefer 为 qq 的语言（中文）先群号，其余先链接；只有一项就用那一项。
+// Community info (official free channels, two lines + one copy button at the bottom of the page): shown only during the first import / generation wait - the platform starts
+// the fetch only on that path (a manifest validated by dm_manifest.h) and calls dm_loadpage_community once it has one; never called, or both empty = not shown, no built-in default.
+// The state is not reset by begin (the manifest may arrive before the page starts). Shown while running / failed, not after done. The string the copy button puts on the clipboard
+// depends on the language: languages whose dmLoadCommPrefer is qq (Chinese) prefer the group number, the others the link; with only one item, that one.
+void dm_loadpage_community(const char *qq, const char *github);   // NULL / 空串 = 没有这一项 | NULL / empty = no such item
+int dm_loadpage_community_shown(void);                            // 1 = 现在画社区两行与复制钮 | 1 = the community lines and copy button are drawn now
+const char *dm_loadpage_copy_value(void);                         // 复制钮要放进剪贴板的串；不显示时为空串 | what the copy button puts on the clipboard; empty when not shown
+// 平台写完剪贴板调：ok = 写成没有，pad = 手柄 A 还是触屏点的；按钮字换成「已复制 / 复制失败」2 秒，写一行「加载页：复制…」日志
+// Called by the platform after writing the clipboard: ok = whether it worked, pad = controller A or a tap; the button reads "Copied / Copy failed" for 2 s, one 「加载页：复制…」 log line
+void dm_loadpage_copied(int ok, int pad, uint64_t now_ms);
+// 输入模式（§2.7）：玩家按了手柄键 = 1，摸了屏幕 = 0。手柄模式下复制钮画成焦点态，按钮字前加 A 键图标（平台画），A 键复制
+// Input mode (§2.7): the player pressed a controller key = 1, touched the screen = 0. In controller mode the copy button is drawn focused with an A glyph in front (drawn by the platform); A copies
+void dm_loadpage_pad(int on);
+int dm_loadpage_pad_mode(void);
+
 typedef struct {   // 四行字 + 百分数。层级：标题（阶段动词短语）/ 正文（事实：文件数、字节、速度、剩余）/ 副文（一句祈使句的提示 / 状态） | four lines + percent. Levels: title (stage verb phrase) / body (facts) / sub (one imperative hint / status)
     char title[160], body[320], sub[256], percent[8];
+    char comm1[224], comm2[160], copy[64];   // 社区两行（副文样式）与复制钮上的字；不显示时为空 | the two community lines (sub style) and the copy button label; empty when not shown
+    int copy_state;                          // 0 平常 / 1 已复制 / -1 复制失败（2 秒内） | 0 normal / 1 copied / -1 copy failed (within 2 s)
     const char *brand;   // 页面左上角的字标（不翻译） | the wordmark at the top left (not translated)
 } dm_lp_text;
 void dm_loadpage_text(dm_lp_text *t, uint64_t now_ms);
@@ -74,12 +94,15 @@ typedef struct {
     dm_lp_rect bar, bar_fill;      // 进度条底与已走部分（bar_fill.w 按总进度） | bar track and filled part (bar_fill.w by overall)
     dm_lp_rect title, percent, body, sub, brand;   // 文字行的框（左对齐；percent 右对齐到条尾）；brand 只在字标图读不到时用 | text line boxes (left aligned; percent right aligned to the bar end); brand only when the wordmark image is unavailable
     dm_lp_rect mute;   // 右上角静音开关（40×40 点圆钮，安全区内、与字标同一条上沿） | the mute toggle at the top right (40×40 pt round button, inside the safe area, on the same top line as the wordmark area)
+    int comm;                      // 1 = 画社区两行与复制钮（这时进度那一组整体上移） | 1 = draw the community lines and copy button (the progress group moves up as a whole)
+    dm_lp_rect comm1, comm2, copy; // 页脚：社区两行（左对齐到内容左沿）与复制钮（右对齐到内容右沿、跨两行高） | footer: the two community lines (left aligned to the content edge) and the copy button (right aligned to the content edge, two lines tall)
     dm_lp_rect logo; const char *logo_name; int logo_w, logo_h;   // 页面中部的字标图（自制 loadpage_logo.png）：横向居中、等比缩放、在安全区与标题之间 | the wordmark image in the middle of the page (self-made loadpage_logo.png): centred, aspect kept, between the safe area and the title
     double title_pt, body_pt, sub_pt, brand_pt;    // 字号：24 / 18 / 14（相邻比 1.29–1.33，同 §2.6 的三级） | font sizes 24 / 18 / 14 (adjacent ratio 1.29–1.33, the three levels of §2.6)
     double bar_radius;
 } dm_lp_layout;
 void dm_loadpage_layout(const dm_lp_screen *s, dm_lp_layout *out);
 int dm_loadpage_hit_mute(const dm_lp_layout *L, double x, double y);       // 点在开关上（判定区比图标四周各大 12 点）| the tap is on the toggle (hit area 12 pt larger than the icon on each side)
+int dm_loadpage_hit_copy(const dm_lp_layout *L, double x, double y);   // 点在复制钮上（判定区四周各大 8 点）；不显示时为 0 | the tap is on the copy button (hit area 8 pt larger each side); 0 when not shown
 // 纯函数：图 iw×ih 铺满 dw×dh 的 cover 裁切；焦点 (fx, fy) 为图内 0..1 坐标，裁切框尽量以它为中心、不越界。返回 src（图内像素矩形）
 // Pure function: cover crop of an iw×ih image onto dw×dh; the focus (fx, fy) in 0..1 image coordinates is kept as the crop centre where possible without leaving the image. Returns src (image pixel rect)
 void dm_loadpage_cover(double iw, double ih, double dw, double dh, double fx, double fy, dm_lp_rect *src);

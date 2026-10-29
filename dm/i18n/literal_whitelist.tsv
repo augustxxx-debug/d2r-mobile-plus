@@ -139,3 +139,4 @@ host/dm_loadpage.c	=安装	阶段名的日志用中文表 k_kind_zh（只进「�
 host/dm_loadpage.c	=校验	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
 host/dm_loadpage.c	@snprintf	dm_loadpage_summary 拼「加载页：」汇总日志行（分享诊断日志摘要取它），不上屏
 host/dm_loadpage.c	=准备	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行）
+host/dm_manifest.c	*	远端清单校验的不合规原因，只进日志（社区信息 / 更新检查的诊断行），不上屏

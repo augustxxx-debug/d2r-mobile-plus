@@ -111,7 +111,7 @@ target_link_options(dmhost PRIVATE -Wl,--no-undefined -Wl,-z,nostart-stop-gc -Wl
 
 # 加载页小库 libdmload.so：只含公共加载页核心 + 多语表 + JNI 胶水，不依赖宿主库（导入包拷进来之前 libdm.so 装不了，见 loadpage_jni.c）
 # Loading page library libdmload.so: only the shared loading page core + i18n table + JNI glue, independent of the host library (libdm.so cannot load before the import pack is copied in, see loadpage_jni.c)
-add_library(dmload SHARED ${HOST}/dm_loadpage.c ${HOST}/dm_i18n.c ${CMAKE_CURRENT_SOURCE_DIR}/loadpage_jni.c)
+add_library(dmload SHARED ${HOST}/dm_loadpage.c ${HOST}/dm_manifest.c ${HOST}/dm_i18n.c ${CMAKE_CURRENT_SOURCE_DIR}/loadpage_jni.c)
 target_compile_definitions(dmload PRIVATE DM_LOADPAGE_STANDALONE=1)
 target_compile_options(dmload PRIVATE -O1 -g -Wall -std=gnu17)
 target_include_directories(dmload PRIVATE ${HOST} ${CMAKE_CURRENT_SOURCE_DIR}/compat/include)   # compat：dm_i18n.c 的 TargetConditionals.h 替身 | compat: the stand-in TargetConditionals.h for dm_i18n.c

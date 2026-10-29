@@ -146,7 +146,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             if (!BuildConfig.DM_PRODUCT.equals(product)) { showStartError(getString(R.string.dmAndroidImportVersion, product)); return false; }
             importing = true;
             // 加载页（LoadPageView，核心在 dm/host/dm_loadpage.c）：单阶段「导入」，进度按字节报，页面自己算速度与剩余时间 | the loading page (LoadPageView, core in dm/host/dm_loadpage.c): the single stage "import", progress in bytes, the page computes speed and ETA itself
-            setContentView(new LoadPageView(this));
+            showLoadPage();
             LoadPageView.begin(new int[] {LoadPageView.IMPORT}, null);
             new Thread(() -> {
                 String error = null;
@@ -225,7 +225,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private void generate(File base, File runtime) {
         genHandler.removeCallbacks(genPoll);
         if (genFailure != null) { showGenScreen(getString(R.string.dmAndroidGenFailed), genFailure, null); return; }
-        setContentView(new LoadPageView(this));   // 阶段状态在原生侧（静态），Activity 重建时只换一个新视图接上 | stage state lives natively (static); a recreated Activity just attaches a new view
+        showLoadPage();   // 阶段状态在原生侧（静态），Activity 重建时只换一个新视图接上 | stage state lives natively (static); a recreated Activity just attaches a new view
         if (generating) { genHandler.post(genPoll); return; }   // Activity 重建：生成线程还在跑，只接回界面 | the Activity was recreated: the generation thread is still running; only reattach the screen
         // 资源目录与 startHost 同一条规则（缺省 data，没有就沿用早先的 Download/data） | resource directory by the same rule as startHost (data by default, else the earlier Download/data)
         File data = new File(base, "data"), earlier = new File(base.getParentFile().getParentFile(), "data");
@@ -383,18 +383,40 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private boolean loadPageDemoRun() {
         if (!BuildConfig.DEBUG || !getIntent().getBooleanExtra("dmLoadPageDemo", false)) return false;
         if (loadPageDemo) return true; loadPageDemo = true;
-        setContentView(new LoadPageView(this));
+        showLoadPage();
         LoadPageView.begin(new int[] {LoadPageView.PATCH, LoadPageView.ASSETS, LoadPageView.OVERLAY, LoadPageView.PACKS, LoadPageView.SHADERS, LoadPageView.INSTALL}, null);
         new Thread(() -> {
             try {
                 for (int st = 0; st < 4; st++) for (int i = 0; i <= 20; i++) { LoadPageView.set(st, i / 20.0, 0, 0, 0, 0); Thread.sleep(150); }   // 前四步各 3 秒 | the first four steps 3 s each
-                for (int i = 0; i <= 6931; i += 23) { LoadPageView.set(4, i / 6931.0, i, 6931, 0, 0); Thread.sleep(100); }                  // 着色器 6931 条，约 30 秒 | 6931 shaders, about 30 s
+                int sec = Math.max(5, getIntent().getIntExtra("dmLoadPageDemoSec", 30)), step = Math.max(1, 6931 / (sec * 10));   // --ei dmLoadPageDemoSec N：着色器那段走 N 秒（验页脚用） | shader stage lasts N s (for checking the footer)
+                for (int i = 0; i <= 6931; i += step) { LoadPageView.set(4, i / 6931.0, i, 6931, 0, 0); Thread.sleep(100); }                  // 着色器 6931 条，缺省约 30 秒 | 6931 shaders, about 30 s by default
                 for (int i = 0; i <= 10; i++) { LoadPageView.set(5, i / 10.0, 0, 0, 0, 0); Thread.sleep(200); }
                 LoadPageView.finish(); Thread.sleep(3000);
             } catch (InterruptedException e) { /* 退出 | exiting */ }
             runOnUiThread(this::finish);
         }, "dm-loadpage-demo").start();
         return true;
+    }
+
+    // 加载页（导入 / 首启生成 / 调试演示）：换上页面，同时（每个进程一次）在后台按「自己服务器 → GitHub raw」取一次清单给页脚的官方免费渠道（CommunityFetch）。
+    // 普通启动不走这里，不联网。调试包可用 am start … --es dmUpdateUrls "<地址…>" 换地址（验「只配 raw」「全失败」等）
+    // Loading page (import / first-launch generation / debug demo): put the page up and, once per process, fetch the manifest in the background from "own server → GitHub raw"
+    // for the footer's official free channels (CommunityFetch). A normal start never comes here and does not touch the network. Debug builds can swap the addresses with
+    // am start … --es dmUpdateUrls "<addresses…>" (to check "raw only", "all fail" and so on)
+    private LoadPageView loadPage;
+    private static boolean communityStarted;
+    static volatile String communityLast = "";
+    private void showLoadPage() {
+        loadPage = new LoadPageView(this); setContentView(loadPage);
+        if (communityStarted) return; communityStarted = true;
+        String cfg = BuildConfig.DEBUG && getIntent().getStringExtra("dmUpdateUrls") != null ? getIntent().getStringExtra("dmUpdateUrls") : BuildConfig.DM_UPDATE_URLS;
+        final java.util.List<String> urls = CommunityFetch.urls(cfg); final File cache = new File(getFilesDir(), "community_manifest.json");
+        final String ua = "D2RMobilePlus-Android/" + BuildConfig.VERSION_NAME;
+        new Thread(() -> {
+            try { new CommunityFetch(urls, cache, CommunityFetch.urlConnection(ua), LoadPageView::manifest, line -> { android.util.Log.i("dm", line); communityLast = line; }, Thread::sleep)
+                    .run((qq, gh, from) -> LoadPageView.community(qq, gh)); }
+            catch (InterruptedException | RuntimeException e) { android.util.Log.w("dm", "社区信息：拉取线程出错，不显示：" + e); }
+        }, "dm-community").start();
     }
 
     private void startHost() {
@@ -448,6 +470,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // 本进程里加载页走过（导入 / 手机端生成）就把它的完成 / 失败行交给宿主写进 boot.log（分享诊断日志的「加载页：」摘要） | if the loading page ran in this process
         // (import / on-phone generation), hand its finish / failure line to the host for boot.log (the 「加载页：」 share-diagnostics summary)
         try { String lp = LoadPageView.lastLine(); if (lp != null && !lp.isEmpty()) Os.setenv("DM_LOADPAGE_LAST", lp, true); } catch (ErrnoException | UnsatisfiedLinkError ignored) {}
+        try { if (!communityLast.isEmpty()) Os.setenv("DM_COMMUNITY_LAST", communityLast, true); } catch (ErrnoException ignored) {}   // 社区信息拉取的最后一行，同上进 boot.log | the community fetch's last line, into boot.log likewise
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
         if (result < 0) {
             int resource = switch (result) {
@@ -611,7 +634,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // 首启生成 / 导入的加载页上吞掉返回与手柄 B（玩家按 B 习惯是「取消」，原来会把 App 切到后台、久了可能被系统清掉；离开仍可按 Home）
         // On the first-launch generation / import loading page, swallow BACK and controller B (players press B to cancel; it used to send the App to the
         // background, where the system may later clean it up; Home still leaves)
-        if (!started && (generating || importing) && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) return true;
+        // 加载页上的手柄（§2.7）：切到手柄模式；页脚显示时 A 键 = 复制群号 / 链接 | controller on the loading page (§2.7): switch to controller mode; with the footer shown, A = copy the number / link
+        if (!started && (generating || importing || loadPageDemo) && loadPage != null && loadPage.isAttachedToWindow() && loadPage.padKey(e)) return true;
+        if (!started && (generating || importing || loadPageDemo) && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) return true;
         if (started && (e.getAction() == android.view.KeyEvent.ACTION_DOWN || e.getAction() == android.view.KeyEvent.ACTION_UP)) {
             android.view.InputDevice d = e.getDevice(); int vendor = d != null ? d.getVendorId() : 0, product = d != null ? d.getProductId() : 0;
             if (nativePadKey(e.getDeviceId(), vendor, product, e.getSource(), e.getKeyCode(), e.getAction() == android.view.KeyEvent.ACTION_DOWN)) return true;

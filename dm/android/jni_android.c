@@ -326,7 +326,8 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
     if (!getenv("DM_LANG") && *lg) setenv("DM_LANG", lg, 0);   // 首次安装的语言按系统首选（同 iOS CFLocaleCopyPreferredLanguages，见 dm_i18n.c） | first-install language follows the system preference (as iOS CFLocaleCopyPreferredLanguages, see dm_i18n.c)
     if (chdir(g_files)) LOG("【红】chdir %s 失败 errno %d", g_files, errno);
     { const char *v = getenv("DM_VERSION_LABEL"); LOG("boot: 显示版本 %s", v && *v ? v : "（无）"); }
-    { const char *v = getenv("DM_LOADPAGE_LAST"); if (v && *v) LOG("%s", v); }   // 本进程加载页的完成 / 失败行（DmActivity 交来；加载页在宿主库之前跑） | this process's loading-page finish / failure line (from DmActivity; the page runs before the host library)
+    { const char *v = getenv("DM_LOADPAGE_LAST"); if (v && *v) LOG("%s", v); }
+    { const char *v = getenv("DM_COMMUNITY_LAST"); if (v && *v) LOG("%s", v); }   // 加载页页脚取清单的最后一行（CommunityFetch，只有主机名、不带路径） | the loading-page footer's last manifest fetch line (CommunityFetch, host name only, no path)   // 本进程加载页的完成 / 失败行（DmActivity 交来；加载页在宿主库之前跑） | this process's loading-page finish / failure line (from DmActivity; the page runs before the host library)
     // 导入包身份与构建输入（d2rm_android.py 写进 pack_info.txt：PRODUCT / MADE / INPUTS=font=<指纹>;weight=<档>），同 iOS 的「boot: … 构建输入 …」行；分享摘要按「boot: 导入包」取
     // Import-pack identity and build inputs (written into pack_info.txt by d2rm_android.py: PRODUCT / MADE / INPUTS=font=<fingerprint>;weight=<level>), like iOS's "boot: ... build inputs ..." line; the share summary picks "boot: 导入包"
     { char pi[1200], line[256], prod[96] = "?", made[48] = "?", inputs[128] = "font=none;weight=0（旧导入包没写）"; snprintf(pi, sizeof pi, "%s/dm/pack_info.txt", g_files); FILE *pf = fopen(pi, "r");
