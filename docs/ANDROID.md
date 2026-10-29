@@ -30,7 +30,7 @@ To make it on a computer instead (faster, or when the phone is short of space), 
 
 ## Phone requirements
 
-- ARM64, Android 12 (API 31) or later, a GPU with Vulkan 1.1
+- ARM64, Android 12 (API 31) or later, a GPU with Vulkan 1.1: Qualcomm Adreno or Arm Mali (MediaTek / Samsung Exynos)
 - About 7 GB free: about 5.6 GB of game resources plus about 0.7 GB of imported content (after the import you can delete the import pack on the phone and get 0.7 GB back)
 
 ## What you need

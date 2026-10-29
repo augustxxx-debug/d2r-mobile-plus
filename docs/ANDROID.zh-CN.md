@@ -30,7 +30,7 @@ Download/S2X/D2R Mobile/data/    游戏资源，与下面第二步相同
 
 ## 手机要求
 
-- ARM64，Android 12（API 31）及以上，显卡支持 Vulkan 1.1
+- ARM64，Android 12（API 31）及以上，显卡支持 Vulkan 1.1：高通 Adreno 或 Arm Mali（联发科 / 三星 Exynos）
 - 约 7 GB 空间：游戏资源约 5.6 GB，导入后的内容约 0.7 GB（导入完可以删掉手机上的导入包，省回 0.7 GB）
 
 ## 你需要准备的
