@@ -112,6 +112,16 @@ int main(void) { @autoreleasepool {
     { rts_mesh *m = mesh_of(40); EXPECT("网格 40 在缓存且没建成", 1, m && !RTS_MESH_READY(m)); }
     int before = g_rts.nmesh; for (int i = 0; i < 1300; i++) rts_frame_begin(++g_frame);
     EXPECT("1300 帧后未建成的网格 40 被淘汰", 1, mesh_of(40) == NULL); EXPECT("1300 帧后缓存清空", 0, g_rts.nmesh); (void)before;
+    // 9. 去重标签含平移（RC1「怪物走着走着影子没了」「地面装饰丢影」）：两级级联画同一实例只进一次；同网格、同朝向、只是位置不同的两个单位（同种怪、同款装饰）两个都进。
+    //    原先标签只哈希模型矩阵前 48 字节（旋转 / 缩放三行，不含第 4 行平移），第二个被当成重复、局部回退下连原版影也省掉
+    // 9. The dedupe tag includes translation (RC1 "monster shadows vanish while walking", "ground decorations lose shadows"): the same instance drawn by both cascades enters once; two units of the same mesh and orientation at different positions (same monster type, same decoration) both enter.
+    //    The tag used to hash only the first 48 bytes of the model matrix (the rotation / scale rows, not the 4th row = translation), so the second one counted as a duplicate and, with partial fallback, its original shadow was skipped too
+    for (int i = 0; i < 3; i++) full_frame(1, a, 1, &ok);   // 网格 0 重新建好 | mesh 0 built again
+    { frame_open(); prepass(); sh(0); sh(0); int n_same = g_rts.ninst, d_same = g_rts.ndup;
+      float *mt = (float *)g_mat; mt[12] = 3000; sh(0); int n_moved = g_rts.ninst; mt[12] = 0;
+      main_pass(); hdr_again(); ok = frame_close();
+      EXPECT("同一矩阵画两次（两级级联）：只进一次", 1, n_same); EXPECT("同一矩阵画两次：记一次重复", 1, d_same);
+      EXPECT("同网格同朝向、平移不同：第二个单位也进 TLAS", 2, n_moved); EXPECT("去重标签：GPU 无错", 1, ok); }
 #ifdef RTS_MAX_ALPHA
     // 导出绘制的顶点参数块（第四阶段 Mac 实测）：补画原版会把顶点阶段标成干净，同一通道里同一变体、绑定不变时会复用上一份参数块 → 各部件写进第一个部件的槽；切到导出状态必须重新标脏
     // the export draw's vertex argument block (measured on the Mac in phase 4): the original re-encode marks the vertex stage clean, and with the same variant and unchanged bindings in one pass the previous block is reused → every part writes into the first part's slot; switching to the export state must mark it dirty again

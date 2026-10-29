@@ -974,7 +974,9 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
     // if the build does not happen (no encoder) the TLAS step finds the mesh unusable and the frame falls back (fifth review Q5-02's "not in the TLAS before it is built" is kept by the order within one encoder instead of waiting a frame)
     if (m->state != RTS_READY && !(m->state == RTS_PENDING && m->queued)) RTS_MISS(RM_NOTREADY);
     if (g_rts.ninst >= RTS_MAX_INST) RTS_MISS(RM_FULL);   // 不是光追帧 / 网格还没可用 / 实例满 | not a ray-traced frame / mesh not usable yet / instances full
-    const float *M = (const float *)m0; uint64_t tag = key ^ rts_fnv(1469598103934665603ull, m0, 48);
+    // 实例标签 = 网格键 ^ 整个模型矩阵（64 字节，含第 4 行平移）：同网格、同朝向、只是位置不同的两个单位（同种怪、同款装饰）不能当成重复（原先只哈希前 48 字节，第二个丢影；t_rts_state 第 9 节）
+    // instance tag = mesh key ^ the whole model matrix (64 bytes, including the 4th row = translation): two units of the same mesh and orientation at different positions (same monster type, same decoration) must not count as duplicates (only the first 48 bytes were hashed, and the second lost its shadow; t_rts_state section 9)
+    const float *M = (const float *)m0; uint64_t tag = key ^ rts_fnv(1469598103934665603ull, m0, 64);
     for (int i = 0; i < g_rts.ninst; i++) if (g_rts.inst_tag[i] == tag) { g_rts.ndup++; if (shadow) g_rts.n_skipped_draws++; return shadow && rts_skip_ok(mi) ? (g_rts.f_skip++, g_rts.n_skip_draws++, g_rts.last_skip = 1) : 0; }   // 两级级联画同一实例：只进一次（局部回退时第二层也省画） | both cascades draw the same instance: enter once (with partial fallback the second layer is skipped too)
     MTLIndirectAccelerationStructureInstanceDescriptor *d = &g_rts.inst[g_rts.ninst]; memset(d, 0, sizeof *d); g_rts.inst_exp[g_rts.ninst] = -1;
     d->options = MTLAccelerationStructureInstanceOptionOpaque; d->mask = 0xff; d->accelerationStructureID = m->as.gpuResourceID;
