@@ -59,13 +59,21 @@ final class PackGenerator {
         volatile Step step = Step.PREPARE;
         volatile String shaderDir;
         volatile int shadersMade;
+        // 失败结论（d2rm_android.py 手机上打的「@summary …」「@fail <类别>」，缺陷台账 B026）与产物代号（「@progress product …」）
+        // the failure verdict (the "@summary ..." / "@fail <kind>" lines d2rm_android.py prints on the phone, defect ledger B026) and the product code ("@progress product ...")
+        final List<String> summary = java.util.Collections.synchronizedList(new ArrayList<>());
+        volatile String failKind, product;
+
+        void reset() { step = Step.PREPARE; shaderDir = null; shadersMade = 0; summary.clear(); failKind = null; product = null; }
 
         // d2rm_android.py 在 DM_GEN_PROGRESS=1 时打「@progress <步骤> [参数]」；认得的返回 true | d2rm_android.py prints "@progress <step> [argument]" with DM_GEN_PROGRESS=1; true when recognised
         boolean accept(String line) {
+            if (line.startsWith("@summary ")) { summary.add(line.substring(9)); return true; }
+            if (line.startsWith("@fail ")) { if (failKind == null) failKind = line.substring(6).trim(); return true; }
             if (!line.startsWith("@progress ")) return false;
             String[] w = line.substring(10).split(" ", 2);
             switch (w[0]) {
-                case "product": return true;
+                case "product": product = w.length > 1 ? w[1].trim() : null; return true;
                 case "patch": step = Step.PATCH; return true;
                 case "assets": step = Step.ASSETS; return true;
                 case "overlay": step = Step.OVERLAY; return true;
@@ -83,11 +91,22 @@ final class PackGenerator {
         }
     }
 
-    enum Failure { NONE, NEED_FILES, NO_SPACE, STEP_FAILED, INTERRUPTED }
+    // NEED_FILES：App 开头就找不到 main / sdk / build_manifest；BAD_FILES：生成器按 3.3.94012 清单核出缺文件、大小或内容不对；VERSION：不是这一版的游戏文件；
+    // STEP_FAILED：内部错误（游戏文件核对没发现问题，请分享日志）
+    // NEED_FILES: the App finds no main / sdk / build_manifest at the start; BAD_FILES: the generator's check against the 3.3.94012 list found missing files or a wrong
+    // size / content; VERSION: not this version's game files; STEP_FAILED: an internal error (the game file check found nothing; please share the log)
+    enum Failure { NONE, NEED_FILES, NO_SPACE, BAD_FILES, VERSION, STEP_FAILED, INTERRUPTED }
 
-    // 按退出码与输出末尾几行归类（d2rm_android.py 出错一律「[x] …」退出码 1；被系统杀掉是信号退出码） | classify by exit code and the last output lines (d2rm_android.py always fails with "[x] ..." and exit code 1; being killed by the system gives a signal exit code)
-    static Failure classify(int exit, List<String> tail) {
+    static Failure classify(int exit, List<String> tail) { return classify(exit, tail, null); }
+    // 生成器给了类别（@fail）就用它；没给（老脚本 / 起不来）再按退出码与输出末尾几行归类（d2rm_android.py 出错一律「[x] …」退出码 1；被系统杀掉是信号退出码）
+    // use the generator's kind (@fail) when given; otherwise (an old script / it never started) classify by exit code and the last output lines (d2rm_android.py always
+    // fails with "[x] ..." and exit code 1; being killed by the system gives a signal exit code)
+    static Failure classify(int exit, List<String> tail, String failKind) {
         if (exit == 0) return Failure.NONE;
+        if ("files".equals(failKind)) return Failure.BAD_FILES;
+        if ("version".equals(failKind)) return Failure.VERSION;
+        if ("space".equals(failKind)) return Failure.NO_SPACE;
+        if ("internal".equals(failKind) && exit == 1) return Failure.STEP_FAILED;
         for (String l : tail) if (l.contains("No space left on device") || l.contains("[Errno 28]")) return Failure.NO_SPACE;
         if (!missingDetail(tail).isEmpty()) return Failure.NEED_FILES;
         if (exit == 1) return Failure.STEP_FAILED;
@@ -201,6 +220,56 @@ final class PackGenerator {
         }
         deleteTree(part);
         if (!new File(runtime, PENDING).delete()) throw new IOException("delete " + PENDING);
+    }
+
+    // ---- 失败日志（缺陷台账 B026）：gen_log.txt 第一屏是结论，接着环境、输入文件清单、生成输出；分享时再带上各步骤的完整日志 ----
+    // ---- Failure log (defect ledger B026): the first screen of gen_log.txt is the verdict, then the environment, the input file list and the generator output;
+    // sharing adds every step's full log ----
+    // 玩家放的游戏文件：ExeFS 与 data 里每个文件的字节数（含隐藏的 .build.config），单独一句说 .build.config 在不在 | the player's game files: the bytes of every file
+    // in ExeFS and data (the hidden .build.config included), with one sentence on whether .build.config is there
+    static String listInputs(File exefs, File data) {
+        StringBuilder b = new StringBuilder();
+        for (File dir : new File[]{exefs, data}) {
+            String[] names = dir.list();
+            b.append(dir == exefs ? "ExeFS" : "data").append('：');
+            if (names == null) { b.append("（没有这个文件夹）\n"); continue; }
+            Arrays.sort(names); b.append(names.length).append(" 个\n");
+            for (String n : names) { File f = new File(dir, n); b.append("  ").append(n).append('\t').append(f.isDirectory() ? "（文件夹）" : Long.toString(f.length())).append('\n'); }
+        }
+        b.append(new File(data, ".build.config").isFile() ? "data/.build.config：有\n" : "data/.build.config：没有（隐藏文件，要一起拷）\n");
+        return b.toString();
+    }
+
+    static String section(String title, String body) { return "==== " + title + " ====\n" + (body.endsWith("\n") ? body : body + "\n") + "\n"; }
+
+    // 拼 gen_log.txt：结论（标题、生成器的 @summary 各句、下一步）→ 环境 → 输入文件 → 生成输出（末尾 40 行之外的全文） | assemble gen_log.txt: verdict (title, the
+    // generator's @summary sentences, next step) -> environment -> input files -> generator output (the full text, beyond the last 40 lines)
+    static String genLog(String title, String body, List<String> summary, String env, String inputs, String output) {
+        StringBuilder v = new StringBuilder(title).append('\n');
+        synchronized (summary) { for (String s : summary) v.append("· ").append(s).append('\n'); }
+        v.append(body).append('\n');
+        return section("结论", v.toString()) + section("环境", env) + section("输入文件", inputs) + section("生成输出", output);
+    }
+
+    // 分享时附的各步骤完整日志：生成输出、每一步写的 *.log（改写 / 素材 / 覆盖层 / 着色器）| the full per-step logs attached when sharing: the generator output and every
+    // *.log a step wrote (rewrite / art / overlay / shaders)
+    static List<File> stepLogs(File gen) {
+        List<File> out = new ArrayList<>();
+        File main = new File(gen, "gen.log"); if (main.isFile()) out.add(main);
+        for (File dir : new File[]{new File(gen, "root/build/pack/android"), new File(gen, "root/build/pack/ohos")}) {
+            File[] fs = dir.listFiles((d, n) -> n.endsWith(".log")); if (fs == null) continue; Arrays.sort(fs); out.addAll(Arrays.asList(fs));
+        }
+        File[] outs = new File(gen, "root/build/cache/dm/out").listFiles();
+        if (outs != null) { Arrays.sort(outs); for (File d : outs) { File[] fs = d.listFiles((x, n) -> n.endsWith(".log")); if (fs != null) { Arrays.sort(fs); out.addAll(Arrays.asList(fs)); } } }
+        return out;
+    }
+
+    // 打 zip（条目名 → 内容，按给的次序） | write a zip (entry name -> content, in the given order)
+    static void writeZip(File zip, Map<String, byte[]> entries) throws IOException {
+        File parent = zip.getParentFile(); if (parent != null && !parent.isDirectory() && !parent.mkdirs()) throw new IOException("mkdir " + parent);
+        try (java.util.zip.ZipOutputStream z = new java.util.zip.ZipOutputStream(new FileOutputStream(zip))) {
+            for (Map.Entry<String, byte[]> e : entries.entrySet()) { z.putNextEntry(new ZipEntry(e.getKey())); z.write(e.getValue()); z.closeEntry(); }
+        }
     }
 
     // gen_log.txt 落在玩家的 Download 里、指南让玩家发到群里：写出前去掉本机路径与包名（四审 A4-09），规则同分享诊断日志（sharelog_android.c：应用数据目录与

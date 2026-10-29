@@ -80,6 +80,63 @@ def check_env(game):
     return dotnet
 
 
+# ---- 失败时的结论（缺陷台账 B026）：手机上（DM_GEN_PROGRESS=1）打两种机器可读的行给 App ----
+#   「@summary <一句话>」：放进 gen_log 开头「结论」那一屏；「@fail <类别>」：files（缺文件 / 大小或内容不对）、version（不是这一版的游戏文件）、
+#   space（空间不足）、internal（内部错误，请分享日志）。App 按类别给玩家看的标题与下一步（PackGenerator.classify）。电脑上不打标记，结论照常打印
+# ---- The verdict on failure (defect ledger B026): on the phone (DM_GEN_PROGRESS=1) two machine-readable kinds of line for the App ----
+#   "@summary <sentence>": goes into the "verdict" screen at the top of gen_log; "@fail <kind>": files (missing / wrong size or content), version (not this version's
+#   game files), space (out of space), internal (internal error, please share the log). The App picks the title and next step shown to the player by kind
+#   (PackGenerator.classify). On a computer no markers are printed; the verdict is printed as usual
+GAME_CHECK = {}; FAILED = []
+
+
+def on_phone(): return os.environ.get('DM_GEN_PROGRESS') == '1'
+
+
+def summary(s):
+    if on_phone(): print('@summary ' + s, flush=True)
+    else: say(s)
+
+
+def fail_kind(kind):
+    if not FAILED: FAILED.append(kind)
+    if on_phone(): print('@fail ' + kind, flush=True)
+
+
+def files_check(game):
+    """开头按清单只比大小（快）：缺文件 / 大小不对就在这里停下并说清是哪几个 | at the start, compare sizes only against the list (fast): stop here and name the files when one is missing / the wrong size"""
+    import genfail
+    with open(os.path.join(DM, 'PRODUCT')) as f: ver = f.readline().strip().split('-')[0]
+    mf = os.path.join(DM, 'data', 'game_files_%s.tsv' % ver)
+    if not os.path.isfile(mf): say('游戏文件核对：没有 %s 的清单，跳过' % ver); return
+    rows = genfail.load_manifest(mf); res = genfail.check_files(game, rows)
+    GAME_CHECK.update(game=game, rows=rows, res=res, ver=ver)
+    lines = genfail.describe(res, len(rows)); kind = genfail.kind_of(res)
+    for s in lines: summary('游戏文件核对：' + s)
+    if kind:
+        fail_kind(kind)
+        die(('游戏文件不完整：' if kind == 'files' else '游戏文件不是 Switch 版 %s：' % ver) + '；'.join(lines))
+
+
+def after_failure(msg):
+    """失败收尾：分类、根因进结论；不是文件问题时对大小一致的游戏文件再核一遍 SHA-256 | wrap-up after a failure: kind and cause into the verdict; when it is not a
+    file problem, hash the game files whose size matched once more"""
+    import genfail
+    if FAILED: return   # 开头核对已经定了类（缺文件 / 版本） | the check at the start already classified it (missing files / version)
+    first = msg.strip().splitlines()[:1]
+    if first: summary('失败：' + first[0].replace('[x] ', '', 1))
+    for c in genfail.root_causes(msg, limit=3): summary('根因：' + c)
+    if 'No space left on device' in msg or 'Errno 28' in msg:
+        try: summary('剩余空间：%.1f GB' % (shutil.disk_usage(ROOT).free / (1 << 30)))
+        except OSError: pass
+        fail_kind('space'); return
+    if on_phone() and GAME_CHECK:
+        bad, n, total, secs = genfail.verify_hashes(GAME_CHECK['game'], GAME_CHECK['rows'], only=set(GAME_CHECK['res']['ok']))
+        for s in genfail.describe_hashes(bad, n, total, secs): summary(s)
+        if bad: fail_kind('files'); return
+    fail_kind('internal')
+
+
 def hud_dir():
     """底栏 v4 素材（gen_assets.py 的产物）：跟 gen_paths 走，DM_GEN_ASSETS 指到源码树外时（手机上）也找得到 | The bottom-bar v4 art (output of gen_assets.py): follows gen_paths, so it is found when DM_GEN_ASSETS points outside the source tree (on the phone)"""
     sys.path.insert(0, os.path.join(IOS, 'tools')); import gen_paths
@@ -109,6 +166,7 @@ def main():
         try: st.reconfigure(errors='replace')
         except Exception: pass
     if not os.path.isdir(game): die('没有这个游戏文件目录：%s' % game)
+    files_check(game)
     dotnet = check_env(game)
     P = open(os.path.join(DM, 'PRODUCT')).readline().strip()
     romfs = os.path.join(game, 'RomFS'); stage = os.path.join(ROOT, 'build', 'pack', T); shutil.rmtree(stage, ignore_errors=True); os.makedirs(stage)
@@ -203,4 +261,11 @@ def main():
               '打开 App 会自己导入。这里面有游戏内容，请只自己用' % (final, size / 1048576, os.path.join(romfs, 'data')))
 
 
-if __name__ == '__main__': main()
+if __name__ == '__main__':
+    try: main()
+    except SystemExit as e:
+        if e.code not in (None, 0): after_failure(e.code if isinstance(e.code, str) else 'exit %s' % e.code)
+        raise
+    except Exception:   # 本进程自己的异常（不是子进程失败）：回溯照打，再做同样的收尾 | an exception in this process itself (not a child failing): print the traceback, then the same wrap-up
+        import traceback; tb = traceback.format_exc(); sys.stderr.write(tb); sys.stderr.flush()
+        after_failure(tb); sys.exit(1)
