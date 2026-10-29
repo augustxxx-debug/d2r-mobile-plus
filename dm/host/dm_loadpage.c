@@ -26,7 +26,7 @@ static const struct { const char *title, *hint; int weight_ms; } k_kind[DM_LP_KI
     [DM_LP_VERIFY]   = { "dmLoadStageVerify",   "dmLoadHintStay", 5000 },
     [DM_LP_PREPARE]  = { "dmLoadStagePrepare",  "dmLoadHintPrepare", 1500 },
 };
-static const char *const k_kind_zh[DM_LP_KIND_N] = { "下载", "导入", "改写程序", "整理资源", "界面覆盖层", "着色器打包", "着色器缓存", "安装", "校验", "准备" };   // 日志用 | for the log
+static const char *const k_kind_zh[DM_LP_KIND_N] = { "下载", "导入", "处理文件", "整理资源", "触屏资源", "着色器打包", "着色器缓存", "安装", "校验", "准备" };   // 日志用 | for the log
 
 typedef struct { int kind, weight_ms; double frac; uint64_t t0, t_last; int started, done; dm_lp_detail d; double rate_bps; uint64_t rate_t; int64_t rate_b; } lp_stage;
 static struct {
