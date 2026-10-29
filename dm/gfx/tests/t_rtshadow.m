@@ -302,6 +302,24 @@ int main(void) { @autoreleasepool {
             int c = px(mn, x, y, 0) > 0.5f; cnt++; iso += c != (px(mn, x - 1, y, 0) > 0.5f) && c != (px(mn, x + 1, y, 0) > 0.5f) && c != (px(mn, x, y - 1, 0) > 0.5f) && c != (px(mn, x, y + 1, 0) > 0.5f); }
         printf("背光 / 受光分界孤立点 %d / %d（%.1f%%） | isolated points at the back / lit boundary\n", iso, cnt, iso * 100.0 / cnt);
         if (iso * 100 >= cnt * 1) FAIL("back / lit boundary: %d of %d pixels are isolated (want < 1%%)", iso, cnt);
+        // 同一块噪声地面走降分辨率太阳（第 2 档 1/2、第 3 档 1/4，真机 120 帧常态）：追踪按块左上像素判背光、再深度感知上采样回全分辨率，孤立点同样要少于 1%（十六审 ②）
+        // the same noisy ground through the reduced-resolution sun (level 2 = 1/2, level 3 = 1/4, the usual state at 120 FPS on devices): the trace judges back faces at each block's top-left pixel and is upsampled back with depth awareness; isolated points must stay under 1% as well (16th review item 2)
+        for (int sc = 2; sc <= 4; sc += 2) {
+            float KL[64]; memcpy(KL, KN, sizeof KL); KL[23] = sc == 2 ? 1 : 4; ((uint32_t *)KL)[20] = W / sc; ((uint32_t *)KL)[21] = H / sc; id<MTLBuffer> kbl = buf(KL, sizeof KL);
+            id<MTLTexture> ml = tex(MTLPixelFormatR8Unorm, W / sc, H / sc, MTLStorageModeShared), mu = tex(MTLPixelFormatR8Unorm, W, H, MTLStorageModeShared); uint32_t pl[4] = {W, H, W / sc, H / sc}; id<MTLBuffer> plb = buf(pl, 16);
+            id<MTLComputePipelineState> ps_pl = [dev newComputePipelineStateWithFunction:[lib newFunctionWithName:@"rts_pup"] error:&e]; [resident commit];
+            if (run(^(id<MTL4ComputeCommandEncoder> ce) { [ce setArgumentTable:at];
+                    [ce setComputePipelineState:ps_trace]; [at setTexture:ndepth.gpuResourceID atIndex:0]; [at setTexture:ml.gpuResourceID atIndex:1]; [at setResource:tlas.gpuResourceID atBufferIndex:0]; [at setAddress:kbl.gpuAddress atIndex:1];
+                    [ce dispatchThreadgroups:MTLSizeMake((W / sc + 7) / 8, (H / sc + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+                    [ce barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch visibilityOptions:MTL4VisibilityOptionDevice];
+                    [ce setComputePipelineState:ps_pl]; [at setTexture:ml.gpuResourceID atIndex:0]; [at setTexture:mu.gpuResourceID atIndex:1]; [at setTexture:ndepth.gpuResourceID atIndex:2]; [at setAddress:plb.gpuAddress atIndex:0];
+                    [ce dispatchThreadgroups:MTLSizeMake(W / 8, H / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)]; })) return 1;
+            int liso = 0, lcnt = 0, lsh = 0;
+            for (int y = 2; y < H - 2; y++) for (int x = 2; x < W - 2; x++) { double wx = ((x + 0.5) / W * 2 - 1) * 50, wz = (1 - (y + 0.5) / H * 2) * 50; if (fabs(wx) < 14 && fabs(wz) < 14) continue;
+                int c = px(mu, x, y, 0) > 0.5f; lcnt++; lsh += !c; liso += c != (px(mu, x - 1, y, 0) > 0.5f) && c != (px(mu, x + 1, y, 0) > 0.5f) && c != (px(mu, x, y - 1, 0) > 0.5f) && c != (px(mu, x, y + 1, 0) > 0.5f); }
+            printf("背光 / 受光分界孤立点（1/%d 分辨率太阳 + 上采样）%d / %d（%.1f%%），判在影里 %.1f%% | isolated points, 1/%d-res sun\n", sc, liso, lcnt, liso * 100.0 / lcnt, lsh * 100.0 / lcnt, sc);
+            if (liso * 100 >= lcnt * 1) FAIL("back / lit boundary, 1/%d-res sun: %d of %d pixels are isolated (want < 1%%)", sc, liso, lcnt);
+        }
     }
     {   // 软阴影最小模糊半径（RC1 背光面修复）：raw 里只有中心一个点在影里、命中距离 0（自遮挡 / 背光面），原先半径 = 0 → 原样留一个黑点；最小半径 2 → 两趟后中心明显变亮、四邻也被抹到
         // minimum soft blur radius (RC1 back-face fix): raw has one shadowed centre pixel with hit distance 0 (self-occlusion / back face); radius 0 used to keep a black dot; with minimum radius 2 the centre brightens clearly after two passes and its neighbours get some of it
