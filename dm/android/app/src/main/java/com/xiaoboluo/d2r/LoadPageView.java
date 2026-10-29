@@ -122,7 +122,7 @@ public final class LoadPageView extends View {
         float x = e.getX() / density, y = e.getY() / density; double[] L = lastLayout; double pad = 12;
         if (L[L_MUTE + 2] > 0 && x >= L[L_MUTE] - pad && x <= L[L_MUTE] + L[L_MUTE + 2] + pad && y >= L[L_MUTE + 1] - pad && y <= L[L_MUTE + 1] + L[L_MUTE + 3] + pad) {
             boolean m = nativeToggleMuted(); prefs.edit().putBoolean("muted", m).apply(); muteLabel(); musicTick(); invalidate(); performClick();
-        } else if (L[L_COMM] > 0 && x >= L[L_COPY] - 8 && x <= L[L_COPY] + L[L_COPY + 2] + 8 && y >= L[L_COPY + 1] - 8 && y <= L[L_COPY + 1] + L[L_COPY + 3] + 8) {
+        } else if (L[L_COMM] > 0 && copyHit.contains(x, y)) {
             copy(false); performClick();
         } else if (onTap != null) { onTap.run(); performClick(); }
         return true;
@@ -193,7 +193,9 @@ public final class LoadPageView extends View {
             paint.setColor(0x8cffc773); if (fill.width() > 4) c.drawRect(fill.left + 2, fill.top + 1, fill.right - 2, fill.top + 2, paint);
         }
         }
-        if (L[L_MUTE + 2] > 0) muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted());   // 提示页没有静音钮 | no mute button on a notice page
+        if (L[L_MUTE + 2] > 0) {   // 提示页没有静音钮；和页脚一样半透明（用户 2026-10-29） | no mute button on a notice page; translucent like the footer (user 2026-10-29)
+            int sc = c.saveLayerAlpha(r(L, L_MUTE, new RectF()), (int) L[L_COMMALPHA]); muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted()); c.restoreToCount(sc);
+        }
         if (L[L_LOGO + 2] > 0) loadLogo();   // 关字标时不读字标图 | the wordmark image is not read with the wordmark off
         if (logo != null && L[L_LOGO + 2] > 0) c.drawBitmap(logo, null, r(L, L_LOGO, new RectF()), paint);   // 字标图：等比居中（矩形由公共布局算） | wordmark: aspect kept, centred (rect from the shared layout)
         else line(c, T[4], brand, (float) L[L_BRANDPT], nativeColor(C_TITLE), false, serif);
@@ -208,34 +210,49 @@ public final class LoadPageView extends View {
         } else footerSince = 0;
         c.restore();
     }
-    // 社区页脚（不抢眼：12 点、半透明，用户 2026-10-29「太乱，字小一些、按钮小一些、文字加透明度」）：两行字左对齐，副文色；右边复制钮 = 一行高的小圆角框 + 淡金细边，
-    // 字用正文色同样半透明；手柄模式边框与字不透明、字前一个 A 键圆标；已复制 / 复制失败时字换掉 2 秒且画满不透明（核心给）。T[5..8] = 第一行、第二行、钮上的字、复制状态
-    // Community footer (unobtrusive: 12 pt, translucent; user 2026-10-29 "too busy - smaller text, smaller button, more transparent text"): two left-aligned lines in the sub colour;
-    // on the right the copy button = a small one-line rounded box with a faint gold edge, label in the body colour, equally translucent; in controller mode the edge and label are
-    // opaque with an A disc in front; copied / failed swaps the label for 2 s, drawn fully opaque (from the core). T[5..8] = line 1, line 2, button label, copy state
+    // 社区页脚（不抢眼：12 点、半透明，用户 2026-10-29「太乱，字小一些、按钮小一些、文字加透明度」）：两行字左对齐，副文色。
+    // 复制是一个小图标，紧跟在第一行字后面（用户 2026-10-29「复制按钮太偏，缩成小图标」），同样半透明；点它（判定区四周各大 10 dp）复制。
+    // 手柄模式：图标不透明、带金色圈，后面一个 A 键圆标 + 「复制群号」；复制后图标后面写「已复制 / 复制失败」2 秒（核心给，六套语言）。T[5..8] = 第一行、第二行、钮上的字、复制状态
+    // Community footer (unobtrusive: 12 pt, translucent; user 2026-10-29 "too busy - smaller text, smaller button, more transparent text"): two left-aligned lines in the sub colour.
+    // Copying is a small icon right after the first line (user 2026-10-29 "the copy button is too far off, make it a small icon"), equally translucent; tapping it (hit area 10 dp larger
+    // each side) copies. Controller mode: the icon opaque with a gold ring, followed by an A disc + the "copy number" label; after copying, "Copied / Copy failed" follows the icon for 2 s
+    // (from the core, six languages). T[5..8] = line 1, line 2, button label, copy state
+    private final RectF copyHit = new RectF();
     private void footer(Canvas c, double[] L, String[] T) {
         float pt = (float) L[L_COMMPT]; int alpha = (int) L[L_COMMALPHA];
+        RectF l1 = r(L, L_COMM1, new RectF());
         lineAlpha = alpha;
-        line(c, T[5], r(L, L_COMM1, new RectF()), pt, nativeColor(C_SUB), false, sans);
+        line(c, T[5], l1, pt, nativeColor(C_SUB), false, sans);
         line(c, T[6], r(L, L_COMM2, new RectF()), pt, nativeColor(C_SUB), false, sans);
         lineAlpha = 255;
-        RectF b = r(L, L_COPY, new RectF()); boolean pad = nativePadMode(), feedback = !"0".equals(T[8]); float rad = b.height() / 2;
-        paint.setStyle(Paint.Style.FILL); paint.setColor(pad ? 0x80201208 : 0x4d000000); c.drawRoundRect(b, rad, rad, paint);
-        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(pad ? 1.4f : 0.8f); paint.setColor(rgb(nativeColor(pad ? C_TITLE : C_EDGE))); paint.setAlpha(pad ? 255 : alpha);
-        if (pad) paint.setShadowLayer(4, 0, 0, 0x80c8a850);
-        c.drawRoundRect(new RectF(b.left + 0.5f, b.top + 0.5f, b.right - 0.5f, b.bottom - 0.5f), rad, rad, paint); paint.clearShadowLayer(); paint.setStyle(Paint.Style.FILL); paint.setAlpha(255);
-        text.setTypeface(sans); text.setTextSize(pt); text.setShadowLayer(2f, 0, 1, 0xd9000000);
-        String label = T[7];
-        float glyph = pad && !feedback ? pt + 4 : 0, tw = text.measureText(label), x = b.centerX() - (tw + glyph) / 2;
-        if (glyph > 0) {   // A 键圆标 | A disc
-            float cx = x + pt / 2, cy = b.centerY();
+        text.setTypeface(sans); text.setTextSize(pt);
+        CharSequence shown = TextUtils.ellipsize(T[5], text, Math.max(0, l1.width() - pt * 1.6f), TextUtils.TruncateAt.END);   // 给图标留一个字宽多一点 | leave a little over one em for the icon
+        float iconS = pt + 4, ix = l1.left + text.measureText(shown, 0, shown.length()) + pt * 0.6f, iy = l1.centerY() - iconS / 2;
+        boolean pad = nativePadMode(), feedback = !"0".equals(T[8]);
+        copyHit.set(ix - 10, iy - 10, ix + iconS + 10, iy + iconS + 10);
+        // 复制图标：两张错开的圆角纸 | copy icon: two offset rounded sheets
+        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(1.3f); paint.setColor(rgb(nativeColor(pad ? C_TITLE : C_BODY))); paint.setAlpha(pad || feedback ? 255 : alpha);
+        float u = iconS / 16f, rr = 2 * u;
+        c.drawRoundRect(new RectF(ix + 5 * u, iy + 1 * u, ix + 15 * u, iy + 11 * u), rr, rr, paint);
+        paint.setStyle(Paint.Style.FILL); paint.setColor(0xff0a0705); c.drawRoundRect(new RectF(ix + 1 * u, iy + 5 * u, ix + 11 * u, iy + 15 * u), rr, rr, paint);
+        paint.setStyle(Paint.Style.STROKE); paint.setColor(rgb(nativeColor(pad ? C_TITLE : C_BODY))); paint.setAlpha(pad || feedback ? 255 : alpha);
+        c.drawRoundRect(new RectF(ix + 1 * u, iy + 5 * u, ix + 11 * u, iy + 15 * u), rr, rr, paint);
+        if (pad) { paint.setStrokeWidth(1.2f); paint.setShadowLayer(4, 0, 0, 0x80c8a850); c.drawCircle(ix + iconS / 2, iy + iconS / 2, iconS * 0.85f, paint); paint.clearShadowLayer(); }
+        paint.setStyle(Paint.Style.FILL); paint.setAlpha(255);
+        // 图标后面：反馈（已复制 / 复制失败）或手柄模式的「A 复制群号」；触屏平常什么都不写 | after the icon: the feedback, or "A copy number" in controller mode; nothing in touch mode normally
+        if (!feedback && !pad) return;
+        float x = ix + iconS + (pad ? iconS * 0.6f : pt * 0.5f), cy = l1.centerY();
+        text.setShadowLayer(2f, 0, 1, 0xd9000000);
+        if (pad && !feedback) {   // A 键圆标 | A disc
+            float cx = x + pt / 2;
             paint.setColor(rgb(nativeColor(C_TITLE))); c.drawCircle(cx, cy, pt / 2, paint);
             text.setColor(0xff1a1008); text.setTypeface(Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)); text.setTextSize(pt * 0.75f); text.clearShadowLayer();
             Paint.FontMetrics fm = text.getFontMetrics(); c.drawText("A", cx - text.measureText("A") / 2, cy - (fm.ascent + fm.descent) / 2, text);
             text.setTypeface(sans); text.setTextSize(pt); text.setShadowLayer(2f, 0, 1, 0xd9000000);
+            x += pt + 4;
         }
-        text.setColor(rgb(nativeColor("-1".equals(T[8]) ? C_FILL : feedback ? C_TITLE : C_BODY))); text.setAlpha(pad || feedback ? 255 : alpha);
-        Paint.FontMetrics fm = text.getFontMetrics(); c.drawText(label, x + glyph, b.centerY() - (fm.ascent + fm.descent) / 2, text);
+        text.setColor(rgb(nativeColor("-1".equals(T[8]) ? C_FILL : feedback ? C_TITLE : C_BODY))); text.setAlpha(255);
+        Paint.FontMetrics fm = text.getFontMetrics(); c.drawText(T[7], x, cy - (fm.ascent + fm.descent) / 2, text);
     }
     private long footerSince;   // 页脚第一次画出的时刻（淡入用） | when the footer was first drawn (for the fade-in)
     private int lineAlpha = 255;   // line() 画字的不透明度（页脚用半透明） | text opacity for line() (translucent for the footer)
