@@ -1,11 +1,11 @@
 // 安卓 App。原生库两种来法：
 //   缺省：externalNativeBuild 用 dm/android/CMakeLists.txt 现编（要 -PdmGenDir=<由游戏文件生成的宿主表头目录>，见该文件头）；
 //   -PdmPrebuiltJni=<目录>：直接打包已编好的 <目录>/arm64-v8a/libdm.so（构建机上 CMake 不可用时）。
-//   -PdmAppId=<包名>：换一个包名装（与别人签名的同名包并排装来对照时用；缺省 com.xiaoboluo.d2r）。
+//   -PdmAppId=<包名>：换一个包名装（与别人签名的同名包并排装来对照时用；缺省 com.augustusplay.d2rmobileplus）。
 // Android App. Two ways to get the native library:
 //   default: externalNativeBuild builds it with dm/android/CMakeLists.txt (needs -PdmGenDir=<directory of host headers generated from the game files>, see that file's header);
 //   -PdmPrebuiltJni=<dir>: package the already built <dir>/arm64-v8a/libdm.so directly (when CMake is unavailable on the build machine).
-//   -PdmAppId=<id>: install under another application id (to sit beside a same-name package signed by someone else; default com.xiaoboluo.d2r).
+//   -PdmAppId=<id>: install under another application id (to sit beside a same-name package signed by someone else; default com.augustusplay.d2rmobileplus).
 //   -PdmGenRuntime=<目录>：带上手机端生成导入包的运行时（dm/android/tools/gen_runtime.sh 的输出：jniLibs 里的 Python / 翻译工具 / SPIRV-Tools 可执行文件、
 //   assets/dmgen/runtime.zip），并现打本仓的生成脚本与 4 个查询核（tools/pack_gen_assets.py）；这时原生库按旧方式解到 nativeLibraryDir（才能 exec）。不给就没有手机端生成，只认电脑做的导入包。
 //   -PdmGenRuntime=<dir>: include the runtime for making the import pack on the phone (output of dm/android/tools/gen_runtime.sh: the Python / translator / SPIRV-Tools executables in jniLibs,
@@ -61,7 +61,9 @@ android {
     compileSdk 36
     ndkVersion '29.0.14206865'
     defaultConfig {
-        applicationId project.findProperty('dmAppId') ?: 'com.xiaoboluo.d2r'
+        // 包名 2026-10-29 起 com.augustusplay.d2rmobileplus（用户定；早先发的是 com.xiaoboluo.d2r，两者并排装、存档不互通）。代码包名（namespace，JNI 函数名跟它走）不变
+        // Application id from 2026-10-29: com.augustusplay.d2rmobileplus (user decision; the earlier release was com.xiaoboluo.d2r, the two install side by side and do not share saves). The code package (namespace, which the JNI function names follow) stays
+        applicationId project.findProperty('dmAppId') ?: 'com.augustusplay.d2rmobileplus'
         // 产物代号（dm/PRODUCT 首行）：导入包的 pack_info.txt 要与它相同（DmActivity.ensureImported）
         // Product code (first line of dm/PRODUCT): an import pack's pack_info.txt must match it (DmActivity.ensureImported)
         buildConfigField 'String', 'DM_PRODUCT', "\"${file('../../PRODUCT').readLines()[0].trim()}\""

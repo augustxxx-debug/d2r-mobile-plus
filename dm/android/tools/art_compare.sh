@@ -12,7 +12,7 @@
 #   ADB: the adb command (default adb; with the phone on another machine write "ssh host adb -s serial"); the phone must be 480 dpi (3x), with the debug build installed and the pack imported.
 # Criterion (per image, premultiplied RGBA, 0–255): mean difference ≤ 2 and 99th percentile ≤ 32 -- the two antialiasing implementations (CoreGraphics / Skia) differ by a few levels at edges; a wrong pattern or parameter goes far beyond that.
 set -u
-OV=${1:?用法：art_compare.sh <overlay 目录> [包名]}; PKG=${2:-com.xiaoboluo.d2r}; ADB=${ADB:-adb}
+OV=${1:?用法：art_compare.sh <overlay 目录> [包名]}; PKG=${2:-com.augustusplay.d2rmobileplus}; ADB=${ADB:-adb}
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); O=${DM_ROOT:-$HOME/dm-work}/build/android_art; rm -rf "$O" && mkdir -p "$O/ref" "$O/dev"
 clang -fobjc-arc -O1 -o "$O/art_ref" "$HERE/art_ref.m" -framework Foundation -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers || exit 1
 "$O/art_ref" "$OV/touchart/dm_mobile_socket.png" "$OV/hud_v4_ui/sil_dm_native_skill_0.png" "$O/ref" || exit 1
