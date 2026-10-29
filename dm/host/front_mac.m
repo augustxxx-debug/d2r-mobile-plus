@@ -202,7 +202,10 @@ void front_run(void (*guest)(void)) {
     if (!getenv("DM_WINDOW")) { guest(); return; }
     @autoreleasepool {
         [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        // DM_NO_ACTIVATE=1（自动化测试用）：窗口照常显示、能截图，但不抢前台与键盘焦点、不出 Dock 图标——跑测试时用户还能在别的 App 里打字；不设 = 原样
+        // DM_NO_ACTIVATE=1 (for automated runs): the window still shows and can be captured, but never takes the foreground or keyboard focus and has no Dock icon, so the user can keep typing elsewhere; unset = unchanged
+        const int no_act = getenv("DM_NO_ACTIVATE") && *getenv("DM_NO_ACTIVATE") == '1';
+        [NSApp setActivationPolicy:no_act ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular];
         full_setup();
         NSRect r = NSMakeRect(0, 0, 1280, floor(1280 / g_aspect));
         NSWindow *win = [[NSWindow alloc] initWithContentRect:r
@@ -232,10 +235,10 @@ void front_run(void (*guest)(void)) {
           { NSMenu *hm = add(ui("dmAppMenuHelp")); [[hm addItemWithTitle:@(ui("dmAppKeysTitle")) action:@selector(keys:) keyEquivalent:@""] setTarget:ctl]; [[hm addItemWithTitle:@(ui("dmAppShareLog")) action:@selector(share:) keyEquivalent:@""] setTarget:ctl]; }
           NSApp.mainMenu = bar; }
         { void dm_gamepad_start(void (*on_mode)(int pad)); dm_gamepad_start(NULL); }   // 手柄（与 iOS 壳共用 ios/Sources/dm_gamepad.m）：连上即用，与键盘并存 | Gamepad (ios/Sources/dm_gamepad.m, shared with the iOS shell): works as soon as it is connected, alongside the keyboard
-        [win makeKeyAndOrderFront:nil];
+        if (no_act) [win orderFrontRegardless]; else [win makeKeyAndOrderFront:nil];
         screen_note();
         [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note(); }];
-        [NSApp activateIgnoringOtherApps:YES];
+        if (!no_act) [NSApp activateIgnoringOtherApps:YES];
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;   // 只吃游戏窗口的键；软键盘输入框等其他窗口照常收字 | Only swallow keys for the game window; other windows such as the software keyboard input box receive typing as usual
             if (e.modifierFlags & NSEventModifierFlagCommand) return e;   // 带 ⌘ 的留给菜单（⌘Q、⌃⌘F） | Keys with ⌘ are left to the menu (⌘Q, ⌃⌘F)
