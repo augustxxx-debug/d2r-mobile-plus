@@ -478,12 +478,16 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
           for (int i = 0; i < g_nstr && i < 3; i++) { struct { const char *s; uint64_t n; } q = { g_str[i].key, g_str[i].klen }; const char *r = ((const char *(*)(void *))(b + 0x7f5630))(&q);
               L += (size_t)snprintf(o + L, L < sizeof o ? sizeof o - L : 0, "%s%s=「%s」", i ? "、" : "", g_str[i].key, r ? r : "(空)"); }
           LOG("DM_TEST_PADMODE：帧 %llu 模式 %s，原版取串 %s", (unsigned long long)frame, g_cur ? "手柄" : "触屏", o); } }
-#if TARGET_OS_OSX
-    // 建角模式页「极乐世界」那行左边写死的手柄键帽（布局 touch_layout.py 的 TouchBlissKey，原位 x −1665）：Mac 的覆盖层同位带了一个键盘键帽 TouchBlissKeyK，按当前键帽对调
-    // The hard-coded gamepad key cap to the left of the "Elysium" row on the character-creation mode page (TouchBlissKey in the layout touch_layout.py, original position x -1665): the Mac overlay carries a keyboard key cap TouchBlissKeyK at the same position, and the two are swapped according to the current key caps
-    if (g_glyph_have[DM_GLYPH_KBD] && frame % 10 == 0) { int kb = g_glyph == DM_GLYPH_KBD; uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), a = root ? pm_find(root, "TouchBlissKey", 0) : 0, k = a ? pm_find(root, "TouchBlissKeyK", 0) : 0;
-        for (int i = 0; i < 2 && a && k; i++) { uint64_t w = i ? k : a; int32_t *r = (int32_t *)(uintptr_t)(w + 0x70), x = (i ? kb : !kb) ? -1665 : 99999; if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))rd8(rd8(w) + 0x10))(w); } } }
-#endif
+    // 建角模式页「极乐世界」那行左边写死的手柄键帽（布局 touch_layout.py 的 TouchBlissKey，原位 x −1665）：同位还有 Xbox / PS 两张（TouchBlissKeyX / P），Mac 覆盖层再带一张
+    // 键盘键帽 TouchBlissKeyK；按当前键帽样式把对应那张放到原位、其余挪到屏外。以前只有 Mac 对调键盘那张，接 Xbox / PS 手柄时仍画 Switch 的「Y」（缺陷台账 B019）
+    // The hard-coded gamepad key cap to the left of the "Elysium" row on the character-creation mode page (TouchBlissKey in the layout touch_layout.py, original position x -1665):
+    // Xbox / PS versions sit at the same spot (TouchBlissKeyX / P), and the Mac overlay adds a keyboard key cap TouchBlissKeyK; the one matching the current key-cap style goes to the
+    // original position and the others off screen. Previously only the Mac keyboard one was swapped, so Xbox / PS controllers still saw Switch's "Y" (defect ledger B019)
+    { int dm_ingame_now(void); if (frame % 10 == 0 && !dm_ingame_now()) { static const char *const nm[DM_GLYPH_N] = { "TouchBlissKey", "TouchBlissKeyK", "TouchBlissKeyX", "TouchBlissKeyP" };   // 这一页只在前端：局内不找 | the page is front end only: no search in game
+        uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), w[DM_GLYPH_N] = {0}; if (root) w[0] = pm_find(root, nm[0], 0);
+        for (int i = 1; w[0] && i < DM_GLYPH_N; i++) w[i] = pm_find(root, nm[i], 0);
+        int pick = g_glyph >= 0 && g_glyph < DM_GLYPH_N && w[g_glyph] ? g_glyph : 0;   // 这一套没带（如非 Mac 的键盘）：用 Switch 那张 | that set is absent (e.g. keyboard outside Mac): use the Switch one
+        for (int i = 0; w[0] && i < DM_GLYPH_N; i++) if (w[i]) { int32_t *r = (int32_t *)(uintptr_t)(w[i] + 0x70), x = i == pick ? -1665 : 99999; if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))rd8(rd8(w[i]) + 0x10))(w[i]); } } } }
     // 测试开关 DM_TEST_GLYPH=<帧>:<样式>[,…]：到帧当作「这一种输入来了」请求键帽样式（0 Switch 手柄 / 1 键盘 / 2 Xbox 手柄 / 3 PlayStation 手柄；无人值守的局没有实体手柄与键盘）
     { static int n = -1, k; static struct { uint64_t f; int m; } ev[8];
       if (n < 0) { n = 0; const char *e = getenv("DM_TEST_GLYPH"); for (const char *q = e; q && *q && n < 8; ) { unsigned long long f; int m; if (sscanf(q, "%llu:%d", &f, &m) != 2) break; ev[n].f = f; ev[n].m = m; n++; q = strchr(q, ','); if (q) q++; } }

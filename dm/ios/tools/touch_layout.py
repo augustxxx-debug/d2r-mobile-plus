@@ -195,6 +195,13 @@ def pad_bliss(s):   # 手柄版建角模式页（原版布局原样）+ 「极�
     s, n = re.subn(r'\{\s*"action"\s*:\s*"option2"\s*,\s*"description"\s*:\s*"@LegacyGameVersionSwitch"\s*\}\s*,?', '', s); assert n == 1, n
     at, add = INSERT['controller/console/characteroptionspanelhd.json']; ms = list(re.finditer(at, s)); assert len(ms) == 1
     key = '        { "type": "ImageWidget", "name": "TouchBlissKey", "fields": { "rect": { "x": -1665, "y": 1330, "scale": 1.5 }, "filename": "Controller/ControllerButtons/Switch/ButtonLeft" } },\n'
+    # 这一张写死了文件名、不走原版换键帽的格式串，接 Xbox / PS 手柄时仍是 Switch 的灰色「Y」，玩家照字面按手柄上印 Y 的上键 = Switch X（这一页收掉）、没反应（缺陷台账 B019）：
+    # 同位再放 Xbox / PS 两张（覆盖层的 switchx* / switchp* 两套，按游戏键重排过：左键 = Xbox 的 X / PS 的 □），缺省在屏外，宿主按当前键帽样式对调（dm_padmode.c）
+    # This one has a hard-coded file name and does not go through the original game's key-cap format string, so with an Xbox / PS controller it still showed Switch's grey "Y" and
+    # players pressing the controller's printed Y (top = Switch X, swallowed on this page) got nothing (defect ledger B019): Xbox / PS versions sit at the same spot (the overlay's
+    # switchx* / switchp* sets, reordered by game key: left = Xbox X / PS square), off screen by default; the host swaps by the current key-cap style (dm_padmode.c)
+    key += '        { "type": "ImageWidget", "name": "TouchBlissKeyX", "fields": { "rect": { "x": 99999, "y": 1330, "scale": 1.5 }, "filename": "Ztouch_controller_buttons_ui/switchXButtonLeft" } },\n'
+    key += '        { "type": "ImageWidget", "name": "TouchBlissKeyP", "fields": { "rect": { "x": 99999, "y": 1330, "scale": 1.5 }, "filename": "Ztouch_controller_buttons_ui/switchPButtonLeft" } },\n'
     if os.environ.get('DM_OVERLAY_MAC'):   # Mac App：同位再带一个键盘键帽（缺省在屏外，玩家用键盘时宿主把两个对调，dm_padmode.c） | Mac App: one more keyboard key cap at the same position (off screen by default; when the player uses the keyboard the host swaps the two, dm_padmode.c)
         key += '        { "type": "ImageWidget", "name": "TouchBlissKeyK", "fields": { "rect": { "x": 99999, "y": 1330, "scale": 1.5 }, "filename": "Ztouch_controller_buttons_ui/switchKButtonLeft" } },\n'
     return s[:ms[0].start()] + add.lstrip() + key + '        ' + s[ms[0].start():]
