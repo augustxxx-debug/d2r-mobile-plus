@@ -38,6 +38,10 @@ public final class LoadPageView extends View {
     static native int nativeState();
     static native int nativePercent();
     static native boolean nativeMusicWanted();
+    static native boolean nativeMuted();
+    static native void nativeSetMuted(boolean muted);
+    static native boolean nativeToggleMuted();
+    static native String nativeUi(String key);
     static native String nativeMusicName();
     static native String nativeBgName(float w, float h);
     static native String nativeLogoName();
@@ -46,10 +50,10 @@ public final class LoadPageView extends View {
     static native int nativeColor(int which);
 
     // 阶段种类（同 dm_loadpage.h 的枚举顺序） | stage kinds (same order as the enum in dm_loadpage.h)
-    public static final int DOWNLOAD = 0, IMPORT = 1, PATCH = 2, ASSETS = 3, OVERLAY = 4, PACKS = 5, SHADERS = 6, INSTALL = 7, VERIFY = 8;
+    public static final int DOWNLOAD = 0, IMPORT = 1, PATCH = 2, ASSETS = 3, OVERLAY = 4, PACKS = 5, SHADERS = 6, INSTALL = 7, VERIFY = 8, PREPARE = 9;
     public static final int IDLE = 0, RUNNING = 1, DONE = 2, FAILED = 3;
     // nativeLayout 数组下标 | nativeLayout array indices
-    private static final int L_LAND = 0, L_BGW = 1, L_BGH = 2, L_BGSRC = 3, L_BGDST = 7, L_BAR = 11, L_FILL = 15, L_TITLE = 19, L_PCT = 23, L_BODY = 27, L_SUB = 31, L_BRAND = 35, L_TITLEPT = 39, L_BODYPT = 40, L_SUBPT = 41, L_BRANDPT = 42, L_RADIUS = 43, L_LOGO = 44, L_LOGOW = 48, L_LOGOH = 49;
+    private static final int L_LAND = 0, L_BGW = 1, L_BGH = 2, L_BGSRC = 3, L_BGDST = 7, L_BAR = 11, L_FILL = 15, L_TITLE = 19, L_PCT = 23, L_BODY = 27, L_SUB = 31, L_BRAND = 35, L_TITLEPT = 39, L_BODYPT = 40, L_SUBPT = 41, L_BRANDPT = 42, L_RADIUS = 43, L_LOGO = 44, L_LOGOW = 48, L_LOGOH = 49, L_MUTE = 50;
     private static final int C_TITLE = 0, C_BODY = 1, C_SUB = 2, C_PCT = 3, C_FILL = 4, C_TRACK = 5, C_EDGE = 6;
 
     // ---- 公共入口（任何线程；状态在原生侧） | public entry points (any thread; state is on the native side) ----
@@ -68,7 +72,8 @@ public final class LoadPageView extends View {
     private final Typeface serif = Typeface.create(Typeface.SERIF, Typeface.BOLD), sans = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
     private final Rect src = new Rect(); private final RectF dst = new RectF();
     private float insetL, insetT, insetR, insetB;   // 挖孔 / 系统栏（dp） | cutout / system bars (dp)
-    private MediaPlayer music; private boolean musicOff; private float musicVol = 0.55f;
+    private MediaPlayer music; private boolean musicOn; private float musicVol = 0.55f; private float vol; private double[] lastLayout;
+    private final android.content.SharedPreferences prefs;   // 静音开关的选择（键 muted，缺省有声音） | the mute toggle choice (key muted, sound on by default)
     private final Runnable tick = new Runnable() { @Override public void run() { if (!isAttachedToWindow()) return; musicTick(); invalidate(); postDelayed(this, 100); } };
 
     public LoadPageView(Context ctx) {
@@ -80,8 +85,21 @@ public final class LoadPageView extends View {
             insetL = s.left / density; insetT = s.top / density; insetR = s.right / density; insetB = s.bottom / density; invalidate(); return insets;
         });
         setKeepScreenOn(true);
+        prefs = ctx.getSharedPreferences("dm_loadpage", Context.MODE_PRIVATE); nativeSetMuted(prefs.getBoolean("muted", false)); muteLabel();
+        setClickable(true);
     }
-    @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); post(tick); musicStart(); }
+    private void muteLabel() { setContentDescription(nativeUi(nativeMuted() ? "dmLoadMusicOn" : "dmLoadMusicOff")); }
+    // 点右上角静音钮：翻转、记住；判定区由公共核心定（图标四周各大 12 dp） | tap on the top-right mute button: flip and remember; the hit area comes from the shared core (12 dp larger on each side)
+    @Override public boolean onTouchEvent(android.view.MotionEvent e) {
+        if (e.getActionMasked() != android.view.MotionEvent.ACTION_UP || lastLayout == null) return true;
+        float x = e.getX() / density, y = e.getY() / density; double[] L = lastLayout; double pad = 12;
+        if (x >= L[L_MUTE] - pad && x <= L[L_MUTE] + L[L_MUTE + 2] + pad && y >= L[L_MUTE + 1] - pad && y <= L[L_MUTE + 1] + L[L_MUTE + 3] + pad) {
+            boolean m = nativeToggleMuted(); prefs.edit().putBoolean("muted", m).apply(); muteLabel(); musicTick(); invalidate(); performClick();
+        }
+        return true;
+    }
+    @Override public boolean performClick() { return super.performClick(); }
+    @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); post(tick); }
     @Override protected void onDetachedFromWindow() { removeCallbacks(tick); musicStop(); if (bg != null) { bg.recycle(); bg = null; bgName = null; } if (logo != null) { logo.recycle(); logo = null; } logoTried = false; super.onDetachedFromWindow(); }
     private void loadLogo() {
         if (logoTried) return; logoTried = true;
@@ -101,7 +119,7 @@ public final class LoadPageView extends View {
     @Override protected void onDraw(Canvas c) {
         float w = getWidth() / density, h = getHeight() / density; if (w <= 0 || h <= 0) return;
         c.save(); c.scale(density, density);   // 之后全用 dp | everything in dp from here
-        double[] L = nativeLayout(w, h, insetL, insetT, insetR, insetB); String[] T = nativeText();
+        double[] L = nativeLayout(w, h, insetL, insetT, insetR, insetB); String[] T = nativeText(); lastLayout = L;
         c.drawColor(0xff050403);
         loadBg(w, h);
         if (bg != null) {   // cover 裁切：图的实际像素尺寸与布局假定的不同也照样裁对 | cover crop: still right when the real pixel size differs from what the layout assumes
@@ -122,6 +140,7 @@ public final class LoadPageView extends View {
             paint.setColor(rgb(nativeColor(C_FILL))); paint.setShadowLayer(6, 0, 0, 0x99ff7319); c.drawRoundRect(fill, rad, rad, paint); paint.clearShadowLayer();
             paint.setColor(0x8cffc773); if (fill.width() > 4) c.drawRect(fill.left + 2, fill.top + 1, fill.right - 2, fill.top + 2, paint);
         }
+        muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted());
         loadLogo();
         if (logo != null && L[L_LOGO + 2] > 0) c.drawBitmap(logo, null, r(L, L_LOGO, new RectF()), paint);   // 字标图：等比居中（矩形由公共布局算） | wordmark: aspect kept, centred (rect from the shared layout)
         else line(c, T[4], brand, (float) L[L_BRANDPT], nativeColor(C_TITLE), false, serif);
@@ -130,6 +149,19 @@ public final class LoadPageView extends View {
         line(c, T[2], body, (float) L[L_BODYPT], nativeColor(C_BODY), false, sans);
         line(c, T[3], sub, (float) L[L_SUBPT], nativeColor(C_SUB), false, sans);
         c.restore();
+    }
+    // 右上角静音钮：暗色圆底 + 金色细边 + 喇叭；有声音两道声波，静音一个叉（与 dm_loadpage_cg.m 同一画法） | top-right mute button: dark round base + thin gold edge + speaker; two waves when on, a cross when muted (same drawing as dm_loadpage_cg.m)
+    private void muteIcon(Canvas c, RectF r, boolean muted) {
+        float cx = r.centerX(), cy = r.centerY(), s = r.width() / 40f, x0 = cx - 9 * s;
+        paint.setStyle(Paint.Style.FILL); paint.setColor(0x73000000); c.drawOval(r, paint);
+        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(1.2f); paint.setColor(rgb(nativeColor(C_EDGE))); c.drawOval(new RectF(r.left + 0.6f, r.top + 0.6f, r.right - 0.6f, r.bottom - 0.6f), paint);
+        android.graphics.Path p = new android.graphics.Path();
+        p.moveTo(x0, cy - 4 * s); p.lineTo(x0 + 5 * s, cy - 4 * s); p.lineTo(x0 + 11 * s, cy - 9.5f * s); p.lineTo(x0 + 11 * s, cy + 9.5f * s); p.lineTo(x0 + 5 * s, cy + 4 * s); p.lineTo(x0, cy + 4 * s); p.close();
+        paint.setStyle(Paint.Style.FILL); paint.setColor(rgb(nativeColor(C_TITLE))); c.drawPath(p, paint);
+        paint.setStyle(Paint.Style.STROKE); paint.setStrokeWidth(2 * s); paint.setStrokeCap(Paint.Cap.ROUND);
+        if (muted) { float a = x0 + 15 * s, b = 7 * s, hb = b / 2 * 1.2f; c.drawLine(a, cy - hb, a + b, cy + hb, paint); c.drawLine(a + b, cy - hb, a, cy + hb, paint); }
+        else for (int k = 0; k < 2; k++) { float rr = (5.5f + k * 4.5f) * s; c.drawArc(new RectF(x0 + 11 * s - rr, cy - rr, x0 + 11 * s + rr, cy + rr), -48.7f, 97.4f, false, paint); }
+        paint.setStyle(Paint.Style.FILL); paint.setStrokeCap(Paint.Cap.BUTT);
     }
     // 一行字：框内垂直居中，右对齐 = 百分数；超宽截尾省略；带投影 | one line: vertically centred in the box, right aligned for the percent; ellipsised when too wide; with a shadow
     private void line(Canvas c, String s, RectF box, float pt, int color, boolean right, Typeface face) {
@@ -140,23 +172,22 @@ public final class LoadPageView extends View {
         Paint.FontMetrics fm = text.getFontMetrics(); float baseline = box.top + (box.height() - (fm.descent - fm.ascent)) / 2 - fm.ascent;
         c.drawText(t, 0, t.length(), right ? box.right - width : box.left, baseline, text);
     }
-    // ---- 音乐：循环，页面在就放；完成 / 失败淡出停 | music: loops while the page is up; fades out on done / failure ----
-    private void musicStart() {
-        if (music != null || "1".equals(System.getProperty("dm.loadpage.nomusic"))) return;
+    // ---- 音乐：跟着「该不该放」（进行中且没静音）——要放就淡入 0.6 秒，不要就淡出后暂停（再打开接着放）；页面摘掉时释放 | music follows "should it play" (running and not muted): fade in over 0.6 s, or fade out then pause (resumes when turned on again); released when the page is detached ----
+    private MediaPlayer player() {
+        if (music != null) return music;
         try (AssetFileDescriptor fd = getContext().getAssets().openFd(nativeMusicName())) {
             music = new MediaPlayer(); music.setDataSource(fd.getFileDescriptor(), fd.getStartOffset(), fd.getLength());
-            music.setLooping(true); music.setVolume(musicVol, musicVol); music.prepare(); music.start(); musicOff = false;
+            music.setLooping(true); vol = 0; music.setVolume(0, 0); music.prepare();
         } catch (IOException | RuntimeException e) { Log.w("dm", "加载页：音乐打不开，不放：" + e); if (music != null) { music.release(); music = null; } }
+        return music;
     }
-    private void musicTick() {
-        if (music == null || musicOff || nativeMusicWanted()) return;
-        musicOff = true; final MediaPlayer m = music; music = null;
-        final int[] step = {0};
-        Runnable fade = new Runnable() { @Override public void run() {
-            step[0]++; float v = Math.max(0, musicVol * (1 - step[0] / 12f));
-            try { if (step[0] >= 12) { m.stop(); m.release(); } else { m.setVolume(v, v); postDelayed(this, 100); } } catch (RuntimeException e) { m.release(); }
-        } };
-        post(fade);
+    private void musicTick() {   // 每 100 ms：音量向目标走一步（0.6 秒走完），到 0 就暂停 | every 100 ms: one volume step toward the target (0.6 s in all), pause at 0
+        boolean want = nativeMusicWanted();
+        if (want && !musicOn) { MediaPlayer m = player(); if (m == null) return; musicOn = true; try { m.start(); } catch (RuntimeException e) { Log.w("dm", "加载页：音乐放不了：" + e); } }
+        if (music == null) return;
+        float target = want ? musicVol : 0, step = musicVol / 6;
+        vol = want ? Math.min(target, vol + step) : Math.max(0, vol - step);
+        try { music.setVolume(vol, vol); if (!want && musicOn && vol <= 0) { musicOn = false; music.pause(); } } catch (RuntimeException e) { /* 已释放 | already released */ }
     }
-    private void musicStop() { if (music != null) { try { music.stop(); } catch (RuntimeException e) { /* 已停 | already stopped */ } music.release(); music = null; } }
+    private void musicStop() { musicOn = false; if (music != null) { try { music.stop(); } catch (RuntimeException e) { /* 已停 | already stopped */ } music.release(); music = null; } }
 }
