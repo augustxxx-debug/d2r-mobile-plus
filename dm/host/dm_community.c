@@ -1,7 +1,7 @@
 // 社区入口，接口见 dm_community.h。
 // 清单字段（版本文件里与 build / note / urgent 并列）：  "community": { "qq_group": "1129913678", "github": "https://github.com/<fork>/d2r-mobile-plus" }
-//   qq_group：5–12 位数字；github：以 https://github.com/ 开头、≤ 160 个 URL 字符。两项都可省；一项不合规就当这一项没有并记红；两项都没有 = 当无字段。
-//   site（项目官网，用户 2026-10-29）：https:// 开头、≤ 160 个 URL 字符；有它时「链接」一项用官网（外文的值行与「复制链接」），并在「关于」段加一行官网；没有退回 github。旧客户端忽略它。
+//   qq_group：5–12 位数字；github：以 https://github.com/ 开头、≤ 160 个 URL 字符；site 见下。三项都可省；一项不合规就当这一项没有并记红；三项都没有 = 当无字段。
+//   site（项目官网，用户 2026-10-29；RC1.1 审计后定）：https:// + 主机名 + 可选端口 / 路径、≤ 60 字符（site_ok）；有它时外文的值行与「复制链接」用官网，GitHub 挪到「关于」段一行；没有退回 github、与 RC1 相同。旧客户端忽略它。
 //   解析在这里用 C 做（严格的最小 JSON 解析器，十一审 Q11-01：整段必须是合法根对象，只认根对象直接子级 community 及其直接子级；语法错 / 重复 / 嵌套同名 / 转义都当格式错），外壳只把原文交过来；单测 t_community.c 覆盖有 / 无 / 坏 / 缓存回退与这些坏形状。
 // 缓存 community.txt（与 sw_custom.txt 同目录）：一行一个「键=值」，先写临时文件再换名；清单明确没有字段时删掉（旧值不留）。
 // 画面（用户：「不要用原生的弹窗，用游戏内弹窗」）：边框 15 片 TouchCommTile（我们通知框同一套美术、自己一套切片 Ztouch_comm）+ 标题 + 三行正文（值 / 提示 / 「已复制」）+ 两颗原版前端按钮（复制群号 或 复制链接 二选一显示、确定），
@@ -10,8 +10,8 @@
 // 日志固定前缀（分享诊断日志摘要取最后一行）：「社区入口：清单有字段 / 清单无字段 / 清单拉取失败」「社区入口：已显示」「社区入口：复制 群号 / 链接」。
 // Community entry; the interface is in dm_community.h.
 // Manifest field (next to build / note / urgent in the version file):  "community": { "qq_group": "1129913678", "github": "https://github.com/<fork>/d2r-mobile-plus" }
-//   qq_group: 5-12 digits; github: starts with https://github.com/, at most 160 URL characters. Both are optional; an invalid one counts as absent and is logged red; both absent = no field.
-//   site (project website, user 2026-10-29): https://, at most 160 URL characters; when present the "link" is the website (the value line in other languages and Copy link) and the About section gets a website line; otherwise github. Older clients ignore it.
+//   qq_group: 5-12 digits; github: starts with https://github.com/, at most 160 URL characters; site: see below. All three are optional; an invalid one counts as absent and is logged red; all absent = no field.
+//   site (project website, user 2026-10-29; settled after the RC1.1 review): https:// + host + optional port / path, at most 60 characters (site_ok); when present the value line and Copy link in other languages use it and GitHub moves to an About line; otherwise github, same as RC1. Older clients ignore it.
 //   Parsing is done here in C (a strict minimal JSON parser, Q11-01: the whole text must be a valid root object; only the root object's direct child community and its direct children count; syntax errors / duplicates / nested same-name keys / escapes are format errors); the shells only hand over the raw text; t_community.c covers present / absent / malformed / cache fallback and these bad shapes.
 // Cache community.txt (next to sw_custom.txt): one "key=value" per line, written to a temporary file then renamed; deleted when the manifest explicitly has no field (no stale value is kept).
 // Picture (user: "do not use a native popup, use an in-game one"): 15 frame tiles TouchCommTile (same art as our notification box, its own slices Ztouch_comm) + title + three body lines (value / hint / "Copied") + two original front-end buttons (Copy number or Copy link, one shown; OK),
@@ -56,11 +56,20 @@ static int gh_ok(const char *s) {
     for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (!(isalnum(c) || strchr("-._~:/?#[]@!$&'()*+,;=%", c))) return 0; }
     return 1;
 }
-// 官网（用户 2026-10-29：「关于弹窗里网址改成新的官网」）：https:// 开头、有主机名、≤ 160 个 URL 字符；地址只从清单 / 缓存来，代码里不写死 | the website: https://, a host, at most 160 URL characters; only from the manifest / cache, never hard-coded
+// 官网（用户 2026-10-29：「关于弹窗里网址改成新的官网」）：地址只从清单 / 缓存来，代码里不写死。RC1.1 增量审计 Q11.1-01 / 02 收紧：
+//   https:// + 主机名（只许 [A-Za-z0-9.-]、至少一个点、不以点或横线开头结尾）+ 可选 :端口（1–5 位数字）+ 可选 /路径；拒绝 @（userinfo，浏览器会打开 @ 后面的主机）、? 与 #；
+//   总长 ≤ SITE_MAX = 60：值行 36 号按 §2.6 估宽（拉丁 0.7 × 字号 ≈ 25.2 单位 / 字）在框内可用 1560 里最多约 61 字。超了当这一项没有（退回 GitHub）
+// The website: only from the manifest / cache, never hard-coded. Tightened in the RC1.1 review (Q11.1-01 / 02): https:// + host ([A-Za-z0-9.-], at least one dot, not starting or ending with . or -)
+//   + optional :port (1-5 digits) + optional /path; rejects @ (userinfo -- a browser opens the host after @), ? and #; at most SITE_MAX = 60 characters (the 36-pt value line fits about 61 in the box's 1560 by the §2.6 estimate). Longer = absent (GitHub fallback)
+#define SITE_MAX 60
 static int site_ok(const char *s) {
     static const char pre[] = "https://"; size_t n = strlen(s);
-    if (n <= sizeof pre - 1 || n > GH_MAX || strncmp(s, pre, sizeof pre - 1) || s[sizeof pre - 1] == '/') return 0;
-    for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (!(isalnum(c) || strchr("-._~:/?#[]@!$&'()*+,;=%", c))) return 0; }
+    if (n <= sizeof pre - 1 || n > SITE_MAX || strncmp(s, pre, sizeof pre - 1)) return 0;
+    const char *h = s + sizeof pre - 1, *e = h; int dot = 0;
+    while (*e && *e != ':' && *e != '/') { unsigned char c = (unsigned char)*e; if (!(isalnum(c) || c == '.' || c == '-')) return 0; dot |= c == '.'; e++; }
+    if (e == h || !dot || h[0] == '.' || h[0] == '-' || e[-1] == '.' || e[-1] == '-') return 0;
+    if (*e == ':') { const char *d = ++e; while (*e >= '0' && *e <= '9') e++; if (e == d || e - d > 5 || (*e && *e != '/')) return 0; }
+    for (; *e; e++) { unsigned char c = (unsigned char)*e; if (!(isalnum(c) || strchr("-._~:/!$&'()*+,;=%", c))) return 0; }   // 路径：不含 ? # @ | path: no ? # @
     return 1;
 }
 static void set_values(const char *qq, const char *gh, const char *site) { pthread_mutex_lock(&g_cm_mu); snprintf(g_qq, sizeof g_qq, "%s", qq ? qq : ""); snprintf(g_gh, sizeof g_gh, "%s", gh ? gh : ""); snprintf(g_site, sizeof g_site, "%s", site ? site : ""); pthread_mutex_unlock(&g_cm_mu); }
@@ -74,11 +83,11 @@ static int cache_write(const char *qq, const char *gh, const char *site) {
 static void cache_delete(void) { char p[1100]; if (cache_path(p, sizeof p)) unlink(p); }
 
 // ---- 严格的最小 JSON 解析（十一审 Q11-01）：整段输入必须是一个合法的 JSON 根对象（对象 / 数组 / 字符串 / 数字 / true / false / null 全按语法验），
-// 只认根对象的直接子级 "community"（必须是对象）和它的直接子级 "qq_group" / "github"（必须是不带转义的字符串）；嵌套更深的同名键一律忽略；
-// 重复的 community / qq_group / github 当格式错。语法错、尾逗号、非对象根、根后有多余内容 = 格式错。深度上限 16 层，不递归到栈爆
+// 只认根对象的直接子级 "community"（必须是对象）和它的直接子级 "qq_group" / "github" / "site"（必须是不带转义的字符串）；嵌套更深的同名键一律忽略；
+// 重复的 community / qq_group / github / site 当格式错。语法错、尾逗号、非对象根、根后有多余内容 = 格式错。深度上限 16 层，不递归到栈爆
 // Strict minimal JSON parsing (Q11-01): the whole input must be one valid JSON root object (object / array / string / number / true / false / null all validated);
-// only the root object's direct child "community" (must be an object) and its direct children "qq_group" / "github" (must be strings without escapes) are honored; deeper same-name keys are ignored;
-// a duplicate community / qq_group / github is a format error. Syntax error, trailing comma, non-object root, trailing content = format error. Depth capped at 16
+// only the root object's direct child "community" (must be an object) and its direct children "qq_group" / "github" / "site" (must be strings without escapes) are honored; deeper same-name keys are ignored;
+// a duplicate community / qq_group / github / site is a format error. Syntax error, trailing comma, non-object root, trailing content = format error. Depth capped at 16
 #define CR_NAME_MAX 32   // 鸣谢名字上限（字节） | credit name limit (bytes)
 #define CR_MAX 24        // 两份名单合计上限 | both lists together
 typedef struct { const char *p, *e; char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; int n_comm, n_qq, n_gh, n_site, bad_type, too_long;
@@ -200,10 +209,13 @@ int dm_community_value(int lang_group, char *out, size_t n) {
     if (out && n) snprintf(out, n, "%s", v);
     return k;
 }
-// 「关于」段的官网行：去掉 https:// 与末尾的 /，只为好读（复制的仍是完整地址）；没有官网返回 0 | the About section's website line: without https:// and the trailing /, for reading only (copy keeps the full URL); 0 without a website
-int dm_community_site_label(char *out, size_t n) {
-    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; get_values(qq, gh, site); if (!site[0]) { if (out && n) out[0] = 0; return 0; }
-    const char *s = site + strlen("https://"); size_t L = strlen(s); if (L > 1 && s[L - 1] == '/') L--;
+// 「关于」段的 GitHub 行（RC1.1 增量审计 Q11.1-03，用户定：接口说明 §13「GitHub 留在『关于』框」）：有官网时值行与「复制链接」给官网，GitHub 挪到「关于」段，
+// 外文界面官网只出现一次；去掉 https:// 与末尾的 /，只为好读。没有官网（或没有 GitHub）返回 0、不出这一行——与 RC1 相同
+// The About section's GitHub line (RC1.1 review Q11.1-03, user's call: spec §13 "GitHub stays in the About box"): with a website the value line and Copy link give the website and GitHub moves to
+// the About section, so the website shows once in other languages; https:// and the trailing / dropped for reading. Without a website (or without GitHub) returns 0 and no line -- same as RC1
+int dm_community_about_github(char *out, size_t n) {
+    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; get_values(qq, gh, site); if (!site[0] || !gh[0]) { if (out && n) out[0] = 0; return 0; }
+    const char *s = gh + strlen("https://"); size_t L = strlen(s); if (L > 1 && s[L - 1] == '/') L--;
     if (out && n) snprintf(out, n, "%.*s", (int)L, s); return 1;
 }
 int dm_community_available(void) { return dm_community_value(dm_lang_group(), NULL, 0) != 0; }
@@ -340,7 +352,7 @@ static void co_origin(uint64_t p, int xr, int *ox, int *oy, float *s) {
     if (!(ax >= 0 && ax <= 1)) ax = 0; if (!(ay >= 0 && ay <= 1)) ay = 0; if (!(sc > 0.05f && sc < 10)) sc = 1;
     *ox = (int)(ax * xr) + r[0]; *oy = (int)(ay * 2160) + r[1]; *s = sc;
 }
-#define CO_DESC 7   // 正文行：社区框 0 群号或链接 / 1 提示或「已复制」/ 2 空（分隔线占这一行）/ 3 版本 / 4 官网 / 5–6 鸣谢；纯「关于」框 0 版本 / 1 官网 / 2–3 鸣谢，其余空；没有官网时官网行不占位、下面的行上移 | body lines: community box 0 number or link / 1 hint or Copied / 2 empty (the divider takes this line) / 3 version / 4-5 credits; About-only box 0 version / 1-2 credits, the rest blank
+#define CO_DESC 7   // 正文行：社区框 0 群号或链接 / 1 提示或「已复制」/ 2 空（分隔线占这一行）/ 3 版本 / 4 GitHub（有官网时）/ 5–6 鸣谢；纯「关于」框 0 版本 / 1 GitHub / 2–3 鸣谢；没有那一行时不占位、下面上移。框高：无官网 700、有官网 748 | body lines: community box 0 value / 1 hint or Copied / 2 empty (divider) / 3 version / 4 GitHub (with a website) / 5-6 credits; About-only box 0 version / 1 GitHub / 2-3 credits; an absent line takes no slot. Box height 700 without a website, 748 with one
 // 两种框的纵向排版（框内面板单位，自框顶算）：各行 y / 字号、分隔线 y、按钮顶、框高。按钮顶 = 末行文字下沿 + CO_GAP（与分隔线到版本行同一个间距），
 // 框高 = 按钮顶 + 按钮高 115 + 下边距 45。原先按钮固定在 600、框高 760：「关于」段末行下面空出约 120 单位一整条（用户 2026-10-29，Duo 内屏上很显眼）
 // Vertical layout of both boxes (panel units from the box top): line y / point size, divider y, button top, box height. Button top = last text line bottom + CO_GAP (the same gap as divider to version line),
@@ -399,14 +411,14 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     { int ack = atomic_exchange(&g_ack, 0); if (ack) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：收起（%s）", ack == 2 ? "手柄 B" : "点确定"); return; } }
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
     int ox, oy; float s; co_origin(p, xr, &ox, &oy, &s);
-    char site[GH_MAX + 1]; int has_site = dm_community_site_label(site, sizeof site);
+    char ghl[GH_MAX + 1]; int has_site = dm_community_about_github(ghl, sizeof ghl);   // 有官网时「关于」段多一行 GitHub | with a website the About section gains a GitHub line
     const co_geom_t gm_ = co_geom(mode, has_site); int H = gm_.h;   // 社区框：标题 + 社区两行 + 「关于」段 + 按钮；纯「关于」框：标题 + 三行 + 确定（co_geom） | community box: title + two community lines + the About section + buttons; About-only box: title + three lines + OK
     int cx = (int)((xr / 2 - ox) / s), y0 = (int)((1080 - oy) / s) - H / 2;   // 整屏居中：框 1800×H（面板单位） | centered on the screen: box 1800×H (panel units)
     // 文字：版本（外壳给的显示版本，没有就空行）、鸣谢（代码缺省名单，最多两行，带标签）、社区值 + 提示 / 「已复制」
     // Text: version (the shell's display version, blank line if none), credits (default list in code, at most two lines, labelled), community value + hint / Copied
     char line[GH_MAX + 64], ver[96]; const char *label = dm_update_label(); int cp = atomic_load(&g_copied);
     if (label && *label) snprintf(ver, sizeof ver, dm_str(b, "dmAboutVersion"), label); else ver[0] = 0;
-    char sl[GH_MAX + 64]; if (has_site) snprintf(sl, sizeof sl, dm_str(b, "dmAboutSite"), site); else sl[0] = 0;   // 官网行（用户 2026-10-29） | website line
+    char sl[GH_MAX + 64]; if (has_site) snprintf(sl, sizeof sl, dm_str(b, "dmAboutGithub"), ghl); else sl[0] = 0;   // GitHub 行（Q11.1-03） | GitHub line
     static int grp = -1, ncr; static cr_line_t cr[2]; int g = dm_lang_group();
     if (g != grp) { int trunc; grp = g; ncr = credits_all(k_maker_default, (int)(sizeof k_maker_default / sizeof *k_maker_default), k_special_default, (int)(sizeof k_special_default / sizeof *k_special_default), NULL, 0, dm_str(b, "dmCreditsSep"), dm_str(b, "dmCreditsUpstreamNote"), cr, 2, &trunc);
         LOG("社区入口：提示框鸣谢 %d 行（制作 %d 名，特别鸣谢 %d 名，鸣谢 0 名）%s", ncr, (int)(sizeof k_maker_default / sizeof *k_maker_default), (int)(sizeof k_special_default / sizeof *k_special_default), trunc ? "，超过两行已在末尾加「…」" : ""); }
@@ -427,5 +439,5 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     else { co_place(cq, 99999, 99999); co_place(cl, 99999, 99999); co_place(ok, cx - 235, y0 + btn_y); }   // 纯「关于」框：只有「确定」，居中 | About-only box: OK only, centered
     if (st == 1) { atomic_store(&g_show, 2); int32_t *pr = (int32_t *)(p + 0x70);
         LOG("社区入口：已显示（%s，%s，%s，版本%s，鸣谢 %d 行%s；面板 %s 锚 %.2f/%.2f 矩形 %d,%d %dx%d 缩放 %.2f → 框中心 %d 顶 %d）", atomic_load(&g_from) == 1 ? "暂停菜单" : atomic_load(&g_from) == 2 ? "主菜单" : "自定义页", mode == 2 ? "关于框" : pad ? "手柄模式，A 复制 B 收起" : "触屏 / 鼠标点按钮", mode == 2 ? "版本 + 鸣谢" : kind == 1 ? "群号" : "链接",
-            ver[0] ? "有" : "无", ncr, has_site ? "，官网有" : "", k_hosts[which], *(float *)(p + 0x48), *(float *)(p + 0x4c), pr[0], pr[1], pr[2], pr[3], s, cx, y0); }
+            ver[0] ? "有" : "无", ncr, has_site ? "，GitHub 行有" : "", k_hosts[which], *(float *)(p + 0x48), *(float *)(p + 0x4c), pr[0], pr[1], pr[2], pr[3], s, cx, y0); }
 }

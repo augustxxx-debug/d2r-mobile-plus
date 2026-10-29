@@ -212,40 +212,55 @@ int main(void) {
         for (int k = 0; k < CO_DESC; k++) if (g.dy[k]) { CHECK(g.dy[k] + 30 - g.sz[k] / 2 >= prev_bottom); prev_bottom = g.dy[k] + 30 + g.sz[k] / 2; last = k; }
         CHECK(last >= 2); CHECK(g.btn_y - prev_bottom <= CO_GAP && g.btn_y - prev_bottom >= 40); CHECK(g.h == g.btn_y + 115 + 45);
         if (mode == 1) { CHECK(g.div_y > g.dy[1] + 30 + g.sz[1] / 2 && g.div_y < g.dy[3] + 30 - g.sz[3] / 2); CHECK(g.dy[3] + 30 - g.sz[3] / 2 - g.div_y <= CO_GAP); }
-        int ks = mode == 1 ? 4 : 1; CHECK(site ? g.dy[ks] > 0 : g.dy[ks] == 0); }   // 官网行：有官网才占位，没有时下面两行鸣谢上移、框跟着变矮 | website line: only takes a slot with a website
-    { co_geom_t a = co_geom(1, 0), b2 = co_geom(1, 1); CHECK(b2.h == a.h + 48 && b2.dy[5] == a.dy[5] + 48); CHECK(a.h == 700); }
+        int ks = mode == 1 ? 4 : 1; CHECK(site ? g.dy[ks] > 0 : g.dy[ks] == 0); }   // GitHub 行：有官网才占位，没有时下面两行鸣谢上移、框跟着变矮 | GitHub line: only takes a slot with a website
+    { co_geom_t a = co_geom(1, 0), b2 = co_geom(1, 1); CHECK(b2.h == a.h + 48 && b2.dy[5] == a.dy[5] + 48); CHECK(a.h == 700 && b2.h == 748); }   // 框高：无官网 700 / 有官网 748（Q11.1-05） | box height 700 / 748
     // 22. 官网（用户 2026-10-29：「关于弹窗里网址改成新的官网」）：清单 community.site（https:// 开头）进内存与缓存；链接一项优先官网、没有退回 GitHub；
-    //     「关于」段官网行去掉 https:// 与末尾 /；site 不合规当这一项没有并记红；重复当格式错；只有 site 也算有字段；旧缓存（没有 site=）照读
-    // 22. Website (user, 2026-10-29): manifest community.site (https://) goes to memory and cache; the link prefers it and falls back to GitHub; the About line drops https:// and the trailing /;
+    //     有官网时「关于」段出 GitHub 行（Q11.1-03：外文界面官网只出现一次），去掉 https:// 与末尾 /；site 不合规当这一项没有并记红；重复当格式错；只有 site 也算有字段；旧缓存（没有 site=）照读
+    // 22. Website (user, 2026-10-29): manifest community.site (https://) goes to memory and cache; the link prefers it and falls back to GitHub; with a website the About section shows a GitHub line (Q11.1-03), without https:// and the trailing /;
     //     an invalid site counts as absent with a red line; a duplicate is a format error; site alone is a field; old caches without site= still load
     { static const char *const s1 = "{\"community\": {\"qq_group\": \"1129913678\", \"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https://d2rplus.example.com/\"}}";
       char lb[200];
       log_reset(); CHECK(dm_community_manifest(s1, strlen(s1)) == 1); CHECK(strstr(log_text(), "官网=https://d2rplus.example.com/"));
       CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 1 && !strcmp(v, "1129913678"));
       CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/"));   // 外文：链接 = 官网 | other languages: link = website
-      CHECK(dm_community_site_label(lb, sizeof lb) == 1 && !strcmp(lb, "d2rplus.example.com")); CHECK(cache_has("site=https://d2rplus.example.com/\n"));
+      CHECK(dm_community_about_github(lb, sizeof lb) == 1 && !strcmp(lb, "github.com/example/d2r-mobile-plus")); CHECK(cache_has("site=https://d2rplus.example.com/\n"));
       restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_RU, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/")); CHECK(strstr(log_text(), "官网=https://d2rplus.example.com/"));
       static const char *const s2 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"http://d2rplus.example.com/\"}}";   // 不是 https | not https
       log_reset(); CHECK(dm_community_manifest(s2, strlen(s2)) == 1); CHECK(strstr(log_text(), "另一项格式坏"));
       CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus"));   // 退回 GitHub | falls back to GitHub
-      CHECK(dm_community_site_label(lb, sizeof lb) == 0 && !lb[0]); CHECK(!cache_has("site="));
+      CHECK(dm_community_about_github(lb, sizeof lb) == 0 && !lb[0]); CHECK(!cache_has("site="));
       static const char *const s3 = "{\"community\": {\"site\": \"https://a.example\", \"site\": \"https://b.example\"}}";
       log_reset(); CHECK(dm_community_manifest(s3, strlen(s3)) == 0); CHECK(strstr(log_text(), "site 重复")); CHECK(!dm_community_available());
       static const char *const s4 = "{\"community\": {\"site\": \"https://d2rplus.example.com/path\"}}";   // 只有官网：外文显示、中文也显示链接 | site only: every language shows it
       CHECK(dm_community_manifest(s4, strlen(s4)) == 1); CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/path"));
-      CHECK(dm_community_site_label(lb, sizeof lb) == 1 && !strcmp(lb, "d2rplus.example.com/path"));
+      CHECK(dm_community_about_github(lb, sizeof lb) == 0);   // 只有官网没有 GitHub：不出 GitHub 行 | website without GitHub: no GitHub line
       static const char *const s5 = "{\"community\": {\"site\": \"https:///x\"}}";   // 没有主机名 | no host
       CHECK(dm_community_manifest(s5, strlen(s5)) == 0);
       // Q11-01 口径：带转义的 site 当这一项没有（链接退回 GitHub）；嵌套更深的同名 site 不认；site 不是字符串当格式坏 | Q11-01: an escaped site counts as absent (link falls back); a deeper same-name site is ignored; a non-string site is malformed
       static const char *const s6 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https:\\/\\/d2rplus.example.com\"}}";
-      log_reset(); CHECK(dm_community_manifest(s6, strlen(s6)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(dm_community_site_label(lb, sizeof lb) == 0);
+      log_reset(); CHECK(dm_community_manifest(s6, strlen(s6)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(dm_community_about_github(lb, sizeof lb) == 0);
       CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus"));
       static const char *const s7 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"extra\": {\"site\": \"https://deep.example\"}}, \"site\": \"https://root.example\"}";
-      CHECK(dm_community_manifest(s7, strlen(s7)) == 1); CHECK(dm_community_site_label(lb, sizeof lb) == 0); CHECK(!cache_has("site="));
+      CHECK(dm_community_manifest(s7, strlen(s7)) == 1); CHECK(dm_community_about_github(lb, sizeof lb) == 0); CHECK(!cache_has("site="));
       static const char *const s8 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": 42}}";
-      log_reset(); CHECK(dm_community_manifest(s8, strlen(s8)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(dm_community_site_label(lb, sizeof lb) == 0);
+      log_reset(); CHECK(dm_community_manifest(s8, strlen(s8)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(dm_community_about_github(lb, sizeof lb) == 0);
+      // RC1.1 增量审计 Q11.1-01 / 02：site 收紧——拒绝 userinfo（@）、? 与 #、空 / 坏主机名；主机名只许 [A-Za-z0-9.-]、要有点、不以点或横线开头结尾；可选 :端口 与路径；总长 ≤ 60（值行 36 号估宽）
+      // RC1.1 review Q11.1-01 / 02: site tightened -- rejects userinfo (@), ? and #, empty / bad hosts; host [A-Za-z0-9.-] with a dot, not starting or ending with . or -; optional :port and path; at most 60 characters
+      { static const char *const bad[] = { "https://?x", "https://#", "https://d2rplus.example.com@evil.example/", "https://a.b@c.d/", "https://a.example/x?y=1", "https://a.example/#top",
+            "https://localhost/", "https://.a.example/", "https://a.example./", "https://-a.example/", "https://a.example-/", "https://a_b.example/", "https://a.example:/", "https://a.example:123456/",
+            "https://a.example:80x/", "https://:443/", "https://a.example:443?x" };
+        for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) CHECK(!site_ok(bad[i]));
+        static const char *const good[] = { "https://d2rplus.augustusplay.com/", "https://a.example", "https://a-b.example.com:8443/d2r/v1/", "https://A1.Example.com/p_a-t.h~/(x)" };
+        for (size_t i = 0; i < sizeof good / sizeof *good; i++) CHECK(site_ok(good[i]));
+        char u[80]; snprintf(u, sizeof u, "https://a.example/%0*d", SITE_MAX - 18, 0); CHECK(strlen(u) == SITE_MAX && site_ok(u));   // 恰 60 收 | exactly 60 accepted
+        snprintf(u, sizeof u, "https://a.example/%0*d", SITE_MAX - 17, 0); CHECK(strlen(u) == SITE_MAX + 1 && !site_ok(u));       // 61 拒 | 61 rejected
+        char m[256]; snprintf(m, sizeof m, "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"%s\"}}", u);
+        log_reset(); CHECK(dm_community_manifest(m, strlen(m)) == 1); CHECK(strstr(log_text(), "另一项格式坏"));   // 超长：丢这一项、退回 GitHub | too long: dropped, GitHub fallback
+        CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(!cache_has("site="));
+        static const char *const s9 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https://d2rplus.example.com@evil.example/\"}}";
+        log_reset(); CHECK(dm_community_manifest(s9, strlen(s9)) == 1); CHECK(dm_community_about_github(lb, sizeof lb) == 0); CHECK(strstr(log_text(), "官网=无")); }
       FILE *f = fopen(cache, "w"); fputs("qq_group=1129913678\ngithub=https://github.com/example/d2r-mobile-plus\n", f); fclose(f);   // 旧缓存（RC1 写的） | an RC1 cache
-      restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(dm_community_site_label(lb, sizeof lb) == 0); }
+      restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(dm_community_about_github(lb, sizeof lb) == 0); }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);

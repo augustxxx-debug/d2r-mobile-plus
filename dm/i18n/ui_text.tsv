@@ -504,7 +504,7 @@ dmCommunityRow	社区讨论	Community	Comunidad		Сообщество	커뮤니�
 dmCommunityOpen	查看	View	Ver		Открыть	보기	自定义页「关于」组那一行右侧的按钮（原版前端中号按钮，打开社区提示框）
 dmCommunityTitle	加入社区讨论	Join the community	Unirse a la comunidad		Сообщество игроков	커뮤니티 참여	社区提示框标题（48 号字，框内可用宽 1560）
 dmCommunityQq	QQ 群：%s	QQ group: %s	Grupo QQ: %s		Группа QQ: %s	QQ 그룹: %s	社区提示框第一行（中文界面：群号来自远端清单 community.qq_group）
-dmCommunityLink	%s	%s	%s		%s	%s	社区提示框第一行（其他语言：仓库地址来自远端清单 community.github，整行就是地址，不加前缀以免超宽）
+dmCommunityLink	%s	%s	%s		%s	%s	社区提示框第一行（其他语言：链接 = 远端清单 community.site 官网，没有官网退回 community.github；整行就是地址，不加前缀以免超宽）
 dmCommunityQqHint	复制群号后在 QQ 里搜索加入	Copy the number and search for it in QQ	Copia el número y búscalo en QQ		Скопируйте номер и найдите группу в QQ	번호를 복사해 QQ에서 검색하세요	社区提示框第二行（群号那种）
 dmCommunityLinkHint	复制链接后在浏览器打开	Copy the link and open it in a browser	Copia el enlace y ábrelo en el navegador		Скопируйте ссылку и откройте в браузере	링크를 복사해 브라우저에서 여세요	社区提示框第二行（链接那种）
 dmCommunityCopied	已复制	Copied	Copiado		Скопировано	복사됨	社区提示框第三行：复制成功后（游戏内文字，不用系统弹窗）
@@ -518,5 +518,5 @@ dmCreditsMaker	制作	Made by	Hecho por	Hecho por	Автор	제작	鸣谢区署
 dmCreditsUpstreamNote	（d2r-mobile 原作者）	 (author of d2r-mobile)	 (autor de d2r-mobile)		 (автор d2r-mobile)	 (d2r-mobile 원작자)	特别鸣谢名单末尾的括号说明（名字不翻译，只翻译这段）
 dmCreditsSep	、	, 	, 		, 	, 	鸣谢名单里名字之间的分隔（中文顿号，其他语言逗号加空格；dm_community.c 拼行用）
 dmAboutVersion	版本 %s	Version %s	Versión %s		Версия %s	버전 %s	提示框「关于」段的版本行：显示版本「1.0.0+N · 哈希」（dm_community.c，取 dm_update_label）
-dmAboutSite	官网 %s	Website %s	Sitio web %s		Сайт %s	웹사이트 %s	提示框「关于」段版本行下的官网行（用户 2026-10-29：「关于弹窗里网址改成新的官网」）：地址来自清单 community.site，去掉 https:// 与末尾 / 显示（dm_community.c dm_community_site_label）；没有官网整行不显示
+dmAboutGithub	GitHub %s	GitHub %s	GitHub %s		GitHub %s	GitHub %s	提示框「关于」段版本行下的 GitHub 行（RC1.1 增量审计 Q11.1-03，用户定：有官网时值行给官网、GitHub 留在「关于」段，外文界面官网不重复）：地址来自清单 community.github，去掉 https:// 与末尾 /（dm_community.c dm_community_about_github）；没有官网时整行不显示，与 RC1 相同
 dmCommunityFe	加入社区讨论	Community	Comunidad		Сообщество	커뮤니티	主菜单第二行「加入社区讨论」（原版前端中号按钮 470 宽，西 / 俄文的长句放不下，这里用短词；暂停菜单那行仍用 dmCommunityJoin）

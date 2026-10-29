@@ -520,6 +520,6 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCreditsUpstreamNote", "（d2r-mobile 原作者）", " (author of d2r-mobile)", " (autor de d2r-mobile)", " (autor de d2r-mobile)", " (автор d2r-mobile)", " (d2r-mobile 원작자)" },
     { "dmCreditsSep", "、", ", ", ", ", ", ", ", ", ", " },
     { "dmAboutVersion", "版本 %s", "Version %s", "Versión %s", "Versión %s", "Версия %s", "버전 %s" },
-    { "dmAboutSite", "官网 %s", "Website %s", "Sitio web %s", "Sitio web %s", "Сайт %s", "웹사이트 %s" },
+    { "dmAboutGithub", "GitHub %s", "GitHub %s", "GitHub %s", "GitHub %s", "GitHub %s", "GitHub %s" },
     { "dmCommunityFe", "加入社区讨论", "Community", "Comunidad", "Comunidad", "Сообщество", "커뮤니티" },
 };

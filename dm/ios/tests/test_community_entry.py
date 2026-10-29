@@ -229,8 +229,8 @@ class Text(unittest.TestCase):
         rows = {r[0]: r[1:] for r in dm_i18n.rows()}
         langs = ('中文', 'English', 'Español', 'Español MX', 'Русский', '한국어')
         sample = {'dmCommunityQq': '1129913678', 'dmCommunityLink': 'https://github.com/example-owner/d2r-mobile-plus/discussions'}
-        sample['dmAboutVersion'] = '1.0.0+123 · 0123456'; sample['dmAboutSite'] = 'd2rplus.augustusplay.com'   # 官网行（用户 2026-10-29） | the website line
-        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmAboutSite', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityAbout', 40, BTN_W), ('dmCommunityFe', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
+        sample['dmAboutVersion'] = '1.0.0+123 · 0123456'; sample['dmAboutGithub'] = 'github.com/augustxxx-debug/d2r-mobile-plus'   # 「关于」段 GitHub 行（Q11.1-03） | the About GitHub line
+        for key, pt, limit in (('dmCommunityTitle', 48, BOX_W), ('dmAboutVersion', 28, BOX_W), ('dmAboutGithub', 28, BOX_W), ('dmCommunityAbout', 48, BOX_W), ('dmCommunityAbout', 36, BOX_W), ('dmCommunityAbout', 40, BTN_W), ('dmCommunityFe', 40, BTN_W), ('dmCommunityQq', 36, BOX_W), ('dmCommunityLink', 36, BOX_W), ('dmCommunityQqHint', 28, BOX_W), ('dmCommunityLinkHint', 28, BOX_W),
                                ('dmCommunityCopied', 28, BOX_W), ('dmCommunityCopyFail', 28, BOX_W), ('dmCommunityCopyQq', 40, BTN_W), ('dmCommunityCopyLink', 40, BTN_W), ('dmCommunityOpen', 40, BTN_W),
                                ('dmCommunityJoin', 40, PAUSE_BTN_W), ('dmCommunityRow', 40, 1000), ('dmCommunityAbout', 40, 1000), ('dmCreditsTitle', 40, 1000), ('dmCreditsSpecial', 36, CREDIT_LABEL_W), ('dmCreditsMaker', 36, CREDIT_LABEL_W), ('dmCreditsThanks', 36, CREDIT_LABEL_W), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25)):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops (13 chars) on the same line
             texts = rows[key]
@@ -238,7 +238,7 @@ class Text(unittest.TestCase):
                 self.assertEqual(t.count('\n'), 0, (key, lang))
                 line = t.replace('%s', sample.get(key, ''))
                 self.assertLessEqual(est_width(line, pt), limit, (key, lang, line, est_width(line, pt)))
-        self.assertEqual(rows['dmCommunityQq'][1].count('%s'), 1); self.assertEqual(rows['dmCommunityLink'][1].count('%s'), 1); self.assertEqual(rows['dmAboutVersion'][1].count('%s'), 1); self.assertEqual([t.count('%s') for t in rows['dmAboutSite']], [1] * 6)
+        self.assertEqual(rows['dmCommunityQq'][1].count('%s'), 1); self.assertEqual(rows['dmCommunityLink'][1].count('%s'), 1); self.assertEqual(rows['dmAboutVersion'][1].count('%s'), 1); self.assertEqual([t.count('%s') for t in rows['dmAboutGithub']], [1] * 6)
 
 
 class Maker(unittest.TestCase):

@@ -315,7 +315,7 @@ def _community():
             + _co_text('TouchCommDesc0', 36, '$FontColorLightGold')                                     # 群号 / 链接（纯「关于」框：版本） | number / link (About-only box: version)
             + _co_text('TouchCommDesc1', 28, '$FontColorLightGray')                                     # 提示 / 「已复制」 | hint / Copied
             + _co_text('TouchCommDesc2', 36, '$FontColorGoldYellow')                                    # 纯「关于」框的鸣谢第二行；社区框里这一行空着（「关于」子标题已换成下面的分隔线） | About-only box: second credits line; empty in the community box
-            + ''.join(_co_text('TouchCommDesc%d' % k, 28, '$FontColorLightGray') for k in (3, 4, 5, 6))   # 版本、官网（用户 2026-10-29，清单有 site 才写）、鸣谢两行 | version, website (user, 2026-10-29; only when the manifest has site), two credit lines
+            + ''.join(_co_text('TouchCommDesc%d' % k, 28, '$FontColorLightGray') for k in (3, 4, 5, 6))   # 版本、GitHub（清单有官网 site 时才写，Q11.1-03）、鸣谢两行 | version, GitHub (only when the manifest has a website, Q11.1-03), two credit lines
             # 社区段与「关于」段之间的分隔线（用户 2026-10-29：「关于」两字换成分隔线，视觉更舒服）：原版设置页分节同一张图 PauseMenu\\Divider，原尺寸（共享精灵，不改尺寸），宿主按图宽居中
             # divider between the community and About sections (user, 2026-10-29: replaces the 'About' sub-title): the original settings-section image, native size (a shared sprite, never resized), centred by the host from its width
             + '        { "type": "ImageWidget", "name": "TouchCommDivider", "fields": { "rect": { "x": 99999, "y": 99999 }, "filename": "PauseMenu\\\\Divider" } },\n'
