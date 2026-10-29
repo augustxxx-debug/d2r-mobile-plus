@@ -40,7 +40,13 @@ def run(cmd, env=None, cwd=None, log=None, what=None):
     e = dict(os.environ, DM_ROOT=ROOT, PYTHONUTF8='1', PYTHONPATH=os.pathsep.join(filter(None, [WINLF, os.environ.get('PYTHONPATH')]))); e.update(env or {})   # 子脚本一律按 UTF-8 读写与打印（Windows 缺省是本地编码，读我们的源文件、打 ✓ 都会出错） | child scripts always read, write and print in UTF-8 (the Windows default is the local encoding, and both reading our source files and printing ✓ would fail)
     r = subprocess.run(cmd, env=e, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     if log: open(log, 'wb').write(r.stdout)
-    if r.returncode: die('%s 没成功（退出码 %d）：%s%s' % (what or cmd[0], r.returncode, r.stdout.decode('utf-8', 'replace').strip().splitlines()[-1:] or '', '；完整输出 ' + log if log else ''))
+    # 失败时先写最里层的报错、再附这一步输出的最后 120 行（genfail.fail_report）：以前只取最后一行，套着包装层（winlf/run.py、子进程 check=True）时只剩外层的
+    # CalledProcessError，看不出真正的原因（缺陷台账 B026）
+    # On failure write the innermost error first, then the last 120 lines of this step's output (genfail.fail_report): previously only the last line was kept, which
+    # behind a wrapper (winlf/run.py, a child process with check=True) left only the outer CalledProcessError and hid the real cause (defect ledger B026)
+    if r.returncode:
+        import genfail
+        die(genfail.fail_report(what or cmd[0], r.returncode, r.stdout.decode('utf-8', 'replace'), log))
     return r.stdout.decode('utf-8', 'replace')
 
 

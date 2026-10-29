@@ -256,7 +256,14 @@ with tempfile.TemporaryDirectory() as t:
                     repl[key]=output
         with open(os.path.join(t,tag+'repl.tsv'),'w') as f:
             for k,v in repl.items(): f.write(f'{"" if k in MAN else "+"}{k}\t{os.path.join(t,v)}\n')   # 新增路径前加「+」（casc_overlay.py） | New paths are prefixed with "+" (casc_overlay.py)
-        subprocess.run(gen_assets.python_command(os.path.join(HERE,'..','..','tools','casc_overlay.py'),romfs,os.path.join(t,tag+'ov'),os.path.join(t,tag+'repl.tsv'),'--thin')+(['--prebuilt',prebuilt] if prebuilt else []),check=True,stdout=subprocess.DEVNULL)
+        # 写覆盖层：成功时它的输出不要（很长）；失败时原样转到本进程的 stderr 再以「[x] …」退出，里层的回溯与报错跟着进生成日志（以前 stdout 丢掉、只剩外层
+        # CalledProcessError，缺陷台账 B026）
+        # Write the overlay: its output is dropped on success (it is long); on failure it is passed through to this process's stderr unchanged and we exit with "[x] ...",
+        # so the inner traceback and error reach the generation log (previously stdout was dropped and only the outer CalledProcessError was left, defect ledger B026)
+        cp=subprocess.run(gen_assets.python_command(os.path.join(HERE,'..','..','tools','casc_overlay.py'),romfs,os.path.join(t,tag+'ov'),os.path.join(t,tag+'repl.tsv'),'--thin')+(['--prebuilt',prebuilt] if prebuilt else []),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        if cp.returncode:
+            sys.stderr.write(cp.stdout.decode('utf-8','replace')); sys.stderr.flush()
+            raise SystemExit('[x] 写覆盖层（casc_overlay.py）退出码 %d，它的输出见上' % cp.returncode)
         src=os.path.join(t,tag+'ov','data'); new=[n for n in os.listdir(src) if n.endswith('.data') and not os.path.islink(os.path.join(src,n))]
         assert len(new)==1, new
         shutil.rmtree(dst,ignore_errors=True); os.makedirs(os.path.join(dst,'data'))

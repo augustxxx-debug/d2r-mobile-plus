@@ -134,6 +134,45 @@ public class PackGeneratorTest {
         write(new File(genF, "font/font.txt"), "file=LXGWWenKai-Medium.ttf\nweight=9\n");
         equal(false, PackGenerator.environment(lib, genF, 8).containsKey("DM_UI_FONT"));
         PackGenerator.deleteTree(genF);
+
+        // 失败日志（缺陷台账 B026）：@summary / @fail / 产物代号的解析；生成器给了类别就按它归类，没给照旧按输出猜
+        // Failure log (defect ledger B026): parsing @summary / @fail / the product code; classify by the generator's kind when given, otherwise guess from the output as before
+        PackGenerator.State st = new PackGenerator.State();
+        equal(true, st.accept("@progress product 3.3.94012-r44")); equal("3.3.94012-r44", st.product);
+        equal(true, st.accept("@summary 游戏文件核对：缺 data/.build.config（隐藏文件，要一起拷）"));
+        equal(true, st.accept("@fail files")); equal(true, st.accept("@fail internal")); equal("files", st.failKind);   // 先到的算 | the first one counts
+        equal(List.of("游戏文件核对：缺 data/.build.config（隐藏文件，要一起拷）"), st.summary);
+        st.reset(); equal(0, st.summary.size()); equal(true, st.failKind == null && st.product == null);
+        equal(PackGenerator.Failure.BAD_FILES, PackGenerator.classify(1, List.of("[x] 游戏文件不完整：…"), "files"));
+        equal(PackGenerator.Failure.VERSION, PackGenerator.classify(1, List.of(), "version"));
+        equal(PackGenerator.Failure.NO_SPACE, PackGenerator.classify(1, List.of(), "space"));
+        equal(PackGenerator.Failure.STEP_FAILED, PackGenerator.classify(1, List.of(), "internal"));
+        equal(PackGenerator.Failure.INTERRUPTED, PackGenerator.classify(-9, List.of(), "internal"));   // 被杀不信标记 | killed: the marker is not trusted
+        equal(PackGenerator.Failure.NONE, PackGenerator.classify(0, List.of(), "files"));
+        // 输入文件清单：每个文件的字节数，单独说 .build.config 在不在 | input file list: bytes of every file, and whether .build.config is there
+        File inBase = temp(); write(new File(inBase, "ExeFS/main"), "mm"); write(new File(inBase, "data/00-00000004.data"), "dddd");
+        String in = PackGenerator.listInputs(new File(inBase, "ExeFS"), new File(inBase, "data"));
+        equal(true, in.contains("ExeFS：1 个\n  main\t2\n")); equal(true, in.contains("  00-00000004.data\t4\n"));
+        equal(true, in.contains("data/.build.config：没有（隐藏文件，要一起拷）"));
+        write(new File(inBase, "data/.build.config"), "cfg");
+        equal(true, PackGenerator.listInputs(new File(inBase, "ExeFS"), new File(inBase, "data")).contains("data/.build.config：有"));
+        equal(true, PackGenerator.listInputs(new File(inBase, "nope"), new File(inBase, "data")).contains("ExeFS：（没有这个文件夹）"));
+        // gen_log：结论在第一屏，再环境、输入文件、生成输出 | gen_log: the verdict on the first screen, then environment, input files, generator output
+        String g = PackGenerator.genLog("游戏文件不完整", "请重新拷", List.of("游戏文件核对：缺 data/.build.config"), "机型：X", in, "[12:00] 生成覆盖层\n");
+        equal(true, g.startsWith("==== 结论 ====\n游戏文件不完整\n· 游戏文件核对：缺 data/.build.config\n请重新拷\n"));
+        equal(true, g.indexOf("==== 环境 ====") < g.indexOf("==== 输入文件 ====") && g.indexOf("==== 输入文件 ====") < g.indexOf("==== 生成输出 ===="));
+        // 分享附的各步骤日志与打包 | the per-step logs attached when sharing, and the packing
+        File logGen = temp(); write(new File(logGen, "gen.log"), "main"); write(new File(logGen, "root/build/pack/android/gen_overlay.log"), "ov");
+        write(new File(logGen, "root/build/pack/android/note.txt"), "x"); write(new File(logGen, "root/build/cache/dm/out/3.3.94012-r44-android/main.patch.log"), "p");
+        List<File> logs = PackGenerator.stepLogs(logGen);
+        equal(Arrays.asList("gen.log", "gen_overlay.log", "main.patch.log"), logs.stream().map(File::getName).collect(java.util.stream.Collectors.toList()));
+        File zip = new File(temp(), "share/x.zip"); Map<String, byte[]> ent = new java.util.LinkedHashMap<>();
+        ent.put("gen_log.txt", "a".getBytes(StandardCharsets.UTF_8)); ent.put("logs/android_gen_overlay.log", "ov".getBytes(StandardCharsets.UTF_8));
+        PackGenerator.writeZip(zip, ent);
+        try (java.util.zip.ZipFile z = new java.util.zip.ZipFile(zip)) {
+            equal(Arrays.asList("gen_log.txt", "logs/android_gen_overlay.log"), z.stream().map(java.util.zip.ZipEntry::getName).collect(java.util.stream.Collectors.toList()));
+        }
+        PackGenerator.deleteTree(inBase); PackGenerator.deleteTree(logGen); PackGenerator.deleteTree(zip.getParentFile().getParentFile());
         System.out.println("PackGenerator OK (" + cases + " cases)");
     }
 }

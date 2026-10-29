@@ -29,7 +29,7 @@ public class DiagProvider extends ContentProvider {
         if (!"r".equals(mode)) throw new FileNotFoundException("read-only");
         return ParcelFileDescriptor.open(resolve(uri), ParcelFileDescriptor.MODE_READ_ONLY);
     }
-    @Override public String getType(Uri uri) { return "text/plain"; }
+    @Override public String getType(Uri uri) { String n = uri.getLastPathSegment(); return n != null && n.endsWith(".zip") ? "application/zip" : "text/plain"; }   // 生成失败的诊断包是 zip（缺陷台账 B026） | the generation failure diagnostics are a zip (defect ledger B026)
     @Override public Cursor query(Uri uri, String[] projection, String selection, String[] args, String sort) {
         File f; try { f = resolve(uri); } catch (FileNotFoundException e) { return null; }
         if (projection == null) projection = new String[] { OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE };
