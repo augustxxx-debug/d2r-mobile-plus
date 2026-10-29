@@ -6,11 +6,28 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Unreleased]
 
+## [Android 1.0.0] - 2026-10-30
+
+First Android release (`android-v1.0.0` = `5b226fd`, shown as `1.0.0+170 · 5b226fd`). Download and checksums: [Releases](https://github.com/augustxxx-debug/d2r-mobile-plus/releases/tag/android-v1.0.0).
+
+- **No PC needed**: put your own Switch game files (`ExeFS` and `data`) on the phone; the first launch builds what it needs on the phone (about 6 minutes, with a loading page), and upgrades rebuild automatically when required.
+- **Snapdragon and Dimensity**: one APK adapts to Qualcomm Adreno and Arm Mali (tested on an Adreno 740 handheld and a Mali-G2 Ultra phone).
+- **Touch and controller**: touch stick and skill buttons; a connected controller switches to controller mode, and menus, options and the copy buttons all work with it.
+- **Graphics**: frame rate (experimental 120 fps where the screen supports it), render-resolution tiers, frame-rate display; LXGW WenKai UI font (SIL OFL 1.1).
+- **Stability**: broken shader pipelines are skipped automatically; texture compatibility fixes for some Mali phones; experimental features switch off after repeated abnormal exits; scrubbed diagnostic sharing.
+- **Community**: the loading page shows the official free channels (website · QQ group) with one-tap copy.
+- **Verify**: official builds are always signed with certificate SHA-256 `b4af06c165dd8699ab9f2b0dec8f6c2de05cd4d01f510fe63778eac6898a52da`.
+- **Known issues / untested**: memory grows during the first hour; 16K-page kernels, Adreno 750–799 and long sessions on phones with 8 GB RAM or less are untested.
+
+### Development log
+
+Everything below is the full list of changes on this branch relative to the upstream baseline (including parts shared with iOS), for developers.
+
 Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). Validation updated on **2026-10-26**.
 
 ### Android
 
-- App icon reads "MOBILE PLUS" (from `AppIcon1024.png`, shared with iOS and Mac), and the app is now installed as **D2R Mobile Plus** under its own package name `com.augustusplay.d2rmobileplus`. It installs beside the earlier package (`com.xiaoboluo.d2r`) instead of over it; saves made in the earlier app stay in that app and cannot be moved over yet (Android keeps each app's internal storage private, and that release has no save export). Save export / import is planned. Moving to the new app means preparing the game content again (about 6 minutes, and a second copy of the prepared content on the phone until the old app is removed); two icons show until then. Uninstalling the old app deletes its saves unless Android offers to keep its data and you accept, so keep it while you still want those characters.
+- App icon reads "MOBILE PLUS" (from `AppIcon1024.png`, shared with iOS and Mac); the app is named **D2R Mobile Plus** with the package name `com.augustusplay.d2rmobileplus`.
 - Arm Mali support (verified on a MediaTek Dimensity 9600 Pro phone, Mali-G2 Ultra, Android 17): load-time shader rewrites where the GPU needs them (a range guard for 32-lane warp shuffles on 16-lane subgroups, unused ClipDistance / CullDistance removed, NonWritable on read-only vertex buffers), the host page size read at run time (groundwork for 16 KB-page kernels; not yet verified on such a device), and on GPUs without BC textures the BC3 textures converted to ASTC 4x4 on load (decoded image memory 837 → 407 MB on that phone; textures with varying transparency lose a little alpha precision). Qualcomm phones keep sampling BC directly.
 - Android performance hints (ADPF) for the busiest game threads and the system thermal status in the performance log; measured neutral on both test phones.
 - From upstream v2.1.0: the 30 FPS power-saving setting is honoured on Android (it ran at 60 before); BC4 / BC5 decode to 8-bit channels where 16-bit R / RG cannot be filtered (a crash on some Mali phones); a compute or graphics pipeline that crashes or fails the driver's shader compiler is skipped from the next boot instead of crashing every boot; on Adreno 750–799 shader helper functions are inlined at load (the SPIRV-Tools library is compiled into the app; its licence is in the notices). The Adreno 740 keeps the quad-derivative and warp32 rewrites (the hang upstream saw there is fixed on this branch).
