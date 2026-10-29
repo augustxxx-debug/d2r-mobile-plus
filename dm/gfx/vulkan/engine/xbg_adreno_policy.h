@@ -1,11 +1,11 @@
 // Adreno 740 / 750（骁龙 8 Gen 2 / 8 Gen 3）收下两个安卓着色器改写后生成的 SPIR-V，运行时却在驱动里出错：kgsl 报 GPU
 // 页错误（gpu timeout ... status 00EF1087），驱动丢掉设备，下一次提交返回 VK_ERROR_DEVICE_LOST（-4），启动约两秒、主菜单
-// 出现之前就崩（#141）。两个改写本来是给 Adreno 730 写的，730 与 830 上都能跑，所以只在 750–799 这一族上缺省关掉（740 例外：上游在 740 上挂起的根因本分支已修，8dfeb6c），
+// 出现之前就崩（#141）。两个改写本来是给 Adreno 730 写的，730 与 830 上都能跑，所以只在 750–799 这一族上缺省关掉（740 例外：上游在 740 上挂起的根因本分支已修，7579f5a；例外本身在 8dfeb6c），
 // 标记文件仍可显式打开（见 xbg_game_initialize 里的两个开关）。
 // Adreno 740 / 750 (Snapdragon 8 Gen 2 / 8 Gen 3) accept the SPIR-V of the two Android shader rewrites and then fault in the
 // driver: kgsl reports a GPU page fault (gpu timeout ... status 00EF1087), the driver drops the device, and the next submit
 // fails with VK_ERROR_DEVICE_LOST (-4) about two seconds into the boot, before the main menu (#141). Both rewrites were written
-// for Adreno 730, which runs them, as does Adreno 830, so they default off on the 750-799 family only (740 excepted: the cause of the upstream 740 hang is fixed on this branch, 8dfeb6c); an explicit marker file
+// for Adreno 730, which runs them, as does Adreno 830, so they default off on the 750-799 family only (740 excepted: the cause of the upstream 740 hang is fixed on this branch, 7579f5a; the exception itself is 8dfeb6c); an explicit marker file
 // still turns either one on (see the two switches in xbg_game_initialize).
 #pragma once
 #include <stdint.h>
@@ -27,8 +27,8 @@ inline int xbg_adreno_model(const char *device_name){
     return digits==3?model:0;
 }
 
-// 厂商 0x5143 是高通；只有 750–799 这一族缺省关掉这两个改写（740 例外，8dfeb6c）。
-// Vendor 0x5143 is Qualcomm; only the 750-799 family defaults both rewrites off (740 excepted, 8dfeb6c).
+// 厂商 0x5143 是高通；只有 750–799 这一族缺省关掉这两个改写（740 例外：根因 7579f5a 已修，例外见 8dfeb6c）。
+// Vendor 0x5143 is Qualcomm; only the 750-799 family defaults both rewrites off (740 excepted: root cause fixed in 7579f5a, exception in 8dfeb6c).
 inline bool xbg_adreno_rewrites_fault(uint32_t vendor_id,const char *device_name){
     if(vendor_id!=0x5143)return false;
     const int model=xbg_adreno_model(device_name);

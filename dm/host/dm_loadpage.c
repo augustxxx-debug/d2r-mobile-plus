@@ -241,7 +241,7 @@ const char *dm_loadpage_music_name(void) { return "loadpage_loop.m4a"; }
 void dm_loadpage_set_muted(int muted) { g.muted = muted != 0; }
 int dm_loadpage_muted(void) { return g.muted; }
 int dm_loadpage_toggle_muted(void) { g.muted = !g.muted; LOG("加载页：玩家%s背景音乐", g.muted ? "关闭了" : "打开了"); return g.muted; }
-int dm_loadpage_hit_mute(const dm_lp_layout *L, double x, double y) { const double pad = 12; return x >= L->mute.x - pad && x <= L->mute.x + L->mute.w + pad && y >= L->mute.y - pad && y <= L->mute.y + L->mute.h + pad; }
+int dm_loadpage_hit_mute(const dm_lp_layout *L, double x, double y) { const double pad = 12; return L->mute.w > 0 && x >= L->mute.x - pad && x <= L->mute.x + L->mute.w + pad && y >= L->mute.y - pad && y <= L->mute.y + L->mute.h + pad; }
 int dm_loadpage_music_wanted(void) { return (g.state == DM_LP_RUNNING || g.state == DM_LP_IDLE) && !g.muted && !g.prompt_title; }   // 提示页不放（玩家会去系统设置，声音不该跟过去） | not on a notice page (the player goes to system settings; the music should not follow)   // 页面在就放（含等玩家拷资源的空闲态）；完成 / 失败停 | plays while the page is up (including idle, waiting for the player); stops on done / failure
 void dm_loadpage_cover(double iw, double ih, double dw, double dh, double fx, double fy, dm_lp_rect *src) {
     if (iw <= 0 || ih <= 0 || dw <= 0 || dh <= 0) { *src = (dm_lp_rect){ 0, 0, iw > 0 ? iw : 1, ih > 0 ? ih : 1 }; return; }
@@ -288,6 +288,7 @@ void dm_loadpage_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     o->bar_fill = (dm_lp_rect){ o->bar.x, o->bar.y, o->bar.w * fill, o->bar.h };
     o->brand = (dm_lp_rect){ cx0, T + m, cw - 56, o->brand_pt * 1.4 };   // 右边让出静音钮 | leave room for the mute button on the right
     o->mute = (dm_lp_rect){ w - R - m - 40, T + m - 6, 40, 40 };
+    if (g.prompt_title) o->mute = (dm_lp_rect){ 0, 0, 0, 0 };   // 提示页不放音乐，也不画静音钮（七审 Q7-03） | no music on a notice page, so no mute button either (seventh review Q7-03)
     // 字标图：宽取内容宽的 58%（横屏）/ 86%（竖屏），不超过 560 点、不矮于能放下的高度；中心在 0.36h（横）/ 0.30h（竖），夹在安全区上沿 + 边距与标题上方 24 点之间
     // Wordmark: width 58% of the content width (landscape) / 86% (portrait), at most 560 pt and never taller than the room available; centre at 0.36h (landscape) / 0.30h (portrait), clamped between the top safe edge + margin and 24 pt above the title
     if (!g_wordmark) {   // 背景按图标外框放进「安全区顶 + 边距」到「标题上方 18 点」之间，不比 cover 更大；图外是底色（图边本来就渐隐到黑） | fit the icon box between the safe top + margin and 18 pt above the title, never larger than cover; outside the image is the base colour (the image edges already fade to black)

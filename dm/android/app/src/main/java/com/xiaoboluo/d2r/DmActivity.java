@@ -114,7 +114,10 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private boolean prompting;
     private void openFileAccessSettings() {
         try { startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getPackageName()))); }
-        catch (android.content.ActivityNotFoundException e) { startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)); }
+        catch (android.content.ActivityNotFoundException e) {   // 这台机没有按包名的那一页：退回总列表；也没有就记一行，不闪退（七审 Q7-01） | no per-app page on this device: fall back to the list; none either = log, no crash (seventh review Q7-01)
+            try { startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)); }
+            catch (android.content.ActivityNotFoundException e2) { android.util.Log.w("dm", "权限提示页：系统没有「所有文件访问」设置页：" + e2); }
+        }
     }
 
     // 导入包：玩家在电脑上用 dm/tools/d2rm_android.py 和自己的游戏文件做出 android 文件夹，拷到 Download/S2X/D2R Mobile/ 下；

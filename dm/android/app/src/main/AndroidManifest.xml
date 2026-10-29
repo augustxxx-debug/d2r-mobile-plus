@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 两个权限：所有文件访问（读玩家放在 Download/S2X/D2R Mobile/data 的游戏资源）；网络（只在需要准备游戏内容的那一次首启里，从权限提示页开始读远端的小清单 latest.json、取到一次为止，
+<!-- 两个权限：所有文件访问（读玩家放在 Download/S2X/D2R Mobile/data 的游戏资源）；网络（只在游戏内容还没准备好的启动里——首启或生成没做完又重开——从权限提示页开始读一轮远端的小清单 latest.json，
      给加载页页脚的官方免费渠道用，CommunityFetch.java；只用 https、包里没配地址就不联网；之后的启动都不联网）。不要别的权限。 -->
-<!-- Two permissions: all files access (to read the game resources the player puts in Download/S2X/D2R Mobile/data); network (only on the first launch that prepares the game
-     content, from the permission prompt until the small remote manifest latest.json has been read once, for the loading page footer's official free channels,
+<!-- Two permissions: all files access (to read the game resources the player puts in Download/S2X/D2R Mobile/data); network (only on launches where the game content is not
+     prepared yet - the first launch, or a relaunch after an unfinished generation - one round of reading the small remote manifest latest.json from the permission prompt on, for the loading page footer's official free channels,
      CommunityFetch.java; https only, and no network access when the package has no address; later starts make no network access). No other permissions. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />

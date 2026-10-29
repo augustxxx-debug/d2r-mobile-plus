@@ -120,7 +120,7 @@ public final class LoadPageView extends View {
         if (e.getActionMasked() == android.view.MotionEvent.ACTION_DOWN && nativePadMode()) { nativePad(false); invalidate(); }
         if (e.getActionMasked() != android.view.MotionEvent.ACTION_UP || lastLayout == null) return true;
         float x = e.getX() / density, y = e.getY() / density; double[] L = lastLayout; double pad = 12;
-        if (x >= L[L_MUTE] - pad && x <= L[L_MUTE] + L[L_MUTE + 2] + pad && y >= L[L_MUTE + 1] - pad && y <= L[L_MUTE + 1] + L[L_MUTE + 3] + pad) {
+        if (L[L_MUTE + 2] > 0 && x >= L[L_MUTE] - pad && x <= L[L_MUTE] + L[L_MUTE + 2] + pad && y >= L[L_MUTE + 1] - pad && y <= L[L_MUTE + 1] + L[L_MUTE + 3] + pad) {
             boolean m = nativeToggleMuted(); prefs.edit().putBoolean("muted", m).apply(); muteLabel(); musicTick(); invalidate(); performClick();
         } else if (L[L_COMM] > 0 && x >= L[L_COPY] - 8 && x <= L[L_COPY] + L[L_COPY + 2] + 8 && y >= L[L_COPY + 1] - 8 && y <= L[L_COPY + 1] + L[L_COPY + 3] + 8) {
             copy(false); performClick();
@@ -193,7 +193,7 @@ public final class LoadPageView extends View {
             paint.setColor(0x8cffc773); if (fill.width() > 4) c.drawRect(fill.left + 2, fill.top + 1, fill.right - 2, fill.top + 2, paint);
         }
         }
-        muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted());
+        if (L[L_MUTE + 2] > 0) muteIcon(c, r(L, L_MUTE, new RectF()), nativeMuted());   // 提示页没有静音钮 | no mute button on a notice page
         if (L[L_LOGO + 2] > 0) loadLogo();   // 关字标时不读字标图 | the wordmark image is not read with the wordmark off
         if (logo != null && L[L_LOGO + 2] > 0) c.drawBitmap(logo, null, r(L, L_LOGO, new RectF()), paint);   // 字标图：等比居中（矩形由公共布局算） | wordmark: aspect kept, centred (rect from the shared layout)
         else line(c, T[4], brand, (float) L[L_BRANDPT], nativeColor(C_TITLE), false, serif);
