@@ -323,6 +323,12 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
      VkPhysicalDeviceExternalMemoryHostPropertiesEXT host{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};VkPhysicalDeviceProperties2 pr{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};pr.pNext=&host;vkGetPhysicalDeviceProperties2(physical,&pr);
      __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","Device %s api=%u.%u.%u driver=%#x minImportedHostPointerAlignment=%llu",pr.properties.deviceName,VK_VERSION_MAJOR(pr.properties.apiVersion),VK_VERSION_MINOR(pr.properties.apiVersion),VK_VERSION_PATCH(pr.properties.apiVersion),pr.properties.driverVersion,(unsigned long long)host.minImportedHostPointerAlignment);}
     std::vector<const char*> dext={VK_KHR_SWAPCHAIN_EXTENSION_NAME};if(mirror)dext.push_back(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
+    // ASTC 解码精度（VK_EXT_astc_decode_mode）：有就开，引擎给 ASTC UNORM 视图挂「解到 RGBA8」（BC3 转 ASTC 的图，见 xbg_game.cpp）；
+    // 开没开经 DM_VK_ASTC_DECODE_MODE 告诉引擎（只在本进程里）。
+    // ASTC decode precision (VK_EXT_astc_decode_mode): enabled where available; the engine then decodes ASTC UNORM views to RGBA8 (the BC3
+    // textures transcoded to ASTC, see xbg_game.cpp); whether it is on reaches the engine through DM_VK_ASTC_DECODE_MODE (this process only).
+    {bool astc_decode=false;for(auto e:available)if(std::string(e.extensionName)==VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME)astc_decode=true;
+     if(astc_decode)dext.push_back(VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME);setenv("DM_VK_ASTC_DECODE_MODE",astc_decode?"1":"0",1);}
     // Diagnostic (marker gfx-pipe-stats): the driver's per-pipeline statistics (VK_KHR_pipeline_executable_properties).
     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pef{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
     if(FILE *ps=[&]{std::string dir=path;size_t cut=dir.find_last_of('/');return fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-pipe-stats").c_str(),"rb");}()){fclose(ps);dext.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);pef.pipelineExecutableInfo=VK_TRUE;pef.pNext=draw.pNext;draw.pNext=&pef;}

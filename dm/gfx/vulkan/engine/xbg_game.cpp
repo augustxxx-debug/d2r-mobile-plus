@@ -238,6 +238,12 @@ bool native_bc=false;uint64_t native_bc_images=0,decoded_bc_images=0;int64_t ima
 // decode; varying-alpha blocks are lossy (dual plane, 48-level endpoints). Marker gfx-bc-astc = 1 / 0, else DM_GFX_BC_ASTC (the Android
 // app sets 1); not used when the device's ASTC 4x4 cannot be sampled, linearly filtered or transferred.
 bool bc_astc=false;uint64_t astc_bc_images=0;
+// ASTC UNORM 视图解到 RGBA8（VK_EXT_astc_decode_mode，安卓壳开了扩展才有）：缺省解码精度是半精度浮点，Arm 建议 LDR 贴图解到 8 位，纹理缓存占用减半。
+// 标记 gfx-astc-u8 = 1 / 0，否则 DM_GFX_ASTC_U8（缺省 1）；sRGB 的 ASTC 按规范本来就解到 8 位，不挂。
+// ASTC UNORM views decode to RGBA8 (VK_EXT_astc_decode_mode, only when the Android shell enabled it): the default decode precision is half
+// float; Arm recommends 8-bit decoding for LDR textures, halving the texture cache footprint. Marker gfx-astc-u8 = 1 / 0, else DM_GFX_ASTC_U8
+// (default 1); sRGB ASTC decodes to 8 bits by the specification already and is left alone.
+bool astc_u8=false;
 int64_t bc_format_bytes_live[16]={};   // BC 图的驱动内存按 NVN 格式（0x41–0x50）分，PERF 行列出，看软解里谁占得多 | BC image memory by NVN format (0x41–0x50), listed in the PERF line to see which decoded formats dominate
 bool no_mutable_images=true;uint64_t mutable_upgrades=0;unsigned mutable_test=0; // mutable_test (marker gfx-mutable-test = N): force the upgrade on every Nth color image when first sampled (test)
 struct Image;void upgrade_mutable(Image &im);
@@ -1379,6 +1385,8 @@ struct Image {
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};vi.image=image;vi.viewType=type;vi.format=vf;vi.subresourceRange={aspects,base,n,layer,ls};
         vi.subresourceRange.aspectMask=view_aspects;
         VkImageViewUsageCreateInfo vu{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};vu.usage=view_usage;vi.pNext=&vu;
+        VkImageViewASTCDecodeModeEXT dm{VK_STRUCTURE_TYPE_IMAGE_VIEW_ASTC_DECODE_MODE_EXT};
+        if(astc_u8 && vf==VK_FORMAT_ASTC_4x4_UNORM_BLOCK && !attachment && !storage){dm.decodeMode=VK_FORMAT_R8G8B8A8_UNORM;vu.pNext=&dm;}
         unsigned view_code=v&&v->set_format?v->format:source.d.format;
         if(!attachment && !storage && (view_code==0x37 || view_code==0x6d))vi.components.a=VK_COMPONENT_SWIZZLE_ONE;
         VkImageView result;VK(vkCreateImageView(cfg.device,&vi,nullptr,&result));views[key]=result;return result;
@@ -3782,6 +3790,9 @@ extern "C" int xbg_game_initialize(const xbg_game_config *c,char *error,size_t b
       VkFormatProperties au{},as{};vkGetPhysicalDeviceFormatProperties(cfg.physical,VK_FORMAT_ASTC_4x4_UNORM_BLOCK,&au);vkGetPhysicalDeviceFormatProperties(cfg.physical,VK_FORMAT_ASTC_4x4_SRGB_BLOCK,&as);
       const bool astc_ok=(au.optimalTilingFeatures&need_astc)==need_astc && (as.optimalTilingFeatures&need_astc)==need_astc;const bool asked=bc_astc;bc_astc=asked && astc_ok;
       xbg_logf("NVN BC3 textures without native BC as ASTC 4x4=%d (marker gfx-bc-astc; asked=%d device_astc=%d)",int(bc_astc),int(asked),int(astc_ok));}
+     {FILE *b=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-astc-u8").c_str(),"rb");bool want=true;if(b){want=fgetc(b)!='0';fclose(b);}else if(const char *e=getenv("DM_GFX_ASTC_U8"))want=atoi(e)!=0;
+      const char *ext=getenv("DM_VK_ASTC_DECODE_MODE");astc_u8=want && ext && ext[0]=='1';
+      xbg_logf("NVN ASTC UNORM views decode to RGBA8=%d (marker gfx-astc-u8; asked=%d extension=%d)",int(astc_u8),int(want),int(ext && ext[0]=='1'));}
      {FILE *b=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-noload").c_str(),"rb");noload_enabled=false;if(b){noload_enabled=fgetc(b)!='0';fclose(b);}else if(const char *e=getenv("DM_GFX_NOLOAD"))noload_enabled=atoi(e)!=0;xbg_logf("NVN proven full-overwrite first draws skip the color load=%d (marker gfx-noload; A/B target noload)",int(noload_enabled));}{FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-bright").c_str(),"rb");bright::enabled=true;if(q){bright::enabled=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_BRIGHT"))bright::enabled=atoi(e)!=0;xbg_logf("NVN 3D brightening=%d (marker gfx-bright; A/B target bright)",int(bright::enabled));}{FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-perf-sample").c_str(),"rb");perf_sample=32;if(m){if(fscanf(m,"%u",&perf_sample)!=1)perf_sample=32;fclose(m);}else if(const char *e=getenv("DM_GFX_PERF_SAMPLE"))perf_sample=unsigned(atoi(e));perf_frame_timed=perf_sample!=0;perf_timed_frames=0;xbg_logf("NVN perf timing every %u frames (marker gfx-perf-sample; 0 = off)",perf_sample);}}
     for(auto &sl:slots)sl=Slot{};slot_index=0;pass_prof_enabled=false;pass_prof_next=300;pass_prof_period=600;pass_prof_until=UINT64_MAX;pass_prof_frame=UINT64_MAX;pass_prof_draws=0;pass_prof_queries=pass_prof_slots=pass_prof_skipped_slots=0;perf=Perf{};for(auto &c:perf_timing_before)c=XbgCpuTiming::Counter{};static_arena.cached=false;support_static.clear();format_property_cache.clear();for(auto &k:format_flat_known)k=false;
     VkPhysicalDeviceShaderDrawParametersFeatures draw_parameters{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES};VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};features.pNext=&draw_parameters;vkGetPhysicalDeviceFeatures2(cfg.physical,&features);if(cfg.enabled_shader_draw_parameters && !draw_parameters.shaderDrawParameters){if(error&&bytes)snprintf(error,bytes,"shaderDrawParameters unsupported");return -1;}
