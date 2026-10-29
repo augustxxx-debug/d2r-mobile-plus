@@ -32,7 +32,12 @@ inline int xbg_adreno_model(const char *device_name){
 inline bool xbg_adreno_rewrites_fault(uint32_t vendor_id,const char *device_name){
     if(vendor_id!=0x5143)return false;
     const int model=xbg_adreno_model(device_name);
-    return model>=740 && model<800;
+    // D2R Mobile Plus：740 不在内。我们的 warp32 改写已不读 SubgroupLtMask 第 1 字（按车道号算掩码，7579f5a），上游 #141 在 740 上的 GPU 挂起
+    // 就是读这个字引起的；奥丁（Adreno 740，驱动 512.676.53）两个改写都开着长测无挂起，关掉 quad 会回到单位周围的黑方块。
+    // D2R Mobile Plus: 740 is excluded. Our warp32 rewrite no longer reads SubgroupLtMask word 1 (masks from the lane id, 7579f5a), the read
+    // behind upstream #141's GPU hang on the 740; the Thor (Adreno 740, driver 512.676.53) soaks with both rewrites on, and quad off brings
+    // back the black squares around units.
+    return model>=750 && model<800;
 }
 
 // 与其它 gfx 开关相同的优先顺序：标记文件优先（只有明确的 0 关闭），其次是机型判断，最后才看环境变量。安卓端
