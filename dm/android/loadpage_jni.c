@@ -29,6 +29,12 @@ void F(nativeBegin)(JNIEnv *env, jclass cls, jintArray kinds, jintArray weights)
 void F(nativeSet)(JNIEnv *env, jclass cls, jint stage, jdouble frac, jlong items_done, jlong items_total, jlong bytes_done, jlong bytes_total) {
     (void)env; (void)cls; dm_lp_detail d = { items_done, items_total, bytes_done, bytes_total }; dm_loadpage_set(stage, frac, &d, now_ms());
 }
+void F(nativePrompt)(JNIEnv *env, jclass cls, jstring title_key, jstring body, jstring sub_key) {   // 提示页（权限）：键要常驻，复制进静态缓冲 | notice page (permission): keys must stay valid, so copy them into static buffers
+    (void)cls; static char tk[64], sk[64]; const char *a = title_key ? (*env)->GetStringUTFChars(env, title_key, NULL) : NULL, *b = body ? (*env)->GetStringUTFChars(env, body, NULL) : NULL, *c = sub_key ? (*env)->GetStringUTFChars(env, sub_key, NULL) : NULL;
+    snprintf(tk, sizeof tk, "%s", a ? a : ""); snprintf(sk, sizeof sk, "%s", c ? c : "");
+    dm_loadpage_prompt(tk, b, c ? sk : NULL);
+    if (a) (*env)->ReleaseStringUTFChars(env, title_key, a); if (b) (*env)->ReleaseStringUTFChars(env, body, b); if (c) (*env)->ReleaseStringUTFChars(env, sub_key, c);
+}
 void F(nativeNote)(JNIEnv *env, jclass cls, jstring text) {
     (void)cls; const char *t = text ? (*env)->GetStringUTFChars(env, text, NULL) : NULL; dm_loadpage_note(t); if (t) (*env)->ReleaseStringUTFChars(env, text, t);
 }
@@ -46,9 +52,9 @@ jboolean F(nativeMusicWanted)(JNIEnv *env, jclass cls) { (void)env; (void)cls; r
 jstring F(nativeMusicName)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_music_name()); }
 jstring F(nativeLogoName)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_logo_name(NULL, NULL)); }
 jstring F(nativeBgName)(JNIEnv *env, jclass cls, jfloat w, jfloat h) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_bg_name(w, h, NULL, NULL)); }
-// 布局摊平成 double[72]：landscape, bg_w, bg_h, bg_src×4, bg_dst×4, bar×4, bar_fill×4, title×4, percent×4, body×4, sub×4, brand×4, title_pt, body_pt, sub_pt, brand_pt, bar_radius,
-//   logo×4, logo_w, logo_h, mute×4, comm, comm1×4, comm2×4, copy×4, comm_pt, comm_alpha（顺序对应 LoadPageView.java 的常量）
-// Layout flattened into double[72] (order matches the constants in LoadPageView.java)
+// 布局摊平成 double[70]：landscape, bg_w, bg_h, bg_src×4, bg_dst×4, bar×4, bar_fill×4, title×4, percent×4, body×4, sub×4, brand×4, title_pt, body_pt, sub_pt, brand_pt, bar_radius,
+//   logo×4, logo_w, logo_h, mute×4, comm, comm1×4, comm2×4, copy×4, comm_pt, comm_alpha, show_bar（顺序对应 LoadPageView.java 的常量）
+// Layout flattened into double[70] (order matches the constants in LoadPageView.java)
 jdoubleArray F(nativeLayout)(JNIEnv *env, jclass cls, jfloat w, jfloat h, jfloat l, jfloat t, jfloat r, jfloat b) {
     (void)cls; dm_lp_screen s = { w, h, l, t, r, b }; dm_lp_layout L; dm_loadpage_layout(&s, &L);
     const dm_lp_rect *rects[] = { &L.bg_src, &L.bg_dst, &L.bar, &L.bar_fill, &L.title, &L.percent, &L.body, &L.sub, &L.brand };
@@ -59,7 +65,7 @@ jdoubleArray F(nativeLayout)(JNIEnv *env, jclass cls, jfloat w, jfloat h, jfloat
     v[o++] = L.mute.x; v[o++] = L.mute.y; v[o++] = L.mute.w; v[o++] = L.mute.h;
     v[o++] = L.comm; const dm_lp_rect *cr[] = { &L.comm1, &L.comm2, &L.copy };   // 社区页脚：标志 + comm1×4 + comm2×4 + copy×4 | community footer: flag + comm1×4 + comm2×4 + copy×4
     for (unsigned i = 0; i < 3; i++) { v[o++] = cr[i]->x; v[o++] = cr[i]->y; v[o++] = cr[i]->w; v[o++] = cr[i]->h; }
-    v[o++] = L.comm_pt; v[o++] = L.comm_alpha;
+    v[o++] = L.comm_pt; v[o++] = L.comm_alpha; v[o++] = L.show_bar;
     jdoubleArray a = (*env)->NewDoubleArray(env, o); (*env)->SetDoubleArrayRegion(env, a, 0, o, v); return a;
 }
 jobjectArray F(nativeText)(JNIEnv *env, jclass cls) {   // { 标题, 百分数, 正文, 副文, 字标, 社区第一行, 社区第二行, 复制钮, 复制状态 } | { title, percent, body, sub, brand, community 1, community 2, copy button, copy state }

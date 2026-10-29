@@ -43,6 +43,10 @@ void dm_loadpage_begin(const int *kinds, int n, const int *weight_ms, uint64_t n
 // 第 stage 个阶段走到 frac（0..1）；d 可为 NULL。报到后面的阶段 = 前面的阶段算完成；报回前面的阶段不让总进度倒退
 // Stage `stage` is at frac (0..1); d may be NULL. Reporting a later stage marks the earlier ones complete; reporting an earlier one again never moves overall backwards
 void dm_loadpage_set(int stage, double frac, const dm_lp_detail *d, uint64_t now_ms);
+// 提示页（不是进度）：同一套背景 / 字标 / 三层字，不画进度条、不放音乐、不显示页脚；标题与副文是多语键，正文是平台给的串（NULL = 不写）。begin 会清掉它
+// A notice page (not progress): the same background / wordmark / three text levels, no bar, no music, no footer; title and sub are i18n keys, the body a string from the platform (NULL = none). begin clears it
+void dm_loadpage_prompt(const char *title_key, const char *body, const char *sub_key);
+int dm_loadpage_prompting(void);
 void dm_loadpage_note(const char *text);                     // 平台给的正文替换（说明 / 指引，如「把资源文件夹拷进…」）；NULL 取消，回到自动细节行 | body override from the platform (instructions); NULL = back to the automatic detail line
 void dm_loadpage_hint(const char *key);                      // 副文的多语键替换（NULL = 按阶段种类的缺省提示） | sub-line i18n key override (NULL = the default hint of the stage kind)
 void dm_loadpage_fail(const char *reason, uint64_t now_ms);  // 失败：标题换「无法继续」，正文 = reason（平台已取好语言） | failure: title becomes "could not continue", body = reason (already localised by the platform)
@@ -94,6 +98,7 @@ typedef struct {
     dm_lp_rect bar, bar_fill;      // 进度条底与已走部分（bar_fill.w 按总进度） | bar track and filled part (bar_fill.w by overall)
     dm_lp_rect title, percent, body, sub, brand;   // 文字行的框（左对齐；percent 右对齐到条尾）；brand 只在字标图读不到时用 | text line boxes (left aligned; percent right aligned to the bar end); brand only when the wordmark image is unavailable
     dm_lp_rect mute;   // 右上角静音开关（40×40 点圆钮，安全区内、与字标同一条上沿） | the mute toggle at the top right (40×40 pt round button, inside the safe area, on the same top line as the wordmark area)
+    int show_bar;                  // 1 = 画进度条（提示页为 0） | 1 = draw the bar (0 on a notice page)
     int comm;                      // 1 = 画社区两行与复制钮（这时进度那一组整体上移） | 1 = draw the community lines and copy button (the progress group moves up as a whole)
     dm_lp_rect comm1, comm2, copy; // 页脚：社区两行（左对齐到内容左沿）与复制钮（右对齐到内容右沿、跨两行高） | footer: the two community lines (left aligned to the content edge) and the copy button (right aligned to the content edge, two lines tall)
     dm_lp_rect logo; const char *logo_name; int logo_w, logo_h;   // 页面中部的字标图（自制 loadpage_logo.png）：横向居中、等比缩放、在安全区与标题之间 | the wordmark image in the middle of the page (self-made loadpage_logo.png): centred, aspect kept, between the safe area and the title

@@ -38,6 +38,7 @@ static struct {
     const char *hint_key;
     int ui_group;               // -1 = dm_ui() | -1 = dm_ui()
     int muted;                  // 静音开关（缺省 0 = 有声音） | mute toggle (default 0 = sound on)
+    const char *prompt_title, *prompt_sub;   // 提示页的标题 / 副文键（非空 = 提示页） | notice page title / sub keys (non-NULL = notice page)
 } g = { .cur = -1, .ui_group = -1, .muted = 0 };
 
 const char *dm_loadpage_ui(const char *key) { return g.ui_group >= 0 ? dm_ui_group(key, g.ui_group) : dm_ui(key); }
@@ -81,6 +82,12 @@ void dm_loadpage_set(int stage, double frac, const dm_lp_detail *d, uint64_t now
     if (s->frac >= 1) { s->done = 1; LOG("加载页：阶段 %d/%d %s 走完，%.1f 秒", stage + 1, g.n, k_kind_zh[s->kind], (now_ms - s->t0) / 1000.0); }
     recompute();
 }
+void dm_loadpage_prompt(const char *title_key, const char *body, const char *sub_key) {
+    int grp = g.ui_group, mu = g.muted; memset(&g, 0, sizeof g); g.ui_group = grp; g.muted = mu; g.cur = -1; g.state = DM_LP_IDLE;
+    g.prompt_title = title_key; g.prompt_sub = sub_key; if (body) snprintf(g.note, sizeof g.note, "%s", body);
+    LOG("加载页：提示页 %s", title_key ? title_key : "-");
+}
+int dm_loadpage_prompting(void) { return g.prompt_title != NULL; }
 void dm_loadpage_note(const char *text) { if (text) snprintf(g.note, sizeof g.note, "%s", text); else g.note[0] = 0; }
 void dm_loadpage_hint(const char *key) { g.hint_key = key; }
 // 最近一次完成 / 失败那一行（安卓：加载页在宿主库之前跑，日志只进 logcat；DmActivity 进游戏前把它交给宿主写进 boot.log，分享诊断日志才看得到）
@@ -146,6 +153,10 @@ static void text_main(dm_lp_text *t, uint64_t now_ms) {
         return;
     }
     if (g.state == DM_LP_DONE) { snprintf(t->title, sizeof t->title, "%s", dm_loadpage_ui("dmLoadDoneTitle")); snprintf(t->percent, sizeof t->percent, "100%%"); return; }
+    if (g.prompt_title) {   // 提示页：标题 / 正文 / 副文，没有百分数 | notice page: title / body / sub, no percent
+        snprintf(t->title, sizeof t->title, "%s", dm_loadpage_ui(g.prompt_title)); snprintf(t->body, sizeof t->body, "%s", g.note);
+        if (g.prompt_sub) snprintf(t->sub, sizeof t->sub, "%s", dm_loadpage_ui(g.prompt_sub));
+        t->percent[0] = 0; return; }
     if (g.cur < 0) {   // 还没有阶段回报：有阶段表就用第一个阶段的标题，没有（iOS 资源页等玩家 / 等下载）用「准备游戏内容」，百分数空着 | no stage reported yet: the first stage's title if there is a stage list, else "Preparing game content" (iOS asset screen waiting), percent blank
         snprintf(t->title, sizeof t->title, "%s", dm_loadpage_ui(g.n ? k_kind[g.s[0].kind].title : "dmLoadIdleTitle")); if (!g.n) t->percent[0] = 0;
         if (g.note[0]) snprintf(t->body, sizeof t->body, "%s", g.note); return; }
@@ -227,7 +238,7 @@ void dm_loadpage_set_muted(int muted) { g.muted = muted != 0; }
 int dm_loadpage_muted(void) { return g.muted; }
 int dm_loadpage_toggle_muted(void) { g.muted = !g.muted; LOG("加载页：玩家%s背景音乐", g.muted ? "关闭了" : "打开了"); return g.muted; }
 int dm_loadpage_hit_mute(const dm_lp_layout *L, double x, double y) { const double pad = 12; return x >= L->mute.x - pad && x <= L->mute.x + L->mute.w + pad && y >= L->mute.y - pad && y <= L->mute.y + L->mute.h + pad; }
-int dm_loadpage_music_wanted(void) { return (g.state == DM_LP_RUNNING || g.state == DM_LP_IDLE) && !g.muted; }   // 页面在就放（含等玩家拷资源的空闲态）；完成 / 失败停 | plays while the page is up (including idle, waiting for the player); stops on done / failure
+int dm_loadpage_music_wanted(void) { return (g.state == DM_LP_RUNNING || g.state == DM_LP_IDLE) && !g.muted && !g.prompt_title; }   // 提示页不放（玩家会去系统设置，声音不该跟过去） | not on a notice page (the player goes to system settings; the music should not follow)   // 页面在就放（含等玩家拷资源的空闲态）；完成 / 失败停 | plays while the page is up (including idle, waiting for the player); stops on done / failure
 void dm_loadpage_cover(double iw, double ih, double dw, double dh, double fx, double fy, dm_lp_rect *src) {
     if (iw <= 0 || ih <= 0 || dw <= 0 || dh <= 0) { *src = (dm_lp_rect){ 0, 0, iw > 0 ? iw : 1, ih > 0 ? ih : 1 }; return; }
     double scale = dw / iw > dh / ih ? dw / iw : dh / ih;   // 短边对齐（放大到两边都盖住） | fit the short side (scale until both are covered)
@@ -266,6 +277,8 @@ void dm_loadpage_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     o->bar = (dm_lp_rect){ bx, y - bh, bw, bh }; y -= bh + 12;
     o->title = (dm_lp_rect){ bx, y - title_h, bw * 0.72, title_h };
     o->percent = (dm_lp_rect){ bx + bw * 0.72, y - title_h, bw * 0.28, title_h };
+    o->show_bar = g.prompt_title ? 0 : 1;   // 提示页不画条，标题占满条宽 | no bar on a notice page; the title takes the full bar width
+    if (g.prompt_title) { o->title.w = bw; o->percent.w = 0; }
     double fill = g.overall < 0 ? 0 : g.overall > 1 ? 1 : g.overall;
     o->bar_fill = (dm_lp_rect){ o->bar.x, o->bar.y, o->bar.w * fill, o->bar.h };
     o->brand = (dm_lp_rect){ cx0, T + m, cw - 56, o->brand_pt * 1.4 };   // 右边让出静音钮 | leave room for the mute button on the right

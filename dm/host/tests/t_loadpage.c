@@ -188,6 +188,17 @@ int main(void) {
         dm_loadpage_ui_set_group(DM_LG_EN); CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678")); dm_loadpage_text(&t, 9600); CHECK(!strcmp(t.copy, "Copy number") && strstr(t.comm1, "d2rplus.augustusplay.com · QQ group 1129913678")); dm_loadpage_ui_set_group(-1);
         dm_loadpage_copied(1, 0, 9700); dm_loadpage_community(NULL, NULL, "https://x.example/"); CHECK(dm_loadpage_community_shown()); dm_loadpage_text(&t, 12000); CHECK(!strcmp(t.comm1, "官方免费渠道：官网 x.example"));
         CHECK(!strcmp(dm_loadpage_copy_value(), "https://x.example/") && !strcmp(t.copy, "复制官网"));
+        // 提示页（权限）：三层字、无百分数、不画条、标题整宽、不放音乐、不显示页脚；begin 清掉提示 | notice page (permission): three levels, no percent, no bar, full-width title, no music, no footer; begin clears it
+        dm_loadpage_prompt("dmLoadPermTitle", "用来读取 X", "dmLoadPermHint"); CHECK(dm_loadpage_prompting() && dm_loadpage_state() == DM_LP_IDLE);
+        dm_loadpage_text(&t, 13000); CHECK(!strcmp(t.title, "需要「所有文件访问」权限") && !strcmp(t.body, "用来读取 X") && strstr(t.sub, "打开系统设置") && !t.percent[0] && !t.comm1[0]);
+        dm_loadpage_layout(&oppo, &L1); CHECK(L1.show_bar == 0 && L1.comm == 0 && NEAR(L1.title.w, L1.bar.w)); CHECK(dm_loadpage_music_wanted() == 0);
+        dm_loadpage_begin(two, 2, w_two, 13100); CHECK(!dm_loadpage_prompting()); dm_loadpage_layout(&oppo, &L1); CHECK(L1.show_bar == 1);
+        { const int gs[5] = { DM_LG_ZH, DM_LG_EN, DM_LG_ES, DM_LG_RU, DM_LG_KO }; dm_loadpage_layout(&oppo, &L1);
+          for (int k = 0; k < 5; k++) { dm_loadpage_ui_set_group(gs[k]); const char *ks[3] = { "dmLoadPermTitle", "dmLoadPermBody", "dmLoadPermHint" }; const double pts[3] = { 24, 18, 14 };
+            for (int q = 0; q < 3; q++) { const char *s = dm_loadpage_ui(ks[q]); double est = 0;
+              for (const unsigned char *c = (const unsigned char *)s; *c; ) { if (*c < 0x80) { est += 0.55; c++; } else if (*c < 0xe0) { est += 0.6; c += 2; } else { est += 1.0; c += 3; } }
+              est *= pts[q]; if (est > L1.bar.w) printf("  宽度：组 %d 键 %s 估 %.0f > %.0f\n", gs[k], ks[q], est, L1.bar.w); CHECK(est <= L1.bar.w); } }
+          dm_loadpage_ui_set_group(-1); }
         // 六套文字：第一行估宽（拉丁 / 西里尔 0.55 个字号、汉字 / 韩文 1.0 个字号）放得进 OPPO 的行宽，按钮字放得进 108 点（左右各留 6 点，手柄 A 图标另占一个字号 + 6 点）
         // six text sets: the first line's estimated width (Latin / Cyrillic 0.55 em, CJK / Hangul 1.0 em) fits OPPO's line width; button labels fit 128 pt (the controller A glyph takes 22 more)
         dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus", "https://d2rplus.augustusplay.com/"); dm_loadpage_layout(&oppo, &L1);
