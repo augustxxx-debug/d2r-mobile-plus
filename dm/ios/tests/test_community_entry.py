@@ -21,10 +21,6 @@ BTN_W = 400    # 原版前端中号按钮 470 宽，字留 400 | the original me
 PAUSE_BTN_W = 600   # 暂停菜单按钮上的字（「分享诊断日志」同一颗按钮；现有最长的西语「Compartir diagnóstico」按同一估算正好 588） | text on a pause-menu button (the same button as "Share Diagnostics"; the longest existing Spanish "Compartir diagnóstico" estimates to 588 by the same rule)
 
 
-# 鸣谢标签可用宽：标签起点 = 行缩进 40（DM_ROW_INDENT），名单列在 x 620，中间至少留 40——原先按 620 − 40 = 580 判，西语「Agradecimiento especial」估 580 刚好过线，
-# Duo 内屏截图上却压到名单（用户 2026-10-29 反馈「关于」区排版）
-# room for a credit label: it starts at the 40-unit row indent and the names column is at x 620, with at least 40 between -- the old 580 limit let the Spanish label (est. 580) through, and it overlapped the names on the Duo
-CREDIT_LABEL_W = 620 - 40 - 40
 def est_width(line, pt):
     return sum(pt if re.match(r'[ᄀ-ᇿ　-鿿가-힯＀-￯]', ch) else pt * 0.7 for ch in line)
 
@@ -211,20 +207,13 @@ class OptionsPage(unittest.TestCase):
         self.assertNotIn('"name": "TouchAboutCommunity"', out)
         self.assertIn('"name": "TouchAboutCommunityRow", "fields": { "rect": { "x": 0, "y": 180, "width": 1730, "height": 180 } }, "children": [\n                { "type": "TextBoxWidget", "name": "TouchAboutCommunityText", "fields": { "rect": { "x": 0, "y": 0,', out)
         self.assertIn('"text": "@dmCommunityAbout"', out); self.assertIn('"text": "@dmCommunityRow"', out); self.assertIn('"textString": "@dmCommunityOpen"', out)
-        # 鸣谢子块：子标题（标题级）+ 2 个标签框（36 LightGold）+ 6 个名单行框（36 LightGray），字空着由宿主写，不是按钮、不发消息，在社区行之后 | credits sub-block: sub-title + 2 label boxes + 6 name-line boxes, text written by the host, no buttons / messages, after the community row
-        for w in ('TouchCreditsTitle', 'TouchCreditLabel0', 'TouchCreditLabel1') + tuple('TouchCreditLine%d' % k for k in range(6)): self.assertIn('"name": "%s"' % w, out, w)
-        block = out[out.index('"name": "TouchCreditsTitle"'):out.index('"name": "TouchCommTile00"')]
-        self.assertIn('"text": "@dmCreditsTitle", "style": "$StyleSettingsTitle"', block); self.assertNotIn('onClickMessage', block); self.assertNotIn('ButtonWidget', block)
-        self.assertEqual(block.count('"fontColor": "$FontColorLightGold"'), 3); self.assertEqual(block.count('"fontColor": "$FontColorLightGray"'), 6); self.assertEqual(block.count('"pointSize": 36'), 9); self.assertIn('"name": "TouchCreditLabel2"', block)   # 「制作」标签（用户 2026-10-29） | the maker label
-        self.assertGreater(out.index('"name": "TouchCreditsTitle"'), out.index('"name": "TouchCommunityOpt"'))
-        self.assertEqual(touch_layout._ABOUT_H, 3 * touch_layout._CUSTOM_LINE_H + 2 * touch_layout._CREDIT_LINE_H)   # 缺省两行：制作 + 特别鸣谢 | two default lines: maker + special
-        # 「鸣谢」与「关于」同一种分节标题（用户 2026-10-29）：同样式、同 x 0、同样带原版分隔线子控件（宿主 indent_rows 不缩进带子控件的标题）
-        # "Credits" is the same kind of section title as "About" (user, 2026-10-29): same style, x 0, and the same original divider child (indent_rows leaves titles with children unindented)
+        # RC1.1 B008：组里不再有鸣谢子块（与社区行点开的提示框页脚重复），只剩标题 + 社区行 | B008: no credits sub-block any more (it duplicated the box footer), only the title + community row
+        self.assertNotIn('TouchCredit', out); self.assertNotIn('@dmCreditsTitle', out)
+        self.assertEqual(touch_layout._ABOUT_H, 2 * touch_layout._CUSTOM_LINE_H)
         div = '"type": "ImageWidget", "name": "%s", "fields": { "rect": "$OptionsDividerRect", "filename": "PauseMenu\\\\Divider" }'
-        self.assertIn(div % 'TouchAboutDivider', out); self.assertIn(div % 'TouchCreditsDivider', out)
-        for t, d in (('TouchAboutTitle', 'TouchAboutDivider'), ('TouchCreditsTitle', 'TouchCreditsDivider')):
-            m = re.search(r'"name": "%s", "fields": \{ "rect": \{ "x": (\d+), "y": \d+, "width": (\d+), "height": (\d+) \}, "text": "@\w+", "style": "\$StyleSettingsTitle" \}, "children": \[\s*\{ [^\n]*"name": "%s"' % (t, d), out)
-            self.assertIsNotNone(m, t); self.assertEqual(m.groups(), ('0', '1730', str(touch_layout._CUSTOM_LINE_H)), t)
+        self.assertIn(div % 'TouchAboutDivider', out)
+        m = re.search(r'"name": "TouchAboutTitle", "fields": \{ "rect": \{ "x": (\d+), "y": \d+, "width": (\d+), "height": (\d+) \}, "text": "@\w+", "style": "\$StyleSettingsTitle" \}, "children": \[\s*\{ [^\n]*"name": "TouchAboutDivider"', out)
+        self.assertIsNotNone(m); self.assertEqual(m.groups(), ('0', '1730', str(touch_layout._CUSTOM_LINE_H)))
         self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityOpt"', out)
         rows = out.index('"name": "TouchCustomRows"'); about = out.index('"name": "TouchAboutTitle"'); box = out.index('"name": "TouchCommTile00"'); scroll_end = out.index('"name": "TouchCustomSel"')
         self.assertLess(rows, about); self.assertLess(about, scroll_end, 'the About group scrolls with the rows')
@@ -247,7 +236,7 @@ class Text(unittest.TestCase):
                                ('dmCommunityCopy', 28, CO_BTN_W - 20, ''), ('dmCommunityCopied', 28, CO_BTN_W - 20, ''), ('dmCommunityCopyFailShort', 28, CO_BTN_W - 20, ''), ('dmLoadCommFree', 28, BOX_W, ''),
                                ('dmAboutVersion', 28, 880, ''), ('dmCreditsMaker', 28, 560, ' Augustus'), ('dmCreditsSpecial', 28, CO_CARD_W, ' jhaizhou-ops'),
                                ('dmCommunityAbout', 40, BTN_W, ''), ('dmCommunityFe', 40, BTN_W, ''), ('dmCommunityOpen', 40, BTN_W, ''),
-                               ('dmCommunityJoin', 40, PAUSE_BTN_W, ''), ('dmCommunityRow', 40, 1000, ''), ('dmCommunityAbout', 40, 1000, ''), ('dmCreditsTitle', 40, 1000, ''), ('dmCreditsSpecial', 36, CREDIT_LABEL_W, ''), ('dmCreditsMaker', 36, CREDIT_LABEL_W, ''), ('dmCreditsThanks', 36, CREDIT_LABEL_W, ''), ('dmCreditsUpstreamNote', 36, 1110 - 13 * 25, '')):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops on the same line
+                               ('dmCommunityJoin', 40, PAUSE_BTN_W, ''), ('dmCommunityRow', 40, 1000, ''), ('dmCommunityAbout', 40, 1000, ''),):   # 括号说明接在 jhaizhou-ops（13 字）之后同一行 | the note follows jhaizhou-ops on the same line
             texts = rows[key]
             for lang, t in zip(langs, texts):
                 self.assertEqual(t.count('\n'), 0, (key, lang))
@@ -259,7 +248,7 @@ class Text(unittest.TestCase):
 
 
 class Maker(unittest.TestCase):
-    """署名「制作：Augustus」（用户 2026-10-29）：只在鸣谢区（提示框「关于」段与自定义页鸣谢子块），排在「特别鸣谢」前、同排版同字号；六套语言只翻标签，名字不翻；
+    """署名「制作：Augustus」（用户 2026-10-29）：只在鸣谢区（提示框「关于」段；RC1.1 B008 起自定义页不再另有鸣谢子块），排在「特别鸣谢」前、同排版同字号；六套语言只翻标签，名字不翻；
     暂停菜单 / 主菜单 / 加载页 / 分享日志摘要都不加；fork README 作者行。
     Maker credit (user, 2026-10-29): only in the credits area, before Special thanks, same layout and size; only the label is translated; nowhere else; the fork README's author line."""
     def test_label_six_languages(self):
@@ -269,7 +258,7 @@ class Maker(unittest.TestCase):
 
     def test_only_in_credits(self):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
-        self.assertEqual(c.count('credits_all(k_maker_default'), 2)   # 提示框与自定义页两处 | the box and the Custom page
+        self.assertEqual(c.count('credits_all(k_maker_default'), 1)   # 只在提示框（RC1.1 B008 删了自定义页那块） | only the box (B008 removed the Custom page block)
         self.assertEqual(c.count('"Augustus"'), 1)
         for f in ('ios/tools/touch_layout.py', 'i18n/ui_text.tsv', 'ios/Sources/dm_sharelog.m', 'host/front_mac.m', 'host/dm_update.c', 'host/diag.c'):
             self.assertNotIn('Augustus', (DM / f).read_text(encoding='utf-8'), f)   # 别处不加 | nowhere else
@@ -285,8 +274,9 @@ class Host(unittest.TestCase):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
         for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_community_input_gate(uint64_t *bt', 'atomic_exchange(&g_md_ev, 0)', 'dm_update_label()', '"dmAboutVersion"',
                   '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : ch[row] == DM_CH_SITE ? "官网" : "GitHub"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
-                  '"TouchAboutCommunityRow"', 'TouchCreditLine%d', '"dmCreditsSpecial"', '"dmCreditsMaker"', 'k_maker_default[] = { "Augustus" }', 'TouchCreditLabel2', 'co_place(l0, ys >= 0 ? DM_ROW_INDENT : 99999', 'dm_sel_frame.h', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
+                  '"TouchAboutRow"', '"dmCreditsSpecial"', '"dmCreditsMaker"', 'k_maker_default[] = { "Augustus" }', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)
+        self.assertNotIn('credits_render', c); self.assertNotIn('TouchCredit', c)   # RC1.1 B008：自定义页鸣谢块删了 | B008: the Custom page credits block is gone
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss
         self.assertNotIn('co_text(b, de[2], dm_str(b, "dmCommunityAbout"))', c)   # 社区框不再写「关于」子标题 | the community box no longer writes the About sub-title

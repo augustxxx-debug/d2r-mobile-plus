@@ -512,7 +512,6 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCommunityCopyFailShort", "复制失败", "Failed", "Error", "Error", "Ошибка", "실패" },
     { "dmLoadCommFree", "本软件免费，付费购买均为倒卖", "This app is free. If you paid for it, it was resold", "Esta app es gratis; si pagaste por ella, es reventa", "Esta app es gratis; si pagaste por ella, es reventa", "Приложение бесплатно; платные копии — перепродажа", "이 앱은 무료이며, 유료 판매는 모두 재판매입니다" },
     { "dmCommunityCopied", "已复制", "Copied", "Copiado", "Copiado", "Скопировано", "복사됨" },
-    { "dmCreditsTitle", "鸣谢", "Credits", "Créditos", "Créditos", "Благодарности", "감사의 말" },
     { "dmCreditsSpecial", "特别鸣谢", "Special thanks", "Gracias especiales", "Gracias especiales", "Особая благодарность", "특별 감사" },
     { "dmCreditsThanks", "鸣谢", "Thanks", "Agradecimientos", "Agradecimientos", "Благодарность", "감사" },
     { "dmCreditsMaker", "制作", "Made by", "Hecho por", "Hecho por", "Автор", "제작" },

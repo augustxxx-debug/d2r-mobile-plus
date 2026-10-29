@@ -159,10 +159,10 @@ int main(void) {
       log_reset(); CHECK(dm_community_manifest(c4, strlen(c4)) == 1); CHECK(strstr(log_text(), "credits 字段格式坏"));
       static const char *const c5 = "{\"credits\": {\"special\": [\"a\"]}}";   // 只有 credits、没有 community：仍是无字段 | credits only: still no community field
       CHECK(dm_community_manifest(c5, strlen(c5)) == 0); CHECK(!dm_community_available()); }
-    // 19. 十二审 Q12-01：「关于」组的社区行跟别的行一样，标签运行时右移 DM_ROW_INDENT、手柄选中框左缘 = 标签 − 30 = +10，不压字；鸣谢标签放在缩进后的位置、不与缩进来回拉扯。
-    //     按布局搭一棵假控件树（名字 +8、可见 +0x50、子控件 +0x58 / +0x60、矩形 +0x70、虚表 +0 的 +0x10 = 重算），跑真的 indent_rows（dm_custom.c）与 credits_render（dm_community.c）
+    // 19. 十二审 Q12-01：「关于」组的社区行跟别的行一样，标签运行时右移 DM_ROW_INDENT、手柄选中框左缘 = 标签 − 30 = +10，不压字；分节标题（带分隔线）不缩进。
+    //     按布局搭一棵假控件树（名字 +8、可见 +0x50、子控件 +0x58 / +0x60、矩形 +0x70、虚表 +0 的 +0x10 = 重算），跑真的 indent_rows（dm_custom.c）。RC1.1 B008 起组里没有鸣谢子块
     // 19. Twelfth review Q12-01: the About group's community row behaves like the other rows -- its label moves right by DM_ROW_INDENT at run time and the controller frame's left edge = label - 30 = +10, clear of the text;
-    //     credit labels sit at the indented position and do not fight the indent. A fake widget tree mirroring the layout runs the real indent_rows (dm_custom.c) and credits_render (dm_community.c)
+    //     the section title (with its divider) is not indented. A fake widget tree mirroring the layout runs the real indent_rows (dm_custom.c). From RC1.1 B008 the group has no credits sub-block
     { enum { NW = 16 }; static uint8_t wb[NW][0x200]; static uint64_t kids[NW][8]; static void (*vt[4])(uint64_t); vt[2] = t_recalc; int nw = 0;
       #define MKW(var, name, x, y) uint64_t var = (uint64_t)(uintptr_t)wb[nw]; *(uint64_t *)(var) = (uint64_t)(uintptr_t)vt; *(const char **)(var + 8) = name; wb[nw][0x50] = wb[nw][0x51] = 1; \
           ((int32_t *)(var + 0x70))[0] = x; ((int32_t *)(var + 0x70))[1] = y; ((int32_t *)(var + 0x70))[2] = 1000; ((int32_t *)(var + 0x70))[3] = 180; nw++
@@ -170,27 +170,17 @@ int main(void) {
           *(uint64_t *)((parent) + 0x58) = (uint64_t)(uintptr_t)kids[i_]; *(uint64_t *)((parent) + 0x60) = sizeof ks_ / sizeof *ks_; } while (0)
       MKW(rows, "TouchCustomRows", 0, 0); MKW(toggle_text, "TouchCustom_x_Text", 0, 0); MKW(about, "TouchAboutRow", 0, 1800); MKW(title, "TouchAboutTitle", 0, 0); MKW(div, "TouchAboutDivider", 0, 90);
       MKW(comm, "TouchAboutCommunityRow", 0, 180); MKW(ctext, "TouchAboutCommunityText", 0, 0); MKW(opt, "TouchCommunityOpt", 1110, 30);
-      MKW(ctitle, "TouchCreditsTitle", 0, 360); MKW(cdiv, "TouchCreditsDivider", 0, 90); MKW(l0, "TouchCreditLabel0", 99999, 540); MKW(l1, "TouchCreditLabel1", 99999, 540); MKW(l2, "TouchCreditLabel2", 99999, 540); MKW(ln0, "TouchCreditLine0", 99999, 540); MKW(ln1, "TouchCreditLine1", 99999, 540);
-      KIDS(rows, toggle_text, about); KIDS(about, title, comm, ctitle, l0, l1, l2, ln0, ln1); KIDS(title, div); KIDS(ctitle, cdiv); KIDS(comm, ctext, opt);
+      KIDS(rows, toggle_text, about); KIDS(about, title, comm); KIDS(title, div); KIDS(comm, ctext, opt);
       #undef MKW
       #undef KIDS
-      uint8_t fake_base[16]; t_group = DM_LG_ZH;
-      for (int pass = 0; pass < 3; pass++) { if (pass == 2) t_recalcs = 0; indent_rows(rows, 0); credits_render(fake_base, rows); }   // 每帧两者都跑：第三帧不再有任何改动 | both run every frame: by the third frame nothing changes
+      t_group = DM_LG_ZH;
+      for (int pass = 0; pass < 3; pass++) { if (pass == 2) t_recalcs = 0; indent_rows(rows, 0); }   // 每帧都跑：第三帧不再有任何改动 | runs every frame: by the third frame nothing changes
       int32_t *tr = (int32_t *)(ctext + 0x70);
       CHECK(tr[0] == DM_ROW_INDENT);                                    // 社区行标签 40（同其他行） | the community label at 40 like the other rows
       CHECK(((int32_t *)(toggle_text + 0x70))[0] == DM_ROW_INDENT);
       CHECK(((int32_t *)(opt + 0x70))[0] == 1110);                       // 按钮不动 | the button stays
       CHECK(dm_sel_frame_x(tr[0]) == DM_SEL_FRAME_MIN_X && dm_sel_frame_x(tr[0]) == 10);   // 选中框左缘 +10（dm_custom.c 用 dm_sel_frame_x(标签 x)） | frame left edge +10
       CHECK(dm_sel_frame_x(tr[0]) + DM_SEL_FRAME_PAD <= tr[0]);          // 框线在字左边 30，不压字 | the frame line is 30 left of the text, clear of it
-      CHECK(((int32_t *)(l0 + 0x70))[0] == DM_ROW_INDENT);              // 「特别鸣谢」标签与各行文字对齐 | the Special-thanks label lines up with the row text
-      // 署名「制作：Augustus」（用户 2026-10-29）：鸣谢区第一行，标签 TouchCreditLabel2 同样缩进；「特别鸣谢」挪到第二行 | the maker credit is the first line with its own label, Special thanks moves to the second
-      CHECK(((int32_t *)(l2 + 0x70))[0] == DM_ROW_INDENT && ((int32_t *)(l2 + 0x70))[1] == 540);
-      CHECK(((int32_t *)(l0 + 0x70))[1] == 630 && ((int32_t *)(ln1 + 0x70))[0] == 620 && ((int32_t *)(ln1 + 0x70))[1] == 630);
-      CHECK(((int32_t *)(l1 + 0x70))[0] == 99999);                      // 「鸣谢」名单空：整行不显示 | empty thanks list: no line
-      CHECK(((int32_t *)(ln0 + 0x70))[0] == 620);                        // 名单列不动 | the names column stays
-      // 「鸣谢」与「关于」同一种分节标题（用户 2026-10-29：「鸣谢和那个关于 title 一看就不一致，也没有分割线」）：带分隔线子控件 → 不当叶子缩进，与「关于」同在 x 0
-      // "Credits" is the same kind of section title as "About" (user, 2026-10-29: they looked inconsistent and Credits had no divider): with its divider child it is not indented as a leaf and sits at x 0 like About
-      CHECK(((int32_t *)(ctitle + 0x70))[0] == ((int32_t *)(title + 0x70))[0] && ((int32_t *)(ctitle + 0x70))[0] == 0);
       CHECK(((int32_t *)(title + 0x70))[0] == 0);                        // 分节标题（带分隔线）不缩进，同原版分节 | the section title (with divider) is not indented, like the original sections
       CHECK(t_recalcs == 0);                                             // 稳定：不来回拉扯 | stable: no tug-of-war
     }

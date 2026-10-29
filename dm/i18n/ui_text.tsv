@@ -510,7 +510,6 @@ dmCommunityCopy	复制	Copy	Copiar		Копировать	복사	渠道卡片各�
 dmCommunityCopyFailShort	复制失败	Failed	Error		Ошибка	실패	小「复制」按钮上复制失败时的字，留 2 秒（按钮宽 293，按 §2.6 估宽放得下的短词）
 dmLoadCommFree	本软件免费，付费购买均为倒卖	This app is free. If you paid for it, it was resold	Esta app es gratis; si pagaste por ella, es reventa		Приложение бесплатно; платные копии — перепродажа	이 앱은 무료이며, 유료 판매는 모두 재판매입니다	免费声明：社区 / 关于弹窗渠道卡片下一行（28 号 GoldYellow）；同键同文与加载页分支（feat/loadpage，加载页底部社区第二行）共用
 dmCommunityCopied	已复制	Copied	Copiado		Скопировано	복사됨	小「复制」按钮上复制成功后的字，留 2 秒（dm_community.c）
-dmCreditsTitle	鸣谢	Credits	Créditos		Благодарности	감사의 말	自定义页「关于」组社区行之后的「鸣谢」子块标题（标题级 GoldYellow；touch_layout.py _custom_about，名单由宿主 dm_community.c 按语言拼）
 dmCreditsSpecial	特别鸣谢	Special thanks	Gracias especiales		Особая благодарность	특별 감사	鸣谢子块第一行的标签（36 号 LightGold，名单 36 号 LightGray 由宿主写）；西语用「Gracias especiales」：原「Agradecimiento especial」在 Duo 内屏压到名单列（用户 2026-10-29 反馈「关于」区排版）
 dmCreditsThanks	鸣谢	Thanks	Agradecimientos		Благодарность	감사	鸣谢子块第二行的标签（名单为空时整行不显示）
 dmCreditsMaker	制作	Made by	Hecho por	Hecho por	Автор	제작	鸣谢区署名标签（用户 2026-10-29：「制作」+ 名字，排在特别鸣谢前；名字在代码常量 dm_community.c k_maker_default、不翻译）；俄文用「Автор」不分性别
