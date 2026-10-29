@@ -107,7 +107,11 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         t.setText(R.string.dmAndroidPermission);
         t.setTextSize(20); t.setPadding(64, 64, 64, 64);
         t.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getPackageName()))));
-        setContentView(t);
+        // 手柄 A / START 也能打开设置（只有手柄的玩家；TextView 自己只认方向键中键与回车） | controller A / START open Settings too (controller-only players; the TextView itself takes only D-pad centre and Enter)
+        t.setFocusable(true); t.setOnKeyListener((v, code, ev) -> {
+            if (ev.getAction() != android.view.KeyEvent.ACTION_UP || (code != android.view.KeyEvent.KEYCODE_BUTTON_A && code != android.view.KeyEvent.KEYCODE_BUTTON_START)) return false;
+            v.performClick(); return true; });
+        setContentView(t); t.requestFocus();
         return false;
     }
 
@@ -604,6 +608,10 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // 实体手柄：按键与轴都先交原生（pad_android.c 判断来源与键位；手柄来源的 BACK 当 B 吃掉）；不归手柄的照常交给系统
     // Physical controllers: keys and axes go native first (pad_android.c decides source and mapping; BACK from a controller counts as B and is swallowed); anything else goes to the system as usual
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) {
+        // 首启生成 / 导入的加载页上吞掉返回与手柄 B（玩家按 B 习惯是「取消」，原来会把 App 切到后台、久了可能被系统清掉；离开仍可按 Home）
+        // On the first-launch generation / import loading page, swallow BACK and controller B (players press B to cancel; it used to send the App to the
+        // background, where the system may later clean it up; Home still leaves)
+        if (!started && (generating || importing) && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) return true;
         if (started && (e.getAction() == android.view.KeyEvent.ACTION_DOWN || e.getAction() == android.view.KeyEvent.ACTION_UP)) {
             android.view.InputDevice d = e.getDevice(); int vendor = d != null ? d.getVendorId() : 0, product = d != null ? d.getProductId() : 0;
             if (nativePadKey(e.getDeviceId(), vendor, product, e.getSource(), e.getKeyCode(), e.getAction() == android.view.KeyEvent.ACTION_DOWN)) return true;
