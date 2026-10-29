@@ -125,7 +125,7 @@ cd d2r-mobile-plus
 
 ## Android（高通 Adreno 候选）
 
-Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gfx/vulkan/`），第一个候选包只面向高通 Adreno（在 Adreno 740 掌机上验过：营地与战斗 60 FPS、120 帧档、手柄）。Mali（联发科 / 三星 Exynos）另有子组 16 道、ClipDistance 等缺口，暂不出包。安装包不含游戏内容：把自己的游戏文件（`ExeFS` 与 `data`）放进手机 `Download/S2X/D2R Mobile/`，打开 App，第一次会在手机上自己生成导入包（骁龙 8 Gen 2 约 7 分钟），界面楷体用随包的霞鹜文楷。仍可在电脑上做导入包（`dm/tools/d2rm_android.py`）。详见 [docs/ANDROID.zh-CN.md](docs/ANDROID.zh-CN.md)。
+Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gfx/vulkan/`），支持高通 Adreno（在 Adreno 740 掌机上验过：营地与战斗 60 FPS、120 帧档、手柄），从这一包起也支持 Arm Mali（在天玑 9600 Pro、Mali-G2 Ultra 的手机上验过：营地 60 FPS，战斗约 45–52 FPS，手机发热后会更低）。不支持 BC 贴图的显卡（Mali）载入时把 BC3 贴图转成 ASTC，省约 400 MB 内存；透明度有渐变的贴图透明精度略有损失。安装包不含游戏内容：把自己的游戏文件（`ExeFS` 与 `data`）放进手机 `Download/S2X/D2R Mobile/`，打开 App，第一次会在手机上自己生成导入包（骁龙 8 Gen 2 约 7 分钟），界面楷体用随包的霞鹜文楷。仍可在电脑上做导入包（`dm/tools/d2rm_android.py`）。详见 [docs/ANDROID.zh-CN.md](docs/ANDROID.zh-CN.md)。
 
 本轮 Android 适配（相对上游 Android 后端）：崩溃围栏接入后台 / 前台 / 内存告警；暂停菜单「分享诊断日志」（脱敏、系统分享面板）；显示版本与构建号同源；原生出图尺寸 + 图形页「渲染分辨率」档；120 帧档（屏幕 ≥ 120 Hz 时出现，自动切高刷模式）；「显示帧数」；实体手柄（Xbox 键位、B / BACK 不退出、手柄 / 触屏模式切换）；3D 画面加亮上限 2；Adreno 740 驱动绕法（warp32 掩码按车道号算、lane 号自检）。
 

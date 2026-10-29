@@ -10,6 +10,11 @@
 
 ### Android
 
+- 支持 Arm Mali（在天玑 9600 Pro、Mali-G2 Ultra、Android 17 的手机上验过）：按显卡需要在载入时改写着色器（16 道子组上给 32 道线程束的 shuffle 加越界保护、去掉没用到的 ClipDistance / CullDistance、只读顶点缓冲补 NonWritable），宿主页大小改为运行时读（16 KB 页），不支持 BC 贴图的显卡在载入时把 BC3 贴图转成 ASTC 4x4（那台手机上解码后的图像内存 837 → 407 MB；透明度有渐变的贴图透明精度略有损失）。高通手机照旧直接采样 BC。
+- 安卓性能提示（ADPF）覆盖最忙的游戏线程，性能记录里加系统温控状态；两台测试机上测下来对帧率没有可测影响。
+- 来自上游 v2.1.0：安卓上遵守 30 帧省电档（之前实际跑 60）；16 位 R / RG 不能线性过滤时 BC4 / BC5 解成 8 位（部分 Mali 手机会崩）；驱动着色器编译器崩溃或失败的计算 / 图形管线从下次启动起跳过，不再每次启动都崩；Adreno 750–799 载入时内联着色器辅助函数（SPIRV-Tools 库编进 App，许可证已写进第三方说明）。Adreno 740 保留 quad 导数与 warp32 两个改写（上游在那里看到的挂起，本分支已修）。
+- 分享诊断日志与生成日志按任意用户号脱敏共享存储（/storage/emulated/<n>），不只用户 0。
+
 - 安卓包改为在手机上生成导入包（不用电脑）：把自己的 `ExeFS` 与 `data` 放进手机，首次打开自动生成。安装包随附开源字体霞鹜文楷（SIL OFL 1.1）作楷体界面字；公开包不再使用原先的私有楷体。
 - 可选界面字体：只替换游戏原字体已有的中日文字形（不再补新码位），合成后超过 15 MiB 就拒绝出字体；字体过大时安卓主菜单一画字就闪退。
 - 安卓包许可证：手机端生成随包的第三方组件（CPython 及其 OpenSSL / SQLite 与内含各库、NumPy、OpenBLAS、python-lz4、fontTools、Capstone、Pillow 及 FreeType / HarfBuzz / zlib-ng、zlib、SPIRV-Tools、含 Ryujinx 代码的 .NET NativeAOT 着色器翻译工具）的许可证随包在 `assets/dmgen/THIRD_PARTY_NOTICES.txt`；出包脚本对缺清单或版本对不上的包直接拒绝。生成失败日志 `gen_log.txt` 写到 Download 前先去掉本机路径与包名。生成好的导入包在最后换上时被打断的，下次打开会重新生成，不再被当成开发时推进来的文件。
