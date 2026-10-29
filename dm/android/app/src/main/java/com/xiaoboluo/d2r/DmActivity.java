@@ -181,7 +181,6 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private static final PackGenerator.State genState = new PackGenerator.State();
     private static volatile String genFailure;   // 生成失败时给玩家看的原因（已按语言取好） | the failure reason shown to the player (already localised)
     private final android.os.Handler genHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-    private TextView genStep;
 
     private boolean generatorAvailable() {
         if (!new File(getApplicationInfo().nativeLibraryDir, "libdmgen_py.so").canExecute()) return false;
@@ -195,35 +194,25 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // 三层：标题 / 正文 / 副文，字号 24 / 18 / 14（相邻比 1.29–1.33，同 CLAUDE 文案原则的层级） | three levels: title / body / sub at 24 / 18 / 14 (neighbouring ratio 1.29-1.33)
         TextView t = new TextView(this); t.setTextSize(24); t.setText(title); box.addView(t);
         TextView b = new TextView(this); b.setTextSize(18); b.setText(body); b.setPadding(0, 24, 0, 0); box.addView(b);
-        genStep = null;
-        if (hint != null) {
-            genStep = new TextView(this); genStep.setTextSize(18); genStep.setPadding(0, 24, 0, 0); box.addView(genStep);
-            TextView h = new TextView(this); h.setTextSize(14); h.setText(hint); h.setPadding(0, 24, 0, 0); box.addView(h);
-        }
+        if (hint != null) { TextView h = new TextView(this); h.setTextSize(14); h.setText(hint); h.setPadding(0, 24, 0, 0); box.addView(h); }
         setContentView(box);
     }
 
-    private String stepLabel(PackGenerator.Step step) {
-        switch (step) {
-            case PATCH: return getString(R.string.dmAndroidGenStepPatch);
-            case ASSETS: return getString(R.string.dmAndroidGenStepAssets);
-            case OVERLAY: return getString(R.string.dmAndroidGenStepOverlay);
-            case PACKS: return getString(R.string.dmAndroidGenStepPacks);
-            case SHADERS: return getString(R.string.dmAndroidGenStepShaders);
-            case FINISH: return getString(R.string.dmAndroidGenStepFinish);
-            default: return getString(R.string.dmAndroidGenStepPrepare);
-        }
-    }
 
+    // 生成进度画在加载页上（LoadPageView，核心 dm/host/dm_loadpage.c）：七个阶段与 PackGenerator.Step 一一对应（收尾那步记作「安装」），着色器那步按已生成的
+    // .xgs 个数报几成与「第 N / M 个」，其余步骤只报阶段（剩余时间由核心按权重外推）。失败时加载页记失败，但仍换成文字页把完整原因（含 gen_log 位置）给玩家看。
+    // Generation progress is drawn on the loading page (LoadPageView, core dm/host/dm_loadpage.c): seven stages one-to-one with PackGenerator.Step (the closing step counts
+    // as "install"); the shader step reports its fraction and "N / M" from the .xgs files made so far, the other steps only their stage (the core extrapolates the time
+    // left from the weights). On failure the loading page records it, but the screen switches to the text page so the player gets the full reason (with the gen_log location).
+    static final int[] GEN_STAGES = {LoadPageView.PREPARE, LoadPageView.PATCH, LoadPageView.ASSETS, LoadPageView.OVERLAY, LoadPageView.PACKS, LoadPageView.SHADERS, LoadPageView.INSTALL};
     private final Runnable genPoll = new Runnable() {
         @Override public void run() {
-            if (genFailure != null) { showGenScreen(getString(R.string.dmAndroidGenFailed), genFailure, null); return; }
-            if (!generating) { if (resumed) startHost(); return; }
+            if (genFailure != null) { LoadPageView.fail(genFailure); showGenScreen(getString(R.string.dmAndroidGenFailed), genFailure, null); return; }
+            if (!generating) { LoadPageView.finish(); if (resumed) startHost(); return; }
             PackGenerator.State s = genState;
             if (s.step == PackGenerator.Step.SHADERS && s.shaderDir != null) s.shadersMade = PackGenerator.count(new File(s.shaderDir), ".xgs");
-            String line = stepLabel(s.step) + " · " + s.percent() + "%";
-            if (s.step == PackGenerator.Step.SHADERS) line += " · " + s.shadersMade + " / " + PackGenerator.SHADERS;
-            if (genStep != null) genStep.setText(line);
+            if (s.step == PackGenerator.Step.SHADERS) LoadPageView.set(PackGenerator.loadStage(s.step), Math.min(1.0, (double) s.shadersMade / PackGenerator.SHADERS), s.shadersMade, PackGenerator.SHADERS, 0, 0);
+            else LoadPageView.set(PackGenerator.loadStage(s.step), 0, 0, 0, 0, 0);
             genHandler.postDelayed(this, 500);
         }
     };
@@ -232,9 +221,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private void generate(File base, File runtime) {
         genHandler.removeCallbacks(genPoll);
         if (genFailure != null) { showGenScreen(getString(R.string.dmAndroidGenFailed), genFailure, null); return; }
-        showGenScreen(getString(R.string.dmAndroidGenTitle), getString(R.string.dmAndroidGenBody), getString(R.string.dmAndroidGenHint));
-        genHandler.post(genPoll);
-        if (generating) return;   // Activity 重建：生成线程还在跑，只接回界面 | the Activity was recreated: the generation thread is still running; only reattach the screen
+        setContentView(new LoadPageView(this));   // 阶段状态在原生侧（静态），Activity 重建时只换一个新视图接上 | stage state lives natively (static); a recreated Activity just attaches a new view
+        if (generating) { genHandler.post(genPoll); return; }   // Activity 重建：生成线程还在跑，只接回界面 | the Activity was recreated: the generation thread is still running; only reattach the screen
         // 资源目录与 startHost 同一条规则（缺省 data，没有就沿用早先的 Download/data） | resource directory by the same rule as startHost (data by default, else the earlier Download/data)
         File data = new File(base, "data"), earlier = new File(base.getParentFile().getParentFile(), "data");
         if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
@@ -245,6 +233,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         long free = new android.os.StatFs(getFilesDir().getPath()).getAvailableBytes() + treeBytes(new File(gen, "root"));
         if (free < PackGenerator.SPACE_NEEDED) { fail(getString(R.string.dmAndroidGenNoSpace, android.text.format.Formatter.formatShortFileSize(this, free))); return; }
         generating = true; genState.step = PackGenerator.Step.PREPARE; genState.shaderDir = null; genState.shadersMade = 0;
+        LoadPageView.begin(GEN_STAGES, PackGenerator.LOAD_WEIGHTS_MS); genHandler.post(genPoll);
         final File dataDir = data; final String nativeDir = getApplicationInfo().nativeLibraryDir;
         final String appHome = getFilesDir().getParent(), apkDir = new File(nativeDir).getParentFile().getParent(), appId = getPackageName();   // gen_log.txt 脱敏用 | for scrubbing gen_log.txt
         final android.content.res.AssetManager assets = getAssets(); final android.content.Context app = getApplicationContext();
@@ -452,6 +441,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         String src = data.getAbsolutePath();
         { File ext2 = getExternalFilesDir(null), internal2 = new File(getFilesDir(), "dm");   // 与上面 / jni_android.c 同一条运行目录规则 | same runtime-directory rule as above / jni_android.c
           writeExitReasons(new File(internal2, "out/main.patched.bin").canRead() || ext2 == null ? internal2 : new File(ext2, "dm")); }   // 分享诊断日志附系统退出原因 | exit reasons for share diagnostics
+        // 本进程里加载页走过（导入 / 手机端生成）就把它的完成 / 失败行交给宿主写进 boot.log（分享诊断日志的「加载页：」摘要） | if the loading page ran in this process
+        // (import / on-phone generation), hand its finish / failure line to the host for boot.log (the 「加载页：」 share-diagnostics summary)
+        try { String lp = LoadPageView.lastLine(); if (lp != null && !lp.isEmpty()) Os.setenv("DM_LOADPAGE_LAST", lp, true); } catch (ErrnoException | UnsatisfiedLinkError ignored) {}
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
         if (result < 0) {
             int resource = switch (result) {

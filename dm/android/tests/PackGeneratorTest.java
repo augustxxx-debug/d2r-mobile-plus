@@ -87,6 +87,10 @@ public class PackGeneratorTest {
         equal(false, clean.contains("/data/") || clean.contains("/storage/") || clean.contains("xiaoboluo"));
         // 五审 A5-04：工作资料 / 多用户的共享存储用户号不是 0 | fifth audit A5-04: shared storage of work profiles / other users is not 0
         equal("in ~/Download/a\nkeep /storage/emulated/legacy", PackGenerator.scrubLog("in /storage/emulated/10/Download/a\nkeep /storage/emulated/legacy", null, null, "com.xiaoboluo.d2r"));
+        // 加载页阶段：七步各占一个序号、按顺序；权重七个、都为正、合计落在两台真机首启之间（391–446 秒）| loading-page stages: one index per step, in order; seven positive weights summing between the two phones' first launches
+        equal(7, PackGenerator.Step.values().length); equal(7, PackGenerator.LOAD_WEIGHTS_MS.length);
+        { int sum = 0; for (int i = 0; i < 7; i++) { equal(i, PackGenerator.loadStage(PackGenerator.Step.values()[i])); equal(true, PackGenerator.LOAD_WEIGHTS_MS[i] > 0); sum += PackGenerator.LOAD_WEIGHTS_MS[i]; }
+          equal(true, sum >= 391000 && sum <= 446000); }
         File broken = temp(); write(new File(broken, "out/x"), "x");
         try { PackGenerator.install(broken, temp()); throw new AssertionError("install of an incomplete pack must fail"); }
         catch (IOException expected) { cases++; }

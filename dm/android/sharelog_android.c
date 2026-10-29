@@ -159,7 +159,7 @@ static void last_line(sb_t *h, const char *log, size_t len, const char *key) {
     if (best) { sb_put(h, best, bl); sb_puts(h, "\n"); } else { sb_puts(h, "（没有「"); sb_puts(h, key); sb_puts(h, "」行）\n"); }
 }
 static void perf_block(sb_t *h, const char *title, const char *log, size_t len) {
-    static const char *const keys[] = { "boot: 显示版本", "boot: 导入包", "boot: dm_main", "NVN caps device=", "NVN caps subgroup", "NVN 32-lane warps", "NVN quad shuffles", "NVN native BC", "NVN texture checks", "guest AS", "崩溃围栏：", "[诊断]", "[perf]", "图形设置：", "帧率档：", "自定义设置：读盘", "内存：", "优雅退出", "【红】" };
+    static const char *const keys[] = { "boot: 显示版本", "boot: 导入包", "加载页：", "boot: dm_main", "NVN caps device=", "NVN caps subgroup", "NVN 32-lane warps", "NVN quad shuffles", "NVN native BC", "NVN texture checks", "guest AS", "崩溃围栏：", "[诊断]", "[perf]", "图形设置：", "帧率档：", "自定义设置：读盘", "内存：", "优雅退出", "【红】" };
     sb_puts(h, "\n—— "); sb_puts(h, title); sb_puts(h, " ——\n");
     if (!log) { sb_puts(h, "（没有这份日志）\n"); return; }
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) last_line(h, log, len, keys[i]);

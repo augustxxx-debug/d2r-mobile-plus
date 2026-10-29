@@ -67,3 +67,4 @@ jint F(nativeColor)(JNIEnv *env, jclass cls, jint which) {   // 颜色统一取�
     (void)env; (void)cls; static const int c[] = { DM_LP_COL_TITLE, DM_LP_COL_BODY, DM_LP_COL_SUB, DM_LP_COL_PERCENT, DM_LP_COL_BAR_FILL, DM_LP_COL_BAR_TRACK, DM_LP_COL_BAR_EDGE };
     return which >= 0 && which < (int)(sizeof c / sizeof *c) ? c[which] : 0xffffff;
 }
+jstring F(nativeLastLine)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_last_line()); }   // 进游戏前交给宿主写进 boot.log | handed to the host before the game starts, for boot.log

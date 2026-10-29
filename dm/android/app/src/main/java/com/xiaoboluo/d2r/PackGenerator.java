@@ -48,6 +48,12 @@ final class PackGenerator {
         Step(int from, int to) { this.from = from; this.to = to; }
     }
 
+    // 加载页（DmActivity.GEN_STAGES）的阶段序号与权重：七步一一对应（FINISH 记作「安装」）；权重按两台真机首启总时长（奥丁 391 秒、OPPO 446 秒）与上面的百分比区间分
+    // Loading-page stage index and weights (DmActivity.GEN_STAGES): the seven steps one-to-one (FINISH shown as "install"); weights split the two phones' first-launch
+    // totals (Thor 391 s, OPPO 446 s) by the percentage ranges above
+    static final int[] LOAD_WEIGHTS_MS = {12000, 29000, 34000, 50000, 25000, 254000, 12000};
+    static int loadStage(Step step) { return step.ordinal(); }
+
     static final class State {
         volatile Step step = Step.PREPARE;
         volatile String shaderDir;

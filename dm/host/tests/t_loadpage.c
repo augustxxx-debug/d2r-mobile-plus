@@ -34,6 +34,7 @@ int main(void) {
     dm_loadpage_set(0, 0.3, NULL, 4200); CHECK(dm_loadpage_percent() == 62); CHECK(dm_loadpage_stage() == 1);
     dm_loadpage_set(1, 1.0, NULL, 5000); CHECK(dm_loadpage_percent() == 100); CHECK(dm_loadpage_state() == DM_LP_RUNNING);   // 到 100% 还不算完成，要平台 finish | 100% is not done yet: the platform must call finish
     dm_loadpage_finish(5500); CHECK(dm_loadpage_state() == DM_LP_DONE); CHECK(dm_loadpage_music_wanted() == 0);
+    CHECK(!strncmp(dm_loadpage_last_line(), "加载页：完成，", strlen("加载页：完成，")));   // 安卓交给宿主写进 boot.log 的那一行 | the line Android hands to the host for boot.log
     dm_loadpage_text(&t, 5600); CHECK(!strcmp(t.title, "准备完成，正在进入游戏")); CHECK(!strcmp(t.percent, "100%"));
     CHECK(dm_loadpage_stage_ms(0) == 1000 + 2000 - 2000);   // 导入 2000→3000 | import 2000→3000
     CHECK(dm_loadpage_stage_ms(1) == 1000);                 // 着色器 4000→5000 | shaders 4000→5000
@@ -77,7 +78,7 @@ int main(void) {
     dm_loadpage_text(&t, 100000); CHECK(!strcmp(t.title, "正在准备着色器缓存")); CHECK(strstr(t.body, "第 1234 / 7062 个文件") != NULL); CHECK(strstr(t.sub, "只做这一次") != NULL);
     // 5. 失败：标题换、正文 = 原因、音乐停、进度留在原处 | 5. Failure: title changes, body = reason, music stops, progress stays
     int before = dm_loadpage_percent();
-    dm_loadpage_fail("磁盘空间不足（还差 1.2 GB）", 101000);
+    dm_loadpage_fail("磁盘空间不足（还差 1.2 GB）", 101000); CHECK(!strncmp(dm_loadpage_last_line(), "加载页：失败于阶段", strlen("加载页：失败于阶段")));
     CHECK(dm_loadpage_state() == DM_LP_FAILED); CHECK(dm_loadpage_music_wanted() == 0); CHECK(dm_loadpage_percent() == before);
     dm_loadpage_text(&t, 101000); CHECK(!strcmp(t.title, "无法继续准备游戏内容")); CHECK(strstr(t.body, "1.2 GB") != NULL); CHECK(strstr(t.sub, "诊断日志") != NULL);
     dm_loadpage_set(4, 1.0, NULL, 102000); CHECK(dm_loadpage_percent() == before);   // 失败后不再动 | frozen after failure
