@@ -6,6 +6,8 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Unreleased]
 
+- Known issue (memory, free signing): per-process limit about 3375 MB; in long 120 fps sessions the footprint levels off near 2.7 GB with continuous system memory warnings but no termination and no leak; gone with a paid account carrying `increased-memory-limit` (about 6 GB).
+
 Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). Validation updated on **2026-10-26**.
 
 ### Added

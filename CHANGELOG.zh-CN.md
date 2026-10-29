@@ -6,6 +6,8 @@
 
 ## [未发布]
 
+- 已知问题（内存，免费签名）：单进程上限约 3375 MB，120 帧长局 footprint 在约 2.7 GB 趋平、系统持续发内存告警但不被结束、无泄漏；付费账号带 `increased-memory-limit` 权益后（约 6 GB）消失。
+
 基线：上游 [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52)。验证记录更新日期：**2026-10-26**。
 
 ### 新增

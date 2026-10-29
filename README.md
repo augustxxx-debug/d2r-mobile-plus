@@ -179,6 +179,8 @@ Devices differ in RAM and in the memory limit the system grants one app, and App
 - The diagnostics summary records both the launch values and the current settings (`Memory tier=… atLaunch … now …`).
 - For debugging, `DM_MEM_TIER=0/1/2` forces a tier.
 
+**Known issue (memory, free signing):** packages signed with a free developer account lack the `increased-memory-limit` entitlement, so the per-process limit is about 3375 MB (same on both test phones). In long 120 fps sessions the footprint levels off near 2.7 GB and the system **keeps sending memory warnings** (about 700 in a 43-minute run on an iPhone 17 Pro), but the app is not terminated and there is no leak (the plateau is flat over 60 minutes; retired objects, command allocators and view caches are reclaimed). The remaining growth is the game's own memory pool being counted into the footprint, which the host cannot reclaim. Packages signed with a paid account carry the entitlement (limit about 6 GB) and do not have this issue.
+
 ## Verification and limitations
 
 The preview has passed focused host geometry/classification tests, the iOS touch suite, notification generator checks and a signed device build. The quest narration issue was reproduced before the change and retested after it. See [verification details](docs/PLUS.md#verification) for the checks actually performed and those still pending.
