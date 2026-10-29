@@ -36,6 +36,15 @@ int main(void) {
       CHECK(edges(&n, &pv, 0, 0) == 0);                                // 回中：解锁 | centred: unlocked
       CHECK(edges(&n, &pv, 30000, 0) == DM_BTN_RIGHT); }
     { dm_stick_nav n = { 1, -1, 2 }; dm_stick_nav_reset(&n); CHECK(n.hx == 0 && n.hy == 0 && n.axis == 0); }
+    // 页接管只扣声明了的方向（RC1.1 终版审计 P1-1）：「游戏」页焦点在表格第一行时只声明「上」——往下推交给原版，往上推扣下 | withhold only declared directions (final audit P1-1)
+    { int32_t x = 0, y = -32767; dm_stick_nav_withhold(DM_BTN_UP, &x, &y); CHECK(y == -32767);             // 只声明上：下推交给原版 | only Up declared: a down push reaches the game
+      y = 32767; dm_stick_nav_withhold(DM_BTN_UP, &x, &y); CHECK(y == 0);                                   // 上推扣下 | an up push is withheld
+      x = 30000; y = -20000; dm_stick_nav_withhold(DM_BTN_UP | DM_BTN_DOWN, &x, &y); CHECK(y == 0 && x == 30000);   // 上下都声明：纵轴扣、横轴照交 | both vertical declared: y withheld, x passes
+      x = -30000; dm_stick_nav_withhold(DM_BTN_LEFT, &x, &y); CHECK(x == 0);
+      x = 30000; dm_stick_nav_withhold(DM_BTN_LEFT, &x, &y); CHECK(x == 30000);
+      x = 30000; y = 30000; dm_stick_nav_withhold(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT, &x, &y); CHECK(x == 0 && y == 0);
+      x = 5; y = -5; dm_stick_nav_withhold(0, &x, &y); CHECK(x == 5 && y == -5);
+      dm_stick_nav_withhold(DM_BTN_UP, NULL, &y); }
     printf("t_stick_nav: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

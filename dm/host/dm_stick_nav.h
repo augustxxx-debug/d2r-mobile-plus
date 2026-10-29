@@ -24,3 +24,13 @@ static inline uint64_t dm_stick_nav_dirs(dm_stick_nav *st, int32_t x, int32_t y)
     if (st->axis == 1) return st->hx > 0 ? DM_BTN_RIGHT : st->hx < 0 ? DM_BTN_LEFT : 0;
     return 0;
 }
+// 页接管时摇杆值哪部分不交给游戏（RC1.1 终版审计 P1-1）：只扣下页声明了的那个方向——纵轴正值只在声明了「上」时清零、负值只在声明了「下」时清零，横轴同理。
+// 原先页只要声明了上或下就把整个纵轴清零：「游戏」页焦点在表格第一行时只声明「上」（B015），往下推摇杆原版收不到、页也不要，「下」就丢了
+// Which part of the stick a page withholds from the game (RC1.1 final audit P1-1): only the declared direction -- a positive vertical value is zeroed only when Up is declared,
+// a negative one only when Down is, likewise horizontally. Previously any Up or Down declaration zeroed the whole vertical axis: with the Gameplay page's focus on the table's
+// first row only Up is declared (B015), so pushing the stick down reached neither the game nor the page and Down was lost
+static inline void dm_stick_nav_withhold(uint64_t declared, int32_t *x, int32_t *y) {
+    if (!x || !y) return;
+    if ((*y > 0 && (declared & DM_BTN_UP)) || (*y < 0 && (declared & DM_BTN_DOWN))) *y = 0;
+    if ((*x > 0 && (declared & DM_BTN_RIGHT)) || (*x < 0 && (declared & DM_BTN_LEFT))) *x = 0;
+}
