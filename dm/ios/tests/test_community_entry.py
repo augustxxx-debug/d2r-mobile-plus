@@ -283,7 +283,7 @@ class Maker(unittest.TestCase):
 class Host(unittest.TestCase):
     def test_host_wiring(self):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
-        for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_padmode_page_keys(DM_BTN_A | DM_BTN_B | DM_BTN_UP | DM_BTN_DOWN)', 'dm_update_label()', '"dmAboutVersion"',
+        for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_community_input_gate(uint64_t *bt', 'atomic_exchange(&g_md_ev, 0)', 'dm_update_label()', '"dmAboutVersion"',
                   '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : ch[row] == DM_CH_SITE ? "官网" : "GitHub"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
                   '"TouchAboutCommunityRow"', 'TouchCreditLine%d', '"dmCreditsSpecial"', '"dmCreditsMaker"', 'k_maker_default[] = { "Augustus" }', 'TouchCreditLabel2', 'co_place(l0, ys >= 0 ? DM_ROW_INDENT : 99999', 'dm_sel_frame.h', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)

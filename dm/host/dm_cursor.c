@@ -1660,6 +1660,10 @@ static void ui_ptr_pump(module_t *m, uint64_t root, int width, int height) {
 #define UI_SCROLL_STEP(h) ((h) * 32 / 900 > 4 ? (h) * 32 / 900 : 4)   // 一格滚轮对应手指走多少像素 | How many pixels of finger travel correspond to one wheel notch
 static _Atomic int g_dg_kind; static _Atomic uint64_t g_dg_o, g_dg_c; static _Atomic unsigned g_dg_seq; static _Atomic uint32_t g_dg_tol;
 static uint64_t dg_pack(float nx, float ny) { nx = nx < 0 ? 0 : nx > 1 ? 1 : nx; ny = ny < 0 ? 0 : ny > 1 ? 1 : ny; return ((uint64_t)(uint32_t)(nx * 65535 + .5f) << 16) | (uint32_t)(ny * 65535 + .5f); }
+// 社区 / 关于弹窗（dm_community.c）的吞输入接口：弱定义的缺省 = 没有弹窗；产品里由 dm_community.c 的强定义替换（不带社区模块的单测用这份）
+// modal-input hooks of the community / About box (dm_community.c): weak defaults = no box; the product's strong definitions in dm_community.c replace them (unit tests without the module use these)
+__attribute__((weak)) int dm_community_modal(void) { return 0; }
+__attribute__((weak)) void dm_community_ui_tap(uint64_t root, int x, int y) { (void)root; (void)x; (void)y; }
 void dm_ui_drag_begin(int kind, float ox, float oy, float tol_ny) {
     { int dm_community_modal(void); if (dm_community_modal()) return; }   // 社区 / 关于弹窗开着：不起拖动 / 滚动（RC1.1，触点全归弹窗） | community / About box up: no drag / scroll (RC1.1, every touch belongs to the box)
     uint64_t o = dg_pack(ox, oy); atomic_store(&g_dg_o, o); atomic_store(&g_dg_c, o); atomic_store(&g_dg_tol, (uint32_t)((tol_ny < 0 ? 0 : tol_ny > 0.5f ? 0.5f : tol_ny) * 65535));
