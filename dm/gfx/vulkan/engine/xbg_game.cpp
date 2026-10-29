@@ -23,6 +23,8 @@ extern "C" int xbg_completion_wait_selftest(char *report,size_t bytes);
 #include "xbg_bright_spv.h"
 #include "xbg_spirv_quad.h"
 #include "xbg_spirv_warp.h"
+#include "xbg_spirv_mali.h"
+#include "xbg_page.h"
 #include "xbg_spirv_laneid.h"
 #include "xbg_laneid_probe_run.h"
 #include "xbg_laneid_spv.h"
@@ -633,7 +635,7 @@ bool slot_pools_enabled=true,readback_cached=false;
 // samples_report_seen: the game has recorded a samples-passed report (D2R never does: its ~8 pending reports a frame are
 // all timestamps).
 bool heavy_timestamps=false;extern uint64_t pass_fast_hits;   // gfx-heavy-timestamps = '1': timestamp reports end the pass with full barriers, as before
-bool no_occlusion_queries=false,samples_report_seen=false;uint64_t samples_reports=0,samples_reported=0,counter_ops[3]={};extern uint64_t pipeline_fast_hits;extern bool pipe_memo;extern uint64_t pipe_memo_hits,pipe_memo_misses;extern uint64_t snap_front_hits,snap_map_hits,snap_invalidations,snap_invalidated;extern std::atomic<uint64_t> quad_rewrites,warp_rewrites,laneid_rewrites,ldc_folds,temps_forwarded,nan_minmax_swaps;namespace vcache{extern bool enabled;extern uint64_t hits,hit_bytes,fills,fill_bytes,refills,volatiles,untracked,flushes;size_t live();VkDeviceSize arena_bytes();}   // counter_ops: resets, timestamp reports, samples reports recorded
+bool no_occlusion_queries=false,samples_report_seen=false;uint64_t samples_reports=0,samples_reported=0,counter_ops[3]={};extern uint64_t pipeline_fast_hits;extern bool pipe_memo;extern uint64_t pipe_memo_hits,pipe_memo_misses;extern uint64_t snap_front_hits,snap_map_hits,snap_invalidations,snap_invalidated;extern std::atomic<uint64_t> quad_rewrites,warp_rewrites,laneid_rewrites,mali_guards,mali_clips,mali_nonwritables,ldc_folds,temps_forwarded,nan_minmax_swaps;namespace vcache{extern bool enabled;extern uint64_t hits,hit_bytes,fills,fill_bytes,refills,volatiles,untracked,flushes;size_t live();VkDeviceSize arena_bytes();}   // counter_ops: resets, timestamp reports, samples reports recorded
 // Resident uniform texel copies (texel_acquire, before descriptors()).
 struct TexelKey{uint64_t base,bytes;uint32_t format;bool operator==(const TexelKey &o)const{return base==o.base&&bytes==o.bytes&&format==o.format;}};
 struct TexelKeyHash{size_t operator()(const TexelKey &k)const{uint64_t x=k.base*0x9E3779B97F4A7C15ull^k.bytes*0xC2B2AE3D27D4EB4Full^k.format;x^=x>>29;return size_t(x*0xBF58476D1CE4E5B9ull);}};
@@ -693,6 +695,8 @@ void snapshot_invalidate(uint64_t address,uint64_t bytes);
 // word is made inaccessible, so a read of it that bypasses nvnEventGetValue faults and is counted (NVN PERF evguard), then
 // the page is opened again. Applying the event opens it first. Pages the dirty tracker or wtrack protect would conflict:
 // run it with gfx-vcache=0, gfx-tex-dirty=0 and gfx-wtrack=0.
+// 宿主页大小（xbg_page.h），evguard 与 wtrack 的 mprotect 都按它对齐 | the host page size (xbg_page.h); evguard and wtrack align their mprotect calls to it
+const xbg_page hostpage=xbg_page_host();
 namespace evguard {
 bool enabled=false;constexpr int slots_n=64;
 std::atomic<uintptr_t> page[slots_n],word[slots_n];   // guarded page; the pending event word in it (one per slot)
@@ -700,25 +704,25 @@ std::atomic<uint64_t> exact{0},other{0},writes{0},guards{0};std::atomic<uintptr_
 // The first faulting access of a guarded page and who made it: the caller (LR; bionic's memcpy is a leaf), x0-x5 at the fault,
 // and the pending event word on that page, so a bulk copy that crosses the word can be told from one that stops before it.
 std::atomic<uintptr_t> last_lr{0},last_word{0},last_x[6];std::atomic<uintptr_t> callers[8];std::atomic<uint64_t> caller_hits[8];
-inline uintptr_t pg(uintptr_t a){return a&~uintptr_t(4095);}
+inline uintptr_t pg(uintptr_t a){return xbg_page_floor(a,hostpage);}
 void reclose();
 void guard(uint64_t addr){if(!enabled)return;uintptr_t p=pg(uintptr_t(addr));
     for(int i=0;i<slots_n;i++)if(page[i].load()==p && word[i].load()==uintptr_t(addr))return;
     bool shut=false;for(int i=0;i<slots_n;i++)if(page[i].load()==p)shut=true;
     for(int i=0;i<slots_n;i++){uintptr_t z=0;if(word[i].compare_exchange_strong(z,uintptr_t(addr))){page[i]=p;break;}}
-    if(!shut){mprotect(reinterpret_cast<void*>(p),4096,PROT_NONE);++guards;}reclose();}
-void open(uintptr_t p){mprotect(reinterpret_cast<void*>(p),4096,PROT_READ|PROT_WRITE);for(int i=0;i<slots_n;i++)if(page[i].load()==p){page[i]=0;word[i]=0;}}
+    if(!shut){mprotect(reinterpret_cast<void*>(p),hostpage.size,PROT_NONE);++guards;}reclose();}
+void open(uintptr_t p){mprotect(reinterpret_cast<void*>(p),hostpage.size,PROT_READ|PROT_WRITE);for(int i=0;i<slots_n;i++)if(page[i].load()==p){page[i]=0;word[i]=0;}}
 // A faulting access opens its page but keeps the pending words; reclose() shuts such pages again (at every guard(), and
 // after each engine copy), so later reads of a word that is still pending fault too.
 std::atomic<bool> reopened[slots_n];std::atomic<uint64_t> engine_opens{0},recloses{0};
-void reclose(){for(int i=0;i<slots_n;i++)if(reopened[i].exchange(false)){uintptr_t p=page[i].load();if(p){mprotect(reinterpret_cast<void*>(p),4096,PROT_NONE);++recloses;}}}
+void reclose(){for(int i=0;i<slots_n;i++)if(reopened[i].exchange(false)){uintptr_t p=page[i].load();if(p){mprotect(reinterpret_cast<void*>(p),hostpage.size,PROT_NONE);++recloses;}}}
 // The engine's own copies of guest memory (stream_buffer) open the guarded pages they cover for the copy and shut them
 // after, so the guard stays on for guest reads; they are counted (engine_opens), not reported as faults.
 struct EngineRead{uintptr_t pages[8];int n=0;
     EngineRead(const void *src,size_t bytes){if(!enabled || !bytes)return;uintptr_t lo=pg(uintptr_t(src)),hi=pg(uintptr_t(src)+bytes-1);
         for(int i=0;i<slots_n && n<8;i++){uintptr_t q=page[i].load();if(!q || q<lo || q>hi)continue;bool dup=false;for(int k=0;k<n;k++)if(pages[k]==q)dup=true;
-            if(!dup){mprotect(reinterpret_cast<void*>(q),4096,PROT_READ|PROT_WRITE);pages[n++]=q;++engine_opens;}}}
-    ~EngineRead(){for(int k=0;k<n;k++){bool still=false;for(int i=0;i<slots_n;i++)if(page[i].load()==pages[k])still=true;if(still)mprotect(reinterpret_cast<void*>(pages[k]),4096,PROT_NONE);}}
+            if(!dup){mprotect(reinterpret_cast<void*>(q),hostpage.size,PROT_READ|PROT_WRITE);pages[n++]=q;++engine_opens;}}}
+    ~EngineRead(){for(int k=0;k<n;k++){bool still=false;for(int i=0;i<slots_n;i++)if(page[i].load()==pages[k])still=true;if(still)mprotect(reinterpret_cast<void*>(pages[k]),hostpage.size,PROT_NONE);}}
 };
 void unguard(uint64_t addr){if(!enabled)return;uintptr_t p=pg(uintptr_t(addr));for(int i=0;i<slots_n;i++)if(page[i].load()==p){open(p);return;}}
 int fault(void *a,int w,void *uc){uintptr_t x=uintptr_t(a),p=pg(x);bool mine=false,hit=false;
@@ -731,7 +735,7 @@ int fault(void *a,int w,void *uc){uintptr_t x=uintptr_t(a),p=pg(x);bool mine=fal
         for(int i=0;i<6;i++)last_x[i]=uintptr_t(mc.regs[i]);
         for(int i=0;i<8;i++){uintptr_t z=0;if(callers[i].load()==lr || callers[i].compare_exchange_strong(z,lr) || callers[i].load()==lr){++caller_hits[i];break;}}}
 #endif
-    mprotect(reinterpret_cast<void*>(p),4096,PROT_READ|PROT_WRITE);for(int i=0;i<slots_n;i++)if(page[i].load()==p)reopened[i]=true;return 1;}
+    mprotect(reinterpret_cast<void*>(p),hostpage.size,PROT_READ|PROT_WRITE);for(int i=0;i<slots_n;i++)if(page[i].load()==p)reopened[i]=true;return 1;}
 }
 void apply_event(uint64_t addr,uint32_t mode,uint32_t v){
     evguard::unguard(addr);snapshot_invalidate(addr,4);auto ptr=reinterpret_cast<uint32_t*>(addr);
@@ -933,7 +937,7 @@ void perf_frame(){
     xbg_logf("NVN PERF storage_snapshots_per_frame=%.1f union_mb_per_frame=%.2f",storage_snap_count/f,storage_pages.size()*4096.0/1048576.0/tf);storage_pages.clear();storage_snap_count=0;
     xbg_logf("NVN PERF wtrack copied_kb_per_frame=%.1f dirty_pages_per_frame=%.1f mismatches=%llu fallbacks=%llu",wtrack::copied_bytes/1024.0/f,wtrack::dirty_pages/f,(unsigned long long)wtrack::mismatches,(unsigned long long)wtrack::fallbacks);wtrack::copied_bytes=wtrack::dirty_pages=0;
     xbg_logf("NVN PERF uniform_trimmed_bindings=%llu snap_mb_per_frame other=%.2f vertex=%.2f index=%.2f storage=%.2f texel=%.2f uniform=%.2f requested vertex=%.2f index=%.2f storage=%.2f",(unsigned long long)uniform_trimmed,snap_site_bytes[0]/1048576.0/f,snap_site_bytes[1]/1048576.0/f,snap_site_bytes[2]/1048576.0/f,snap_site_bytes[3]/1048576.0/f,snap_site_bytes[4]/1048576.0/f,snap_site_bytes[5]/1048576.0/f,snap_site_req[1]/1048576.0/f,snap_site_req[2]/1048576.0/f,snap_site_req[3]/1048576.0/f);for(auto &b:snap_site_bytes)b=0;for(auto &b:snap_site_req)b=0;
-    xbg_logf("NVN PERF quad_rewrites=%llu warp_rewrites=%llu laneid_rewrites=%llu ldc_folds=%llu temps_forwarded=%llu nan_minmax=%llu",(unsigned long long)quad_rewrites.load(std::memory_order_relaxed),(unsigned long long)warp_rewrites.load(std::memory_order_relaxed),(unsigned long long)laneid_rewrites.load(std::memory_order_relaxed),(unsigned long long)ldc_folds.load(std::memory_order_relaxed),(unsigned long long)temps_forwarded.load(std::memory_order_relaxed),(unsigned long long)nan_minmax_swaps.load(std::memory_order_relaxed));
+    xbg_logf("NVN PERF mali guards=%llu clipcull=%llu nonwritable=%llu",(unsigned long long)mali_guards.load(std::memory_order_relaxed),(unsigned long long)mali_clips.load(std::memory_order_relaxed),(unsigned long long)mali_nonwritables.load(std::memory_order_relaxed));xbg_logf("NVN PERF quad_rewrites=%llu warp_rewrites=%llu laneid_rewrites=%llu ldc_folds=%llu temps_forwarded=%llu nan_minmax=%llu",(unsigned long long)quad_rewrites.load(std::memory_order_relaxed),(unsigned long long)warp_rewrites.load(std::memory_order_relaxed),(unsigned long long)laneid_rewrites.load(std::memory_order_relaxed),(unsigned long long)ldc_folds.load(std::memory_order_relaxed),(unsigned long long)temps_forwarded.load(std::memory_order_relaxed),(unsigned long long)nan_minmax_swaps.load(std::memory_order_relaxed));
     xbg_logf("NVN PERF snapfront front_hits=%.1f map_hits=%.1f invalidations=%.1f erased=%.1f",snap_front_hits/f,snap_map_hits/f,snap_invalidations/f,snap_invalidated/f);xbg_logf("NVN PERF textures bc_native=%llu bc_decoded=%llu live_images=%.1fMB bc_images=%.1fMB bc_payload=%.1fMB",(unsigned long long)native_bc_images,(unsigned long long)decoded_bc_images,image_bytes_live/1048576.0,bc_image_bytes_live/1048576.0,bc_data_bytes_live/1048576.0);snap_front_hits=snap_map_hits=snap_invalidations=snap_invalidated=0;
     if(bright::enabled){xbg_logf("NVN PERF bright applied=%.2f k=%.2f",bright::applied/f,bright::last_k);bright::applied=0;}
     if(tex_dirty){xbg_logf("NVN PERF texdirty tracked=%.1f checks=%.1f changed=%.1f",tex_dirty_tracked/f,tex_dirty_checks/f,tex_dirty_changed/f);tex_dirty_tracked=tex_dirty_checks=tex_dirty_changed=0;}
@@ -1076,8 +1080,8 @@ Region regions[max_regions];std::atomic<unsigned> nregions{0};struct sigaction p
 // Re-enable writes to the tracked pages in [a,a+len) and mark them dirty. Signal-safe: atomics and mprotect only.
 bool unprotect(uintptr_t a,size_t len){if(!len || a>UINTPTR_MAX-len)return false;bool any=false;unsigned n=nregions.load(std::memory_order_acquire);
     for(unsigned i=0;i<n;i++){uintptr_t b=regions[i].begin.load(std::memory_order_relaxed),e=regions[i].end.load(std::memory_order_relaxed);
-        uintptr_t lo=std::max(a,b),hi=std::min(a+len,e);if(lo>=hi)continue;size_t p0=(lo-b)>>12,p1=(hi-1-b)>>12;
-        if(mprotect(reinterpret_cast<void*>(b+(p0<<12)),(p1-p0+1)<<12,PROT_READ|PROT_WRITE))continue;
+        uintptr_t lo=std::max(a,b),hi=std::min(a+len,e);if(lo>=hi)continue;size_t p0=(lo-b)>>hostpage.shift,p1=(hi-1-b)>>hostpage.shift;
+        if(mprotect(reinterpret_cast<void*>(b+(p0<<hostpage.shift)),(p1-p0+1)<<hostpage.shift,PROT_READ|PROT_WRITE))continue;
         for(size_t pg=p0;pg<=p1;pg++)regions[i].dirty[pg].store(1,std::memory_order_release);any=true;}
     return any;}
 void handler(int sig,siginfo_t *si,void *uc){
@@ -1094,12 +1098,12 @@ bool activate(Tracked &t){
     if(!installed){   // a host that routes faults to xbg_wtrack_fault marks this installed (xbg_wtrack_use_host_hooks)
         struct sigaction sa{};sa.sa_sigaction=handler;sa.sa_flags=SA_SIGINFO|SA_ONSTACK|SA_NODEFER;sigemptyset(&sa.sa_mask);if(sigaction(SIGSEGV,&sa,&previous)){enabled=false;return false;}installed=true;}
     unsigned n=nregions.load();if(n>=max_regions)return false;
-    t.pbegin=uintptr_t(t.address)&~uintptr_t(4095);uintptr_t pend=(uintptr_t(t.address)+t.bytes+4095)&~uintptr_t(4095);
+    t.pbegin=xbg_page_floor(uintptr_t(t.address),hostpage);uintptr_t pend=xbg_page_ceil(uintptr_t(t.address)+t.bytes,hostpage);
     for(unsigned i=0;i<n;i++){uintptr_t b=regions[i].begin.load(),e=regions[i].end.load();if(t.pbegin<e && pend>b)return false;} // overlapping regions unsupported
     // Pages the HLE's dirty-page tracker has ever protected (the vertex/index cache) are its for good: its fault hook runs
     // first and takes a fault on such a page as already handled, so a protection of ours there would re-fault forever.
-    if(nvn_dirty_since && nvn_dirty_tracked)for(uintptr_t pg=t.pbegin;pg<pend;pg+=4096){const void *q=reinterpret_cast<const void*>(pg);if(nvn_dirty_tracked(q,1) && nvn_dirty_since(q,1,0)){xbg_logf("NVN wtrack region refused addr=%#llx: page %#llx belongs to the dirty-page tracker",(unsigned long long)t.address,(unsigned long long)pg);return false;}}
-    size_t npages=(pend-t.pbegin)>>12;
+    if(nvn_dirty_since && nvn_dirty_tracked)for(uintptr_t pg=t.pbegin;pg<pend;pg+=hostpage.size){const void *q=reinterpret_cast<const void*>(pg);if(nvn_dirty_tracked(q,1) && nvn_dirty_since(q,1,0)){xbg_logf("NVN wtrack region refused addr=%#llx: page %#llx belongs to the dirty-page tracker",(unsigned long long)t.address,(unsigned long long)pg);return false;}}
+    size_t npages=(pend-t.pbegin)>>hostpage.shift;
     auto *dirty=new std::atomic<uint8_t>[npages];for(size_t i=0;i<npages;i++)dirty[i].store(0);
     for(auto &v:t.v){
         VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};ci.size=t.bytes;ci.usage=arena_usage;ci.sharingMode=VK_SHARING_MODE_EXCLUSIVE;VK(vkCreateBuffer(cfg.device,&ci,nullptr,&v.buffer));
@@ -1113,7 +1117,7 @@ bool activate(Tracked &t){
     t.npages=npages;xbg_logf("NVN wtrack region=%u addr=%#llx bytes=%zu pages=%zu",n,(unsigned long long)t.address,t.bytes,t.npages);return true;
 }
 void copy_page(Tracked &t,Version &v,size_t pg){
-    uint64_t lo=std::max<uint64_t>(t.address,t.pbegin+(pg<<12)),hi=std::min<uint64_t>(t.address+t.bytes,t.pbegin+((pg+1)<<12));
+    uint64_t lo=std::max<uint64_t>(t.address,t.pbegin+(pg<<hostpage.shift)),hi=std::min<uint64_t>(t.address+t.bytes,t.pbegin+((pg+1)<<hostpage.shift));
     if(hi>lo){memcpy(v.mapped+(lo-t.address),reinterpret_cast<const void*>(uintptr_t(lo)),size_t(hi-lo));copied_bytes+=hi-lo;}
 }
 bool snapshot(uint64_t address,size_t bytes,Buffer &out){
@@ -1125,7 +1129,7 @@ bool snapshot(uint64_t address,size_t bytes,Buffer &out){
     for(size_t pg=0;pg<t.npages;){
         if(!r.dirty[pg].exchange(0,std::memory_order_acq_rel)){++pg;continue;}
         size_t end=pg+1;while(end<t.npages && r.dirty[end].exchange(0,std::memory_order_acq_rel))++end;
-        if(mprotect(reinterpret_cast<void*>(t.pbegin+(pg<<12)),(end-pg)<<12,PROT_READ)){enabled=false;xbg_logf("NVN wtrack mprotect failed errno=%d; disabled",errno);return false;}
+        if(mprotect(reinterpret_cast<void*>(t.pbegin+(pg<<hostpage.shift)),(end-pg)<<hostpage.shift,PROT_READ)){enabled=false;xbg_logf("NVN wtrack mprotect failed errno=%d; disabled",errno);return false;}
         for(size_t i=pg;i<end;i++)for(auto &v:t.v)v.stale[i]=1;dirty_pages+=end-pg;pg=end;
     }
     Version *pick=nullptr;
@@ -1137,7 +1141,7 @@ bool snapshot(uint64_t address,size_t bytes,Buffer &out){
     // Spot check for writes the fault path missed: 16 pages per use, cycling through the range (a full pass of a 19.6 MB
     // buffer every ~300 uses, about the old rate). Reading the copy back is slow (arena memory on Adreno 730 reads at
     // ~1.1 GB/s), so the former check of the whole range every 240 uses read 19.6 MB in one frame, ~18 ms at that speed.
-    ++t.uses;{size_t bad=0;for(unsigned k=0;k<16 && k<t.npages;k++){size_t pg=t.verify_next++%t.npages;uint64_t lo=std::max<uint64_t>(t.address,t.pbegin+(pg<<12)),hi=std::min<uint64_t>(t.address+t.bytes,t.pbegin+((pg+1)<<12));
+    ++t.uses;{size_t bad=0;for(unsigned k=0;k<16 && k<t.npages;k++){size_t pg=t.verify_next++%t.npages;uint64_t lo=std::max<uint64_t>(t.address,t.pbegin+(pg<<hostpage.shift)),hi=std::min<uint64_t>(t.address+t.bytes,t.pbegin+((pg+1)<<hostpage.shift));
             if(hi>lo && memcmp(pick->mapped+(lo-t.address),reinterpret_cast<const void*>(uintptr_t(lo)),size_t(hi-lo))){++bad;copy_page(t,*pick,pg);}}
         if(bad){mismatches+=bad;xbg_logf("NVN wtrack MISMATCH addr=%#llx pages=%zu (untracked writes; resynced)",(unsigned long long)t.address,bad);}}
     if(!pick->coherent){VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};mr.memory=pick->memory;mr.size=VK_WHOLE_SIZE;VK(vkFlushMappedMemoryRanges(cfg.device,1,&mr));}
@@ -1881,6 +1885,25 @@ void warp_rewrite(std::vector<uint32_t> &words,uint32_t stage,const char *key,co
         xbg_logf("NVN warp32 shader=%s loader=%s subgroupSize=%u rewrites=%zu",key,loader,subgroup.subgroupSize,k);
     }
 }
+// Mali 载入改写（xbg_spirv_mali.cpp）：子组窄于 32 道时给 shuffle 加越界保护（5 个按 32 道线程束写的计算着色器的蝶形归约），设备没有
+// shaderClipDistance / shaderCullDistance 时去掉从不写入的 gl_PerVertex ClipDistance / CullDistance（Mali 驱动编译这种声明曾崩），设备没有
+// vertexPipelineStoresAndAtomics 时给顶点 / 细分 / 几何阶段只读的存储块补 NonWritable。标记 gfx-mali / DM_GFX_MALI：0 关、1 三项都开、
+// 2（缺省）按设备能力自动开；Adreno 740 三项能力都有，自动模式下不改任何模块。两个载入路径都做，在 warp32 改写之前。
+// Mali load-time rewrites (xbg_spirv_mali.cpp): a range guard on shuffles when subgroups are narrower than 32 lanes (the butterfly
+// reductions of the 5 compute shaders written for 32-lane warps), stripping never-written gl_PerVertex ClipDistance / CullDistance when the
+// device lacks shaderClipDistance / shaderCullDistance (the Mali driver compiler once crashed on them), and NonWritable on read-only storage
+// blocks of vertex / tessellation / geometry stages when the device lacks vertexPipelineStoresAndAtomics. Marker gfx-mali / DM_GFX_MALI:
+// 0 off, 1 all three on, 2 (default) each by device capability; the Adreno 740 has all three capabilities, so auto mode changes no module
+// there. Both module loaders apply it, before the warp32 rewrite.
+bool mali_guard=false,mali_clip=false,mali_nonwritable=false;std::atomic<uint64_t> mali_guards{0},mali_clips{0},mali_nonwritables{0};
+void mali_rewrite(std::vector<uint32_t> &words,uint32_t stage,const char *key,const char *loader){
+    std::vector<uint32_t> out;
+    if(mali_guard && stage==5){size_t k=xbg_spirv_shuffle_guard(words.data(),words.size(),subgroup.subgroupSize,out);
+        if(k){validate_capabilities(out,stage);words.swap(out);mali_guards.fetch_add(k,std::memory_order_relaxed);xbg_logf("NVN mali shuffle guard shader=%s loader=%s subgroupSize=%u shuffles=%zu",key,loader,subgroup.subgroupSize,k);}}
+    if(stage>3)return;
+    if(mali_clip && xbg_spirv_strip_clipcull(words.data(),words.size(),out)){words.swap(out);mali_clips.fetch_add(1,std::memory_order_relaxed);}
+    if(mali_nonwritable && xbg_spirv_nonwritable(words.data(),words.size(),out)){words.swap(out);mali_nonwritables.fetch_add(1,std::memory_order_relaxed);}
+}
 // 子组 lane 号改走 ballot（xbg_spirv_laneid.cpp）：Adreno 740 驱动 512.676.53 在含 shuffle 的计算着色器里把 SubgroupLocalInvocationId 读成 0，warp32 改写
 // 靠它选线程束，于是 GPU 挂起。放在 warp32 改写之后，只改计算着色器。按启动自检（laneid_probe，下）启用：标记 gfx-laneid-ballot / DM_GFX_LANEID_BALLOT
 // = 0 关、1 强开、2（默认）自检判定 builtin 不可用时才开。
@@ -1969,7 +1992,7 @@ Shader *load_shader(const void *control){
     // gfx-shader-reuse：预热线程已改写过这个着色器时直接取用；2 时照样改写，与取来的逐字比对。
     // gfx-shader-reuse: take the warm-up threads' rewrite of this shader when there is one; with 2, rewrite as well and compare word by word.
     std::vector<uint32_t> reused;const bool have_reused=shader_reuse && !ab_off("shreuse") && warm::take_rewritten(key,reused);
-    if(!have_reused || shader_reuse==2){quad_rewrite(words,h.stage,key.c_str(),"runtime");warp_rewrite(words,h.stage,key.c_str(),"runtime");laneid_rewrite(words,h.stage,key.c_str(),"runtime");tidy_rewrite(words);
+    if(!have_reused || shader_reuse==2){quad_rewrite(words,h.stage,key.c_str(),"runtime");mali_rewrite(words,h.stage,key.c_str(),"runtime");warp_rewrite(words,h.stage,key.c_str(),"runtime");laneid_rewrite(words,h.stage,key.c_str(),"runtime");tidy_rewrite(words);
         if(have_reused && reused!=words){++shader_reuse_mismatches;xbg_logf("NVN shader reuse MISMATCH %s stage=%u words=%zu/%zu",key.c_str(),h.stage,reused.size(),words.size());}}
     else words.swap(reused);
     if(have_reused)++shaders_reused;
@@ -2091,7 +2114,7 @@ VkShaderModule load_module(const std::string &key){
     fseek(f,0,SEEK_END);long n=ftell(f);rewind(f);if(n<32 || n>16*1024*1024){fclose(f);return VK_NULL_HANDLE;}std::vector<uint8_t> b(static_cast<size_t>(n));bool ok=fread(b.data(),1,b.size(),f)==b.size();fclose(f);if(!ok)return VK_NULL_HANDLE;
     xbg_shader_header h;memcpy(&h,b.data(),sizeof(h));if(h.magic!=0x31534758 || h.version!=1 || h.spirv_bytes%4)return VK_NULL_HANDLE;
     size_t off=sizeof(h)+size_t(h.binding_count)*sizeof(xbg_shader_binding)+size_t(h.input_count)*4+h.c1_bytes;if(off+h.spirv_bytes!=b.size())return VK_NULL_HANDLE;
-    std::vector<uint32_t> w(h.spirv_bytes/4);memcpy(w.data(),b.data()+off,h.spirv_bytes);spv_override(key,w);quad_rewrite(w,h.stage,key.c_str(),"warm");warp_rewrite(w,h.stage,key.c_str(),"warm");laneid_rewrite(w,h.stage,key.c_str(),"warm");tidy_rewrite(w);
+    std::vector<uint32_t> w(h.spirv_bytes/4);memcpy(w.data(),b.data()+off,h.spirv_bytes);spv_override(key,w);quad_rewrite(w,h.stage,key.c_str(),"warm");mali_rewrite(w,h.stage,key.c_str(),"warm");warp_rewrite(w,h.stage,key.c_str(),"warm");laneid_rewrite(w,h.stage,key.c_str(),"warm");tidy_rewrite(w);
     if(keep_rewritten){std::lock_guard<std::mutex> l(mu);rewritten.emplace(key,w);}
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};ci.codeSize=w.size()*4;ci.pCode=w.data();VkShaderModule m;if(vkCreateShaderModule(cfg.device,&ci,nullptr,&m)!=VK_SUCCESS)return VK_NULL_HANDLE;
     std::lock_guard<std::mutex> l(mu);auto ins=modules.emplace(key,m);if(!ins.second){vkDestroyShaderModule(cfg.device,m,nullptr);return ins.first->second;}return m;
@@ -3742,6 +3765,11 @@ extern "C" int xbg_game_initialize(const xbg_game_config *c,char *error,size_t b
      if(q){quad_derivatives=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_QUAD_DERIVATIVES"))quad_derivatives=atoi(e)!=0;xbg_logf("NVN quad shuffles to fine derivatives=%d (marker gfx-quad-derivatives)",int(quad_derivatives));}
     {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-warp32").c_str(),"rb");warp32=false;
      if(q){warp32=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_WARP32"))warp32=atoi(e)!=0;xbg_logf("NVN 32-lane warps in wider subgroups=%d subgroup=%u (marker gfx-warp32)",int(warp32),subgroup.subgroupSize);}
+    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-mali").c_str(),"rb");int mode=2;
+     if(q){int c=fgetc(q);mode=c=='0'?0:c=='1'?1:2;fclose(q);}else if(const char *e=getenv("DM_GFX_MALI")){int v=atoi(e);mode=v==0?0:v==1?1:2;}
+     VkPhysicalDeviceFeatures have{};vkGetPhysicalDeviceFeatures(cfg.physical,&have);const uint32_t sg=subgroup.subgroupSize;const bool narrow=sg && sg<32 && !(sg&(sg-1));
+     mali_guard=mode!=0 && narrow;mali_clip=mode==1 || (mode==2 && (!have.shaderClipDistance || !have.shaderCullDistance));mali_nonwritable=mode==1 || (mode==2 && !have.vertexPipelineStoresAndAtomics);
+     xbg_logf("NVN mali rewrites mode=%d shuffle_guard=%d strip_clipcull=%d nonwritable=%d subgroup=%u clip=%u cull=%u vertexStores=%u (marker gfx-mali)",mode,int(mali_guard),int(mali_clip),int(mali_nonwritable),sg,have.shaderClipDistance,have.shaderCullDistance,have.vertexPipelineStoresAndAtomics);}
     {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-laneid-ballot").c_str(),"rb");laneid_ballot=2;
      if(q){int c=fgetc(q);laneid_ballot=c=='0'?0:c=='1'?1:2;fclose(q);}else if(const char *e=getenv("DM_GFX_LANEID_BALLOT")){int v=atoi(e);laneid_ballot=v==0?0:v==1?1:2;}
      unsigned distinct=0,expect=0;int probe=laneid_ballot==2?laneid_probe(distinct,expect):-2;   // -2: 没自检 | not probed
