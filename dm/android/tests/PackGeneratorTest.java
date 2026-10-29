@@ -85,6 +85,8 @@ public class PackGeneratorTest {
         String clean = PackGenerator.scrubLog(raw, "/data/app/~~Ab12==/com.xiaoboluo.d2r-Cd34==", "/data/user/0/com.xiaoboluo.d2r", "com.xiaoboluo.d2r");
         equal("rt ~/files/dmgen/rt\nexe <apk>/lib/arm64/libdmgen_py.so\nin ~/Download/S2X/D2R Mobile/ExeFS/main\nold ~/files\n~/Download/x\npkg <app-id>\nfont=f4b8a34d1f83 step ok", clean);
         equal(false, clean.contains("/data/") || clean.contains("/storage/") || clean.contains("xiaoboluo"));
+        // 五审 A5-04：工作资料 / 多用户的共享存储用户号不是 0 | fifth audit A5-04: shared storage of work profiles / other users is not 0
+        equal("in ~/Download/a\nkeep /storage/emulated/legacy", PackGenerator.scrubLog("in /storage/emulated/10/Download/a\nkeep /storage/emulated/legacy", null, null, "com.xiaoboluo.d2r"));
         File broken = temp(); write(new File(broken, "out/x"), "x");
         try { PackGenerator.install(broken, temp()); throw new AssertionError("install of an incomplete pack must fail"); }
         catch (IOException expected) { cases++; }
