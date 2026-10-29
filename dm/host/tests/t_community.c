@@ -268,6 +268,13 @@ int main(void) {
         CHECK(dm_community_channel_value(DM_CH_SITE, full, sizeof full, shown, sizeof shown) && !strcmp(full, "https://d2rplus.example.com/") && !strcmp(shown, "d2rplus.example.com"));
         CHECK(dm_community_channel_value(DM_CH_GITHUB, full, sizeof full, shown, sizeof shown) && !strcmp(full, "https://github.com/example/d2r-mobile-plus") && !strcmp(shown, "d2r-mobile-plus"));
         CHECK(dm_community_channel_value(DM_CH_QQ, full, sizeof full, shown, sizeof shown) && !strcmp(full, "1129913678") && !strcmp(shown, "1129913678"));
+        // RC1.1 终版审计 P2-4：显示 owner/repo 的 repo 段，不是路径最后一段；复制仍是完整地址 | final audit P2-4: show the repo segment of owner/repo, not the last path segment; copy keeps the full URL
+        { static const struct { const char *url, *want; } gh_cases[] = { { "https://github.com/example/d2r-mobile-plus/discussions", "d2r-mobile-plus" }, { "https://github.com/example/d2r-mobile-plus/", "d2r-mobile-plus" },
+              { "https://github.com/example/d2r-mobile-plus/releases/tag/v1", "d2r-mobile-plus" }, { "https://github.com/example", "example" } };
+          for (size_t k = 0; k < sizeof gh_cases / sizeof *gh_cases; k++) { char mj[512]; snprintf(mj, sizeof mj, "{\"community\": {\"github\": \"%s\"}}", gh_cases[k].url);
+              if (dm_community_manifest(mj, strlen(mj)) != 1) { CHECK(!"manifest"); continue; }
+              CHECK(dm_community_channel_value(DM_CH_GITHUB, full, sizeof full, shown, sizeof shown) && !strcmp(full, gh_cases[k].url) && !strcmp(shown, gh_cases[k].want)); }
+          CHECK(dm_community_manifest(s1, strlen(s1)) == 1); }   // 换回本段的清单 | back to this block's manifest
         dm_community_copy_init(copy_ok); atomic_store(&g_show, 2); unsigned c0 = dm_community_copy_count();
         t_group = DM_LG_ZH; log_reset(); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy1"); CHECK(!strcmp(copied, "https://d2rplus.example.com/")); CHECK(strstr(log_text(), "社区入口：复制 官网"));
         dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy0"); CHECK(!strcmp(copied, "1129913678")); CHECK(atomic_load(&g_copied_row) == 0);

@@ -268,7 +268,11 @@ int dm_community_channel_value(int ch, char *full, size_t nf, char *shown, size_
     if (full && nf) snprintf(full, nf, "%s", v);
     if (shown && ns) { const char *a = v; size_t L = strlen(v);
         if (ch != DM_CH_QQ) { a = v + strlen("https://"); L = strlen(a); if (L > 1 && a[L - 1] == '/') L--; }
-        if (ch == DM_CH_GITHUB) { const char *e = a + L, *q = e; while (q > a && q[-1] != '/') q--; if (q < e) { L = (size_t)(e - q); a = q; } }   // 仓库名 = 路径最后一段 | repository name = last path segment
+        if (ch == DM_CH_GITHUB) {   // 仓库名 = github.com/<owner>/<repo>/… 的 <repo> 那一段（RC1.1 终版审计 P2-4：原先取最后一段，…/d2r-mobile-plus/discussions 显示成 discussions）；没有第三段才退回最后一段
+                                    // repository name = the <repo> segment of github.com/<owner>/<repo>/... (final audit P2-4: the last segment used to be taken, so .../d2r-mobile-plus/discussions showed "discussions"); falls back to the last segment only without a third one
+            const char *e = a + L, *s1 = memchr(a, '/', L), *s2 = s1 ? memchr(s1 + 1, '/', (size_t)(e - s1 - 1)) : NULL;
+            if (s2 && s2 + 1 < e) { const char *r = s2 + 1, *re = memchr(r, '/', (size_t)(e - r)); a = r; L = (size_t)((re ? re : e) - r); }
+            else { const char *q = e; while (q > a && q[-1] != '/') q--; if (q < e) { L = (size_t)(e - q); a = q; } } }
         snprintf(shown, ns, "%.*s", (int)L, a); }
     return 1;
 }
