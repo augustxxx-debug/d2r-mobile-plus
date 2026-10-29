@@ -507,8 +507,25 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
         // while the box is up, the pause / main menu row that opened it moves away (its hover / focus glow showed outside the box as if still active; it comes back with focus on close); the Custom page row is frozen
         co_entry_show(co_find(p, i == 0 ? "TouchAboutRow" : i < 3 ? "TouchCommunity" : "TouchCommunityFe", 0), i == 0 ? avail : avail && !atomic_load(&g_show), &home[i]);
     }
-    int st = atomic_load(&g_show); if (!st) return;
+    // 底下菜单的焦点金框（RC1.1 冒烟 PARENTHL，用户点名阻塞）：手柄模式开框时点开它的那一行被挪开，原版就把焦点（连同金框）挪到「进入游戏」等别的行，框外还亮着一个能按的样子
+    // （同一下 A 漏下去时直接进了游戏，审计 P2-1）。开着时把焦点管理器的焦点控件（[界面根+0xd0]+0x190，B015 也这样摆焦点）清空、每帧保持，金框不画；
+    // 开框那一刻的焦点控件记下，关掉后它还在界面树里就交还焦点（行已在上面挪回原位），玩家回到点开它的那一行
+    // The focus frame of the menu underneath (RC1.1 smoke PARENTHL, a blocker): in controller mode the row that opened the box moves away, so the game moved the focus (and its gold frame) to
+    // "Play" or another row, lit up outside the box as if usable (and the leaked A started the game, audit P2-1). While the box is up the focus manager's focused widget ([UI root+0xd0]+0x190,
+    // as B015 sets focus) is cleared every frame, so no frame is drawn; the widget focused when the box opened is remembered and gets the focus back after it closes if still in the UI tree
+    // (the row has been moved back above), returning the player to the row that opened it
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current(), mode = atomic_load(&g_mode);
+    { static uint64_t saved; static char saved_nm[64]; static int held; uint64_t fm = *(uint64_t *)(root + 0xd0);
+      if (atomic_load(&g_show) && fm && pad) {
+          uint64_t F = *(uint64_t *)(fm + 0x190);
+          if (!held) { held = 1; saved = F; const char *nm = F ? *(const char **)(F + 8) : NULL; snprintf(saved_nm, sizeof saved_nm, "%s", nm ? nm : ""); if (F) LOG("社区入口：开框时藏起底下菜单的焦点（原在 %s）", saved_nm); }
+          if (F) *(uint64_t *)(fm + 0x190) = 0; }
+      else if (held && !atomic_load(&g_show)) { held = 0;
+          uint64_t w = saved && saved_nm[0] ? co_find(root, saved_nm, 0) : 0;
+          if (fm && w && w == saved) { *(uint64_t *)(fm + 0x190) = saved; LOG("社区入口：关框后焦点交还 %s", saved_nm); }
+          else if (saved) LOG("社区入口：关框后原焦点控件 %s 已不在界面树里，不交还", saved_nm);
+          saved = 0; } }
+    int st = atomic_load(&g_show); if (!st) return;
     static int wait; int which = 0; uint64_t p = co_host(root, &which);
     if (!p) { if (st == 1 && ++wait == 600) { wait = 0; atomic_store(&g_show, 0); LOG("【红】社区入口：开着的面板里没有提示框控件（原版布局？），只记日志不显示"); }
               else if (st == 2) { atomic_store(&g_show, 0); LOG("社区入口：所在面板已关，提示框作废"); }
