@@ -103,6 +103,11 @@ COMPONENTS = [
     ('nvn.h (graphics interface declarations)', 'as in dm/gfx/nvn/include/nvn.h', 'MIT (Copyright (c) 2020 h1k421)', 'lib/arm64-v8a/libdm.so', 'author named in the file header', ('file', 'nvn')),
     ('deko3d texture layout algorithm (ported into dm/gfx/nvn/nvn_tex.c)', 'source/dk_image.cpp', 'Zlib (Copyright (C) 2018-2020 fincs)', 'lib/arm64-v8a/libdmdeswizzle.so, libdm.so',
      'https://github.com/devkitPro/deko3d', ('note', ZLIB_DEKO3D)),
+    ('SPIRV-Tools library (optimizer passes compiled into the Vulkan graphics layer; inlines shader helper functions at load on the Adreno 750 family)',
+     'v2026.3 (tag vulkan-sdk-1.4.357.0; the library sources vendored unmodified in dm/third_party/spirv-tools)', 'Apache-2.0', 'lib/arm64-v8a/libdm.so',
+     'https://github.com/KhronosGroup/SPIRV-Tools', ('file', 'spirv-tools-lib')),
+    ('SPIRV-Headers (compiled into the SPIRV-Tools library above)', 'tag vulkan-sdk-1.4.357.0 (the 9 headers in dm/third_party/spirv-tools/spirv-headers)', 'MIT (Khronos)',
+     'lib/arm64-v8a/libdm.so (compiled in)', 'https://github.com/KhronosGroup/SPIRV-Headers', ('file', 'spirv-headers-lib')),
     ('LXGW WenKai (霞鹜文楷) Medium', 'v1.530', 'SIL Open Font License 1.1 (shipped unmodified, licence also at assets/dmgen/font/OFL.txt)', 'assets/dmgen/font/LXGWWenKai-Medium.ttf',
      'https://github.com/lxgw/LxgwWenKai', ('file', 'ofl')),
 ]
@@ -139,7 +144,8 @@ def main():
     dm = Path(__file__).resolve().parents[2]
     files = {'spirv-tools': [a.spirv / 'LICENSE'], 'spirv-headers': [a.spirv / 'external/spirv-headers/LICENSE'],
              'dotnet': [a.dotnet_pack / 'LICENSE.TXT', a.dotnet_pack / 'THIRD-PARTY-NOTICES.TXT'], 'ryujinx': [dm / 'third_party/ryujinx/LICENSE.txt'], 'ofl': [a.font_license],
-             'libdeflate': [dm / 'third_party/libdeflate/COPYING'], 'bcdec': [dm / 'third_party/bcdec/LICENSE'], 'nvn': [dm / 'gfx/nvn/include/nvn.h']}
+             'libdeflate': [dm / 'third_party/libdeflate/COPYING'], 'bcdec': [dm / 'third_party/bcdec/LICENSE'], 'nvn': [dm / 'gfx/nvn/include/nvn.h'],
+             'spirv-tools-lib': [dm / 'third_party/spirv-tools/LICENSE'], 'spirv-headers-lib': [dm / 'third_party/spirv-tools/spirv-headers/LICENSE']}
     for f in EXTRA:
         if not (a.extra / f).is_file(): raise SystemExit('缺 %s（%s）' % (a.extra / f, EXTRA[f]))
     out = io.StringIO()
