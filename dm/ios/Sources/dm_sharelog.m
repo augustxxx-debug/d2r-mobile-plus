@@ -79,7 +79,7 @@ static NSURL *build_file(void) {
     [h appendFormat:@"\n—— Plus graphics (applied values; no pending UI changes) ——\nMetalFX enabled=%d selected=%s effective=%s lastEligiblePassActive=%d supported=%d (-1=not-probed) fallback=%s\n", dm_custom_get("upscale"), selected>=0 && selected<4 ? profiles[selected] : "unknown", effective>=0 && effective<5 ? profiles[effective] : "unknown", graphics.active, graphics.supported, graphics.fallback>=0 && graphics.fallback<4 ? fallback[graphics.fallback] : "unknown"];
     [h appendFormat:@"FPS target=%d renderScale=%.3f lastUpscaleInput=%ux%u lastUpscaleOutput=%ux%u\n", dm_fps_setting(), dm_3d_scale_cur(), graphics.input_width, graphics.input_height, graphics.output_width, graphics.output_height];
     [h appendString:@"Enhanced preferences (applied):"];
-    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above" };
+    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above", "free_tp" };
     for (unsigned i=0;i<sizeof custom/sizeof *custom;i++) [h appendFormat:@" %s=%d",custom[i],dm_custom_get(custom[i])];
     [h appendString:@"\n"];
     [h appendFormat:@"Log export: at most %lu bytes per log; omitted prefix bytes current=%llu previous=%llu. Original log files are unchanged.\n", (unsigned long)log_limit,cur_omitted,prev_omitted];

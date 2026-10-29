@@ -55,12 +55,15 @@ static void apply(void) {
     if (!g_pad_mode || !on[0]) ax[0] = ax[1] = 0; if (!g_pad_mode || !on[1]) ax[2] = ax[3] = 0;   // 触屏模式不交摇杆；手柄模式下没推出来的给 0 | Sticks are not delivered in touch mode; in controller mode a stick that is not pushed out gives 0
     // ZR：原版六个技能格之一。这一格空着（没绑技能）时按它 = 免费回城（手柄玩家也免费回城，与触屏回城钮一致）；绑了技能就整颗交还原版（不再整颗占用）。
     // 想把回城放在别的键上：原版选技能界面「综合技能」里有回城技能可绑（宿主进局时挂上的，dm_freetp.c），那条走原版自己的施放，不经这里。
+    // 以上只在自定义页「免费回城」开着时（free_tp，缺省关）：关着时 dm_freetp_zr_free 恒 0，ZR 整颗交还原版，也不挂回城技能。
     // 只在游戏态接管：面板开着时 ZR 照常交给原版（储藏箱 / 编年史用 ZL / ZR 翻页签）；按下时在游戏态接管的那一下，到松开前都不交给游戏
     // ZR: one of the six original skill slots. While this slot is empty (no skill bound), pressing it = free town portal (controller players get
     // the free town portal too, consistent with the touch town portal button); once a skill is bound the whole button is handed back to the
     // original game (we no longer claim the whole button).
     // To put town portal on another key: the original skill selection screen has a town portal skill under "General Skills" that can be bound
     // (attached by the host on joining a run, dm_freetp.c); that one goes through the original game's own cast and does not pass through here.
+    // All of the above only while the Custom page's "Free Town Portal" is on (free_tp, off by default): while off dm_freetp_zr_free is always 0,
+    // ZR goes back to the original game entirely and the town portal skill is not attached.
     // Taken over only in game state: with a panel open ZR goes to the original game as usual (the stash / Chronicle use ZL / ZR to switch tabs);
     // a press that was taken over in game state is not handed to the game until it is released
     { static uint64_t prev; static int mine; void dm_tp_request(void); int dm_front_navigation(void), dm_freetp_zr_free(int zl);

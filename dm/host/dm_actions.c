@@ -490,18 +490,22 @@ uint64_t dm_swapskill_filter(uint64_t raw) {
     prev = raw; return out;
 }
 // 测试开关 DM_TEST_BINDTBL（造现场，产品不设）：原版手柄技能绑定表 main+0x2d5f0c0（32 格 × 28 字节，前 4 字节 = 技能号）。
-//   log：进局后每变一次打一行；clear:<格>[,<格>…]：进局 3 秒后把这几格的技能号写成空格的值（取表里第一个现成的空格值），造「这个键没有技能」
+//   log：进局后每变一次打一行；clear:<格>[,<格>…]：进局 3 秒后把这几格的技能号写成空格的值（取表里第一个现成的空格值），造「这个键没有技能」；
+//   set:<格>=<技能>[,<格>=<技能>…]：进局 3 秒后把这几格写成该技能号，造「存档里这个键绑着某技能」（如免费回城关着时老绑定的回城技能 411，dm_freetp.c）
 // Test switch DM_TEST_BINDTBL (scene setup, not set in the product): the original gamepad skill binding table main+0x2d5f0c0 (32 slots × 28 bytes, first 4 bytes = skill ID).
-//   log: after entering the game, prints a line on every change; clear:<slot>[,<slot>...]: 3 seconds after entering the game, writes the skill ID of these slots as the empty slot value (taken from the first existing empty slot value in the table), producing "this key has no skill"
+//   log: after entering the game, prints a line on every change; clear:<slot>[,<slot>...]: 3 seconds after entering the game, writes the skill ID of these slots as the empty slot value (taken from the first existing empty slot value in the table), producing "this key has no skill";
+//   set:<slot>=<skill>[,<slot>=<skill>...]: 3 seconds after entering the game, writes that skill ID into these slots, producing "the save binds this key to a skill" (e.g. an old binding of town portal skill 411 while free town portal is off, dm_freetp.c)
 static void test_bindtbl(uint8_t *b, uint64_t pl) {
-    static int mode = -1; static int clr[8], nclr; if (mode < 0) { const char *e = getenv("DM_TEST_BINDTBL"); mode = 0;
-        if (e && !strcmp(e, "log")) mode = 1; else if (e && !strncmp(e, "clear:", 6)) { mode = 2; for (const char *c = e + 6; c && *c && nclr < 8; c = strchr(c, ',') ? strchr(c, ',') + 1 : NULL) clr[nclr++] = atoi(c); } }
+    static int mode = -1; static int clr[8], nclr, setv[8]; if (mode < 0) { const char *e = getenv("DM_TEST_BINDTBL"); mode = 0;
+        if (e && !strcmp(e, "log")) mode = 1; else if (e && !strncmp(e, "clear:", 6)) { mode = 2; for (const char *c = e + 6; c && *c && nclr < 8; c = strchr(c, ',') ? strchr(c, ',') + 1 : NULL) clr[nclr++] = atoi(c); }
+        else if (e && !strncmp(e, "set:", 4)) { mode = 3; for (const char *c = e + 4; c && *c && nclr < 8; c = strchr(c, ',') ? strchr(c, ',') + 1 : NULL) { const char *q = strchr(c, '='); if (!q) break; clr[nclr] = atoi(c); setv[nclr++] = atoi(q + 1); } } }
     if (!mode || !pl) return;
     int32_t cur[32]; for (int i = 0; i < 32; i++) memcpy(&cur[i], b + 0x2d5f0c0 + (uint64_t)i * 28, 4);
     static int32_t prev[32]; static int have; static uint64_t t0; uint64_t now_ns(void); if (!t0) t0 = now_ns();
     if (mode == 2 && nclr && now_ns() - t0 > 3000000000ull) { int32_t emp = -1; for (int i = 0; i < 32 && emp == -1; i++) { int k = 0; for (int j = 0; j < nclr; j++) k |= clr[j] == i; if (!k && (cur[i] < 0 || cur[i] == 0xffff)) emp = cur[i]; }
         for (int j = 0; j < nclr; j++) if (clr[j] >= 0 && clr[j] < 32) { memcpy(b + 0x2d5f0c0 + (uint64_t)clr[j] * 28, &emp, 4); cur[clr[j]] = emp; }
         LOG("测试 DM_TEST_BINDTBL：清了 %d 格（写成空格值 %d）", nclr, emp); nclr = 0; }
+    if (mode == 3 && nclr && now_ns() - t0 > 3000000000ull) { for (int j = 0; j < nclr; j++) if (clr[j] >= 0 && clr[j] < 32) { memcpy(b + 0x2d5f0c0 + (uint64_t)clr[j] * 28, &setv[j], 4); cur[clr[j]] = setv[j]; LOG("测试 DM_TEST_BINDTBL：第 %d 格写成技能 %d", clr[j], setv[j]); } nclr = 0; }
     if (have && !memcmp(cur, prev, sizeof cur)) return; memcpy(prev, cur, sizeof cur); have = 1;
     char t[400]; int k = 0; for (int i = 0; i < 32; i++) k += snprintf(t + k, sizeof t - k, "%s%d", i == 16 ? " ‖ " : i ? "," : "", cur[i]);
     LOG("测试 DM_TEST_BINDTBL：绑定表 [%s]", t);
