@@ -162,12 +162,12 @@ public final class LoadPageView extends View {
         String name = nativeBgName(wdp, hdp); if (name.equals(bgName)) return;
         if (bg != null) bg.recycle(); bg = null; bgName = name;
         try (java.io.InputStream in = getContext().getAssets().open(name)) { bg = BitmapFactory.decodeStream(in); }
+        catch (IOException e) { Log.e("dm", "加载页：背景图 " + name + " 读不到（APK 的 assets 里没有？）：" + e); }
         if (bg != null) {   // 底色取背景图四角的平均色：图不铺满时（图标背景按图标外框缩放）图边与底色接得上、看不出矩形 | base colour = the mean of the four corners, so where the image does not fill the screen its edges blend in
             int[] px = { bg.getPixel(2, 2), bg.getPixel(bg.getWidth() - 3, 2), bg.getPixel(2, bg.getHeight() - 3), bg.getPixel(bg.getWidth() - 3, bg.getHeight() - 3) }; int rr = 0, gg = 0, bb = 0;
             for (int p : px) { rr += Color.red(p); gg += Color.green(p); bb += Color.blue(p); }
             baseColor = Color.rgb(rr / 4, gg / 4, bb / 4);
         }
-        catch (IOException e) { Log.e("dm", "加载页：背景图 " + name + " 读不到（APK 的 assets 里没有？）：" + e); }
     }
     private static RectF r(double[] L, int i, RectF out) { out.set((float) L[i], (float) L[i + 1], (float) (L[i] + L[i + 2]), (float) (L[i + 1] + L[i + 3])); return out; }
     private static int rgb(int c) { return 0xff000000 | c; }
