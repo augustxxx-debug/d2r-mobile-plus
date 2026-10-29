@@ -16,6 +16,7 @@ void dm_num_set(int n) { (void)n; }
 void dm_actions_pump(void) {}
 uint64_t dm_swapskill_filter(uint64_t b) { return b; }   // 副手组技能（dm_actions.c）：不压键 | swap-set skill (dm_actions.c): does not suppress keys
 uint64_t dm_runeword_pad_filter(uint64_t b) { return b; }   // 手柄模式符文之语清单（dm_runeword.c）：不吃键 | Runeword list in controller mode (dm_runeword.c): swallow no buttons
+void dm_padmode_page_stick(int32_t *lx, int32_t *ly) { (void)lx; (void)ly; }   // 页接管摇杆（B006b）：这些单测不带页，不动 | page stick takeover: no page in these tests
 uint64_t dm_padmode_page_filter(uint64_t b) { return b; }   // 手柄模式我们自己的页（dm_padmode.c）：不吃键 | Our own pages in controller mode (dm_padmode.c): swallow no buttons
 int dm_padmode_input_gate(uint64_t *b) { (void)b; return 0; }   // 手柄 / 触屏切换事务的输入闸（dm_padmode.c）：没在切 | Input gate of the controller / touch switch transaction (dm_padmode.c): not switching
 int dm_padmode_current(void) { return 0; }   // 手柄 / 触屏模式（dm_padmode.c）：触屏 | Controller / touch mode (dm_padmode.c): touch

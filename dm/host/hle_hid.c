@@ -410,9 +410,16 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     // stick has actually been pushed out (dm_gamepad.m), so a slightly drifting controller left lying aside never reaches here
     { uint64_t ax = atomic_load(&g_pad_axes); int16_t plx = (int16_t)ax, ply = (int16_t)(ax >> 16), prx = (int16_t)(ax >> 32), pry = (int16_t)(ax >> 48);
       if (!(s->lx || s->ly) && (plx || ply)) { s->lx = plx; s->ly = ply; } if (!(s->rx || s->ry) && (prx || pry)) { s->rx = prx; s->ry = pry; } }
+    // 脚本摇杆伪键：推满（Horizon 摇杆 ±32767，上为正）。放在真手柄摇杆合并进来的同一位置，之后的切换冻结 / 页接管摇杆（B006b）/ 弹窗闸门对它与真摇杆一视同仁
+    // （原先放在最后，页接管与弹窗之前都看不到它，脚本测不了左摇杆导航）
+    // script stick pseudo-keys: push to full. Applied where the real controller stick is merged, so the switch freeze / page stick takeover (B006b) / box gate treat it like a real stick
+    // (it used to be applied last, after the page takeover, so scripts could not exercise left-stick navigation)
+    if (km & PK_LSL) s->lx = -32767; if (km & PK_LSR) s->lx = 32767;
+    if (km & PK_LSU) s->ly = 32767;  if (km & PK_LSD) s->ly = -32767;
     { int dm_padmode_input_gate(uint64_t *); if (dm_padmode_input_gate(&s->buttons)) s->lx = s->ly = s->rx = s->ry = 0; }   // 手柄 / 触屏切换事务进行中：键和摇杆都不交给游戏；触发切换时按着的键松开前也不交（dm_padmode.c） | Controller / touch switch transaction in progress: neither keys nor sticks are handed to the game; keys held when the switch was triggered are not handed over either until released (dm_padmode.c)
     if (dm_pad_hook) dm_pad_hook(guest_ns(), &s->buttons, &s->lx, &s->ly, &s->rx, &s->ry);
     { uint64_t dm_runeword_pad_filter(uint64_t); s->buttons = dm_runeword_pad_filter(s->buttons); }   // 手柄模式符文之语清单开着时十字键 / A / B / L / R 归清单（dm_runeword.c） | While the runeword list is open in controller mode, the D-pad / A / B / L / R belong to the list (dm_runeword.c)
+    { void dm_padmode_page_stick(int32_t *, int32_t *); dm_padmode_page_stick(&s->lx, &s->ly); }   // 页接管方向键时左摇杆归页（dm_padmode.c，RC1.1 B006b） | the left stick goes to the page when it takes the directions (B006b)
     { uint64_t dm_padmode_page_filter(uint64_t); s->buttons = dm_padmode_page_filter(s->buttons); }   // 手柄模式我们自己的页（自定义页等）开着时，页声明的键归页（dm_padmode.c） | While one of our own pages (the Custom page etc.) is open in controller mode, the buttons the page declares belong to the page (dm_padmode.c)
     { uint64_t dm_swapskill_filter(uint64_t); s->buttons = dm_swapskill_filter(s->buttons); }   // 副手组技能：换武器好之前压住那个键（dm_actions.c） | off-hand set skill: hold that key back until the weapon swap is done (dm_actions.c)
     { static int trx, tryy, tdelay, held, tset = -1; if (tset < 0) { const char *e = getenv("DM_TEST_RSTICK"); tset = e && sscanf(e, "%d,%d,%d", &trx, &tryy, &tdelay) >= 2; }   // 测试开关 DM_TEST_RSTICK=rx,ry[,延迟次数]：按键脚本按着 A / B / X / Y 时把右摇杆置成这个值（模拟「按住技能钮拖动」，游戏自己也看得到右摇杆）；延迟 = 按下后第几次取手柄才开始给（真手指是先按下、再拖出方向） | test switch DM_TEST_RSTICK=rx,ry[,delay count]: while the key script holds A / B / X / Y, set the right stick to this value (simulates "hold a skill button and drag", the game itself also sees the right stick); delay = on which controller read after the press it starts being given (a real finger presses first, then drags out a direction)
@@ -420,8 +427,6 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     if (s->lx || s->ly || (km & PK_MASK & ~(uint64_t)PK_TOUCH)) atomic_store(&g_stick_ns, now_ns());   // 玩家的摇杆（前端 / 脚本伪键）最近一次非零；光标改写的摇杆不算 | the last time the player's stick (front end / script pseudo-keys) was non-zero; a stick rewritten by the cursor does not count
     dm_cursor_apply(&s->buttons, &s->lx, &s->ly);   // 指针目标：本次采样内按原版光标位置改写左摇杆 / A（见 dm_cursor.h） | pointer target: within this sample, rewrite the left stick / A according to the original game's cursor position (see dm_cursor.h)
     { static uint64_t prev; if ((s->buttons & DM_BTN_L) && !(prev & DM_BTN_L)) { int n = atomic_fetch_add(&g_dm_l_presses, 1) + 1; if (n <= 3) LOG("取手柄处：「显示物品」键（L）交给了游戏，本进程第 %d 次", n); } prev = s->buttons; }   // 「显示物品」键（L）交给游戏的按下次数（首领掉落读数用，dm_bossrush.c） | number of presses of the 「显示物品」(Show Items) key (L) delivered to the game (used by the boss drop readout, dm_bossrush.c)
-    if (km & PK_LSL) s->lx = -32767; if (km & PK_LSR) s->lx = 32767;   // 脚本摇杆伪键：推满（Horizon 摇杆 ±32767，上为正） | script stick pseudo-keys: push to full (Horizon stick ±32767, up is positive)
-    if (km & PK_LSU) s->ly = 32767;  if (km & PK_LSD) s->ly = -32767;
     s->attributes = ATTR_CONNECTED;
     atomic_store_explicit(&g_sampled_right,(uint32_t)s->rx|((uint64_t)(uint32_t)s->ry<<32),memory_order_release);
     receipt(s, id, style, km, read_start_ns);
