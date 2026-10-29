@@ -70,18 +70,25 @@ int dm_perfhint_pick(const pid_t *tids, const uint64_t *busy_ns, int n, pid_t *o
     uint64_t top = 0; for (int i = 0; i < n; i++) if (busy_ns[i] > top) top = busy_ns[i];
     if (!top) return 0;
     int k = 0;
-    char used[512] = {0}; if (n > 512) n = 512;
-    while (k < max) {
-        int best = -1; for (int i = 0; i < n; i++) if (!used[i] && busy_ns[i] * 10 >= top && (best < 0 || busy_ns[i] > busy_ns[best])) best = i;
-        if (best < 0) break; used[best] = 1; out[k++] = tids[best];
+    while (k < max) {   // 已选的不再选（最多 max 个，逐个比对，不用标记数组） | skip the ones already picked (at most max, compared one by one, no marker array)
+        int best = -1;
+        for (int i = 0; i < n; i++) {
+            int taken = 0; for (int j = 0; j < k; j++) if (out[j] == tids[i]) { taken = 1; break; }
+            if (!taken && busy_ns[i] * 10 >= top && (best < 0 || busy_ns[i] > busy_ns[best])) best = i;
+        }
+        if (best < 0) break; out[k++] = tids[best];
     }
     return k;
 }
 
-// 重选会话线程（每 10 秒）：两次采样之间的忙碌时长决定谁进会话；线程集变了才换 | Re-pick the session threads (every 10 s): busy time between two samples decides; only changes when the set changes
+// 重选会话线程（每 10 秒）：两次采样之间的忙碌时长决定谁进会话；线程集变了才换。
+// 这里跑在游戏渲染线程自己的栈上（nvnQueuePresentTexture → dm_perf_present），那条调用链本来就深：工作数组全放静态区（只有这一个线程进来），栈上不留大块。
+// Re-pick the session threads (every 10 s): busy time between two samples decides; only changes when the set changes.
+// This runs on the game's render thread's own stack (nvnQueuePresentTexture -> dm_perf_present), already deep there: the work arrays are static
+// (only this one thread comes here), nothing large on the stack.
 static void pick_threads(void) {
     enum { N = 512 }; static pid_t prev_tid[N]; static uint64_t prev_run[N]; static int nprev, have_prev; static uint64_t prev_wall;
-    pid_t tid[N]; uint64_t run[N], busy[N]; int n = 0;
+    static pid_t tid[N]; static uint64_t run[N], busy[N]; int n = 0;
     DIR *d = opendir("/proc/self/task"); if (!d) return; struct dirent *de;
     while ((de = readdir(d)) && n < N) { if (de->d_name[0] < '0' || de->d_name[0] > '9') continue; tid[n] = (pid_t)atoi(de->d_name); run[n] = thread_run_ns(tid[n]); n++; }
     closedir(d);
