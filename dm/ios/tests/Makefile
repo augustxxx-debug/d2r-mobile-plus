@@ -74,6 +74,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_touch_layout_options.py
 	python3 test_options_divider_rows.py
 	python3 test_touch_layout_language.py
+	python3 test_padmode_compare_hint.py   # B014：手柄提示条「比较（按住）」 | B014: controller legend "Compare (hold)"
 	$(call fixture_test,t_native_binding)
 	$(call fixture_test,t_game_bridge)
 	./t_binding_freshness
