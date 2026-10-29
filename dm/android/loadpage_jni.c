@@ -48,7 +48,7 @@ jint F(nativePercent)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm
 jboolean F(nativeMuted)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_muted() ? JNI_TRUE : JNI_FALSE; }
 void F(nativeSetMuted)(JNIEnv *env, jclass cls, jboolean m) { (void)env; (void)cls; dm_loadpage_set_muted(m); }
 jboolean F(nativeToggleMuted)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_toggle_muted() ? JNI_TRUE : JNI_FALSE; }
-jstring F(nativeUi)(JNIEnv *env, jclass cls, jstring key) { (void)cls; const char *k = (*env)->GetStringUTFChars(env, key, NULL); jstring r = (*env)->NewStringUTF(env, dm_loadpage_ui(k)); (*env)->ReleaseStringUTFChars(env, key, k); return r; }
+jstring F(nativeUi)(JNIEnv *env, jclass cls, jstring key) { (void)cls; const char *k = (*env)->GetStringUTFChars(env, key, NULL); dm_loadpage_lock(); jstring r = (*env)->NewStringUTF(env, dm_loadpage_ui(k)); dm_loadpage_unlock(); (*env)->ReleaseStringUTFChars(env, key, k); return r; }
 jboolean F(nativeMusicWanted)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_music_wanted() ? JNI_TRUE : JNI_FALSE; }
 jstring F(nativeMusicName)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_music_name()); }
 jstring F(nativeLogoName)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_logo_name(NULL, NULL)); }
@@ -56,8 +56,8 @@ jstring F(nativeBgName)(JNIEnv *env, jclass cls, jfloat w, jfloat h) { (void)cls
 // 布局摊平成 double[70]：landscape, bg_w, bg_h, bg_src×4, bg_dst×4, bar×4, bar_fill×4, title×4, percent×4, body×4, sub×4, brand×4, title_pt, body_pt, sub_pt, brand_pt, bar_radius,
 //   logo×4, logo_w, logo_h, mute×4, comm, comm1×4, comm2×4, copy×4, comm_pt, comm_alpha, show_bar（顺序对应 LoadPageView.java 的常量）
 // Layout flattened into double[70] (order matches the constants in LoadPageView.java)
-jdoubleArray F(nativeLayout)(JNIEnv *env, jclass cls, jfloat w, jfloat h, jfloat l, jfloat t, jfloat r, jfloat b) {
-    (void)cls; dm_lp_screen s = { w, h, l, t, r, b }; dm_lp_layout L; dm_loadpage_layout(&s, &L);
+static jdoubleArray layout_array(JNIEnv *env, jfloat w, jfloat h, jfloat l, jfloat t, jfloat r, jfloat b) {
+    dm_lp_screen s = { w, h, l, t, r, b }; dm_lp_layout L; dm_loadpage_layout(&s, &L);
     const dm_lp_rect *rects[] = { &L.bg_src, &L.bg_dst, &L.bar, &L.bar_fill, &L.title, &L.percent, &L.body, &L.sub, &L.brand };
     double v[72]; int o = 0; v[o++] = L.landscape; v[o++] = L.bg_w; v[o++] = L.bg_h;
     for (unsigned i = 0; i < sizeof rects / sizeof *rects; i++) { v[o++] = rects[i]->x; v[o++] = rects[i]->y; v[o++] = rects[i]->w; v[o++] = rects[i]->h; }
@@ -69,8 +69,20 @@ jdoubleArray F(nativeLayout)(JNIEnv *env, jclass cls, jfloat w, jfloat h, jfloat
     v[o++] = L.comm_pt; v[o++] = L.comm_alpha; v[o++] = L.show_bar;
     jdoubleArray a = (*env)->NewDoubleArray(env, o); (*env)->SetDoubleArrayRegion(env, a, 0, o, v); return a;
 }
-jobjectArray F(nativeText)(JNIEnv *env, jclass cls) {   // { 标题, 百分数, 正文, 副文, 字标, 社区第一行, 社区第二行, 复制钮, 复制状态 } | { title, percent, body, sub, brand, community 1, community 2, copy button, copy state }
-    (void)cls; dm_lp_text t; dm_loadpage_text(&t, now_ms()); char cs[4]; snprintf(cs, sizeof cs, "%d", t.copy_state);
+jdoubleArray F(nativeLayout)(JNIEnv *env, jclass cls, jfloat w, jfloat h, jfloat l, jfloat t, jfloat r, jfloat b) { (void)cls; return layout_array(env, w, h, l, t, r, b); }
+static jobjectArray text_array(JNIEnv *env);
+jobjectArray F(nativeText)(JNIEnv *env, jclass cls) { (void)cls; return text_array(env); }
+// 一帧：一把锁里取齐布局与文本（外审 EXT6-01：生成 / 社区线程在写，分两次取会拿到不一致的两半）。{ double[] 布局, String[] 文本 }
+// One frame: layout and text under one lock (external review EXT6-01: the generation / community threads are writing; two separate calls could return halves that do not match). { double[] layout, String[] text }
+jobjectArray F(nativeFrame)(JNIEnv *env, jclass cls, jfloat w, jfloat h, jfloat l, jfloat t, jfloat r, jfloat b) {
+    (void)cls; dm_loadpage_lock();
+    jdoubleArray L = layout_array(env, w, h, l, t, r, b); jobjectArray T = text_array(env);
+    dm_loadpage_unlock();
+    jobjectArray a = (*env)->NewObjectArray(env, 2, (*env)->FindClass(env, "java/lang/Object"), NULL);
+    (*env)->SetObjectArrayElement(env, a, 0, L); (*env)->SetObjectArrayElement(env, a, 1, T); return a;
+}
+static jobjectArray text_array(JNIEnv *env) {   // { 标题, 百分数, 正文, 副文, 字标, 社区第一行, 社区第二行, 复制钮, 复制状态 } | { title, percent, body, sub, brand, community 1, community 2, copy button, copy state }
+    dm_lp_text t; dm_loadpage_text(&t, now_ms()); char cs[4]; snprintf(cs, sizeof cs, "%d", t.copy_state);
     const char *parts[9] = { t.title, t.percent, t.body, t.sub, t.brand, t.comm1, t.comm2, t.copy, cs };
     jobjectArray a = (*env)->NewObjectArray(env, 9, (*env)->FindClass(env, "java/lang/String"), NULL);
     for (int i = 0; i < 9; i++) (*env)->SetObjectArrayElement(env, a, i, (*env)->NewStringUTF(env, parts[i]));
@@ -95,7 +107,7 @@ void F(nativeCommunity)(JNIEnv *env, jclass cls, jstring qq, jstring gh, jstring
     dm_loadpage_community(q, g, w);
     if (q) (*env)->ReleaseStringUTFChars(env, qq, q); if (g) (*env)->ReleaseStringUTFChars(env, gh, g); if (w) (*env)->ReleaseStringUTFChars(env, site, w);
 }
-jstring F(nativeCopyValue)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_copy_value()); }
+jstring F(nativeCopyValue)(JNIEnv *env, jclass cls) { (void)cls; dm_loadpage_lock(); jstring r = (*env)->NewStringUTF(env, dm_loadpage_copy_value()); dm_loadpage_unlock(); return r; }   // 指针只在锁内有效 | the pointer is valid only under the lock
 void F(nativeCopied)(JNIEnv *env, jclass cls, jboolean ok, jboolean pad) { (void)env; (void)cls; dm_loadpage_copied(ok, pad, now_ms()); }
 void F(nativePad)(JNIEnv *env, jclass cls, jboolean on) { (void)env; (void)cls; dm_loadpage_pad(on); }
 jboolean F(nativePadMode)(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_loadpage_pad_mode() ? JNI_TRUE : JNI_FALSE; }
@@ -103,4 +115,4 @@ jint F(nativeColor)(JNIEnv *env, jclass cls, jint which) {   // 颜色统一取�
     (void)env; (void)cls; static const int c[] = { DM_LP_COL_TITLE, DM_LP_COL_BODY, DM_LP_COL_SUB, DM_LP_COL_PERCENT, DM_LP_COL_BAR_FILL, DM_LP_COL_BAR_TRACK, DM_LP_COL_BAR_EDGE };
     return which >= 0 && which < (int)(sizeof c / sizeof *c) ? c[which] : 0xffffff;
 }
-jstring F(nativeLastLine)(JNIEnv *env, jclass cls) { (void)cls; return (*env)->NewStringUTF(env, dm_loadpage_last_line()); }   // 进游戏前交给宿主写进 boot.log | handed to the host before the game starts, for boot.log
+jstring F(nativeLastLine)(JNIEnv *env, jclass cls) { (void)cls; dm_loadpage_lock(); jstring r = (*env)->NewStringUTF(env, dm_loadpage_last_line()); dm_loadpage_unlock(); return r; }   // 进游戏前交给宿主写进 boot.log | handed to the host before the game starts, for boot.log

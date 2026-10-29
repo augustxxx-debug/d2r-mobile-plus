@@ -48,6 +48,7 @@ public final class LoadPageView extends View {
     static native String nativeLogoName();
     static native double[] nativeLayout(float w, float h, float l, float t, float r, float b);
     static native String[] nativeText();
+    static native Object[] nativeFrame(float w, float h, float l, float t, float r, float b);   // 一把锁里取齐布局与文本（外审 EXT6-01） | layout and text under one lock (external review EXT6-01)
     static native int nativeColor(int which);
     static native String nativeLastLine();
     static native void nativeSetWordmark(boolean on);
@@ -130,12 +131,7 @@ public final class LoadPageView extends View {
     // 手柄（§2.7）：任一手柄键 = 手柄模式（复制钮画成焦点态、前面加 A 键图标），A 键松开时复制。返回 true = 吃掉这个键
     // Controller (§2.7): any controller key = controller mode (the copy button drawn focused with an A glyph in front); A copies on release. Returns true = the key is consumed
     public boolean padKey(android.view.KeyEvent e) {
-        // 来源要整组位都对上：SOURCE_GAMEPAD 含 SOURCE_CLASS_BUTTON 这一位，键盘也有，按位与非零会把音量键、键盘当成手柄（六审 Q6-01）
-        // the whole source mask must match: SOURCE_GAMEPAD includes the SOURCE_CLASS_BUTTON bit that keyboards also carry, so a non-zero AND would treat volume keys and keyboards as a controller (sixth review Q6-01)
-        int src = e.getSource();
-        boolean pad = (src & android.view.InputDevice.SOURCE_GAMEPAD) == android.view.InputDevice.SOURCE_GAMEPAD || (src & android.view.InputDevice.SOURCE_JOYSTICK) == android.view.InputDevice.SOURCE_JOYSTICK
-                || android.view.KeyEvent.isGamepadButton(e.getKeyCode());
-        if (!pad) return false;
+        if (!InputSource.isPad(e.getSource(), android.view.KeyEvent.isGamepadButton(e.getKeyCode()))) return false;   // 完整来源位判定，见 InputSource（外审 EXT6-04） | full source bits, see InputSource (external review EXT6-04)
         if (!nativePadMode()) { nativePad(true); invalidate(); }
         if (e.getKeyCode() != android.view.KeyEvent.KEYCODE_BUTTON_A || lastLayout == null || lastLayout[L_COMM] <= 0) return false;
         if (e.getAction() == android.view.KeyEvent.ACTION_UP) copy(true);
@@ -175,7 +171,7 @@ public final class LoadPageView extends View {
     @Override protected void onDraw(Canvas c) {
         float w = getWidth() / density, h = getHeight() / density; if (w <= 0 || h <= 0) return;
         c.save(); c.scale(density, density);   // 之后全用 dp | everything in dp from here
-        double[] L = nativeLayout(w, h, insetL, insetT, insetR, insetB); String[] T = nativeText(); lastLayout = L;
+        Object[] fr = nativeFrame(w, h, insetL, insetT, insetR, insetB); double[] L = (double[]) fr[0]; String[] T = (String[]) fr[1]; lastLayout = L;   // 同一帧的布局与文本（同一把锁里取） | layout and text of the same frame (taken under one lock)
         loadBg(w, h);
         c.drawColor(baseColor);
         if (bg != null) {   // cover 裁切：图的实际像素尺寸与布局假定的不同也照样裁对 | cover crop: still right when the real pixel size differs from what the layout assumes

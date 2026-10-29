@@ -35,6 +35,7 @@ run: \
 	$(B)/t_i18n \
 	$(B)/t_loadpage \
 	$(B)/t_manifest \
+	$(B)/t_loadpage_race \
 	$(B)/t_minimap_lift \
 	$(B)/t_loader_weak \
 	$(B)/t_mac_overlay \
@@ -106,6 +107,7 @@ run: \
 	$(B)/t_bright_cap
 	$(B)/t_loadpage
 	$(B)/t_manifest
+	TSAN_OPTIONS=halt_on_error=1 $(B)/t_loadpage_race > /dev/null
 	$(B)/t_custom_scroll
 	$(B)/t_sel_frame
 	$(B)/t_hud_mask
@@ -265,6 +267,9 @@ $(B)/t_loadpage: t_loadpage.c ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.h ../
 # Loading page render check (not part of run: writes PNGs to a given directory): make render-loadpage OUT=<dir> [LANG=zh]
 $(B)/t_manifest: t_manifest.c ../dm_manifest.c ../dm_manifest.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_manifest.c
+
+$(B)/t_loadpage_race: t_loadpage_race.c ../dm_loadpage.c ../dm_loadpage.h | $(B)
+	clang -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=thread -I.. -o $@ t_loadpage_race.c -lm
 
 $(B)/t_loadpage_render: t_loadpage_render.m ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.c ../dm_i18n_tab.h ../../ios/Sources/dm_loadpage_cg.m | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -fobjc-arc -I.. -o $@ t_loadpage_render.m ../dm_loadpage.c ../dm_i18n.c ../../ios/Sources/dm_loadpage_cg.m -framework Foundation -framework CoreGraphics -framework CoreText -framework ImageIO -lm
