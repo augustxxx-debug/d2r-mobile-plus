@@ -1239,6 +1239,7 @@ static int ui_classify0(module_t *m, uint64_t root, int x, int y, char *hit, siz
     return 3;   // 面板外（不发鼠标点击） | Outside the panel (no mouse click sent)
 }
 void dm_ui_tab_go(void) {   // 前端在「点按落在页签上」（最近一次命中结果 = 2）时调：按 |差| 次 ZR / ZL（顶部五页签 R / L） | Called by the front end when "the tap landed on a tab" (most recent hit result = 2): press ZR / ZL |delta| times (R / L for the five top tabs)
+    { int dm_community_modal(void); if (dm_community_modal()) { LOG("界面页签：社区 / 关于弹窗开着，不切页签"); return; } }   // 兜底（审计 P2-2）：弹窗开着时不切 | backstop (audit P2-2): no switch while the box is up
     DM_LAT("tab_go");
     int d = atomic_load(&g_tab_delta), top = atomic_load(&g_tab_top);
     if (top == 4) { atomic_store(&g_set_back_at, dm_guest_frame() + 2); LOG("界面对话菜单：商人页结果提示 → 按返回键收掉"); return; }
@@ -1592,6 +1593,11 @@ static void ui_item_pump(uint64_t root, int width, int height) {
     if (dm_lat_on()) { static unsigned ls; unsigned ds = atomic_load(&g_iq_done); float rr[4]; if (ds != ls && dm_ui_item_rect(ds, rr)) { ls = ds; DM_LAT("shelf_rect %d,%d-%d,%d", (int)(rr[0] * width), (int)(rr[1] * height), (int)(rr[2] * width), (int)(rr[3] * height)); } }
     unsigned seq = atomic_load(&g_iq_seq); if (seq == atomic_load(&g_iq_done)) return;
     uint64_t v = atomic_load(&g_iq_xy); int x = (int)(((v >> 16) & 0xffff) / 65535.0 * width), y = (int)((v & 0xffff) / 65535.0 * height);
+    // 社区 / 关于弹窗开着（RC1.1 终版审计 P2-2）：不判类、直接答「已处理」——原先这里照常判类，点到弹窗外的页签得「页签」，前端随即调 dm_ui_tab_go，
+    // 在弹窗的触点闸门（ui_mouse_pump，dm_community_modal）之前就切了页。触点全归弹窗，由抬起那一下交给 dm_community_ui_tap
+    // community / About box up (RC1.1 final audit P2-2): no classification, answer "handled" -- this used to classify as usual, so a tap on a tab outside the box came back as "tab", the front end
+    // called dm_ui_tab_go and the page switched before the box's touch gate (ui_mouse_pump, dm_community_modal) was reached. Every touch belongs to the box, handed to dm_community_ui_tap on lift
+    { int dm_community_modal(void); if (dm_community_modal()) { atomic_store(&g_iq_res, 6); atomic_store(&g_iq_done, seq); if (hit_log_ok("社区弹窗开着")) LOG("界面命中：(%d,%d) → 社区 / 关于弹窗开着，不判类（触点归弹窗）", x, y); return; } }
     char hit[40] = ""; int r; g_cls_out = atomic_load(&g_iq_out);
     if (atomic_exchange(&g_iq_drop, 0)) { r = ui_drop_kind(main_module(), root, x, y, (int)(atomic_load(&g_iq_y2) / 65535.0 * height)); 
         if (r == 5 && g_press_stack && dm_wref_get(&g_slot) && *(uint64_t *)(dm_wref_get(&g_slot) + 8) && !strcmp((const char *)*(uint64_t *)(dm_wref_get(&g_slot) + 8), "horadriccube_grid")) r = 11;   // 11 = 从成叠格拖出、物品图落在这一页下方的魔盒格上（前端：1 件进魔盒，不是取到背包）。g_slot = 刚才落点分类命中的物品区控件 | 11 = dragged out of a stacked slot with the item image landing on the Horadric Cube slot below this page (front end: 1 item goes into the Cube, not taken to the backpack). g_slot = the item-area widget hit by the drop-point classification just now
