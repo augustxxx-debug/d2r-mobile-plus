@@ -165,7 +165,7 @@ static void row_action(row_t *r) {
     if (st == S_BKITEM) { dm_pkg_backup *b = &g_bk[g_bk_sel]; char p[1500]; snprintf(p, sizeof p, "%s/%s", b->dir, b->file);
         if (r->idx == 0) start_import(1, p); else if (r->idx == 1) { int rc = dm_savepkg_backup_star(save_dir(), b, !b->starred); if (rc) { show_fail(rc, S_BKLIST); return; } b->starred = !b->starred; bklist_page(); } else if (r->idx == 2) { go(S_WORK); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); share_now(p); } else { rows_clear(); set_box(S("dmSaveBkDeleteAsk"), S("dmSaveBkDeleteSub"), NULL, S("dmSaveBkDelete"), S("dmSaveBack")); go(S_BKDEL); } return; }
 }
-static void *shutdown_main(void *a) { (void)a; dm_host_shutdown("存档导入后退出"); return NULL; }
+static void *shutdown_main(void *a) { (void)a; dm_host_shutdown("save import"); return NULL; }
 static void close_box(void) { go(S_NONE); if (g_view_ok) { dm_savepkg_view_free(&g_view); g_view_ok = 0; } }
 static void btn_action(int k) {
     int st = atomic_load(&g_st);
@@ -176,7 +176,7 @@ static void btn_action(int k) {
     case S_PREVIEW: if (k == 1) { dm_savepkg_stage_cancel(save_dir()); dm_savepkg_view_free(&g_view); g_view_ok = 0; show_home(); break; }
         { int act = g_view.settings_action == DM_PKG_OVERWRITE; for (int i = 0; i < g_view.nchars; i++) act |= g_view.chars[i].action != DM_PKG_SKIP && g_view.chars[i].status != DM_PKG_BAD && g_view.chars[i].status != DM_PKG_SAME; for (int i = 0; i < g_view.nstash; i++) act |= g_view.stash[i].action == DM_PKG_OVERWRITE; if (!act) { dm_savepkg_stage_cancel(save_dir()); dm_savepkg_view_free(&g_view); g_view_ok = 0; show_home(); LOG("存档管理：没有要导入的内容，回首页"); break; }
           int rc = dm_savepkg_stage_commit(save_dir(), &g_view, NULL); dm_savepkg_view_free(&g_view); g_view_ok = 0; if (rc) { show_fail(rc, S_HOME); break; } rows_clear(); set_box(S("dmSaveRestartTitle"), S("dmSaveRestartSub"), NULL, S("dmSaveOk"), NULL); go(S_RESTART); } break;
-    case S_RESTART: { LOG("存档管理：确认退出，下次启动换入"); pthread_t th; if (pthread_create(&th, NULL, shutdown_main, NULL)) dm_host_shutdown("存档导入后退出"); else pthread_detach(th); atomic_store(&g_shown, 2); } break;
+    case S_RESTART: { LOG("存档管理：确认退出，下次启动换入"); pthread_t th; if (pthread_create(&th, NULL, shutdown_main, NULL)) dm_host_shutdown("save import"); else pthread_detach(th); atomic_store(&g_shown, 2); } break;
     case S_MSG: if (g_msg_back == S_HOME) show_home(); else if (g_msg_back == S_BKLIST) bklist_page(); else close_box(); break;
     case S_BKLIST: show_home(); break;
     case S_BKITEM: bklist_page(); break;
