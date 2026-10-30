@@ -546,7 +546,9 @@ void dm_ui_touch(int phase, float nx, float ny) { if (phase != 3 && dm_restart_b
 int dm_ui_touch_active(void) { return atomic_load(&g_ut_phase) != 0; }
 // 前端纵向拖能不能当滚动：删除角色确认框（长按「是」，手指一漂就作废长按）、模式页（牌子以外 = 返回）、起名页、确认框开着时不当，照旧是点按
 // Whether a vertical drag in the front end can count as a scroll: not while the delete-character confirmation box (long-press 「是」(Yes); the long-press is voided as soon as the finger drifts), the mode page (outside the plaques = back), the naming page, or a confirmation box is open; those stay taps as before
-int dm_ui_fe_drag_ok(void) { return !atomic_load(&g_fe_del_open) && !atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_name_open) && !atomic_load(&g_fe_confirm_open); }
+// 社区 / 关于弹窗开着也不当（RC1.1 真机 B058：真手指点「复制」有几像素纵向抖动，前端判成「纵向拖 → 滚动」、这一下不点，框根本收不到；框里没有可滚的东西，抖动一律按点按交给框）
+// nor while the community / About box is up (RC1.1 on-device B058: a real finger tapping Copy drifted a few pixels vertically, the front end took it for "vertical drag -> scroll" and dropped the tap; nothing in the box scrolls, so a drift is always a tap for the box)
+int dm_ui_fe_drag_ok(void) { int dm_community_modal(void); return !atomic_load(&g_fe_del_open) && !atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_name_open) && !atomic_load(&g_fe_confirm_open) && !dm_community_modal(); }
 static uint64_t ui_hash(const char *s) { uint64_t h = 0xcbf29ce484222325ull; for (; *s; s++) h = (h ^ (uint8_t)*s) * 0x100000001b3ull; return h; }
 static void ui_send_mouse_arg(module_t *m, uint64_t root, uint64_t act, int x, int y, int arg) {   // 负载 +4 / +8 = 光标，+0x10 = 滚轮量（120 一格）/ 键码（VK） | Payload +4 / +8 = cursor, +0x10 = wheel amount (120 per notch) / key code (VK)
     static uint64_t payload[16], msg[8];
