@@ -42,6 +42,7 @@ class IosSummary(unittest.TestCase):
         build = block(SHARE, 'static NSData *build_data(')
         line = next(l for l in build.splitlines() if 'FPS target=' in l)
         self.assertIn('profileSelected=', line); self.assertIn('profileEffective=', line); self.assertIn('qualityCapped120=', line)
+        self.assertIn('thermalFallback60=', line)   # 120 帧档遇热退回 60（用户 2026-10-30）| the 120 mode's thermal fallback to 60 (user 2026-10-30)
 
     def test_memory_tier_launch_and_now(self):
         # 内存档位：启动时生效的值与当前设置并列（用户 2026-10-29：局中调低不还内存，渲染档在启动时定预留）；预留行进摘要键

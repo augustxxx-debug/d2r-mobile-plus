@@ -185,6 +185,7 @@ static int file_path(char *p, size_t n) {
 // at 120 fps the Graphics tab's profile slider stops at Balanced and a grey subtext line appears under the profile row (dm_graphics_ui_pump). Pure function for unit tests (t_render_profile)
 static int q3d_for_fps(int q3d, int fps) { return fps == 120 && q3d == 3 ? 2 : q3d; }
 static void save(void);
+static int fps_selected(void);
 static int fps_effective(int saved);   // 下面帧率档那里（测试开关 + 屏幕刷新率）；读盘时用它，不能走 dm_custom_get（会再进 load_once） | defined with the frame rate mode below (test switch + screen refresh); used while loading, where dm_custom_get would re-enter load_once
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
@@ -264,7 +265,7 @@ int mtl_upscale_supported(void);   // 弱定义在下面（光追门旁）| weak
 // Effective profile: platforms without upscaling stay on Original; Quality runs as Balanced while 120 fps is in effect (q3d_for_fps). One "超分档位：" line whenever the saved or effective profile or the frame rate changes (the share summary takes the last one, dm_sharelog.m perf_block / front_mac.m)
 int dm_3d_profile_get(void) {
     if (!mtl_upscale_supported() || !dm_custom_get("upscale")) return 4;
-    int q = dm_custom_get("q3d"), f = dm_fps_setting(), e = q3d_for_fps(q, f);
+    int q = dm_custom_get("q3d"), f = (dm_fps_setting(), fps_selected()), e = q3d_for_fps(q, f);   // 高画质上限跟「选的帧率」走，遇热退回 60 时不跟着放开（免得 MetalFX 随热度反复重建）| the Quality cap follows the selected rate, not the thermal fallback (so MetalFX is not rebuilt with the heat)
     static _Atomic int last = -1; int key = (q & 7) * 64 + (e & 7) * 8 + (f == 120 ? 2 : f == 30);
     static const char *const nm[5] = { "自动", "省电", "均衡", "高画质", "原版" };
     if (atomic_exchange(&last, key) != key)
@@ -343,14 +344,63 @@ static int fps_effective(int saved) {   // 设置值（eco_fps）+ 测试开关 
     int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t == 120 ? FPS_120 : 0) : saved;
     return v == 1 ? 30 : v == FPS_120 && fps120_ok() ? 120 : 60;
 }
+// 120 帧档遇热自动退回 60（用户 2026-10-30 定，原 RC2 待办提前；B060：用户 Duo 开局就是温控 2，进野外打怪 CPU 主频从约 3.6 降到约 1.5 GHz，
+// 120 档 1 分钟内从 113 帧掉到 53）：温控 ≥ 2（严重 / 危急）立刻按 60 走；回落到 ≤ 1 并持续 THERMAL_RECOVER_NS（60 秒）才回 120，中途再热重新计时，不来回跳。
+// 只动生效帧率（显示节拍、节拍器、ProMotion 表态、3D 比例控制都每帧读 dm_fps_setting，运行时切档已有）；设置文件、图形页帧率格（仍显示玩家选的 120）、
+// 超分高画质上限（跟选的帧率）都不变。温控未知（−1：Mac、单测）按凉。DM_THERMAL_NOFALLBACK（功耗测量，front_ios.m 同名开关）不退。
+// 测试开关 DM_TEST_THERMAL=<档>[@秒][,<档>@秒…]（0–3）：按宿主计时秒数换温控，Mac 上验证用。纯函数 fps_thermal_step / thermal_schedule 给单测（t_fps_thermal）
+// The 120 fps mode falls back to 60 when hot (user 2026-10-30, pulled forward from RC2; B060: the user's Duo started at thermal state 2, and in the field with monsters the CPU clock fell from about 3.6 to about 1.5 GHz,
+// the 120 mode dropping from 113 to 53 fps within a minute): thermal >= 2 (serious / critical) runs at 60 at once; back to 120 only after it has stayed <= 1 for THERMAL_RECOVER_NS (60 s), the timer restarting if it heats up again, so it does not flap.
+// Only the effective rate changes (display link, pacer, ProMotion declaration and the 3D scale controller all read dm_fps_setting every frame; runtime switching already exists); the settings file, the Graphics frame-rate stop (still showing the player's 120)
+// and the Quality cap (following the selected rate) stay. Unknown thermal state (-1: Mac, unit tests) counts as cool. DM_THERMAL_NOFALLBACK (power measurement, same switch as in front_ios.m) does not fall back.
+// Test switch DM_TEST_THERMAL=<state>[@sec][,<state>@sec...] (0-3): thermal state by host seconds, for checks on the Mac. Pure functions fps_thermal_step / thermal_schedule for unit tests (t_fps_thermal)
+#define THERMAL_CAP_AT 2
+#define THERMAL_RECOVER_NS 60000000000ull
+typedef struct { int capped; uint64_t cool_since; } fps_thermal_state;
+static int fps_thermal_step(fps_thermal_state *st, int thermal, uint64_t now) {
+    if (thermal >= THERMAL_CAP_AT) { st->capped = 1; st->cool_since = 0; return 1; }
+    if (!st->capped) return 0;
+    if (!st->cool_since) { st->cool_since = now ? now : 1; return 1; }
+    if (now - st->cool_since >= THERMAL_RECOVER_NS) { st->capped = 0; st->cool_since = 0; }
+    return st->capped;
+}
+static int thermal_schedule(const char *spec, double elapsed) { return res_schedule_level(spec, elapsed); }   // 同渲染档时间表的写法与取值范围 0–3 | same syntax and 0-3 range as the render-level schedule
+static uint64_t mono_ns(void) { return (uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC); }
+static uint64_t (*g_fps_clock)(void) = mono_ns;   // 单测换成假时钟 | unit tests swap in a fake clock
+#ifdef DM_THERMAL_TEST_HOOK   // 单测自己给温控 | the unit test supplies the thermal state
+int dm_thermal_now(void);
+#else
+__attribute__((weak)) int dm_thermal_now(void) { return -1; }   // 缺省未知（Mac、不链前端的单测）；iOS front_ios.m 的强定义覆盖 | unknown by default (Mac, unit tests without the front end); the strong definition in iOS front_ios.m overrides it
+#endif
+static int thermal_now(void) {
+    static int on = -1; static const char *spec; static uint64_t t0;
+    if (on < 0) { spec = getenv("DM_TEST_THERMAL"); on = spec && thermal_schedule(spec, 0) >= 0; t0 = g_fps_clock(); if (spec && !on) LOG("【红】DM_TEST_THERMAL 非法：%s", spec); }
+    return on ? thermal_schedule(spec, (g_fps_clock() - t0) / 1e9) : dm_thermal_now();
+}
+static _Atomic int g_fps_hot;                 // 此刻是否因过热按 60（图形页说明、分享摘要读）| whether 120 is running as 60 because of heat right now (read by the Graphics note and the share summary)
+static _Atomic uint64_t g_fps_cool_since;     // 回落开始的时刻（0 = 没在回落）| when cooling started (0 = not cooling)
+int dm_fps_thermal_capped(void) { return atomic_load(&g_fps_hot); }
+// 选的帧率（测试开关 / 设置 + 屏幕刷新率 + 内存档位），未计遇热退回 | the selected rate (test switch / setting + screen refresh + memory tier), before the thermal fallback
+static int fps_selected(void) {
+    int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t == 120 ? FPS_120 : 0) : dm_custom_get("eco_fps");
+    return v == 1 ? 30 : v == FPS_120 && fps120_ok() ? 120 : 60;
+}
 int dm_fps_setting(void) {
     int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t == 120 ? FPS_120 : 0) : dm_custom_get("eco_fps"), hz = dm_display_max_hz();
     int f = v == 1 ? 30 : v == FPS_120 && fps120_ok() ? 120 : 60, why = (v == FPS_120 && f == 60) * 2 + (t > 0);
-    static _Atomic int last = -1; int key = f * 16 + why * 4 + (hz > 0) + (hz >= 119) * 2;
+    int th = thermal_now(), hot = 0;
+    if (f == 120 && !getenv("DM_THERMAL_NOFALLBACK")) {
+        fps_thermal_state st = { atomic_load(&g_fps_hot), atomic_load(&g_fps_cool_since) };
+        hot = fps_thermal_step(&st, th, g_fps_clock());
+        atomic_store(&g_fps_hot, hot); atomic_store(&g_fps_cool_since, st.cool_since);
+    } else { atomic_store(&g_fps_hot, 0); atomic_store(&g_fps_cool_since, 0); }
+    int sel = f; if (hot) f = 60;
+    static _Atomic int last = -1; int key = f * 16 + why * 4 + (hz > 0) + (hz >= 119) * 2 + hot * 4096;
     if (atomic_exchange(&last, key) != key) {
-        // 生效帧率变了（应用、测试开关、建窗后才读到 120 Hz）：3D 比例控制的高画质模式跟着 120 帧的上限走 | the effective rate changed (Apply, test switch, 120 Hz known only once the window exists): the 3D scale controller's Quality mode follows the 120 fps cap
-        if (atomic_load(&g_loaded)) dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && q3d_for_fps(atomic_load(&g_val[K_Q3D]), f) == 3);
-        LOG("帧率档：生效 %d 帧（%s%s，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", v == 1 ? "30" : v == FPS_120 ? "120" : "60", hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz, why >= 2 && hz >= 119 ? "；内存档位不开放 120 帧（见「内存档位：」行），120 档按 60" : why >= 2 && hz > 0 ? "；屏幕不到 120 Hz，120 档按 60" : why >= 2 ? "；暂按 60" : "");
+        // 生效帧率变了（应用、测试开关、建窗后才读到 120 Hz、遇热退回 / 回升）：3D 比例控制的高画质模式跟着「选的」120 帧上限走 | the effective rate changed (Apply, test switch, 120 Hz known once the window exists, thermal fallback / recovery): the 3D scale controller's Quality mode follows the selected 120 cap
+        if (atomic_load(&g_loaded)) dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && q3d_for_fps(atomic_load(&g_val[K_Q3D]), sel) == 3);
+        if (hot) LOG("帧率档：生效 60 帧（设置 120，过热 温控 %d，自动退回 60；温控回落到 ≤ 1 并持续 60 秒后回 120）", th);
+        else LOG("帧率档：生效 %d 帧（%s%s，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", v == 1 ? "30" : v == FPS_120 ? "120" : "60", hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz, why >= 2 && hz >= 119 ? "；内存档位不开放 120 帧（见「内存档位：」行），120 档按 60" : why >= 2 && hz > 0 ? "；屏幕不到 120 Hz，120 档按 60" : why >= 2 ? "；暂按 60" : sel == 120 && th >= 0 ? "；温控已回落，回到 120" : "");
     }
     return f;
 }
@@ -738,7 +788,11 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // 120 帧格选着时档位行下的灰色副文「120 帧下不提供高画质」（布局 touch_layout.py TouchGraphicsProfileNote，缺省藏着）| at the 120 fps stop, the grey subtext under the profile row (layout TouchGraphicsProfileNote, hidden by default)
     { uint64_t note = find_w(sp, "TouchGraphicsProfileNote", 0); if (note) ui_show_ours(note, enabled && profile_max() < 3); }
     // 内存 1 / 0 档：屏幕撑得住 120 却不开放时，帧率行下一行灰色副文说明（布局 TouchGraphicsFpsNote，缺省藏着）| memory tiers 1 / 0: when the screen could do 120 but it is not offered, a grey subtext line under the frame-rate row (layout TouchGraphicsFpsNote, hidden by default)
-    { uint64_t note = find_w(sp, "TouchGraphicsFpsNote", 0); if (note) ui_show_ours(note, fps_ok && fps_mem_capped()); }
+    // 同一行副文还用于「过热暂按 60 帧」（120 帧格选着、遇热退回时；用户 2026-10-30）：内存说明优先（那时根本没有 120 格）| the same subtext also says "running at 60 while hot" (120 stop selected and the thermal fallback active; user 2026-10-30): the memory note wins (no 120 stop at all then)
+    { uint64_t note = find_w(sp, "TouchGraphicsFpsNote", 0);
+      if (note) { int mem = fps_ok && fps_mem_capped(), hot = !mem && fps_ok && fps_pos(pending_value(K_FPS)) == 2 && dm_fps_thermal_capped();
+          if (mem || hot) graphics_text(note, dm_str(main_base(), mem ? "dmGraphicsFps120MemNote" : "dmGraphicsFps120HotNote"));
+          ui_show_ours(note, mem || hot); } }
     { uint64_t note = find_w(sp, "TouchGraphicsResNote", 0); if (note) ui_show_ours(note, res_ok && res_raise_needs_restart()); }
     uint64_t vt = *(uint64_t *)sp; int valid = 0;
     for (int k = 0; k < 96 && !valid; k++) valid = *(uint64_t *)(vt + 8 * k) == (uint64_t)main_base() + 0xae5f28;
