@@ -1559,7 +1559,8 @@ def _graphics_page(text):
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}},
         label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 720, 1000, 180), toggle('TouchGraphicsUpscale', 720),
-        profile, rt_row, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 1260, 1670, 300),
+        # 说明文案按平台分：安卓没有 MetalFX，用中性文案 dmAndGraphicsApplyHint | Hint text per platform: Android has no MetalFX, so it uses the neutral dmAndGraphicsApplyHint
+        profile, rt_row, label('TouchGraphicsApplyHint', 'dmAndGraphicsApplyHint' if os.environ.get('DM_TARGET') == 'android' else 'dmGraphicsApplyHint', 0, 1260, 1670, 300),
         {'type': 'NineTileImageWidget', 'name': 'TouchGraphicsSel', 'fields': {
             'rect': {'x': 99999, 'y': 0, 'width': 1700, 'height': 180}, 'backgroundColor': [0, 0, 0, 0],
             'filename': 'Controller/PANEL/ControllerSelector/ControllerSelectorBorder', 'tileScale': 0.5}}]}

@@ -88,6 +88,14 @@ assert isinstance(g_nodes['TouchGraphicsApplyHint']['fields']['style/fontColor']
 assert g_nodes['TouchGraphicsApplyHint']['fields']['style/fontColor'].startswith('$FontColor')
 assert g_nodes['TouchGraphicsProfile']['fields']['onUpdateMessage'].endswith('SetD2RUpscaleProfile')
 assert '@dmGraphicsFrameRate60' in graphics_out and '@dmGraphicsUpscaling' in graphics_out
+# 图形页说明按平台分：iOS 原文案，安卓中性文案、整段说明不提 MetalFX（B079）| Graphics page hint per platform: iOS keeps its text, Android is neutral and does not mention MetalFX (B079)
+_and_row = [l for l in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../i18n/ui_text.tsv'), encoding='utf-8') if l.startswith('dmAndGraphicsApplyHint\t')]
+assert len(_and_row) == 1 and 'MetalFX' not in _and_row[0].rsplit('\t', 1)[0]
+assert g_nodes['TouchGraphicsApplyHint']['fields']['text'] == '@dmGraphicsApplyHint'
+os.environ['DM_TARGET'] = 'android'; layout = importlib.reload(layout)
+_and_out, _ = layout._graphics_page(graphics_src)
+assert '@dmAndGraphicsApplyHint' in _and_out and '@dmGraphicsApplyHint' not in _and_out
+os.environ.pop('DM_TARGET'); layout = importlib.reload(layout)
 assert 'Row Offline' not in g_nodes and 'Row Online' not in g_nodes
 assert not g_nodes['OptionsTable'].get('children')
 assert g_nodes['TouchGraphicsRows']['type'] == 'Widget'

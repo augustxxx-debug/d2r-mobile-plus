@@ -560,4 +560,5 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmLoadCommCopied", "已复制", "Copied", "Copiado", "Copiado", "Скопировано", "복사됨" },
     { "dmLoadCommCopyFail", "复制失败", "Copy failed", "Error al copiar", "Error al copiar", "Ошибка", "복사 실패" },
     { "dmLoadCommPrefer", "qq", "github", "github", "github", "github", "github" },
+    { "dmAndGraphicsApplyHint", "点“应用”生效，无需重启。\n“默认”全局恢复游戏设定、图形与自定义，保留语言及配音。", "Apply without restarting.\nDefaults resets game options, Graphics and Custom; language and voice stay unchanged.", "Aplica sin reiniciar.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.", "Aplica sin reiniciar.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.", "Применяется без перезапуска.\nСброс восстанавливает настройки игры, графику и свои настройки; язык и озвучка сохраняются.", "재시작 없이 적용됩니다.\n기본값은 게임, 그래픽과 사용자 설정을 초기화하며 언어와 음성은 유지합니다." },
 };
