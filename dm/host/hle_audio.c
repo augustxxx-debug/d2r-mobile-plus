@@ -187,8 +187,8 @@ static void render(aout *a, void *data, uint32_t bytes) {
       if (df) fwrite(data, 1, bytes, df); }
     { int q = nq_phase(); atomic_fetch_add_explicit(&g_nq_calls[q], 1, memory_order_relaxed); if (a->dry) atomic_fetch_add_explicit(&g_nq_dry[q], 1, memory_order_relaxed); }   // 通知线程 QoS 对照：按当前相记 | Notification thread QoS comparison: recorded per current phase
 }
-// 声卡重开失败的定时重试不刷日志：au_open 的红字只在第 1 次与每 20 次记一行。持 g_aos_lock 改
-// Periodic reopen retries do not flood the log: au_open's red lines are logged only on the 1st and every 20th attempt. Changed under g_aos_lock
+// 声卡重开失败的定时重试不刷日志：au_open 的日志只在第 1 次与每 20 次记。持 g_aos_lock 改
+// Periodic reopen retries do not flood the log: au_open logs only on the 1st and every 20th attempt. Changed under g_aos_lock
 static int g_au_quiet;
 static void *null_sink(void *p);
 // 声卡丢了：记下等重试，在播就让静音接收端接手（游戏音频节奏不断），由它定时重开（dev_retry）。持 g_aos_lock、a->au 已空时调
@@ -225,7 +225,7 @@ static int au_open(aout *a) {   // 0 = 声卡开好了；-1 = 开不了（a->au 
                                      .mFormatFlags = kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
                                      .mBytesPerPacket = 2u * och, .mFramesPerPacket = 1, .mBytesPerFrame = 2u * och,
                                      .mChannelsPerFrame = (UInt32)och, .mBitsPerChannel = 16};
-    if (a->mix) LOG("audio：游戏给 6 声道（5.1）→ 交给声卡前自己下混成双声道（中置 / 后环绕 ×0.707 并入左右，低音不并入，整体 −3 dB、饱和截断）");
+    if (a->mix && !g_au_quiet) LOG("audio：游戏给 6 声道（5.1）→ 交给声卡前自己下混成双声道（中置 / 后环绕 ×0.707 并入左右，低音不并入，整体 −3 dB、饱和截断）");
     AURenderCallbackStruct cb = {au_render, a};
     if (AudioUnitSetProperty(a->au, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &f, sizeof f) ||
         AudioUnitSetProperty(a->au, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &cb, sizeof cb) ||
@@ -236,7 +236,7 @@ static int au_open(aout *a) {   // 0 = 声卡开好了；-1 = 开不了（a->au 
         AudioUnitGetProperty(a->au, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &cur, &sz);
         AudioObjectPropertyAddress pa = { kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain }; sz = sizeof def;
         AudioObjectGetPropertyData(kAudioObjectSystemObject, &pa, 0, NULL, &sz, &def); dev_name(cur, cn, sizeof cn); dev_name(def, dn, sizeof dn);
-        LOG("audio：输出设备「%s」（%u），系统缺省输出「%s」（%u）%s", cn, (unsigned)cur, dn, (unsigned)def, cur == def ? "，一致" : "【红】不一致"); }
+        if (!g_au_quiet) LOG("audio：输出设备「%s」（%u），系统缺省输出「%s」（%u）%s", cn, (unsigned)cur, dn, (unsigned)def, cur == def ? "，一致" : "【红】不一致"); }
 #endif
     return 0;
 }
@@ -294,9 +294,9 @@ static int au_open(aout *a) {   // 0 = 声卡开好了；-1 = 开不了（a->au 
     OH_AudioStream_Result r = OH_AudioStreamBuilder_GenerateRenderer(b, &a->au);
     OH_AudioStreamBuilder_Destroy(b);
     if (r != AUDIOSTREAM_SUCCESS) { a->au = NULL; if (!g_au_quiet) LOG("【红】OHAudio 打开失败 %d：这一路改用静音接收端（不出声）", (int)r); return -1; }
-    if (a->mix) LOG("audio：游戏给 6 声道（5.1）→ 交给声卡前自己下混成双声道（中置 / 后环绕 ×0.707 并入左右，低音不并入，整体 −3 dB、饱和截断）");
+    if (a->mix && !g_au_quiet) LOG("audio：游戏给 6 声道（5.1）→ 交给声卡前自己下混成双声道（中置 / 后环绕 ×0.707 并入左右，低音不并入，整体 −3 dB、饱和截断）");
     int32_t rate = 0, chn = 0, fpc = 0; OH_AudioRenderer_GetSamplingRate(a->au, &rate); OH_AudioRenderer_GetChannelCount(a->au, &chn); OH_AudioRenderer_GetFrameSizeInCallback(a->au, &fpc);
-    LOG("audio：OHAudio 流 %d Hz %d 声道，每次回调 %d 帧", (int)rate, (int)chn, (int)fpc);
+    if (!g_au_quiet) LOG("audio：OHAudio 流 %d Hz %d 声道，每次回调 %d 帧", (int)rate, (int)chn, (int)fpc);
     return 0;
 }
 static int dev_start(aout *a) { return OH_AudioRenderer_Start(a->au) == AUDIOSTREAM_SUCCESS ? 0 : -1; }
@@ -349,8 +349,8 @@ static int au_open(aout *a) {   // 0 = 声卡开好了；-1 = 开不了（a->au 
     aaudio_result_t r = AAudioStreamBuilder_openStream(b, &a->au);
     AAudioStreamBuilder_delete(b);
     if (r != AAUDIO_OK) { a->au = NULL; if (!g_au_quiet) LOG("【红】AAudio 打开失败 %d（%s）：这一路改用静音接收端（不出声）", (int)r, AAudio_convertResultToText(r)); return -1; }
-    if (a->mix) LOG("audio：游戏给 6 声道（5.1）→ 交给声卡前自己下混成双声道（中置 / 后环绕 ×0.707 并入左右，低音不并入，整体 −3 dB、饱和截断）");
-    LOG("audio：AAudio 流 %d Hz %d 声道，性能模式 %d，每次回调 %d 帧，缓冲 %d / %d 帧", AAudioStream_getSampleRate(a->au), AAudioStream_getChannelCount(a->au),
+    if (a->mix && !g_au_quiet) LOG("audio：游戏给 6 声道（5.1）→ 交给声卡前自己下混成双声道（中置 / 后环绕 ×0.707 并入左右，低音不并入，整体 −3 dB、饱和截断）");
+    if (!g_au_quiet) LOG("audio：AAudio 流 %d Hz %d 声道，性能模式 %d，每次回调 %d 帧，缓冲 %d / %d 帧", AAudioStream_getSampleRate(a->au), AAudioStream_getChannelCount(a->au),
         (int)AAudioStream_getPerformanceMode(a->au), AAudioStream_getFramesPerBurst(a->au), AAudioStream_getBufferSizeInFrames(a->au), AAudioStream_getBufferCapacityInFrames(a->au));
     return 0;
 }
