@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum { DM_PKG_OK = 0, DM_PKG_E_IO = 1, DM_PKG_E_ZIP = 2, DM_PKG_E_NOTOURS = 3, DM_PKG_E_CHECK = 4, DM_PKG_E_TOONEW = 5, DM_PKG_E_LIMIT = 6, DM_PKG_E_PATH = 7, DM_PKG_E_SPACE = 8, DM_PKG_E_STARFULL = 9 };
+enum { DM_PKG_OK = 0, DM_PKG_E_IO = 1, DM_PKG_E_ZIP = 2, DM_PKG_E_NOTOURS = 3, DM_PKG_E_CHECK = 4, DM_PKG_E_TOONEW = 5, DM_PKG_E_LIMIT = 6, DM_PKG_E_PATH = 7, DM_PKG_E_SPACE = 8, DM_PKG_E_STARFULL = 9, DM_PKG_E_CONVERT = 10 };
 enum { DM_PKG_NEW = 0, DM_PKG_SAME = 1, DM_PKG_CONFLICT = 2, DM_PKG_BAD = 3 };           // 预览里每行的状态 | row state in the preview
 enum { DM_PKG_SKIP = 0, DM_PKG_OVERWRITE = 1, DM_PKG_KEEPBOTH = 2 };                      // 每行的处理（新角色导入 = OVERWRITE） | per-row action (importing a new character = OVERWRITE)
 enum { DM_PKG_FORMAT_MAJOR = 1, DM_PKG_FORMAT_MINOR = 0, DM_PKG_SAVE_GEN = 2 };           // 版本规则见设计稿 2.1 节：旧版跳过会丢东西的改动必须升 major | versioning rules: a change an old build would lose data by skipping must bump major
@@ -32,6 +32,7 @@ typedef struct { char name[64]; int status, action; } dm_pkg_stash;
 typedef struct {
     int format_major, format_minor, save_gen;
     char platform[16], commit[48], build[24], version[40], game_build[24], exported_at[24], kind[12];
+    char source_format[20], source_version[24], converted_from[48];   // 数据来自哪种格式 / 那种格式的版本 / 谁转换过（空 = 没转换）。第一期只有恒等转换 | which format the data came from / its version / what converted it (empty = not converted). Phase 1 only has the identity conversion
     int nchars, nstash, has_settings, settings_action, skipped_unknown, nfiles;
     long long total_bytes;
     dm_pkg_char *chars;                     // DM_PKG_MAX_CHARS 个，dm_savepkg_view_free 释放 | DM_PKG_MAX_CHARS entries, released by dm_savepkg_view_free

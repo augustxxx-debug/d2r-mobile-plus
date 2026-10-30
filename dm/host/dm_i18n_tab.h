@@ -1047,4 +1047,8 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
 #if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndSaveBackupPath", "备份也保存在 Download/S2X/D2R Mobile Plus/SaveBackups", "Backups are also in Download/S2X/D2R Mobile Plus/SaveBackups", "Copias también en Download/S2X/D2R Mobile Plus/SaveBackups", "Copias también en Download/S2X/D2R Mobile Plus/SaveBackups", "Копии также в Download/S2X/D2R Mobile Plus/SaveBackups", "백업은 Download/S2X/D2R Mobile Plus/SaveBackups 에도 저장됩니다" },
 #endif
+    { "dmSaveFmtPc", "PC 版 D2R", "D2R on PC", "D2R en PC", "D2R en PC", "D2R на ПК", "PC판 D2R" },
+    { "dmSaveFmtLod", "暗黑 2 毁灭之王", "Diablo II: LoD", "Diablo II: LoD", "Diablo II: LoD", "Diablo II: LoD", "디아블로 2: 파괴의 군주" },
+    { "dmSaveFmtOther", "其他来源", "another source", "otro origen", "otro origen", "другой источник", "다른 출처" },
+    { "dmSaveErrConvert", "这个存档包需要转换，当前版本还不支持", "This package needs converting, which this version does not support yet", "Este paquete requiere conversión, aún no disponible", "Este paquete requiere conversión, aún no disponible", "Пакет требует преобразования, пока не поддерживается", "이 패키지는 변환이 필요하며 아직 지원되지 않습니다" },
 };
