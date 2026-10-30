@@ -378,6 +378,7 @@ void (*dm_pad_hook)(uint64_t, uint64_t *, int32_t *, int32_t *, int32_t *, int32
 // controller gate of the community / About box (dm_community.c): weak defaults pass everything through; the strong definitions in dm_community.c replace them in the product
 __attribute__((weak)) void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) { (void)bt; (void)lx; (void)ly; (void)rx; (void)ry; }
 __attribute__((weak)) void dm_community_input_leak(int leaked) { (void)leaked; }
+__attribute__((weak)) void dm_savemgr_pump(void) {}
 static void fill(NpadState *s, uint32_t id, uint32_t style) {
     pthread_once(&g_receipt_once, receipt_init);
     DM_PROF(0, "taps", ui_taps_step());

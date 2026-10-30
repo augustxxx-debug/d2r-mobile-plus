@@ -242,6 +242,7 @@ static void load_once(void) {
             mem_tier_env() >= 0 ? "DM_MEM_TIER 覆盖" : lim < 0 ? "没量到，按最高档" : "实测", mem_save ? "；套用本档缺省：" : "；", mem_save ? mem_what : "缺省不变");
         if (mem_save) save(); }
 }
+__attribute__((weak)) void dm_savemgr_open(int from) { (void)from; }   // 没有存档管理模块（单测）| no save-management module (unit tests)
 void dm_custom_reload(void) { atomic_store(&g_loaded, 0); load_once(); }   // 存档导入改了设置文件之后（启动期，dm_savemgr_boot）| after a save import changed the settings file (at boot)
 int dm_custom_loaded(void) { load_once(); return atomic_load(&g_loaded); }   // 设置文件读到了没有（iOS 壳在 didFinishLaunching 给目录之前一直是 0）| whether the settings file has been read (0 until the iOS shell gives the directory in didFinishLaunching)
 int dm_custom_get(const char *key) {
@@ -757,7 +758,7 @@ void dm_custom_ui_pump(unsigned long long root) {
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
           if (ev & DM_BTN_DOWN) sel = sel + 1 < rows ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
           int ci = sel < nc ? custom_key_at(sel) : -1;
-          if (ci < 0 && sel == nc) { void dm_savemgr_open(int); tw = find_w(sp, "TouchSavesText", 0); cw = find_w(sp, "TouchSavesOpt", 0); uint64_t ar = find_w(sp, "TouchSavesGroup", 0), ac = find_w(sp, "TouchSavesRow", 0);
+          if (ci < 0 && sel == nc) { tw = find_w(sp, "TouchSavesText", 0); cw = find_w(sp, "TouchSavesOpt", 0); uint64_t ar = find_w(sp, "TouchSavesGroup", 0), ac = find_w(sp, "TouchSavesRow", 0);
               if (cw && ((int32_t *)(cw + 0x70))[0] == 99999) cw = find_w(sp, "TouchSavesHint", 0);   // 局内按钮挪走了，框住副文 | in a run the button is away, frame the subtext
               oy = (ar ? *(int32_t *)(ar + 0x74) : 0) + (ac ? *(int32_t *)(ac + 0x74) : 0); if (ar) about_bot = *(int32_t *)(ar + 0x74) + *(int32_t *)(ar + 0x7c); if ((ev & DM_BTN_A) && ac) dm_savemgr_open(2); }
           else if (ci < 0) { tw = find_w(sp, "TouchAboutCommunityText", 0); cw = find_w(sp, "TouchCommunityOpt", 0); uint64_t ar = find_w(sp, "TouchAboutRow", 0), ac = find_w(sp, "TouchAboutCommunityRow", 0);
