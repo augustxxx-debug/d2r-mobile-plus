@@ -13,7 +13,7 @@ This is a development preview. Improvements have been tested locally on an iOS d
 ## Download and verify
 
 - Website: https://d2rplus.augustusplay.com/ · QQ group 1129913678 · This software is free; any paid channel is a resale.
-- **Android**: [Releases · android-v1.0.0](https://github.com/augustxxx-debug/d2r-mobile-plus/releases/tag/android-v1.0.0) (source on branch `android/v1.0.0`). Official packages are always signed with the certificate SHA-256 `b4af06c165dd8699ab9f2b0dec8f6c2de05cd4d01f510fe63778eac6898a52da`; anything else is not from us.
+- **Android**: [Releases · android-v1.0.1](https://github.com/augustxxx-debug/d2r-mobile-plus/releases/tag/android-v1.0.1) (source on branch `android/v1.0.1`; 1.0.0 was withdrawn). Official packages are always signed with the certificate SHA-256 `b4af06c165dd8699ab9f2b0dec8f6c2de05cd4d01f510fe63778eac6898a52da`; anything else is not from us.
 - **iOS**: source only — build it with your own game files and Xcode as described under "Build your own copy".
 
 ## Coming soon (preview)
