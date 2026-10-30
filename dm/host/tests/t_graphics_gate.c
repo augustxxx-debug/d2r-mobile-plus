@@ -44,7 +44,7 @@ int main(void) {
     // 自定义页的平台限制：有 iCloud 时 icloud 行在，没有时整页少一行、后面的行号前移（与 touch_layout.py DM_TARGET=android 对齐）
     // Per-platform Custom rows: with iCloud the icloud row exists; without it the page has one row fewer and later rows move up (matching touch_layout.py DM_TARGET=android)
     icloud_ok = 1; int rows_apple = custom_rows(); CHECK(rows_apple == NK - N_GFX && custom_key_at(6) == K_ICLOUD);
-    icloud_ok = 0; CHECK(custom_rows() == rows_apple - 1 && custom_key_at(6) == K_ICLOUD + 1 && !custom_row(K_ICLOUD) && custom_key_at(rows_apple - 2) == key_index("free_tp"));
+    icloud_ok = 0; CHECK(custom_rows() == rows_apple - 1 && custom_key_at(6) == K_ICLOUD + 1 && !custom_row(K_ICLOUD) && custom_key_at(rows_apple - 2) == key_index("auto_crash"));
     icloud_ok = 1;
     unlink(path); rmdir(dir);
     printf("PASS t_graphics_gate: %d checks\n", checks); return 0;
