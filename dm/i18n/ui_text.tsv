@@ -25,6 +25,11 @@ dmStoreSep	，	, 	, 		, 	, 	存放提示里的分隔符
 dmStoreNone	没有可以存放的物品	No items to deposit	Nada que depositar		Нечего складывать	보관할 아이템 없음	存放提示：一件没存；同上
 dmStoreLeft	，%d 件留在背包	, %d left in inventory	, %d siguen en el inventario		, %d осталось в инвентаре	, %d개 가방에 남음	存放提示：没存进去的件数
 dmStoreFull	这一格已放满，物品留在原处	That stack is full. Item left where it is.	Esa pila está llena. El objeto se queda donde está.		Этот стак полон. Предмет остался на месте.	해당 칸이 가득 참. 아이템은 제자리에 둡니다.	存放提示：高级仓库那一格叠满 99，物品留在背包 / 仓库页
+dmStackTitle	%d 瓶	%d bottles	%d frascos		%d шт.	%d병	拆分框标题
+dmStackOne	拆出 1 瓶（A）	Split 1 (A)	Separar 1 (A)		Отделить 1 (A)	1병 나누기 (A)	拆分框按钮，括号里是手柄键
+dmStackHalf	拆半（Y）	Split half (Y)	Separar mitad (Y)		Пополам (Y)	절반 나누기 (Y)	拆分框按钮
+dmStackAll	全部拆开（X）	Split all (X)	Separar todo (X)		Разделить все (X)	모두 나누기 (X)	拆分框按钮
+dmStackNoRoom	没有空格，拆不开	No free cell to split into	No hay espacio para separar		Нет места для разделения	나눌 공간이 없습니다	拆分时背包或仓库满的提示
 dmPouchTitle	百宝囊	Pouch	Zurrón		Сумка	주머니	百宝囊清单标题
 dmPouchEmpty	（空）	(empty)	(vacío)		(пусто)	(비어 있음)	百宝囊清单：空
 dmRwTitle	%s · %d 孔 · 可做的符文之语	%s · Socketed (%d) · Runewords	%s · Con huecos (%d) · Palabras rúnicas	%s · Engarzado (%d) · Palabras rúnicas	%s · С гнездами (%d) · Рунные слова	%s · 홈 %d · 가능한 룬워드	符文之语清单标题（dm_runeword.c；%s = 底材名）；英文用原版词：item-modifiers[Socketable]「Socketed (%i)」、ui[Runewords]
@@ -74,6 +79,7 @@ dmCustomPotPick	腰带有空位时自动拾取能放进去的药水	Auto-pick po
 dmCustomDropHaptic	高价值物品掉落时震动	Vibrate on valuable drops	Vibrar con botín valioso		Вибрация на ценных дропах	고가치 드롭 시 진동	自定义页开关
 dmCustomGemPick	符文与宝石自动拾取（直接进高级仓库）	Auto-stash runes & gems	Runas y gemas al alijo	Runas y gemas al Arcón	Руны и камни в хранилище	룬·보석 자동 창고 보관	自定义页开关
 dmCustomStoreBtn	背包「存放」按钮	Inventory Deposit button	Botón Depositar en inventario		Кнопка «Внести» в инвентаре	가방 '보관' 버튼	自定义页开关
+dmCustomBeltRefill	腰带有空位时从背包补药	Auto-refill belt from inventory	Rellenar cinturón desde inventario		Пополнять пояс из инвентаря	벨트 빈칸 자동 보충	自定义页开关
 dmCustomEcoFps	省电模式（30 帧）	Power saver (30 fps)	Modo ahorro (30 fps)		Экономия (30 fps)	절전 모드 (30 fps)	自定义页开关
 dmCustomQ3dSmooth	流畅优先	Smoothness first	Fluidez primero		Плавность важнее	부드러움 우선	自定义页「3D 画质」单选的第一项（缺省；dm_custom.c 键 q3d=0）
 dmCustomQ3dSmoothHint	掉帧时自动降低 3D 画面清晰度	Lowers 3D resolution when frames drop	Baja la resolución 3D si caen los fotogramas		Снижает 3D-разрешение при просадке FPS	프레임 하락 시 3D 해상도 자동 낮춤	流畅优先下面的说明小字

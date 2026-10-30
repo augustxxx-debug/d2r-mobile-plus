@@ -18,6 +18,21 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 INV = 'controller/console/switch/playerinventoryexpansionlayouthd.json'
 TIP = 99999   # 说明框缺省在屏外，宿主按字的大小摆 | The tooltip box is off screen by default; the host positions it according to the size of the text
 
+# 药水叠数（宿主 dm_stack.c 按格摆，平时在屏外）与拆分框：副文 28 号、金色，右下对齐
+# Potion counts (placed per cell by the host dm_stack.c, off screen otherwise) and the split box: 28 pt secondary text, gold, bottom right
+def _qty_widgets():
+    t = ''
+    for i in range(24):
+        t += ('            { "type": "TextBoxWidget", "name": "TouchQtyN%02d", "fields": { "rect": { "x": %d, "y": 0, "width": 90, "height": 44 }, "text": "", '
+              '"style": { "fontColor": "$FontColorGoldYellow", "pointSize": "$MediumFontSize", "spacing": "$ReducedSpacing", "dropShadow": "$DefaultDropShadow", "alignment": { "h": "right", "v": "bottom" } } } },\n') % (i, TIP)
+    t += ('            { "type": "NineTileImageWidget", "name": "TouchQtyBg", "fields": { "rect": { "x": %d, "y": 0, "width": 560, "height": 340 }, "filename": "PANEL/TooltipBorder/TooltipBorder", "backgroundColor": [0.0, 0.0, 0.0, 0.92], "tileScale": 1.0 } },\n'
+          '            { "type": "TextBoxWidget", "name": "TouchQtyTitle", "fields": { "rect": { "x": %d, "y": 0, "width": 520, "height": 60 }, "text": "", '
+          '"style": { "fontColor": "$FontColorLightGold", "pointSize": "$TooltipFontSize", "spacing": "$ReducedSpacing", "alignment": { "h": "center", "v": "center" } } } },\n') % (TIP, TIP)
+    for n, key in (('TouchQtyOne', '@dmStackOne'), ('TouchQtyHalf', '@dmStackHalf'), ('TouchQtyAll', '@dmStackAll')):
+        t += ('            { "type": "ButtonWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": 0, "width": 700, "scale": 0.74 }, "filename": "FrontEnd/HD/Final/FrontEnd_ButtonSmall", "hoveredFrame": 1, '
+              '"textString": "%s", "textColor": "$LightButtonTextColor", "text/style": "$StyleFEButtonText", "onClickMessage": "PanelManager:ClosePanel:%s" } },\n') % (n, TIP, key, n)
+    return t
+
 def widgets():
     return ('        { "type": "Widget", "name": "TouchPouchBox", "children": [\n'
             '            { "type": "ButtonWidget", "name": "TouchPouch", "fields": { "rect": { "x": 222, "y": 1294, "width": 280, "height": 128 }, "filename": "Controller/Panel/zspouch/PouchBox", '
@@ -29,8 +44,9 @@ def widgets():
             '"textString": "@strGoldDeposit", "textColor": "$LightButtonTextColor", "text/style": "$StyleFEButtonText", "onClickMessage": "PanelManager:ClosePanel:TouchStore" } },\n'
             '            { "type": "NineTileImageWidget", "name": "TouchPouchTipBg", "fields": { "rect": { "x": %d, "y": 0, "width": 700, "height": 400 }, "filename": "PANEL/TooltipBorder/TooltipBorder", "backgroundColor": [0.0, 0.0, 0.0, 0.85], "tileScale": 1.0 } },\n'
             '            { "type": "TextBoxWidget", "name": "TouchPouchTip", "fields": { "rect": { "x": %d, "y": 0, "width": 900, "height": 600 }, "text": "", "fitToText": true, '
-            '"style": { "fontColor": "$FontColorWhite", "pointSize": "$TooltipFontSize", "alignment": { "h": "center", "v": "top" }, "options": { "newlineHandling": "standard" } } } },\n'
-            '        ] },\n') % (TIP, TIP)
+            '"style": { "fontColor": "$FontColorWhite", "pointSize": "$TooltipFontSize", "alignment": { "h": "center", "v": "top" }, "options": { "newlineHandling": "standard" } } } },\n' % (TIP, TIP)
+            + _qty_widgets() +
+            '        ] },\n')
 
 def inv_layout(s):
     if '"TouchPouchBox"' in s: raise SystemExit('pouch_layout：物品栏布局里已经有 TouchPouchBox')
