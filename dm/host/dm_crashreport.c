@@ -145,7 +145,8 @@ void dm_crashreport_result(unsigned token, int outcome, const char *detail, int 
 void dm_update_redraw(void);
 void dm_crashreport_pump(void) {
     double now = now_s(); long long wall = (long long)time(NULL);
-    if (!S.booted) dm_crashreport_boot(now, wall);
+    // 设置文件读到之后才判定：没读到就当「关」会把待传报告删掉 | decide only once the settings file is read: treating "not read yet" as off would delete a pending report
+    if (!S.booted) { (void)dm_custom_auto_crash(); if (!dm_custom_loaded()) return; dm_crashreport_boot(now, wall); }
     dm_crashreport_tick(now, wall);
     if (atomic_exchange(&g_note_dirty, 0)) dm_update_redraw();
     if (g_note_until && now > g_note_until) { g_note_key[0] = 0; g_note_until = 0; dm_update_redraw(); }

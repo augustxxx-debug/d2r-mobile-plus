@@ -9,6 +9,7 @@ module_t g_mod[MAX_MOD]; int g_nmod;
 static char g_dir[256];
 static int f_on = 1, f_prev = 1, f_cfg = 1, f_cancels, f_starts, f_redraws; static const char *f_test; static unsigned f_tok; static char f_fence[160], f_dirarg[256];
 int dm_custom_auto_crash(void) { return f_on; }
+static int f_loaded = 1; int dm_custom_loaded(void) { return f_loaded; }
 int dm_custom_dir(char *p, size_t n) { snprintf(p, n, "%s", g_dir); return 1; }
 const char *dm_crashfence_test_env(void) { return f_test; }
 int dm_crashfence_prev(int *cause, int *arg, int *streak, char *hist, size_t hn) { if (cause) *cause = 1; if (arg) *arg = 11; if (streak) *streak = 2; if (hist && hn) snprintf(hist, hn, "11"); return f_prev; }
@@ -76,6 +77,8 @@ int main(void) {
     CHECK(f_cancels == 1 && dm_crashreport_state(0, 0) == DM_CR_OFF && !exists("state") && !exists("payload") && !exists("id"));
     dm_crashreport_result(late, DM_DIAGUP_OK, "x", 0, 0); dm_crashreport_tick(21, 1021); CHECK(!g_note_key[0]);
     dm_crashreport_setting_changed(1); CHECK(dm_crashreport_state(0, 0) == DM_CR_OFF);   // 开：下次启动才起作用 | on: from the next launch
+    // 设置文件还没读到：泵不判定、不删待传报告；读到才判定 | settings not read yet: the pump decides nothing and deletes nothing; it decides once they are read
+    f_on = 0; f_loaded = 0; memset(&S, 0, sizeof S); touch("state"); dm_crashreport_pump(); CHECK(!S.booted && exists("state")); f_loaded = 1; dm_crashreport_pump(); CHECK(S.booted && !exists("state")); f_on = 1; wipe();
     printf("t_crashreport: %d checks, %d failed\n", checks, fails); rmdir(g_dir);
     return fails != 0;
 }
