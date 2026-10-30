@@ -137,9 +137,9 @@ void dm_telebox_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_
     int cx = (int)((xr / 2 - ox) / s), y0 = (int)((1080 - oy) / s) - BOX_H / 2;
     { int gm[15][4], h = dm_notice_geometry(BOX_W - 128, BOX_H - 24, BOX_W, gm), top = (244 - h) / 2;
       for (int k = 0; h && k < 15; k++) { int r[4] = { cx - BOX_W / 2 + gm[k][0], y0 + gm[k][1] - top, gm[k][2], gm[k][3] + (k / 3 < 4 ? 2 : 0) }; tb_tile(b, tl[k], r); } }
-    tb_place(ti, cx - TEXT_W / 2, y0 + 20);
-    for (int k = 0; k < N_BODY; k++) tb_place(de[k], cx - TEXT_W / 2, y0 + 88 + k * 46);
-    tb_place(de[N_BODY], cx - TEXT_W / 2, y0 + 556); tb_place(de[N_BODY + 1], cx - TEXT_W / 2, y0 + 596);
-    tb_place(ag, cx - 500, y0 + 650); tb_place(dc, cx + 30, y0 + 650);
+    tb_place(ti, cx - TEXT_W / 2, y0 + 24);
+    for (int k = 0; k < N_BODY; k++) tb_place(de[k], cx - TEXT_W / 2, y0 + 92 + k * 48);
+    tb_place(de[N_BODY], cx - TEXT_W / 2, y0 + 576); tb_place(de[N_BODY + 1], cx - TEXT_W / 2, y0 + 614);
+    tb_place(ag, cx - 500, y0 + 664); tb_place(dc, cx + 30, y0 + 664);
     if (st == 1) { atomic_store(&g_show, 2); LOG("统计告知：已显示（%s，面板 %s 矩形 %d,%d 缩放 %.2f → 框中心 %d 顶 %d）", pad ? "手柄模式，A 同意 B 不同意" : "触屏 / 鼠标点按钮", hn, pr[0], pr[1], s, cx, y0); }
 }

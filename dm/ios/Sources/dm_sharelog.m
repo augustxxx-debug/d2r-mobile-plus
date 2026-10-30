@@ -267,7 +267,8 @@ static void tele_device(dm_tele_device_t *d) {
         if (code[0]) done = 1;   // IDFV 开机后短时间可能读不到：下次再读 | the IDFV may be unavailable shortly after boot: read again next time
     }
     d->platform = "ios"; d->app_version = ver; d->build = build; d->source_revision = rev; d->channel = chan; d->model = model; d->os_version = os; d->locale = loc; d->device_code = code;
-    d->font = [NSBundle.mainBundle pathForResource:@"LXGWWenKai-Medium-game" ofType:@"ttf" inDirectory:@"UIFonts"] ? "lxgw" : "other";
+    static int lxgw = -1; if (lxgw < 0) { NSString *lic = [NSString stringWithContentsOfFile:[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"UIFonts/FONT_LICENSE.txt"] encoding:NSUTF8StringEncoding error:NULL]; lxgw = [lic containsString:@"LXGW WenKai"]; }   // 公开字体的许可证里写着字体名 | the public font's licence file names it
+    d->font = lxgw ? "lxgw" : "other";
 }
 static const dm_telemetry_shell_t tele_shell = { diag_configured, tele_device, tele_probe, tele_send, dm_telemetry_net_cancel, tele_forget, 0 };
 static const dm_crashreport_shell_t crash_shell = { diag_configured, crash_start, dm_crashreport_net_cancel, crash_prepare, 0 };
