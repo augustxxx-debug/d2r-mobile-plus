@@ -284,7 +284,8 @@ static int auto_pot_life(uint8_t *b, uint64_t pl, uint32_t t) {   // 人物生�
     static ap_life s; int (*gs)(uint64_t, int, int) = (void *)(b + 0x5b9290); int v = gs(pl, 6, 0) >> 8, mx = gs(pl, 7, 0) >> 8, bag = 0; uint32_t code = 0; const char *why = NULL;
     uint32_t id = ap_life_pick(b, pl, &s, v, mx, a_has_state(pl, 100), t, &code, &bag, &why);
     if (!id) { if (why) LOG("自动喝药：生命 %d/%d 低于 %d%%，背包和腰带里都没有可喝的生命药水", v, mx, ap_pct(0)); return 0; }
-    atomic_store(&g_use, id); s.last = t; s.warned = 0;
+    { uint32_t z = 0; if (!atomic_compare_exchange_strong(&g_use, &z, id)) return 0; }   // 同一拍已有别的使用请求（如回城钮用书 / 卷轴）就不覆盖，下一拍再喝（B063） | if another use request is already pending this tick (e.g. the portal button using a tome / scroll), do not overwrite it; drink on the next tick (B063)
+    s.last = t; s.warned = 0;
     LOG("自动喝药：拍 %u 生命 %d/%d（%d%%）→ %s：喝%s的 %.3s（id %u）", t, v, mx, (int)((long long)v * 100 / mx), why, bag ? "背包" : "腰带", (const char *)&code, id);
     return 1;
 }
@@ -296,7 +297,8 @@ static int auto_pot_mana(uint8_t *b, uint64_t pl, uint32_t t) {   // 法力：�
     if (mx <= 0 || v * 10 >= mx * 3) { warned = 0; return 0; }
     uint32_t id = ap_find(b, pl, 1, &code, &bag);
     if (!id) { if (!warned) { warned = 1; LOG("自动喝药：法力 %d/%d 低于 30%%，背包和腰带里都没有法力药水", v, mx); } return 0; }
-    atomic_store(&g_use, id); last = t; warned = 0;
+    { uint32_t z = 0; if (!atomic_compare_exchange_strong(&g_use, &z, id)) return 0; }   // 同上（B063） | as above (B063)
+    last = t; warned = 0;
     LOG("自动喝药：拍 %u 法力 %d/%d 低于 30%% → 喝%s的 %.3s（id %u）", t, v, mx, bag ? "背包" : "腰带", (const char *)&code, id);
     return 1;
 }

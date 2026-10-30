@@ -854,8 +854,12 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
         if (tk_rd(inv + 0x10, &u, 8))
             for (unsigned k = 0; u && k < 1024 && state_read_item(u, &it, 0, &next); k++) {
                 if (it.mode == 2) h.belt[it.x % 4]++;                       // 腰带物品 x = 0..15，列 = x % 4（与 LEFT/UP/RIGHT/DOWN 对应） | Belt items x = 0..15, column = x % 4 (matching LEFT/UP/RIGHT/DOWN)
-                if (it.cls == CLS_TSC) h.portal++;
-                if (it.cls == CLS_TBK) { uint32_t q = 0; if (stat_read(u, 70, &q)) h.portal += (int)q; }   // stat 70 = quantity
+                {   // 回城钮角标只数回城时真能用上的：背包第 0 页（mode 0 且 page 0）与腰带（mode 2），同 dm_freetp.c use_scroll；储藏箱 / 方块里的不算（B062）
+                    // The portal badge counts only what a portal press can use: inventory page 0 (mode 0, page 0) and the belt (mode 2), as use_scroll in dm_freetp.c; stash / cube items do not count (B062)
+                    int pack = it.mode == 0 && it.page == 0;
+                    if (it.cls == CLS_TSC && (pack || it.mode == 2)) h.portal++;
+                    if (it.cls == CLS_TBK && pack) { uint32_t q = 0; if (stat_read(u, 70, &q)) h.portal += (int)q; }   // stat 70 = quantity
+                }
                 u = next;
             }
         h.valid = 1;
