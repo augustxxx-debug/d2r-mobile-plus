@@ -129,4 +129,25 @@ static void mac_crash_prepare(const char *fence, const char *dir) {
 }
 static const dm_crashreport_shell_t mac_crash_shell = { mac_configured, mac_crash_start, dm_crashreport_net_cancel, mac_crash_prepare, 0 };
 static const dm_diagup_shell_t mac_shell = { mac_configured, mac_start, dm_diagup_net_cancel, mac_export, mac_copy };
-__attribute__((constructor)) static void diagup_mac_register(void) { dm_diagup_init(&mac_shell); dm_crashreport_init(&mac_crash_shell); }   // 只在 dmhost_diag 里链进来：一启动就登记 | linked only into dmhost_diag: registered at launch
+// 设备与使用统计的 Mac 外壳（只在 dmhost_diag 里；地址同 DM_DIAG_ORIGIN）。设备码 = 设置目录下 0600 文件里的随机标识；私钥 DM_TELE_KEY_FILE（缺省同目录） | the statistics' Mac shell (dmhost_diag only; origin as DM_DIAG_ORIGIN). Device code = a random id in a 0600 file in the settings dir; private key DM_TELE_KEY_FILE (default next to it)
+#include "dm_telemetry.h"
+#include "dm_custom.h"
+void dm_telemetry_net_probe(unsigned token, void (*done)(unsigned, int));
+void dm_telemetry_net_send(unsigned token, const char *origin, const char *key_path, const char *body, long n, void (*done)(unsigned, int, const char *, int));
+void dm_telemetry_net_cancel(void);
+void dm_telemetry_net_forget(const char *key_path);
+static const char *mac_tele_key(void) { const char *k = getenv("DM_TELE_KEY_FILE"); if (k && *k) return k; static char p[1100]; char d[1024]; if (!dm_custom_dir(d, sizeof d)) return NULL; snprintf(p, sizeof p, "%s/dm_tele_identity.key", d); return p; }
+static void mac_tele_probe(unsigned token) { dm_telemetry_net_probe(token, dm_telemetry_net); }
+static void mac_tele_done(unsigned token, int outcome, const char *detail, int retry_after) { dm_telemetry_result(token, outcome, detail, retry_after); }
+static void mac_tele_send(unsigned token, const char *body, size_t n) { const char *o = mac_origin(), *k = mac_tele_key(); if (!o || !k) { mac_tele_done(token, DM_DIAGUP_CONFIG, "origin", 0); return; } dm_telemetry_net_send(token, o, k, body, (long)n, mac_tele_done); }
+static void mac_tele_forget(void) { const char *k = mac_tele_key(); if (k) dm_telemetry_net_forget(k); char d[1024], p[1100]; if (dm_custom_dir(d, sizeof d)) { snprintf(p, sizeof p, "%s/dm_tele_device.txt", d); unlink(p); } }
+static void mac_tele_device(dm_tele_device_t *t) {
+    static char model[64] = "unknown", os[32], code[48], rev[48]; char d[1024], p[1100];
+    size_t hn = sizeof model; sysctlbyname("hw.model", model, &hn, NULL, 0); NSOperatingSystemVersion v = NSProcessInfo.processInfo.operatingSystemVersion; snprintf(os, sizeof os, "%ld.%ld.%ld", (long)v.majorVersion, (long)v.minorVersion, (long)v.patchVersion);
+    const char *r = getenv("DM_DIAG_SOURCE_REVISION"); snprintf(rev, sizeof rev, "%s", r ? r : "unknown");
+    if (!code[0] && dm_custom_dir(d, sizeof d)) { snprintf(p, sizeof p, "%s/dm_tele_device.txt", d); FILE *f = fopen(p, "r"); if (f) { if (!fgets(code, sizeof code, f)) code[0] = 0; fclose(f); code[strcspn(code, "\r\n")] = 0; }
+        if (!code[0]) { snprintf(code, sizeof code, "%s", NSUUID.UUID.UUIDString.UTF8String); int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0600); if (fd >= 0) { (void)!write(fd, code, strlen(code)); close(fd); } } }
+    t->platform = "mac"; t->app_version = "0.0"; t->build = "0"; t->source_revision = rev; t->channel = "mac"; t->model = model; t->os_version = os; t->locale = NSLocale.currentLocale.localeIdentifier.UTF8String; t->device_code = code; t->font = "other";
+}
+static const dm_telemetry_shell_t mac_tele_shell = { mac_configured, mac_tele_device, mac_tele_probe, mac_tele_send, dm_telemetry_net_cancel, mac_tele_forget, 0 };
+__attribute__((constructor)) static void diagup_mac_register(void) { dm_diagup_init(&mac_shell); dm_crashreport_init(&mac_crash_shell); dm_telemetry_init(&mac_tele_shell); }   // 只在 dmhost_diag 里链进来：一启动就登记 | linked only into dmhost_diag: registered at launch

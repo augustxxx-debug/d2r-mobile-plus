@@ -19,6 +19,7 @@
 #include "../../host/dm_custom.h"
 #include "../../host/dm_diagup.h"
 #include "../../host/dm_crashreport.h"
+#include "../../host/dm_telemetry.h"
 #import <Metal/Metal.h>
 #import "dm_diagnostic_scrub.h"
 #import "dm_diagnostic_read.h"
@@ -42,7 +43,7 @@ static NSString *last_line(NSData *d, const char *key) {
 static void perf_block(NSMutableString *h, NSString *title, NSData *d) {
     [h appendFormat:@"\n—— %@ ——\n", title];
     if (!d) { [h appendString:@"（没有这份日志）\n"]; return; }
-    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "存档管理：", "诊断上传：", "自动上报：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "超分档位：", "内存档位：", "内存档位预留：", "光追阴影：机器判定", "光追档位：", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追阴影：局部回退 至第", "光追阴影：主光", "光追阴影：阴影图 第", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追质量：", "光追降分辨率：", "光追阴影：GPU", "自定义设置：读盘", "输入模式：", "社区入口：清单", "社区入口：已显示", "社区入口：复制", "Metal 抓帧层：", "光追内存：预算", "光追内存：第", "光追内存：告警", "内存 至帧", "【内存告警】", "游戏难度：", "线程同步：", "加载页：" };
+    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "存档管理：", "诊断上传：", "自动上报：", "统计上报：", "统计告知：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "超分档位：", "内存档位：", "内存档位预留：", "光追阴影：机器判定", "光追档位：", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追阴影：局部回退 至第", "光追阴影：主光", "光追阴影：阴影图 第", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追质量：", "光追降分辨率：", "光追阴影：GPU", "自定义设置：读盘", "输入模式：", "社区入口：清单", "社区入口：已显示", "社区入口：复制", "Metal 抓帧层：", "光追内存：预算", "光追内存：第", "光追内存：告警", "内存 至帧", "【内存告警】", "游戏难度：", "线程同步：", "加载页：" };
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) { NSString *l = last_line(d, keys[i]); [h appendFormat:@"%@\n", l ?: [NSString stringWithFormat:@"（没有「%@」行）", @(keys[i])]]; }
 }
 // 日志里的路径会带系统用户主目录（Mac 上是 /Users/<用户名>，iPhone 上是 /var/mobile）：导出时一律换成 ~，不把用户名带出去
@@ -90,7 +91,7 @@ static NSData *build_data(NSUInteger log_limit, NSUInteger crash_limit, NSUInteg
       [h appendFormat:@"Memory tier=%d limitMB=%d physMB=%d model=%s | atLaunch renderRes=%d profile=%s | now renderRes=%d profile=%s\n", tier, lim, phys, dm_mem_model(), r0,
           q0 >= 0 && q0 < 5 ? profiles[q0] : "unknown", dm_render_res_level(), up ? (qn >= 0 && qn < 4 ? profiles[qn] : "unknown") : profiles[4]]; }
     [h appendString:@"Enhanced preferences (applied):"];
-    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "auto_crash" };
+    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "tel_stats", "auto_crash" };
     for (unsigned i=0;i<sizeof custom/sizeof *custom;i++) [h appendFormat:@" %s=%d",custom[i],dm_custom_get(custom[i])];
     [h appendString:@"\n"];
     [h appendFormat:@"Log export: at most %lu bytes per log; omitted prefix bytes current=%llu previous=%llu. Original log files are unchanged.\n", (unsigned long)log_limit,cur_omitted,prev_omitted];
@@ -245,7 +246,31 @@ static void crash_prepare(const char *fence, const char *dir) {   // 总开关�
     static char fence_copy[160]; snprintf(fence_copy, sizeof fence_copy, "%s", fence ? fence : "");
     dm_crashreport_net_prepare(diag_meta().UTF8String, dir, crash_collect, fence_copy);
 }
+// ---- 设备与使用统计的外壳（策略 dm/host/dm_telemetry.c，网络 dm_diag_upload.swift）：地址同诊断上传（DMDiagnosticUploadOrigin）；设备码 = identifierForVendor，不取 UDID / IDFA、不取设备名 | shell of the device and usage statistics (policy: dm_telemetry.c; network: dm_diag_upload.swift): the same origin as the diagnostic upload; device code = identifierForVendor, never the UDID / IDFA / device name ----
+void dm_telemetry_net_probe(unsigned token, void (*done)(unsigned, int));
+void dm_telemetry_net_send(unsigned token, const char *origin, const char *key_path, const char *body, long n, void (*done)(unsigned, int, const char *, int));
+void dm_telemetry_net_cancel(void);
+void dm_telemetry_net_forget(const char *key_path);
+static void tele_done(unsigned token, int outcome, const char *detail, int retry_after) { dm_telemetry_result(token, outcome, detail, retry_after); }
+static void tele_probe(unsigned token) { dm_telemetry_net_probe(token, dm_telemetry_net); }
+static void tele_send(unsigned token, const char *body, size_t n) { NSString *o = diag_origin(); if (!o) { tele_done(token, 10, "origin", 0); return; } dm_telemetry_net_send(token, o.UTF8String, NULL, body, (long)n, tele_done); }
+static void tele_forget(void) { dm_telemetry_net_forget(NULL); }
+static void tele_device(dm_tele_device_t *d) {
+    static char ver[32], build[24], rev[48], chan[24], model[64], os[32], loc[32], code[48]; static int done;
+    if (!done) {   // 启动后不变：只读一次 | fixed for the launch: read once
+        NSDictionary *inf = NSBundle.mainBundle.infoDictionary; NSOperatingSystemVersion v = NSProcessInfo.processInfo.operatingSystemVersion;
+        snprintf(ver, sizeof ver, "%s", [inf[@"CFBundleShortVersionString"] description].UTF8String ?: ""); snprintf(build, sizeof build, "%s", [inf[@"CFBundleVersion"] description].UTF8String ?: ""); snprintf(rev, sizeof rev, "%s", [inf[@"DMSourceCommit"] description].UTF8String ?: "");
+        snprintf(chan, sizeof chan, "%s", [inf[@"DMChannel"] description].UTF8String ?: "unknown");   // 出包注入（DM_CHANNEL），源码缺省 unknown | injected at packaging, unknown in the source
+        size_t hn = sizeof model; if (sysctlbyname("hw.machine", model, &hn, NULL, 0) != 0) snprintf(model, sizeof model, "unknown");
+        snprintf(os, sizeof os, "%ld.%ld.%ld", (long)v.majorVersion, (long)v.minorVersion, (long)v.patchVersion); snprintf(loc, sizeof loc, "%s", NSLocale.currentLocale.localeIdentifier.UTF8String ?: "und");
+        void (^idfv)(void) = ^{ snprintf(code, sizeof code, "%s", UIDevice.currentDevice.identifierForVendor.UUIDString.UTF8String ?: ""); }; if (NSThread.isMainThread) idfv(); else dispatch_sync(dispatch_get_main_queue(), idfv);
+        if (code[0]) done = 1;   // IDFV 开机后短时间可能读不到：下次再读 | the IDFV may be unavailable shortly after boot: read again next time
+    }
+    d->platform = "ios"; d->app_version = ver; d->build = build; d->source_revision = rev; d->channel = chan; d->model = model; d->os_version = os; d->locale = loc; d->device_code = code;
+    d->font = [NSBundle.mainBundle pathForResource:@"LXGWWenKai-Medium-game" ofType:@"ttf" inDirectory:@"UIFonts"] ? "lxgw" : "other";
+}
+static const dm_telemetry_shell_t tele_shell = { diag_configured, tele_device, tele_probe, tele_send, dm_telemetry_net_cancel, tele_forget, 0 };
 static const dm_crashreport_shell_t crash_shell = { diag_configured, crash_start, dm_crashreport_net_cancel, crash_prepare, 0 };
 static const dm_diagup_shell_t diag_shell = { diag_configured, diag_start, dm_diagup_net_cancel, on_click, diag_copy };   // 「导出到本地」= 原分享面板 | Export locally = the original share sheet
-void dm_sharelog_boot(void) { g_t0 = NSDate.date; dm_sharelog_init(on_click); dm_diagup_init(&diag_shell); dm_crashreport_init(&crash_shell); plog("诊断上传：%s", diag_configured() ? "已配置上传地址（分享诊断日志先开上传提示框）" : "未配置上传地址（分享诊断日志直接导出）"); }   // main.m 起宿主前调一次 | main.m calls this once before starting the host
+void dm_sharelog_boot(void) { g_t0 = NSDate.date; dm_sharelog_init(on_click); dm_diagup_init(&diag_shell); dm_crashreport_init(&crash_shell); dm_telemetry_init(&tele_shell); plog("诊断上传：%s", diag_configured() ? "已配置上传地址（分享诊断日志先开上传提示框）" : "未配置上传地址（分享诊断日志直接导出）"); }   // main.m 起宿主前调一次 | main.m calls this once before starting the host
 void dm_sharelog_share(void) { on_click(); }   // 游戏外的界面直接调（资源下载页的「分享诊断日志」按钮，main.m AssetVC） | called directly from screens outside the game (the "Share diagnostic log" button on the asset download page, main.m AssetVC)

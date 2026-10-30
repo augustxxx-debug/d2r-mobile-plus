@@ -165,7 +165,7 @@ if [ "$1" = build ]; then
     else t "⚠ 免费账号第一次构建要把手机连上，并在本机配置里填 DM_IOS_UDID（见 local.env.example）；没填，先按通用目标试"; fi
   fi
   xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination "$DEST" \
-    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} ${DM_DIAGNOSTIC_ORIGIN:+DM_DIAGNOSTIC_ORIGIN=$DM_DIAGNOSTIC_ORIGIN} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
+    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} ${DM_CHANNEL:+DM_CHANNEL=$DM_CHANNEL} ${DM_DIAGNOSTIC_ORIGIN:+DM_DIAGNOSTIC_ORIGIN=$DM_DIAGNOSTIC_ORIGIN} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
       grep -q 'no devices from which to generate a provisioning profile' "$R/build.log" && t "原因：这个团队名下还没有设备。把手机用数据线连上并解锁，在本机配置里填 DM_IOS_UDID、DM_FREE_ACCOUNT=1，再构建一次"; exit 1; }
   codesign -d --entitlements :- $APP 2>/dev/null | plutil -p - ; t "构建完成"
   # DM_NOINSTALL 保持兼容；build 现在本来就只编译，不触碰设备。

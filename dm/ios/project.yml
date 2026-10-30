@@ -77,6 +77,7 @@ targets:
         DMSourceDirty: $(DM_SOURCE_DIRTY)                   # 工作区差异：clean，或「改动文件数:差异 sha256 前 12 位:文件列表」 | Working-tree difference: clean, or "changed file count:first 12 hex of the diff sha256:file list"
         DMBuildInputs: $(DM_BUILD_INPUTS)                   # 构建输入：着色器链、字体指纹与字重、测量 / 过场 / 免费账号 / 旧接口 / 设备族开关（run.sh 写进 Gen/dm.xcconfig） | Build inputs: shader chain, font fingerprint and weight, sampling / movie / free account / older API / device family (written into Gen/dm.xcconfig by run.sh)
         SWUpdateURL: $(DM_UPDATE_URL)                       # 新版本提示查的版本文件地址（Sources/dm_update.m）；出包脚本传，地址不进仓库。空 = 不查不提示 | URL of the version file checked for the new-version prompt (Sources/dm_update.m); passed by the packaging script, the URL is not committed to the repository. Empty = no check, no prompt
+        DMChannel: $(DM_CHANNEL)                            # 统计的渠道字段（ios_ipa / unknown），出包时环境变量 DM_CHANNEL 传入，源码缺省 unknown（看板 PRD U3） | the statistics channel field, DM_CHANNEL at packaging, unknown in the source
         DMDiagnosticUploadOrigin: $(DM_DIAGNOSTIC_ORIGIN)   # 上传诊断报告的服务地址（https 源，只到主机名；Sources/dm_sharelog.m）；出包时环境变量 DM_DIAGNOSTIC_ORIGIN 传，地址不进仓库。空 = 不开上传，分享诊断日志照旧只导出 | Origin of the diagnostic upload service (https, host only; Sources/dm_sharelog.m); passed at packaging via DM_DIAGNOSTIC_ORIGIN, never in the repository. Empty = no upload, Share Diagnostics only exports
         UILaunchScreen: {}   # 声明启动屏，避免 iPhone 以旧尺寸兼容模式运行 | Declare a launch screen so iPhone uses its native screen size instead of legacy compatibility mode
         UIFileSharingEnabled: true
@@ -123,6 +124,7 @@ targets:
       # DM_SOURCE_COMMIT / DM_SOURCE_DIRTY / DM_BUILD_INPUTS 只由 run.sh 写进 Gen/dm.xcconfig（项目层）；这里不能再给默认值——target 层设置优先于项目层 xcconfig，会把真实值盖成默认值（2026-10-27 实测 Info.plist 全是 unknown）
       # DM_SOURCE_COMMIT / DM_SOURCE_DIRTY / DM_BUILD_INPUTS come only from Gen/dm.xcconfig (project level, written by run.sh); no defaults here: target settings take precedence over the project-level xcconfig and would mask the real values (seen on 2026-10-27: Info.plist all "unknown")
       DM_UPDATE_URL: ""                             # tools/adhoc.sh 在环境里有 DM_UPDATE_URL 时传入；本地构建缺省空 | Passed in by tools/adhoc.sh when DM_UPDATE_URL is in the environment; empty by default for local builds
+      DM_CHANNEL: unknown                           # 见 DMChannel | see DMChannel
       DM_DIAGNOSTIC_ORIGIN: ""                      # run.sh / 出包脚本在环境里有 DM_DIAGNOSTIC_ORIGIN 时传入；本地构建缺省空 | passed by run.sh / the packaging script when DM_DIAGNOSTIC_ORIGIN is in the environment; empty by default
       DEVELOPMENT_TEAM: ${DM_TEAM_ID}
       CODE_SIGN_STYLE: Automatic
