@@ -776,8 +776,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // 首启生成 / 导入的加载页上吞掉返回与手柄 B（玩家按 B 习惯是「取消」，原来会把 App 切到后台、久了可能被系统清掉；离开仍可按 Home）
         // On the first-launch generation / import loading page, swallow BACK and controller B (players press B to cancel; it used to send the App to the
         // background, where the system may later clean it up; Home still leaves)
-        // 权限提示页：手柄 A / START 松开时打开系统设置（只有手柄的玩家） | permission prompt: controller A / START on release opens system settings (controller-only players)
-        if (!started && prompting && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_START)) {
+        // 权限提示页：手柄 A / START、确认键或回车松开时打开系统设置（只有手柄或键盘的玩家；有的手柄把确认键映射成 DPAD_CENTER，七审 Q7-02） | permission prompt: controller A / START, confirm or Enter on release opens system settings (controller or keyboard players; some controllers map confirm to DPAD_CENTER, seventh audit Q7-02)
+        if (!started && prompting && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_START || e.getKeyCode() == android.view.KeyEvent.KEYCODE_DPAD_CENTER || e.getKeyCode() == android.view.KeyEvent.KEYCODE_ENTER || e.getKeyCode() == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)) {
             if (e.getAction() == android.view.KeyEvent.ACTION_UP) openFileAccessSettings(); return true; }
         // 加载页上的手柄（§2.7）：切到手柄模式；页脚显示时 A 键 = 复制群号 / 链接 | controller on the loading page (§2.7): switch to controller mode; with the footer shown, A = copy the number / link
         if (!started && (generating || importing || loadPageDemo) && loadPage != null && loadPage.isAttachedToWindow() && loadPage.padKey(e)) return true;
