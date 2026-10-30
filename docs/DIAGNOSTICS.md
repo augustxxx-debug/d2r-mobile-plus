@@ -54,6 +54,16 @@ On cellular, Low Data Mode and metered networks only a summary goes out: the fen
 
 The update manifest may carry `telemetry`: `{"enabled": false, "pause_until": <Unix seconds, optional>, "reason": "<optional>"}`, on by default. When it reads `false`, that launch uploads no report and shows no notice; a report for an abnormal exit is still packed and kept on the device, within the 7-day limit, and goes out after resuming. If the manifest cannot be fetched, the last value is kept. The switch can only make clients send less, never more, so an unsigned manifest is acceptable, and the player's own switch remains the precondition. A 503 + Retry-After from the upload endpoint counts as a pause too: no retry budget spent, probed again after at least 300 s, at most 3 probes per launch. A manual upload from the pause menu is not held back by this switch; the server can simply answer 503.
 
+## Device and usage statistics
+
+Options → Custom → "Device and usage statistics", off by default. A notice appears once on first reaching the main menu: Agree turns this switch and "Auto-report crashes" on, Decline leaves both off, with normal play and no requests at all. Afterwards each one can be toggled in Options with no further box; turning it off deletes the data not yet sent, the sequence number and the reporting identity on the spot, and no further requests follow.
+
+- **Recorded now**: one entry per launch: time, version / build / source commit, platform, model, OS version, memory tier, device ID (iOS identifierForVendor, Android ANDROID_ID; never the UDID, IMEI or advertising ID), system locale, channel, how the previous run ended, drop counters and the game settings at that moment (the switches, frame rate, upscaling, ray tracing, input method, language, font). The per-session summary, weekly performance window and entry-point counters named in the notice come in later versions and are not collected in this one.
+- **Never recorded**: device name, user name, local paths, accounts, contacts, location, chat, character names and saves. Every field passes a whitelist before it is written; anything else becomes the default or is left out.
+- **When it is sent**: stored locally first (`dm_tele_queue.tsv`, at most 64 entries / 128 KiB / 7 days, the oldest dropped and counted beyond that), sent only after 5 s on the main menu / character select, at most 8 KiB per batch; no requests in a game, and a request in flight is cancelled on entering one. Cellular, Low Data Mode and metered networks only carry launch and session events, at most 16 KiB a day; each device sends at most 8 requests / 64 KiB a day.
+- **Failures**: network errors back off 1 min / 5 min / 30 min / 2 h / 12 h, at most 6 per launch; 429 / 503 follow `Retry-After`, beyond 10 minutes waiting for the next launch; other 4xx drop the batch and count it; 409 counts as delivered.
+- **Server switch**: the same one as above. While paused, events stay on the device, nothing is uploaded and nothing is shown; after it resumes, what has not expired is sent. The switch cannot override the player's own switch.
+
 ## Protocol
 
 Prefix `/diagnostics/v1`. It shares one server contract with the co-op line (section 7 of `docs/COOP_PROTOCOL.md` on that line) and adds no fields.

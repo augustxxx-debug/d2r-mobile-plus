@@ -158,3 +158,4 @@ host/dm_crashreport.c	放弃完整版（摘要已送达）	只进日志（自动
 host/dm_crashreport.c	等 Wi-Fi 发完整版	只进日志（自动上报：）
 host/dm_crashreport.c	等 Wi-Fi	只进日志（自动上报：）
 host/dm_crashreport.c	服务端暂停（%s）	只进日志（自动上报：）
+host/dm_telemetry.c	*	原因与状态只进日志（统计上报：）；这个模块没有上屏文字

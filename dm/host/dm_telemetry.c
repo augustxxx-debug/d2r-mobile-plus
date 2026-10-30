@@ -295,7 +295,7 @@ void dm_telemetry_result(unsigned token, int outcome, const char *detail, int re
 void dm_telemetry_tick(double now, long long wall, int on_menu) {
     if (S.st == DM_TE_OFF) return;
     if (!on_menu) {   // 局内 / 读取 / 选项页：零请求；飞着的取消 | in a game / loading / options: zero requests; what is in flight is cancelled
-        if (S.st == DM_TE_PROBE || S.st == DM_TE_SEND) { cancel_running("离开菜单"); S.st = DM_TE_WAIT; S.attempts = S.attempts > 0 ? S.attempts - 1 : 0; }
+        if (S.st == DM_TE_PROBE || S.st == DM_TE_SEND) { if (S.st == DM_TE_SEND && S.attempts > 0) S.attempts--; cancel_running("离开菜单"); S.st = DM_TE_WAIT; }   // 这次不占重试次数 | this one uses no retry budget
         S.menu_since = 0; return; }
     if (!S.launch_done) make_launch(now, wall);
     pthread_mutex_lock(&g_mu); typeof(g_pend) p = g_pend; g_pend.have_net = g_pend.have_res = 0; pthread_mutex_unlock(&g_mu);
