@@ -26,11 +26,15 @@
 
 static const dm_crashreport_shell_t *g_shell;
 static struct {   // 只在游戏主线程读写 | game main thread only
-    int st, booted, attempts, launches, this_launch; unsigned token;
-    long long created, next_wall; double next_mono, t_start; char fence[160];
+    int st, booted, attempts, launches, this_launch, probes, prepared, pause_logged; unsigned token;
+    long long created, next_wall; double next_mono, t_start, boot_mono; char fence[160];
 } S;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;   // 护 g_pend（结果从外壳的后台线程来） | guards g_pend (results come from a shell background thread)
 static struct { int valid; unsigned token; int outcome, flags, retry_after; char detail[80]; } g_pend;
+static _Atomic int g_sw_on = 1, g_sw_seen; static _Atomic long long g_sw_until;
+#define MANIFEST_WAIT_S 60      // 第一次尝试前最多等这么久看清单（iOS 清单在选角页出现时才拉） | wait this long for the manifest before the first attempt (iOS fetches it when the select page appears)
+#define PAUSE_PROBE_S 300       // 503 + Retry-After 当暂停：至少隔这么久 | 503 + Retry-After as a pause: at least this far apart
+#define MAX_PROBES 3
 static char g_note_key[32], g_note_arg[16]; static double g_note_until; static _Atomic int g_note_dirty;
 
 void dm_crashreport_init(const dm_crashreport_shell_t *shell) { g_shell = shell; }
@@ -45,6 +49,26 @@ static void state_write(void) {   // 先写临时文件再换名 | temp file, th
     int ok = fprintf(f, "created=%lld\nattempts=%d\nlaunches=%d\nnext=%lld\nfence=%s\n", S.created, S.attempts, S.launches, S.next_wall, S.fence) > 0; ok = fclose(f) == 0 && ok;
     if (ok) rename(t, p); else unlink(t);
 }
+// ---- 服务端总开关 | the server switch ----
+static int sw_path(char *p, size_t n) { char d[1024]; if (!dm_custom_dir(d, sizeof d)) return 0; return snprintf(p, n, "%s/dm_telemetry.txt", d) < (int)n; }
+static void sw_load(void) {
+    char p[1100], ln[64]; if (!sw_path(p, sizeof p)) return; FILE *f = fopen(p, "r"); if (!f) return;
+    while (fgets(ln, sizeof ln, f)) { if (!strncmp(ln, "enabled=", 8)) atomic_store(&g_sw_on, ln[8] != '0'); else if (!strncmp(ln, "pause_until=", 12)) atomic_store(&g_sw_until, atoll(ln + 12)); }
+    fclose(f);
+}
+void dm_crashreport_switch_no_fetch(void) { atomic_store(&g_sw_seen, 1); }
+void dm_crashreport_switch(int present, int enabled, long long until, const char *reason) {
+    int on = !present || enabled; if (until < 0) until = 0;
+    if (on != atomic_load(&g_sw_on) || until != atomic_load(&g_sw_until)) {
+        char why[33] = ""; size_t o = 0; for (const char *q = reason; q && *q && o + 1 < sizeof why; q++) if ((*q >= 'a' && *q <= 'z') || (*q >= '0' && *q <= '9') || *q == '_' || *q == '-') why[o++] = *q;
+        LOG("自动上报：服务端总开关 → %s（pause_until=%lld reason=%s）", on ? "开" : "暂停", until, why);
+    }
+    atomic_store(&g_sw_on, on); atomic_store(&g_sw_until, on ? 0 : until); atomic_store(&g_sw_seen, 1);
+    char p[1100], t[1120]; if (!sw_path(p, sizeof p)) return; snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); if (!f) return;   // 先写临时文件再换名 | temp file, then rename
+    int ok = fprintf(f, "enabled=%d\npause_until=%lld\n", on, on ? 0LL : until) > 0; ok = fclose(f) == 0 && ok; if (ok) rename(t, p); else unlink(t);
+}
+int dm_crashreport_switch_paused(long long wall) { long long u = atomic_load(&g_sw_until); return !atomic_load(&g_sw_on) && (u <= 0 || wall < u); }
+
 static int state_read(void) {
     char p[1100], ln[256]; if (!path(p, sizeof p, "state")) return 0; FILE *f = fopen(p, "r"); if (!f) return 0;
     while (fgets(ln, sizeof ln, f)) { ln[strcspn(ln, "\r\n")] = 0;
@@ -82,20 +106,19 @@ static void fence_line(char *o, size_t n) {
     snprintf(o, n, "fence cause=%s arg=%d streak=%d hist=%s", names[cause >= 0 && cause < 4 ? cause : 0], arg, streak, hist);
 }
 void dm_crashreport_boot(double now, long long wall) {
-    S.booted = 1; S.st = DM_CR_OFF; note_load();
+    S.booted = 1; S.st = DM_CR_OFF; note_load(); sw_load(); S.boot_mono = now;
     int on = dm_custom_auto_crash(), have = 0; const char *te = dm_crashfence_test_env();
     if (!on) { char p[1100]; if (path(p, sizeof p, "state") && access(p, F_OK) == 0) { drop_files(); LOG("自动上报：关，删掉遗留的待传报告"); } else LOG("自动上报：关（不收集、不联网）"); return; }
     if (te && !getenv("DM_TEST_CRASHREPORT")) { LOG("自动上报：开，但本局是测试局（%s），不收集、不联网", te); return; }
     if (!dm_crashreport_configured()) { LOG("自动上报：开，但这个构建没配上报地址，不收集、不联网"); return; }
     have = state_read();
     if (have && S.fence[0]) {
-        S.launches++;
-        if (S.launches > MAX_LAUNCHES || S.attempts >= MAX_ATTEMPTS || (S.created > 0 && wall - S.created > MAX_AGE_S)) { S.launches--; finish("放弃上一份报告（到了重试上限或存放期限）", "dmCrashReportFailed", NULL); if (!dm_crashfence_prev(NULL, NULL, NULL, NULL, 0)) return; have = 0; S.attempts = S.launches = 0; S.next_wall = 0; S.created = 0; S.fence[0] = 0; }
+        if (S.launches >= MAX_LAUNCHES || S.attempts >= MAX_ATTEMPTS || (S.created > 0 && wall - S.created > MAX_AGE_S)) { finish("放弃上一份报告（到了重试上限或存放期限）", "dmCrashReportFailed", NULL); if (!dm_crashfence_prev(NULL, NULL, NULL, NULL, 0)) return; have = 0; S.attempts = S.launches = 0; S.next_wall = 0; S.created = 0; S.fence[0] = 0; }
     } else have = 0;
     // 待传的旧报告优先：一次只留一份；旧的传完前新的崩溃只进日志（下一次异常退出还会触发） | the pending older report goes first: only one is kept; a newer crash stays in the log until then
     if (!have) {
         if (!dm_crashfence_prev(NULL, NULL, NULL, NULL, 0)) { LOG("自动上报：开，上一局正常结束，没有要报的"); return; }
-        drop_files(); S.created = wall; S.attempts = 0; S.launches = 1; S.next_wall = 0; fence_line(S.fence, sizeof S.fence);
+        drop_files(); S.created = wall; S.attempts = 0; S.launches = 0; S.next_wall = 0; fence_line(S.fence, sizeof S.fence);
     }
     state_write();
     S.st = DM_CR_WAIT; S.this_launch = 0; S.next_mono = now + FIRST_DELAY_S;
@@ -120,6 +143,14 @@ static void after_retryable(double now, long long wall, int retry_after) {
 void dm_crashreport_tick(double now, long long wall) {
     if (S.st == DM_CR_WAIT && now >= S.next_mono && wall >= S.next_wall) {
         if (!g_shell || !g_shell->start) { S.st = DM_CR_IDLE; return; }
+        if (!g_shell->checks_switch) {
+            if (!atomic_load(&g_sw_seen) && now < S.boot_mono + MANIFEST_WAIT_S) return;   // 先等这次的清单，别抢在总开关前面发 | wait for this launch's manifest first
+            if (dm_crashreport_switch_paused(wall)) {   // 暂停：不占次数；报告先打好存盘（上一局日志下次启动就没了），不联网 | paused: no budget spent; pack the report now, no network
+                if (!S.pause_logged) { S.pause_logged = 1; LOG("自动上报：服务端总开关暂停，本次不上传，报告留盘"); }
+                char p[1100]; if (!S.prepared && g_shell->prepare && path(p, sizeof p, "payload") && access(p, F_OK) != 0) { char d[1024]; if (dm_custom_dir(d, sizeof d)) g_shell->prepare(S.fence, d); }
+                S.prepared = 1; return; }
+            if (S.pause_logged) { S.pause_logged = 0; LOG("自动上报：服务端总开关恢复，接着发"); } }
+        if (!S.this_launch) S.launches++;   // 真发了才算一次启动：暂停期间的启动不占名额 | a launch counts only once it really sends: launches during a pause use no budget
         S.attempts++; S.this_launch++; S.token++; state_write();   // 先记次数再开始：万一收集或上传本身把进程弄崩，次数上限照样管用 | count first: should collection or upload itself bring the process down, the limits still hold
         S.st = DM_CR_RUNNING; S.t_start = now; LOG("自动上报：开始第 %d 次尝试（后台收集、脱敏、签名、上传）", S.attempts);
         { char d[1024]; if (!dm_custom_dir(d, sizeof d)) d[0] = 0; g_shell->start(S.token, S.fence, d); } return;
@@ -128,6 +159,11 @@ void dm_crashreport_tick(double now, long long wall) {
     if (p.valid) {
         if (p.token != S.token || S.st != DM_CR_RUNNING) LOG("自动上报：丢弃过期回调（第 %u 号尝试）", p.token);
         else if (p.outcome == DM_DIAGUP_OK) { char id[9]; snprintf(id, sizeof id, "%s", p.detail); LOG("自动上报：已上传，报告编号 %s%s（第 %d 次尝试，用时 %.1f 秒）", p.detail, p.flags & DM_DIAGUP_F_DUPLICATE ? "（重试命中已存的那份）" : "", S.attempts, now - S.t_start); finish("上传成功", "dmCrashReportSent", id); }
+        else if (p.outcome == DM_DIAGUP_MAINTENANCE || (p.outcome == DM_DIAGUP_UNAVAILABLE && p.retry_after > 0)) {   // 503 + Retry-After：当暂停，这次不占次数 | 503 + Retry-After: a pause, this attempt uses no budget
+            S.attempts--; S.this_launch--; if (!S.this_launch) S.launches--; S.probes++;
+            int gap = p.retry_after > PAUSE_PROBE_S ? p.retry_after : PAUSE_PROBE_S; S.next_wall = wall + (p.retry_after > 0 ? p.retry_after : 0); state_write();
+            if (S.probes >= MAX_PROBES || gap > LONG_WAIT_S) { S.st = DM_CR_IDLE; LOG("自动上报：服务端暂停（%s，Retry-After %d），这次启动不再探，报告留到下次", p.detail, p.retry_after); }
+            else { S.st = DM_CR_WAIT; S.next_mono = now + gap; LOG("自动上报：服务端暂停（%s，Retry-After %d），%d 秒后再探，不占重试次数", p.detail, p.retry_after, gap); } }
         else if (retryable(p.outcome)) { LOG("自动上报：第 %d 次结果 %d（%s%s）", S.attempts, p.outcome, p.detail, p.flags & DM_DIAGUP_F_MAYBE ? "，此前的请求可能已送达" : ""); after_retryable(now, wall, p.retry_after); }
         else if (p.outcome == DM_DIAGUP_CANCELLED) S.st = DM_CR_IDLE;
         else { LOG("%s自动上报：服务端或本机明确不能继续，结果 %d（%s）", p.outcome == DM_DIAGUP_CONFLICT ? "【红】" : "", p.outcome, p.detail); finish("不再重试", "dmCrashReportFailed", NULL); }

@@ -16,6 +16,8 @@ typedef struct {
     // 后台开一次尝试（立即返回）。fence = 围栏状态一行（英文键值，没有用户内容）；dir = 报告所在目录。结束时调 dm_crashreport_result（任意线程）一次 | start one attempt in the background (returns at once); calls dm_crashreport_result once when done (any thread)
     void (*start)(unsigned token, const char *fence, const char *dir);
     void (*cancel)(void);      // 取消进行中的尝试（看门狗、玩家关开关）；可为空 | cancel the running attempt (watchdog, the player turning it off); may be NULL
+    void (*prepare)(const char *fence, const char *dir);   // 总开关暂停时：只把报告打好存盘（上一局日志下次启动就被覆盖），不联网；可为空 | while the server switch pauses uploads: pack the report to disk only (the previous log is overwritten at the next launch), no network; may be NULL
+    int checks_switch;         // 1 = 外壳每次尝试前自己现查总开关（安卓：普通启动不拉清单）；0 = 这里按清单缓存拦 | 1 = the shell checks the switch itself before each attempt (Android: a normal start fetches no manifest); 0 = held back here from the manifest cache
 } dm_crashreport_shell_t;
 
 void dm_crashreport_init(const dm_crashreport_shell_t *shell);   // 外壳启动时登记一次 | registered once by the shell at launch
@@ -23,6 +25,13 @@ int dm_crashreport_configured(void);                             // 这个构建
 void dm_crashreport_pump(void);                                  // 取手柄处每帧调（hle_hid.c），第一次调时做启动判定 | every frame at the controller poll; the first call makes the launch decision
 void dm_crashreport_result(unsigned token, int outcome, const char *detail, int flags, int retry_after);   // 外壳报结果（任意线程）；outcome 同 DM_DIAGUP_* | the shell reports a result (any thread); outcome as DM_DIAGUP_*
 void dm_crashreport_setting_changed(int on);                     // 玩家点了「应用」改了开关：关 = 取消并删掉待传报告；开 = 下次启动起作用 | Apply changed the switch: off = cancel and delete the pending report; on = effective from the next launch
+// 服务端总开关（更新清单 telemetry.enabled，缺省 true，可带 pause_until / reason；用户 2026-10-30）：false 时本次零上传，报告留盘但受 7 天上限约束，不弹提示；恢复 true 后接着发。只能让客户端少发、不能多发，所以读未签名清单可以接受。玩家的开关仍是前提。
+//   清单拉不到 = 沿用上次缓存（<设置目录>/dm_telemetry.txt）。上传接口回 503 + Retry-After 同样当暂停：不占重试次数，隔至少 300 秒再探，一次启动最多探 3 次。
+// Server switch (manifest telemetry.enabled, default true, optional pause_until / reason): false = no uploads this launch, the report stays on disk within the 7-day limit, no notice; true again resumes. It can only make clients send less, never more, so reading it from an unsigned manifest is acceptable. The player's switch remains the precondition.
+//   Manifest not fetched = the cached value is kept. A 503 + Retry-After from the upload endpoint counts as a pause too: no retry budget spent, probed again after at least 300 s, at most 3 probes per launch.
+void dm_crashreport_switch(int present, int enabled, long long pause_until, const char *reason);   // 拉到合法清单（任意线程）：present = 0 没有 telemetry 字段（= 开） | a valid manifest arrived (any thread): present = 0 means no telemetry field (= on)
+void dm_crashreport_switch_no_fetch(void);   // 这次拉不到（任意线程）：沿用缓存，不再等 | not fetched this time (any thread): keep the cache, stop waiting
+int dm_crashreport_switch_paused(long long wall);   // 此刻是否被总开关暂停 | whether the server switch pauses uploads right now
 const char *dm_crashreport_note(void);                           // 选角页那一行的表键（dmCrashReportSent / dmCrashReportFailed），没有返回 NULL；第一次取到开始计 20 秒 | table key for the select-page line, NULL if none; the first call starts the 20 s
 const char *dm_crashreport_note_arg(void);                       // 那一行的参数（报告编号前 8 位） | its argument (first 8 characters of the report number)
 

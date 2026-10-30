@@ -39,10 +39,14 @@ Scrubbing is rule-based and cannot guarantee it removes every piece of personal 
 ## Identity, frequency and retention
 
 - Each installation creates an Ed25519 key used only for diagnostics, separate from any co-op identity. iOS keeps it in the Keychain (this device only, not synchronized); Android keeps it in the no-backup private directory. The server can tell that two reports came from one installation, but the key is not tied to an account.
-- At most 3 attempts per launch (20 s after launch, then 60 s and 300 s later, or longer if the server asks), 3 launches, 6 attempts overall and 7 days of storage; then the report is deleted with one notice. An explicit refusal is not retried.
+- At most 3 attempts per launch (20 s after launch, having waited up to 60 s for this launch's update manifest, then 60 s and 300 s later, or longer if the server asks), 3 launches, 6 attempts overall and 7 days of storage; then the report is deleted with one notice. An explicit refusal is not retried.
 - On iOS, automatic uploads do not use Low Data Mode networks. Manual uploads are not limited this way.
 - Turning the switch off and pressing Apply cancels a running upload and deletes the pending report.
 - The server states its retention before each upload, currently 7 days; only authorized maintainers can read reports.
+
+## Server switch
+
+The update manifest may carry `telemetry`: `{"enabled": false, "pause_until": <Unix seconds, optional>, "reason": "<optional>"}`, on by default. When it reads `false`, that launch uploads no report and shows no notice; a report for an abnormal exit is still packed and kept on the device, within the 7-day limit, and goes out after resuming. If the manifest cannot be fetched, the last value is kept. The switch can only make clients send less, never more, so an unsigned manifest is acceptable, and the player's own switch remains the precondition. A 503 + Retry-After from the upload endpoint counts as a pause too: no retry budget spent, probed again after at least 300 s, at most 3 probes per launch. A manual upload from the pause menu is not held back by this switch; the server can simply answer 503.
 
 ## Protocol
 

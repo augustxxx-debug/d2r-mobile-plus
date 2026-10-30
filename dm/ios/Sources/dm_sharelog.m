@@ -219,6 +219,7 @@ static int diag_copy(const char *s) {   // 同 dm_update.m ios_copy：到主线�
 void dm_crashreport_net_start(unsigned token, const char *origin, const char *meta, const char *key_path, const char *dir, char *(*collect)(long, void *), void *ctx,
                               void (*done)(unsigned, int, const char *, long long, int, int, int));   // dm_diag_upload.swift
 void dm_crashreport_net_cancel(void);
+void dm_crashreport_net_prepare(const char *meta, const char *dir, char *(*collect)(long, void *), void *ctx);
 static char *crash_collect(long limit, void *ctx) {
     @autoreleasepool {
         NSUInteger lim = limit > 0 ? MIN((NSUInteger)limit, (NSUInteger)128 * 1024) : 0; const char *fence = ctx;
@@ -240,7 +241,11 @@ static void crash_start(unsigned token, const char *fence, const char *dir) {   
     static char fence_copy[160]; snprintf(fence_copy, sizeof fence_copy, "%s", fence ? fence : "");   // 一次只有一个尝试（dm_crashreport.c 保证），放静态区 | one attempt at a time
     dm_crashreport_net_start(token, o.UTF8String, diag_meta().UTF8String, NULL, dir, crash_collect, fence_copy, crash_done);
 }
-static const dm_crashreport_shell_t crash_shell = { diag_configured, crash_start, dm_crashreport_net_cancel };
+static void crash_prepare(const char *fence, const char *dir) {   // 总开关暂停：只打包存盘 | server switch paused: pack to disk only
+    static char fence_copy[160]; snprintf(fence_copy, sizeof fence_copy, "%s", fence ? fence : "");
+    dm_crashreport_net_prepare(diag_meta().UTF8String, dir, crash_collect, fence_copy);
+}
+static const dm_crashreport_shell_t crash_shell = { diag_configured, crash_start, dm_crashreport_net_cancel, crash_prepare, 0 };
 static const dm_diagup_shell_t diag_shell = { diag_configured, diag_start, dm_diagup_net_cancel, on_click, diag_copy };   // 「导出到本地」= 原分享面板 | Export locally = the original share sheet
 void dm_sharelog_boot(void) { g_t0 = NSDate.date; dm_sharelog_init(on_click); dm_diagup_init(&diag_shell); dm_crashreport_init(&crash_shell); plog("诊断上传：%s", diag_configured() ? "已配置上传地址（分享诊断日志先开上传提示框）" : "未配置上传地址（分享诊断日志直接导出）"); }   // main.m 起宿主前调一次 | main.m calls this once before starting the host
 void dm_sharelog_share(void) { on_click(); }   // 游戏外的界面直接调（资源下载页的「分享诊断日志」按钮，main.m AssetVC） | called directly from screens outside the game (the "Share diagnostic log" button on the asset download page, main.m AssetVC)

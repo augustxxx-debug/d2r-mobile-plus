@@ -218,6 +218,16 @@ func collector(_ text: String) -> (Int) -> String? { { limit in text.count <= li
         crCollects.n = 0
         r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta) { _ in crCollects.n += 1; return bigLog }
         check(r1.outcome == .ok && crCollects.n == 1, "re-pack did not collect again: \(r1.outcome) \(crCollects.n)")
+        // 总开关暂停：只打包存盘、零请求；恢复后同一份报告发出 | server switch paused: pack only, zero requests; the same report goes out on resume
+        try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report.payload"); try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report.id")
+        FakeServer.shared.reset([]); crCollects.n = 0
+        DmCrashReportStore.prepare(dir: crDir, limit: 256 * 1024, metadata: crMeta) { _ in crCollects.n += 1; return "packed while paused" }
+        DmCrashReportStore.prepare(dir: crDir, limit: 256 * 1024, metadata: crMeta) { _ in crCollects.n += 1; return "again" }
+        let packed = DmCrashReportStore.load(dir: crDir)
+        check(FakeServer.shared.seen.isEmpty && crCollects.n == 1 && packed != nil, "prepare: no request, collected once")
+        FakeServer.shared.reset([FakeServer.shared.challenge(), receipt("0123456789abcdef0123456789abcdef", dup: false)])
+        r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta) { _ in "must not collect" }
+        check(r1.outcome == .ok && (FakeServer.shared.seen.last.map { json($0.body) }?["upload_id"] as? String) == packed?.uploadID, "resume sends the packed report")
         // 4xx / 5xx / 限流：归类交回策略层，报告留着由策略层决定 | 4xx / 5xx / rate limit classified and handed back
         for (status, code, want, after) in [(429, "rate_limited", DmDiagOutcome.rateLimited, "120"), (503, "diagnostic_maintenance", .maintenance, "90"), (400, "invalid_metadata", .rejected, nil), (409, "upload_conflict", .conflict, nil), (500, "request_failed", .unconfirmed, nil)] as [(Int, String, DmDiagOutcome, String?)] {
             try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report.payload"); try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report.id")

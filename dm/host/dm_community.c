@@ -130,7 +130,7 @@ static void cache_delete(void) { char p[1100]; if (cache_path(p, sizeof p)) unli
 #define CR_NAME_MAX 32   // 鸣谢名字上限（字节） | credit name limit (bytes)
 #define CR_MAX 24        // 两份名单合计上限 | both lists together
 typedef struct { const char *p, *e; char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; int n_comm, n_qq, n_gh, n_site, bad_type, too_long;
-    char cr[CR_MAX][CR_NAME_MAX + 1]; int n_cr, n_special, n_thanks, n_credits, bad_credits; } jp_t;   // credits：RC1 只解析、去重、计数进日志，不渲染不缓存（RC2 覆盖静态缺省） | credits: RC1 only parses, dedupes and logs counts; not rendered or cached (RC2 overrides the static default)
+    char cr[CR_MAX][CR_NAME_MAX + 1]; int n_cr, n_special, n_thanks, n_credits, bad_credits; int n_tel, tel_bad, tel_has, tel_on; long long tel_until; char tel_reason[33]; } jp_t;   // credits：RC1 只解析、去重、计数进日志，不渲染不缓存（RC2 覆盖静态缺省） | credits: RC1 only parses, dedupes and logs counts; not rendered or cached (RC2 overrides the static default)
 static void js_ws(jp_t *j) { while (j->p < j->e && (*j->p == ' ' || *j->p == '\t' || *j->p == '\n' || *j->p == '\r')) j->p++; }
 static int js_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 // 字符串：验语法（转义只许 \" \\ \/ \b \f \n \r \t \uXXXX，不许控制字符）；out 非空时原样抄（遇到转义记 *esc，抄不下记 *over） | string: validate (escapes only the JSON set, no control characters); with out, copy raw bytes (an escape sets *esc, overflow sets *over)
@@ -154,7 +154,13 @@ static int js_number(jp_t *j) {
     j->p = p; return 1;
 }
 static int js_lit(jp_t *j, const char *w) { size_t n = strlen(w); if ((size_t)(j->e - j->p) < n || memcmp(j->p, w, n)) return 0; j->p += n; return 1; }
-static int js_value(jp_t *j, int depth, int ctx);   // ctx：0 别处 / 1 根对象 / 2 community 对象 / 3 credits 对象 | ctx: 0 elsewhere / 1 root object / 2 the community object / 3 the credits object
+#ifndef DM_TEL_EXTERNAL   // t_community 自己记调用 | t_community records the calls itself
+__attribute__((weak)) void dm_crashreport_switch(int present, int enabled, long long pause_until, const char *reason) { (void)present; (void)enabled; (void)pause_until; (void)reason; }   // 不带自动上报模块的单测用；产品里 dm_crashreport.c 的强定义替换 | for unit tests without that module
+__attribute__((weak)) void dm_crashreport_switch_no_fetch(void) {}
+#else
+void dm_crashreport_switch(int, int, long long, const char *); void dm_crashreport_switch_no_fetch(void);
+#endif
+static int js_value(jp_t *j, int depth, int ctx);   // ctx：0 别处 / 1 根对象 / 2 community 对象 / 3 credits 对象 / 4 telemetry 对象 | ctx: 0 elsewhere / 1 root object / 2 the community object / 3 the credits object
 // credits 的名单数组：只收不带转义、≤ 32 字节的字符串，去重，合计 ≤ 24；别的元素 / 超限记 bad_credits（整个 credits 忽略），语法仍要对 | a credits name array: only escape-free strings ≤ 32 bytes, deduped, ≤ 24 in all; anything else / over the cap sets bad_credits (credits ignored as a whole); syntax must still hold
 static int js_names(jp_t *j, int depth, int which) {
     if (depth > 16 || j->p >= j->e || *j->p != '[') { j->bad_credits = 1; return js_value(j, depth, 0); }
@@ -180,6 +186,11 @@ static int js_object(jp_t *j, int depth, int ctx) {
             else { j->bad_type = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
         else if (ctx == 1 && !strcmp(key, "credits")) { j->n_credits++;
             if (j->p < j->e && *j->p == '{') { if (!js_object(j, depth + 1, 3)) return 0; } else { j->bad_credits = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
+        // 服务端总开关（dm_crashreport.h）：类型不对就当这份清单没说，沿用缓存，不往「多发」的方向猜 | the server switch: a wrong type counts as saying nothing, the cache stays
+        else if (ctx == 1 && !strcmp(key, "telemetry")) { j->n_tel++; if (j->p < j->e && *j->p == '{') { if (!js_object(j, depth + 1, 4)) return 0; } else { j->tel_bad = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
+        else if (ctx == 4 && !strcmp(key, "enabled")) { if (js_lit(j, "true")) j->tel_on = 1; else if (js_lit(j, "false")) j->tel_on = 0; else { j->tel_bad = 1; if (!js_value(j, depth + 1, 0)) return 0; } j->tel_has = 1; }
+        else if (ctx == 4 && !strcmp(key, "pause_until")) { const char *q = j->p; if (!js_number(j)) { j->tel_bad = 1; if (!js_value(j, depth + 1, 0)) return 0; } else j->tel_until = atoll(q); }
+        else if (ctx == 4 && !strcmp(key, "reason") && j->p < j->e && *j->p == '"') { int esc = 0, over = 0; if (!js_string(j, j->tel_reason, sizeof j->tel_reason, &esc, &over)) return 0; if (esc || over) j->tel_reason[0] = 0; }
         else if (ctx == 3 && (!strcmp(key, "special") || !strcmp(key, "thanks"))) { if (!js_names(j, depth + 1, key[0] == 't')) return 0; }
         else if (!js_value(j, depth + 1, 0)) return 0;
         js_ws(j); if (j->p >= j->e) return 0;
@@ -206,11 +217,15 @@ static int js_parse(jp_t *j, const char *json, size_t len, size_t *at) {
 }
 static void drop_values(void) { set_values("", "", ""); cache_delete(); }   // 格式错 / 无字段：清内存与缓存 | malformed / absent: clear memory and cache
 
+static void tel_apply(const jp_t *j) { if (j->n_tel > 1 || j->tel_bad) return; dm_crashreport_switch(j->n_tel && j->tel_has, j->tel_on, j->tel_until, j->tel_reason); }   // 坏字段不动缓存 | a bad field leaves the cache alone
+// 只取总开关（安卓自动上报前现拉的清单：不动社区入口的值） | the server switch only (the manifest Android fetches before an automatic report; community values untouched)
+int dm_community_telemetry_only(const char *json, size_t len) { if (!json || len > MANIFEST_MAX) { dm_crashreport_switch_no_fetch(); return 0; } jp_t j; size_t at; if (!js_parse(&j, json, len, &at)) { dm_crashreport_switch_no_fetch(); return 0; } tel_apply(&j); return 1; }
 int dm_community_manifest(const char *json, size_t len) {
     char qq[QQ_MAX + 1] = "", gh[GH_MAX + 1] = "", site[GH_MAX + 1] = ""; get_values(qq, gh, site);
-    if (!json) { LOG("社区入口：清单拉取失败，沿用缓存（群号 %s，链接 %s，官网 %s）", qq[0] ? "有" : "无", gh[0] ? "有" : "无", site[0] ? "有" : "无"); return -1; }
-    if (len > MANIFEST_MAX) { drop_values(); LOG("【红】社区入口：清单格式错（超过 %d 字节），入口不显示（缓存已清）", MANIFEST_MAX); return 0; }
-    jp_t j; size_t at; if (!js_parse(&j, json, len, &at)) { drop_values(); LOG("【红】社区入口：清单格式错（JSON 语法：第 %zu 字节附近），入口不显示（缓存已清）", at); return 0; }
+    if (!json) { dm_crashreport_switch_no_fetch(); LOG("社区入口：清单拉取失败，沿用缓存（群号 %s，链接 %s，官网 %s）", qq[0] ? "有" : "无", gh[0] ? "有" : "无", site[0] ? "有" : "无"); return -1; }
+    if (len > MANIFEST_MAX) { dm_crashreport_switch_no_fetch(); drop_values(); LOG("【红】社区入口：清单格式错（超过 %d 字节），入口不显示（缓存已清）", MANIFEST_MAX); return 0; }
+    jp_t j; size_t at; if (!js_parse(&j, json, len, &at)) { dm_crashreport_switch_no_fetch(); drop_values(); LOG("【红】社区入口：清单格式错（JSON 语法：第 %zu 字节附近），入口不显示（缓存已清）", at); return 0; }
+    tel_apply(&j);
     if (j.n_comm == 0) { drop_values(); LOG("社区入口：清单无字段，入口不显示（缓存已清）"); return 0; }
     if (j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1) { drop_values(); LOG("【红】社区入口：清单格式错（community / qq_group / github / site 重复），入口不显示（缓存已清）"); return 0; }
     int given = j.n_qq || j.n_gh || j.n_site;   // 给了渠道键（值合不合规另算） | channel keys are present (valid or not)

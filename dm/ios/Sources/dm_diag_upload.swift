@@ -374,6 +374,11 @@ public enum DmCrashReportStore {
         let head = min(16 * 1024, limit / 2), tail = max(0, limit - head - mark.utf8.count)
         return String(decoding: u[0..<head], as: UTF8.self) + mark + String(decoding: u[(u.count - tail)...], as: UTF8.self)
     }
+    /// 总开关暂停时只打包存盘，不联网（上一局日志下次启动就被覆盖） | while the server switch pauses uploads: pack to disk only, no network (the previous log is overwritten at the next launch)
+    public static func prepare(dir: String, limit: Int, metadata: [String: String], collect: (Int) -> String?) {
+        guard load(dir: dir) == nil, let report = try? DmDiagUploader.buildReport(limit: limit, metadata: metadata, collect: collect) else { return }
+        save(report, dir: dir)
+    }
     /// 一次尝试：有盘上报告就接着传，没有就新打一份并立刻存盘。collect 只在这次启动第一次打包时走（日志文件还是崩溃那一局的） | one attempt: continue the report on disk, or build one and save it at once. collect runs only for the first pack (the log files still belong to the crashed run)
     public static func attempt(dir: String, limit: Int, uploader: DmDiagUploader, key: Curve25519.Signing.PrivateKey, metadata: [String: String], collect: @Sendable (Int) -> String?) async -> DmDiagResult {
         var report = load(dir: dir)
@@ -462,6 +467,19 @@ public func dmCrashReportNetStart(_ token: UInt32, _ origin: UnsafePointer<CChar
     }
     jobs.crashTask = task
     jobs.lock.unlock()
+}
+@_cdecl("dm_crashreport_net_prepare")
+public func dmCrashReportNetPrepare(_ meta: UnsafePointer<CChar>?, _ dir: UnsafePointer<CChar>?, _ collect: DmDiagCollectFn, _ ctx: UnsafeMutableRawPointer?) {
+    let metaText = dmDiagCString(meta) ?? "", dirText = dmDiagCString(dir) ?? "", box = DmDiagCtx(ptr: ctx, collect: collect, done: { _, _, _, _, _, _, _ in })
+    let metadata = Dictionary(metaText.split(separator: "\n").compactMap { line in line.firstIndex(of: "=").map { (String(line[..<$0]), String(line[line.index(after: $0)...])) } }, uniquingKeysWith: { first, _ in first })
+    Task.detached(priority: .utility) {
+        guard !dirText.isEmpty else { return }
+        DmCrashReportStore.prepare(dir: dirText, limit: 256 * 1024, metadata: metadata) { limit in
+            guard let p = box.collect(limit, box.ptr) else { return nil }
+            defer { free(p) }
+            return String(validatingCString: p)
+        }
+    }
 }
 @_cdecl("dm_crashreport_net_cancel")
 public func dmCrashReportNetCancel() {

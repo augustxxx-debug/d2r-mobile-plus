@@ -99,6 +99,7 @@ static void mac_export(void) {
 void dm_crashreport_net_start(unsigned token, const char *origin, const char *meta, const char *key_path, const char *dir, char *(*collect)(long, void *), void *ctx,
                               void (*done)(unsigned, int, const char *, long long, int, int, int));
 void dm_crashreport_net_cancel(void);
+void dm_crashreport_net_prepare(const char *meta, const char *dir, char *(*collect)(long, void *), void *ctx);
 static char *mac_crash_collect(long limit, void *ctx) {
     @autoreleasepool {
         NSUInteger lim = limit > 0 ? MIN((NSUInteger)limit, (NSUInteger)128 * 1024) : 0; 
@@ -122,6 +123,10 @@ static void mac_crash_start(unsigned token, const char *fence, const char *dir) 
     static char fence_copy[160]; snprintf(fence_copy, sizeof fence_copy, "%s", fence ? fence : "");
     dm_crashreport_net_start(token, o, meta.UTF8String, kf && *kf ? kf : def.fileSystemRepresentation, dir, mac_crash_collect, fence_copy, mac_crash_done);
 }
-static const dm_crashreport_shell_t mac_crash_shell = { mac_configured, mac_crash_start, dm_crashreport_net_cancel };
+static void mac_crash_prepare(const char *fence, const char *dir) {
+    static char fence_copy[160]; snprintf(fence_copy, sizeof fence_copy, "%s", fence ? fence : "");
+    dm_crashreport_net_prepare("app_version=dev\nbuild=0\nsource_revision=unknown\nmodel=unknown\nos_version=0.0\nlocale=en", dir, mac_crash_collect, fence_copy);
+}
+static const dm_crashreport_shell_t mac_crash_shell = { mac_configured, mac_crash_start, dm_crashreport_net_cancel, mac_crash_prepare, 0 };
 static const dm_diagup_shell_t mac_shell = { mac_configured, mac_start, dm_diagup_net_cancel, mac_export, mac_copy };
 __attribute__((constructor)) static void diagup_mac_register(void) { dm_diagup_init(&mac_shell); dm_crashreport_init(&mac_crash_shell); }   // 只在 dmhost_diag 里链进来：一启动就登记 | linked only into dmhost_diag: registered at launch
