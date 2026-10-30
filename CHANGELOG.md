@@ -8,9 +8,10 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Android 1.0.2] - unreleased
 
-Upgrade over 1.0.1 (same package name and signing certificate; saves and the game files on the phone stay).
+Upgrade over 1.0.1 (same package name and signing certificate; saves and the game files on the phone stay). After the upgrade the first launch rebuilds its touch resources once.
 
 - **Sound no longer disappears for good after leaving the game**: if the system dropped the audio stream while the game was in the background, sound stayed off until the game was restarted. The game now reopens the audio stream when you come back and, if that fails, keeps retrying about every 1.5 seconds until sound returns.
+- **Options → Graphics**: the note at the bottom of the page no longer describes MetalFX, which only exists on iOS.
 
 ## [Android 1.0.1] - unreleased
 
