@@ -825,6 +825,15 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             try { a.startActivity(Intent.createChooser(send, title)); } catch (Exception e) { android.util.Log.w("dm", "share: " + e); }
         });
     }
+    // 游戏内社区弹窗的复制（dm_community.c → text_input_jni.c，工作线程）：到界面线程写剪贴板 | the in-game community box's copy (dm_community.c → text_input_jni.c, a worker thread): write the clipboard on the UI thread
+    static void copyToClipboard(String text) {
+        DmActivity a = current.get(); if (a == null) { android.util.Log.w("dm", "copy: no activity"); return; }
+        a.runOnUiThread(() -> {
+            try { android.content.ClipboardManager cm = (android.content.ClipboardManager) a.getSystemService(android.content.Context.CLIPBOARD_SERVICE);
+                if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("D2R Mobile Plus", text)); else android.util.Log.w("dm", "copy: no clipboard"); }
+            catch (RuntimeException e) { android.util.Log.w("dm", "copy: " + e); }
+        });
+    }
     // 系统记录的最近退出原因（Android 11+ ApplicationExitInfo，代替 iOS 的 .ips 崩溃日志）：写到 files/dm/exit_reasons.txt，分享诊断日志附上；只读本 App 自己的记录
     // The system's recent exit reasons (Android 11+ ApplicationExitInfo, in place of iOS's .ips crash logs): written to files/dm/exit_reasons.txt and attached to share diagnostics; only this App's own records
     private void writeExitReasons(File runtime) {

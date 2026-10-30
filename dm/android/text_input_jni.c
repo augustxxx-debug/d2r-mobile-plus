@@ -8,7 +8,7 @@
 
 static JavaVM *vm;
 static jclass activity_class;
-static jmethodID show_input, report_failure, share_file;
+static jmethodID show_input, report_failure, share_file, copy_text;
 static pthread_mutex_t input_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t input_done = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t work_ready = PTHREAD_COND_INITIALIZER;
@@ -117,7 +117,8 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *java_vm, void *reserved) {
         "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;III)V");
     report_failure = (*env)->GetStaticMethodID(env, activity_class, "showNativeFailure", "(I)V");
     share_file = (*env)->GetStaticMethodID(env, activity_class, "shareDiagnostics", "(Ljava/lang/String;Ljava/lang/String;)V");
-    if (!show_input || !report_failure || !share_file) return JNI_ERR;
+    copy_text = (*env)->GetStaticMethodID(env, activity_class, "copyToClipboard", "(Ljava/lang/String;)V");
+    if (!show_input || !report_failure || !share_file || !copy_text) return JNI_ERR;
     vm = java_vm;
     pthread_t worker;
     if (pthread_create(&worker, NULL, input_worker, NULL)) worker_state = -1;
@@ -185,6 +186,19 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeTextResult(
         pthread_cond_signal(&input_done);
     }
     pthread_mutex_unlock(&input_lock);
+}
+
+// 社区弹窗的复制（jni_android.c 的工作线程调，不是客体线程）：挂到 JVM，调 DmActivity.copyToClipboard(文字)，再脱开
+// Community box copy (called from a jni_android.c worker thread, never a guest thread): attach to the JVM, call DmActivity.copyToClipboard(text), detach
+void dm_android_copy_text(const char *text) {
+    if (!vm || !activity_class || !copy_text) { __android_log_write(ANDROID_LOG_ERROR, "dm", "copy: JNI bridge not ready"); return; }
+    JNIEnv *env = NULL; int attached = (*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK;
+    if (attached && (*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) { __android_log_write(ANDROID_LOG_ERROR, "dm", "copy: AttachCurrentThread failed"); return; }
+    jstring jt = (*env)->NewStringUTF(env, text);
+    if (jt) (*env)->CallStaticVoidMethod(env, activity_class, copy_text, jt);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionDescribe(env); (*env)->ExceptionClear(env); }
+    if (jt) (*env)->DeleteLocalRef(env, jt);
+    if (attached) (*vm)->DetachCurrentThread(vm);
 }
 
 // 分享诊断日志（jni_android.c 的工作线程调，不是客体线程）：挂到 JVM，调 DmActivity.shareDiagnostics(路径, 标题)，再脱开

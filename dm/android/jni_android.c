@@ -157,6 +157,29 @@ static void android_sharelog(void) {
     pthread_attr_destroy(&at);
 }
 
+// 游戏内社区弹窗（dm_community.c，暂停菜单 / 主菜单 / 自定义页「关于」）：
+// 剪贴板回调在游戏主线程被调，JNI 不进客体线程（同 dm_android_share_file 的约定），另起一条线程交给 Java；起得来就算成功。
+// 清单：普通启动不联网（DmActivity），用加载页 CommunityFetch 写下的 files/community_manifest.json（只存合法清单）；没有这个文件就只用 dm_community 自己的缓存
+// In-game community box (dm_community.c: pause menu / main menu / Custom page "About"):
+// the clipboard callback runs on the game's main thread and JNI stays off guest threads (as dm_android_share_file), so a separate thread hands it to Java; starting that thread counts as success.
+// Manifest: a normal start makes no network access (DmActivity), so this reads files/community_manifest.json written by the loading page's CommunityFetch (valid manifests only); without that file only dm_community's own cache is used
+void dm_android_copy_text(const char *text);
+static void *copy_thread(void *arg) { dm_android_copy_text(arg); free(arg); return NULL; }
+static int android_copy(const char *text) {
+    char *t = strdup(text ? text : ""); pthread_t th;
+    if (!t) return 0;
+    if (pthread_create(&th, NULL, copy_thread, t)) { free(t); return 0; }
+    pthread_detach(th); return 1;
+}
+static void community_boot(void) {
+    void dm_community_copy_init(int (*)(const char *)), dm_community_load(void); int dm_community_manifest(const char *, size_t);
+    dm_community_copy_init(android_copy); dm_community_load();
+    char path[1200], buf[4097]; snprintf(path, sizeof path, "%s/community_manifest.json", g_files);   // 4096 = CommunityFetch 的上限 | CommunityFetch's limit
+    FILE *f = fopen(path, "r"); if (!f) return;
+    size_t n = fread(buf, 1, sizeof buf, f); fclose(f);
+    if (n && n < sizeof buf) dm_community_manifest(buf, n);
+}
+
 static void *host_thread(void *arg) {
     (void)arg;
     char out[1200]; snprintf(out, sizeof out, "%s/out", g_runtime);
@@ -167,6 +190,7 @@ static void *host_thread(void *arg) {
     int graphics_rc = dm_android_vk_initialize(shaders, error, sizeof error);
     if (graphics_rc) { LOG("boot: Vulkan initialization failed %d: %s", graphics_rc, error); front_android_boot_failed(-6); return NULL; }
     { void dm_sharelog_init(void (*)(void)); dm_sharelog_init(android_sharelog); }   // 暂停菜单「分享诊断日志」（diag.c 在游戏主线程调）| pause menu "Share Diagnostics" (diag.c calls it on the game main thread)
+    community_boot();
     char *argv[] = {"dmhost", out, "main", "sdk", NULL};
     LOG("boot: dm_main %s", out);
     int rc = dm_main(4, argv);
