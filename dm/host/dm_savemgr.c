@@ -183,7 +183,7 @@ static void btn_action(int k) {
     case S_BKDEL: if (k == 0) { dm_savepkg_backup_delete(save_dir(), &g_bk[g_bk_sel]); LOG("存档管理：删除一份备份"); bklist_page(); } else bkitem_page(); break;
     default: break; }
 }
-void dm_savemgr_open(int from) { if (dm_uiscreen_ingame()) { LOG("存档管理：局内不打开（入口 %d）", from); return; } g_home_import = 0; if (from == 3) { atomic_store(&g_st, S_WORK); request_pick(); rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); return; } show_home(); LOG("存档管理：打开（入口 %d）", from); }
+void dm_savemgr_open(int from) { if (dm_uiscreen_ingame()) { LOG("存档管理：局内不打开（入口 %d）", from); return; } g_home_import = 0; if (from == 3) { rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); go(S_WORK); request_pick(); LOG("存档管理：打开（入口 3）"); return; } show_home(); LOG("存档管理：打开（入口 %d）", from); }
 void dm_savemgr_on_uimsg(const char *cat, const char *act, const char *arg) { if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return; if (!strcmp(arg, "TouchSavesOpt")) dm_savemgr_open(1); else if (!strcmp(arg, "TouchSavesCc")) dm_savemgr_open(3); }
 
 // ---- 弹窗：输入 | The box: input
@@ -215,12 +215,13 @@ static uint64_t box_host(uint64_t root) { for (size_t i = 0; i < sizeof k_save_h
 static void hide_all(uint8_t *b, uint64_t p) {
     static const char *const nm[] = { "TouchSaveTitle", "TouchSaveSub", "TouchSavePage", "TouchSaveNote", "TouchSaveBtn0", "TouchSaveBtn1", "TouchSaveBtnText0", "TouchSaveBtnText1" }; for (size_t i = 0; i < sizeof nm / sizeof *nm; i++) { uint64_t w = co_find(p, nm[i], 0); if (w) { co_place(w, 99999, 99999); if (strncmp(nm[i], "TouchSaveBtn", 12) || strstr(nm[i], "Text")) co_text(b, w, ""); } }
     for (int k = 0; k < PER_PAGE; k++) { char n[32]; snprintf(n, sizeof n, "TouchSaveRow%d", k); uint64_t w = co_find(p, n, 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); } snprintf(n, sizeof n, "TouchSaveTag%d", k); w = co_find(p, n, 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); } }
-    int off[4] = { 99999, 99999, 4, 4 }; for (int k = 0; k < 15; k++) { char n[24]; snprintf(n, sizeof n, "TouchSaveTile%d%d", k / 3, k % 3); uint64_t w = co_find(p, n, 0); if (w) co_tile(b, w, off); } co_rect_hide(p, "TouchSaveFocus");
+    for (int k = 0; k < 15; k++) { char n[24]; snprintf(n, sizeof n, "TouchSaveTile%d%d", k / 3, k % 3); uint64_t w = co_find(p, n, 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); r[0] = r[1] = 99999; } } co_rect_hide(p, "TouchSaveFocus");
 }
 static void entries(uint8_t *b, uint64_t root) {   // 两个入口的显隐：自定义页这一行、建角页的按钮 | the two entries: the Custom page row, the class-select button
     int ing = dm_uiscreen_ingame(), pad = dm_padmode_current(); uint64_t vp = dm_ui_top(root, "VideoOptionsPanel");
-    if (vp && *(uint8_t *)(vp + 0x50)) { uint64_t bt = co_find(vp, "TouchSavesOpt", 0), hi = co_find(vp, "TouchSavesHint", 0); if (bt && hi) { static int last = -1; if (last != ing) { last = ing; co_place(bt, ing ? 99999 : 1110, 30); co_place(hi, ing ? 680 : 99999, 0); co_text(b, hi, ing ? S("dmSaveInRun") : ""); } } }
-    uint64_t cc = dm_ui_top(root, "CharacterCreatePanel"); if (cc && *(uint8_t *)(cc + 0x50)) { uint64_t t = co_find(cc, "TouchSavesCc", 0), tp = co_find(cc, "TouchSavesCcPad", 0); const char *sv = save_dir(); int none = 0; if (sv) { DIR *d = opendir(sv); struct dirent *e; none = 1; while (none && d && (e = readdir(d))) { if (e->d_name[0] == '.' || e->d_name[0] == '_') continue; char p[1400]; struct stat st; snprintf(p, sizeof p, "%s/%s/%s.d2s", sv, e->d_name, e->d_name); if (!stat(p, &st)) none = 0; } if (d) closedir(d); } int show = none && !ing && !dm_savemgr_modal();
+    if (vp && *(uint8_t *)(vp + 0x50)) { uint64_t bt = co_find(vp, "TouchSavesOpt", 0), hi = co_find(vp, "TouchSavesHint", 0); if (bt && hi && (((int32_t *)(bt + 0x70))[0] == 99999) != ing) { co_place(bt, ing ? 99999 : 1110, 30); co_place(hi, ing ? 680 : 99999, 0); co_text(b, hi, ing ? S("dmSaveInRun") : ""); } }   // 面板可能重建，按控件现状判，不缓存 | the panel may be rebuilt: judge by the widget, no caching
+    uint64_t cc = dm_ui_top(root, "CharacterCreatePanel"); static int cc_was, none; if (!(cc && *(uint8_t *)(cc + 0x50))) cc_was = 0; else { uint64_t t = co_find(cc, "TouchSavesCc", 0), tp = co_find(cc, "TouchSavesCcPad", 0); const char *sv = save_dir(); if (!cc_was) { cc_was = 1; none = 0; if (sv) { DIR *d = opendir(sv); struct dirent *e; none = 1; while (none && d && (e = readdir(d))) { if (e->d_name[0] == '.' || e->d_name[0] == '_') continue; char p[1400]; struct stat st; snprintf(p, sizeof p, "%s/%s/%s.d2s", sv, e->d_name, e->d_name); if (!stat(p, &st)) none = 0; } if (d) closedir(d); } }   // 只在这页出现那一刻看一次盘 | look at the disk only when the page appears
+        int show = none && !ing && !dm_savemgr_modal();
         if (t) co_place(t, show && !pad ? 275 : 99999, 1900); if (tp) co_place(tp, show && pad ? 275 : 99999, 1900); if (show && pad && (dm_padmode_page_keys(DM_BTN_Y) & DM_BTN_Y)) dm_savemgr_open(3); }
 }
 void dm_savemgr_pump(void) {
@@ -242,7 +243,8 @@ void dm_savemgr_pump(void) {
     { static uint64_t saved; static char saved_nm[64]; static int held; uint64_t fm = *(uint64_t *)(root + 0xd0);
       if (st && fm && pad) { uint64_t F = *(uint64_t *)(fm + 0x190); if (!held) { held = 1; saved = F; const char *nm = F ? *(const char **)(F + 8) : NULL; snprintf(saved_nm, sizeof saved_nm, "%s", nm ? nm : ""); } if (F) *(uint64_t *)(fm + 0x190) = 0; }
       else if (held && !st) { held = 0; const char *nm = saved && co_has(root, saved, 0) ? *(const char **)(saved + 8) : NULL; if (fm && nm && !strcmp(nm, saved_nm)) *(uint64_t *)(fm + 0x190) = saved; saved = 0; } }
-    static uint64_t last_host; uint64_t p = box_host(root); if (!st) { if (last_host && p == last_host) hide_all(b, p); else if (p) hide_all(b, p); last_host = 0; g_tap.valid = 0; return; } if (!p) { g_tap.valid = 0; return; } if (last_host && last_host != p && co_has(root, last_host, 0)) hide_all(b, last_host); last_host = p;
+    static uint64_t last_host; if (!st) { if (last_host && co_has(root, last_host, 0)) hide_all(b, last_host); last_host = 0; g_tap.valid = 0; return; }   // 只在收起那一刻写一次，平时不碰控件 | written once on closing; widgets are left alone otherwise
+    uint64_t p = box_host(root); if (!p) { g_tap.valid = 0; return; } if (last_host && last_host != p && co_has(root, last_host, 0)) hide_all(b, last_host); last_host = p;
     // 手柄事件 | controller events
     { uint64_t ev = atomic_exchange(&g_md_ev, 0); if (!pad) ev = 0; int shown = atomic_load(&g_shown) == 1; if (ev && shown) { int pages = g_nrows ? (g_nrows + PER_PAGE - 1) / PER_PAGE : 1, on = g_nrows - g_page * PER_PAGE; if (on > PER_PAGE) on = PER_PAGE; if (on < 0) on = 0; int total = on + g_nbtn;
           if ((ev & DM_BTN_UP) && g_foc > 0) g_foc--; if ((ev & DM_BTN_DOWN) && g_foc + 1 < total) g_foc++;

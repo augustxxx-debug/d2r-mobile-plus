@@ -389,8 +389,8 @@ void co_text(uint8_t *b, uint64_t w, const char *s) {   // 文字框设文本（
     ((void *(*)(uint64_t, const char *, uint64_t))(b + 0x136e5c))(w + 0x88, s, n); ((void (*)(uint64_t))(b + 0xadc434))(w);
 }
 void co_tile(uint8_t *b, uint64_t w, const int want[4]) {   // 边框片（同 dm_crashfence.c cf_tile）：只改自己的单帧切片 Ztouch_comm/tileRC 的绘制尺寸，名字、文件名、帧数都对上才写 | frame tile (same as cf_tile): only our own slice Ztouch_comm/tileRC, written only when name, file and frame count match
-    const char *name = w ? *(const char **)(w + 8) : NULL, *pre = "TouchCommTile"; size_t n = strlen(pre);
-    if (!name || strncmp(name, pre, n) || name[n] < '0' || name[n] > '4' || name[n + 1] < '0' || name[n + 1] > '2' || name[n + 2]) return;
+    const char *name = w ? *(const char **)(w + 8) : NULL; size_t n = strlen("TouchCommTile");   // 存档管理列表框用同一套切片（dm_savemgr.c）| the save-management box uses the same slices
+    if (!name || (strncmp(name, "TouchCommTile", n) && strncmp(name, "TouchSaveTile", n)) || name[n] < '0' || name[n] > '4' || name[n + 1] < '0' || name[n + 1] > '2' || name[n + 2]) return;
     if (want[2] < 1 || want[2] > 4000 || want[3] < 1 || want[3] > 800 || !dm_widget_is(b, w, DM_VT_IMAGE)) return;
     char expect[40]; snprintf(expect, sizeof expect, "Ztouch_comm/tile%c%c", name[n], name[n + 1]);
     const char *file = *(const char **)(w + 0x108); uint64_t len = *(uint64_t *)(w + 0x110);
@@ -452,7 +452,7 @@ static void co_hide_all(uint8_t *b, uint64_t p) {
 // 线条片（卡片边框、手柄焦点框）：我们自己的单色单帧切片 Ztouch_comm/<file>，同 co_tile 只改精灵的绘制尺寸（同名切片的控件尺寸相同才共用：横线一组、竖线一组）
 // Line slices (card border, controller focus frame): our own one-colour single-frame slices Ztouch_comm/<file>; like co_tile only the sprite's draw size changes (widgets sharing a slice have the same size)
 static void co_line(uint8_t *b, uint64_t w, const char *file, int x, int y, int wd, int ht) {
-    const char *name = w ? *(const char **)(w + 8) : NULL; if (!name || strncmp(name, "TouchComm", 9) || !dm_widget_is(b, w, DM_VT_IMAGE) || wd < 1 || ht < 1 || wd > 4000 || ht > 800) return;
+    const char *name = w ? *(const char **)(w + 8) : NULL; if (!name || (strncmp(name, "TouchComm", 9) && strncmp(name, "TouchSave", 9)) || !dm_widget_is(b, w, DM_VT_IMAGE) || wd < 1 || ht < 1 || wd > 4000 || ht > 800) return;
     char expect[40]; snprintf(expect, sizeof expect, "Ztouch_comm/%s", file);
     const char *f = *(const char **)(w + 0x108); uint64_t len = *(uint64_t *)(w + 0x110);
     if (!f || len != strlen(expect) || memcmp(f, expect, len) || *(int32_t *)(w + 0x90) != 0) return;
