@@ -487,6 +487,7 @@ static void legend_pump(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧
 // A request lands on the next server tick (dm_hud.c takes it at the server tick entry; measured on the Mac, ticks keep running with the options page open, so each press lands at once); should no tick run, repeated changes continue from "the last requested level", which the slider and label show too;
 // the tick on which the level really lands is logged by diag.c as 「游戏难度：当前 N 档」, and the share-log summary takes the last 「游戏难度：」 line.
 static dm_wref g_diff_w; static int g_diff_last = -1, g_diff_pend;
+static uint64_t g_diff_home;   // 进页缺省焦点落到难度行的期限帧（0 = 不用再落，B057） | deadline frame for landing the default focus on the difficulty row (0 = done, B057)
 static void diff_set_text(uint8_t *b, uint64_t w, const char *t) {   // 只写我们自己的文字控件（名字 Touch 开头、核虚表） | writes only our own text widgets (name starting with Touch, vtable checked)
     const char *nm = w ? (const char *)rd8(w + 8) : NULL; if (!t || !nm || strncmp(nm, "Touch", 5) || !DM_WIDGET_OK(b, w, DM_VT_TEXT, "游戏难度行文字")) return;
     size_t L = strlen(t); if (rd8(w + 0x90) == L && !memcmp((const void *)(uintptr_t)rd8(w + 0x88), t, L)) return;
@@ -501,7 +502,7 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
     int shown = g_diff_pend ? g_diff_pend : cur, setv = -1;
     int v = *(int32_t *)(uintptr_t)(w + 0x5c4);
     if (dm_wref_get(&g_diff_w) != w) {
-        dm_wref_set(&g_diff_w, w);
+        dm_wref_set(&g_diff_w, w); g_diff_home = frame + 60;
         *(int32_t *)(uintptr_t)(w + 0x5b0) = 1; *(int32_t *)(uintptr_t)(w + 0x5b8) = 7; *(int32_t *)(uintptr_t)(w + 0x5bc) = 0; *(int32_t *)(uintptr_t)(w + 0x5c0) = 7;
         setv = dm_hud_slider_value(0, 7, shown ? shown : 1);
         LOG("游戏难度：选项页打开，%s，滑块拨到 %d 档", shown ? "局内" : "不在局内", shown ? shown : 1);
@@ -536,8 +537,15 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
               int dir = dm_custom_scroll_step(0, 460, off, vh, last_dir, last_off); if (dir) { void dm_ui_wheel_on(uint64_t, int); wheel_at = frame; last_dir = dir; last_off = off; dm_ui_wheel_on(sv, dir); } } }
       else { uint64_t tb = pm_find(gp, "OptionsTable", 0), ch = tb ? rd8(tb + 0x58) : 0, n = tb ? rd8(tb + 0x60) : 0, first = 0;
           for (uint64_t i = 1; ch && i < n && i < 64 && !first; i++) { uint64_t r = rd8(ch + 8 * i); if (r && *(uint8_t *)(uintptr_t)(r + 0x50)) first = r; }   // 第 0 行是分节标题「游戏选项」 | row 0 is the "Gameplay Options" section header
-          const char *fn = F ? (const char *)rd8(F + 8) : NULL;
-          if (first && fn && pm_find(first, fn, 0) == F && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
+          const char *fn = F ? (const char *)rd8(F + 8) : NULL; int in_first = first && fn && pm_find(first, fn, 0) == F;
+          // 进页缺省焦点（RC1.1 真机 B057：手柄模式进「游戏」页，缺省焦点是「显示物品」）：难度行是这页第一行，页刚显示 / 重建的 60 帧内，原版把缺省焦点放到表格第一行时
+          // 改放到难度行（下键照样回表格第一行）；那时焦点已在别处（玩家动过）就不管
+          // Default focus on entry (RC1.1 on-device B057: entering the Gameplay page in controller mode focused "Show Items"): the difficulty row is the page's first row, so within 60
+          // frames of the page being shown / rebuilt, when the game puts its default focus on the table's first row it moves to the difficulty row instead (Down still returns to that first row);
+          // if the focus is elsewhere by then (the player moved), it is left alone
+          if (g_diff_home && (frame > g_diff_home || (F && !in_first))) g_diff_home = 0;
+          if (g_diff_home && in_first) { g_diff_home = 0; back = F; *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：进页缺省焦点放到难度行（原版给的是 %s）", fn); }
+          else if (in_first && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
               back = F; *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：手柄焦点上移到难度行（从 %s）", fn); } } }
     if (setv >= 0 && setv != v) ((void (*)(uint64_t, int, int, int))(b + 0xad7028))(w, setv, 0, 0);
     g_diff_last = *(int32_t *)(uintptr_t)(w + 0x5c4);
