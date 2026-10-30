@@ -95,8 +95,17 @@ static int cube_gate(uint64_t G, uint64_t player) {
     if (!others && nl == 1 && qty(list[0]) >= 2 && !(qty(list[0]) == 3 && is_rejuv(list[0]) && ((const char *)&(uint32_t){ code_of(list[0]) })[2] == 's')) {   /* 3 瓶小紫留给配方 3 小紫 → 大紫 | 3 small rejuvs are left to the recipe 3 rvs -> rvl */ int n = qty(list[0]); uint32_t c = code_of(list[0]); split_off(G, player, list[0], n / 2, 3); LOG("堆叠：方块里只有一叠 %.3s×%d → 拆半", (const char *)&c, n); return 1; }
     if (!others && nl == 2 && code_of(list[0]) == code_of(list[1]) && qty(list[0]) + qty(list[1]) <= DM_STACK_MAX && qty(list[0]) >= 2 && qty(list[1]) >= 2) {
         int t = qty(list[0]) + qty(list[1]); uint32_t c = code_of(list[0]); uint64_t pp = *(uint64_t *)(list[1] + 0x38); if (pp) { set_qty(player, list[0], t); remove_item(G, player, list[1], *(int32_t *)(pp + 0x10), *(int32_t *)(pp + 0x14)); LOG("堆叠：方块里两叠 %.3s → 合并成 %d", (const char *)&c, t); return 1; } }
-    for (int i = 0; i < nl; i++) while (qty(list[i]) >= 2) { if (!split_off(G, player, list[i], 1, 3)) { LOG("堆叠：方块放不下，%.3s 留 %d 瓶一叠", (const char *)&(uint32_t){ code_of(list[i]) }, qty(list[i])); break; } }
-    return 0;
+    int split = 0; for (int i = 0; i < nl; i++) while (qty(list[i]) >= 2) { if (!split_off(G, player, list[i], 1, 3)) { LOG("堆叠：方块放不下，%.3s 留 %d 瓶一叠", (const char *)&(uint32_t){ code_of(list[i]) }, qty(list[i])); break; } split = 1; }
+    return split ? 2 : 0;
+}
+// 合成包带着方块里的原料清单（[7] = 件数 − 1，之后每件 {u32 id, 格字节 x | y << 4}），服务端逐项核对（0x6e8938–0x6e8b0c），对不上静默丢。拆过之后按方块现状重写清单
+// The transmute packet carries the cube's ingredient list ([7] = count − 1, then per item {u32 id, cell byte x | y << 4}) and the server checks it entry by entry (0x6e8938–0x6e8b0c), silently dropping on a mismatch. After a split, rewrite the list from the cube's current contents
+static uint32_t cube_packet(uint64_t player, const uint8_t *pk, uint32_t len, uint8_t *o, uint32_t cap) {
+    if (len < 8 || cap < 8) return 0; memcpy(o, pk, 8); uint32_t n = 8; int cnt = 0;
+    for (uint64_t it = inv_first(player), k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
+        if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 3 && pp && n + 5 <= cap) { memcpy(o + n, (void *)(it + 8), 4); o[n + 4] = (uint8_t)((*(int32_t *)(pp + 0x10) & 15) | (*(int32_t *)(pp + 0x14) & 15) << 4); n += 5; cnt++; }
+        it = *(uint64_t *)(d + 0xb0); }
+    if (!cnt) return 0; o[7] = (uint8_t)(cnt - 1); return n;
 }
 
 // 命令分派入口（diag.c c2s_obs，regs：x0 游戏、x1 玩家、x2 包、x3 长度，可改）。包字段照 main+0x2cecf0：+6 目标类型，+0xa 物品 id
@@ -106,7 +115,10 @@ void dm_stack_c2s(uint64_t *regs) {
     { static int lg = -1; if (lg < 0) lg = getenv("DM_TEST_STACK_PKT") != NULL; if (lg && pk && len >= 1 && pk[0] != 0x01 && pk[0] != 0x02 && pk[0] != 0x03 && pk[0] != 0x04 && pk[0] != 0x6d) { char h[160]; int k = 0; for (uint32_t i = 0; i < len && i < 40; i++) k += snprintf(h + k, sizeof h - k, "%02x", pk[i]); LOG("堆叠：包 %s", h); } }   // 测试开关：记命令包 | Test switch: log command packets
     if (inside || !B || !G || !player || !pk || !len) return;
     static uint8_t noop[0x24]; uint32_t id = 0;
-    if (pk[0] == 0x20) { if (cube_gate(G, player)) { memset(noop, 0, sizeof noop); noop[0] = 0x26; noop[6] = 0xff; regs[2] = (uint64_t)(uintptr_t)noop; regs[3] = sizeof noop; } return; }
+    if (pk[0] == 0x20) { int g = cube_gate(G, player); static uint8_t cp[96]; uint32_t cl;
+        if (g == 1) { memset(noop, 0, sizeof noop); noop[0] = 0x26; noop[6] = 0xff; regs[2] = (uint64_t)(uintptr_t)noop; regs[3] = sizeof noop; }
+        else if (g == 2 && (cl = cube_packet(player, pk, len, cp, sizeof cp))) { regs[2] = (uint64_t)(uintptr_t)cp; regs[3] = cl; LOG("堆叠：方块里的叠拆成单瓶后重写合成清单（%u 字节）", cl); }
+        return; }
     if (pk[0] == 0x26 && len >= 0x24) memcpy(&id, pk + 0xa, 4);
     else if (pk[0] == 0x53 && len >= 5) memcpy(&id, pk + 1, 4);
     else return;
@@ -165,13 +177,22 @@ void dm_stack_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
     // 测试开关 DM_TEST_STACK_BELTQ=<拍>：腰带第 1 列底格那瓶改成 5 瓶（造「腰带里有一叠」：手动把一叠拖进腰带的现场）
     // Test switch DM_TEST_STACK_BELTQ=<tick>: set the bottom bottle of belt column 1 to 5 (sets up "a stack in the belt", as when a stack is dragged there by hand)
     { static int at = -1; if (at < 0) { const char *e = getenv("DM_TEST_STACK_BELTQ"); at = e ? atoi(e) : 0; } if (at && tq >= (uint32_t)at) { at = 0; for (uint64_t it = inv_first(player), k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break; if (*(uint32_t *)(it + 0xc) == 2 && pp && *(int32_t *)(pp + 0x10) == 0) { set_qty(player, it, 5); LOG("测试 DM_TEST_STACK_BELTQ：腰带槽 0 改成 5 瓶"); break; } it = *(uint64_t *)(d + 0xb0); } } }
+    // 测试开关 DM_TEST_CHARM_Y=<拍>（护身符袋探针）：背包第一件护身符依次走原版包放到 (0,5)、方块、背包 (4,1) 对照，每步记玩家属性 0–60 的和，看页 0 第 4 行以下是否还生效
+    // Test switch DM_TEST_CHARM_Y=<tick> (charm bag probe): move the first charm in the inventory to (0,5), the cube, then the inventory at (4,1) with the original packets, logging the sum of player stats 0-60 at each step, to see whether it still counts below row 4 of page 0
+    { static int at = -1, st; if (at < 0) { const char *e = getenv("DM_TEST_CHARM_Y"); at = e ? atoi(e) : 0; }
+      if (at && tq >= (uint32_t)at + (uint32_t)st * 40 && st < 4) { uint64_t f = 0; int (*is)(uint64_t, int) = (int (*)(uint64_t, int))(b + 0x574bc0); for (uint64_t it = inv_first(player), k = 0; it && k < 2048 && !f; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; static uint32_t fid; if (!fid) { uint32_t mx = 0; for (uint64_t q = it, n = 0; q && n < 2048; n++) { uint64_t qd = *(uint64_t *)(q + 0x10); if (!qd) break; if (*(uint32_t *)(q + 0xc) == 0 && *(uint8_t *)(qd + 0x55) == 0 && is(q, 13) && *(uint32_t *)(q + 8) > mx) mx = *(uint32_t *)(q + 8); q = *(uint64_t *)(qd + 0xb0); } fid = mx; LOG("护身符探针：挑最新一件 id %u", fid); } if (*(uint32_t *)(it + 8) == fid) f = it; else it = *(uint64_t *)(d + 0xb0); }
+          long sum = 0; char v[160]; int vk = 0; for (int i = 0; i <= 60; i++) { int x = ((int (*)(uint64_t, int, int))(b + 0x5b9290))(player, i, 0); sum += x; if ((i == 7 || i == 9 || i == 39 || i == 41 || i == 43 || i == 45 || i == 0 || i == 2) && vk < 140) vk += snprintf(v + vk, sizeof v - vk, " s%d=%d", i, x); }
+          uint64_t pp = f ? *(uint64_t *)(f + 0x38) : 0; LOG("护身符探针：步 %d 物品 id %u 格 %d,%d 属性和 %ld%s", st, f ? *(uint32_t *)(f + 8) : 0, pp ? *(int32_t *)(pp + 0x10) : -1, pp ? *(int32_t *)(pp + 0x14) : -1, sum, v);
+          if (f && pp && st < 3) { void (*disp)(uint64_t, uint64_t, uint8_t *, uint32_t) = (void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(b + 0x6e5b40); uint32_t id = *(uint32_t *)(f + 8), x = *(uint32_t *)(pp + 0x10), y = *(uint32_t *)(pp + 0x14), pg = (uint32_t)*(uint8_t *)(*(uint64_t *)(f + 0x10) + 0x55), tp = st == 1 ? 3 : 0, nx = st == 1 ? 0 : st == 2 ? 4 : 0, ny = st == 0 ? 5 : st == 1 ? 0 : 1; uint8_t a1[17] = { 0x19 }, a2[17] = { 0x18 }; memcpy(a1 + 1, &id, 4); memcpy(a1 + 5, &x, 4); memcpy(a1 + 9, &y, 4); memcpy(a1 + 13, &pg, 4); memcpy(a2 + 1, &id, 4); memcpy(a2 + 5, &nx, 4); memcpy(a2 + 9, &ny, 4); memcpy(a2 + 13, &tp, 4); *(uint32_t *)(G + 0x19050) = 1; disp(G, player, a1, 17); disp(G, player, a2, 17); *(uint32_t *)(G + 0x19050) = 0; }
+          st++; } }
+    { static int at = -1; if (at < 0) { const char *e = getenv("DM_TEST_STACK_THREE"); at = e ? atoi(e) : 0; } if (at && tq >= (uint32_t)at) { at = 0; for (uint64_t it = inv_first(player), k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && is_rejuv(it) && qty(it) >= 2) { set_qty(player, it, 3); LOG("测试 DM_TEST_STACK_THREE：紫药改成 3 瓶"); break; } it = *(uint64_t *)(d + 0xb0); } } }
     // 测试开关 DM_TEST_STACK_CUBE=<拍>：背包第一叠药水走原版包放进方块 (0,0)，之后每 40 拍发一次合成包 0x20（共 3 次），看拆半 / 合并 / 配方
     // Test switch DM_TEST_STACK_CUBE=<tick>: put the first potion stack in the inventory into the cube at (0,0) with the original packets, then send the transmute packet 0x20 every 40 ticks (3 times), to observe split / merge / recipe
     { static int at = -1, st; if (at < 0) { const char *e = getenv("DM_TEST_STACK_CUBE"); at = e ? atoi(e) : 0; }
       if (at && tq >= (uint32_t)at + (uint32_t)st * 40 && st <= 3) { void (*disp)(uint64_t, uint64_t, uint8_t *, uint32_t) = (void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(b + 0x6e5b40); *(uint32_t *)(G + 0x19050) = 1;
           if (!st) { uint64_t f = 0; for (uint64_t it = inv_first(player), k = 0; it && k < 2048 && !f; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && is_potion(it) && qty(it) >= 2) f = it; else it = *(uint64_t *)(d + 0xb0); }
               uint64_t pp = f ? *(uint64_t *)(f + 0x38) : 0; if (pp) { uint32_t id = *(uint32_t *)(f + 8), x = *(uint32_t *)(pp + 0x10), y = *(uint32_t *)(pp + 0x14), pg = 0, x0 = 0, y0 = 0, pc = 3; uint8_t a1[17] = { 0x19 }, a2[17] = { 0x18 }; memcpy(a1 + 1, &id, 4); memcpy(a1 + 5, &x, 4); memcpy(a1 + 9, &y, 4); memcpy(a1 + 13, &pg, 4); memcpy(a2 + 1, &id, 4); memcpy(a2 + 5, &x0, 4); memcpy(a2 + 9, &y0, 4); memcpy(a2 + 13, &pc, 4); disp(G, player, a1, 17); disp(G, player, a2, 17); LOG("测试 DM_TEST_STACK_CUBE：放进方块 id %u", id); } }
-          else { uint8_t t[7] = { 0x20 }; disp(G, player, t, 7); LOG("测试 DM_TEST_STACK_CUBE：第 %d 次合成", st); }
+          else { uint8_t t0[8] = { 0x20 }, t[96]; for (uint64_t it = inv_first(player), k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break; uint32_t c = code_of(it); if (!memcmp(&c, "box", 3) && pp) { memcpy(t0 + 1, (void *)(it + 8), 4); t0[5] = *(uint8_t *)(d + 0x55); t0[6] = (uint8_t)((*(int32_t *)(pp + 0x10) & 15) | (*(int32_t *)(pp + 0x14) & 15) << 4); break; } it = *(uint64_t *)(d + 0xb0); } uint32_t tl = cube_packet(player, t0, 8, t, sizeof t); if (tl) disp(G, player, t, tl); LOG("测试 DM_TEST_STACK_CUBE：第 %d 次合成", st); }
           *(uint32_t *)(G + 0x19050) = 0; st++; } }
     if (!per || tq % (uint32_t)per) return;
     char s[768]; int k = 0; s[0] = 0;
