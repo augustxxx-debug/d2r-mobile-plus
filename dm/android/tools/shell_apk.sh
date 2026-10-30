@@ -69,6 +69,7 @@ VER=(-PdmVersionName="$DM_VERSION" -PdmBuildNumber="$DM_BUILD" -PdmVersionLabel=
 # (space separated, https:// only), never in the source; none = the package makes no network access
 if [ -n "${DM_UPDATE_URLS:-}" ]; then VER+=(-PdmUpdateUrls="$DM_UPDATE_URLS"); t "清单地址 $(echo $DM_UPDATE_URLS | wc -w | tr -d ' ') 个，按顺序：$(for u in $DM_UPDATE_URLS; do printf '%s ' "$(echo "$u" | sed -E 's#^https://([^/]+).*#\1#')"; done)"
 else t "没给 DM_UPDATE_URLS：包里不联网，加载页不显示官方免费渠道"; fi
+VER+=(-PdmChannel="${DM_CHANNEL:-unknown}" -PdmSourceCommit="$(git -C "$(dirname "$0")" rev-parse HEAD 2>/dev/null || echo unknown)")   # 统计的渠道与源码提交（TelemetryBridge） | the statistics' channel and source commit
 if [ -n "${DM_DIAGNOSTIC_ORIGIN:-}" ]; then VER+=(-PdmDiagnosticOrigin="$DM_DIAGNOSTIC_ORIGIN"); t "诊断上传地址已给（地址不进日志）"; else t "没给 DM_DIAGNOSTIC_ORIGIN：自动上报崩溃不联网"; fi
 # 手机端生成器缺省编进主包（同一个 App：没有导入包就自己生成）。运行时 = gen_runtime.sh 的输出，脚本与翻译工具源码都没变就复用，否则重编（约 5 分钟，要网）；
 #   DM_GEN_RUNTIME=<目录> 指定输出位置，DM_GEN_RUNTIME=none 出不带生成器的包（只认电脑做的导入包）；工作目录 DM_GEN_WORK 要 ASCII 路径

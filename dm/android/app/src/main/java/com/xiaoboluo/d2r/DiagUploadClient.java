@@ -219,8 +219,9 @@ final class DiagUploadClient {
 
     // 真正的 HTTP：只许 https（调试包可 http://127.0.0.1）、不带路径 / 账号 / 查询；不跟跳转、不用缓存；回复最多读 16 KiB | the real HTTP: https only (debug may use loopback), no path / credentials / query; no redirects, no cache; replies capped at 16 KiB
     static boolean validOrigin(String o, boolean allowLoopback) { return o != null && (o.matches("https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?") || (allowLoopback && o.matches("http://127\\.0\\.0\\.1(:[0-9]{1,5})?/?"))); }
-    static Http urlConnection(String origin, String userAgent) {
-        String base = (origin.endsWith("/") ? origin : origin + "/") + "diagnostics/v1/";
+    static Http urlConnection(String origin, String userAgent) { return urlConnection(origin, userAgent, "diagnostics/v1/"); }
+    static Http urlConnection(String origin, String userAgent, String api) {
+        String base = (origin.endsWith("/") ? origin : origin + "/") + api;
         return (method, path, body) -> {
             HttpURLConnection c = (HttpURLConnection) new URL(base + path).openConnection();
             try {
