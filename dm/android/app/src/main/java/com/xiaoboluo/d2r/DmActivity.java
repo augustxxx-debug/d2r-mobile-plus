@@ -604,6 +604,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         try { if (!communityLast.isEmpty()) Os.setenv("DM_COMMUNITY_LAST", communityLast, true); } catch (ErrnoException ignored) {}   // 社区信息拉取的最后一行，同上进 boot.log | the community fetch's last line, into boot.log likewise
         new File(new File(getFilesDir(), "temp"), "save_import_pick.zip").delete();   // 上一局选的包（内容已校验进待应用目录）| the package picked last run (already staged)
         nativeSaveInit(Environment.isExternalStorageManager() ? downloads.getAbsolutePath() : "", "", String.valueOf(BuildConfig.VERSION_CODE));
+        CrashReportBridge.init(this);   // 自动上报崩溃：地址合不合格（dm_crashreport.c 在宿主第一帧判定，开关缺省关） | automatic crash reports: whether the origin is valid (decided at the host's first frame; the switch is off by default)
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
         if (result < 0) {
             // 触屏资源缺失 / 与这版不配套（App 升级后覆盖层的输入变了）：带生成器的包把已生成内容标成过期、重启进程，重启后自动在加载页重新生成。

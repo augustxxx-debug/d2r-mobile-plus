@@ -81,6 +81,10 @@ android {
         def dmUpdateUrls = (project.findProperty('dmUpdateUrls') ?: '').toString().trim().split('\\s+').findAll { it }
         dmUpdateUrls.each { u -> if (!java.util.regex.Pattern.matches('https://[A-Za-z0-9._~:/?#@!$&\'()*+,;=%-]+', u)) throw new GradleException('dmUpdateUrls: not an https URL: ' + u) }
         buildConfigField 'String', 'DM_UPDATE_URLS', "\"${dmUpdateUrls.join(' ')}\""
+        // 诊断上传地址（自动上报崩溃，CrashReportBridge）：不进源码，出包脚本读 DM_DIAGNOSTIC_ORIGIN 传 -PdmDiagnosticOrigin；只许 https:// 根地址；没给 = 不联网、开关只说明 | diagnostic upload origin: not in the source; https:// root only; none = no network, the switch only explains
+        def dmDiagOrigin = (project.findProperty('dmDiagnosticOrigin') ?: '').toString().trim()
+        if (dmDiagOrigin && !java.util.regex.Pattern.matches('https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?', dmDiagOrigin)) throw new GradleException('dmDiagnosticOrigin: not an https root URL')
+        buildConfigField 'String', 'DM_DIAGNOSTIC_ORIGIN', "\"${dmDiagOrigin}\""
         ndk { abiFilters 'arm64-v8a' }
         if (!prebuilt) externalNativeBuild { cmake {
             arguments "-DDM_GEN_DIR=${project.findProperty('dmGenDir') ?: ''}"
