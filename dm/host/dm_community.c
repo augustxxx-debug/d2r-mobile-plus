@@ -225,7 +225,7 @@ static int js_parse(jp_t *j, const char *json, size_t len, size_t *at) {
 }
 static void drop_values(void) { set_values("", "", ""); cache_delete(); }   // 格式错 / 无字段：清内存与缓存 | malformed / absent: clear memory and cache
 
-static void tel_apply(const jp_t *j) { if (j->n_tel > 1 || j->tel_bad) return; dm_crashreport_switch(j->n_tel && j->tel_has, j->tel_on, j->tel_until, j->tel_reason); }   // 坏字段不动缓存 | a bad field leaves the cache alone
+static void tel_apply(const jp_t *j) { if (j->n_tel > 1 || j->tel_bad || (j->n_tel && !j->tel_has)) { dm_crashreport_switch_no_fetch(); return; } dm_crashreport_switch(j->n_tel && j->tel_has, j->tel_on, j->tel_until, j->tel_reason); }   // 坏字段不动缓存 | a bad field leaves the cache alone
 // 只取总开关（安卓自动上报前现拉的清单：不动社区入口的值） | the server switch only (the manifest Android fetches before an automatic report; community values untouched)
 int dm_community_telemetry_only(const char *json, size_t len) { if (!json || len > MANIFEST_MAX) { dm_crashreport_switch_no_fetch(); return 0; } jp_t j; size_t at; if (!js_parse(&j, json, len, &at)) { dm_crashreport_switch_no_fetch(); return 0; } tel_apply(&j); return 1; }
 int dm_community_manifest(const char *json, size_t len) {
