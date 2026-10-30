@@ -162,6 +162,9 @@ void dm_stack_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
     if (atomic_exchange(&g_notice_full, 0)) { void dm_game_notice(uint8_t *, const char *); dm_game_notice(b, dm_str(b, "dmStackNoRoom")); }
     uint32_t tq = *(uint32_t *)(G + 0x170); if (!(tq % 5)) normalize(G, player);
     static int per = -1; if (per < 0) { const char *e = getenv("DM_TEST_STACK_LOG"); per = e ? atoi(e) : 0; }
+    // 测试开关 DM_TEST_STACK_BELTQ=<拍>：腰带第 1 列底格那瓶改成 5 瓶（造「腰带里有一叠」：手动把一叠拖进腰带的现场）
+    // Test switch DM_TEST_STACK_BELTQ=<tick>: set the bottom bottle of belt column 1 to 5 (sets up "a stack in the belt", as when a stack is dragged there by hand)
+    { static int at = -1; if (at < 0) { const char *e = getenv("DM_TEST_STACK_BELTQ"); at = e ? atoi(e) : 0; } if (at && tq >= (uint32_t)at) { at = 0; for (uint64_t it = inv_first(player), k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break; if (*(uint32_t *)(it + 0xc) == 2 && pp && *(int32_t *)(pp + 0x10) == 0) { set_qty(player, it, 5); LOG("测试 DM_TEST_STACK_BELTQ：腰带槽 0 改成 5 瓶"); break; } it = *(uint64_t *)(d + 0xb0); } } }
     // 测试开关 DM_TEST_STACK_CUBE=<拍>：背包第一叠药水走原版包放进方块 (0,0)，之后每 40 拍发一次合成包 0x20（共 3 次），看拆半 / 合并 / 配方
     // Test switch DM_TEST_STACK_CUBE=<tick>: put the first potion stack in the inventory into the cube at (0,0) with the original packets, then send the transmute packet 0x20 every 40 ticks (3 times), to observe split / merge / recipe
     { static int at = -1, st; if (at < 0) { const char *e = getenv("DM_TEST_STACK_CUBE"); at = e ? atoi(e) : 0; }
@@ -216,12 +219,12 @@ void dm_stack_pad(uint64_t *buttons, uint64_t now_ns) {
     if (!since) { since = now_ns; return; }
     if (now_ns - since >= 400000000ull) { since = 0; dm_cursor_item_info ci; if (dm_cursor_item(&ci)) dm_stack_open(&ci); }
 }
-// 按下点在框开着时：点框里的按钮照常；点外面只收框（同百宝囊清单）
-// A press while the box is open: its buttons work as usual; anywhere else only closes the box (same as the pouch list)
+// 按下点在框开着时：点中按钮就在这里选（命中用控件自己的判断）；点外面只收框（同百宝囊清单）。这一下都不再交给游戏
+// A press while the box is open: a hit on a button chooses here (with the widget's own hit test); anywhere else only closes the box (same as the pouch list). Either way the press does not reach the game
 int dm_stack_box_gate(int x, int y) {
     if (!dm_stack_box_open() || !B) return 0; uint64_t root = *(uint64_t *)(B + 0x2f05458);
     static const char *const bt[] = { "TouchQtyOne", "TouchQtyHalf", "TouchQtyAll" };
-    for (int i = 0; i < 3; i++) { uint64_t w = find_w(root, bt[i], 1); if (w && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32)) & 1)) return 0; }
+    for (int i = 0; i < 3; i++) { uint64_t w = find_w(root, bt[i], 1); if (w && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32)) & 1)) { box_choose(i + 1); return 1; } }
     box_close(); return 1;
 }
 void dm_stack_on_uimsg(const char *cat, const char *act, const char *arg) {
@@ -247,6 +250,7 @@ void dm_stack_panel_closed(void) { box_close(); }
 void dm_stack_test(uint8_t *b, uint64_t pl, uint64_t fr) {
     static int at = -1, m, bx = -1; if (at < 0) { const char *e = getenv("DM_TEST_STACK_SPLIT"); if (!e || sscanf(e, "%d:%d", &at, &m) != 2) at = 0; e = getenv("DM_TEST_STACK_BOX"); bx = e ? atoi(e) : 0; }
     { static int sip = -1; if (sip < 0) { const char *e = getenv("DM_TEST_STACK_SIP"); sip = e ? atoi(e) : 0; } if (sip && fr >= (uint64_t)sip) { sip = 0; void dm_belt_use(int, int); dm_belt_use(0, 0); LOG("测试 DM_TEST_STACK_SIP：喝第 1 列一瓶"); } }
+    { static int m = -1; if (m < 0) { const char *e = getenv("DM_TEST_STACK_SIPM"); m = e ? atoi(e) : 0; } if (m && fr >= (uint64_t)m) { m = 0; void dm_belt_use_merc(int, int); dm_belt_use_merc(0, 0); LOG("测试 DM_TEST_STACK_SIPM：第 1 列喂佣兵一瓶"); } }
     if ((!at || fr < (uint64_t)at) && (!bx || fr < (uint64_t)bx)) return; B = b; uint64_t inv = pl ? *(uint64_t *)(pl + 0x90) : 0, f = 0;
     for (uint64_t it = inv ? *(uint64_t *)(inv + 0x10) : 0, k = 0; it && k < 2048 && !f; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && is_potion(it) && qty(it) >= 2) f = it; else it = *(uint64_t *)(d + 0xb0); }
     if (!f) return;
