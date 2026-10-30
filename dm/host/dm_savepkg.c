@@ -77,6 +77,7 @@ static int write_new(const char *p, const void *d, size_t n) {   // 只写新文
 }
 static int write_replace(const char *p, const void *d, size_t n) { pth t; snprintf(t, sizeof t, "%s.tmp", p); unlink(t); if (write_new(t, d, n)) return -1; if (rename(t, p)) { unlink(t); return -1; } return 0; }
 static int mkdirs_for(const char *p) { pth d; strlcpy(d, p, sizeof d); for (char *s = d + 1; (s = strchr(s, '/')); s++) { *s = 0; if (mkdir(d, 0755) && errno != EEXIST) return -1; *s = '/'; } return 0; }
+int dm_savepkg_rmtree(const char *path) { return rm_tree(path); }
 long long dm_savepkg_free_bytes(const char *path) { struct statvfs v; return statvfs(path, &v) ? -1 : (long long)v.f_bavail * (long long)v.f_frsize; }
 
 // ---- 名字与路径 | Names and paths
@@ -427,10 +428,11 @@ static char g_mirror[1024];
 void dm_savepkg_set_mirror(const char *dir) { strlcpy(g_mirror, dir ? dir : "", sizeof g_mirror); }
 static void backups_dir(const char *save, char *o) { snprintf(o, 1400, "%s.backups", save); }
 static int copy_plain(const char *a, const char *b) { size_t n = 0; uint8_t *d = read_all(a, (size_t)MAX_TOTAL * 2, &n); if (!d) return -1; int rc = mkdirs_for(b) ? -1 : write_replace(b, d, n); free(d); return rc; }
-int dm_savepkg_backup(const char *save, const char *kind, int64_t now, const char *custom_dir, const dm_pkg_source *src, char *name_out, size_t no) {
+int dm_savepkg_backup(const char *save, const char *kind, int64_t now, const char *custom_dir, const dm_pkg_source *src, char *name_out, size_t no) { return dm_savepkg_backup_tree(save, save, kind, now, custom_dir, src, name_out, no); }
+int dm_savepkg_backup_tree(const char *save, const char *tree, const char *kind, int64_t now, const char *custom_dir, const dm_pkg_source *src, char *name_out, size_t no) {
     pth dir, p; backups_dir(save, dir); if (mkdir(dir, 0755) && errno != EEXIST) return DM_PKG_E_IO; time_t t = (time_t)now; struct tm tm; localtime_r(&t, &tm); char ts[32]; strftime(ts, sizeof ts, "%Y%m%d-%H%M%S", &tm); char nm[96]; int seq = 0; struct stat st;
     do { if (seq) snprintf(nm, sizeof nm, "%s-%d-%s.zip", ts, seq, kind); else snprintf(nm, sizeof nm, "%s-%s.zip", ts, kind); snprintf(p, sizeof p, "%s/%s", dir, nm); seq++; } while (!lstat(p, &st) && seq < 100);
-    dm_pkg_export_opts o; memset(&o, 0, sizeof o); o.nnames = -1; o.stash = 1; o.settings = 1; o.custom_dir = custom_dir; o.kind = kind; o.now = now; int rc = dm_savepkg_export(save, p, &o, src); if (rc) return rc;
+    dm_pkg_export_opts o; memset(&o, 0, sizeof o); o.nnames = -1; o.stash = 1; o.settings = 1; o.custom_dir = custom_dir; o.kind = kind; o.now = now; int rc = dm_savepkg_export(tree, p, &o, src); if (rc) return rc;
     zf z; int zr_ = zf_open(&z, p); if (!zr_) { const zr *m = zf_find(&z, "manifest.json"); if (!m) zr_ = DM_PKG_E_CHECK; else for (int i = 0; i < z.n && !zr_; i++) { int e2 = 0; uint8_t *b = zf_read(&z, &z.e[i], MAX_MANIFEST > MAX_FILE ? MAX_MANIFEST : MAX_FILE, &e2); if (!b) zr_ = e2; free(b); } } zf_close(&z); if (zr_) { unlink(p); LOG("【红】存档管理：备份读回校验失败 代码 %d", zr_); return zr_; }   // 读回校验：坏的备份比没备份更糟 | read-back check: a bad backup is worse than none
     if (g_mirror[0]) { pth mp; snprintf(mp, sizeof mp, "%s/%s", g_mirror, nm); if (copy_plain(p, mp)) LOG("存档管理：外部备份写失败 errno=%d（内部备份已成）", errno); }
     if (name_out) strlcpy(name_out, nm, no); dm_savepkg_backup_prune(save, nm); LOG("存档管理：备份完成（%s）", kind); return DM_PKG_OK;

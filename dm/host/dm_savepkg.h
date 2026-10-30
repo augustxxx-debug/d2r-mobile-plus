@@ -56,8 +56,10 @@ int dm_savepkg_result_take(const char *save, int *ok, int *chars, int *code);   
 
 void dm_savepkg_set_mirror(const char *dir);    // 安卓：备份另存一份的目录（卸载后还在）；空 = 不另存 | Android: second backup directory that survives uninstall; NULL = none
 int dm_savepkg_backup(const char *save, const char *kind, int64_t now, const char *custom_dir, const dm_pkg_source *src, char *name_out, size_t n);
+int dm_savepkg_backup_tree(const char *save, const char *tree, const char *kind, int64_t now, const char *custom_dir, const dm_pkg_source *src, char *name_out, size_t n);   // tree = 快照（运行中用：打包时不怕提交）| tree = a snapshot (while running: commits cannot interfere)
 int dm_savepkg_backup_list(const char *save, dm_pkg_backup *out, int cap);       // 新的在前 | newest first
 int dm_savepkg_backup_star(const char *save, const dm_pkg_backup *b, int on);
 int dm_savepkg_backup_delete(const char *save, const dm_pkg_backup *b);
 void dm_savepkg_backup_prune(const char *save, const char *keep);                // 未标星只留最近 10 份，每个目录各算（keep 这份不删） | keep the 10 newest unstarred per directory (never deletes keep)
 long long dm_savepkg_free_bytes(const char *path);
+int dm_savepkg_rmtree(const char *path);

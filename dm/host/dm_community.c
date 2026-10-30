@@ -54,13 +54,16 @@ static _Atomic int g_copied_row; static _Atomic uint64_t g_copied_at;   // 哪�
 //   controller: hle_hid.c runs dm_community_input_gate last, which zeroes every key and both sticks, turns D-pad / stick up-down into focus moves and keeps A / B for the box. Counted; one log line on dismiss (passed to the game should be 0)
 static _Atomic uint64_t g_md_ev;   // 闸门攒给弹窗的按下沿（A / B / 上 / 下） | press edges collected for the box
 static _Atomic unsigned g_sw_touch, g_sw_key, g_sw_stick, g_leak;
-int dm_community_modal(void) { return atomic_load(&g_show) != 0; }
+__attribute__((weak)) int dm_savemgr_modal(void) { return 0; }   // 存档管理面板也用这一套弹窗机制（dm_savemgr.c）| save management uses the same modal mechanism
+__attribute__((weak)) void dm_savemgr_ui_tap(uint64_t root, int x, int y) { (void)root; (void)x; (void)y; }
+__attribute__((weak)) void dm_savemgr_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) { (void)bt; (void)lx; (void)ly; (void)rx; (void)ry; }
+int dm_community_modal(void) { return atomic_load(&g_show) != 0 || dm_savemgr_modal(); }
 // 弹窗开着时宿主对触屏命中查询的答案（RC1.1 复核 P1-2；dm_cursor.c 的异步 / 同步两种查询都取这里）：0「面板内控件」——两端手势层对 0 走界面鼠标点击，
 // 鼠标泵把抬起交给 dm_community_ui_tap；不能答 6「不点」（9943fd2：手势层不点也不发键，iOS 局内面板态弹窗里的按钮全点不动）。没开弹窗返回 -1（照常判类）
 // The host's answer to a touch hit query while the box is up (RC1.1 recheck P1-2; both of dm_cursor.c's async / sync queries take it from here): 0 "control inside a panel" -- both ends'
 // gesture layer turn 0 into a UI mouse click and the mouse pump hands the lift to dm_community_ui_tap; it must not be 6 "no click" (9943fd2: the gesture layer neither clicked nor sent a key,
 // so on iOS in panel mode the box's buttons could not be tapped). -1 when no box is up (classify as usual)
-int dm_community_hit_answer(void) { return atomic_load(&g_show) ? 0 : -1; }
+int dm_community_hit_answer(void) { return atomic_load(&g_show) || dm_savemgr_modal() ? 0 : -1; }
 // 关框后的压住窗口（RC1.1 终版审计 P2-1）：手柄 A / B 关框时，泵在取手柄处开头就把 g_show 置 0，同一拍末尾的闸门以为弹窗已关、把还按着的那一下交给了底层菜单。
 // 现在弹窗开着时记下按着的键与摇杆；关掉后，这些键全松开、两根摇杆都回到 1/4 以内之前，整只手柄都不交给游戏（压住的拍数在清零之前计数），窗口结束记一行。
 // 漏口计数（dm_community_input_leak）也覆盖这个窗口：原先只在 g_show 时计、又在闸门清零之后查，恒为 0、测不到这类漏口
@@ -71,6 +74,7 @@ int dm_community_hit_answer(void) { return atomic_load(&g_show) ? 0 : -1; }
 static _Atomic int g_after; static _Atomic unsigned g_after_n;
 static int stick_off(int32_t v) { return v > -8000 && v < 8000; }
 void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
+    dm_savemgr_input_gate(bt, lx, ly, rx, ry);
     static uint64_t prev, pdir, held; static int stick; static dm_stick_nav nav;
     if (!atomic_load(&g_show)) {
         if (atomic_load(&g_after) && bt && lx && ly && rx && ry) {
@@ -306,7 +310,7 @@ void dm_community_open_about(void) {   // 主菜单「关于」行：只有版�
 }
 void dm_community_copy_init(int (*cb)(const char *)) { g_copy = cb; }
 unsigned dm_community_copy_count(void) { return atomic_load(&g_copies); }
-int dm_community_shown(void) { return atomic_load(&g_show) == 2; }
+int dm_community_shown(void) { return atomic_load(&g_show) == 2 || dm_savemgr_modal(); }
 static uint64_t co_now(void) { return clock_gettime_nsec_np(CLOCK_MONOTONIC); }
 static void do_copy(int by, int row) {   // by：1 点按钮 / 2 手柄 A；row：第几行渠道 | by: 1 button / 2 controller A; row: channel row
     int ch[2], n = dm_community_channels(dm_lang_group(), ch); char v[GH_MAX + 1] = "";
@@ -362,29 +366,29 @@ static int credits_lines(const char *const *sp, int nsp, const char *const *th, 
     return o;
 }
 // ---- 画面 | picture ----
-static uint8_t *co_base(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
-static int co_has(uint64_t w, uint64_t target, int dep) {   // 按指针找：target 在不在 w 的子树里（深度 14、每层至多 256 个子控件，同 dm_cursor.c ui_has） | by pointer: is target in w's subtree
+uint8_t *co_base(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
+int co_has(uint64_t w, uint64_t target, int dep) {   // 按指针找：target 在不在 w 的子树里（深度 14、每层至多 256 个子控件，同 dm_cursor.c ui_has） | by pointer: is target in w's subtree
     if (!w || dep > 14) return 0; if (w == target) return 1;
     uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
     for (uint64_t i = 0; i < n; i++) if (co_has(*(uint64_t *)(ch + 8 * i), target, dep + 1)) return 1;
     return 0;
 }
-static uint64_t co_find(uint64_t w, const char *name, int dep) {   // 按名字找控件：名字 +8、子控件数组 +0x58、个数 +0x60（同 dm_crashfence.c） | find a widget by name (same as dm_crashfence.c)
+uint64_t co_find(uint64_t w, const char *name, int dep) {   // 按名字找控件：名字 +8、子控件数组 +0x58、个数 +0x60（同 dm_crashfence.c） | find a widget by name (same as dm_crashfence.c)
     if (!w || dep > 6) return 0; const char *nm = *(const char **)(w + 8); if (nm && !strcmp(nm, name)) return w;
     uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
     for (uint64_t i = 0; i < n; i++) { uint64_t r = co_find(*(uint64_t *)(ch + 8 * i), name, dep + 1); if (r) return r; }
     return 0;
 }
-static void co_place(uint64_t w, int x, int y) {   // 只挪自己的控件（名字 Touch 开头）：矩形 +0x70 / +0x74，改完调虚表 +0x10 重算（同 dm_crashfence.c cf_place） | only our own widgets (names starting with Touch): rect +0x70 / +0x74, then vtable +0x10 (same as cf_place)
+void co_place(uint64_t w, int x, int y) {   // 只挪自己的控件（名字 Touch 开头）：矩形 +0x70 / +0x74，改完调虚表 +0x10 重算（同 dm_crashfence.c cf_place） | only our own widgets (names starting with Touch): rect +0x70 / +0x74, then vtable +0x10 (same as cf_place)
     const char *nm = w ? *(const char **)(w + 8) : NULL; if (!nm || strncmp(nm, "Touch", 5)) return;
     int32_t *r = (int32_t *)(w + 0x70); if (r[0] == x && r[1] == y) return; r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x10))(w);
 }
-static void co_text(uint8_t *b, uint64_t w, const char *s) {   // 文字框设文本（同 dm_crashfence.c cf_text；不是文字框不动） | set a text box's text (same as cf_text)
+void co_text(uint8_t *b, uint64_t w, const char *s) {   // 文字框设文本（同 dm_crashfence.c cf_text；不是文字框不动） | set a text box's text (same as cf_text)
     if (!w || *(uint64_t *)w - (uint64_t)(uintptr_t)b != DM_VT_TEXT) return;
     size_t n = strlen(s); if (*(uint64_t *)(w + 0x90) == n && !memcmp(*(const char **)(w + 0x88), s, n)) return;
     ((void *(*)(uint64_t, const char *, uint64_t))(b + 0x136e5c))(w + 0x88, s, n); ((void (*)(uint64_t))(b + 0xadc434))(w);
 }
-static void co_tile(uint8_t *b, uint64_t w, const int want[4]) {   // 边框片（同 dm_crashfence.c cf_tile）：只改自己的单帧切片 Ztouch_comm/tileRC 的绘制尺寸，名字、文件名、帧数都对上才写 | frame tile (same as cf_tile): only our own slice Ztouch_comm/tileRC, written only when name, file and frame count match
+void co_tile(uint8_t *b, uint64_t w, const int want[4]) {   // 边框片（同 dm_crashfence.c cf_tile）：只改自己的单帧切片 Ztouch_comm/tileRC 的绘制尺寸，名字、文件名、帧数都对上才写 | frame tile (same as cf_tile): only our own slice Ztouch_comm/tileRC, written only when name, file and frame count match
     const char *name = w ? *(const char **)(w + 8) : NULL, *pre = "TouchCommTile"; size_t n = strlen(pre);
     if (!name || strncmp(name, pre, n) || name[n] < '0' || name[n] > '4' || name[n + 1] < '0' || name[n + 1] > '2' || name[n + 2]) return;
     if (want[2] < 1 || want[2] > 4000 || want[3] < 1 || want[3] > 800 || !dm_widget_is(b, w, DM_VT_IMAGE)) return;
@@ -411,7 +415,7 @@ static uint64_t co_host(uint64_t root, int *which) {
 // Mac 实测：暂停菜单面板矩形 (-1039, 243) 缩放 1.16、自定义页 (-1007, 390, 1730×1284) 缩放 1.16（主机档 _profileConsoleHD），都按屏宽的一半锚定，算出的框整屏居中；算出来的值进日志
 // Panel origin and scale (panel-level fields shared by all widgets: horizontal anchor +0x48, vertical anchor +0x4c, rect +0x70.., scale +0x80, as in dm_cursor.c): for an unanchored child, screen = origin + child × scale.
 // Mac: pause panel rect (-1039, 243) scale 1.16, Custom page (-1007, 390, 1730×1284) scale 1.16 (console profile), both anchored at half the screen width; the computed box was screen-centered; the values go to the log
-static void co_origin(uint64_t p, int xr, int *ox, int *oy, float *s) {
+void co_origin(uint64_t p, int xr, int *ox, int *oy, float *s) {
     float ax = *(float *)(p + 0x48), ay = *(float *)(p + 0x4c), sc = *(float *)(p + 0x80); int32_t *r = (int32_t *)(p + 0x70);
     if (!(ax >= 0 && ax <= 1)) ax = 0; if (!(ay >= 0 && ay <= 1)) ay = 0; if (!(sc > 0.05f && sc < 10)) sc = 1;
     *ox = (int)(ax * xr) + r[0]; *oy = (int)(ay * 2160) + r[1]; *s = sc;
@@ -458,13 +462,13 @@ static void co_line(uint8_t *b, uint64_t w, const char *file, int x, int y, int 
     *atlas = *width = (uint32_t)wd; *height = (uint32_t)ht;
     int32_t *r = (int32_t *)(w + 0x70); if (r[0] != x || r[1] != y || r[2] != wd || r[3] != ht) { r[0] = x; r[1] = y; r[2] = wd; r[3] = ht; }
 }
-static void co_rect_lines(uint8_t *b, uint64_t p, const char *pre, const char *fh, const char *fv, int x, int y, int wd, int ht, int t) {   // 四条线围一个矩形 | four lines around a rectangle
+void co_rect_lines(uint8_t *b, uint64_t p, const char *pre, const char *fh, const char *fv, int x, int y, int wd, int ht, int t) {   // 四条线围一个矩形 | four lines around a rectangle
     char nm[32]; snprintf(nm, sizeof nm, "%sT", pre); co_line(b, co_find(p, nm, 0), fh, x, y, wd, t);
     snprintf(nm, sizeof nm, "%sB", pre); co_line(b, co_find(p, nm, 0), fh, x, y + ht - t, wd, t);
     snprintf(nm, sizeof nm, "%sL", pre); co_line(b, co_find(p, nm, 0), fv, x, y, t, ht);
     snprintf(nm, sizeof nm, "%sR", pre); co_line(b, co_find(p, nm, 0), fv, x + wd - t, y, t, ht);
 }
-static void co_rect_hide(uint64_t p, const char *pre) { static const char sfx[4] = { 'T', 'B', 'L', 'R' }; for (int k = 0; k < 4; k++) { char nm[32]; snprintf(nm, sizeof nm, "%s%c", pre, sfx[k]); uint64_t w = co_find(p, nm, 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); r[0] = r[1] = 99999; } } }
+void co_rect_hide(uint64_t p, const char *pre) { static const char sfx[4] = { 'T', 'B', 'L', 'R' }; for (int k = 0; k < 4; k++) { char nm[32]; snprintf(nm, sizeof nm, "%s%c", pre, sfx[k]); uint64_t w = co_find(p, nm, 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); r[0] = r[1] = 99999; } } }
 // 社区段与「关于」段之间的分隔线（用户 2026-10-29：「关于」子标题换成分隔线）：原版设置页分节同一张图 PauseMenu\Divider，共享精灵不改尺寸——
 // 只读它的图宽（精灵 +0xd0，同 co_tile 的偏移）按框中线居中；读不到就按 1500 估。核过是图片控件、名字对才摆
 // Divider between the community and About sections (user, 2026-10-29: replaces the About sub-title): the original settings-section image PauseMenu\Divider, a shared sprite never resized --
@@ -513,6 +517,7 @@ static int co_tap_zone(const co_tapgeo_t *g, int x, int y) {   // 返回 0 / 1 =
 // A tap while the box is up (dm_cursor.c sends no mouse messages then and hands the lift here): the widgets' own hit test (vtable +0x48, as the delete-character Yes in dm_cursor.c) for the two Copy buttons and OK only;
 // x / y = game window pixels (the coordinates dm_cursor.c sends mouse messages in). Anything else is swallowed. Game main thread
 void dm_community_ui_tap(uint64_t root, int x, int y) {
+    if (dm_savemgr_modal()) { dm_savemgr_ui_tap(root, x, y); return; }
     atomic_fetch_add(&g_sw_touch, 1);
     int which = 0; uint64_t p = root ? co_host(root, &which) : 0; if (!p || atomic_load(&g_show) != 2) return;
     uint64_t xy = (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)y << 32;

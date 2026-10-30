@@ -680,7 +680,7 @@ static void boot_prepare(void) {
         if ([fm fileExistsAtPath:sv]) writable();
         // 全新存档 = 新设备：iCloud 同步状态与同步备份（save.test.cloudstate / .cloudbak）一并清掉，否则旧局的同步记录还在，同步按「这台的存档被换了」处理（cfc：首装那条路没走到）
         // Brand-new save = new device: also clear the iCloud sync state and sync backup (save.test.cloudstate / .cloudbak); otherwise the old run's sync record is still there and sync treats it as "this device's save was replaced" (cfc: the first-install path was not reached)
-        for (NSString *x in @[@".cloudstate", @".cloudbak"]) { NSString *p = [sv stringByAppendingString:x]; if ([fm fileExistsAtPath:p]) [fm removeItemAtPath:p error:nil]; }
+        for (NSString *x in @[@".cloudstate", @".cloudbak", @".cloudstate.forceup", @".import", @".import.tmp", @".import.result", @".backups", @".imp"]) { NSString *p = [sv stringByAppendingString:x]; if ([fm fileExistsAtPath:p]) [fm removeItemAtPath:p error:nil]; }
         if ([fm fileExistsAtPath:sv] && ![fm removeItemAtPath:sv error:&e]) plog("boot: 删旧存档失败 %s", e.localizedDescription.UTF8String);
         else if (!strcmp(sf, "empty")) { [fm createDirectoryAtPath:sv withIntermediateDirectories:YES attributes:nil error:nil]; plog("boot: 本局从空存档起（Documents/save.test 已清空 = 首次启动；Documents/save 未动）"); }   // =empty：无存档（冒烟的触摸玩家路径：建角进局） | =empty: no save (the touch player path of the smoke test: create a character and enter a run)
         else if (![fm copyItemAtPath:ref toPath:sv error:&e]) plog("boot: 标准存档副本失败 %s", e.localizedDescription.UTF8String);
@@ -765,6 +765,7 @@ static void *boot_thread(void *arg) {
       plog("boot: 前端给游戏的输出分辨率 主机 %llux%llu / 掌机 %llux%llu", r & 0xffffffff, r >> 32, r0 & 0xffffffff, r0 >> 32); }
     g_T[6] = since_start();
     plog("启动计时 T5 boot_thread 入口 %.1f ms · T6 dm_main 前 %.1f ms", g_T[5], g_T[6]);
+    { void dm_savemgr_boot_ios(void); dm_savemgr_boot_ios(); }   // 待应用的存档导入：挂存档与 iCloud 同步之前换入（dm_savemgr_ios.m）| a pending save import: applied before mount and iCloud sync
     { void dm_cloud_boot(void); dm_cloud_boot(); }   // iCloud 同步：挂存档之前把云端更新的角色 / 共享仓库换进来（最多等 5 秒；cloud_ios.m） | iCloud sync: before mounting saves, swap in the characters / shared stash that are newer in the cloud (wait at most 5 seconds; cloud_ios.m)
     plog("boot: dm_main %s", argv[1]);
     int rc = dm_main(g_boot_argc, argv);
