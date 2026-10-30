@@ -110,6 +110,18 @@ final class DiagUploadClient {
         Files.createFile(t.toPath(), PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))); Files.write(t.toPath(), seed); Files.move(t.toPath(), f.toPath(), StandardCopyOption.ATOMIC_MOVE); return seed;
     }
 
+    // 总开关暂停时只打包存盘，不联网 | while the server switch pauses uploads: pack to disk only, no network
+    static void prepare(File dir, Map<String, String> metadata, Collect collect) throws IOException {
+        if (load(dir) != null) return;
+        String text = collect.text(); if (text == null) return;
+        for (int cap = PACK_LIMIT; cap >= 2048; cap = cap * 3 / 4) { byte[] p = payload(metadata, trim(text, cap)); if (p.length <= PACK_LIMIT) { save(dir, new Report(newId(), p, false)); return; } }
+    }
+    // 按序拉清单，第一份 200 就用；都拉不到返回 null（调用方沿用缓存） | fetch the manifest in order, the first 200 wins; null when none (the caller keeps the cache)
+    static byte[] fetchManifest(java.util.List<String> urls, CommunityFetch.Http http) {
+        for (String u : urls) { try { CommunityFetch.Response r = http.get(u); if (r.code == 200 && r.body.length <= CommunityFetch.MAX_BYTES) return r.body; } catch (IOException e) { /* 换下一个 | next one */ } }
+        return null;
+    }
+
     // ---- 一次尝试 | one attempt ----
     private static String notSent(IOException e) {   // 请求肯定没到服务端的网络错误 → 原因码；其余算结果不明 | network errors where nothing reached the server → reason code; the rest count as indeterminate
         if (e instanceof UnknownHostException) return "dns"; if (e instanceof ConnectException) return "connect"; if (e instanceof SSLException) return "tls"; return null;

@@ -71,6 +71,15 @@ public class DiagUploadClientTest {
         h = new Fake(); h.script.add(reply(503, "{\"error\":\"diagnostic_maintenance\"}", 30)); r = DiagUploadClient.attempt(dir, h, seed, meta, c); check(r.outcome == DiagUploadClient.MAINTENANCE && r.retryAfter == 30, "challenge maintenance");
         // 地址规则：只许 https 根地址；回环只给调试包 | origin rules
         check(DiagUploadClient.validOrigin("https://diag.example.invalid", false) && !DiagUploadClient.validOrigin("http://diag.example.invalid", true) && !DiagUploadClient.validOrigin("https://diag.example.invalid/x", false) && !DiagUploadClient.validOrigin("", true) && !DiagUploadClient.validOrigin(null, true) && !DiagUploadClient.validOrigin("http://127.0.0.1:9", false) && DiagUploadClient.validOrigin("http://127.0.0.1:9", true), "origin rules");
+        // 总开关暂停：只打包、零请求；恢复后发同一份；清单按序拉、拉不到返回 null | server switch paused: pack only, zero requests; the same report on resume; manifests in order, null when none
+        wipe(dir); int[] packs = { 0 }; DiagUploadClient.prepare(dir, meta, () -> { packs[0]++; return "packed while paused"; }); DiagUploadClient.prepare(dir, meta, () -> { packs[0]++; return "again"; });
+        DiagUploadClient.Report held = DiagUploadClient.load(dir); check(packs[0] == 1 && held != null, "packed once");
+        h = new Fake(); h.script.add(challenge()); h.script.add(receipt(false)); r = DiagUploadClient.attempt(dir, h, seed, meta, () -> { throw new AssertionError("must not collect"); });
+        check(r.outcome == DiagUploadClient.OK && f(h.posts.get(0), "upload_id").equals(held.id), "resume sends the packed report");
+        List<String> got = new ArrayList<>();
+        byte[] mf = DiagUploadClient.fetchManifest(List.of("https://a.invalid/m", "https://b.invalid/m"), u -> { got.add(u); if (u.contains("a.invalid")) throw new IOException("x"); return new CommunityFetch.Response(200, "{}".getBytes(StandardCharsets.UTF_8)); });
+        check(mf != null && got.size() == 2, "second source used");
+        check(DiagUploadClient.fetchManifest(List.of("https://a.invalid/m"), u -> new CommunityFetch.Response(404, new byte[0])) == null, "404 = not fetched"); check(DiagUploadClient.fetchManifest(new ArrayList<>(), u -> { throw new AssertionError(); }) == null, "no addresses = no request");
         // 上传脱敏 | upload scrub
         String sc = DiagUploadClient.scrubUpload("大厅 https://lobby.example.invalid/x 连 203.0.113.7 与 fe80:0:0:0:1:2:3:4 std::vector\n[coop] device_token=abc123\nticket=T1\n版本 1.0.0+28 2424x1705");
         for (String bad : new String[] { "lobby.example.invalid", "203.0.113.7", "fe80:0", "abc123", "T1" }) check(!sc.contains(bad), "kept " + bad);

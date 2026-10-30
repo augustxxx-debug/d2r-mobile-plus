@@ -17,7 +17,7 @@ static void cr_start(unsigned token, const char *fence, const char *dir) {   // 
     if (jf) (*env)->DeleteLocalRef(env, jf); if (jd) (*env)->DeleteLocalRef(env, jd);
     if (attached) (*g_vm)->DetachCurrentThread(g_vm);
 }
-static const dm_crashreport_shell_t k_shell = { cr_configured, cr_start, NULL };   // Java 线程有自己的超时（单次 15 秒），看门狗到点只作废 token | the Java thread has its own timeouts; the watchdog just retires the token
+static const dm_crashreport_shell_t k_shell = { cr_configured, cr_start, NULL, NULL, 1 };   // checks_switch = 1：普通启动不拉清单，Java 每次尝试前现拉一次再判总开关（宿主这边只读缓存会一直停在暂停） | a normal start fetches no manifest, so Java fetches one before each attempt and checks the server switch (the host alone would stay paused on its cache)   // Java 线程有自己的超时（单次 15 秒），看门狗到点只作废 token | the Java thread has its own timeouts; the watchdog just retires the token
 
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_CrashReportBridge_nativeConfigure(JNIEnv *env, jclass cls, jboolean configured) {
     if ((*env)->GetJavaVM(env, &g_vm) != JNI_OK) return;
@@ -30,6 +30,13 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_CrashReportBridge_nativeResult(JNI
     dm_crashreport_result((unsigned)token, outcome, d ? d : "", flags, retry_after);
     if (d) (*env)->ReleaseStringUTFChars(env, detail, d);
 }
+int dm_community_telemetry_only(const char *json, size_t len);   // dm_community.c：只取总开关 | the server switch only
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_CrashReportBridge_nativeManifest(JNIEnv *env, jclass cls, jbyteArray json) {
+    (void)cls; if (!json) { dm_crashreport_switch_no_fetch(); return; }
+    jsize n = (*env)->GetArrayLength(env, json); jbyte *b = (*env)->GetByteArrayElements(env, json, NULL); if (!b) return;
+    dm_community_telemetry_only((const char *)b, (size_t)n); (*env)->ReleaseByteArrayElements(env, json, b, JNI_ABORT);
+}
+JNIEXPORT jboolean JNICALL Java_com_xiaoboluo_d2r_CrashReportBridge_nativePaused(JNIEnv *env, jclass cls, jlong wall) { (void)env; (void)cls; return dm_crashreport_switch_paused((long long)wall) ? JNI_TRUE : JNI_FALSE; }
 int dm_android_build_report(const char *out_path);   // jni_android.c
 JNIEXPORT jboolean JNICALL Java_com_xiaoboluo_d2r_CrashReportBridge_nativeBuild(JNIEnv *env, jclass cls, jstring out) {
     (void)cls; const char *p = (*env)->GetStringUTFChars(env, out, NULL); int ok = p && dm_android_build_report(p);

@@ -16,6 +16,8 @@ final class CrashReportBridge {
     private CrashReportBridge() {}
     static native void nativeConfigure(boolean configured);
     static native void nativeResult(int token, int outcome, String detail, int flags, int retryAfter);
+    static native void nativeManifest(byte[] json);      // 总开关（dm_crashreport.h）：拉到的清单；null = 没拉到，沿用缓存 | the server switch: the fetched manifest; null = not fetched, keep the cache
+    static native boolean nativePaused(long wall);
     static native boolean nativeBuild(String outPath);   // 组装 + 导出脱敏（sharelog_android.c 同一份）写到 outPath | assemble + export scrub into outPath
 
     static void init(Context context) {
@@ -29,10 +31,13 @@ final class CrashReportBridge {
             try {
                 File noBackup = app.getNoBackupFilesDir();
                 byte[] seed = DiagUploadClient.loadOrCreateSeed(new File(noBackup, "diag_identity.key"));
-                r = DiagUploadClient.attempt(new File(dir),
-                        DiagUploadClient.urlConnection(BuildConfig.DM_DIAGNOSTIC_ORIGIN, "D2R-Mobile-Plus-Diagnostics/1"), seed,
-                        DiagUploadClient.metadata(BuildConfig.VERSION_NAME, String.valueOf(BuildConfig.VERSION_CODE), BuildConfig.DM_VERSION_LABEL, Build.VERSION.RELEASE, Locale.getDefault().toLanguageTag()),
-                        () -> collect(fence));
+                java.util.Map<String, String> meta = DiagUploadClient.metadata(BuildConfig.VERSION_NAME, String.valueOf(BuildConfig.VERSION_CODE), BuildConfig.DM_VERSION_LABEL, Build.VERSION.RELEASE, Locale.getDefault().toLanguageTag());
+                DiagUploadClient.Collect col = () -> collect(fence);
+                DiagUploadClient.prepare(new File(dir), meta, col);   // 先打包存盘：上一局日志下次启动就被覆盖，暂停时也要留 | pack first: the previous log is overwritten at the next launch, also while paused
+                // 普通启动不拉清单（DmActivity），这里现拉一次看总开关；拉不到沿用缓存 | a normal start fetches no manifest, so fetch one here for the server switch; not fetched = the cache
+                nativeManifest(DiagUploadClient.fetchManifest(CommunityFetch.urls(BuildConfig.DM_UPDATE_URLS), CommunityFetch.urlConnection("D2RMobilePlus-Android/" + BuildConfig.VERSION_NAME)));
+                if (nativePaused(System.currentTimeMillis() / 1000)) r = new DiagUploadClient.Result(DiagUploadClient.MAINTENANCE, "switch_off", 0, 0);
+                else r = DiagUploadClient.attempt(new File(dir), DiagUploadClient.urlConnection(BuildConfig.DM_DIAGNOSTIC_ORIGIN, "D2R-Mobile-Plus-Diagnostics/1"), seed, meta, col);
             } catch (IOException e) { r = new DiagUploadClient.Result(DiagUploadClient.PREPARE, e.getMessage() != null && e.getMessage().startsWith("key_") ? e.getMessage() : "identity", 0, 0); }
             nativeResult(token, r.outcome, r.detail, r.flags, r.retryAfter);
         }, "dm-crash-report");
