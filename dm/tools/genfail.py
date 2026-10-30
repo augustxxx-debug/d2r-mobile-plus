@@ -135,7 +135,8 @@ def kind_of(res):
     if not res['size']: return ''
     if sum(1 for _, want, got in res['size'] if got > want) >= 2: return 'version'
     ver = {'RomFS/data/build_manifest.psv', 'RomFS/data/.build.config'}
-    return 'version' if all(p in ver and got > want for p, want, got in res['size']) else 'files'
+    # 只差版本清单时，有一个偏大就是别的版本（一大一小 = 换了版本又没拷完，重拷同一版仍会报版本错，内审 I-09） | when only the version manifests differ, one larger means another version (one larger and one smaller = another version, partly copied; recopying the same one would still fail on version, internal audit I-09)
+    return 'version' if all(p in ver for p, _, _ in res['size']) and any(got > want for _, want, got in res['size']) else 'files'
 
 
 def describe(res, total):

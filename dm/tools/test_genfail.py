@@ -102,6 +102,10 @@ class FilesTest(unittest.TestCase):
         r = genfail.check_files(self.game, self.rows)
         self.assertEqual(genfail.kind_of(r), 'files'); self.assertTrue(any('可能没拷完' in l for l in genfail.describe(r, 6)))
 
+    def test_manifests_one_larger_one_smaller_is_version(self):   # 换了版本又没拷完：重拷同一版仍是版本错（内审 I-09） | another version, partly copied: recopying the same one would still fail on version (internal audit I-09)
+        put(os.path.join(self.game, 'RomFS/data/build_manifest.psv'), b'B' * 120); put(os.path.join(self.game, 'RomFS/data/.build.config'), b'')
+        self.assertEqual(genfail.kind_of(genfail.check_files(self.game, self.rows)), 'version')
+
     def test_undotted_build_config_asks_to_rename(self):
         os.rename(os.path.join(self.game, 'RomFS/data/.build.config'), os.path.join(self.game, 'RomFS/data/build.config'))
         r = genfail.check_files(self.game, self.rows)
