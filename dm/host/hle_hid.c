@@ -373,12 +373,12 @@ static void receipt(const NpadState *s, uint32_t id, uint32_t style, uint64_t km
     pthread_mutex_unlock(&g_receipt_lock);
 }
 
+__attribute__((weak)) void dm_savemgr_pump(void) {}   // 没有存档管理模块（单测）| no save-management module (unit tests)
 void (*dm_pad_hook)(uint64_t, uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *);
 // 社区 / 关于弹窗的手柄闸门（dm_community.c）：弱定义的缺省 = 原样放过；产品里由 dm_community.c 的强定义替换（不带社区模块的单测用这份）
 // controller gate of the community / About box (dm_community.c): weak defaults pass everything through; the strong definitions in dm_community.c replace them in the product
 __attribute__((weak)) void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) { (void)bt; (void)lx; (void)ly; (void)rx; (void)ry; }
 __attribute__((weak)) void dm_community_input_leak(int leaked) { (void)leaked; }
-__attribute__((weak)) void dm_savemgr_pump(void) {}
 static void fill(NpadState *s, uint32_t id, uint32_t style) {
     pthread_once(&g_receipt_once, receipt_init);
     DM_PROF(0, "taps", ui_taps_step());
