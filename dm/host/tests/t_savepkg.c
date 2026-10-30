@@ -66,6 +66,16 @@ static void mkpkg(const char *rel, const char *path, const char *content, int ma
 static int pkg_rc(const char *path) { mkpkg("evil.zip", path, "x", 1, 2); dm_pkg_view v; mkdir(R, 0755); int rc = inspect("evil.zip", "ev", 0, &v); dm_savepkg_view_free(&v); return rc; }
 
 // 联机角色隔离：导出 / 备份不带；伪造标记的包被拒；同名不覆盖；换入后还在；导入的不带标记 | co-op isolation: left out of exports and backups; forged markers are refused; same name not overwritten; survives apply; imports carry no marker
+// 安卓备份另存目录：Plus 优先、旧名其次、都没有建 Plus；另一个目录里的备份照样列出 | Android second backup folder: Plus, else the old name, else create Plus; backups in the other folder are still listed
+static void t_mirror_dirs(void) {
+    char dl[1024], s[1024], p[1100]; struct stat st; P(dl, "md/dl1"); char d2[1100]; snprintf(d2, sizeof d2, "%s/S2X/D2R Mobile/x", dl); mkparents(d2);
+    CHECK(dm_savepkg_mirror_from_downloads(dl) == 0, "旧名在：成功"); snprintf(p, sizeof p, "%s/S2X/D2R Mobile/SaveBackups", dl); CHECK(!stat(p, &st), "旧名在：写旧名下"); snprintf(p, sizeof p, "%s/S2X/D2R Mobile Plus", dl); CHECK(stat(p, &st), "旧名在：不建 Plus");
+    mk_save("md/save"); P(s, "md/save"); dm_pkg_source src = {"macos", "c", "b", "v"}; char nm[96]; CHECK(dm_savepkg_backup(s, "manual", 1700000000, NULL, &src, nm, sizeof nm) == 0, "备份进旧名");
+    snprintf(p, sizeof p, "%s/S2X/D2R Mobile Plus/x", dl); mkparents(p); CHECK(dm_savepkg_mirror_from_downloads(dl) == 0, "Plus 也在：成功"); snprintf(p, sizeof p, "%s/S2X/D2R Mobile Plus/SaveBackups", dl); CHECK(!stat(p, &st), "Plus 也在：写 Plus 下");
+    char ip[1024], cmd[1100]; P(ip, "md/save.backups"); snprintf(cmd, sizeof cmd, "rm -rf '%s'", ip); system(cmd); dm_pkg_backup l[8]; CHECK(dm_savepkg_backup_list(s, l, 8) == 1 && l[0].mirror, "旧名下的备份照样列出");
+    P(dl, "md/dl2"); mkdir(dl, 0755); CHECK(dm_savepkg_mirror_from_downloads(dl) == 0, "都没有：成功"); snprintf(p, sizeof p, "%s/S2X/D2R Mobile Plus/SaveBackups", dl); CHECK(!stat(p, &st), "都没有：建 Plus");
+    CHECK(dm_savepkg_mirror_from_downloads("") == -1, "空 = 没权限"); dm_savepkg_set_mirror(NULL);
+}
 static void t_coop(void) {
     dm_pkg_view v; mk_save("co/save"); mk_char("co/save", "Online", 2, 30, 0, 5); puts_("co/save/Online/Online.sw_coop", "1"); puts_("co/save/stray.sw_coop", "1"); mk_char("co/save.coop", "Ghost", 2, 30, 0, 5); puts_("co/save.coop/Ghost/Ghost.sw_coop", "{}"); char s[1024]; P(s, "co/save"); CHECK(dm_savepkg_coop_count(s) == 2, "计数：存档根一个、兄弟目录一个");
     CHECK(export_all("co/save", "co.zip", 1, 0) == 0, "导出"); size_t n = 0; uint8_t *z = get("co.zip", &n); int leak = 0; for (size_t i = 0; i + 9 < n; i++) if (!memcmp(z + i, "Online", 6) || !memcmp(z + i, "Ghost", 5) || !memcmp(z + i, "sw_coop", 7) || !memcmp(z + i, "save.coop", 9)) leak = 1; free(z); CHECK(!leak, "联机角色进了导出包");
@@ -193,7 +203,7 @@ static void t_cross(void) {
 
 int main(void) {
     const char *td = getenv("TMPDIR"); snprintf(R, sizeof R, "%s/t_savepkg_%d", td ? td : "/tmp", (int)getpid()); mkdir(R, 0755);
-    t_names(); t_paths(); t_d2s(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_cross(); t_coop();
+    t_names(); t_paths(); t_d2s(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_cross(); t_coop(); t_mirror_dirs();
     char cmd[700]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", R); if (!fails) system(cmd); else printf("  保留现场 %s\n", R);
     printf("t_savepkg: %d 项检查，%d 项失败\n", checks, fails); return fails != 0;
 }

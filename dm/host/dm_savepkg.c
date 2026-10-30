@@ -450,8 +450,14 @@ fail:
 
 // ---- 备份：<save>.backups/<yyyyMMdd-HHmmss>[-序号]-<auto|manual>.zip，旁路 <同名>.star = 标星；安卓另存一份到 mirror（同名、同格式、同保留规则）
 // ---- Backups: <save>.backups/<yyyyMMdd-HHmmss>[-seq]-<auto|manual>.zip, side file <same name>.star = starred; Android also keeps a copy in the mirror (same name, same format, same retention)
-static char g_mirror[1024];
-void dm_savepkg_set_mirror(const char *dir) { strlcpy(g_mirror, dir ? dir : "", sizeof g_mirror); }
+static char g_mirror[1024], g_mirror_old[1024];   // g_mirror 写和读；g_mirror_old 只读（另一个目录名下早先的备份）| g_mirror is written and read; g_mirror_old is read only (earlier backups under the other folder name)
+void dm_savepkg_set_mirror(const char *dir) { strlcpy(g_mirror, dir ? dir : "", sizeof g_mirror); g_mirror_old[0] = 0; }
+// 安卓备份另存位置（设计稿 §2.1「两个目录名」）：<Download>/S2X/ 下 D2R Mobile Plus 在就用它，否则 D2R Mobile 在就用它，都没有就建 Plus；另一个目录里已有的备份照样列出 | Android's second backup location: D2R Mobile Plus under <Download>/S2X/ if present, else D2R Mobile if present, else create Plus; backups already in the other folder are still listed
+int dm_savepkg_mirror_from_downloads(const char *downloads) {
+    g_mirror[0] = g_mirror_old[0] = 0; if (!downloads || !downloads[0]) return -1; pth plus, old, p; struct stat st; snprintf(plus, sizeof plus, "%s/S2X/D2R Mobile Plus", downloads); snprintf(old, sizeof old, "%s/S2X/D2R Mobile", downloads);
+    int hp = !stat(plus, &st) && S_ISDIR(st.st_mode), ho = !stat(old, &st) && S_ISDIR(st.st_mode); snprintf(p, sizeof p, "%s/SaveBackups/x", hp || !ho ? plus : old); if (mkdirs_for(p)) return -1;
+    p[strlen(p) - 2] = 0; strlcpy(g_mirror, p, sizeof g_mirror); snprintf(p, sizeof p, "%s/SaveBackups", hp || !ho ? old : plus); if (!stat(p, &st) && S_ISDIR(st.st_mode)) strlcpy(g_mirror_old, p, sizeof g_mirror_old); return 0;
+}
 static void backups_dir(const char *save, char *o) { snprintf(o, 1400, "%s.backups", save); }
 static int copy_plain(const char *a, const char *b) { size_t n = 0; uint8_t *d = read_all(a, (size_t)MAX_TOTAL * 2, &n); if (!d) return -1; int rc = mkdirs_for(b) ? -1 : write_replace(b, d, n); free(d); return rc; }
 int dm_savepkg_backup(const char *save, const char *kind, int64_t now, const char *custom_dir, const dm_pkg_source *src, char *name_out, size_t no) { return dm_savepkg_backup_tree(save, save, kind, now, custom_dir, src, name_out, no); }
@@ -471,12 +477,12 @@ static int backups_scan(const char *dir, int mirror, dm_pkg_backup *out, int n, 
         pth sp; snprintf(sp, sizeof sp, "%s.star", p); b->starred = !lstat(sp, &st); zf z; if (!zf_open(&z, p)) { const zr *m = zf_find(&z, "manifest.json"); int er = 0; uint8_t *mj = m ? zf_read(&z, m, MAX_MANIFEST, &er) : NULL; if (mj) { const char *q = (const char *)mj; jn *j = jval(&q, 0); jn *c = jget(j, "characters"); if (c && c->t == J_ARR) for (jn *k = c->kid; k; k = k->next) b->chars++; jfree(j); free(mj); } } zf_close(&z); }
     closedir(d); return n;
 }
-int dm_savepkg_backup_list(const char *save, dm_pkg_backup *out, int cap) { pth dir; backups_dir(save, dir); int n = backups_scan(dir, 0, out, 0, cap); if (g_mirror[0]) n = backups_scan(g_mirror, 1, out, n, cap); qsort(out, (size_t)n, sizeof *out, cmp_name_desc); return n; }
+int dm_savepkg_backup_list(const char *save, dm_pkg_backup *out, int cap) { pth dir; backups_dir(save, dir); int n = backups_scan(dir, 0, out, 0, cap); if (g_mirror[0]) n = backups_scan(g_mirror, 1, out, n, cap); if (g_mirror_old[0]) n = backups_scan(g_mirror_old, 1, out, n, cap); qsort(out, (size_t)n, sizeof *out, cmp_name_desc); return n; }
 int dm_savepkg_backup_star(const char *save, const dm_pkg_backup *b, int on) {
     if (on) { dm_pkg_backup *l = calloc(256, sizeof *l); if (!l) return DM_PKG_E_IO; int n = dm_savepkg_backup_list(save, l, 256), s = 0; for (int i = 0; i < n; i++) s += l[i].starred; free(l); if (s >= MAX_STARRED) return DM_PKG_E_STARFULL; }
-    pth dir; backups_dir(save, dir); const char *ds[2] = { dir, g_mirror }; int rc = DM_PKG_OK; for (int k = 0; k < 2; k++) { if (!ds[k][0]) continue; pth z, p; snprintf(z, sizeof z, "%s/%s", ds[k], b->file); struct stat st; if (lstat(z, &st)) continue; snprintf(p, sizeof p, "%s.star", z); if (on) { int fd = open(p, O_WRONLY | O_CREAT, 0644); if (fd < 0) rc = DM_PKG_E_IO; else close(fd); } else unlink(p); } return rc;
+    pth dir; backups_dir(save, dir); const char *ds[3] = { dir, g_mirror, g_mirror_old }; int rc = DM_PKG_OK; for (int k = 0; k < 3; k++) { if (!ds[k][0]) continue; pth z, p; snprintf(z, sizeof z, "%s/%s", ds[k], b->file); struct stat st; if (lstat(z, &st)) continue; snprintf(p, sizeof p, "%s.star", z); if (on) { int fd = open(p, O_WRONLY | O_CREAT, 0644); if (fd < 0) rc = DM_PKG_E_IO; else close(fd); } else unlink(p); } return rc;
 }
-int dm_savepkg_backup_delete(const char *save, const dm_pkg_backup *b) { pth dir; backups_dir(save, dir); const char *ds[2] = { dir, g_mirror }; for (int k = 0; k < 2; k++) { if (!ds[k][0]) continue; pth z, p; snprintf(z, sizeof z, "%s/%s", ds[k], b->file); unlink(z); snprintf(p, sizeof p, "%s.star", z); unlink(p); } return DM_PKG_OK; }
+int dm_savepkg_backup_delete(const char *save, const dm_pkg_backup *b) { pth dir; backups_dir(save, dir); const char *ds[3] = { dir, g_mirror, g_mirror_old }; for (int k = 0; k < 3; k++) { if (!ds[k][0]) continue; pth z, p; snprintf(z, sizeof z, "%s/%s", ds[k], b->file); unlink(z); snprintf(p, sizeof p, "%s.star", z); unlink(p); } return DM_PKG_OK; }
 static void prune_dir(const char *dir, const char *keep) {
     dm_pkg_backup *l = calloc(1024, sizeof *l); if (!l) return; int n = backups_scan(dir, 0, l, 0, 1024); qsort(l, (size_t)n, sizeof *l, cmp_name_desc); int kept = 0;
     for (int i = 0; i < n; i++) { if (l[i].starred) continue; if (keep && !strcmp(l[i].file, keep)) { kept++; continue; } if (++kept > KEEP_UNSTARRED) { pth z; snprintf(z, sizeof z, "%s/%s", dir, l[i].file); unlink(z); } } free(l);

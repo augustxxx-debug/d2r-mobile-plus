@@ -54,6 +54,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     static native void nativeMemoryWarning(int level);   // 崩溃围栏：系统内存告警 | crash fence: system memory warning
     static native void nativeShutdown();                  // 宿主优雅退出（Activity 结束时）| graceful host exit (when the Activity finishes)
     static native void nativeTextResult(long id, boolean accepted, String text);
+    static native void nativeSaveInit(String downloads, String commit, String build);   // 存档管理：备份另存的 Download 目录（没有所有文件访问权限时为空）、来源身份 | save management: the Download folder for the second backup copy (empty without all files access), source identity
+    static native void nativeSavePicked(String path);      // null = 没选 | null = nothing picked
+    static native void nativeSaveExported(boolean saved);
     // 实体手柄（pad_android.c）：按键 / 轴事件交给原生，true = 归手柄（不再交给系统，B 发的 BACK 不退出）| physical controllers (pad_android.c): key / axis events go native, true = the controller's (not passed on; BACK from B does not exit)
     static native boolean nativePadKey(int device, int vendor, int product, int source, int keycode, boolean down);
     static native boolean nativePadMotion(int device, int vendor, int product, int source, float lx, float ly, float rx, float ry, float lt, float rt, float hx, float hy);
@@ -599,6 +602,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // (import / on-phone generation), hand its finish / failure line to the host for boot.log (the 「加载页：」 share-diagnostics summary)
         try { String lp = LoadPageView.lastLine(); if (lp != null && !lp.isEmpty()) Os.setenv("DM_LOADPAGE_LAST", lp, true); } catch (ErrnoException | UnsatisfiedLinkError ignored) {}
         try { if (!communityLast.isEmpty()) Os.setenv("DM_COMMUNITY_LAST", communityLast, true); } catch (ErrnoException ignored) {}   // 社区信息拉取的最后一行，同上进 boot.log | the community fetch's last line, into boot.log likewise
+        new File(new File(getFilesDir(), "temp"), "save_import_pick.zip").delete();   // 上一局选的包（内容已校验进待应用目录）| the package picked last run (already staged)
+        nativeSaveInit(Environment.isExternalStorageManager() ? downloads.getAbsolutePath() : "", "", String.valueOf(BuildConfig.VERSION_CODE));
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
         if (result < 0) {
             // 触屏资源缺失 / 与这版不配套（App 升级后覆盖层的输入变了）：带生成器的包把已生成内容标成过期、重启进程，重启后自动在加载页重新生成。
@@ -829,6 +834,47 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             try { a.startActivity(Intent.createChooser(send, title)); } catch (Exception e) { android.util.Log.w("dm", "share: " + e); }
         });
+    }
+    // 存档管理的系统面板（text_input_jni.c，工作线程）：SAF 选包 / 存包。选到的包先拷进 files/temp 再交给宿主（宿主按普通文件读），存包从宿主的临时 ZIP 拷到玩家选的位置；拷都在后台线程
+    // Save management's system panels (text_input_jni.c, worker thread): SAF pick / save. A picked package is copied into files/temp before going to the host (the host reads plain files); saving copies from the host's temporary ZIP to the place the player picked; copies run on a background thread
+    private static final int REQ_SAVE_PICK = 7101, REQ_SAVE_EXPORT = 7102;
+    private String saveExportPath;
+    static void savePick() {
+        DmActivity a = current.get(); if (a == null) { nativeSavePicked(null); return; }
+        a.runOnUiThread(() -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");   // 不少文件管理器不给 zip 标类型，选完由宿主校验 | many file managers do not tag zips, the host validates what is picked
+            try { a.startActivityForResult(i, REQ_SAVE_PICK); } catch (Exception e) { android.util.Log.w("dm", "save pick: " + e); nativeSavePicked(null); }
+        });
+    }
+    static void saveExport(String path) {
+        DmActivity a = current.get(); if (a == null) { nativeSaveExported(false); return; }
+        a.runOnUiThread(() -> {
+            a.saveExportPath = path;
+            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/zip").putExtra(Intent.EXTRA_TITLE, new File(path).getName());
+            try { a.startActivityForResult(i, REQ_SAVE_EXPORT); } catch (Exception e) { android.util.Log.w("dm", "save export: " + e); nativeSaveExported(false); }
+        });
+    }
+    private static boolean saveCopy(java.io.InputStream in, java.io.OutputStream out) throws java.io.IOException {
+        if (in == null || out == null) return false;
+        byte[] buf = new byte[1 << 16]; int n; while ((n = in.read(buf)) > 0) out.write(buf, 0, n); out.flush(); return true;
+    }
+    @Override protected void onActivityResult(int req, int res, Intent data) {
+        super.onActivityResult(req, res, data);
+        if (req != REQ_SAVE_PICK && req != REQ_SAVE_EXPORT) return;
+        Uri uri = res == RESULT_OK && data != null ? data.getData() : null; String src = saveExportPath; File tmp = new File(new File(getFilesDir(), "temp"), "save_import_pick.zip"); android.content.ContentResolver cr = getContentResolver();
+        if (req == REQ_SAVE_PICK) {
+            if (uri == null) { nativeSavePicked(null); return; }
+            new Thread(() -> {
+                boolean ok = false; try (java.io.InputStream in = cr.openInputStream(uri); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { ok = saveCopy(in, out); } catch (Exception e) { android.util.Log.w("dm", "save pick copy: " + e); }
+                nativeSavePicked(ok ? tmp.getPath() : null);
+            }, "dm-save-pick").start();
+        } else {
+            if (uri == null || src == null) { nativeSaveExported(false); return; }
+            new Thread(() -> {
+                boolean ok = false; try (java.io.InputStream in = new java.io.FileInputStream(src); java.io.OutputStream out = cr.openOutputStream(uri, "wt")) { ok = saveCopy(in, out); } catch (Exception e) { android.util.Log.w("dm", "save export copy: " + e); }
+                nativeSaveExported(ok);
+            }, "dm-save-export").start();
+        }
     }
     // 游戏内社区弹窗的复制（dm_community.c → text_input_jni.c，工作线程）：到界面线程写剪贴板 | the in-game community box's copy (dm_community.c → text_input_jni.c, a worker thread): write the clipboard on the UI thread
     static void copyToClipboard(String text) {

@@ -55,6 +55,7 @@ void dm_savepkg_view_free(dm_pkg_view *v);
 int dm_savepkg_apply_pending(const char *save, const char *custom_dir, int64_t now, const dm_pkg_source *src);   // 启动期、挂存档与云同步之前调：0 = 没有待应用，1 = 换入成功，-1 = 失败（存档不变） | at boot, before mount and cloud sync: 0 = nothing pending, 1 = applied, -1 = failed (save unchanged)
 int dm_savepkg_result_take(const char *save, int *ok, int *chars, int *code);   // 取上次换入的结果（读完删）；1 = 有 | take the last apply's result (deleted once read); 1 = present
 
+int dm_savepkg_mirror_from_downloads(const char *downloads);   // 安卓：按「Plus 优先、旧名其次、都没有建 Plus」定写入目录，另一个只读；0 = 成功 | Android: picks the write folder (Plus, else the old name, else create Plus), the other is read only; 0 = ok
 void dm_savepkg_set_mirror(const char *dir);    // 安卓：备份另存一份的目录（卸载后还在）；空 = 不另存 | Android: second backup directory that survives uninstall; NULL = none
 int dm_savepkg_backup(const char *save, const char *kind, int64_t now, const char *custom_dir, const dm_pkg_source *src, char *name_out, size_t n);
 int dm_savepkg_backup_tree(const char *save, const char *tree, const char *kind, int64_t now, const char *custom_dir, const dm_pkg_source *src, char *name_out, size_t n);   // tree = 快照（运行中用：打包时不怕提交）| tree = a snapshot (while running: commits cannot interfere)
