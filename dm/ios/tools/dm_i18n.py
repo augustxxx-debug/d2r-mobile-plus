@@ -40,6 +40,22 @@ EN_LIMITS = (
 # Keys may only contain letters and digits: the layout's "@key" parsing stops at _ (@dmCustom_auto_mana was shown as "missing string_auto_mana", measured in the iOS package on a Mac)
 # Keys that must show Chinese characters in the English UI as well (the language row of the Custom page: someone who switched to the wrong language has to be able to read it). Only allowed on text controls that specify the global font BlizzardGlobal -- the default font of the English UI has no Chinese characters
 EN_HAS_ZH = {'dmCustomLangZh', 'dmCustomLangHintZh'}
+# 平台专属键（CLAUDE.md §2.8，内审 I-02）：另一端的编译期表和覆盖层都不带；--check 查文字列里的平台词
+# Platform-only keys (CLAUDE.md section 2.8, internal audit I-02): left out of the other platform's compile-time table and overlay; --check looks for platform words in the text columns
+IOS_ONLY = re.compile(r'dm(Graphics(Upscaling|UpscaleProfile|Profile[A-Z].*|ApplyHint|RtShadow.*)|CustomFx.+|CustomIcloud.*|Cloud[A-Z].*|GpuOld.+|Tv[A-Z].*)')
+ANDROID_ONLY = re.compile(r'dm(Android[A-Z].*|And[A-Z].*|LoadPerm[A-Z].*)')
+IOS_WORDS = ('MetalFX', 'Metal', 'iCloud', 'Apple', 'TestFlight', 'Xcode', 'MetricKit', 'Dynamic Island', '灵动岛')
+ANDROID_WORDS = ('Vulkan', 'Turnip', 'Download/S2X', '宝塔')
+def platform_of(k): return 'ios' if IOS_ONLY.fullmatch(k) else 'android' if ANDROID_ONLY.fullmatch(k) else ''
+def check_platform_words():
+    """没标 iOS 专属的文字不得含 iOS 词，没标安卓专属的不得含安卓词。返回违规的 [(键, 词)]。 | Text not marked iOS-only must not hold iOS words, and likewise for Android. Returns the violations as [(key, word)]."""
+    bad = []
+    for r in rows():
+        k, plat, text = r[0], platform_of(r[0]), '\n'.join(r[1:])
+        bad += [(k, w) for w in IOS_WORDS if plat != 'ios' and w in text]
+        bad += [(k, w) for w in ANDROID_WORDS if plat != 'android' and w in text]
+    return bad
+
 def rows():
     """[(键, 中文, English, Español, Español MX, Русский, 한국어)]；Español MX 空 = 同 Español。"""
     out = []
@@ -71,7 +87,8 @@ def build(romfs, outdir, repl):
     clash = [r[0] for r in rs if r[0] in have]
     if clash: raise SystemExit('dm_i18n：键和原版重名：%s' % clash)
     col = lambda l, zh, en, es, mx, ru, ko: zh if l in ('zhCN', 'zhTW') else es if l == 'esES' else mx if l == 'esMX' else ru if l == 'ruRU' else ko if l == 'koKR' else en
-    add = [{'id': ID0 + i, 'Key': k, **{l: col(l, zh, en, es, mx, ru, ko) for l in LANGS}} for i, (k, zh, en, es, mx, ru, ko) in enumerate(rs)]
+    other = 'ios' if os.environ.get('DM_TARGET') == 'android' else 'android'   # 这个覆盖层不带另一端的键；编号按全表，两端同一个键同一个 id | this overlay leaves out the other platform's keys; ids follow the full table, so a key has one id on both
+    add = [{'id': ID0 + i, 'Key': k, **{l: col(l, zh, en, es, mx, ru, ko) for l in LANGS}} for i, (k, zh, en, es, mx, ru, ko) in enumerate(rs) if platform_of(k) != other]
     end = text.rstrip().rindex(']')
     body = ',\n'.join('  ' + json.dumps(e, ensure_ascii=False) for e in add)
     text = text[:end].rstrip() + ',\n' + body + '\n' + text[end:]
@@ -84,7 +101,11 @@ def header():
     c = lambda s: json.dumps(s, ensure_ascii=False)   # JSON 串的转义在 C 里同样成立（\n \" \\） | JSON string escapes are equally valid in C (newline, double quote, backslash)
     out = ['// 生成文件，勿手改：python3 dm/ios/tools/dm_i18n.py --header > dm/host/dm_i18n_tab.h（表 dm/i18n/ui_text.tsv）', '#pragma once',
            'static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[] = {']
-    out += ['    { %s, %s, %s, %s, %s, %s, %s },' % (c(k), c(zh), c(en), c(es), c(mx), c(ru), c(ko)) for k, zh, en, es, mx, ru, ko in rows()]
+    # DM_I18N_ALL：单测要两端的键 | DM_I18N_ALL: unit tests need the keys of both platforms
+    guard = {'ios': '#if !defined(__ANDROID__) || defined(DM_I18N_ALL)', 'android': '#if defined(__ANDROID__) || defined(DM_I18N_ALL)'}
+    for k, zh, en, es, mx, ru, ko in rows():
+        g = guard.get(platform_of(k)); line = '    { %s, %s, %s, %s, %s, %s, %s },' % (c(k), c(zh), c(en), c(es), c(mx), c(ru), c(ko))
+        out += [g, line, '#endif'] if g else [line]
     return '\n'.join(out + ['};', ''])
 
 if __name__ == '__main__':
@@ -93,5 +114,7 @@ if __name__ == '__main__':
     elif sys.argv[1:] == ['--check']:   # 单测：表与入库的头文件一致 | unit test: the table matches the checked-in header file
         h = os.path.join(HERE, '..', '..', 'host', 'dm_i18n_tab.h')
         if open(h, encoding='utf-8').read() != header(): raise SystemExit('dm_i18n：dm/host/dm_i18n_tab.h 过期，重跑 python3 dm/ios/tools/dm_i18n.py --header > dm/host/dm_i18n_tab.h')
+        bad = check_platform_words()
+        if bad: raise SystemExit('dm_i18n：平台词出现在没标该平台的键里（CLAUDE.md §2.8；改文案，或在 IOS_ONLY / ANDROID_ONLY 标上）：%s' % bad)
         print('dm_i18n OK %d 条' % len(rows()))
     else: raise SystemExit('用法：dm_i18n.py --header | --check')

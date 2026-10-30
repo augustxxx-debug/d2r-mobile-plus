@@ -71,7 +71,9 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCustomDropLight", "高价值掉落光柱", "Light beam on valuable drops", "Haz de luz en botín valioso", "Haz de luz en botín valioso", "Луч света на ценных дропах", "고가치 드롭 광기둥" },
     { "dmCustomMapMark", "小地图标注出入口、小站与任务终点", "Automap: exits, waypoints, quests", "Mapa: salidas, transportadores, búsquedas", "Automapa: salidas, traslocadores, gestas", "Карта: выходы, точки пути, квесты", "자동맵: 출구, 웨이포인트, 퀘스트" },
     { "dmCustomItemNotes", "物品注释与旧译名（重启后生效）", "Item notes (Chinese/Spanish only, restart)", "Notas de objetos (reinicia)", "Notas de objetos (reinicia)", "Пометки к предметам (кит./исп., рестарт)", "아이템 주석 (중/스페인어, 재시작)" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomIcloud", "iCloud 同步存档（重启后生效）", "iCloud save sync (after restart)", "Sincronía iCloud (tras reiniciar)", "Sincronía iCloud (tras reiniciar)", "Синхронизация iCloud (рестарт)", "iCloud 저장 동기화 (재시작 후)" },
+#endif
     { "dmCustomPotPick", "腰带有空位时自动拾取能放进去的药水", "Auto-pick potions into belt", "Recoger pociones al cinturón", "Recolectar pociones al cinturón", "Зелья в пояс автоматически", "벨트에 물약 자동 줍기" },
     { "dmCustomDropHaptic", "高价值物品掉落时震动", "Vibrate on valuable drops", "Vibrar con botín valioso", "Vibrar con botín valioso", "Вибрация на ценных дропах", "고가치 드롭 시 진동" },
     { "dmCustomGemPick", "符文与宝石自动拾取（直接进高级仓库）", "Auto-stash runes & gems", "Runas y gemas al alijo", "Runas y gemas al Arcón", "Руны и камни в хранилище", "룬·보석 자동 창고 보관" },
@@ -104,18 +106,32 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmTabGraphics", "图形", "Graphics", "Gráficos", "Gráficos", "Графика", "그래픽" },
     { "dmGraphicsTitle", "图形设置", "Graphics", "Gráficos", "Gráficos", "Графика", "그래픽" },
     { "dmGraphicsFrameRate", "帧率：30 FPS 省电（关闭为 60 FPS）", "Frame rate: 30 FPS power saving (off: 60 FPS)", "Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)", "Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)", "Частота: 30 FPS экономия (выкл.: 60 FPS)", "프레임: 30 FPS 절전 (끔: 60 FPS)" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsUpscaling", "MetalFX 空间超分（实验性）", "MetalFX upscaling (experimental)", "Superresolución MetalFX (experimental)", "Superresolución MetalFX (experimental)", "Апскейлинг MetalFX (эксперимент)", "MetalFX 업스케일링 (실험적)" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsUpscaleProfile", "MetalFX 档位：自动 → 省电 → 均衡 → 高画质", "MetalFX profile: Auto → Eco → Balanced → Quality", "Perfil MetalFX: Auto → Ahorro → Equilibrado → Calidad", "Perfil MetalFX: Auto → Ahorro → Equilibrado → Calidad", "Профиль MetalFX: авто → экономия → баланс → качество", "MetalFX 프로필: 자동 → 절전 → 균형 → 고화질" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsProfileAuto", "超分档位：自动", "Profile: Auto", "Perfil: Automático", "Perfil: Automático", "Режим: авто", "모드: 자동" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsProfileEco", "超分档位：省电", "Profile: Eco", "Perfil: Ahorro", "Perfil: Ahorro", "Режим: экономия", "모드: 절전" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsProfileBalanced", "超分档位：均衡", "Profile: Balanced", "Perfil: Equilibrado", "Perfil: Equilibrado", "Режим: баланс", "모드: 균형" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsProfileQuality", "超分档位：高画质", "Profile: Quality", "Perfil: Calidad", "Perfil: Calidad", "Режим: качество", "모드: 고화질" },
+#endif
     { "dmGraphicsQuality120Note", "120 帧下不提供高画质，切回 60 帧可选", "Quality is unavailable at 120 FPS; use 60 FPS", "Calidad no disponible a 120 FPS; usa 60 FPS", "Calidad no disponible a 120 FPS; usa 60 FPS", "«Качество» недоступно при 120 FPS; выберите 60", "120 FPS에서는 고화질 불가, 60 FPS에서 선택하세요" },
     { "dmGraphicsFps120MemNote", "本机内存上限偏小，不提供 120 帧", "120 FPS is unavailable on this device (memory)", "120 FPS no disponible en este dispositivo (memoria)", "120 FPS no disponible en este dispositivo (memoria)", "120 FPS недоступны на этом устройстве (память)", "이 기기에서는 메모리 때문에 120 FPS 불가" },
     { "dmGraphicsResRestartNote", "本机内存偏小：调高分辨率需重启游戏生效", "Low memory: higher resolution applies after restart", "Poca memoria: más resolución tras reiniciar", "Poca memoria: más resolución tras reiniciar", "Мало памяти: выше разрешение — после перезапуска", "메모리 부족: 해상도 올리기는 재시작 후 적용" },
     { "dmLowMemTitle", "已自动降低画质", "Graphics lowered automatically", "Calidad gráfica reducida", "Calidad gráfica reducida", "Графика снижена автоматически", "화질을 자동으로 낮췄습니다" },
     { "dmLowMemMsg", "本机可用内存偏小，\n已自动降低画质，不开放 120 帧。\n可在选项的「图形」页调整。", "This device has less memory available,\nso graphics were lowered and 120 FPS is off.\nYou can change this on the Graphics tab in Options.", "Este dispositivo tiene poca memoria,\nasí que se redujo la calidad y no hay 120 FPS.\nPuedes cambiarlo en la pestaña Gráficos de Opciones.", "Este dispositivo tiene poca memoria,\nasí que se redujo la calidad y no hay 120 FPS.\nPuedes cambiarlo en la pestaña Gráficos de Opciones.", "На этом устройстве мало памяти,\nпоэтому графика снижена, 120 FPS недоступны.\nЭто можно изменить на вкладке «Графика» в настройках.", "이 기기는 사용 가능한 메모리가 적어\n화질을 낮추고 120 FPS를 껐습니다.\n옵션의 그래픽 탭에서 바꿀 수 있습니다." },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsApplyHint", "MetalFX 空间超分仅处理 3D 画面，UI 保持清晰。\n点“应用”生效，无需重启；切换时可能短暂停顿。\n“默认”全局恢复游戏设定、图形与自定义，保留语言及配音。", "MetalFX upscales 3D only; UI stays sharp.\nApply without restarting; switching may briefly pause.\nDefaults resets game options, Graphics and Custom; language and voice stay unchanged.", "MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.", "MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.", "MetalFX масштабирует только 3D; интерфейс остаётся чётким.\nПрименяется без перезапуска; возможна короткая пауза.\nСброс восстанавливает настройки игры, графику и свои настройки; язык и озвучка сохраняются.", "MetalFX는 3D만 업스케일링하며 UI는 선명하게 유지됩니다.\n재시작 없이 적용되며 전환 시 잠시 멈출 수 있습니다.\n기본값은 게임, 그래픽과 사용자 설정을 초기화하며 언어와 음성은 유지합니다." },
+#endif
     { "dmTabCustom", "自定义", "Custom", "Extras", "Extras", "Своё", "사용자" },
     { "dmChronRunewords", "符文之语", "Runewords", "P. rúnicas", "P. rúnicas", "Руны", "룬워드" },
     { "dmVaultPart0", "头盔", "Helms", "Yelmos", "Yelmos", "Шлемы", "투구" },
@@ -202,8 +218,12 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmPackBadMiss", "安装包里缺游戏内容（缺 %d 项，如 %@）。", "The package is missing game content (%d items, e.g. %@).", "Al paquete le falta contenido del juego (%d elementos, p. ej. %@).", "Al paquete le falta contenido del juego (%d elementos, p. ej. %@).", "В пакете нет игрового содержимого (не хватает %d поз., например %@).", "설치 패키지에 게임 내용이 없습니다(%d항목, 예: %@)." },
     { "dmPackBadProd", "安装包是用不同版本拼成的（壳是 %@，做进去的内容是 %@）。", "The package mixes versions (shell %@, built-in content %@).", "El paquete mezcla versiones (carcasa %@, contenido integrado %@).", "El paquete mezcla versiones (carcasa %@, contenido integrado %@).", "Пакет собран из разных версий (оболочка %@, содержимое %@).", "패키지 버전이 섞였습니다(셸 %@, 내장 내용 %@)." },
     { "dmPackBadHow", "发布页上的壳是做安装包的原料，不能直接装来玩。\n\n怎么做：在电脑上打开 github.com/jhaizhou-ops/d2r-mobile，照 docs/NO_XCODE 的第一步用 d2rm_pack.py 把你的游戏内容做进同一版本的壳，再装它输出的那个安装包。", "The shell on the releases page is build input, not an app to install.\n\nWhat to do: on a computer, open github.com/jhaizhou-ops/d2r-mobile and follow step 1 of docs/NO_XCODE — run d2rm_pack.py to build your game content into the shell of the same release, then install the package it outputs.", "La carcasa de la página de versiones es material para compilar, no una app para instalar.\n\nQué hacer: en un ordenador, abre github.com/jhaizhou-ops/d2r-mobile y sigue el paso 1 de docs/NO_XCODE: ejecuta d2rm_pack.py para meter el contenido de tu juego en la carcasa de la misma versión e instala el paquete que genere.", "La carcasa de la página de versiones es material para compilar, no una app para instalar.\n\nQué hacer: en una computadora, abre github.com/jhaizhou-ops/d2r-mobile y sigue el paso 1 de docs/NO_XCODE: ejecuta d2rm_pack.py para meter el contenido de tu juego en la carcasa de la misma versión e instala el paquete que genere.", "Оболочка со страницы релизов — это сырьё для сборки, а не готовое приложение.\n\nЧто делать: на компьютере откройте github.com/jhaizhou-ops/d2r-mobile и выполните первый шаг docs/NO_XCODE — соберите своё игровое содержимое в оболочку той же версии через d2rm_pack.py, затем установите полученный пакет.", "릴리스 페이지의 셸은 설치용 앱이 아니라 빌드 원료입니다.\n\n방법: 컴퓨터에서 github.com/jhaizhou-ops/d2r-mobile을 열고 docs/NO_XCODE 1단계대로 d2rm_pack.py로 같은 버전의 셸에 게임 내용을 넣은 뒤, 출력된 설치 패키지를 설치하세요." },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGpuOldTitle", "这台设备玩不了", "This Device Is Not Supported", "Este dispositivo no es compatible", "Este dispositivo no es compatible", "На этом устройстве игра не пойдёт", "이 기기는 지원되지 않음" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGpuOldMsg", "这台设备的图形芯片不支持 Metal 3，本游戏的图形层需要它。\n\n需要 A14 / M1 及以后的芯片（iPhone 12 及以后、2021 年及以后的 iPad Pro 等）；A13 及更早的芯片（包括 2020 年的 iPad Pro）玩不了。", "This device's graphics chip does not support Metal 3, which the game's graphics layer needs.\n\nAn A14 / M1 chip or later is required (iPhone 12 and later, iPad Pro from 2021 and later, and so on); A13 and earlier chips, including the 2020 iPad Pro, cannot run it.", "El chip gráfico de este dispositivo no admite Metal 3, que la capa gráfica del juego necesita.\n\nSe requiere un chip A14 / M1 o posterior (iPhone 12 y posteriores, iPad Pro de 2021 y posteriores, etc.); los chips A13 y anteriores, incluido el iPad Pro de 2020, no pueden ejecutarlo.", "El chip gráfico de este dispositivo no admite Metal 3, que la capa gráfica del juego necesita.\n\nSe requiere un chip A14 / M1 o posterior (iPhone 12 y posteriores, iPad Pro de 2021 y posteriores, etc.); los chips A13 y anteriores, incluido el iPad Pro de 2020, no pueden ejecutarlo.", "Графический чип этого устройства не поддерживает Metal 3, а графическому слою игры он нужен.\n\nНужен чип A14 / M1 или новее (iPhone 12 и новее, iPad Pro 2021 года и новее и т. п.); A13 и старше (включая iPad Pro 2020) не подходят.", "이 기기의 그래픽 칩은 Metal 3를 지원하지 않으며, 게임 그래픽 레이어에 필요합니다.\n\nA14 / M1 이상(iPhone 12 이후, 2021년 이후 iPad Pro 등)이 필요합니다. A13 이하(2020 iPad Pro 포함)는 실행할 수 없습니다." },
+#endif
     { "dmOldConnecting", "正在连接下载服务器…", "Connecting to the download server…", "Conectando con el servidor de descargas…", "Conectando con el servidor de descargas…", "Подключение к серверу загрузки…", "다운로드 서버에 연결 중…" },
     { "dmOldDlFail", "下载失败：%s", "Download failed: %s", "Error de descarga: %s", "Error de descarga: %s", "Ошибка загрузки: %s", "다운로드 실패: %s" },
     { "dmOldProgress", "正在下载老机型补充包\n%.2f / %.2f GB（%.0f%%）%@", "Downloading the supplementary pack\n%.2f / %.2f GB (%.0f%%)%@", "Descargando el paquete complementario\n%.2f / %.2f GB (%.0f%%)%@", "Descargando el paquete complementario\n%.2f / %.2f GB (%.0f%%)%@", "Скачивание пака для старых устройств\n%.2f / %.2f ГБ (%.0f%%)%@", "구형 기기 보충 팩 다운로드 중\n%.2f / %.2f GB (%.0f%%)%@" },
@@ -301,10 +321,18 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmKbRiftFast", "最快 %d:%02d", "Best Time %d:%02d", "Mejor tiempo %d:%02d", "Mejor tiempo %d:%02d", "Лучшее %d:%02d", "최단 %d:%02d" },
     { "dmKbRiftMsGot", "首通奖励已领取", "First clear reward claimed", "Premio de primera vez cobrado", "Premio de primera vez cobrado", "Первая награда получена", "획득함" },
     { "dmKbRiftTotal", "最高 %d 层", "Best Level: %d", "Mejor nivel: %d", "Mejor nivel: %d", "Лучший: %d", "최고 %d층" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCloudConflict", "iCloud：两台设备的共享仓库各有内容，已用云端那份，本机那份已完整保存待并回", "iCloud: both devices had shared stash contents. Using the cloud copy; this device's copy is kept to be merged back", "iCloud: ambos dispositivos tenían contenido en el alijo compartido. Se usa la copia de la nube; la de este dispositivo se guarda para fusionarla después", "iCloud: ambos dispositivos tenían contenido en el Arcón compartido. Se usa la copia de la nube; la de este dispositivo se guarda para fusionarla después", "iCloud: на обоих устройствах в общем тайнике есть вещи. Взята копия из облака; копия этого устройства сохранена целиком для слияния", "클라우드 충돌" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCloudCharConflict", "iCloud：角色 %s 两台设备各有一份，已用云端那份，本机那份已备份", "iCloud: both devices had character %s. Using the cloud copy; this device's copy is backed up", "iCloud: ambos dispositivos tenían el personaje %s. Se usa la copia de la nube; la de este dispositivo queda en una copia de seguridad", "iCloud: ambos dispositivos tenían el personaje %s. Se usa la copia de la nube; la de este dispositivo queda respaldada", "iCloud: персонаж %s есть на обоих устройствах. Взята копия из облака; копия этого устройства сохранена", "iCloud: 캐릭터 %s가 기기마다 달라, 클라우드 쪽을 쓰고 기기 쪽은 백업했습니다" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCloudMergeBack", "iCloud：另一台设备共享仓库里多出的物品已放进背包，金币已加回共享仓库", "iCloud: items from the other device's shared stash are now in your inventory; its gold is back in the shared stash", "iCloud: los objetos del alijo compartido del otro dispositivo ya están en tu inventario; su oro ha vuelto al alijo compartido", "iCloud: los objetos del Arcón compartido del otro dispositivo ya están en tu inventario; su oro volvió al Arcón compartido", "iCloud: вещи из общего тайника другого устройства уже в инвентаре, золото вернулось в общий тайник", "iCloud: 다른 기기의 공유 창고 아이템은 가방에, 그 금화는 공유 창고로 되돌렸습니다" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCloudMergeFull", "iCloud：背包放不下了，腾出空位后再打开储藏箱继续取回", "iCloud: inventory is full. Make room and open the stash again to get the rest", "iCloud: el inventario está lleno. Haz sitio y vuelve a abrir el alijo para recibir el resto", "iCloud: el inventario está lleno. Haz espacio y vuelve a abrir el Arcón para recibir el resto", "iCloud: инвентарь полон. Освободите место и откройте тайник снова, чтобы забрать остальное", "iCloud: 가방이 가득 참. 자리를 비운 뒤 창고를 다시 열어 나머지를 받으세요" },
+#endif
     { "dmRiftHudTitle", "秘境", "Rift", "Gr.", "Gr.", "Рифт", "균열" },
     { "dmRiftHudDone", "第 %d 层完成", "Level %d complete", "Nivel %d superado", "Nivel %d superado", "Ур. %d пройден", "%d층 완료" },
     { "dmRiftHudLate", "第 %d 层超时", "Level %d overtime", "Nivel %d prórroga", "Nivel %d prórroga", "Ур. %d: просрочен", "%d층 시간 초과" },
@@ -395,10 +423,18 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmAppShareLog", "分享日志…", "Share Logs…", "Compartir registros…", "Compartir registros…", "Поделиться логами…", "로그 공유…" },
     { "dmAppShareInfo", "版本信息", "Version Info", "Info. de versión", "Info. de versión", "Информация о версии", "버전 정보" },
     { "dmAppShareFail", "日志打包失败", "Could Not Pack the Logs", "Error al empaquetar registros", "Error al empaquetar registros", "Не удалось упаковать логи", "로그 묶기 실패" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmTvChecking", "正在检查游戏文件…", "Checking game files…", "Comprobando archivos del juego…", "Comprobando archivos del juego…", "Проверка игровых файлов…", "게임 파일 확인 중…" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmTvNoRomfs", "游戏文件还不齐全：\n%s", "The game files are incomplete:\n%s", "Los archivos del juego están incompletos:\n%s", "Los archivos del juego están incompletos:\n%s", "Игровые файлы неполные:\n%s", "게임 파일이 불완전합니다:\n%s" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmTvNoAstcIndex", "老机型补充包的覆盖层索引不在（romfs_overlay_astc/data/.build.config）", "The Legacy Device Pack index is missing (romfs_overlay_astc/data/.build.config)", "Falta el índice del Paquete para dispositivos antiguos (romfs_overlay_astc/data/.build.config)", "Falta el índice del Paquete para dispositivos antiguos (romfs_overlay_astc/data/.build.config)", "Нет индекса оверлея пака для старых устройств (romfs_overlay_astc/data/.build.config)", "구형 기기 팩 오버레이 인덱스가 없습니다(romfs_overlay_astc/data/.build.config)" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmTvGpuFail", "图形设备初始化失败，请看启动日志", "Could not set up the graphics device; see the launch log", "No se pudo configurar el dispositivo gráfico; consulta el registro de inicio", "No se pudo configurar el dispositivo gráfico; consulta el registro de inicio", "Не удалось инициализировать графику, см. лог запуска", "그래픽 장치 초기화 실패. 실행 로그를 확인하세요" },
+#endif
     { "dmTcMap", "地图", "Map", "Mapa", "Mapa", "Карта", "맵" },
     { "dmTcCancel", "取消", "Cancel", "Cancelar", "Cancelar", "Отмена", "취소" },
     { "dmTcNavConfirm", "确认／交换", "Confirm / Swap", "Confirmar / Cambiar", "Confirmar / Cambiar", "ОК / замена", "확인 / 교환" },
@@ -414,77 +450,219 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmDoorRift", "大秘境", "Greater Rift", "Grieta superior", "Grieta mayor", "Великий рифт", "그레이터 리프트" },
     { "dmDoorRiftTown", "回城", "Return to Town", "Volver a la ciudad", "Volver a la ciudad", "Портал в город", "마을로" },
     { "dmDoorBossRush", "Boss 连战", "Boss Rush", "Ronda de jefes", "Ronda de jefes", "Босс-раш", "보스 러시" },
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidName", "D2R Mobile Plus", "D2R Mobile Plus", "D2R Mobile Plus", "D2R Mobile Plus", "D2R Mobile Plus", "D2R Mobile Plus" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidPermission", "需要「所有文件访问」权限，才能读取 Download/S2X/D2R Mobile/data 里的游戏资源。\n点屏幕打开设置，允许后返回。", "Allow all files access to read your game resources in Download/S2X/D2R Mobile/data.\nTap to open Settings, allow access, then return.", "Permite el acceso a todos los archivos para leer los recursos del juego en Download/S2X/D2R Mobile/data.\nToca para abrir Ajustes, permite el acceso y vuelve.", "Permite el acceso a todos los archivos para leer los recursos del juego en Download/S2X/D2R Mobile/data.\nToca para abrir Ajustes, permite el acceso y vuelve.", "Разрешите доступ ко всем файлам, чтобы читать ресурсы игры в Download/S2X/D2R Mobile/data.\nНажмите, чтобы открыть настройки, разрешите доступ и вернитесь.", "Download/S2X/D2R Mobile/data에 있는 게임 리소스를 읽으려면 모든 파일 접근 권한을 허용하세요.\n탭하여 설정을 열고 접근을 허용한 뒤 돌아오세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidStorage", "应用资源目录暂不可用，请重新打开应用。", "App storage is unavailable. Please reopen the app.", "El almacenamiento de la app no está disponible. Vuelve a abrir la app.", "El almacenamiento de la app no está disponible. Vuelve a abrir la app.", "Хранилище приложения недоступно. Откройте приложение заново.", "앱 저장소를 사용할 수 없습니다. 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidStartFailed", "游戏启动准备失败（%d），请检查游戏文件与启动日志。", "Game startup preparation failed (%d). Check your game files and startup log.", "Falló la preparación del inicio del juego (%d). Revisa los archivos del juego y el registro de inicio.", "Falló la preparación del inicio del juego (%d). Revisa los archivos del juego y el registro de inicio.", "Не удалось подготовить запуск игры (%d). Проверьте файлы игры и журнал запуска.", "게임 시작 준비에 실패했습니다 (%d). 게임 파일과 시작 로그를 확인하세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidLibrary", "原生运行库未能加载，请重新构建并安装应用。", "The native library could not be loaded. Rebuild and install the app.", "No se pudo cargar la biblioteca nativa. Vuelve a compilar e instalar la app.", "No se pudo cargar la biblioteca nativa. Vuelve a compilar e instalar la app.", "Не удалось загрузить нативную библиотеку. Пересоберите и установите приложение.", "네이티브 라이브러리를 불러올 수 없습니다. 앱을 다시 빌드하여 설치하세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidMissingData", "未找到游戏资源。请将自己的游戏 data 目录放入 Download/S2X/D2R Mobile/data。", "Game resources were not found. Put your own game data directory in Download/S2X/D2R Mobile/data.", "No se encontraron los recursos del juego. Coloca tu propio directorio data del juego en Download/S2X/D2R Mobile/data.", "No se encontraron los recursos del juego. Coloca tu propio directorio data del juego en Download/S2X/D2R Mobile/data.", "Ресурсы игры не найдены. Поместите собственный каталог data игры в Download/S2X/D2R Mobile/data.", "게임 리소스를 찾을 수 없습니다. 본인의 게임 데이터 폴더를 Download/S2X/D2R Mobile/data에 넣으세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidMissingModules", "还没有导入游戏内容。请在电脑上用 d2rm_android.py 和你自己的游戏文件做出导入包（android 文件夹），拷到 Download/S2X/D2R Mobile/ 下，然后重新打开 App。", "Game content has not been imported yet. On your computer, make the import pack (the android folder) with d2rm_android.py and your own game files, copy it to Download/S2X/D2R Mobile/, then reopen the app.", "Todavía no se ha importado el contenido del juego. En tu equipo, crea el paquete de importación (la carpeta android) con d2rm_android.py y tus propios archivos del juego, cópialo a Download/S2X/D2R Mobile/ y vuelve a abrir la app.", "Todavía no se ha importado el contenido del juego. En tu equipo, crea el paquete de importación (la carpeta android) con d2rm_android.py y tus propios archivos del juego, cópialo a Download/S2X/D2R Mobile/ y vuelve a abrir la app.", "Игровое содержимое ещё не импортировано. На компьютере сделайте пакет импорта (папку android) с помощью d2rm_android.py и своих файлов игры, скопируйте его в Download/S2X/D2R Mobile/ и снова откройте приложение.", "아직 게임 콘텐츠를 가져오지 않았습니다. 컴퓨터에서 d2rm_android.py와 본인의 게임 파일로 가져오기 팩(android 폴더)을 만들어 Download/S2X/D2R Mobile/에 복사한 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidMissingShaders", "导入的游戏内容里缺少着色器包。请用 d2rm_android.py 重新做导入包，拷到 Download/S2X/D2R Mobile/ 下，然后重新打开 App。", "The imported game content has no shader bundles. Make the import pack again with d2rm_android.py, copy it to Download/S2X/D2R Mobile/, then reopen the app.", "Al contenido importado del juego le faltan los paquetes de shaders. Vuelve a crear el paquete de importación con d2rm_android.py, cópialo a Download/S2X/D2R Mobile/ y vuelve a abrir la app.", "Al contenido importado del juego le faltan los paquetes de shaders. Vuelve a crear el paquete de importación con d2rm_android.py, cópialo a Download/S2X/D2R Mobile/ y vuelve a abrir la app.", "В импортированном игровом содержимом нет пакетов шейдеров. Сделайте пакет импорта заново с помощью d2rm_android.py, скопируйте его в Download/S2X/D2R Mobile/ и снова откройте приложение.", "가져온 게임 콘텐츠에 셰이더 번들이 없습니다. d2rm_android.py로 가져오기 팩을 다시 만들어 Download/S2X/D2R Mobile/에 복사한 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidMissingConfig", "缺少 .build.config。请将游戏 data 目录中的该文件一并放入 Download/S2X/D2R Mobile/data。", "The .build.config file is missing. Include it with your game data in Download/S2X/D2R Mobile/data.", "Falta el archivo .build.config. Inclúyelo con los datos del juego en Download/S2X/D2R Mobile/data.", "Falta el archivo .build.config. Inclúyelo con los datos del juego en Download/S2X/D2R Mobile/data.", "Отсутствует файл .build.config. Положите его вместе с данными игры в Download/S2X/D2R Mobile/data.", ".build.config 파일이 없습니다. Download/S2X/D2R Mobile/data에 게임 데이터와 함께 넣으세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGraphicsFailed", "图形初始化失败。请检查设备 Vulkan 支持与启动日志，关闭应用后重试。", "Graphics initialization failed. Check Vulkan support and the startup log, then close and reopen the app.", "Falló la inicialización de gráficos. Revisa la compatibilidad con Vulkan y el registro de inicio; luego cierra y vuelve a abrir la app.", "Falló la inicialización de gráficos. Revisa la compatibilidad con Vulkan y el registro de inicio; luego cierra y vuelve a abrir la app.", "Не удалось инициализировать графику. Проверьте поддержку Vulkan и журнал запуска, затем закройте и снова откройте приложение.", "그래픽 초기화에 실패했습니다. Vulkan 지원과 시작 로그를 확인한 뒤 앱을 닫았다가 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidHostStopped", "游戏运行线程已退出。请查看启动日志，关闭应用后重试。", "The game runtime stopped. Check the startup log, then close and reopen the app.", "El entorno de ejecución del juego se detuvo. Revisa el registro de inicio; luego cierra y vuelve a abrir la app.", "El entorno de ejecución del juego se detuvo. Revisa el registro de inicio; luego cierra y vuelve a abrir la app.", "Среда выполнения игры остановилась. Проверьте журнал запуска, затем закройте и снова откройте приложение.", "게임 런타임이 중지되었습니다. 시작 로그를 확인한 뒤 앱을 닫았다가 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidQuantityRange", "0 – %d", "0 – %d", "0 – %d", "0 – %d", "0 – %d", "0 – %d" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidAttack", "攻击", "Attack", "Atacar", "Atacar", "Атака", "공격" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidPortal", "回城", "Portal", "Portal", "Portal", "Портал", "차원문" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidMenu", "菜单", "Menu", "Menú", "Menú", "Меню", "메뉴" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidMap", "地图", "Map", "Mapa", "Mapa", "Карта", "지도" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidMove", "移动", "Move", "Mover", "Mover", "Движение", "이동" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidSwap", "换组", "Swap", "Cambiar", "Cambiar", "Смена", "무기 교체" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidDifficulty", "难度", "Difficulty", "Dificultad", "Dificultad", "Сложность", "난이도" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidBack", "返回", "Back", "Atrás", "Atrás", "Назад", "뒤로" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidAction", "操作", "Action", "Acción", "Acción", "Действие", "동작" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidBind", "绑定", "Bind", "Asignar", "Asignar", "Назначить", "지정" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidNext", "下一页", "Next", "Siguiente", "Siguiente", "Далее", "다음" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidSkill1", "技能1", "Skill 1", "Habilidad 1", "Habilidad 1", "Умение 1", "기술 1" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidSkill2", "技能2", "Skill 2", "Habilidad 2", "Habilidad 2", "Умение 2", "기술 2" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidSkill3", "技能3", "Skill 3", "Habilidad 3", "Habilidad 3", "Умение 3", "기술 3" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidSkill4", "技能4", "Skill 4", "Habilidad 4", "Habilidad 4", "Умение 4", "기술 4" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidPotion1", "药水1", "Potion 1", "Poción 1", "Poción 1", "Зелье 1", "물약 1" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidPotion2", "药水2", "Potion 2", "Poción 2", "Poción 2", "Зелье 2", "물약 2" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidPotion3", "药水3", "Potion 3", "Poción 3", "Poción 3", "Зелье 3", "물약 3" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidPotion4", "药水4", "Potion 4", "Poción 4", "Poción 4", "Зелье 4", "물약 4" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetTitle", "英雄", "Heroes", "Héroes", "Héroes", "Герои", "영웅" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetRefresh", "刷新", "Refresh", "Actualizar", "Actualizar", "Обновить", "새로 고침" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetName2x2", "最近英雄", "Latest Hero", "Último héroe", "Último héroe", "Последний герой", "최근 영웅" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetName4x2", "英雄列表", "Hero List", "Lista de héroes", "Lista de héroes", "Список героев", "영웅 목록" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetDescription", "查看已保存的英雄进度", "View saved hero progress", "Ver el progreso de los héroes guardados", "Ver el progreso de los héroes guardados", "Прогресс сохранённых героев", "저장된 영웅의 진행 상황 보기" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetEmpty", "还没有英雄", "No heroes yet", "Aún no hay héroes", "Aún no hay héroes", "Героев пока нет", "아직 영웅이 없습니다" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetEmptyHint", "点开游戏创建英雄", "Open the game to create a hero", "Abre el juego para crear un héroe", "Abre el juego para crear un héroe", "Откройте игру, чтобы создать героя", "게임을 열어 영웅을 만드세요" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetError", "无法读取存档摘要", "Save summary unavailable", "Resumen de partidas no disponible", "Resumen de partidas no disponible", "Сводка сохранений недоступна", "저장 요약을 불러올 수 없습니다" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetErrorHint", "成功保存后请刷新", "Refresh after a successful save", "Actualiza tras guardar correctamente", "Actualiza tras guardar correctamente", "Обновите после успешного сохранения", "저장에 성공한 뒤 새로 고침하세요" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetStats", "%1$d级 · %2$s", "Lv %1$d · %2$s", "Nv. %1$d · %2$s", "Nv. %1$d · %2$s", "Ур. %1$d · %2$s", "레벨 %1$d · %2$s" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetExp", "经验 %1$s", "Exp %1$s", "Exp. %1$s", "Exp. %1$s", "Опыт %1$s", "경험치 %1$s" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetGold", "金币 %1$s", "Gold %1$s", "Oro %1$s", "Oro %1$s", "Золото %1$s", "금화 %1$s" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetExpUnknown", "经验暂不可读", "Experience unavailable", "Experiencia no disponible", "Experiencia no disponible", "Опыт недоступен", "경험치 정보 없음" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetGoldUnknown", "金币暂不可读", "Gold unavailable", "Oro no disponible", "Oro no disponible", "Золото недоступно", "금화 정보 없음" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetFooter", "%1$d位英雄", "%1$d heroes", "%1$d héroes", "%1$d héroes", "Героев: %1$d", "영웅 %1$d명" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetPartial", "%1$d位英雄 · 部分存档不可读", "%1$d heroes · some saves unreadable", "%1$d héroes · algunas partidas no se pueden leer", "%1$d héroes · algunas partidas no se pueden leer", "Героев: %1$d · часть сохранений не читается", "영웅 %1$d명 · 일부 저장 파일을 읽을 수 없음" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetClassAmazon", "亚马逊", "Amazon", "Amazona", "Amazona", "Амазонка", "아마존" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetClassSorceress", "法师", "Sorceress", "Hechicera", "Hechicera", "Волшебница", "원소술사" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetClassNecromancer", "死灵法师", "Necromancer", "Nigromante", "Nigromante", "Некромант", "강령술사" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetClassPaladin", "圣骑士", "Paladin", "Paladín", "Paladín", "Паладин", "성기사" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetClassBarbarian", "野蛮人", "Barbarian", "Bárbaro", "Bárbaro", "Варвар", "야만용사" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetClassDruid", "德鲁伊", "Druid", "Druida", "Druida", "Друид", "드루이드" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetClassAssassin", "刺客", "Assassin", "Asesina", "Asesina", "Ассасин", "암살자" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidWidgetClassWarlock", "术士", "Warlock", "Brujo", "Brujo", "Чернокнижник", "악마술사" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidMissingOverlay", "导入的游戏内容里缺少触屏资源，启动已停止。请用 d2rm_android.py 重新做导入包，拷到 Download/S2X/D2R Mobile/ 下，然后重新打开 App。", "The imported game content has no touch resources. Startup stopped. Make the import pack again with d2rm_android.py, copy it to Download/S2X/D2R Mobile/, then reopen the app.", "Al contenido importado del juego le faltan los recursos táctiles. Se detuvo el inicio. Vuelve a crear el paquete de importación con d2rm_android.py, cópialo a Download/S2X/D2R Mobile/ y vuelve a abrir la app.", "Al contenido importado del juego le faltan los recursos táctiles. Se detuvo el inicio. Vuelve a crear el paquete de importación con d2rm_android.py, cópialo a Download/S2X/D2R Mobile/ y vuelve a abrir la app.", "В импортированном игровом содержимом нет сенсорных ресурсов. Запуск остановлен. Сделайте пакет импорта заново с помощью d2rm_android.py, скопируйте его в Download/S2X/D2R Mobile/ и снова откройте приложение.", "가져온 게임 콘텐츠에 터치 리소스가 없어 시작을 멈췄습니다. d2rm_android.py로 가져오기 팩을 다시 만들어 Download/S2X/D2R Mobile/에 복사한 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidInvalidOverlay", "触屏资源不完整或与这版 App 不配套，启动已停止。请用与这版 App 同一版本的 d2rm_android.py 重新做导入包，拷到 Download/S2X/D2R Mobile/ 下，然后重新打开 App。", "The touch resources are incomplete or do not match this version of the app. Startup stopped. Make the import pack again with d2rm_android.py from the same release as the app, copy it to Download/S2X/D2R Mobile/, then reopen the app.", "Los recursos táctiles están incompletos o no corresponden a esta versión de la app. Se detuvo el inicio. Vuelve a crear el paquete de importación con d2rm_android.py de la misma versión que la app, cópialo a Download/S2X/D2R Mobile/ y vuelve a abrir la app.", "Los recursos táctiles están incompletos o no corresponden a esta versión de la app. Se detuvo el inicio. Vuelve a crear el paquete de importación con d2rm_android.py de la misma versión que la app, cópialo a Download/S2X/D2R Mobile/ y vuelve a abrir la app.", "Сенсорные ресурсы неполны или не подходят к этой версии приложения. Запуск остановлен. Сделайте пакет импорта заново с помощью d2rm_android.py из того же выпуска, что и приложение, скопируйте его в Download/S2X/D2R Mobile/ и снова откройте приложение.", "터치 리소스가 불완전하거나 이 버전의 앱과 맞지 않아 시작을 멈췄습니다. 앱과 같은 릴리스의 d2rm_android.py로 가져오기 팩을 다시 만들어 Download/S2X/D2R Mobile/에 복사한 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidHudLevel", "Lv %d · %d%%", "Lv %d · %d%%", "Nv. %d · %d%%", "Nv. %d · %d%%", "Ур. %d · %d%%", "레벨 %d · %d%%" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidImporting", "正在导入游戏内容（%d%%）\n第一次要一两分钟，请留在这个页面。", "Importing game content (%d%%)\nThe first time takes a minute or two. Please stay on this screen.", "Importando el contenido del juego (%d%%)\nLa primera vez tarda uno o dos minutos. Quédate en esta pantalla.", "Importando el contenido del juego (%d%%)\nLa primera vez tarda uno o dos minutos. Quédate en esta pantalla.", "Импорт игрового содержимого (%d%%)\nВ первый раз это занимает минуту-две. Не уходите с этого экрана.", "게임 콘텐츠를 가져오는 중 (%d%%)\n처음에는 1~2분 걸립니다. 이 화면에 머물러 주세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidImportFailed", "导入没有完成：%s\n请确认手机剩余空间够用，然后重新打开 App。", "The import did not finish: %s\nMake sure the phone has enough free space, then reopen the app.", "La importación no terminó: %s\nAsegúrate de que el teléfono tenga espacio libre suficiente y vuelve a abrir la app.", "La importación no terminó: %s\nAsegúrate de que el teléfono tenga espacio libre suficiente y vuelve a abrir la app.", "Импорт не завершён: %s\nУбедитесь, что на телефоне достаточно свободного места, и снова откройте приложение.", "가져오기가 완료되지 않았습니다: %s\n휴대폰의 여유 공간을 확인한 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidImportVersion", "导入包与这版 App 不配套（导入包是给 %s 做的）。请用与这版 App 同一版本的 d2rm_android.py 重新做导入包，拷到 Download/S2X/D2R Mobile/ 下，然后重新打开 App。", "This import pack does not match this version of the app (it was made for %s). Make the import pack again with d2rm_android.py from the same release as the app, copy it to Download/S2X/D2R Mobile/, then reopen the app.", "Este paquete de importación no corresponde a esta versión de la app (se hizo para %s). Vuelve a crear el paquete con d2rm_android.py de la misma versión que la app, cópialo a Download/S2X/D2R Mobile/ y vuelve a abrir la app.", "Este paquete de importación no corresponde a esta versión de la app (se hizo para %s). Vuelve a crear el paquete con d2rm_android.py de la misma versión que la app, cópialo a Download/S2X/D2R Mobile/ y vuelve a abrir la app.", "Этот пакет импорта не подходит к этой версии приложения (он сделан для %s). Сделайте пакет импорта заново с помощью d2rm_android.py из того же выпуска, что и приложение, скопируйте его в Download/S2X/D2R Mobile/ и снова откройте приложение.", "이 가져오기 팩은 이 버전의 앱과 맞지 않습니다 (%s용으로 만들어짐). 앱과 같은 릴리스의 d2rm_android.py로 가져오기 팩을 다시 만들어 Download/S2X/D2R Mobile/에 복사한 뒤 앱을 다시 여세요." },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomFxAuto", "MetalFX 超分：自动", "MetalFX upscaling: Auto", "MetalFX upscaling: Auto", "MetalFX upscaling: Auto", "MetalFX upscaling: Auto", "MetalFX upscaling: Auto" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomFxAutoHint", "MetalFX 空间超分；按屏幕、温度与帧耗时调整\n点击应用后生效，无需重启；切换可能短暂停顿", "Adapts to screen, heat and frame timing\nApply without restarting; switching may briefly pause", "Adapts to screen, heat and frame timing\nApply without restarting; switching may briefly pause", "Adapts to screen, heat and frame timing\nApply without restarting; switching may briefly pause", "Adapts to screen, heat and frame timing\nApply without restarting; switching may briefly pause", "Adapts to screen, heat and frame timing\nApply without restarting; switching may briefly pause" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomFxEco", "MetalFX 超分：省电", "MetalFX upscaling: Eco", "MetalFX upscaling: Eco", "MetalFX upscaling: Eco", "MetalFX upscaling: Eco", "MetalFX upscaling: Eco" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomFxEcoHint", "较低 3D 分辨率；界面与帧率设置独立", "Lower 3D resolution; UI and frame-rate settings stay independent", "Lower 3D resolution; UI and frame-rate settings stay independent", "Lower 3D resolution; UI and frame-rate settings stay independent", "Lower 3D resolution; UI and frame-rate settings stay independent", "Lower 3D resolution; UI and frame-rate settings stay independent" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomFxBalanced", "MetalFX 超分：均衡", "MetalFX upscaling: Balanced", "MetalFX upscaling: Balanced", "MetalFX upscaling: Balanced", "MetalFX upscaling: Balanced", "MetalFX upscaling: Balanced" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomFxBalancedHint", "平衡 3D 清晰度与负载", "Balances 3D clarity and rendering load", "Balances 3D clarity and rendering load", "Balances 3D clarity and rendering load", "Balances 3D clarity and rendering load", "Balances 3D clarity and rendering load" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomFxQuality", "MetalFX 超分：高画质", "MetalFX upscaling: Quality", "MetalFX upscaling: Quality", "MetalFX upscaling: Quality", "MetalFX upscaling: Quality", "MetalFX upscaling: Quality" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomFxQualityHint", "较高 3D 分辨率；功耗取决于场景", "Higher 3D resolution; power use depends on the scene", "Higher 3D resolution; power use depends on the scene", "Higher 3D resolution; power use depends on the scene", "Higher 3D resolution; power use depends on the scene", "Higher 3D resolution; power use depends on the scene" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomFxOff", "MetalFX 超分：原版", "MetalFX upscaling: Original", "MetalFX upscaling: Original", "MetalFX upscaling: Original", "MetalFX upscaling: Original", "MetalFX upscaling: Original" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomFxOffHint", "可手动关闭 MetalFX；设备不支持时自动使用原版放大", "Turn MetalFX off manually; unsupported devices use the original scaler", "Turn MetalFX off manually; unsupported devices use the original scaler", "Turn MetalFX off manually; unsupported devices use the original scaler", "Turn MetalFX off manually; unsupported devices use the original scaler", "Turn MetalFX off manually; unsupported devices use the original scaler" },
+#endif
     { "dmGraphicsFrameRate30", "帧率：30 FPS", "Frame rate: 30 FPS", "Fotogramas: 30 FPS", "Fotogramas: 30 FPS", "Частота кадров: 30 FPS", "프레임 레이트: 30 FPS" },
     { "dmGraphicsFrameRate60", "帧率：60 FPS", "Frame rate: 60 FPS", "Fotogramas: 60 FPS", "Fotogramas: 60 FPS", "Частота кадров: 60 FPS", "프레임 레이트: 60 FPS" },
     { "dmGraphicsFrameRate120", "帧率：120 FPS（实验性）", "Frame rate: 120 FPS (experimental)", "Fotogramas: 120 FPS (experimental)", "Fotogramas: 120 FPS (experimental)", "Частота кадров: 120 FPS (эксперимент)", "프레임 레이트: 120 FPS (실험적)" },
@@ -492,7 +670,9 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmGraphicsResEco", "渲染分辨率：省电", "Resolution: Eco", "Resolución: Ahorro", "Resolución: Ahorro", "Разрешение: экономия", "해상도: 절전" },
     { "dmGraphicsResBalanced", "渲染分辨率：均衡", "Resolution: Balanced", "Resolución: Equilibrada", "Resolución: Equilibrada", "Разрешение: баланс", "해상도: 균형" },
     { "dmGraphicsResNative", "渲染分辨率：原生", "Resolution: Native", "Resolución: Nativa", "Resolución: Nativa", "Разрешение: нативное", "해상도: 네이티브" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsRtShadow", "光追阴影（实验性）", "Ray-traced shadows (experimental)", "Sombras por trazado de rayos (experimental)", "Sombras por trazado de rayos (experimental)", "Трассировка теней (эксперимент)", "레이 트레이싱 그림자 (실험적)" },
+#endif
     { "dmIpadModeTitle", "画面两边有黑边？", "Black bars on both sides?", "¿Barras negras a los lados?", "¿Barras negras a los lados?", "Чёрные полосы по бокам?", "양쪽에 검은 띠가 보이나요?" },
     { "dmIpadModeMsg", "这个安装包正以 iPad 身份在 iPhone 上运行（签名工具开了“iPad 模式”），系统会按 iPad 屏幕比例显示、两边留黑边，游戏自己无法去掉。\n请在签名工具里关闭“iPad 模式”（设备类型选 iPhone），重新签名安装。", "This package is running on your iPhone as an iPad app (the signing tool's \"iPad mode\" is on). The system shows it at the iPad aspect ratio with black bars on both sides, and the game cannot remove them.\nTurn off \"iPad mode\" (device type: iPhone) in the signing tool, then re-sign and reinstall.", "Este paquete se ejecuta en tu iPhone como app de iPad (el \"modo iPad\" de la herramienta de firma está activo). El sistema lo muestra con la proporción del iPad y barras negras a los lados; el juego no puede quitarlas.\nDesactiva el \"modo iPad\" (tipo de dispositivo: iPhone) en la herramienta de firma, vuelve a firmar e instala.", "Este paquete se ejecuta en tu iPhone como app de iPad (el \"modo iPad\" de la herramienta de firma está activo). El sistema lo muestra con la proporción del iPad y barras negras a los lados; el juego no puede quitarlas.\nDesactiva el \"modo iPad\" (tipo de dispositivo: iPhone) en la herramienta de firma, vuelve a firmar e instala.", "Этот пакет запущен на iPhone как приложение для iPad (в инструменте подписи включён «режим iPad»). Система показывает его с пропорциями iPad и чёрными полосами по бокам; игра не может это изменить.\nОтключите «режим iPad» (тип устройства: iPhone) в инструменте подписи, подпишите и установите заново.", "이 패키지는 iPhone에서 iPad 앱으로 실행되고 있습니다(서명 도구의 \"iPad 모드\"가 켜짐). 시스템이 iPad 화면 비율로 표시해 양쪽에 검은 띠가 생기며 게임이 이를 없앨 수 없습니다.\n서명 도구에서 \"iPad 모드\"를 끄고(기기 유형: iPhone) 다시 서명해 설치하세요." },
     { "dmIpadModeOk", "知道了", "Got it", "Entendido", "Entendido", "Понятно", "확인" },
@@ -521,30 +701,78 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCreditsSep", "、", ", ", ", ", ", ", ", ", ", " },
     { "dmAboutVersion", "版本 %s", "Version %s", "Versión %s", "Versión %s", "Версия %s", "버전 %s" },
     { "dmCommunityFe", "加入社区讨论", "Community", "Comunidad", "Comunidad", "Сообщество", "커뮤니티" },
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenTitle", "正在生成着色器缓存", "Building the shader cache", "Generando la caché de shaders", "Generando la caché de shaders", "Создание кэша шейдеров", "셰이더 캐시 생성 중" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenBody", "第一次打开要用你自己的游戏文件生成着色器缓存，约 5–15 分钟，只做一次。", "The first launch builds the shader cache from your own game files. It takes about 5–15 minutes and happens only once.", "La primera vez se genera la caché de shaders con tus propios archivos del juego. Tarda unos 5–15 minutos y solo se hace una vez.", "La primera vez se genera la caché de shaders con tus propios archivos del juego. Tarda unos 5–15 minutos y solo se hace una vez.", "При первом запуске кэш шейдеров создаётся из ваших файлов игры. Это займёт 5–15 минут и делается один раз.", "처음 실행할 때 내 게임 파일로 셰이더 캐시를 만듭니다. 5~15분 정도 걸리며 한 번만 하면 됩니다." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenHint", "请留在这个页面，生成期间屏幕保持常亮。", "Please stay on this screen. It stays on until the cache is ready.", "Quédate en esta pantalla. Se mantendrá encendida hasta que termine.", "Quédate en esta pantalla. Se mantendrá encendida hasta que termine.", "Не уходите с этого экрана. Он не погаснет, пока кэш не будет готов.", "이 화면에 머물러 주세요. 끝날 때까지 화면이 꺼지지 않습니다." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenStepPrepare", "准备生成工具", "Preparing tools", "Preparando herramientas", "Preparando herramientas", "Подготовка инструментов", "도구 준비 중" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenStepPatch", "处理游戏文件", "Processing game files", "Procesando los archivos del juego", "Procesando los archivos del juego", "Обработка файлов игры", "게임 파일 처리 중" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenStepAssets", "生成界面素材", "Making interface art", "Creando gráficos de la interfaz", "Creando gráficos de la interfaz", "Создание графики интерфейса", "인터페이스 이미지 생성 중" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenStepOverlay", "生成触屏资源", "Making touch resources", "Creando recursos táctiles", "Creando recursos táctiles", "Создание сенсорных ресурсов", "터치 리소스 생성 중" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenStepPacks", "读取游戏着色器", "Reading game shaders", "Leyendo los shaders del juego", "Leyendo los shaders del juego", "Чтение шейдеров игры", "게임 셰이더 읽는 중" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenStepShaders", "翻译着色器", "Translating shaders", "Traduciendo shaders", "Traduciendo shaders", "Перевод шейдеров", "셰이더 변환 중" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenStepFinish", "整理生成结果", "Finishing up", "Terminando", "Terminando", "Завершение", "마무리 중" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenFailed", "游戏内容没有准备好", "The game content could not be prepared", "No se pudo preparar el contenido del juego", "No se pudo preparar el contenido del juego", "Не удалось подготовить содержимое игры", "게임 콘텐츠를 준비하지 못했습니다" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenFailFiles", "游戏文件不完整", "Game files are incomplete", "Los archivos del juego están incompletos", "Los archivos del juego están incompletos", "Файлы игры неполные", "게임 파일이 완전하지 않습니다" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenFailFilesNext", "请把上面列出的文件从电脑重新拷到 Download/S2X/D2R Mobile（data 里的隐藏文件 .build.config 也要拷），然后重新打开 App。", "Copy the files listed above from your computer to Download/S2X/D2R Mobile again (including the hidden file .build.config in data), then reopen the app.", "Vuelve a copiar desde el ordenador los archivos indicados arriba a Download/S2X/D2R Mobile (incluido el archivo oculto .build.config de data) y abre la app de nuevo.", "Vuelve a copiar desde el ordenador los archivos indicados arriba a Download/S2X/D2R Mobile (incluido el archivo oculto .build.config de data) y abre la app de nuevo.", "Скопируйте указанные выше файлы с компьютера в Download/S2X/D2R Mobile ещё раз (включая скрытый файл .build.config в data) и снова откройте приложение.", "위에 나온 파일을 컴퓨터에서 Download/S2X/D2R Mobile로 다시 복사한 뒤(data 안의 숨김 파일 .build.config 포함) 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenFailVersion", "游戏文件版本不对", "Wrong game version", "Versión del juego incorrecta", "Versión del juego incorrecta", "Неверная версия игры", "게임 버전이 맞지 않습니다" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenFailVersionNext", "需要 Switch 版 3.3.94012 的游戏文件：请把 ExeFS 与 data 换成这一版，然后重新打开 App。", "Game files from Switch version 3.3.94012 are needed: replace ExeFS and data with that version, then reopen the app.", "Se necesitan los archivos de la versión 3.3.94012 de Switch: sustituye ExeFS y data por esa versión y vuelve a abrir la app.", "Se necesitan los archivos de la versión 3.3.94012 de Switch: sustituye ExeFS y data por esa versión y vuelve a abrir la app.", "Нужны файлы игры версии 3.3.94012 для Switch: замените ExeFS и data этой версией и снова откройте приложение.", "Switch 버전 3.3.94012의 게임 파일이 필요합니다. ExeFS와 data를 이 버전으로 바꾼 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenFailSpace", "手机空间不够", "Not enough storage", "No hay espacio suficiente", "No hay espacio suficiente", "Недостаточно памяти", "저장 공간이 부족합니다" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenFailInternal", "生成过程出错了", "Something went wrong during the build", "Algo falló durante la generación", "Algo falló durante la generación", "Во время создания произошла ошибка", "생성 중 오류가 발생했습니다" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenFailInternalNext", "「%s」这一步出错，游戏文件核对没有发现问题。请点下面的「分享诊断日志」，发到 QQ 群或 GitHub。", "The step \"%s\" failed; the game file check found no problem. Tap \"Share Diagnostics\" below and send the log to the QQ group or GitHub.", "El paso «%s» falló; la comprobación de los archivos del juego no encontró problemas. Toca «Compartir diagnóstico» abajo y envía el registro al grupo de QQ o a GitHub.", "El paso «%s» falló; la comprobación de los archivos del juego no encontró problemas. Toca «Compartir diagnóstico» abajo y envía el registro al grupo de QQ o a GitHub.", "Шаг «%s» не выполнен; проверка файлов игры проблем не нашла. Нажмите «Поделиться диагностикой» ниже и отправьте журнал в группу QQ или на GitHub.", "%s 단계에서 오류가 났습니다. 게임 파일 점검에서는 문제가 없었습니다. 아래 \"진단 로그 공유\"를 눌러 QQ 그룹이나 GitHub에 보내 주세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenShare", "分享诊断日志", "Share Diagnostics", "Compartir diagnóstico", "Compartir diagnóstico", "Поделиться диагностикой", "진단 로그 공유" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenShareHint", "日志已去掉本机路径与账号信息，也存在 Download/S2X/D2R Mobile/gen_log.txt；手柄按 A 也能分享。", "Local paths and account details are removed. The log is also saved as Download/S2X/D2R Mobile/gen_log.txt. On a controller, press A to share.", "Se quitan las rutas locales y los datos de la cuenta. El registro también se guarda en Download/S2X/D2R Mobile/gen_log.txt. Con mando, pulsa A para compartir.", "Se quitan las rutas locales y los datos de la cuenta. El registro también se guarda en Download/S2X/D2R Mobile/gen_log.txt. Con mando, pulsa A para compartir.", "Локальные пути и данные учётной записи удалены. Журнал также сохранён в Download/S2X/D2R Mobile/gen_log.txt. На геймпаде нажмите A, чтобы поделиться.", "기기 경로와 계정 정보는 지웠습니다. 로그는 Download/S2X/D2R Mobile/gen_log.txt에도 있습니다. 컨트롤러는 A 버튼으로 공유할 수 있습니다." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenNeedFiles", "找不到生成所需的游戏文件：%s\n请把 Switch 版 3.3.94012 的 ExeFS 文件夹（含 main、sdk）放到 Download/S2X/D2R Mobile/ExeFS，游戏资源放到 Download/S2X/D2R Mobile/data，然后重新打开 App。", "Game files needed for the build were not found: %s\nPut the ExeFS folder (with main and sdk) of Switch version 3.3.94012 in Download/S2X/D2R Mobile/ExeFS and the game resources in Download/S2X/D2R Mobile/data, then reopen the app.", "No se encontraron los archivos del juego necesarios: %s\nPon la carpeta ExeFS (con main y sdk) de la versión 3.3.94012 de Switch en Download/S2X/D2R Mobile/ExeFS y los recursos del juego en Download/S2X/D2R Mobile/data, y vuelve a abrir la app.", "No se encontraron los archivos del juego necesarios: %s\nPon la carpeta ExeFS (con main y sdk) de la versión 3.3.94012 de Switch en Download/S2X/D2R Mobile/ExeFS y los recursos del juego en Download/S2X/D2R Mobile/data, y vuelve a abrir la app.", "Не найдены нужные файлы игры: %s\nПоложите папку ExeFS (с main и sdk) версии 3.3.94012 для Switch в Download/S2X/D2R Mobile/ExeFS, а ресурсы игры — в Download/S2X/D2R Mobile/data, затем снова откройте приложение.", "캐시를 만들 게임 파일을 찾지 못했습니다: %s\nSwitch 3.3.94012 버전의 ExeFS 폴더(main, sdk 포함)를 Download/S2X/D2R Mobile/ExeFS에, 게임 리소스를 Download/S2X/D2R Mobile/data에 넣은 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenNoSpace", "手机剩余空间不够（还剩 %s，生成需要约 3 GB）。\n清理空间后重新打开 App。", "Not enough free space on the phone (%s left; the build needs about 3 GB).\nFree up space, then reopen the app.", "No hay suficiente espacio libre (quedan %s; se necesitan unos 3 GB).\nLibera espacio y vuelve a abrir la app.", "No hay suficiente espacio libre (quedan %s; se necesitan unos 3 GB).\nLibera espacio y vuelve a abrir la app.", "Недостаточно свободного места (осталось %s, нужно около 3 ГБ).\nОсвободите место и снова откройте приложение.", "휴대폰 저장 공간이 부족합니다(남은 공간 %s, 약 3GB 필요).\n공간을 확보한 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenStepFailed", "「%s」这一步没有成功，可能是游戏文件不完整或不是 Switch 版 3.3.94012。\n日志在 Download/S2X/D2R Mobile/gen_log.txt，反馈时请附上。", "The step \"%s\" failed. The game files may be incomplete or not Switch version 3.3.94012.\nThe log is in Download/S2X/D2R Mobile/gen_log.txt; please attach it when reporting.", "El paso «%s» falló. Puede que los archivos del juego estén incompletos o no sean de la versión 3.3.94012 de Switch.\nEl registro está en Download/S2X/D2R Mobile/gen_log.txt; adjúntalo al informar.", "El paso «%s» falló. Puede que los archivos del juego estén incompletos o no sean de la versión 3.3.94012 de Switch.\nEl registro está en Download/S2X/D2R Mobile/gen_log.txt; adjúntalo al informar.", "Шаг «%s» не выполнен. Возможно, файлы игры неполные или не от версии 3.3.94012 для Switch.\nЖурнал: Download/S2X/D2R Mobile/gen_log.txt — приложите его к отчёту.", "%s 단계가 실패했습니다. 게임 파일이 불완전하거나 Switch 3.3.94012 버전이 아닐 수 있습니다.\n로그는 Download/S2X/D2R Mobile/gen_log.txt에 있으니 문의할 때 첨부해 주세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenInterrupted", "生成中断了：%s\n重新打开 App 会接着生成。", "The build stopped: %s\nReopen the app to continue.", "La generación se detuvo: %s\nVuelve a abrir la app para continuar.", "La generación se detuvo: %s\nVuelve a abrir la app para continuar.", "Создание прервано: %s\nОткройте приложение снова, чтобы продолжить.", "생성이 중단되었습니다: %s\n앱을 다시 열면 이어서 진행합니다." },
+#endif
     { "dmLoadStageDownload", "正在下载游戏内容", "Downloading game content", "Descargando el contenido del juego", "Descargando el contenido del juego", "Загрузка игрового содержимого", "게임 콘텐츠 다운로드 중" },
     { "dmLoadStageImport", "正在导入游戏内容", "Importing game content", "Importando el contenido del juego", "Importando el contenido del juego", "Импорт игрового содержимого", "게임 콘텐츠 가져오는 중" },
     { "dmLoadStagePatch", "正在处理游戏文件", "Processing game files", "Procesando los archivos del juego", "Procesando los archivos del juego", "Обработка файлов игры", "게임 파일 처리 중" },
@@ -573,9 +801,15 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmLoadHintPrepare", "马上进入游戏，请稍候", "Entering the game shortly, please wait", "Entrando al juego en un momento, espera", "Entrando al juego en un momento, espera", "Игра скоро запустится, подождите", "곧 게임에 들어갑니다. 잠시 기다려 주세요" },
     { "dmLoadMusicOn", "打开背景音乐", "Turn music on", "Activar la música", "Activar la música", "Включить музыку", "배경 음악 켜기" },
     { "dmLoadMusicOff", "关闭背景音乐", "Turn music off", "Desactivar la música", "Desactivar la música", "Выключить музыку", "배경 음악 끄기" },
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmLoadPermTitle", "需要「所有文件访问」权限", "All files access needed", "Permiso de acceso a archivos", "Permiso de acceso a archivos", "Нужен доступ ко всем файлам", "모든 파일 접근 권한 필요" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmLoadPermBody", "用来读取 Download/S2X/D2R Mobile/data", "To read Download/S2X/D2R Mobile/data", "Para leer Download/S2X/D2R Mobile/data", "Para leer Download/S2X/D2R Mobile/data", "Для чтения Download/S2X/D2R Mobile/data", "Download/S2X/D2R Mobile/data 읽기에 필요" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmLoadPermHint", "点屏幕或按手柄 A 打开系统设置，允许后返回", "Tap or press A, allow access in Settings, come back", "Toca o pulsa A, permite el acceso y vuelve", "Toca o pulsa A, permite el acceso y vuelve", "Нажмите экран или A, разрешите доступ, вернитесь", "화면이나 A를 눌러 설정에서 허용한 뒤 돌아오세요" },
+#endif
     { "dmLoadCommSiteQq", "官方免费渠道：官网 %s · QQ 群 %s", "Official free channels: %s · QQ group %s", "Canales oficiales gratis: %s · grupo QQ %s", "Canales oficiales gratis: %s · grupo QQ %s", "Бесплатные каналы: %s · группа QQ %s", "공식 무료 채널: %s · QQ 그룹 %s" },
     { "dmLoadCommSite", "官方免费渠道：官网 %s", "Official free channel: %s", "Canal oficial gratis: %s", "Canal oficial gratis: %s", "Бесплатный канал: %s", "공식 무료 채널: %s" },
     { "dmLoadCommCopySite", "复制官网", "Copy site", "Copiar web", "Copiar web", "Копировать", "사이트 복사" },
@@ -587,5 +821,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmLoadCommCopied", "已复制", "Copied", "Copiado", "Copiado", "Скопировано", "복사됨" },
     { "dmLoadCommCopyFail", "复制失败", "Copy failed", "Error al copiar", "Error al copiar", "Ошибка", "복사 실패" },
     { "dmLoadCommPrefer", "qq", "github", "github", "github", "github", "github" },
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndGraphicsApplyHint", "点“应用”生效，无需重启。\n“默认”全局恢复游戏设定、图形与自定义，保留语言及配音。", "Apply without restarting.\nDefaults resets game options, Graphics and Custom; language and voice stay unchanged.", "Aplica sin reiniciar.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.", "Aplica sin reiniciar.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.", "Применяется без перезапуска.\nСброс восстанавливает настройки игры, графику и свои настройки; язык и озвучка сохраняются.", "재시작 없이 적용됩니다.\n기본값은 게임, 그래픽과 사용자 설정을 초기화하며 언어와 음성은 유지합니다." },
+#endif
 };

@@ -1,7 +1,8 @@
 DM_ROOT ?= $(HOME)/dm-work
 # dm/host 单测一条命令：make -C dm/host/tests run（秒级；产物放 build/ 不进仓）
 # dm/host unit tests in one command: make -C dm/host/tests run (takes seconds; build output goes to build/ and is not committed)
-PY ?= $(DM_ROOT)/build/cache/dm/venv/bin/python
+# 没有项目 venv（干净快照）时用系统 python3（内审 I-11）| without the project venv (a clean snapshot) use the system python3 (internal audit I-11)
+PY ?= $(if $(wildcard $(DM_ROOT)/build/cache/dm/venv/bin/python),$(DM_ROOT)/build/cache/dm/venv/bin/python,python3)
 EXEFS ?= $(DM_ROOT)/data/switch/3.3.94012/Update/ExeFS
 B = build
 MOVIE_PACKAGES = libavformat libavcodec libavutil libswscale
@@ -304,7 +305,7 @@ $(B)/t_update_appear: t_update_appear.c ../dm_update.c | $(B)
 $(B)/t_bright_cap: t_bright_cap.c ../dm_bright_cap.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_bright_cap.c -lm
 $(B)/t_loadpage: t_loadpage.c ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.h ../dm_i18n_tab.h | $(B)
-	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_loadpage.c -lm
+	clang -O1 -Wall -Werror -Wno-unused-function -DDM_I18N_ALL -I.. -o $@ t_loadpage.c -lm
 # 加载页出图核对（不在 run 里：写 PNG 到指定目录）：make render-loadpage OUT=<目录> [LANG=zh]
 # Loading page render check (not part of run: writes PNGs to a given directory): make render-loadpage OUT=<dir> [LANG=zh]
 $(B)/t_manifest: t_manifest.c ../dm_manifest.c ../dm_manifest.h | $(B)
