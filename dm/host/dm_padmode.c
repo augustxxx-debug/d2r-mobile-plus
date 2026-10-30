@@ -85,6 +85,7 @@ static const char *const k_glyph_name[DM_GLYPH_N] = { "Switch", "keyboard", "Xbo
 static int g_app;   // Mac App 形态 | the overlay carries keyboard key caps; the current path points at keyboard key caps; whether the next path write should point at keyboard key caps; Mac App form
 #endif
 // 统计的设置快照（dm_telemetry.c）：手柄模式下按当前键帽报手柄类型 | for the statistics' settings snapshot: the controller type by the current glyph set in controller mode
+int dm_padmode_current(void);
 const char *dm_padmode_pad_type(void) { if (!dm_padmode_current()) return "none"; int g = atomic_load(&g_glyph_want); return g == DM_GLYPH_XBOX ? "xbox" : g == DM_GLYPH_PS ? "ps" : "other"; }
 void dm_padmode_request_glyph(int g) { if (g < 0 || g >= DM_GLYPH_N || !g_glyph_have[g]) g = DM_GLYPH_PAD; atomic_store(&g_glyph_want, g); }   // 前端（任意线程）：键盘有输入 → 键盘，实体手柄有输入 → 按它的类型。覆盖层没有那套就用原版键帽。这里不立输入冻结：换键帽要等面板都关了才起（见 glyph_swap_ok），等的时候玩家照常操作；事务起的那一帧才冻结 | Front end (any thread): keyboard input -> keyboard, physical controller input -> by its type. Without that set in the overlay the original glyphs are used. No input freeze here: the glyph swap waits until all panels are closed (see glyph_swap_ok), the player keeps playing meanwhile; input freezes only on the frame the transaction starts
 int dm_padmode_kbd(void) { return g_glyph == DM_GLYPH_KBD; }

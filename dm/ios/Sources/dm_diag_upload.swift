@@ -396,16 +396,19 @@ private final class DmTelemetryJob: @unchecked Sendable { let lock = NSLock(); v
 private let dmTelemetryJob = DmTelemetryJob()
 public typealias DmTelemetryNetFn = @convention(c) (UInt32, Int32) -> Void
 public typealias DmTelemetryDoneFn = @convention(c) (UInt32, Int32, UnsafePointer<CChar>?, Int32) -> Void
+private struct DmTelemetryFn: @unchecked Sendable { let net: DmTelemetryNetFn?; let send: DmTelemetryDoneFn? }   // C 回调随任务进后台线程 | the C callbacks travel with the task to its background thread
 @_cdecl("dm_telemetry_net_probe")
 public func dmTelemetryNetProbe(_ token: UInt32, _ done: DmTelemetryNetFn) {
-    Task.detached(priority: .utility) { done(token, await DmCrashReportStore.isMetered() ? 1 : 0) }
+    let box = DmTelemetryFn(net: done, send: nil)
+    Task.detached(priority: .utility) { box.net?(token, await DmCrashReportStore.isMetered() ? 1 : 0) }
 }
 @_cdecl("dm_telemetry_net_send")
 public func dmTelemetryNetSend(_ token: UInt32, _ origin: UnsafePointer<CChar>?, _ keyPath: UnsafePointer<CChar>?, _ body: UnsafePointer<CChar>?, _ n: Int, _ done: DmTelemetryDoneFn) {
     let originText = dmDiagCString(origin) ?? "", keyFile = dmDiagCString(keyPath), payload = body.map { Data(bytes: $0, count: n) } ?? Data()
     dmTelemetryJob.lock.lock(); defer { dmTelemetryJob.lock.unlock() }
+    let box = DmTelemetryFn(net: nil, send: done)
     dmTelemetryJob.task = Task.detached(priority: .utility) {
-        func finish(_ r: DmDiagResult) { r.detail.withCString { done(token, r.outcome.rawValue, $0, r.retryAfter) } }
+        func finish(_ r: DmDiagResult) { r.detail.withCString { box.send?(token, r.outcome.rawValue, $0, r.retryAfter) } }
         guard let up = DmDiagUploader(origin: originText, apiBase: "telemetry/v1/") else { finish(DmDiagResult(outcome: .configuration, detail: "origin")); return }
         let key: Curve25519.Signing.PrivateKey
         do { key = try dmTelemetryStore(keyFile).loadOrCreate() } catch { finish(DmDiagResult(outcome: .prepare, detail: "identity")); return }
