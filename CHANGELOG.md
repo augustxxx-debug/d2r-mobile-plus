@@ -6,6 +6,11 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Unreleased]
 
+RC2 merges the iOS and Android lines: one tree, and both packages come from the same commit.
+
+- **Android, from the iOS line**: the "Join the community" box (pause menu, main menu, Options → Custom → About); the pause menu has the same rows in touch and controller mode; Game Difficulty moves to Options → Gameplay; the touch portal badge counts only tomes and scrolls a press can use; auto-potion no longer overwrites a portal press in the same tick.
+- **iOS, from the Android line**: the shared loading page for first-time preparation; the PLUS app icon.
+- **Android**: when the game's version manifest is too small the failure page now says the files are incomplete instead of naming the wrong version; the permission prompt also takes confirm and Enter keys.
 - **Free Town Portal is on by default** (user, 2026-10-30; both platforms): new installs and settings files without the key start with it on. A settings file that already holds it off stays off: RC1.2 and Android 1.0.1 / 1.0.2 wrote every key on save, so a player who changed any option there keeps it off until they turn it on in Options → Custom.
 
 ## [1.0.0-rc1.2] - 2026-10-30
