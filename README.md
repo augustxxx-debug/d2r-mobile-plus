@@ -141,6 +141,15 @@ See [build and verification notes](docs/PLUS.md) for other checks and limitation
 
 "Join the community" in the pause menu, on the front-end main menu and at the end of the Custom options page opens one in-game box: one card per channel, each with its own Copy: the Chinese UI shows the QQ group and the website, other languages the website and GitHub; the footer holds the version and credits. All of them come from the `community` field of the remote version file (sample: `docs/community_manifest.sample.json`); without that field the entry is hidden. Only the group and the repository address are shown, never any personal contact.
 
+## Save management
+
+Options → Custom → "Save Management" on the front end (greyed in a run; a new install with no characters gets "Import Saves" on the class-select page). Touch and controller both work.
+
+- **Export**: pick characters, shared stashes and optionally settings (key bindings, filter rules, gameplay switches); the result is one ZIP with `manifest.json`, the original files and a SHA-256 per file. The same package moves between iOS, iPad, Android and Mac.
+- **Import**: the package is checked and previewed first. Each character with a clashing name can be overwritten, kept as a second copy or skipped; characters only on this device stay. After confirming, the game closes; the next start backs up automatically and swaps the whole save in atomically. If any step fails the save is unchanged.
+- **Backups**: the 10 newest are kept, starred ones are never removed, any can be restored. Backups stay in the app's own data (`<save folder>.backups/`) and are removed with the app; on Android, a second copy goes to `Download/S2X/D2R Mobile Plus/SaveBackups/`.
+- **Limits**: the checks catch accidental damage, not tampering, and online play does not trust imported saves. Co-op characters (`save.coop/`) are never exported or backed up, and a package carrying co-op data is refused as a whole. Graphics, experimental, iCloud and language settings do not travel. With iCloud on, imported data uploads with local as authoritative and the cloud copy goes to the sync backup; restoring an old shared stash may merge extra items back on another device.
+
 ## Notification example
 
 The frame is generated from the game’s button artwork, preserving its decorative ends. The wider text area accommodates longer English notifications.
