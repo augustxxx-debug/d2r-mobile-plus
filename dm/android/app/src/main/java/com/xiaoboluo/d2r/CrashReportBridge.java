@@ -37,12 +37,14 @@ final class CrashReportBridge {
                 // 普通启动不拉清单（DmActivity），这里现拉一次看总开关；拉不到沿用缓存 | a normal start fetches no manifest, so fetch one here for the server switch; not fetched = the cache
                 nativeManifest(DiagUploadClient.fetchManifest(CommunityFetch.urls(BuildConfig.DM_UPDATE_URLS), CommunityFetch.urlConnection("D2RMobilePlus-Android/" + BuildConfig.VERSION_NAME)));
                 if (nativePaused(System.currentTimeMillis() / 1000)) r = new DiagUploadClient.Result(DiagUploadClient.MAINTENANCE, "switch_off", 0, 0);
-                else r = DiagUploadClient.attempt(new File(dir), DiagUploadClient.urlConnection(BuildConfig.DM_DIAGNOSTIC_ORIGIN, "D2R-Mobile-Plus-Diagnostics/1"), seed, meta, col);
+                else r = DiagUploadClient.attempt(new File(dir), DiagUploadClient.urlConnection(BuildConfig.DM_DIAGNOSTIC_ORIGIN, "D2R-Mobile-Plus-Diagnostics/1"), seed, meta, col, metered());
             } catch (IOException e) { r = new DiagUploadClient.Result(DiagUploadClient.PREPARE, e.getMessage() != null && e.getMessage().startsWith("key_") ? e.getMessage() : "identity", 0, 0); }
             nativeResult(token, r.outcome, r.detail, r.flags, r.retryAfter);
         }, "dm-crash-report");
         t.setPriority(Thread.MIN_PRIORITY); t.start();
     }
+    // 计量网络（蜂窝等）只发摘要版；读不出来按计量算，只会少发 | metered networks (cellular etc.) only get the summary; unreadable counts as metered, which only sends less
+    private static boolean metered() { try { android.net.ConnectivityManager cm = app.getSystemService(android.net.ConnectivityManager.class); return cm == null || cm.isActiveNetworkMetered(); } catch (RuntimeException e) { return true; } }
     private static String collect(String fence) throws IOException {
         File out = new File(app.getCacheDir(), "crash_report_build.txt");
         try {

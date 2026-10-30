@@ -50,7 +50,7 @@ public class DiagUploadClientTest {
         byte[] payload = java.util.Base64.getUrlDecoder().decode(f(body, "payload")); String ps = new String(payload, StandardCharsets.UTF_8);
         check(ps.startsWith("{\"log\":\"") && ps.endsWith("},\"schema\":1}"), "payload shape " + ps);
         for (String k : new String[] { "app_version", "build", "source_revision", "model", "os_version", "locale" }) check(ps.contains("\"" + k + "\":"), "metadata " + k);
-        check(DiagUploadClient.logOf(payload).equals("fence cause=crash\n日志\t\"quoted\"\\back\nlast"), "log round trip");
+        check(DiagUploadClient.logOf(payload).equals("D2R Mobile Plus crash report (automatic, full)\n日志\t\"quoted\"\\back\nlast"), "log round trip, first line names the kind");
         check(new String(DiagUploadClient.transcript(CHALLENGE, f(body, "upload_id"), payload), StandardCharsets.UTF_8).startsWith("D2R-DIAGNOSTICS-V1\n" + CHALLENGE + "\n" + f(body, "upload_id") + "\n"), "transcript");
         check(f(body, "signature").equals(DiagUploadClient.b64(Ed25519Lite.sign(seed, DiagUploadClient.transcript(CHALLENGE, f(body, "upload_id"), payload)))), "signature over the exact transcript");
         // 丢响应：盘上留着、标可能已送达；下次同 ID 同载荷，不再收集 | lost response: kept, flagged; next time same id and payload, no collection
@@ -60,10 +60,10 @@ public class DiagUploadClientTest {
         h = new Fake(); h.script.add(challenge()); h.script.add(receipt(true)); r = DiagUploadClient.attempt(dir, h, seed, meta, () -> { throw new AssertionError("must not collect"); });
         check(r.outcome == DiagUploadClient.OK && (r.flags & DiagUploadClient.F_DUPLICATE) != 0, "duplicate ok"); check(f(h.posts.get(0), "upload_id").equals(saved.id) && java.util.Arrays.equals(java.util.Base64.getUrlDecoder().decode(f(h.posts.get(0), "payload")), saved.payload), "same id and bytes");
         // 413：从盘上载荷缩小（留头尾）、新 ID、不再收集 | 413: shrink from the stored payload, keep head and tail, new id
-        wipe(dir); String big = "HEAD-MARK\n" + "x".repeat(100000) + "\nTAIL-MARK"; h = new Fake(); h.script.add(challenge()); h.script.add(reply(413, "{\"error\":\"payload_too_large\"}", 0)); h.script.add(challenge()); h.script.add(receipt(false)); collects[0] = 0;
+        wipe(dir); String big = "first line\nHEAD-MARK\n" + "x".repeat(100000) + "\nTAIL-MARK"; h = new Fake(); h.script.add(challenge()); h.script.add(reply(413, "{\"error\":\"payload_too_large\"}", 0)); h.script.add(challenge()); h.script.add(receipt(false)); collects[0] = 0;
         r = DiagUploadClient.attempt(dir, h, seed, meta, () -> { collects[0]++; return big; });
         check(r.outcome == DiagUploadClient.OK && collects[0] == 1, "shrunk"); byte[] p2 = java.util.Base64.getUrlDecoder().decode(f(h.posts.get(1), "payload")); String l2 = DiagUploadClient.logOf(p2);
-        check(p2.length <= 60000 && l2.startsWith("HEAD-MARK") && l2.endsWith("TAIL-MARK"), "head and tail kept"); check(!f(h.posts.get(0), "upload_id").equals(f(h.posts.get(1), "upload_id")), "new id after 413");
+        check(p2.length <= 60000 && l2.contains("HEAD-MARK") && l2.endsWith("TAIL-MARK"), "head and tail kept"); check(!f(h.posts.get(0), "upload_id").equals(f(h.posts.get(1), "upload_id")), "new id after 413");
         // 归类 | classification
         Object[][] table = { { 429, "rate_limited", 120, DiagUploadClient.RATE_LIMITED }, { 503, "diagnostic_maintenance", 90, DiagUploadClient.MAINTENANCE }, { 400, "invalid_metadata", 0, DiagUploadClient.REJECTED }, { 409, "upload_conflict", 0, DiagUploadClient.CONFLICT }, { 500, "request_failed", 0, DiagUploadClient.UNCONFIRMED }, { 503, "storage_capacity", 60, DiagUploadClient.UNAVAILABLE } };
         for (Object[] t : table) { wipe(dir); h = new Fake(); h.script.add(challenge()); h.script.add(reply((Integer) t[0], "{\"error\":\"" + t[1] + "\"}", (Integer) t[2])); r = DiagUploadClient.attempt(dir, h, seed, meta, c); check(r.outcome == (Integer) t[3] && r.detail.equals(t[1]), "class " + t[0] + " got " + r.outcome); if ((Integer) t[2] > 0) check(r.retryAfter == (Integer) t[2], "retry after " + t[0]); }
@@ -71,6 +71,15 @@ public class DiagUploadClientTest {
         h = new Fake(); h.script.add(reply(503, "{\"error\":\"diagnostic_maintenance\"}", 30)); r = DiagUploadClient.attempt(dir, h, seed, meta, c); check(r.outcome == DiagUploadClient.MAINTENANCE && r.retryAfter == 30, "challenge maintenance");
         // 地址规则：只许 https 根地址；回环只给调试包 | origin rules
         check(DiagUploadClient.validOrigin("https://diag.example.invalid", false) && !DiagUploadClient.validOrigin("http://diag.example.invalid", true) && !DiagUploadClient.validOrigin("https://diag.example.invalid/x", false) && !DiagUploadClient.validOrigin("", true) && !DiagUploadClient.validOrigin(null, true) && !DiagUploadClient.validOrigin("http://127.0.0.1:9", false) && DiagUploadClient.validOrigin("http://127.0.0.1:9", true), "origin rules");
+        // 蜂窝：摘要 ≤ 16 KiB、第一行标 summary；到了不再发；Wi-Fi 上完整版 summary_of、不同 ID；丢响应后蜂窝不发摘要 | metered: summary; nothing more once arrived; full on Wi-Fi with summary_of and another id; after a lost response no summary on metered
+        wipe(dir); StringBuilder lg = new StringBuilder("D2R Mobile Plus crash report (automatic)\nfence cause=crash\n"); for (int i = 0; i < 4000; i++) lg.append("line ").append(i).append(" of the log\n"); String longLog = lg.toString();
+        h = new Fake(); h.script.add(challenge()); h.script.add(receipt(false)); r = DiagUploadClient.attempt(dir, h, seed, meta, () -> longLog, true); check(r.outcome == DiagUploadClient.SUMMARY_SENT, "summary sent " + r.outcome);
+        byte[] sp = java.util.Base64.getUrlDecoder().decode(f(h.posts.get(0), "payload")); String sl = DiagUploadClient.logOf(sp), sid = f(h.posts.get(0), "upload_id");
+        check(sp.length <= 16 * 1024 && sl.startsWith("D2R Mobile Plus crash report (automatic, summary)\nfence cause=crash") && !sl.contains("line 3999"), "summary shape " + sp.length);
+        h = new Fake(); r = DiagUploadClient.attempt(dir, h, seed, meta, () -> "x", true); check(r.outcome == DiagUploadClient.WAIT_WIFI && h.requests == 0, "metered after the summary: no request");
+        h = new Fake(); h.script.add(challenge()); h.script.add(receipt(false)); r = DiagUploadClient.attempt(dir, h, seed, meta, () -> "x", false); byte[] fp = java.util.Base64.getUrlDecoder().decode(f(h.posts.get(0), "payload")); String fl = DiagUploadClient.logOf(fp);
+        check(r.outcome == DiagUploadClient.OK && fl.startsWith("D2R Mobile Plus crash report (automatic, full) summary_of=" + sid + "\n") && fl.contains("line 3999") && !f(h.posts.get(0), "upload_id").equals(sid), "full on Wi-Fi");
+        wipe(dir); h = new Fake(); h.script.add(challenge()); h.script.add((m, p, b) -> { throw new SocketTimeoutException("t"); }); DiagUploadClient.attempt(dir, h, seed, meta, () -> "log", false); h = new Fake(); r = DiagUploadClient.attempt(dir, h, seed, meta, () -> "x", true); check(r.outcome == DiagUploadClient.WAIT_WIFI && h.requests == 0, "maybe delivered: wait for Wi-Fi");
         // 总开关暂停：只打包、零请求；恢复后发同一份；清单按序拉、拉不到返回 null | server switch paused: pack only, zero requests; the same report on resume; manifests in order, null when none
         wipe(dir); int[] packs = { 0 }; DiagUploadClient.prepare(dir, meta, () -> { packs[0]++; return "packed while paused"; }); DiagUploadClient.prepare(dir, meta, () -> { packs[0]++; return "again"; });
         DiagUploadClient.Report held = DiagUploadClient.load(dir); check(packs[0] == 1 && held != null, "packed once");

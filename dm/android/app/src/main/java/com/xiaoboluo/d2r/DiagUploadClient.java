@@ -36,7 +36,7 @@ import javax.net.ssl.SSLException;
 //   Only two automatic bounded steps: one fresh challenge after challenge_rejected; up to 3 smaller re-packs after a 413 (trimming the stored payload, since the log files may have rotated). No redirects, no cache.
 //   Exactly six metadata fields; the server's model rule only knows Apple models, so Android sends unknown (the real model is in the log head); os_version must contain a dot (14 → 14.0). The 32-byte private seed lives in the no-backup directory, 0600, never logged, not backed up.
 final class DiagUploadClient {
-    static final int OK = 1, UNCONFIRMED = 2, UNAVAILABLE = 3, MAINTENANCE = 4, RATE_LIMITED = 5, TOO_LARGE = 6, REJECTED = 7, CONFLICT = 8, PREPARE = 9, CONFIG = 10;
+    static final int OK = 1, UNCONFIRMED = 2, UNAVAILABLE = 3, MAINTENANCE = 4, RATE_LIMITED = 5, TOO_LARGE = 6, REJECTED = 7, CONFLICT = 8, PREPARE = 9, CONFIG = 10, SUMMARY_SENT = 11, WAIT_WIFI = 12;
     static final int F_DUPLICATE = 1, F_MAYBE = 2;
     static final int PACK_LIMIT = 256 * 1024, HEAD_KEEP = 16 * 1024;
     private static final int MAX_REPLY = 16 * 1024, TIMEOUT_MS = 15000;
@@ -93,6 +93,21 @@ final class DiagUploadClient {
         return Pattern.compile("(?i)(?<![0-9A-Za-z:])(?:(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?::[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*|[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*::)(?![0-9A-Za-z:])").matcher(t).replaceAll("<ip>");
     }
 
+    // ---- 摘要版与完整版（iOS 版 DmCrashReportStore，看板 PRD §2.6） | summary and full report (iOS: DmCrashReportStore) ----
+    static String withFirstLine(String log, String first) { int nl = log.indexOf('\n'); return first + (nl >= 0 ? log.substring(nl) : ""); }
+    static byte[] withLog(byte[] payload, String log) {   // 换日志、元数据原样（jsonString 转义了引号，这个分界不会出现在日志里） | swap the log, metadata untouched (jsonString escapes quotes, so this boundary cannot occur inside the log)
+        String s = new String(payload, StandardCharsets.UTF_8); int e = s.indexOf("\",\"metadata\":"); return ("{\"log\":" + jsonString(log) + s.substring(e + 1)).getBytes(StandardCharsets.UTF_8);
+    }
+    static Report makeSummary(Report full) {
+        String log = logOf(full.payload); if (log == null) return null;
+        byte[] u = log.getBytes(StandardCharsets.UTF_8); int n = Math.min(u.length, 16 * 1024 - 1024); while (n > 0 && u[n - 1] != '\n') n--; if (n == 0) n = Math.min(u.length, 1024);
+        return new Report(newId(), withLog(full.payload, withFirstLine(new String(u, 0, n, StandardCharsets.UTF_8), "D2R Mobile Plus crash report (automatic, summary)")), false);
+    }
+    static boolean summaryDone(File dir) { try { File f = new File(dir, "dm_crash_report.summary.id"); return f.isFile() && new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).contains("done=1"); } catch (IOException e) { return false; } }
+    private static void markSummaryDone(File dir, Report s) { try { writeAtomic(new File(dir, "dm_crash_report.summary.id"), (s.id + "\nmaybe=0\ndone=1\n").getBytes(StandardCharsets.UTF_8)); } catch (IOException e) { /* 下次再发一次摘要，服务端幂等 | the summary goes again next time, idempotent on the server */ } }
+    private static Report loadSummary(File dir) { try { File p = new File(dir, "dm_crash_report.summary.payload"), i = new File(dir, "dm_crash_report.summary.id"); if (!p.isFile() || !i.isFile()) return null; String[] l = new String(Files.readAllBytes(i.toPath()), StandardCharsets.UTF_8).split("\n"); return l[0].matches("[0-9a-f]{32}") ? new Report(l[0], Files.readAllBytes(p.toPath()), false) : null; } catch (IOException e) { return null; } }
+    private static void saveSummary(File dir, Report r) { try { writeAtomic(new File(dir, "dm_crash_report.summary.payload"), r.payload); writeAtomic(new File(dir, "dm_crash_report.summary.id"), (r.id + "\nmaybe=0\n").getBytes(StandardCharsets.UTF_8)); } catch (IOException e) { /* 重打一份 | packed again */ } }
+
     // ---- 盘上报告与私钥 | the report on disk and the private key ----
     private static void writeAtomic(File f, byte[] d) throws IOException { File t = new File(f.getPath() + ".tmp"); Files.write(t.toPath(), d); Files.move(t.toPath(), f.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE); }
     static Report load(File dir) {
@@ -129,8 +144,27 @@ final class DiagUploadClient {
     private static Result fail(int outcome, String detail, Report r, int retry) { boolean m = r != null && r.maybe; return new Result(m && outcome == UNAVAILABLE ? UNCONFIRMED : outcome, detail, m ? F_MAYBE : 0, retry); }
     private static String code(Response r, String dflt) { String c = field(r.body, "error"); return c != null && c.matches("[a-z0-9_]{1,64}") ? c : dflt; }
     private static int retryAfter(Response r) { int v = r.retryAfter; if (v <= 0) { String f = field(r.body, "retry_after"); if (f != null && f.matches("[0-9]{1,6}")) v = Integer.parseInt(f); } return v <= 0 ? 60 : Math.min(v, 3600); }
-    static Result attempt(File dir, Http http, byte[] seed, Map<String, String> metadata, Collect collect) {
-        Report report = load(dir); int budget = PACK_LIMIT, shrinks = 0; boolean refetched = false;
+    static Result attempt(File dir, Http http, byte[] seed, Map<String, String> metadata, Collect collect) { return attempt(dir, http, seed, metadata, collect, false); }
+    // metered：蜂窝只发摘要版；摘要已到或完整版可能已到就等 Wi-Fi | metered: the summary only; wait for Wi-Fi once it arrived or the full report may have
+    static Result attempt(File dir, Http http, byte[] seed, Map<String, String> metadata, Collect collect, boolean metered) {
+        try { prepare(dir, metadata, collect); } catch (IOException e) { return fail(PREPARE, "collect", null, 0); }
+        Report full = load(dir); if (full == null) return fail(PREPARE, "collect", null, 0);
+        if (metered) {
+            if (summaryDone(dir) || full.maybe) return new Result(WAIT_WIFI, "wifi", 0, 0);
+            Report sum = loadSummary(dir); if (sum == null) { sum = makeSummary(full); if (sum == null) return fail(PREPARE, "summary", null, 0); saveSummary(dir, sum); }
+            Result r = send(http, seed, metadata, sum, null, s -> saveSummary(dir, s), "summary");
+            if (r.outcome == OK) { markSummaryDone(dir, sum); return new Result(SUMMARY_SENT, r.detail, r.flags, 0); }
+            return r;
+        }
+        if (!full.maybe) {   // 第一行：没发过才改（同一 upload_id 载荷必须不变） | the first line: changed only before any send (one upload_id keeps one payload)
+            Report s = summaryDone(dir) ? loadSummary(dir) : null; String log = logOf(full.payload);
+            if (log != null) { byte[] p = withLog(full.payload, withFirstLine(log, "D2R Mobile Plus crash report (automatic, full)" + (s != null ? " summary_of=" + s.id : ""))); if (!java.util.Arrays.equals(p, full.payload)) { full = new Report(full.id, p, false); save(dir, full); } }
+        }
+        return send(http, seed, metadata, full, collect, s -> save(dir, s), "full");
+    }
+    interface Saver { void save(Report r); }
+    private static Result send(Http http, byte[] seed, Map<String, String> metadata, Report report, Collect collect, Saver saver, String kind) {
+        int budget = PACK_LIMIT, shrinks = 0; boolean refetched = false;
         try {
             while (true) {
                 Response ch;
@@ -141,21 +175,21 @@ final class DiagUploadClient {
                 int limit = Math.min(Integer.parseInt(maxS), budget);
                 if (report == null || report.payload.length > limit) {
                     if (report != null && report.maybe) return fail(TOO_LARGE, "limit_shrank", report, 0);   // 上次可能已送达：不换 ID 另发一份 | maybe delivered: no second copy under a new ID
-                    String text = report != null ? logOf(report.payload) : collect.text();
+                    String text = logOf(report.payload);
                     if (text == null) return fail(PREPARE, "collect", report, 0);
                     report = null;
                     for (int cap = limit; cap >= 2048; cap = cap * 3 / 4) { byte[] p = payload(metadata, trim(text, cap)); if (p.length <= limit) { report = new Report(newId(), p, false); break; } }
                     if (report == null) return fail(TOO_LARGE, "local_limit", null, 0);
-                    save(dir, report);
+                    saver.save(report);
                 }
                 byte[] sig = Ed25519Lite.sign(seed, transcript(challenge, report.id, report.payload));
                 byte[] body = ("{\"challenge\":\"" + challenge + "\",\"payload\":\"" + b64(report.payload) + "\",\"public_key\":\"" + b64(Ed25519Lite.publicKey(seed)) + "\",\"signature\":\"" + b64(sig) + "\",\"upload_id\":\"" + report.id + "\"}").getBytes(StandardCharsets.UTF_8);
                 Response r;
                 try { r = http.send("POST", "reports", body); }
-                catch (IOException e) { String why = notSent(e); if (why != null) return fail(UNAVAILABLE, why, report, 0); report.maybe = true; save(dir, report); return fail(UNCONFIRMED, e instanceof SocketTimeoutException ? "timeout" : "response_lost", report, 0); }
+                catch (IOException e) { String why = notSent(e); if (why != null) return fail(UNAVAILABLE, why, report, 0); report.maybe = true; saver.save(report); return fail(UNCONFIRMED, e instanceof SocketTimeoutException ? "timeout" : "response_lost", report, 0); }
                 if (r.code == 200 || r.code == 201) {
                     String id = field(r.body, "report_id"), dup = field(r.body, "duplicate");
-                    if (id == null || !id.matches("[0-9a-f]{32}") || dup == null) { report.maybe = true; save(dir, report); return fail(UNCONFIRMED, "bad_receipt", report, 0); }
+                    if (id == null || !id.matches("[0-9a-f]{32}") || dup == null) { report.maybe = true; saver.save(report); return fail(UNCONFIRMED, "bad_receipt", report, 0); }
                     return new Result(OK, id, "true".equals(dup) ? F_DUPLICATE : 0, 0);
                 }
                 String c = code(r, "http_" + r.code);
@@ -168,10 +202,10 @@ final class DiagUploadClient {
                 if (r.code == 429) return fail(RATE_LIMITED, c, report, retryAfter(r));
                 if (r.code == 503 && c.equals("diagnostic_maintenance")) return fail(MAINTENANCE, c, report, retryAfter(r));
                 if (r.code == 503 && field(r.body, "error") != null) return fail(UNAVAILABLE, c, report, retryAfter(r));
-                if (r.code >= 500) { report.maybe = true; save(dir, report); return fail(UNCONFIRMED, c, report, 0); }   // 网关 / 500：请求可能已处理 | gateway / 500: the request may have been processed
+                if (r.code >= 500) { report.maybe = true; saver.save(report); return fail(UNCONFIRMED, c, report, 0); }   // 网关 / 500：请求可能已处理 | gateway / 500: the request may have been processed
                 return fail(REJECTED, c, report, 0);
             }
-        } catch (IOException e) { return fail(PREPARE, "collect", report, 0); }
+        } catch (RuntimeException e) { return fail(PREPARE, kind, report, 0); }
     }
 
     // 真正的 HTTP：只许 https（调试包可 http://127.0.0.1）、不带路径 / 账号 / 查询；不跟跳转、不用缓存；回复最多读 16 KiB | the real HTTP: https only (debug may use loopback), no path / credentials / query; no redirects, no cache; replies capped at 16 KiB
