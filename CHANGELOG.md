@@ -9,9 +9,9 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 RC2 merges the iOS and Android lines: one tree, and both packages come from the same commit.
 
 - **Android, from the iOS line**: the "Join the community" box (pause menu, main menu, Options → Custom → About); the pause menu has the same rows in touch and controller mode; Game Difficulty moves to Options → Gameplay; the touch portal badge counts only tomes and scrolls a press can use; auto-potion no longer overwrites a portal press in the same tick.
-- **iOS, from the Android line**: the shared loading page for first-time preparation; the PLUS app icon.
+- **iOS, from the Android line**: the shared loading page for first-time preparation; the PLUS app icon; after a failed audio resume the sound card is reopened every 1.5 seconds; the D-pad hints under the belt in controller mode sit higher so they are fully visible; the frame-rate display uses the sampling shared by both platforms (1-second window, at most 2 updates a second); diagnostics redact CJK character names; the UI font replaces only code points the game font already has.
 - **Android**: when the game's version manifest is too small the failure page now says the files are incomplete instead of naming the wrong version; the permission prompt also takes confirm and Enter keys.
-- **Free Town Portal is on by default** (user, 2026-10-30; both platforms): new installs and settings files without the key start with it on. A settings file that already holds it off stays off: RC1.2 and Android 1.0.1 / 1.0.2 wrote every key on save, so a player who changed any option there keeps it off until they turn it on in Options → Custom.
+- **Free Town Portal is on by default** (user, 2026-10-30; both platforms): new installs start with it on, and settings from RC1.2 and Android 1.0.1 / 1.0.2 are moved to on once when you upgrade. Those versions saved every option, so an old "off" cannot be told from the old default; if you had turned it off on purpose, turn it off again in Options → Custom and it stays off.
 
 ## [1.0.0-rc1.2] - 2026-10-30
 
