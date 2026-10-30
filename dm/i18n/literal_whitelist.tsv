@@ -116,7 +116,7 @@ ios/tools/drop_light.py	掉落光变体：	构建期生成数量统计，仅写�
 host/dm_custom.c	设置文件还没法读	崩溃围栏关实验项的说明，只拼进日志行（dm_crashfence.c LOG）
 host/dm_custom.c	120 帧档 → 60	同上，只进日志
 host/dm_custom.c	光追阴影 → 关	同上，只进日志
-host/dm_custom.c	MetalFX 空间超分 → 关	同上，只进日志
+host/dm_custom.c	空间超分 → 关	同上，只进日志
 host/dm_custom.c	=、	同上：日志里各项之间的分隔
 host/dm_custom.c	实验性功能本来都关着	同上，只进日志
 host/hle_lifecycle.c	@dm_crashfence_clean	崩溃围栏清标记的原因，只进日志
