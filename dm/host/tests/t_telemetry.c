@@ -98,6 +98,8 @@ int main(void) {
     dm_telemetry_result(f_tok, DM_DIAGUP_OK, "ok", 0); dm_telemetry_tick(9, 1009, 1); CHECK(dm_telemetry_state(&q, 0, 0) == DM_TE_IDLE && q == 0);
     launch(0, 2000); dm_telemetry_tick(1, 2001, 1); CHECK(S.seq == 2 && S.prev_session[0] && strstr(S.q[0].json, "\"seq\":2,") && strstr(S.q[0].json, "\"prev_exit\":\"normal\"") && strstr(S.q[0].json, "\"prev_session_id\":"));
 
+    // 这次启动里才打开：mono_s 从启动算 | turned on during this launch: mono_s counts from the launch
+    wipe(); f_stats = 0; launch(100, 1000); f_stats = 1; dm_telemetry_setting_changed(1); dm_telemetry_tick(130, 1030, 1); CHECK(S.qn == 1 && strstr(S.q[0].json, "\"mono_s\":30,"));
     // ④ 关闭清队列、状态、身份；重开 seq 从 1 起；此后零请求 | off clears queue, state and identity; seq restarts from 1; zero requests afterwards
     reset_counts(); dm_telemetry_setting_changed(0); CHECK(dm_telemetry_state(&q, 0, 0) == DM_TE_OFF && q == 0 && f_forgets == 1 && !exists("dm_tele_queue.tsv") && !exists("dm_tele_state.txt"));
     dm_telemetry_tick(100, 3000, 1); CHECK(f_probes == 0 && f_sends == 0);

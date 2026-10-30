@@ -272,7 +272,8 @@ static void on_result(double now, long long wall, int o, const char *detail, int
     if (S.qn) { S.st = DM_TE_WAIT; S.next_mono = now + NEXT_BATCH_S; } else S.st = DM_TE_IDLE;
 }
 void dm_telemetry_boot(double now, long long wall) {
-    S.booted = 1; S.boot_mono = now; S.st = DM_TE_OFF;
+    S.booted = 1; if (!S.boot_mono) S.boot_mono = now; S.st = DM_TE_OFF;   // 这次启动里才打开：mono_s 仍从启动算 | turned on during this launch: mono_s still counts from the launch
+   
     if (!dm_custom_tel_stats()) {
         char p[1100]; if (path(p, sizeof p, "dm_tele_state.txt") && access(p, F_OK) == 0) { files_drop(); if (g_shell && g_shell->forget_identity) g_shell->forget_identity(); LOG("统计上报：关，删掉遗留的队列与状态"); }
         else LOG("统计上报：关（不收集、不联网）"); return; }
