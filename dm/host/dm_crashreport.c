@@ -69,6 +69,7 @@ void dm_crashreport_switch(int present, int enabled, long long until, const char
     char p[1100], t[1120]; if (!sw_path(p, sizeof p)) return; snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); if (!f) return;   // 先写临时文件再换名 | temp file, then rename
     int ok = fprintf(f, "enabled=%d\npause_until=%lld\n", on, on ? 0LL : until) > 0; ok = fclose(f) == 0 && ok; if (ok) rename(t, p); else unlink(t);
 }
+int dm_crashreport_switch_seen(void) { return atomic_load(&g_sw_seen); }
 int dm_crashreport_switch_paused(long long wall) { long long u = atomic_load(&g_sw_until); return !atomic_load(&g_sw_on) && (u <= 0 || wall < u); }
 
 static int state_read(void) {

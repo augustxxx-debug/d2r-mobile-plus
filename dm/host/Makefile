@@ -52,6 +52,8 @@ SRC=\
 	dm_community.c \
 	dm_diagup.c \
 	dm_crashreport.c \
+	dm_telemetry.c \
+	dm_telebox.c \
 	dm_cursor.c \
 	dm_cursor_item.c \
 	dm_custom.c \

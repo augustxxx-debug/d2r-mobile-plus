@@ -36,6 +36,7 @@ void dm_crashreport_setting_changed(int on);                     // 玩家点了
 void dm_crashreport_switch(int present, int enabled, long long pause_until, const char *reason);   // 拉到合法清单（任意线程）：present = 0 没有 telemetry 字段（= 开） | a valid manifest arrived (any thread): present = 0 means no telemetry field (= on)
 void dm_crashreport_switch_no_fetch(void);   // 这次拉不到（任意线程）：沿用缓存，不再等 | not fetched this time (any thread): keep the cache, stop waiting
 int dm_crashreport_switch_paused(long long wall);   // 此刻是否被总开关暂停 | whether the server switch pauses uploads right now
+int dm_crashreport_switch_seen(void);   // 这次启动已拉过清单（成败都算） | this launch's manifest fetch finished (either way)
 const char *dm_crashreport_note(void);                           // 选角页那一行的表键（dmCrashReportSent / dmCrashReportFailed），没有返回 NULL；第一次取到开始计 20 秒 | table key for the select-page line, NULL if none; the first call starts the 20 s
 const char *dm_crashreport_note_arg(void);                       // 那一行的参数（报告编号前 8 位） | its argument (first 8 characters of the report number)
 
