@@ -10,6 +10,7 @@
 //   No upload origin (none injected by the build) or the test switch DM_TEST_SHARELOG_CLOSE: Share Diagnostics exports directly as before (original path unchanged).
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
 
 enum {   // 与 dm_diag_upload.swift DmDiagOutcome 一致 | kept in step with DmDiagOutcome in dm_diag_upload.swift
     DM_DIAGUP_CANCELLED = 0, DM_DIAGUP_OK = 1, DM_DIAGUP_UNCONFIRMED = 2, DM_DIAGUP_UNAVAILABLE = 3, DM_DIAGUP_MAINTENANCE = 4, DM_DIAGUP_RATE_LIMITED = 5,
@@ -35,8 +36,8 @@ int dm_diagup_shown(void);                             // 提示框显示着 | t
 // 弹窗吞输入（同社区入口 dm_community.c，用户 RC1.1 判过的阻塞项）：开着时触屏的抬起只给框里的按钮，其余吞掉；手柄键与两根摇杆全不交给游戏，关框后按着的东西松开前也不交 | modal input (as the community box): while up, a touch lift only reaches the box's buttons and everything else is swallowed; controller keys and both sticks never reach the game, not even until released after the box closes
 int dm_diagup_modal(void);
 int dm_diagup_hit_answer(void);
-void dm_diagup_ui_tap(unsigned long long root, int x, int y);
-void dm_diagup_input_gate(unsigned long long *bt, int *lx, int *ly, int *rx, int *ry);
+void dm_diagup_ui_tap(uint64_t root, int x, int y);
+void dm_diagup_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);
 void dm_diagup_input_leak(int leaked);
 // 「自动上报崩溃」第一次打开时的确认框（选项 → 自定义，dm_custom.c）：同一个框的另一页。答复调 cb(1 同意 / 0 不开启)；构建没配地址时只说明、只有「关闭」，答 0 | the first-enable consent box for automatic crash reports: another page of the same box. Answers through cb(1 agree / 0 no); without an origin it only explains, Close only, answers 0
 void dm_diagup_consent_open(void (*cb)(int yes));
