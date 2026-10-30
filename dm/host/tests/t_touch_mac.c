@@ -1,5 +1,6 @@
 #include "t_uiscreen_fixture.h"
 #include <stdio.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 #include "../dm.h"
 #define dm_ui_item_at_now test_ui_item_at_now
@@ -184,7 +185,8 @@ static void test_live_hover(void) {
 
 int main(void) {
     const char *path = "build/touch_host.script";
-    FILE *f = fopen(path, "w"); if (!f) return 2;
+    mkdir("build", 0755);   // 干净快照里没有这个目录（内审 I-11）| a clean snapshot does not have this directory (internal audit I-11)
+    FILE *f = fopen(path, "w"); if (!f) { perror(path); return 2; }
     fputs("0 down 0 90,1220\n0.1 move 0 150,1220\n2.1 up 0\n", f); fclose(f);
     setenv("DM_TOUCH_SCRIPT", path, 1); unsetenv("DM_TOUCH_TEST_DROP");
     uint64_t b = 0; int32_t lx = 0, ly = 0, rx = 0, ry = 0;
