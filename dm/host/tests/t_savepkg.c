@@ -1,0 +1,178 @@
+// 存档包单测（秒级）：dm_savepkg.c。夹具全是这里造的假角色，不含真实存档。覆盖 manifest 往返、校验、路径穿越、恶意 ZIP、版本规则、换入的每个中断点、合并、备份保留、跨端差异。
+// Save package unit test (takes seconds): dm_savepkg.c. Fixtures are fake characters built here, no real saves. Covers manifest round trips, validation, traversal, malicious ZIPs, version rules, every interruption point of apply, merging, backup retention, cross-platform differences.
+#include "dm_savepkg.h"
+#include <CommonCrypto/CommonDigest.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <sys/xattr.h>
+#include <time.h>
+#include <unistd.h>
+
+static int fails, checks;
+#define CHECK(c, ...) do { checks++; if (!(c)) { fails++; printf("  ✗ %s:%d ", __func__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
+static char R[512];
+static const dm_pkg_source SRC = { "ios", "0123456789012345678901234567890123456789", "346", "1.1.0-rc2", "3.3.94012" };
+#define NOW 1793000000
+static void P(char *o, const char *a) { snprintf(o, 1024, "%s/%s", R, a); }
+static void mkparents(const char *p) { char d[1400]; strcpy(d, p); for (char *s = d + 1; (s = strchr(s, '/')); s++) { *s = 0; mkdir(d, 0755); *s = '/'; } }
+static void put(const char *rel, const void *d, size_t n) { char p[1024]; P(p, rel); mkparents(p); FILE *f = fopen(p, "wb"); fwrite(d, 1, n, f); fclose(f); }
+static void puts_(const char *rel, const char *t) { put(rel, t, strlen(t)); }
+static uint8_t *get(const char *rel, size_t *n) { char p[1024]; P(p, rel); FILE *f = fopen(p, "rb"); if (!f) return NULL; fseek(f, 0, SEEK_END); long L = ftell(f); fseek(f, 0, SEEK_SET); uint8_t *b = malloc((size_t)L + 1); fread(b, 1, (size_t)L, f); b[L] = 0; fclose(f); if (n) *n = (size_t)L; return b; }
+static int has(const char *rel) { char p[1024]; P(p, rel); struct stat st; return !lstat(p, &st); }
+static uint32_t ck(const uint8_t *b, size_t n) { uint32_t s = 0; for (size_t i = 0; i < n; i++) { s = (s << 1) | (s >> 31); s += i >= 12 && i < 16 ? 0 : b[i]; } return s; }
+static void mk_d2s(uint8_t *b, size_t n, const char *name, int cls, int lvl, int hc, uint32_t played) { memset(b, 0, n); uint32_t m = 0xaa55aa55, v = 0x69, sz = (uint32_t)n; memcpy(b, &m, 4); memcpy(b + 4, &v, 4); memcpy(b + 8, &sz, 4); b[0x14] = hc ? 0x24 : 0x20; b[0x18] = (uint8_t)cls; b[0x1b] = (uint8_t)lvl; memcpy(b + 0x20, &played, 4); strcpy((char *)b + 0x12b, name); uint32_t c = ck(b, n); memcpy(b + 12, &c, 4); }
+static void mk_char(const char *save, const char *name, int cls, int lvl, int hc, uint32_t played) {
+    uint8_t b[1024]; mk_d2s(b, sizeof b, name, cls, lvl, hc, played); char p[1024]; snprintf(p, sizeof p, "%s/%s/%s.d2s", save, name, name); put(p, b, sizeof b);
+    static const char *const ext[] = { "key", "ctl", "map", "ma0", "d2s.meta", "swpage", "swpouch", "sw_kills" }; for (size_t i = 0; i < 8; i++) { snprintf(p, sizeof p, "%s/%s/%s.%s", save, name, name, ext[i]); char t[64]; snprintf(t, sizeof t, "%s-%d-%s", ext[i], lvl, name); puts_(p, t); }
+}
+static void mk_save(const char *save) {
+    mk_char(save, "Alice", 1, 20, 0, 1000); mk_char(save, "法师", 3, 50, 1, 2000); char p[1024];
+    snprintf(p, sizeof p, "%s/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i", save); puts_(p, "stash-v1");
+    snprintf(p, sizeof p, "%s/ModernSharedStashSoftCoreV2.swvault", save); puts_(p, "vault-v1");
+    snprintf(p, sizeof p, "%s/Settings/Settings.json", save); puts_(p, "{\"Language\": 8,\n\"VoiceLanguage\": 8,\n\"Always Run\": 1}");
+    snprintf(p, sizeof p, "%s/Settings/Starter - Amz.fltr", save); puts_(p, "filter");
+    snprintf(p, sizeof p, "%s/sw_elysium.txt", save); puts_(p, "法师\n");
+    snprintf(p, sizeof p, "%s/_cloudinbox/1-1/mine.pack", save); puts_(p, "inbox");
+    snprintf(p, sizeof p, "%s/Alice 2/Alice 2.d2s", save); puts_(p, "icloud-conflict-copy");
+    snprintf(p, sizeof p, "%s/.Alice.pack.icloud", save); puts_(p, "placeholder");
+    snprintf(p, sizeof p, "%s/boot.txt", save); puts_(p, "log");
+}
+static int export_all(const char *save, const char *zip, int stash, int settings) { char t[1024], z[1024]; P(t, save); P(z, zip); dm_pkg_export_opts o; memset(&o, 0, sizeof o); o.nnames = -1; o.stash = stash; o.settings = settings; o.kind = "export"; o.now = NOW; return dm_savepkg_export(t, z, &o, &SRC); }
+static int inspect(const char *zip, const char *save, int restore, dm_pkg_view *v) { char z[1024], s[1024]; P(z, zip); P(s, save); return dm_savepkg_inspect(z, s, restore, v); }
+static int apply(const char *save) { char s[1024]; P(s, save); return dm_savepkg_apply_pending(s, NULL, NOW + 100, &SRC); }
+static int commit(const char *save, const dm_pkg_view *v) { char s[1024]; P(s, save); return dm_savepkg_stage_commit(s, v, NULL); }
+static dm_pkg_char *row(dm_pkg_view *v, const char *name) { for (int i = 0; i < v->nchars; i++) if (!strcmp(v->chars[i].name, name)) return &v->chars[i]; return NULL; }
+static void same_file(const char *a, const char *b) { size_t x = 0, y = 0; uint8_t *p = get(a, &x), *q = get(b, &y); CHECK(p && q && x == y && !memcmp(p, q, x), "%s 与 %s 不同", a, b); free(p); free(q); }
+
+// ---- 手工 ZIP（恶意样本用）| Hand-built ZIP (for malicious samples)
+typedef struct { const char *name; const uint8_t *d; uint32_t n; uint32_t flags, method, ext, made; uint32_t usize_override; int use_over; } ent;
+static uint32_t crc(const uint8_t *d, size_t n) { static uint32_t t[256]; if (!t[1]) for (uint32_t i = 0; i < 256; i++) { uint32_t c = i; for (int k = 0; k < 8; k++) c = c & 1 ? 0xedb88320u ^ (c >> 1) : c >> 1; t[i] = c; } uint32_t c = ~0u; for (size_t i = 0; i < n; i++) c = t[(c ^ d[i]) & 255] ^ (c >> 8); return ~c; }
+static void w16(FILE *f, uint32_t v) { fputc(v & 255, f); fputc((v >> 8) & 255, f); }
+static void w32(FILE *f, uint32_t v) { w16(f, v & 0xffff); w16(f, v >> 16); }
+static void mkzip(const char *rel, const ent *e, int n, int disk) {
+    char p[1024]; P(p, rel); mkparents(p); FILE *f = fopen(p, "wb"); uint32_t off[64];
+    for (int i = 0; i < n; i++) { off[i] = (uint32_t)ftell(f); size_t L = strlen(e[i].name); w32(f, 0x04034b50); w16(f, 20); w16(f, e[i].flags); w16(f, e[i].method); w16(f, 0); w16(f, 0x21); w32(f, crc(e[i].d, e[i].n)); w32(f, e[i].n); w32(f, e[i].use_over ? e[i].usize_override : e[i].n); w16(f, (uint32_t)L); w16(f, 0); fwrite(e[i].name, 1, L, f); fwrite(e[i].d, 1, e[i].n, f); }
+    uint32_t cd = (uint32_t)ftell(f); for (int i = 0; i < n; i++) { size_t L = strlen(e[i].name); w32(f, 0x02014b50); w16(f, e[i].made ? e[i].made : 20); w16(f, 20); w16(f, e[i].flags); w16(f, e[i].method); w16(f, 0); w16(f, 0x21); w32(f, crc(e[i].d, e[i].n)); w32(f, e[i].n); w32(f, e[i].use_over ? e[i].usize_override : e[i].n); w16(f, (uint32_t)L); w16(f, 0); w16(f, 0); w16(f, 0); w16(f, 0); w32(f, e[i].ext); w32(f, off[i]); fwrite(e[i].name, 1, L, f); }
+    uint32_t sz = (uint32_t)ftell(f) - cd; w32(f, 0x06054b50); w16(f, (uint32_t)disk); w16(f, 0); w16(f, (uint32_t)n); w16(f, (uint32_t)n); w32(f, sz); w32(f, cd); w16(f, 0); fclose(f);
+}
+static void sha(const void *d, size_t n, char o[65]) { uint8_t h[32]; CC_SHA256(d, (CC_LONG)n, h); for (int i = 0; i < 32; i++) sprintf(o + 2 * i, "%02x", h[i]); }
+// 造一个 manifest + 一个文件的包：path / content 可任意（路径穿越等）| one manifest + one file: path / content are arbitrary (traversal etc.)
+static void mkpkg(const char *rel, const char *path, const char *content, int major, int gen) { static char m[4096]; char h[65]; sha(content, strlen(content), h); snprintf(m, sizeof m, "{\"format\":\"d2rmp-saves\",\"format_major\":%d,\"format_minor\":0,\"save_gen\":%d,\"source\":{\"platform\":\"android\"},\"characters\":[],\"stash\":[],\"files\":[{\"path\":\"%s\",\"unit\":\"x\",\"size\":%zu,\"sha256\":\"%s\"}]}", major, gen, path, strlen(content), h); ent e[2] = { { .name = "manifest.json", .d = (const uint8_t *)m, .n = (uint32_t)strlen(m) }, { .name = path, .d = (const uint8_t *)content, .n = (uint32_t)strlen(content) } }; mkzip(rel, e, 2, 0); }
+static int pkg_rc(const char *path) { mkpkg("evil.zip", path, "x", 1, 2); dm_pkg_view v; mkdir(R, 0755); int rc = inspect("evil.zip", "ev", 0, &v); dm_savepkg_view_free(&v); return rc; }
+
+static void t_names(void) {
+    static const char *const ok[] = { "Alice", "法师", "Ab", "a-b", "a_b", "한글이름" }, *const bad[] = { "A", "abcdefghijklmnop", "-ab", "ab-", "a-b-c", "a_b-c", "a b", "a1b", "a/b", "a..b", "" };
+    for (size_t i = 0; i < 6; i++) CHECK(dm_savepkg_name_ok(ok[i]), "应合规 %s", ok[i]); for (size_t i = 0; i < 11; i++) CHECK(!dm_savepkg_name_ok(bad[i]), "应不合规 %s", bad[i]);
+    char o[64]; CHECK(dm_savepkg_keepboth_name("Alice", o, sizeof o, NULL, NULL) && !strcmp(o, "Alice-A"), "%s", o); CHECK(dm_savepkg_keepboth_name("a-b", o, sizeof o, NULL, NULL) && !strcmp(o, "a-bA"), "%s", o);
+    CHECK(dm_savepkg_keepboth_name("abcdefghijklmno", o, sizeof o, NULL, NULL) && !strcmp(o, "abcdefghijklm-A"), "%s", o); CHECK(dm_savepkg_keepboth_name("一二三四五", o, sizeof o, NULL, NULL) && dm_savepkg_name_ok(o) && strlen(o) <= 15, "%s", o);
+    CHECK(dm_savepkg_keepboth_name("abcdefghijklm-o", o, sizeof o, NULL, NULL) && dm_savepkg_name_ok(o), "%s", o);
+}
+static int taken_ab(const char *c, void *x) { (void)x; return !strcmp(c, "Alice-A") || !strcmp(c, "Alice-B"); }
+static void t_paths(void) {
+    char u[64]; static const char *const unsafe[] = { "../x", "a/../b", "/abs", "a\\b", "C:x", "a/b/c", ".hidden/x", "a/.hidden", "_cloudinbox/x", "_import_done", "a\x01/b", "a/", "", "\xff\xfe/x" };
+    for (size_t i = 0; i < sizeof unsafe / sizeof *unsafe; i++) CHECK(dm_savepkg_path_class(unsafe[i], u, sizeof u) == -1, "应拒绝 [%s]", unsafe[i]);
+    static const char *const unknown[] = { "Alice 2/Alice 2.d2s", "Alice/Alice.exe", "Alice/Bob.d2s", "boot.txt", "sw_elysium.txt", "Settings/x.sh" }; for (size_t i = 0; i < sizeof unknown / sizeof *unknown; i++) CHECK(dm_savepkg_path_class(unknown[i], u, sizeof u) == 0, "应是未知 [%s]", unknown[i]);
+    CHECK(dm_savepkg_path_class("Alice/Alice.d2s", u, sizeof u) == 1 && !strcmp(u, "Alice"), "角色"); CHECK(dm_savepkg_path_class("法师/法师.ma3", u, sizeof u) == 1, "角色 2"); CHECK(dm_savepkg_path_class("ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i", u, sizeof u) == 2, "仓库"); CHECK(dm_savepkg_path_class("ModernSharedStashSoftCoreV2.swvault", u, sizeof u) == 2 && !strcmp(u, "ModernSharedStashSoftCoreV2"), "编年史"); CHECK(dm_savepkg_path_class("Settings/Starter - Amz.fltr", u, sizeof u) == 3, "设置含空格");
+    char o[64]; CHECK(dm_savepkg_keepboth_name("Alice", o, sizeof o, taken_ab, NULL) && !strcmp(o, "Alice-C"), "占用 %s", o);
+}
+static void t_d2s(void) {
+    uint8_t b[1024]; mk_d2s(b, sizeof b, "Alice", 3, 42, 1, 777); dm_pkg_char c; memset(&c, 0, sizeof c); CHECK(dm_savepkg_parse_d2s(b, sizeof b, &c), "解析"); CHECK(c.cls == 3 && c.level == 42 && c.hardcore == 1 && c.expansion == 1 && c.last_played == 777 && !strcmp(c.name, "Alice"), "字段");
+    b[500] ^= 1; CHECK(!dm_savepkg_parse_d2s(b, sizeof b, &c), "校验和错要拒"); b[500] ^= 1;
+    CHECK(dm_savepkg_rename_d2s(b, sizeof b, "Alice-A"), "改名"); memset(&c, 0, sizeof c); CHECK(dm_savepkg_parse_d2s(b, sizeof b, &c) && !strcmp(c.name, "Alice-A") && c.level == 42, "改名后校验和有效");
+    uint8_t v[1024]; mk_d2s(v, sizeof v, "Alice", 3, 42, 0, 1); v[4] = 0x70; uint32_t s = ck(v, sizeof v); memcpy(v + 12, &s, 4); CHECK(!dm_savepkg_parse_d2s(v, sizeof v, NULL), "未知版本要拒");
+}
+static void t_roundtrip(void) {
+    mk_save("a/save"); mk_save("b/save"); char sv[1024]; CHECK(export_all("a/save", "p.zip", 1, 1) == 0, "导出");
+    size_t n = 0; uint8_t *z = get("p.zip", &n); CHECK(z && n > 30 && !memcmp(z + 30, "manifest.json", 13), "manifest 第一条"); uint8_t *hit = z; int leak = 0; for (size_t i = 0; i + 8 < n; i++) if (!memcmp(hit + i, "_cloudinbox", 11) || !memcmp(hit + i, "Alice 2", 7) || !memcmp(hit + i, "placeholder", 11) || !memcmp(hit + i, "icloud-conflict", 15)) leak = 1; CHECK(!leak, "不属于存档的东西进了包"); free(z);
+    dm_pkg_view v; CHECK(inspect("p.zip", "c/save", 0, &v) == 0, "校验"); CHECK(v.nchars == 2 && v.nstash == 1 && v.has_settings && !strcmp(v.platform, "ios") && !strcmp(v.game_build, "3.3.94012"), "预览字段 %d %d", v.nchars, v.nstash);
+    dm_pkg_char *al = row(&v, "Alice"), *fa = row(&v, "法师"); CHECK(al && fa && al->status == DM_PKG_NEW && al->action == DM_PKG_OVERWRITE && fa->level == 50 && fa->hardcore && fa->elysium && !al->elysium, "角色行"); CHECK(has("c/save.import.tmp/files/Alice/Alice.d2s"), "解到临时"); CHECK(!has("c/save/Alice"), "校验不碰存档");
+    v.settings_action = DM_PKG_OVERWRITE; v.stash[0].action = DM_PKG_OVERWRITE; CHECK(commit("c/save", &v) == 0, "确认"); dm_savepkg_view_free(&v); CHECK(has("c/save.import/plan.tsv") && !has("c/save.import.tmp"), "待应用");
+    CHECK(apply("c/save") == 1, "换入"); CHECK(!has("c/save.import") && !has("c/save.imp") && !has("c/save/_import_done"), "收尾");
+    same_file("a/save/Alice/Alice.d2s", "c/save/Alice/Alice.d2s"); same_file("a/save/法师/法师.swpouch", "c/save/法师/法师.swpouch"); same_file("a/save/ModernSharedStashSoftCoreV2.swvault", "c/save/ModernSharedStashSoftCoreV2.swvault"); same_file("a/save/Settings/Starter - Amz.fltr", "c/save/Settings/Starter - Amz.fltr"); CHECK(!has("c/save/_cloudinbox") && !has("c/save/Alice 2"), "杂物不过来");
+    size_t en = 0; uint8_t *el = get("c/save/sw_elysium.txt", &en); CHECK(el && strstr((char *)el, "法师"), "极乐名单跟角色走"); free(el);
+    int ok = 0, ch = 0, code = 9; P(sv, "c/save"); CHECK(dm_savepkg_result_take(sv, &ok, &ch, &code) == 1 && ok == 1 && ch == 2 && code == 0, "结果"); CHECK(!dm_savepkg_result_take(sv, &ok, &ch, &code), "结果读完就删");
+    struct stat st; char p[1024]; P(p, "c/save/Alice/Alice.d2s"); stat(p, &st); CHECK(st.st_mtimespec.tv_sec == NOW + 100, "修改时间 = 换入时刻（云同步要它最新）");
+    char fu[1024]; size_t fn = 0; uint8_t *fb = get("c/save.cloudstate.forceup", &fn); (void)fu; CHECK(fb && strstr((char *)fb, "Alice\n") && strstr((char *)fb, "_stash\n"), "云同步标记"); free(fb);
+    CHECK(has("c/save.backups"), "换入前自动备份"); CHECK(apply("c/save") == 0, "没待应用 = 0");
+    // 第二次：同内容 = 相同，不用动 | second time: same content = identical, nothing to do
+    CHECK(inspect("p.zip", "a/save", 0, &v) == 0 && row(&v, "Alice")->status == DM_PKG_SAME && v.stash[0].status == DM_PKG_SAME, "相同 %d", row(&v, "Alice") ? row(&v, "Alice")->status : -1); char t[1024]; P(t, "a/save"); dm_savepkg_stage_cancel(t); dm_savepkg_view_free(&v);
+}
+static void t_merge_conflict(void) {
+    mk_save("m1/save"); export_all("m1/save", "m.zip", 1, 0); mk_char("m2/save", "Alice", 1, 25, 0, 1500); mk_char("m2/save", "Local", 2, 9, 0, 1); puts_("m2/save/sw_elysium.txt", "Local\n");
+    dm_pkg_view v; CHECK(inspect("m.zip", "m2/save", 0, &v) == 0, "校验"); dm_pkg_char *a = row(&v, "Alice"); CHECK(a->status == DM_PKG_CONFLICT && a->action == DM_PKG_SKIP && a->local_level == 25, "冲突缺省跳过"); commit("m2/save", &v); dm_savepkg_view_free(&v); apply("m2/save");
+    CHECK(has("m2/save/Local/Local.d2s") && has("m2/save/法师/法师.d2s"), "本机独有的保留、新角色进来"); size_t n = 0; uint8_t *d = get("m2/save/Alice/Alice.d2s", &n); dm_pkg_char c; CHECK(dm_savepkg_parse_d2s(d, n, &c) && c.level == 25, "跳过的没动"); free(d);
+    d = get("m2/save/sw_elysium.txt", &n); CHECK(strstr((char *)d, "Local") && strstr((char *)d, "法师"), "名单按行合并"); free(d);
+    CHECK(inspect("m.zip", "m2/save", 0, &v) == 0, "再校验"); a = row(&v, "Alice"); a->action = DM_PKG_OVERWRITE; commit("m2/save", &v); dm_savepkg_view_free(&v); apply("m2/save"); d = get("m2/save/Alice/Alice.d2s", &n); CHECK(dm_savepkg_parse_d2s(d, n, &c) && c.level == 20, "覆盖"); free(d); CHECK(has("m2/save/Local/Local.d2s"), "覆盖也不删别的");
+    mk_char("m3/save", "Alice", 1, 25, 0, 1500); CHECK(inspect("m.zip", "m3/save", 0, &v) == 0, "保留两份校验"); a = row(&v, "Alice"); a->action = DM_PKG_KEEPBOTH; strcpy(a->newname, "Alice-A"); commit("m3/save", &v); dm_savepkg_view_free(&v); CHECK(apply("m3/save") == 1, "保留两份换入"); d = get("m3/save/Alice-A/Alice-A.d2s", &n); CHECK(d && dm_savepkg_parse_d2s(d, n, &c) && !strcmp(c.name, "Alice-A") && c.level == 20, "新名角色有效"); free(d); same_file("m1/save/Alice/Alice.swpouch", "m3/save/Alice-A/Alice-A.swpouch"); d = get("m3/save/Alice/Alice.d2s", &n); CHECK(dm_savepkg_parse_d2s(d, n, &c) && c.level == 25, "原角色还在"); free(d);
+    mk_save("m4/save"); dm_pkg_view r; export_all("m4/save", "r.zip", 1, 1); puts_("m4/save/ModernSharedStashSoftCoreV2.swvault", "vault-changed"); CHECK(inspect("r.zip", "m4/save", 1, &r) == 0 && r.stash[0].action == DM_PKG_OVERWRITE && r.settings_action == DM_PKG_OVERWRITE, "恢复缺省覆盖"); char t[1024]; P(t, "m4/save"); dm_savepkg_stage_cancel(t); dm_savepkg_view_free(&r);
+}
+static void t_bad_packages(void) {
+    dm_pkg_view v; mkdir(R, 0755); puts_("notzip.zip", "hello world this is not a zip at all, sorry about that."); CHECK(inspect("notzip.zip", "ev", 0, &v) == DM_PKG_E_ZIP, "不是 ZIP"); dm_savepkg_view_free(&v); put("empty.zip", "", 0); CHECK(inspect("empty.zip", "ev", 0, &v) == DM_PKG_E_ZIP, "空文件"); dm_savepkg_view_free(&v);
+    uint8_t x[10] = {1, 2, 3}; ent e1[1] = { { .name = "a.txt", .d = x, .n = 10 } }; mkzip("other.zip", e1, 1, 0); CHECK(inspect("other.zip", "ev", 0, &v) == DM_PKG_E_NOTOURS, "别人的 ZIP"); dm_savepkg_view_free(&v);
+    static const char *const trav[] = { "../evil", "a/../../evil", "/etc/evil", "C:evil", "_cloudinbox/x", ".ssh/x", "Alice/Alice/Alice.d2s" }; for (size_t i = 0; i < 7; i++) { CHECK(pkg_rc(trav[i]) == DM_PKG_E_PATH, "穿越应拒 [%s] = %d", trav[i], pkg_rc(trav[i])); } CHECK(!has("evil") && !has("../evil"), "没写出去");
+    mkpkg("new1.zip", "Alice/Alice.key", "x", 2, 2); CHECK(inspect("new1.zip", "ev", 0, &v) == DM_PKG_E_TOONEW, "major 过新"); dm_savepkg_view_free(&v); mkpkg("new2.zip", "Alice/Alice.key", "x", 1, 3); CHECK(inspect("new2.zip", "ev", 0, &v) == DM_PKG_E_TOONEW, "save_gen 过新"); dm_savepkg_view_free(&v);
+    mkpkg("unk.zip", "Alice/Alice.newext", "x", 1, 2); CHECK(inspect("unk.zip", "ev", 0, &v) == 0 && v.skipped_unknown == 1, "未知文件跳过计数 %d", v.skipped_unknown); char t[1024]; P(t, "ev"); dm_savepkg_stage_cancel(t); dm_savepkg_view_free(&v);
+    // 改一个字节 | one byte changed
+    mk_save("g/save"); export_all("g/save", "g.zip", 1, 0); size_t n = 0; uint8_t *z = get("g.zip", &n); uint8_t *hit = NULL; for (size_t i = 0; i + 8 < n; i++) if (!memcmp(z + i, "key-20-Alice", 12)) hit = z + i; CHECK(hit != NULL, "找到内容"); if (hit) { hit[0] ^= 1; put("g2.zip", z, n); CHECK(inspect("g2.zip", "ev", 0, &v) == DM_PKG_E_CHECK, "改字节应拒（CRC）"); dm_savepkg_view_free(&v); } free(z); CHECK(!has("ev.import.tmp"), "失败清临时");
+    // 结构：符号链接、加密、分卷、重复、声明大小不符 | structure: symlink, encryption, multi-disk, duplicates, wrong declared size
+    static const char m0[] = "{\"format\":\"d2rmp-saves\",\"format_major\":1,\"save_gen\":2,\"files\":[]}"; ent ml = { .name = "manifest.json", .d = (const uint8_t *)m0, .n = sizeof m0 - 1 };
+    ent s[2] = { ml, { .name = "link", .d = x, .n = 3, .ext = 0120777u << 16, .made = 3 << 8 } }; mkzip("sym.zip", s, 2, 0); CHECK(inspect("sym.zip", "ev", 0, &v) == DM_PKG_E_PATH, "符号链接"); dm_savepkg_view_free(&v);
+    ent c[2] = { ml, { .name = "Alice/Alice.key", .d = x, .n = 3, .flags = 1 } }; mkzip("enc.zip", c, 2, 0); CHECK(inspect("enc.zip", "ev", 0, &v) == DM_PKG_E_ZIP, "加密"); dm_savepkg_view_free(&v);
+    ent one[1] = { ml }; mkzip("disk.zip", one, 1, 1); CHECK(inspect("disk.zip", "ev", 0, &v) == DM_PKG_E_ZIP, "分卷"); dm_savepkg_view_free(&v);
+    ent dup[3] = { ml, { .name = "a", .d = x, .n = 1 }, { .name = "a", .d = x, .n = 1 } }; mkzip("dup.zip", dup, 3, 0); CHECK(inspect("dup.zip", "ev", 0, &v) == DM_PKG_E_ZIP, "重复"); dm_savepkg_view_free(&v);
+    ent ex[2] = { ml, { .name = "extra.bin", .d = x, .n = 3 } }; mkzip("ex.zip", ex, 2, 0); CHECK(inspect("ex.zip", "ev", 0, &v) == DM_PKG_E_CHECK, "manifest 外多文件"); dm_savepkg_view_free(&v);
+    ent jk[6] = { ml, { .name = "__MACOSX/._x", .d = x, .n = 3 }, { .name = ".DS_Store", .d = x, .n = 3 }, { .name = "Alice 2.d2s", .d = x, .n = 3 }, { .name = ".Alice.pack.icloud", .d = x, .n = 3 }, { .name = "dir/", .d = x, .n = 0 } }; mkzip("jk.zip", jk, 6, 0); CHECK(inspect("jk.zip", "ev", 0, &v) == 0, "杂项放过"); P(t, "ev"); dm_savepkg_stage_cancel(t); dm_savepkg_view_free(&v);
+    { uint8_t bz[64] = {0}; static const uint8_t def[] = { 0x4b, 0x4c, 0x4c, 0x4c, 0x4c, 0x04, 0x00 }; (void)bz; char m[512]; char h[65]; sha("aaaaa", 5, h); snprintf(m, sizeof m, "{\"format\":\"d2rmp-saves\",\"format_major\":1,\"save_gen\":2,\"files\":[{\"path\":\"Alice/Alice.key\",\"size\":2,\"sha256\":\"%s\"}]}", h); ent b[2] = { { .name = "manifest.json", .d = (const uint8_t *)m, .n = (uint32_t)strlen(m) }, { .name = "Alice/Alice.key", .d = def, .n = sizeof def, .method = 8, .use_over = 1, .usize_override = 2 } }; mkzip("bomb.zip", b, 2, 0); CHECK(inspect("bomb.zip", "ev", 0, &v) != 0, "解压超声明（炸弹）"); dm_savepkg_view_free(&v); }
+    { static char big[(16 << 20) + 16]; memset(big, 'x', sizeof big - 1); ent b[2] = { ml, { .name = "x", .d = (const uint8_t *)big, .n = 0, .use_over = 1, .usize_override = (16 << 20) + 1, .method = 8 } }; char m[512]; char h[65]; sha("x", 1, h); snprintf(m, sizeof m, "{\"format\":\"d2rmp-saves\",\"format_major\":1,\"save_gen\":2,\"files\":[{\"path\":\"Alice/Alice.key\",\"size\":%d,\"sha256\":\"%s\"}]}", (16 << 20) + 1, h); b[0].d = (const uint8_t *)m; b[0].n = (uint32_t)strlen(m); b[1].name = "Alice/Alice.key"; mkzip("big.zip", b, 2, 0); CHECK(inspect("big.zip", "ev", 0, &v) == DM_PKG_E_LIMIT, "单文件超限"); dm_savepkg_view_free(&v); }
+    setenv("DM_TEST_SAVEPKG_FAILAT", "space", 1); mkpkg("sp.zip", "Alice/Alice.key", "x", 1, 2); CHECK(inspect("sp.zip", "ev", 0, &v) == DM_PKG_E_SPACE, "空间不足"); dm_savepkg_view_free(&v); unsetenv("DM_TEST_SAVEPKG_FAILAT");
+}
+// 换入的每个中断点：被杀后下次启动，存档要么全旧要么全新；每个失败点存档不变 | every interruption of apply: after a kill, the next boot sees all-old or all-new; every failure point leaves the save unchanged
+static void t_apply_interrupt(void) {
+    static const char *const kills[] = { "before_backup", "after_backup", "mid_apply", "before_swap", "after_swap", "before_cleanup" }; mk_save("k0/save"); export_all("k0/save", "k.zip", 1, 0);
+    for (size_t i = 0; i < 6; i++) { char sv[64], rel[128]; snprintf(sv, sizeof sv, "k%zu/save", i + 1); mk_char(sv, "Alice", 1, 25, 0, 1500); mk_char(sv, "Keep", 2, 9, 0, 1); dm_pkg_view v; CHECK(inspect("k.zip", sv, 0, &v) == 0, "校验"); row(&v, "Alice")->action = DM_PKG_OVERWRITE; commit(sv, &v); dm_savepkg_view_free(&v);
+        pid_t p = fork(); if (!p) { setenv("DM_TEST_SAVEPKG_KILLAT", kills[i], 1); freopen("/dev/null", "w", stderr); apply(sv); _exit(0); } int st = 0; waitpid(p, &st, 0); CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 9, "%s 该被杀 %d", kills[i], WEXITSTATUS(st));
+        snprintf(rel, sizeof rel, "%s/Alice/Alice.d2s", sv); size_t n = 0; uint8_t *d = get(rel, &n); dm_pkg_char c; CHECK(d && dm_savepkg_parse_d2s(d, n, &c), "%s 后角色档完好", kills[i]); int after = strcmp(kills[i], "after_swap") == 0 || strcmp(kills[i], "before_cleanup") == 0; CHECK(c.level == (after ? 20 : 25), "%s 后是%s版 Lv%d", kills[i], after ? "新" : "旧", c.level); free(d);
+        snprintf(rel, sizeof rel, "%s.cloudstate.forceup", sv); if (!after) CHECK(!has(rel), "%s：没换入不能留云同步标记", kills[i]);
+        CHECK(apply(sv) == 1 || !strcmp(kills[i], "before_cleanup"), "%s 下次启动完成", kills[i]); snprintf(rel, sizeof rel, "%s/Alice/Alice.d2s", sv); d = get(rel, &n); CHECK(d && dm_savepkg_parse_d2s(d, n, &c) && c.level == 20, "%s 最终是新版", kills[i]); free(d);
+        snprintf(rel, sizeof rel, "%s/Keep/Keep.d2s", sv); CHECK(has(rel), "%s 本机独有的保留", kills[i]); snprintf(rel, sizeof rel, "%s.import", sv); CHECK(!has(rel), "%s 待应用清了", kills[i]); snprintf(rel, sizeof rel, "%s.imp", sv); CHECK(!has(rel), "%s 克隆清了", kills[i]); snprintf(rel, sizeof rel, "%s/_import_done", sv); CHECK(!has(rel), "%s 标记清了", kills[i]); snprintf(rel, sizeof rel, "%s.cloudstate.forceup", sv); CHECK(has(rel), "%s 云同步标记在", kills[i]); }
+    static const char *const fl[] = { "backup", "clone", "apply", "swap" };
+    for (size_t i = 0; i < 4; i++) { char sv[64], rel[128], t[1024]; snprintf(sv, sizeof sv, "f%zu/save", i); mk_char(sv, "Alice", 1, 25, 0, 1500); dm_pkg_view v; CHECK(inspect("k.zip", sv, 0, &v) == 0, "校验"); row(&v, "Alice")->action = DM_PKG_OVERWRITE; commit(sv, &v); dm_savepkg_view_free(&v); setenv("DM_TEST_SAVEPKG_FAILAT", fl[i], 1);
+        CHECK(apply(sv) == -1, "%s 失败返回", fl[i]); snprintf(rel, sizeof rel, "%s/Alice/Alice.d2s", sv); size_t n = 0; uint8_t *d = get(rel, &n); dm_pkg_char c; CHECK(d && dm_savepkg_parse_d2s(d, n, &c) && c.level == 25, "%s 存档不变", fl[i]); free(d); P(t, sv); int ok = 1, ch, co; CHECK(dm_savepkg_result_take(t, &ok, &ch, &co) && !ok, "%s 结果=失败", fl[i]);
+        apply(sv); CHECK(apply(sv) == -1, "%s 超次数放弃", fl[i]); snprintf(rel, sizeof rel, "%s.import.failed", sv); CHECK(has(rel), "%s 放弃后改名", fl[i]); snprintf(rel, sizeof rel, "%s.import", sv); CHECK(!has(rel), "%s 不再重试", fl[i]); CHECK(apply(sv) == 0, "%s 之后正常启动", fl[i]); unsetenv("DM_TEST_SAVEPKG_FAILAT"); }
+}
+static void t_backups(void) {
+    mk_save("bk/save"); char s[1024]; P(s, "bk/save"); char nm[96]; int64_t t = NOW; for (int i = 0; i < 13; i++) CHECK(dm_savepkg_backup(s, i & 1 ? "auto" : "manual", t + i * 60, NULL, &SRC, nm, sizeof nm) == 0, "备份 %d", i);
+    dm_pkg_backup l[64]; int n = dm_savepkg_backup_list(s, l, 64); CHECK(n == 10, "只留 10 份 %d", n); CHECK(l[0].when > l[1].when && l[0].chars == 2 && l[0].size > 0, "新的在前"); dm_pkg_view v; char z[1024]; snprintf(z, sizeof z, "%s/%s", l[0].dir, l[0].file); CHECK(dm_savepkg_inspect(z, s, 1, &v) == 0 && row(&v, "Alice")->status == DM_PKG_SAME, "备份能走导入流程"); dm_savepkg_stage_cancel(s); dm_savepkg_view_free(&v);
+    CHECK(dm_savepkg_backup_star(s, &l[9], 1) == 0, "标星"); char oldest[96]; strcpy(oldest, l[9].file); for (int i = 0; i < 12; i++) dm_savepkg_backup(s, "auto", t + 3600 + i * 60, NULL, &SRC, NULL, 0); n = dm_savepkg_backup_list(s, l, 64); int found = 0, st = 0; for (int i = 0; i < n; i++) { if (!strcmp(l[i].file, oldest)) found = 1; st += l[i].starred; } CHECK(n == 11 && found && st == 1, "标星不删 n=%d", n);
+    { int full = 0; for (int i = 0; i < 25 && !full; i++) { char f[96]; dm_savepkg_backup(s, "manual", t + 90000 + i * 60, NULL, &SRC, f, sizeof f); dm_pkg_backup x; memset(&x, 0, sizeof x); strcpy(x.file, f); full = dm_savepkg_backup_star(s, &x, 1) == DM_PKG_E_STARFULL; } CHECK(full, "标星上限"); }
+    n = dm_savepkg_backup_list(s, l, 64); int before = n; dm_savepkg_backup_delete(s, &l[0]); CHECK(dm_savepkg_backup_list(s, l, 64) == before - 1, "删除");
+    mk_save("mi/save"); char mir[1024]; P(mir, "mi/ext/SaveBackups"); mkparents(mir); mkdir(mir, 0755); P(s, "mi/save"); dm_savepkg_set_mirror(mir); for (int i = 0; i < 12; i++) dm_savepkg_backup(s, "manual", t + i * 60, NULL, &SRC, NULL, 0); n = dm_savepkg_backup_list(s, l, 64); CHECK(n == 10, "外部同名去重 %d", n); DIR *d = opendir(mir); int c = 0; struct dirent *e; while (d && (e = readdir(d))) if (e->d_name[0] != '.') c++; if (d) closedir(d); CHECK(c == 10, "外部同样只留 10 份 %d", c);
+    char ip[1024]; P(ip, "mi/save.backups"); rm: { char cmd[1100]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", ip); system(cmd); } n = dm_savepkg_backup_list(s, l, 64); CHECK(n == 10 && l[0].mirror, "内部没了（卸载）外部还在 %d", n); dm_savepkg_set_mirror(NULL);
+}
+static void t_cross(void) {
+    // iOS 物理别名：包内必须是客体名 | iOS physical alias: the package must carry guest names
+    mk_char("x1/save", "alice", 1, 20, 0, 1); char p[1024], q[1024]; P(p, "x1/save/alice"); P(q, "x1/save/alice~1"); rename(p, q); setxattr(q, "org.d2rmobile.guest-name", "alice", 5, 0, XATTR_NOFOLLOW); CHECK(export_all("x1/save", "x1.zip", 0, 0) == 0, "别名导出"); size_t n = 0; uint8_t *z = get("x1.zip", &n); int alias = 0; for (size_t i = 0; i + 7 < n; i++) if (!memcmp(z + i, "alice~1", 7)) alias = 1; CHECK(!alias, "物理别名进了包"); free(z); dm_pkg_view v; CHECK(inspect("x1.zip", "x2/save", 0, &v) == 0 && row(&v, "alice") && row(&v, "alice")->status == DM_PKG_NEW, "别名包可导入"); char t[1024]; P(t, "x2/save"); dm_savepkg_stage_cancel(t); dm_savepkg_view_free(&v);
+    // 只差大小写算同名（三端统一）| names differing only in case are the same name (all platforms)
+    mk_char("y1/save", "Alice", 1, 20, 0, 1); export_all("y1/save", "y.zip", 0, 0); mk_char("y2/save", "ALICE", 1, 40, 0, 1); CHECK(inspect("y.zip", "y2/save", 0, &v) == 0, "校验"); dm_pkg_char *a = row(&v, "Alice"); CHECK(a->status == DM_PKG_CONFLICT && !strcmp(a->local, "ALICE") && a->local_level == 40, "大小写同名 %s", a->local); a->action = DM_PKG_OVERWRITE; commit("y2/save", &v); dm_savepkg_view_free(&v); CHECK(apply("y2/save") == 1, "覆盖"); DIR *d; P(t, "y2/save"); d = opendir(t); int al = 0, up = 0; struct dirent *e; while ((e = readdir(d))) { if (!strcmp(e->d_name, "Alice")) al = 1; if (!strcmp(e->d_name, "ALICE")) up = 1; } closedir(d); CHECK(al && !up, "换成包里的大小写");
+    // Settings.json 保留本机语言；未知键不影响 | Settings.json keeps the local language; unknown keys do no harm
+    mk_save("s1/save"); puts_("s1/save/Settings/Settings.json", "{\"Language\": 0,\n\"VoiceLanguage\": 0,\n\"Always Run\": 0,\n\"FromFuture\": 3}"); export_all("s1/save", "s.zip", 0, 1); mk_save("s2/save"); CHECK(inspect("s.zip", "s2/save", 0, &v) == 0, "校验"); v.settings_action = DM_PKG_OVERWRITE; commit("s2/save", &v); dm_savepkg_view_free(&v); apply("s2/save"); n = 0; uint8_t *j = get("s2/save/Settings/Settings.json", &n); CHECK(j && strstr((char *)j, "\"Language\": 8") && strstr((char *)j, "\"VoiceLanguage\": 8") && strstr((char *)j, "\"Always Run\": 0") && strstr((char *)j, "\"FromFuture\": 3"), "语言保留，其余用包里的 [%s]", j ? (char *)j : ""); free(j);
+    // sw_custom：白名单之外一个都不带；导入端也按白名单 | sw_custom: nothing outside the allow-list; the importing side filters too
+    mk_save("c1/save"); puts_("c1/sw_custom.txt", "auto_mana=1\nrt_shadow=1\nicloud=0\nlang=2\neco_fps=2\nfree_tp=0\n"); char cd[1024], sv[1024], zp[1024]; P(cd, "c1"); P(sv, "c1/save"); P(zp, "c.zip"); dm_pkg_export_opts o; memset(&o, 0, sizeof o); o.nnames = -1; o.settings = 1; o.custom_dir = cd; o.kind = "export"; o.now = NOW; CHECK(dm_savepkg_export(sv, zp, &o, &SRC) == 0, "导出"); z = get("c.zip", &n); z[n - 1] = z[n - 1]; int leak = 0; for (size_t i = 0; i + 9 < n; i++) if (!memcmp(z + i, "rt_shadow", 9) || !memcmp(z + i, "\"icloud\"", 8) || !memcmp(z + i, "eco_fps", 7)) leak = 1; CHECK(!leak, "平台专属键进了包"); free(z);
+    mk_save("c2/save"); puts_("c2/sw_custom.txt", "rt_shadow=1\nicloud=1\nmerc_pot=1\nfree_tp=1\n"); CHECK(inspect("c.zip", "c2/save", 0, &v) == 0, "校验"); P(sv, "c2/save"); P(cd, "c2"); static const char *const kv[] = { "free_tp", "0", "merc_pot", "0", "rt_shadow", "0", "not_a_key", "1", "auto_mana", "7", NULL }; CHECK(dm_savepkg_stage_commit(sv, &v, kv) == 0, "确认"); dm_savepkg_view_free(&v); CHECK(dm_savepkg_apply_pending(sv, cd, NOW, &SRC) == 1, "换入"); j = get("c2/sw_custom.txt", &n); CHECK(j && strstr((char *)j, "rt_shadow=1") && strstr((char *)j, "icloud=1") && strstr((char *)j, "free_tp=0") && strstr((char *)j, "merc_pot=0") && strstr((char *)j, "merc_pot_v2=1") && !strstr((char *)j, "not_a_key") && !strstr((char *)j, "auto_mana"), "只改白名单且值合法 [%s]", j ? (char *)j : ""); free(j);
+    // v1 夹具长期回归：把固定字节的包读出来（以后改格式也必须能读）| long-term regression: read a package with fixed bytes (later format changes must still read it)
+    { static const char m[] = "{\"format\":\"d2rmp-saves\",\"format_major\":1,\"format_minor\":0,\"exported_at\":\"2026-10-31T00:00:00Z\",\"kind\":\"export\",\"source\":{\"platform\":\"android\",\"commit\":\"abc\",\"build\":\"7\",\"version\":\"1.0.2\"},\"game_build\":\"3.3.94012\",\"save_gen\":2,\"includes\":{\"shared_stash\":false,\"settings\":false},\"characters\":[],\"stash\":[],\"custom\":{},\"files\":[],\"future_field\":{\"a\":[1,2.5,true,null]}}"; ent e1[1] = { { .name = "manifest.json", .d = (const uint8_t *)m, .n = sizeof m - 1 } }; mkzip("v1.zip", e1, 1, 0); CHECK(inspect("v1.zip", "v1/save", 0, &v) == 0 && !strcmp(v.platform, "android"), "v1 与未知字段"); P(t, "v1/save"); dm_savepkg_stage_cancel(t); dm_savepkg_view_free(&v); }
+    // deflate 包（玩家用系统工具重新压过）| a deflate package (re-zipped by a system tool)
+    { char m[512], h[65]; static const uint8_t def[] = { 0x4b, 0x4c, 0x4c, 0x4c, 0x4c, 0x04, 0x00 }; sha("aaaaa", 5, h); snprintf(m, sizeof m, "{\"format\":\"d2rmp-saves\",\"format_major\":1,\"save_gen\":2,\"files\":[{\"path\":\"Alice/Alice.key\",\"size\":5,\"sha256\":\"%s\"}]}", h); ent b[2] = { { .name = "manifest.json", .d = (const uint8_t *)m, .n = (uint32_t)strlen(m) }, { .name = "Alice/Alice.key", .d = def, .n = sizeof def, .method = 8, .use_over = 1, .usize_override = 5 } }; char pz[1024]; P(pz, "d.zip"); mkzip("d.zip", b, 2, 0); FILE *f = fopen(pz, "r+b"); (void)f; if (f) { uint8_t *zb; size_t zn = 0; fclose(f); zb = get("d.zip", &zn); uint32_t cc = crc((const uint8_t *)"aaaaa", 5); for (size_t i = 0; i + 4 < zn; i++) { uint32_t sg; memcpy(&sg, zb + i, 4); if (sg == 0x04034b50 && !memcmp(zb + i + 30, "Alice", 5)) memcpy(zb + i + 14, &cc, 4); if (sg == 0x02014b50 && !memcmp(zb + i + 46, "Alice", 5)) memcpy(zb + i + 16, &cc, 4); } put("d.zip", zb, zn); free(zb); } CHECK(inspect("d.zip", "d/save", 0, &v) == 0 && has("d/save.import.tmp/files/Alice/Alice.key"), "deflate 能读"); P(t, "d/save"); dm_savepkg_stage_cancel(t); dm_savepkg_view_free(&v); }
+}
+
+int main(void) {
+    const char *td = getenv("TMPDIR"); snprintf(R, sizeof R, "%s/t_savepkg_%d", td ? td : "/tmp", (int)getpid()); mkdir(R, 0755);
+    t_names(); t_paths(); t_d2s(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_cross();
+    char cmd[700]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", R); if (!fails) system(cmd); else printf("  保留现场 %s\n", R);
+    printf("t_savepkg: %d 项检查，%d 项失败\n", checks, fails); return fails != 0;
+}
