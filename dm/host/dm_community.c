@@ -54,6 +54,12 @@ static _Atomic int g_copied_row; static _Atomic uint64_t g_copied_at;   // 哪�
 static _Atomic uint64_t g_md_ev;   // 闸门攒给弹窗的按下沿（A / B / 上 / 下） | press edges collected for the box
 static _Atomic unsigned g_sw_touch, g_sw_key, g_sw_stick, g_leak;
 int dm_community_modal(void) { return atomic_load(&g_show) != 0; }
+// 弹窗开着时宿主对触屏命中查询的答案（RC1.1 复核 P1-2；dm_cursor.c 的异步 / 同步两种查询都取这里）：0「面板内控件」——两端手势层对 0 走界面鼠标点击，
+// 鼠标泵把抬起交给 dm_community_ui_tap；不能答 6「不点」（9943fd2：手势层不点也不发键，iOS 局内面板态弹窗里的按钮全点不动）。没开弹窗返回 -1（照常判类）
+// The host's answer to a touch hit query while the box is up (RC1.1 recheck P1-2; both of dm_cursor.c's async / sync queries take it from here): 0 "control inside a panel" -- both ends'
+// gesture layer turn 0 into a UI mouse click and the mouse pump hands the lift to dm_community_ui_tap; it must not be 6 "no click" (9943fd2: the gesture layer neither clicked nor sent a key,
+// so on iOS in panel mode the box's buttons could not be tapped). -1 when no box is up (classify as usual)
+int dm_community_hit_answer(void) { return atomic_load(&g_show) ? 0 : -1; }
 // 关框后的压住窗口（RC1.1 终版审计 P2-1）：手柄 A / B 关框时，泵在取手柄处开头就把 g_show 置 0，同一拍末尾的闸门以为弹窗已关、把还按着的那一下交给了底层菜单。
 // 现在弹窗开着时记下按着的键与摇杆；关掉后，这些键全松开、两根摇杆都回到 1/4 以内之前，整只手柄都不交给游戏（压住的拍数在清零之前计数），窗口结束记一行。
 // 漏口计数（dm_community_input_leak）也覆盖这个窗口：原先只在 g_show 时计、又在闸门清零之后查，恒为 0、测不到这类漏口

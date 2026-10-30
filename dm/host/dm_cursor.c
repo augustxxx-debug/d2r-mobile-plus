@@ -1263,7 +1263,17 @@ static int imbue_locked(module_t *m, uint64_t root) {
     dm_hud_info hi; dm_hud_get(&hi); if (!hi.valid || !hi.holding) return 0;
     return !(dm_wref_get(&g_slot) && *(uint64_t *)dm_wref_get(&g_slot) == (uint64_t)m->base + 0x20898e8);
 }
+// 社区 / 关于弹窗开着时的命中答案（RC1.1 终版审计 P2-2 / 复核 P1-2）：不判类，一律答 0「面板内控件」——两端手势层（dm_touch_controls.c）对 0 走界面鼠标点击，
+// 鼠标泵在弹窗开着时把抬起交给 dm_community_ui_tap（只认两颗「复制」与「确定」，其余吞），页签也就不会被判成「页签」去切页。
+// 9943fd2 曾答 6「不点」：手势层对 6 既不点也不发键，iOS 局内面板态弹窗里的按钮全点不动、关不掉。异步查询（ui_item_pump，iOS）与同步查询（dm_ui_item_at_now，Mac）共用这一处
+// Hit answer while the community / About box is up (RC1.1 final audit P2-2 / recheck P1-2): no classification, always 0 "control inside a panel" -- both ends' gesture layer
+// (dm_touch_controls.c) turn 0 into a UI mouse click, and the mouse pump hands the lift to dm_community_ui_tap while the box is up (only the two Copy buttons and OK, the rest swallowed),
+// so a tab is never classified as "tab" either. 9943fd2 answered 6 "no click": the gesture layer then neither clicks nor sends a key, so on iOS in panel mode the box's buttons could not be
+// tapped and it could not be closed. The async query (ui_item_pump, iOS) and the sync query (dm_ui_item_at_now, Mac) share this one place. Returns -1 when no box is up
+__attribute__((weak)) int dm_community_hit_answer(void) { return -1; }   // 没有社区模块（单测）：不接管 | no community module (unit tests): no takeover
+static int ui_modal_answer(void) { return dm_community_hit_answer(); }   // 答案本身在 dm_community.c（单测 t_community 第 25 项把它接上手势层验整条链） | the answer itself lives in dm_community.c (t_community case 25 wires it to the gesture layer)
 int dm_ui_item_at_now(float nx, float ny) {   // 只许游戏主线程调（Mac 宿主触点脚本在取手柄处跑） | Callable only from the game main thread (the Mac host touch point script runs where the controller is polled)
+    { int r0 = ui_modal_answer(); if (r0 >= 0) return r0; }   // 同 ui_item_pump：弹窗开着答面板内控件（复核 P1-2） | as ui_item_pump: answer "control in a panel" while the box is up (recheck P1-2)
     module_t *m = main_module(); if (!m) return 0; uint64_t root = 0; memcpy(&root, m->base + 0x2f05458, 8);
     int32_t w = *(int32_t *)(m->base + 0x211da38), h = *(int32_t *)(m->base + 0x211da3c); if (!root || w <= 0 || h <= 0) return 0;
     { int dm_vault_ui_tip_gate(int, int); if ((dm_ui_panel_state() & DM_PS_VAULT) && dm_vault_ui_tip_gate((int)(nx * w), (int)(ny * h))) return 6; }
@@ -1593,11 +1603,7 @@ static void ui_item_pump(uint64_t root, int width, int height) {
     if (dm_lat_on()) { static unsigned ls; unsigned ds = atomic_load(&g_iq_done); float rr[4]; if (ds != ls && dm_ui_item_rect(ds, rr)) { ls = ds; DM_LAT("shelf_rect %d,%d-%d,%d", (int)(rr[0] * width), (int)(rr[1] * height), (int)(rr[2] * width), (int)(rr[3] * height)); } }
     unsigned seq = atomic_load(&g_iq_seq); if (seq == atomic_load(&g_iq_done)) return;
     uint64_t v = atomic_load(&g_iq_xy); int x = (int)(((v >> 16) & 0xffff) / 65535.0 * width), y = (int)((v & 0xffff) / 65535.0 * height);
-    // 社区 / 关于弹窗开着（RC1.1 终版审计 P2-2）：不判类、直接答「已处理」——原先这里照常判类，点到弹窗外的页签得「页签」，前端随即调 dm_ui_tab_go，
-    // 在弹窗的触点闸门（ui_mouse_pump，dm_community_modal）之前就切了页。触点全归弹窗，由抬起那一下交给 dm_community_ui_tap
-    // community / About box up (RC1.1 final audit P2-2): no classification, answer "handled" -- this used to classify as usual, so a tap on a tab outside the box came back as "tab", the front end
-    // called dm_ui_tab_go and the page switched before the box's touch gate (ui_mouse_pump, dm_community_modal) was reached. Every touch belongs to the box, handed to dm_community_ui_tap on lift
-    { int dm_community_modal(void); if (dm_community_modal()) { atomic_store(&g_iq_res, 6); atomic_store(&g_iq_done, seq); if (hit_log_ok("社区弹窗开着")) LOG("界面命中：(%d,%d) → 社区 / 关于弹窗开着，不判类（触点归弹窗）", x, y); return; } }
+    { int r0 = ui_modal_answer(); if (r0 >= 0) { atomic_store(&g_iq_res, r0); atomic_store(&g_iq_done, seq); if (hit_log_ok("社区弹窗开着")) LOG("界面命中：(%d,%d) → 社区 / 关于弹窗开着，答面板内控件（点按走鼠标点击，交给弹窗）", x, y); return; } }
     char hit[40] = ""; int r; g_cls_out = atomic_load(&g_iq_out);
     if (atomic_exchange(&g_iq_drop, 0)) { r = ui_drop_kind(main_module(), root, x, y, (int)(atomic_load(&g_iq_y2) / 65535.0 * height)); 
         if (r == 5 && g_press_stack && dm_wref_get(&g_slot) && *(uint64_t *)(dm_wref_get(&g_slot) + 8) && !strcmp((const char *)*(uint64_t *)(dm_wref_get(&g_slot) + 8), "horadriccube_grid")) r = 11;   // 11 = 从成叠格拖出、物品图落在这一页下方的魔盒格上（前端：1 件进魔盒，不是取到背包）。g_slot = 刚才落点分类命中的物品区控件 | 11 = dragged out of a stacked slot with the item image landing on the Horadric Cube slot below this page (front end: 1 item goes into the Cube, not taken to the backpack). g_slot = the item-area widget hit by the drop-point classification just now

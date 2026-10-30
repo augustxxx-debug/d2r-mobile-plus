@@ -281,8 +281,8 @@ $(B)/t_diffrow: t_diffrow.c ../dm_hud.c ../dm_hud.h | $(B)
 
 $(B)/t_stick_nav: t_stick_nav.c ../dm_stick_nav.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_stick_nav.c
-$(B)/t_community: t_community.c ../dm_community.c ../dm_community.h ../dm_custom.c ../dm_custom.h | $(B)
-	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_community.c
+$(B)/t_community: t_community.c ../dm_community.c ../dm_community.h ../dm_custom.c ../dm_custom.h ../../ios/Sources/dm_touch_controls.c ../../ios/Sources/dm_touch_controls.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -I../../ios/Sources -o $@ t_community.c ../../ios/Sources/dm_touch_controls.c -lm
 
 $(B)/t_res_auto_policy: t_res_auto_policy.c t_metalfx_handoff_backend.c ../hle_oe.c ../dm_res_cap.h ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_res_auto_policy.c t_metalfx_handoff_backend.c

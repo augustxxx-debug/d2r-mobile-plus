@@ -4,6 +4,7 @@
 // the two entry messages, copy callback count and log lines, the failure branch without a clipboard callback. Temporary directories only, never real saves; "restart" = reset the static state and call dm_community_load again
 #include "../dm_custom.c"
 #include "../dm_community.c"
+#include "dm_touch_controls.h"
 #include <unistd.h>
 void dm_3d_quality_mode_set(int value) { (void)value; }
 static int t_group = DM_LG_ZH;
@@ -28,6 +29,7 @@ void dm_ui_wheel_on(uint64_t w, int notches) { (void)w; (void)notches; }
 uint64_t dm_wref_get(dm_wref *r) { return r ? r->w : 0; }
 void dm_ui_top_chk(uint64_t r, const char *n, uint64_t g) { (void)r; (void)n; (void)g; }
 static int checks, fails;
+static int t_rect_hit(uint64_t w, uint64_t xy) { int32_t *r = (int32_t *)(uintptr_t)(w + 0x70); int x = (int32_t)(uint32_t)xy, y = (int32_t)(xy >> 32); return x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3]; }   // 假控件的命中判断（虚表 +0x48） | fake widgets' hit test (vtable +0x48)
 static int chs(int lg, char *first) { int c[2]; int n = dm_community_channels(lg, c); first[0] = n ? (char)c[0] : 0; return n; }   // 渠道行数，first[0] = 第一行渠道 | channel rows; first[0] = the first row's channel
 static int t_recalcs; static void t_recalc(uint64_t w) { (void)w; t_recalcs++; }   // 假控件虚表 +0x10（重算）：只计数 | fake widget vtable +0x10 (recompute): counts only
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
@@ -364,6 +366,32 @@ int main(void) {
       bt = 0; ly = -12000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(ly == 0);
       ly = -5000; dm_community_input_gate(&bt, &lx, &ly, &rx, &ry); CHECK(ly == -5000 && !atomic_load(&g_after));
       atomic_store(&g_md_ev, 0); }
+    // 25. RC1.1 复核 P1-2：弹窗开着时整条触屏链——宿主命中答案（dm_community_hit_answer，dm_cursor.c 两种查询都取它）→ 手势层（dm_touch_controls.c，iOS 与 Mac 共用）
+    //     → 前端胶水（front_ios.m：鼠标点击序号变了就 dm_ui_touch 按下 + 抬起）→ 鼠标泵的弹窗分支（dm_cursor.c：弹窗开着时抬起交 dm_community_ui_tap）→ 点中「确定」收起。
+    //     假控件树：根 → 暂停菜单面板 → 标题 + 「确定」（虚表 +0x48 = 按矩形命中）。旧答案 6 在同一条链上什么都不发（9943fd2 的失败），也钉住
+    // 25. RC1.1 recheck P1-2: the whole touch chain while the box is up -- the host hit answer (dm_community_hit_answer, taken by both of dm_cursor.c's queries) -> the gesture layer
+    //     (dm_touch_controls.c, shared by iOS and Mac) -> the front-end glue (front_ios.m: when the mouse click sequence moved, dm_ui_touch down + up) -> the mouse pump's box branch
+    //     (dm_cursor.c: while the box is up the lift goes to dm_community_ui_tap) -> OK hit, box dismissed. Fake tree: root -> pause panel -> title + OK (vtable +0x48 = rect hit test).
+    //     The old answer 6 sends nothing down the same chain (the 9943fd2 failure), pinned as well
+    { static uint8_t wb[4][0x200]; static uint64_t kids_root[1], kids_panel[2]; static uint64_t vt[16];
+      vt[9] = (uint64_t)(uintptr_t)t_rect_hit;   // +0x48 = 第 9 个槽 | +0x48 = slot 9
+      uint64_t root = (uint64_t)(uintptr_t)wb[0], panel = (uint64_t)(uintptr_t)wb[1], title = (uint64_t)(uintptr_t)wb[2], ok = (uint64_t)(uintptr_t)wb[3];
+      const char *names[4] = { "Root", "PauseLayout", "TouchCommTitle", "TouchCommOk" };
+      for (int k = 0; k < 4; k++) { *(uint64_t *)(uintptr_t)(wb[k]) = (uint64_t)(uintptr_t)vt; *(const char **)(wb[k] + 8) = names[k]; wb[k][0x50] = wb[k][0x51] = 1; }
+      kids_root[0] = panel; *(uint64_t *)(root + 0x58) = (uint64_t)(uintptr_t)kids_root; *(uint64_t *)(root + 0x60) = 1;
+      kids_panel[0] = title; kids_panel[1] = ok; *(uint64_t *)(panel + 0x58) = (uint64_t)(uintptr_t)kids_panel; *(uint64_t *)(panel + 0x60) = 2;
+      int32_t *okr = (int32_t *)(uintptr_t)(ok + 0x70); okr[0] = 1300; okr[1] = 1050; okr[2] = 260; okr[3] = 80;   // 「确定」在游戏窗口像素 (1300,1050) 260×80 | OK at game pixels (1300,1050) 260x80
+      for (int pass = 0; pass < 2; pass++) {
+          atomic_store(&g_show, 2); atomic_store(&g_ack, 0); atomic_store(&g_sw_touch, 0);
+          int answer = pass == 0 ? dm_community_hit_answer() : 6;   // 第二遍：9943fd2 的旧答案 | second pass: the old answer from 9943fd2
+          if (pass == 0) CHECK(answer == 0);
+          dm_tc_state s; dm_tc_init(&s, 2868, 1320); dm_tc_set_navigation_mode(&s, 1); s.mouse_click_mode = 1;
+          unsigned mc = s.mouse_click_seq; float tx = 1430, ty = 1090;   // 点在「确定」中间（手势层坐标 = 游戏窗口像素，同 touch_mac.c） | tap the middle of OK
+          dm_tc_begin_at(&s, 0, tx, ty, 10.0); dm_tc_pointer_item(&s, answer); dm_tc_end_at(&s, 0, 10.08);
+          if (s.mouse_click_seq != mc && dm_community_modal()) dm_community_ui_tap(root, (int)s.mouse_click_x, (int)s.mouse_click_y);   // 前端胶水 + 鼠标泵的弹窗分支 | front-end glue + the mouse pump's box branch
+          if (pass == 0) { CHECK(s.mouse_click_seq == mc + 1); CHECK(atomic_load(&g_sw_touch) == 1); CHECK(atomic_load(&g_ack) == 1); }   // 点到了「确定」：收起 | OK hit: dismissed
+          else { CHECK(s.mouse_click_seq == mc); CHECK(atomic_load(&g_sw_touch) == 0); CHECK(atomic_load(&g_ack) == 0); } }   // 答 6：弹窗收不到点按（复核 P1-2 的现象） | answer 6: the box never sees the tap
+      atomic_store(&g_show, 0); atomic_store(&g_ack, 0); CHECK(dm_community_hit_answer() == -1); }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);
