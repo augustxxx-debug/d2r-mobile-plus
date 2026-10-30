@@ -66,7 +66,7 @@ static int g_rts_plain;   // 旧接口版：draw 里照样引用（恒 0） | ol
 static uint64_t rts_lcopy_rid(NvShader *sh, void **tex) { (void)sh; (void)tex; return 0; }
 int mtl_rt_shadow_supported(void) { return 0; }
 #else
-#define RTS_AO_RADIUS 6.f   // 光追 AO 缺省半径（世界单位）| default ray-traced AO radius (world units)
+#define RTS_AO_RADIUS 120.f   // 光追 AO 缺省半径（世界单位）：原先的 6 对数千量级的世界坐标几乎无效；17 Pro 地窖 40 / 120 / 300 代价相近（GPU 约 +10 ms），120 起墙脚和隔板缝才看得出 | default ray-traced AO radius (world units): the old 6 did almost nothing at world coordinates in the thousands; on the 17 Pro cellar 40 / 120 / 300 cost about the same (GPU about +10 ms) and wall bases and shelf gaps only show from 120
 #define RTS_MAX_INST 4096
 #define RTS_BUILDS_PER_FRAME 32   // 每帧最多新建这么多 BLAS（新网格首次出现时），其余下一帧再建 | At most this many new BLAS per frame (when new meshes first appear), the rest next frame
 #define RTS_BUILD_TRIS 60000      // 每帧新建 BLAS 的三角形上限（第一个不受限）。局部回退后配额满的绘制照原版画进阴影图、不再拖整帧回原版，所以按耗时压小：进营地一次冒出两百多个网格摊到十来帧建，免得一帧建 20 万三角形的尖峰把自动降档推到底 | triangle cap for the BLAS built per frame (the first is not capped). With partial fallback a draw over quota goes into the map as original instead of sending the whole frame back, so the cap is kept small for cost: the 200+ meshes of the camp are spread over a dozen frames rather than one 200k-triangle spike pushing the automatic downgrade to the bottom
