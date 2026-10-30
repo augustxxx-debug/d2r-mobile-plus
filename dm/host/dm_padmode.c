@@ -522,14 +522,14 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
     // A = +1 level (back to 1 after 8), taking effect at once like the other rows; Down = the focus goes back to the row it came from; Up does nothing.
     // The focus moved elsewhere (page rebuilt, a touch on another row) counts as leaving the row. If the table was scrolled down, the original scroll area is made to scroll back to the
     // top by itself (as on the Custom page: wheel notches, reading only, never writing original widgets)
-    { static int on_row, last_dir, last_off = -1; static uint64_t back, wheel_at; uint64_t fm = rd8(root + 0xd0), F = fm ? rd8(fm + 0x190) : 0;
+    { static int on_row, last_dir, last_off = -1; static uint64_t wheel_at; static char back_nm[64]; uint64_t fm = rd8(root + 0xd0), F = fm ? rd8(fm + 0x190) : 0;
       if (!pad || !fm || dm_ui_modal_active(root)) on_row = 0;
       else if (on_row && F != w) { on_row = 0; LOG("游戏难度：手柄焦点离开难度行（被改到 %s）", F ? (const char *)rd8(F + 8) : "-"); }
       else if (on_row) {
           uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A);
-          if (ev & DM_BTN_DOWN) { const char *bn = back ? (const char *)rd8(back + 8) : NULL; uint64_t tb = pm_find(gp, "OptionsTable", 0);
-              if (bn && tb && pm_find(tb, bn, 0) == back) *(uint64_t *)(uintptr_t)(fm + 0x190) = back;   // 还在这页的表格里才交回 | hand back only if it is still in this page's table
-              on_row = 0; LOG("游戏难度：手柄焦点下移回 %s", bn ? bn : "-"); }
+          if (ev & DM_BTN_DOWN) { uint64_t tb = pm_find(gp, "OptionsTable", 0), bw = tb && back_nm[0] ? pm_find(tb, back_nm, 0) : 0;   // 按名字在这页的表格里找回那一行（页重建过指针会变，B064） | find that row again by name in this page's table (pointers change when the page is rebuilt, B064)
+              if (bw) *(uint64_t *)(uintptr_t)(fm + 0x190) = bw;
+              on_row = 0; LOG("游戏难度：手柄焦点下移回 %s", bw ? back_nm : "-（表格里找不到）"); }
           else if (shown && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A))) {
               int n = (ev & DM_BTN_A) ? shown % 8 + 1 : shown + ((ev & DM_BTN_RIGHT) ? 1 : -1);
               if (n >= 1 && n <= 8 && n != shown) { dm_hud_request_players(n); g_diff_pend = n; LOG("游戏难度：选项页手柄 %d → %d 档（下一拍生效）", shown, n); shown = n; setv = dm_hud_slider_value(0, 7, n); } }
@@ -547,11 +547,15 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
           // 只在局内落（局外这一行不可调，审计 P2-4）；焦点还指着上一页的控件时继续等，只有落在本页别的行上才算玩家动过（审计 P2-3：从 LB / RB 切进来的第一帧焦点还在上一页）
           // only in a run (outside one the row cannot be changed, audit P2-4); while the focus still points at the previous page's widget keep waiting, only a focus on another row of
           // this page means the player moved (audit P2-3: on the first frame after switching in with LB / RB the focus is still on the previous page)
+          // 焦点已经在难度行的滑块上、行处理却没开（触屏模式下关掉了，切回手柄后焦点指针还留在滑块上；B064 Mac 实测）：接回来，否则金框在难度行、左右 / A / 下却交给了原版
+          // the focus is already on the difficulty slider but the row handler is off (it was switched off in touch mode and the pointer stayed on the slider after switching back; B064,
+          // measured on the Mac host): take it back over, otherwise the gold frame sits on the row while Left / Right / A / Down go to the original game
+          if (F == w) { on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; g_diff_home = 0; LOG("游戏难度：焦点已在难度行，接回手柄行处理（回到 %s）", back_nm[0] ? back_nm : "-"); }
           int in_page = fn && pm_find(gp, fn, 0) == F;
           if (g_diff_home && (frame > g_diff_home || !shown || (in_page && !in_first))) g_diff_home = 0;
-          if (g_diff_home && in_first) { g_diff_home = 0; back = F; *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：进页缺省焦点放到难度行（原版给的是 %s）", fn); }
+          if (g_diff_home && in_first) { g_diff_home = 0; snprintf(back_nm, sizeof back_nm, "%s", fn); *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：进页缺省焦点放到难度行（原版给的是 %s）", fn); }
           else if (in_first && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
-              back = F; *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：手柄焦点上移到难度行（从 %s）", fn); } } }
+              snprintf(back_nm, sizeof back_nm, "%s", fn); *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：手柄焦点上移到难度行（从 %s）", fn); } } }
     if (setv >= 0 && setv != v) ((void (*)(uint64_t, int, int, int))(b + 0xad7028))(w, setv, 0, 0);
     g_diff_last = *(int32_t *)(uintptr_t)(w + 0x5c4);
     // 滑块自己不显示数字：行名写「游戏难度：N」；说明行局外写「进入游戏后可调整」，局内两种模式同一句（RC1.1 B015 起手柄也走焦点链，不再有「按 Y」那句）
