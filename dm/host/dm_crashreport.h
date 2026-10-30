@@ -2,11 +2,15 @@
 // 这里是公共部分：是否上报、何时上报、失败重试到什么时候为止、结果提示；只在游戏主线程跑（取手柄处每帧 dm_crashreport_pump），收集 / 脱敏 / 签名 / 网络全在外壳的后台线程，绝不阻塞启动。
 //   开关关着（或没同意、没配地址、测试局没带 DM_TEST_CRASHREPORT）：不收集、不联网，手上的待传报告一并删掉。
 //   重试有上限：一次启动最多 3 次（启动 20 秒后第一次，再隔 60 秒、300 秒，服务端要求更久就按它，超过 10 分钟留到下次启动）、最多跨 3 次启动、总共 6 次、报告存放不超过 7 天；到了上限就放弃。服务端明确拒收（其他 4xx、upload_conflict、过大）不重试。
+//   网络（看板 PRD §2.6，用户 2026-10-30）：蜂窝 / 低数据模式 / 计量网络只发摘要版（日志头与关键读数，≤ 16 KiB，第一行 (automatic, summary)），完整版（第一行 (automatic, full) summary_of=<摘要的 upload_id>）只在 Wi-Fi 发；判断在外壳。设置里没有另外的开关。
+//   时机：只在主菜单 / 选人页、连续 5 秒没进局时发；局内零请求。到点时已在局内就先把报告打好存盘（上一局日志下次启动就被覆盖），回主菜单再发。后台通道留给后续 P-编号。
 //   报告在盘上：<设置目录>/dm_crash_report.payload（已脱敏的载荷原文，玩家可以直接打开看）+ .id（upload_id）由外壳写；.state（次数与时间）这里写；重试沿用同一 upload_id 与同一载荷（服务端幂等）。结果提示写 .note，下次到选角页显示一行（dm_update.c TouchUpdNote），显示 20 秒。
 // Automatic crash reports (RC2, off by default): once the player has turned on "Auto-report crashes" under Options → Custom and agreed in the in-game box, a launch where the crash fence says the previous run exited abnormally packs that run's scrubbed log, the system crash diagnostic (iOS MetricKit / Android ApplicationExitInfo), the fence state, version, model and GPU into one report and uploads it with the challenge-signed diagnostic protocol (docs/DIAGNOSTICS.md).
 // This is the shared part: whether and when to report, when retries stop, the result notice; it runs only on the game main thread (dm_crashreport_pump at the controller poll); collection / scrubbing / signing / network all live on the shells' background threads, so startup is never blocked.
 //   Switch off (or no consent, no origin, or a test run without DM_TEST_CRASHREPORT): nothing is collected or sent, and any pending report is deleted.
 //   Bounded retries: at most 3 per launch (first 20 s after launch, then 60 s and 300 s later, longer if the server asks, beyond 10 minutes left to the next launch), at most 3 launches, 6 attempts overall, 7 days of storage; then it gives up. An explicit refusal (other 4xx, upload_conflict, too large) is not retried.
+//   Network (dashboard PRD 2.6): metered networks (cellular, Low Data Mode) only get the summary (log head and key readings, at most 16 KiB, first line (automatic, summary)); the full report (first line (automatic, full) summary_of=<the summary's upload_id>) only goes on Wi-Fi; the shells decide. There is no further switch in Settings.
+//   Timing: only on the main menu / character select after 5 s without entering a game; zero requests in a game. If already in a game when due, the report is packed to disk first (the previous log is overwritten at the next launch) and sent back on the menu. A background channel is left to a later P- number.
 //   The report on disk: <settings dir>/dm_crash_report.payload (the scrubbed payload itself, the player can open it) + .id (upload_id), written by the shell; .state (counts and times) written here; a retry keeps the same upload_id and payload (idempotent on the server). The result goes to .note and shows as one line on the character-select page at the next visit (dm_update.c TouchUpdNote) for 20 s.
 #pragma once
 #include <stddef.h>

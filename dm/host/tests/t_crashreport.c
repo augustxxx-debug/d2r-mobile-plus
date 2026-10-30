@@ -10,6 +10,7 @@ static char g_dir[256];
 static int f_on = 1, f_prev = 1, f_cfg = 1, f_cancels, f_starts, f_redraws; static const char *f_test; static unsigned f_tok; static char f_fence[160], f_dirarg[256];
 int dm_custom_auto_crash(void) { return f_on; }
 static int f_loaded = 1; int dm_custom_loaded(void) { return f_loaded; }
+static int f_ingame; int dm_ingame_now(void) { return f_ingame; }
 int dm_custom_dir(char *p, size_t n) { snprintf(p, n, "%s", g_dir); return 1; }
 const char *dm_crashfence_test_env(void) { return f_test; }
 int dm_crashfence_prev(int *cause, int *arg, int *streak, char *hist, size_t hn) { if (cause) *cause = 1; if (arg) *arg = 11; if (streak) *streak = 2; if (hist && hn) snprintf(hist, hn, "11"); return f_prev; }
@@ -24,7 +25,7 @@ static int checks, fails;
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
 static int exists(const char *ext) { char p[1100]; snprintf(p, sizeof p, "%s/dm_crash_report.%s", g_dir, ext); return access(p, F_OK) == 0; }
 static void touch(const char *ext) { char p[1100]; snprintf(p, sizeof p, "%s/dm_crash_report.%s", g_dir, ext); FILE *f = fopen(p, "w"); fputs("x", f); fclose(f); }
-static void launch(double now, long long wall) { atomic_store(&g_sw_on, 1); atomic_store(&g_sw_until, 0); atomic_store(&g_sw_seen, 1); memset(&S, 0, sizeof S); memset(&g_pend, 0, sizeof g_pend); g_note_key[0] = 0; g_note_until = 0; f_starts = 0; dm_crashreport_boot(now, wall); }
+static void launch(double now, long long wall) { f_ingame = 0; atomic_store(&g_sw_on, 1); atomic_store(&g_sw_until, 0); atomic_store(&g_sw_seen, 1); memset(&S, 0, sizeof S); memset(&g_pend, 0, sizeof g_pend); g_note_key[0] = 0; g_note_until = 0; f_starts = 0; dm_crashreport_boot(now, wall); S.menu_since = -100; }   // 缺省场景：已在主菜单停够 | default scene: on the menu long enough
 static void wipe(void) { static const char *const e[] = { "payload", "id", "state", "note" }; for (int i = 0; i < 4; i++) { char p[1100]; snprintf(p, sizeof p, "%s/dm_crash_report.%s", g_dir, e[i]); unlink(p); } char q[1100]; snprintf(q, sizeof q, "%s/dm_telemetry.txt", g_dir); unlink(q); }
 int main(void) {
     snprintf(g_dir, sizeof g_dir, "/tmp/t_crashreport.%d", getpid()); mkdir(g_dir, 0700); unsetenv("DM_TEST_CRASHREPORT");
@@ -82,7 +83,7 @@ int main(void) {
     // 总开关：false = 零尝试、不占次数、报告只打包一次；缓存跨启动沿用；恢复 true 接着发 | server switch: false = no attempt, no budget, packed once; the cache carries across launches; true resumes
     launch(0, 1000); dm_crashreport_switch(1, 0, 0, "maint_01"); f_prepares = 0; dm_crashreport_tick(20, 1020); dm_crashreport_tick(5000, 6000); CHECK(f_starts == 0 && f_prepares == 1 && dm_crashreport_state(&at, &la) == DM_CR_WAIT && at == 0 && la == 0 && !g_note_key[0]);
     { char p[1100]; snprintf(p, sizeof p, "%s/dm_telemetry.txt", g_dir); CHECK(access(p, F_OK) == 0); }
-    touch("payload"); touch("id"); f_prev = 0; memset(&S, 0, sizeof S); atomic_store(&g_sw_on, 1); atomic_store(&g_sw_seen, 1); f_starts = 0; f_prepares = 0; dm_crashreport_boot(0, 7000);   // 下次启动：清单拉不到，读盘上缓存，仍暂停；报告已在盘上不再打包 | next launch: no manifest, the disk cache still pauses; the report is on disk already
+    touch("payload"); touch("id"); f_prev = 0; memset(&S, 0, sizeof S); atomic_store(&g_sw_on, 1); atomic_store(&g_sw_seen, 1); f_starts = 0; f_prepares = 0; dm_crashreport_boot(0, 7000); S.menu_since = -100;   // 下次启动：清单拉不到，读盘上缓存，仍暂停；报告已在盘上不再打包 | next launch: no manifest, the disk cache still pauses; the report is on disk already
     dm_crashreport_tick(100, 7100); CHECK(f_starts == 0 && f_prepares == 0 && !atomic_load(&g_sw_on) && dm_crashreport_state(&at, &la) == DM_CR_WAIT && la == 0);
     dm_crashreport_switch(0, 0, 0, NULL); dm_crashreport_tick(101, 7101); CHECK(f_starts == 1 && dm_crashreport_state(&at, &la) == DM_CR_RUNNING && at == 1 && la == 1);   // 新清单没有这个字段 = 开，补发 | a manifest without the field = on, catch up
     dm_crashreport_result(f_tok, DM_DIAGUP_OK, "0123456789abcdef0123456789abcdef", 0, 0); dm_crashreport_tick(102, 7102); CHECK(dm_crashreport_state(0, 0) == DM_CR_OFF); wipe(); g_note_key[0] = 0; f_prev = 1;
@@ -96,6 +97,14 @@ int main(void) {
     launch(0, 1000); dm_crashreport_tick(20, 1020); dm_crashreport_result(f_tok, DM_DIAGUP_UNAVAILABLE, "storage_capacity", 0, 3600); dm_crashreport_tick(21, 1021); CHECK(dm_crashreport_state(&at, 0) == DM_CR_IDLE && at == 0); wipe();
     // 外壳自己查总开关（安卓）：这里不拦、不打包 | a shell that checks the switch itself (Android): not held here
     dm_crashreport_init(&shell_self); launch(0, 1000); dm_crashreport_switch(1, 0, 0, NULL); dm_crashreport_tick(20, 1020); CHECK(f_starts == 1); wipe(); dm_crashreport_init(&shell);
+    // 局内零请求：到点在局内只打包；回主菜单停够 5 秒才发 | zero requests in a game: packs only when due in a game; sends after 5 s back on the menu
+    launch(0, 1000); f_ingame = 1; f_prepares = 0; dm_crashreport_tick(20, 1020); dm_crashreport_tick(500, 1500); CHECK(f_starts == 0 && f_prepares == 1); f_ingame = 0; dm_crashreport_tick(501, 1501); CHECK(f_starts == 0); dm_crashreport_tick(505, 1505); CHECK(f_starts == 0); dm_crashreport_tick(506, 1506); CHECK(f_starts == 1); wipe();
+    // 蜂窝：摘要送达提示一次、不占次数，完整版等 Wi-Fi；Wi-Fi 上完整版送达不再提示；报告一直留到那时 | metered: the summary notifies once with no budget used, the full report waits for Wi-Fi and is silent
+    launch(0, 1000); dm_crashreport_tick(20, 1020); dm_crashreport_result(f_tok, DM_DIAGUP_SUMMARY_SENT, "0123456789abcdef0123456789abcdef", 0, 0); dm_crashreport_tick(21, 1021); CHECK(dm_crashreport_state(&at, &la) == DM_CR_WAIT && at == 0 && la == 0 && S.summary == 1 && !strcmp(g_note_key, "dmCrashReportSent") && exists("state"));
+    dm_crashreport_note(); g_note_key[0] = 0; dm_crashreport_tick(321, 1321); dm_crashreport_result(f_tok, DM_DIAGUP_WAIT_WIFI, "wifi", 0, 0); dm_crashreport_tick(322, 1322); CHECK(dm_crashreport_state(&at, 0) == DM_CR_WAIT && at == 0); dm_crashreport_tick(622, 1622); dm_crashreport_result(f_tok, DM_DIAGUP_WAIT_WIFI, "wifi", 0, 0); dm_crashreport_tick(623, 1623); CHECK(dm_crashreport_state(0, 0) == DM_CR_IDLE && exists("state"));
+    f_prev = 0; launch(0, 5000); CHECK(S.summary == 1); dm_crashreport_tick(20, 5020); dm_crashreport_result(f_tok, DM_DIAGUP_OK, "fedcba9876543210fedcba9876543210", 0, 0); dm_crashreport_tick(21, 5021); CHECK(dm_crashreport_state(0, 0) == DM_CR_OFF && !exists("state") && !g_note_key[0]); f_prev = 1; wipe();
+    // 摘要之后完整版一直没等到 Wi-Fi：7 天后删除，不报失败 | never got Wi-Fi after the summary: deleted after 7 days, no failure notice
+    f_prev = 0; memset(&S, 0, sizeof S); S.created = 1000; S.summary = 1; S.launches = 0; snprintf(S.fence, sizeof S.fence, "fence x"); state_write(); launch(0, 1000 + 8 * 86400); CHECK(dm_crashreport_state(0, 0) == DM_CR_OFF && !exists("state") && !g_note_key[0]); f_prev = 1; wipe();
     // 设置文件还没读到：泵不判定、不删待传报告；读到才判定 | settings not read yet: the pump decides nothing and deletes nothing; it decides once they are read
     f_on = 0; f_loaded = 0; memset(&S, 0, sizeof S); touch("state"); dm_crashreport_pump(); CHECK(!S.booted && exists("state")); f_loaded = 1; dm_crashreport_pump(); CHECK(S.booted && !exists("state")); f_on = 1; wipe();
     printf("t_crashreport: %d checks, %d failed\n", checks, fails); rmdir(g_dir);

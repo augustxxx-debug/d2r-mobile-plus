@@ -193,8 +193,7 @@ func collector(_ text: String) -> (Int) -> String? { { limit in text.count <= li
         let crDir = NSTemporaryDirectory() + "dm-cr-\(getpid())"; try? FileManager.default.createDirectory(atPath: crDir, withIntermediateDirectories: true)
         let crCollects = CrCount(); let crMeta = ["app_version": "1.0.0", "build": "12", "source_revision": "abcdef1", "model": "iPhone19,4", "os_version": "27.2.0", "locale": "en"]
         let crCfg = URLSessionConfiguration.ephemeral; crCfg.protocolClasses = [FakeProtocol.self]
-        guard let crUp = DmDiagUploader(origin: "https://diag.example.invalid", configuration: crCfg, automatic: true) else { check(false, "uploader"); exit(1) }
-        check(crCfg.allowsConstrainedNetworkAccess == false, "automatic reports respect Low Data Mode")
+        guard let crUp = DmDiagUploader(origin: "https://diag.example.invalid", configuration: crCfg) else { check(false, "uploader"); exit(1) }
         let crKey = Curve25519.Signing.PrivateKey()
         FakeServer.shared.reset([FakeServer.shared.challenge(), { _, _ in .fail(.timedOut) }])
         var r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta) { _ in crCollects.n += 1; return "fence cause=crash\nlog line" }
@@ -210,10 +209,10 @@ func collector(_ text: String) -> (Int) -> String? { { limit in text.count <= li
         check(sent2["upload_id"] as? String == saved1?.uploadID, "same upload_id"); check((sent2["payload"] as? String).flatMap(DmDiagUploader.decodeBase64URL) == saved1?.payload, "byte-identical payload")
         // 缩小重打包：日志文件已换，只能从盘上的载荷截；413 后新 upload_id、绝不再收集 | smaller re-pack from the payload on disk: new upload_id after a 413, no fresh collection
         try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report.payload"); try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report.id")
-        let bigLog = "HEAD-MARK\n" + String(repeating: "x", count: 100_000) + "\nTAIL-MARK"
+        let bigLog = "first line\nHEAD-MARK\n" + String(repeating: "x", count: 100_000) + "\nTAIL-MARK"
         FakeServer.shared.reset([FakeServer.shared.challenge(), err(413, "payload_too_large"), FakeServer.shared.challenge(), { r, b in
             let p = (json(b)["payload"] as? String).flatMap(DmDiagUploader.decodeBase64URL) ?? Data(); check(p.count <= 60_000, "smaller after 413: \(p.count)")
-            let log = (json(p)["log"] as? String) ?? ""; check(log.hasPrefix("HEAD-MARK") && log.hasSuffix("TAIL-MARK"), "keeps head and tail")
+            let log = (json(p)["log"] as? String) ?? ""; check(log.contains("HEAD-MARK") && log.hasSuffix("TAIL-MARK"), "keeps head and tail")
             return receipt("fedcba9876543210fedcba9876543210", dup: false)(r, b) }])
         crCollects.n = 0
         r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta) { _ in crCollects.n += 1; return bigLog }
@@ -228,6 +227,31 @@ func collector(_ text: String) -> (Int) -> String? { { limit in text.count <= li
         FakeServer.shared.reset([FakeServer.shared.challenge(), receipt("0123456789abcdef0123456789abcdef", dup: false)])
         r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta) { _ in "must not collect" }
         check(r1.outcome == .ok && (FakeServer.shared.seen.last.map { json($0.body) }?["upload_id"] as? String) == packed?.uploadID, "resume sends the packed report")
+        // 蜂窝：摘要版 ≤ 16 KiB、第一行标 summary；到了就不再发；完整版 Wi-Fi 才发、第一行 summary_of、不同 upload_id | metered: summary at most 16 KiB; once arrived nothing more; the full report on Wi-Fi with summary_of and another upload_id
+        for f in ["payload", "id", "summary.payload", "summary.id"] { try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report." + f) }
+        let longLog = "D2R Mobile Plus crash report (automatic)\nfence cause=crash\n" + (0..<4000).map { "line \($0) of the log" }.joined(separator: "\n")
+        FakeServer.shared.reset([FakeServer.shared.challenge(), receipt("0123456789abcdef0123456789abcdef", dup: false)])
+        r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta, metered: true) { _ in longLog }
+        check(r1.outcome == .summarySent, "summary sent \(r1.outcome)")
+        let sb = FakeServer.shared.seen.last.map { json($0.body) } ?? [:], sp = (sb["payload"] as? String).flatMap(DmDiagUploader.decodeBase64URL) ?? Data(), sl = (json(sp)["log"] as? String) ?? ""
+        check(sp.count <= 16 * 1024 && sl.hasPrefix("D2R Mobile Plus crash report (automatic, summary)\nfence cause=crash") && !sl.contains("line 3999"), "summary shape \(sp.count)")
+        FakeServer.shared.reset([])
+        r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta, metered: true) { _ in "x" }
+        check(r1.outcome == .waitWifi && FakeServer.shared.seen.isEmpty, "metered after the summary: no request")
+        FakeServer.shared.reset([FakeServer.shared.challenge(), receipt("fedcba9876543210fedcba9876543210", dup: false)])
+        r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta, metered: false) { _ in "x" }
+        let fb = FakeServer.shared.seen.last.map { json($0.body) } ?? [:], fp = (fb["payload"] as? String).flatMap(DmDiagUploader.decodeBase64URL) ?? Data(), fl = (json(fp)["log"] as? String) ?? ""
+        check(r1.outcome == .ok && fl.hasPrefix("D2R Mobile Plus crash report (automatic, full) summary_of=\(sb["upload_id"] as? String ?? "?")\n") && fl.contains("line 3999") && (fb["upload_id"] as? String) != (sb["upload_id"] as? String), "full report on Wi-Fi")
+        // Wi-Fi 上丢响应后换到蜂窝：完整版可能已到，不发摘要；回 Wi-Fi 同 ID 同载荷 | a lost response on Wi-Fi then metered: no summary; back on Wi-Fi the same id and bytes
+        for f in ["payload", "id", "summary.payload", "summary.id"] { try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report." + f) }
+        FakeServer.shared.reset([FakeServer.shared.challenge(), { _, _ in .fail(.timedOut) }])
+        r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta) { _ in "log" }
+        let held = DmCrashReportStore.load(dir: crDir); FakeServer.shared.reset([])
+        r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta, metered: true) { _ in "x" }
+        check(r1.outcome == .waitWifi && FakeServer.shared.seen.isEmpty, "maybe delivered: wait for Wi-Fi")
+        FakeServer.shared.reset([FakeServer.shared.challenge(), receipt("0123456789abcdef0123456789abcdef", dup: true)])
+        r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta) { _ in "x" }
+        check(r1.outcome == .ok && (FakeServer.shared.seen.last.map { json($0.body) }?["upload_id"] as? String) == held?.uploadID, "same id"); 
         // 4xx / 5xx / 限流：归类交回策略层，报告留着由策略层决定 | 4xx / 5xx / rate limit classified and handed back
         for (status, code, want, after) in [(429, "rate_limited", DmDiagOutcome.rateLimited, "120"), (503, "diagnostic_maintenance", .maintenance, "90"), (400, "invalid_metadata", .rejected, nil), (409, "upload_conflict", .conflict, nil), (500, "request_failed", .unconfirmed, nil)] as [(Int, String, DmDiagOutcome, String?)] {
             try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report.payload"); try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report.id")

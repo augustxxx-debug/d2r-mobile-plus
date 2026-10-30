@@ -18,7 +18,7 @@ Being reclaimed by the system in the background, or swiping the app away yoursel
 
 A report is one text plus six metadata fields. The automatic report's text contains, in order:
 
-- A fixed first line, `D2R Mobile Plus crash report (automatic)`.
+- A first line naming the kind: `D2R Mobile Plus crash report (automatic, full)` or `(automatic, summary)`.
 - One crash fence line such as `fence cause=crash arg=11 streak=2 hist=11` (cause, signal or seconds, streak).
 - GPU name (iOS; on Android it is in the log's `NVN caps` line).
 - Version, build, model, OS version, battery and Low Power Mode, thermal state, free storage, uptime, physical memory.
@@ -39,10 +39,16 @@ Scrubbing is rule-based and cannot guarantee it removes every piece of personal 
 ## Identity, frequency and retention
 
 - Each installation creates an Ed25519 key used only for diagnostics, separate from any co-op identity. iOS keeps it in the Keychain (this device only, not synchronized); Android keeps it in the no-backup private directory. The server can tell that two reports came from one installation, but the key is not tied to an account.
-- At most 3 attempts per launch (20 s after launch, having waited up to 60 s for this launch's update manifest, then 60 s and 300 s later, or longer if the server asks), 3 launches, 6 attempts overall and 7 days of storage; then the report is deleted with one notice. An explicit refusal is not retried.
+- At most 3 attempts per launch (starting at least 20 s after launch, after 5 s on the menu and up to 60 s waiting for this launch's update manifest, then 60 s and 300 s later, or longer if the server asks), 3 launches, 6 attempts overall and 7 days of storage; then the report is deleted with one notice. An explicit refusal is not retried.
 - On iOS, automatic uploads do not use Low Data Mode networks. Manual uploads are not limited this way.
 - Turning the switch off and pressing Apply cancels a running upload and deletes the pending report.
 - The server states its retention before each upload, currently 7 days; only authorized maintainers can read reports.
+
+## When, and on which network
+
+Reports go out only after 5 s on the main menu or character select; nothing is requested during a game. If a report is due while you are in a game, it is packed on the device and sent once you are back on the menu.
+
+On cellular, Low Data Mode and metered networks only a summary goes out: the fence state, version, settings and key readings from the start of the report, at most 16 KiB, with `D2R Mobile Plus crash report (automatic, summary)` as its first line. The full report (with log tails and the system crash diagnostic) goes only on Wi-Fi, with `(automatic, full) summary_of=<the summary's upload_id>` as its first line and its own `upload_id`. There is no further switch in Settings. If Wi-Fi never comes after the summary, the full report is deleted after 7 days of storage.
 
 ## Server switch
 

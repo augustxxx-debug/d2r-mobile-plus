@@ -160,6 +160,12 @@ __attribute__((weak)) void dm_crashreport_switch_no_fetch(void) {}
 #else
 void dm_crashreport_switch(int, int, long long, const char *); void dm_crashreport_switch_no_fetch(void);
 #endif
+static long long tel_iso(const char *s) {   // YYYY-MM-DDTHH:MM:SS(Z|±HH:MM) → Unix 秒；格式不对返回 0 | to Unix seconds; 0 on a bad format
+    int y, mo, d, h, mi, se, n = 0; if (sscanf(s, "%4d-%2d-%2dT%2d:%2d:%2d%n", &y, &mo, &d, &h, &mi, &se, &n) != 6 || mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || se > 60) return 0;
+    const char *z = s + n; long off = 0; if (*z == 'Z' && !z[1]) off = 0; else { int oh, om, m2 = 0; if ((*z != '+' && *z != '-') || sscanf(z + 1, "%2d:%2d%n", &oh, &om, &m2) != 2 || z[1 + m2]) return 0; off = (oh * 3600L + om * 60L) * (*z == '-' ? -1 : 1); }
+    int a = (14 - mo) / 12, yy = y + 4800 - a, mm = mo + 12 * a - 3; long long days = d + (153 * mm + 2) / 5 + 365LL * yy + yy / 4 - yy / 100 + yy / 400 - 32045 - 2440588;   // 公历日数（不依赖时区） | civil days, independent of the time zone
+    return days * 86400 + h * 3600 + mi * 60 + se - off;
+}
 static int js_value(jp_t *j, int depth, int ctx);   // ctx：0 别处 / 1 根对象 / 2 community 对象 / 3 credits 对象 / 4 telemetry 对象 | ctx: 0 elsewhere / 1 root object / 2 the community object / 3 the credits object
 // credits 的名单数组：只收不带转义、≤ 32 字节的字符串，去重，合计 ≤ 24；别的元素 / 超限记 bad_credits（整个 credits 忽略），语法仍要对 | a credits name array: only escape-free strings ≤ 32 bytes, deduped, ≤ 24 in all; anything else / over the cap sets bad_credits (credits ignored as a whole); syntax must still hold
 static int js_names(jp_t *j, int depth, int which) {
@@ -189,7 +195,9 @@ static int js_object(jp_t *j, int depth, int ctx) {
         // 服务端总开关（dm_crashreport.h）：类型不对就当这份清单没说，沿用缓存，不往「多发」的方向猜 | the server switch: a wrong type counts as saying nothing, the cache stays
         else if (ctx == 1 && !strcmp(key, "telemetry")) { j->n_tel++; if (j->p < j->e && *j->p == '{') { if (!js_object(j, depth + 1, 4)) return 0; } else { j->tel_bad = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
         else if (ctx == 4 && !strcmp(key, "enabled")) { if (js_lit(j, "true")) j->tel_on = 1; else if (js_lit(j, "false")) j->tel_on = 0; else { j->tel_bad = 1; if (!js_value(j, depth + 1, 0)) return 0; } j->tel_has = 1; }
-        else if (ctx == 4 && !strcmp(key, "pause_until")) { const char *q = j->p; if (!js_number(j)) { j->tel_bad = 1; if (!js_value(j, depth + 1, 0)) return 0; } else j->tel_until = atoll(q); }
+        else if (ctx == 4 && !strcmp(key, "pause_until")) { const char *q = j->p;   // ISO 8601（看板 PRD §2.7）或 Unix 秒；null = 没有；认不出 = 坏字段 | ISO 8601 (dashboard PRD 2.7) or Unix seconds; null = none; unreadable = a bad field
+            if (j->p < j->e && *j->p == '"') { char iso[40] = ""; int esc = 0, over = 0; if (!js_string(j, iso, sizeof iso, &esc, &over)) return 0; j->tel_until = esc || over ? 0 : tel_iso(iso); if (j->tel_until <= 0) j->tel_bad = 1; }
+            else if (js_lit(j, "null")) {} else if (js_number(j)) j->tel_until = atoll(q); else { j->tel_bad = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
         else if (ctx == 4 && !strcmp(key, "reason") && j->p < j->e && *j->p == '"') { int esc = 0, over = 0; if (!js_string(j, j->tel_reason, sizeof j->tel_reason, &esc, &over)) return 0; if (esc || over) j->tel_reason[0] = 0; }
         else if (ctx == 3 && (!strcmp(key, "special") || !strcmp(key, "thanks"))) { if (!js_names(j, depth + 1, key[0] == 't')) return 0; }
         else if (!js_value(j, depth + 1, 0)) return 0;

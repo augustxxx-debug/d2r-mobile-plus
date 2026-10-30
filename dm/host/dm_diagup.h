@@ -15,6 +15,7 @@
 enum {   // 与 dm_diag_upload.swift DmDiagOutcome 一致 | kept in step with DmDiagOutcome in dm_diag_upload.swift
     DM_DIAGUP_CANCELLED = 0, DM_DIAGUP_OK = 1, DM_DIAGUP_UNCONFIRMED = 2, DM_DIAGUP_UNAVAILABLE = 3, DM_DIAGUP_MAINTENANCE = 4, DM_DIAGUP_RATE_LIMITED = 5,
     DM_DIAGUP_TOO_LARGE = 6, DM_DIAGUP_REJECTED = 7, DM_DIAGUP_CONFLICT = 8, DM_DIAGUP_PREPARE = 9, DM_DIAGUP_CONFIG = 10,
+    DM_DIAGUP_SUMMARY_SENT = 11, DM_DIAGUP_WAIT_WIFI = 12,   // 只有自动上报用：蜂窝下摘要版已送达，完整版等 Wi-Fi / 这次没发（摘要已送达或完整版可能已送达），等 Wi-Fi | automatic reports only: the summary arrived on a metered network, the full report waits for Wi-Fi / nothing sent this time, waiting for Wi-Fi
 };
 #define DM_DIAGUP_F_DUPLICATE 1   // 回执 duplicate = true（重试命中服务端已存的那份） | receipt duplicate = true
 #define DM_DIAGUP_F_MAYBE 2       // 这份报告此前有请求结果不明，可能已送达 | an earlier request of this report had no definite answer

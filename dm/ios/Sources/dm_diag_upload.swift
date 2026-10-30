@@ -11,6 +11,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Network
 import Security
 
 /// 结果分类，与 dm/host/dm_diagup.h 的 DM_DIAGUP_* 一致 | outcome classes, kept in step with DM_DIAGUP_* in dm/host/dm_diagup.h
@@ -26,6 +27,8 @@ public enum DmDiagOutcome: Int32, Sendable {
     case conflict = 8      // upload_conflict：同一 upload_id 不同载荷 = 客户端缺陷 | same upload_id, different payload = a client defect
     case prepare = 9       // 本机准备失败（收集 / 身份） | local preparation failed (collection / identity)
     case configuration = 10 // 没有合法的上传地址 | no valid upload origin
+    case summarySent = 11  // 只有自动上报：蜂窝下摘要版已送达 | automatic only: the summary arrived on a metered network
+    case waitWifi = 12     // 只有自动上报：这次没发，等 Wi-Fi | automatic only: nothing sent, waiting for Wi-Fi
 }
 
 public struct DmDiagResult: Sendable, Equatable {
@@ -144,11 +147,10 @@ public final class DmDiagUploader: @unchecked Sendable {
         return nil
     }
 
-    public init?(origin raw: String, configuration: URLSessionConfiguration? = nil, automatic: Bool = false) {
+    public init?(origin raw: String, configuration: URLSessionConfiguration? = nil) {
         guard let url = Self.validOrigin(raw) else { return nil }
         origin = url
         let config = configuration ?? URLSessionConfiguration.ephemeral
-        if automatic { config.allowsConstrainedNetworkAccess = false }   // 自动上报不动玩家的低数据模式（手动上传是玩家自己点的，不限） | automatic reports respect Low Data Mode (a manual upload is the player's own tap)
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 30
         config.waitsForConnectivity = false   // 离线立刻失败，不在后台等网 | fail at once when offline instead of waiting in the background
@@ -353,16 +355,16 @@ public struct DmDiagFailure: Error {
 // <dir>/dm_crash_report.payload = 载荷原文（已脱敏的 JSON，重试要逐字节相同）；.id = upload_id + 「可能已送达」标记。先写临时文件再换名
 // <dir>/dm_crash_report.payload = the exact payload (scrubbed JSON; retries must be byte-identical); .id = upload_id + the maybe-delivered flag. Temp file, then rename
 public enum DmCrashReportStore {
-    static func paths(_ dir: String) -> (payload: String, id: String) { (dir + "/dm_crash_report.payload", dir + "/dm_crash_report.id") }
-    public static func load(dir: String) -> DmDiagReport? {
-        let p = paths(dir)
+    static func paths(_ dir: String, summary: Bool = false) -> (payload: String, id: String) { let k = dir + "/dm_crash_report." + (summary ? "summary." : ""); return (k + "payload", k + "id") }
+    public static func load(dir: String, summary: Bool = false) -> DmDiagReport? {
+        let p = paths(dir, summary: summary)
         guard let payload = FileManager.default.contents(atPath: p.payload), let raw = FileManager.default.contents(atPath: p.id), let text = String(data: raw, encoding: .utf8) else { return nil }
         let lines = text.split(separator: "\n").map(String.init)
         guard let id = lines.first, id.range(of: "^[0-9a-f]{32}$", options: .regularExpression) != nil else { return nil }
         return DmDiagReport(uploadID: id, payload: payload, maybeDelivered: lines.contains("maybe=1"))
     }
-    public static func save(_ report: DmDiagReport, dir: String) {
-        let p = paths(dir)
+    public static func save(_ report: DmDiagReport, dir: String, summary: Bool = false) {
+        let p = paths(dir, summary: summary)
         try? report.payload.write(to: URL(fileURLWithPath: p.payload), options: .atomic)
         try? Data("\(report.uploadID)\nmaybe=\(report.maybeDelivered ? 1 : 0)\n".utf8).write(to: URL(fileURLWithPath: p.id), options: .atomic)
     }
@@ -374,19 +376,62 @@ public enum DmCrashReportStore {
         let head = min(16 * 1024, limit / 2), tail = max(0, limit - head - mark.utf8.count)
         return String(decoding: u[0..<head], as: UTF8.self) + mark + String(decoding: u[(u.count - tail)...], as: UTF8.self)
     }
+    static func summaryDone(dir: String) -> Bool { (FileManager.default.contents(atPath: paths(dir, summary: true).id).flatMap { String(data: $0, encoding: .utf8) } ?? "").contains("done=1") }
+    static func markSummaryDone(dir: String) { let p = paths(dir, summary: true); if let d = FileManager.default.contents(atPath: p.id), let t = String(data: d, encoding: .utf8) { try? Data((t + "done=1\n").utf8).write(to: URL(fileURLWithPath: p.id), options: .atomic) } }
+    static func logAndMeta(_ payload: Data) -> (String, [String: String])? {
+        guard let o = (try? JSONSerialization.jsonObject(with: payload)) as? [String: Any], let log = o["log"] as? String, let m = o["metadata"] as? [String: String] else { return nil }
+        return (log, m)
+    }
+    static func withFirstLine(_ log: String, _ first: String) -> String { first + (log.firstIndex(of: "\n").map { String(log[$0...]) } ?? "") }
+    /// 摘要版：同一份报告的头（围栏、版本、设置与关键读数）≤ 16 KiB，整行截断，自己的 upload_id | the summary: the head of the same report (fence, version, settings and key readings), at most 16 KiB, cut at a line, its own upload_id
+    static func makeSummary(of full: DmDiagReport) -> DmDiagReport? {
+        guard let (log, meta) = logAndMeta(full.payload) else { return nil }
+        var head = Array(log.utf8.prefix(16 * 1024 - 1024)); if let nl = head.lastIndex(of: 10) { head = Array(head[..<nl]) }
+        let text = withFirstLine(String(decoding: head, as: UTF8.self), "D2R Mobile Plus crash report (automatic, summary)")
+        guard let body = try? DmDiagUploader.payload(metadata: meta, log: text) else { return nil }
+        return DmDiagReport(uploadID: DmDiagUploader.newUploadID(), payload: body)
+    }
+    /// 现在是不是计量网络（蜂窝、低数据模式）；测试开关 DM_TEST_METERED=0|1 | whether the current network is metered; test switch DM_TEST_METERED
+    public static func isMetered() async -> Bool {
+        if let t = getenv("DM_TEST_METERED") { return t[0] == 49 }
+        return await withCheckedContinuation { (c: CheckedContinuation<Bool, Never>) in
+            final class Once: @unchecked Sendable { let lock = NSLock(); var done = false; func first() -> Bool { lock.withLock { defer { done = true }; return !done } } }
+            let m = NWPathMonitor(), once = Once(), q = DispatchQueue(label: "dm.crash.path")
+            m.pathUpdateHandler = { p in if once.first() { m.cancel(); c.resume(returning: p.isExpensive || p.isConstrained) } }
+            q.asyncAfter(deadline: .now() + 2) { if once.first() { m.cancel(); c.resume(returning: true) } }   // 读不出来按计量算：只会少发 | unreadable counts as metered: only ever sends less
+            m.start(queue: q)
+        }
+    }
     /// 总开关暂停时只打包存盘，不联网（上一局日志下次启动就被覆盖） | while the server switch pauses uploads: pack to disk only, no network (the previous log is overwritten at the next launch)
     public static func prepare(dir: String, limit: Int, metadata: [String: String], collect: (Int) -> String?) {
         guard load(dir: dir) == nil, let report = try? DmDiagUploader.buildReport(limit: limit, metadata: metadata, collect: collect) else { return }
         save(report, dir: dir)
     }
     /// 一次尝试：有盘上报告就接着传，没有就新打一份并立刻存盘。collect 只在这次启动第一次打包时走（日志文件还是崩溃那一局的） | one attempt: continue the report on disk, or build one and save it at once. collect runs only for the first pack (the log files still belong to the crashed run)
-    public static func attempt(dir: String, limit: Int, uploader: DmDiagUploader, key: Curve25519.Signing.PrivateKey, metadata: [String: String], collect: @Sendable (Int) -> String?) async -> DmDiagResult {
+    public static func attempt(dir: String, limit: Int, uploader: DmDiagUploader, key: Curve25519.Signing.PrivateKey, metadata: [String: String], metered: Bool = false, collect: @Sendable (Int) -> String?) async -> DmDiagResult {
         var report = load(dir: dir)
         if report == nil {
             do { report = try DmDiagUploader.buildReport(limit: limit, metadata: metadata, collect: collect) }
             catch DmDiagError.tooLarge { return DmDiagResult(outcome: .tooLarge, detail: "local_limit") }
             catch { return DmDiagResult(outcome: .prepare, detail: "collect") }
             save(report!, dir: dir)
+        }
+        if metered {   // 蜂窝只发摘要版；摘要已到或完整版可能已到就等 Wi-Fi | metered: the summary only; wait for Wi-Fi once it arrived or the full report may have
+            if summaryDone(dir: dir) || report!.maybeDelivered { return DmDiagResult(outcome: .waitWifi, detail: "wifi") }
+            var sum = load(dir: dir, summary: true) ?? makeSummary(of: report!)
+            guard sum != nil else { return DmDiagResult(outcome: .prepare, detail: "summary") }
+            save(sum!, dir: dir, summary: true)
+            let id = sum!.uploadID, first = sum!.payload
+            let r = await uploader.attempt(report: &sum, key: key, metadata: metadata) { lim in trimmedLog(payload: first, limit: lim) }
+            if r.outcome == .ok { markSummaryDone(dir: dir); return DmDiagResult(outcome: .summarySent, detail: r.detail, duplicate: r.duplicate) }
+            if let s = sum, s.uploadID == id || r.outcome != .ok { save(s, dir: dir, summary: true) }
+            return r
+        }
+        // 完整版的第一行：没发过才改（同一 upload_id 载荷必须不变）；发过的报告 maybeDelivered 已置，原样重发 | the full report's first line: changed only before any send (one upload_id keeps one payload); a report already sent has maybeDelivered set and goes out unchanged
+        if !report!.maybeDelivered, let (log, meta) = logAndMeta(report!.payload) {
+            let sumID = load(dir: dir, summary: true).flatMap { summaryDone(dir: dir) ? $0.uploadID : nil }
+            let line = "D2R Mobile Plus crash report (automatic, full)" + (sumID.map { " summary_of=" + $0 } ?? "")
+            if let body = try? DmDiagUploader.payload(metadata: meta, log: withFirstLine(log, line)), body != report!.payload { report = DmDiagReport(uploadID: report!.uploadID, payload: body); save(report!, dir: dir) }
         }
         let original = report!.payload
         let result = await uploader.attempt(report: &report, key: key, metadata: metadata) { lim in trimmedLog(payload: original, limit: lim) }
@@ -454,12 +499,13 @@ public func dmCrashReportNetStart(_ token: UInt32, _ origin: UnsafePointer<CChar
     jobs.lock.lock()
     let task = Task.detached(priority: .utility) {
         func finish(_ r: DmDiagResult) { r.detail.withCString { box.done(token, r.outcome.rawValue, $0, r.expiresAt, (r.duplicate ? 1 : 0) | (r.maybeDelivered ? 2 : 0), r.retryAfter, r.retentionDays) } }
-        guard !dirText.isEmpty, let uploader = DmDiagUploader(origin: originText, automatic: true) else { finish(DmDiagResult(outcome: .configuration, detail: "origin")); return }
+        guard !dirText.isEmpty, let uploader = DmDiagUploader(origin: originText) else { finish(DmDiagResult(outcome: .configuration, detail: "origin")); return }
         let key: Curve25519.Signing.PrivateKey
         do { key = try (keyFile.map { DmDiagFileKeyStore(path: $0) as DmDiagKeyStore } ?? DmDiagKeychainStore.shared).loadOrCreate() }
         catch DmDiagError.identity(let why) { finish(DmDiagResult(outcome: .prepare, detail: why)); return }
         catch { finish(DmDiagResult(outcome: .prepare, detail: "identity")); return }
-        finish(await DmCrashReportStore.attempt(dir: dirText, limit: 256 * 1024, uploader: uploader, key: key, metadata: metadata) { limit in
+        let metered = await DmCrashReportStore.isMetered()
+        finish(await DmCrashReportStore.attempt(dir: dirText, limit: 256 * 1024, uploader: uploader, key: key, metadata: metadata, metered: metered) { limit in
             guard let p = box.collect(limit, box.ptr) else { return nil }
             defer { free(p) }
             return String(validatingCString: p)
