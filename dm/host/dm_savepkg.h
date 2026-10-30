@@ -64,5 +64,5 @@ int dm_savepkg_backup_delete(const char *save, const dm_pkg_backup *b);
 void dm_savepkg_backup_prune(const char *save, const char *keep);                // 未标星只留最近 10 份，每个目录各算（keep 这份不删） | keep the 10 newest unstarred per directory (never deletes keep)
 long long dm_savepkg_free_bytes(const char *path);
 int dm_savepkg_rmtree(const char *path);
-int dm_savepkg_is_coop_char(const char *root, const char *phys);   // 这个角色目录是不是联机角色（占位约定见 dm_savepkg.c）| whether this character directory is a co-op character (placeholder convention in dm_savepkg.c)
-int dm_savepkg_coop_count(const char *save);
+int dm_savepkg_is_coop_char(const char *root, const char *phys);   // 这个角色目录有没有 .sw_coop 标记（约定见 dm_savepkg.c）| whether this character directory carries a .sw_coop marker (convention in dm_savepkg.c)
+int dm_savepkg_coop_count(const char *save);   // 存档根和兄弟目录 <存档根>.coop 里的联机角色数 | co-op characters in the save root and its sibling <save root>.coop
