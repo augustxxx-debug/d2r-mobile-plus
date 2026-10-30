@@ -492,6 +492,30 @@ static void co_entry_show(uint64_t w, int avail, int32_t *home) {
     else if (avail && r[0] == 99999 && *home != 99999) co_place(w, *home, r[1]);
 }
 const char *dm_update_label(void);   // dm_update.c：显示版本「1.0.0+N · 哈希」（没经外壳初始化时为空） | display version (empty when the shell has not initialized it)
+// 触屏点按的命中区（RC1.1 真机 B058，用户真手指在 17 Pro 上点「复制 / 确定」全不响应）：
+//   ① 框挂在主菜单面板（MainMenuPanel，矩形 0×0）下时，原版控件自己的命中判断（虚表 +0x48）一个都不中——画出来照样在，但命中被父面板的范围裁掉；
+//      自定义页的框比设置面板宽，靠右的「复制」落在面板外也不中，居中的「确定」中（09:30 那局在暂停菜单测、点的是控件正中，所以测得过）；
+//   ② 真手指的落点普遍偏在小钮上方（日志：比第一张卡片上沿还高 3–34 单位）。
+// 所以先照旧用控件自己的命中判断，没中再按画出来的几何判：每一行渠道占框的整宽、行与行之间不留缝，第一行往上多放 70；「确定」四周放宽 60 / 50。
+// 几何由泵每帧按实际摆放记下（面板单位），这里把游戏窗口像素换回面板单位再比（Mac 宿主 2622×1206 截图核过：算出的钮心与画面一致）
+// Hit areas for touch taps (RC1.1 on-device B058, the user's real finger on a 17 Pro got no response from Copy / OK):
+//   1) with the box hosted by the main menu panel (MainMenuPanel, a 0x0 rect) none of the widgets' own hit tests (vtable +0x48) hit -- the box is still drawn, but hits are clipped to the
+//      parent panel; on the Custom page the box is wider than the settings panel, so the right-hand Copy buttons fall outside it while the centred OK still hits (the 09:30 run tested the
+//      pause menu and tapped widget centres, so it passed);
+//   2) real fingers land above the small button (log: 3-34 units above the first card's top edge).
+// So the widgets' own hit test still goes first; on a miss the drawn geometry decides: each channel row spans the box's width with no gap between rows, the first row reaches 70 further up,
+// OK is widened by 60 / 50. The pump records the geometry it actually placed (panel units) every frame; the tap converts game-window pixels back to panel units (checked against a 2622x1206
+// Mac host screenshot: the computed button centres match the picture)
+typedef struct { int valid, vh, ox, oy, n, bx0, bx1, card_y[CO_ROWS], ok_x, ok_y, ok_w, ok_h; float s; } co_tapgeo_t;
+static co_tapgeo_t g_tapgeo;
+static int co_tap_zone(const co_tapgeo_t *g, int x, int y) {   // 返回 0 / 1 = 第几行「复制」，2 = 「确定」，-1 = 都不是 | 0 / 1 = that row's Copy, 2 = OK, -1 = none
+    if (!g || !g->valid || g->vh <= 0 || !(g->s > 0.05f)) return -1;
+    float u = (float)x * 2160 / g->vh, v = (float)y * 2160 / g->vh, lx = (u - g->ox) / g->s, ly = (v - g->oy) / g->s;
+    if (lx >= g->ok_x - 60 && lx <= g->ok_x + g->ok_w + 60 && ly >= g->ok_y - 50 && ly <= g->ok_y + g->ok_h + 50) return 2;
+    if (lx < g->bx0 || lx > g->bx1) return -1;
+    for (int k = 0; k < g->n && k < CO_ROWS; k++) if (ly >= g->card_y[k] - (k ? 10 : 70) && ly <= g->card_y[k] + 110) return k;
+    return -1;
+}
 // 触屏点在弹窗上（dm_cursor.c 在弹窗开着时不发鼠标消息，抬起那一下转到这里）：用控件自己的命中判断（虚表 +0x48，同 dm_cursor.c 删除角色弹窗的「是」）只认两颗「复制」与「确定」；
 // x / y = 游戏窗口像素（与 dm_cursor.c 发鼠标消息同一坐标）。其余位置一律吞掉。游戏主线程
 // A tap while the box is up (dm_cursor.c sends no mouse messages then and hands the lift here): the widgets' own hit test (vtable +0x48, as the delete-character Yes in dm_cursor.c) for the two Copy buttons and OK only;
@@ -503,6 +527,8 @@ void dm_community_ui_tap(uint64_t root, int x, int y) {
     static const char *const nm[3] = { "TouchCommCopy0", "TouchCommCopy1", "TouchCommOk" };
     for (int k = 0; k < 3; k++) { uint64_t w = co_find(p, nm[k], 0); if (!w || ((int32_t *)(w + 0x70))[0] == 99999) continue;
         if (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, xy) & 1) { LOG("社区入口：弹窗开着时点按 (%d,%d) → %s", x, y, k == 2 ? "确定" : k ? "第 2 行复制" : "第 1 行复制"); if (k < 2) do_copy(1, k); else atomic_store(&g_ack, 1); return; } }
+    { int z = co_tap_zone(&g_tapgeo, x, y);   // 放宽的命中区（B058） | the widened hit areas (B058)
+      if (z >= 0) { LOG("社区入口：弹窗开着时点按 (%d,%d) → %s（按卡片 / 按钮周围的放宽区）", x, y, z == 2 ? "确定" : z ? "第 2 行复制" : "第 1 行复制"); if (z < 2) do_copy(1, z); else atomic_store(&g_ack, 1); return; } }
     LOG("社区入口：弹窗开着时点按 (%d,%d) → 没点在按钮上，吞掉", x, y);
 }
 void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
@@ -592,6 +618,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     co_text(b, W("TouchCommFoot0R"), crt[0]); co_place(W("TouchCommFoot0R"), cl + CO_CARD_W - 880, y0 + gm_.foot_y[0]);
     co_text(b, W("TouchCommFoot1"), crt[1]); co_place(W("TouchCommFoot1"), cl, y0 + gm_.foot_y[1]);
     co_place(W("TouchCommOk"), cx - 235, y0 + gm_.btn_y);   // 只留一颗「确定」，居中 | one OK only, centered
+    { co_tapgeo_t g = { 1, vh, ox, oy, n, cx - 860, cx + 860, { 0 }, cx - 235, y0 + gm_.btn_y, 470, 115, s }; for (int k = 0; k < CO_ROWS; k++) g.card_y[k] = y0 + gm_.card_y[k]; g_tapgeo = g; }   // 触屏命中区的几何（B058） | geometry for the touch hit areas (B058)
     if (pad) { if (foc < n) co_rect_lines(b, p, "TouchCommFocus", "focus_h", "focus_v", bx - 8, y0 + gm_.card_y[foc] + (100 - CO_BTN_H) / 2 - 8, CO_BTN_W + 16, CO_BTN_H + 16, 4);
                else co_rect_lines(b, p, "TouchCommFocus", "focus_h", "focus_v", cx - 235 - 8, y0 + gm_.btn_y - 8, 470 + 16, 115 + 16, 4); }   // 手柄焦点框贴合按钮、不压字 | controller focus frame hugs the button
     else co_rect_hide(p, "TouchCommFocus");

@@ -394,7 +394,31 @@ int main(void) {
           if (s.mouse_click_seq != mc && dm_community_modal()) dm_community_ui_tap(root, (int)s.mouse_click_x, (int)s.mouse_click_y);   // 前端胶水 + 鼠标泵的弹窗分支 | front-end glue + the mouse pump's box branch
           if (pass == 0) { CHECK(s.mouse_click_seq == mc + 1); CHECK(atomic_load(&g_sw_touch) == 1); CHECK(atomic_load(&g_ack) == 1); }   // 点到了「确定」：收起 | OK hit: dismissed
           else { CHECK(s.mouse_click_seq == mc); CHECK(atomic_load(&g_sw_touch) == 0); CHECK(atomic_load(&g_ack) == 0); } }   // 答 6：弹窗收不到点按（复核 P1-2 的现象） | answer 6: the box never sees the tap
+      // B058：点在「确定」正下方 30（控件矩形外、放宽区内）→ 仍算「确定」 | B058: 30 below OK (outside the widget rect, inside the widened area) still counts as OK
+      { co_tapgeo_t g = { 1, 2160, 0, 0, 0, 0, 1560, { 0, 0 }, 1300, 1050, 260, 80, 1.0f }; g_tapgeo = g;
+        atomic_store(&g_show, 2); atomic_store(&g_ack, 0); dm_community_ui_tap(root, 1430, 1050 + 80 + 30); CHECK(atomic_load(&g_ack) == 1);
+        atomic_store(&g_ack, 0); dm_community_ui_tap(root, 1430, 1050 + 80 + 60); CHECK(atomic_load(&g_ack) == 0);   // 下沿 60 外：吞掉 | 60 below: swallowed
+        memset(&g_tapgeo, 0, sizeof g_tapgeo); }
       atomic_store(&g_show, 0); atomic_store(&g_ack, 0); CHECK(dm_community_hit_answer() == -1); }
+    // 26. RC1.1 真机 B058：手指没点在小「复制」钮正中也要算——每行渠道占框整宽、行间不留缝、第一行往上多 70，「确定」四周放宽 60 / 50；按画出来的几何换算（面板单位 ↔ 游戏窗口像素）
+    // 26. RC1.1 on-device B058: a finger that misses the small Copy button still counts -- each channel row spans the box width with no gap, the first row reaches 70 up, OK widened by 60 / 50
+    { co_tapgeo_t g = { 1, 2160, 0, 0, 2, 150, 1870, { 200, 320 }, 775, 760, 470, 115, 1.0f };   // 像素 = 面板单位；框 1800 宽居中于 1010 | pixels = panel units; box 1800 wide centred at 1010
+      CHECK(co_tap_zone(&g, 1600, 250) == 0 && co_tap_zone(&g, 500, 250) == 0);     // 钮上 / 值文字上 | on the button / on the value text
+      CHECK(co_tap_zone(&g, 1600, 140) == 0 && co_tap_zone(&g, 1600, 125) == -1);   // 卡片上沿往上 60 仍算，70 以外不算 | 60 above the card still counts, beyond 70 not
+      CHECK(co_tap_zone(&g, 1600, 310) == 0 && co_tap_zone(&g, 1600, 311) == 1);    // 两行之间不留缝 | no gap between rows
+      CHECK(co_tap_zone(&g, 1600, 430) == 1 && co_tap_zone(&g, 1600, 431) == -1);   // 第二行下沿 + 10 | row two's bottom edge + 10
+      CHECK(co_tap_zone(&g, 140, 250) == -1 && co_tap_zone(&g, 1880, 250) == -1);   // 框外左右 | left / right of the box
+      CHECK(co_tap_zone(&g, 1010, 800) == 2 && co_tap_zone(&g, 1010, 760 + 115 + 50) == 2 && co_tap_zone(&g, 775 - 60, 800) == 2 && co_tap_zone(&g, 1010, 760 - 50) == 2);   // 确定及四周 | OK and around it
+      CHECK(co_tap_zone(&g, 775 - 70, 800) == -1 && co_tap_zone(&g, 1010, 940) == -1);   // 再远：吞掉 | further: swallowed
+      g.n = 1; CHECK(co_tap_zone(&g, 1600, 380) == -1);                             // 只有一行渠道 | one channel row only
+      g.valid = 0; CHECK(co_tap_zone(&g, 1010, 800) == -1); CHECK(co_tap_zone(NULL, 1, 1) == -1);
+      // 用户真机日志（17 Pro，主菜单，游戏窗口 2468×1134，框中心 2350、顶 679、2 行）：四下都点在第一张卡片上沿上方 3–34 单位——现在都算第 1 行复制
+      // the user's on-device log (17 Pro, main menu, game window 2468x1134, box centre 2350, top 679, 2 rows): the four taps were 3-34 units above the first card -- now all row 1's Copy
+      co_tapgeo_t h = { 1, 1134, 0, 0, 2, 2350 - 860, 2350 + 860, { 679 + 130, 679 + 250 }, 2350 - 235, 679 + 642, 470, 115, 1.0f };
+      CHECK(co_tap_zone(&h, 1560, 423) == 0 && co_tap_zone(&h, 1578, 411) == 0 && co_tap_zone(&h, 1564, 407) == 0 && co_tap_zone(&h, 1570, 412) == 0);
+      CHECK(co_tap_zone(&h, 1799, 489) == -1);                                      // 框右边以外（框右沿约 1694 像素） | right of the box (its right edge is about 1694 px)
+      CHECK(co_tap_zone(&h, (int)(2350 * 1134 / 2160.0), (int)((679 + 642 + 57) * 1134 / 2160.0)) == 2);   // 「确定」正中 | OK's centre
+    }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);
