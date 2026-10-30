@@ -222,7 +222,8 @@ static void entries(uint8_t *b, uint64_t root) {   // 两个入口的显隐：�
     if (vp && *(uint8_t *)(vp + 0x50)) { uint64_t bt = co_find(vp, "TouchSavesOpt", 0), hi = co_find(vp, "TouchSavesHint", 0); if (bt && hi && (((int32_t *)(bt + 0x70))[0] == 99999) != ing) { co_place(bt, ing ? 99999 : 1110, 30); co_place(hi, ing ? 680 : 99999, 0); co_text(b, hi, ing ? S("dmSaveInRun") : ""); } }   // 面板可能重建，按控件现状判，不缓存 | the panel may be rebuilt: judge by the widget, no caching
     uint64_t cc = dm_ui_top(root, "CharacterCreatePanel"); static int cc_was, none; if (!(cc && *(uint8_t *)(cc + 0x50))) cc_was = 0; else { uint64_t t = co_find(cc, "TouchSavesCc", 0), tp = co_find(cc, "TouchSavesCcPad", 0); const char *sv = save_dir(); if (!cc_was) { cc_was = 1; none = 0; if (sv) { DIR *d = opendir(sv); struct dirent *e; none = 1; while (none && d && (e = readdir(d))) { if (e->d_name[0] == '.' || e->d_name[0] == '_') continue; char p[1400]; struct stat st; snprintf(p, sizeof p, "%s/%s/%s.d2s", sv, e->d_name, e->d_name); if (!stat(p, &st)) none = 0; } if (d) closedir(d); } }   // 只在这页出现那一刻看一次盘 | look at the disk only when the page appears
         int show = none && !ing && !dm_savemgr_modal();
-        if (t) co_place(t, show && !pad ? 275 : 99999, 1900); if (tp) co_place(tp, show && pad ? 275 : 99999, 1900); if (show && pad && (dm_padmode_page_keys(DM_BTN_Y) & DM_BTN_Y)) dm_savemgr_open(3); }
+        if (t) co_place(t, show && !pad ? 275 : 99999, 1900); if (tp) co_place(tp, show && pad ? 420 : 99999, 1900);   // 手柄版让开中间的键位提示条 | the controller version clears the legend in the middle
+        if (show && pad && (dm_padmode_page_keys(DM_BTN_Y) & DM_BTN_Y)) dm_savemgr_open(3); }
 }
 void dm_savemgr_pump(void) {
     uint8_t *b = base_(); if (!b) return; uint64_t root = *(uint64_t *)(b + 0x2f05458); if (!root) return;

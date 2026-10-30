@@ -154,8 +154,7 @@ INSERT = {
           _btn_big('TouchNext', 40, 1900, '@UICreate', 'ConsoleCharacterCreate:ToConsoleCharacterOptions')
           + _btn_big('TouchBack', -510, 1900, '@UIBack', 'FrontEndNavigation:ToCharacterSelect')
           # 无角色时的「导入存档」（换机主场景，主会话 D2）：宿主只在没有角色时摆到屏内 | Import when there are no characters (moving devices, the main scenario); the host only brings it on screen then
-          + _btn_big('TouchSavesCc', 99999, 1900, '@dmSaveImport', 'PanelManager:ClosePanel:TouchSavesCc')
-          + _btn_big('TouchSavesCcPad', 99999, 1900, '@dmSaveImportPad', 'PanelManager:ClosePanel:TouchSavesCc')),
+          + _btn_big('TouchSavesCc', 99999, 1900, '@dmSaveImport', 'PanelManager:ClosePanel:TouchSavesCc')),
           # 起名页：键盘收起后要有路可走——「创建」「返回」两个按钮（发 PanelManager:ClosePanel:TouchKey<键>，宿主换成原版的 ＋ / B）；「按 Ⓐ 输入名称」那行挪走，点输入框即重新弹键盘
           # Naming page: there must be a way forward after the keyboard is dismissed -- the two buttons 「创建」(Create) and 「返回」(Back) (send PanelManager:ClosePanel:TouchKey<key>, which the host converts to the original game's + / B); the line 「按 Ⓐ 输入名称」(Press Ⓐ to enter a name) is moved away, and tapping the input box brings the keyboard up again
           'controller/console/charactercreatenamepanelhd.json': (r'\{\s*"type"\s*:\s*"ButtonLegendWidget"\s*,\s*"name"\s*:\s*"CharacterNameLegend"',
@@ -375,6 +374,9 @@ def _savebox():
             + ''.join(_btn('TouchSaveBtn%d' % k, 99999, '', 'PanelManager:ClosePanel:TouchSaveNoop', x=99999, anchor=False) + _co_text('TouchSaveBtnText%d' % k, 36, '$LightButtonTextColor', 'center', 470, 115) for k in range(2))
             + ''.join(_co_line('TouchSaveFocus%s' % e, 'focus_h' if e in 'TB' else 'focus_v') for e in 'TBLR'))
 _SAVEBOX = _savebox()
+def pad_charcreate(s):   # 手柄版职业选择页走原版布局（gen_romfs_overlay.py）：同样要「导入存档（Y）」和存档框，加在根 children 末尾 | the controller class-select page uses the original layout (gen_romfs_overlay.py): it needs Import Saves (Y) and the save box too, appended at the end of the root children
+    i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
+    return s[:i].rstrip(' ') + _btn_big('TouchSavesCcPad', 99999, 1900, '@dmSaveImportPad', 'PanelManager:ClosePanel:TouchSavesCc') + _SAVEBOX + '    ' + s[i:]
 INSERT['controller/console/charactercreatepanelhd.json'] = (INSERT['controller/console/charactercreatepanelhd.json'][0], INSERT['controller/console/charactercreatepanelhd.json'][1] + _SAVEBOX)
 _COMM = _community() + _SAVEBOX
 _COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(Touch(?:Comm|Save)\w+)"', _COMM))

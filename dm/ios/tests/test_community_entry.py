@@ -311,5 +311,13 @@ class Host(unittest.TestCase):
         self.assertIn('"community"', sample); self.assertIn('"qq_group"', sample); self.assertIn('"github"', sample)
 
 
+class SaveEntryPad(unittest.TestCase):
+    def test_pad_class_select_has_entry_and_box(self):   # 手柄版职业选择页是单独一份布局：入口和存档框都要在 | the controller class-select page is its own layout: both the entry and the save box must be there
+        out = touch_layout.pad_charcreate('{\n    "children": [\n        { "name": "x" }\n    ]\n}\n')
+        for nm in ('TouchSavesCcPad', 'TouchSaveTitle', 'TouchSaveBtn0', 'TouchSaveFocusT'): self.assertIn('"name": "%s"' % nm, out)
+        self.assertLess(out.index('"name": "x"'), out.index('TouchSavesCcPad'))
+        self.assertIn('touch_layout.pad_charcreate(lt)', (DM / 'ios' / 'tools' / 'gen_romfs_overlay.py').read_text(encoding='utf-8'))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=1)
