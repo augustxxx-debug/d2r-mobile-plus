@@ -185,6 +185,9 @@ int main(void) {
       CHECK(dm_sel_frame_x(tr[0]) + DM_SEL_FRAME_PAD <= tr[0]);          // 框线在字左边 30，不压字 | the frame line is 30 left of the text, clear of it
       CHECK(((int32_t *)(title + 0x70))[0] == 0);                        // 分节标题（带分隔线）不缩进，同原版分节 | the section title (with divider) is not indented, like the original sections
       CHECK(t_recalcs == 0);                                             // 稳定：不来回拉扯 | stable: no tug-of-war
+      // 复核 P2-5：关框交还焦点按指针确认原控件还在树里（同名控件不算） | recheck P2-5: the focus is handed back only if that very widget (by pointer) is still in the tree
+      CHECK(co_has(rows, opt, 0) && co_has(rows, ctext, 0) && co_has(about, opt, 0)); CHECK(!co_has(comm, title, 0)); CHECK(!co_has(0, opt, 0));
+      { static uint8_t twin[0x200]; *(const char **)(twin + 8) = "TouchCommunityOpt"; CHECK(!co_has(rows, (uint64_t)(uintptr_t)twin, 0)); CHECK(co_find(rows, "TouchCommunityOpt", 0) == opt); }   // 同名但不在树里：找不到 | same name, not in the tree: not found
     }
     // 20. 署名（用户 2026-10-29）：「制作：Augustus」排在「特别鸣谢」前，同一套拼行规则（kind 3，每行 ≤ 4 名、≤ 44 单位）；名字代码常量、不翻译；空名单不出行；提示框只有两行时超出加「…」
     // 20. Maker credit (user, 2026-10-29): "Made by Augustus" before Special thanks, same line rules (kind 3); the name is a code constant, untranslated; an empty list gives no line; the two-line box truncates with "…"

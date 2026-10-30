@@ -371,6 +371,12 @@ static int credits_lines(const char *const *sp, int nsp, const char *const *th, 
 }
 // ---- 画面 | picture ----
 static uint8_t *co_base(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
+static int co_has(uint64_t w, uint64_t target, int dep) {   // 按指针找：target 在不在 w 的子树里（深度 14、每层至多 256 个子控件，同 dm_cursor.c ui_has） | by pointer: is target in w's subtree
+    if (!w || dep > 14) return 0; if (w == target) return 1;
+    uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
+    for (uint64_t i = 0; i < n; i++) if (co_has(*(uint64_t *)(ch + 8 * i), target, dep + 1)) return 1;
+    return 0;
+}
 static uint64_t co_find(uint64_t w, const char *name, int dep) {   // 按名字找控件：名字 +8、子控件数组 +0x58、个数 +0x60（同 dm_crashfence.c） | find a widget by name (same as dm_crashfence.c)
     if (!w || dep > 6) return 0; const char *nm = *(const char **)(w + 8); if (nm && !strcmp(nm, name)) return w;
     uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
@@ -527,8 +533,11 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
           if (!held) { held = 1; saved = F; const char *nm = F ? *(const char **)(F + 8) : NULL; snprintf(saved_nm, sizeof saved_nm, "%s", nm ? nm : ""); if (F) LOG("社区入口：开框时藏起底下菜单的焦点（原在 %s）", saved_nm); }
           if (F) *(uint64_t *)(fm + 0x190) = 0; }
       else if (held && !atomic_load(&g_show)) { held = 0;
-          uint64_t w = saved && saved_nm[0] ? co_find(root, saved_nm, 0) : 0;
-          if (fm && w && w == saved) { *(uint64_t *)(fm + 0x190) = saved; LOG("社区入口：关框后焦点交还 %s", saved_nm); }
+          // 按指针确认原控件还在界面树里、名字也没变（复核 P2-5：原先按名字从根找第一个同名控件、深度 6 层——TouchCommunity / TouchCommunityFe 手柄版与触屏版布局都有，两份同在树里时找不回）
+          // confirm by pointer that the original widget is still in the UI tree with the same name (recheck P2-5: the first same-named widget within 6 levels of the root used to be taken --
+          // TouchCommunity / TouchCommunityFe exist in both the controller and the touch layouts, so with both in the tree it was not found)
+          const char *nm = saved && co_has(root, saved, 0) ? *(const char **)(saved + 8) : NULL;
+          if (fm && nm && !strcmp(nm, saved_nm)) { *(uint64_t *)(fm + 0x190) = saved; LOG("社区入口：关框后焦点交还 %s", saved_nm); }
           else if (saved) LOG("社区入口：关框后原焦点控件 %s 已不在界面树里，不交还", saved_nm);
           saved = 0; } }
     int st = atomic_load(&g_show); if (!st) return;
