@@ -54,7 +54,8 @@ static const int k_def[NK] = { 0,
 #define FPS_120 2
 #define K_Q3D (12 + VOICE_ROW)
 #define K_TOUCH_SWAP (15 + VOICE_ROW)
-// free_tp（免费回城，dm_freetp.c）缺省开（用户 2026-10-30，RC2 起）：旧设置文件里没有这个键 = 开；文件里写着 0 的照旧关（存盘会写全部键，分不出是玩家关的还是当时的缺省，一律尊重）| free_tp (free town portal, dm_freetp.c) on by default (user 2026-10-30, from RC2): an old settings file without this key = on; a file holding 0 stays off (save writes every key, so a player's choice and the old default look the same; both are respected)
+// free_tp（免费回城，dm_freetp.c）缺省开（用户 2026-10-30，RC2 起）：RC1.2 / 安卓 1.0.x 缺省关且存盘写全部键，它们留下的 free_tp=0 分不出是不是玩家关的，所以另记 free_tp_v2：没有这个标记的旧文件迁移一次到开；存盘都带标记，之后玩家再关就一直是关
+// free_tp (free town portal, dm_freetp.c) on by default (user 2026-10-30, from RC2): RC1.2 / Android 1.0.x shipped it off and saved every key, so their free_tp=0 cannot be told from a player choice; hence the free_tp_v2 marker: an old file without it migrates once to on; every save writes the marker, so a later off by the player stays off
 #define K_FPSHUD (NK - 4)   // fps_hud 显示帧数：图形页第二行（原在自定义页末行）| fps_hud Show frame rate: Graphics tab row 2 (was the last Custom row)
 #define K_UPSCALE (NK - 3)
 #define K_RES (NK - 2)
@@ -172,13 +173,14 @@ static void load_once(void) {
     char p[1100]; if (!file_path(p, sizeof p)) return;   // 存档还没挂上：先按缺省开答，挂上后再读 | The save is not mounted yet: answer with the default (on) for now, and read again after it is mounted
     int v[NK]; for (int i = 0; i < NK; i++) v[i] = k_def[i];
     FILE *f = fopen(p, "r"); char ln[128];
-    int lang = -1, voice = -1, merc = -1, qv2 = 0, mem_was = -1, mem_ack = 0;
+    int lang = -1, voice = -1, merc = -1, qv2 = 0, ftv2 = 0, mem_was = -1, mem_ack = 0;
     for (int b = 0; b < 3; b++) atomic_store(&g_bak[b], -1);   // 备份以文件为准 | the backup follows the file
     while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0';
         if (i == K_Q3D) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 4) v[i] = (int)q; else v[i] = 0; }
         if (i == K_RES) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q < DM_RES_LEVELS) v[i] = (int)q; else v[i] = 0; }
         if (i == K_FPS && eq[1] == '2' && (eq[2] == '\n' || eq[2] == '\r' || eq[2] == 0)) v[i] = FPS_120;   // 其余照旧：0 = 60、非 0 = 30 | Otherwise as before: 0 = 60, non-zero = 30
         if (!strcmp(ln, "q3d_v2")) qv2 = eq[1] == '1';
+        if (!strcmp(ln, "free_tp_v2")) ftv2 = eq[1] == '1';
         if (!strcmp(ln, "mem_tier") && eq[1] >= '0' && eq[1] <= '2' && (eq[2] == '\n' || eq[2] == '\r' || eq[2] == 0)) mem_was = eq[1] - '0';
         if (!strcmp(ln, "mem_notice")) mem_ack = eq[1] == '1';
         if (i == 0) { int l = atoi(eq + 1); if (l >= 0 && l < LANG_N) lang = v[0] = l; }
@@ -190,6 +192,7 @@ static void load_once(void) {
             if (q && q[L] == ':' && q[L + 1] >= '0' && q[L + 1] <= '9') atomic_store(&g_bak[b], q[L + 1] - '0'); } }
     if (f) fclose(f);
     if (!qv2) v[K_Q3D] = v[K_Q3D] == 1 ? 3 : 0;
+    if (!ftv2) { int ft = key_index("free_tp"); if (f && !v[ft]) LOG("自定义设置：旧文件的 free_tp=0 迁移为开（RC2 起缺省开，free_tp_v2）"); v[ft] = 1; }
     if (v[K_Q3D] == 4) { v[K_Q3D] = 0; v[K_UPSCALE] = 0; }
     { const char *tl = getenv("DM_TEST_LANG"); if (tl && *tl >= '0' && *tl < '0' + LANG_N) { lang = v[0] = *tl - '0'; g_lang_test = 1; LOG("自定义设置：测试开关 DM_TEST_LANG=%d（当作语言行选了 %s 并应用，不写回文件）", lang, k_lang_name[lang]); } }
 #if VOICE_ROW
@@ -388,6 +391,7 @@ static void save(void) {
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
     for (int i = 0; ok && i < NK; i++) { if (i == 0 && (atomic_load(&g_lang_explicit) < 0 || g_lang_test)) continue; if (i == K_VOICE && (atomic_load(&g_voice_explicit) < 0 || g_voice_test)) continue; ok = fprintf(f, "%s=%d\n", k_keys[i], atomic_load(&g_val[i])) > 0; }   // lang / voice 只在玩家真改过之后才写进文件
     if (ok) ok = fprintf(f, "q3d_v2=1\n") > 0;
+    if (ok) ok = fprintf(f, "free_tp_v2=1\n") > 0;
     if (ok && atomic_load(&g_merc_explicit) >= 0) ok = fprintf(f, "merc_pot_v2=%d\n", atomic_load(&g_merc_explicit)) > 0;
     if (ok && atomic_load(&g_mem_tier_file) >= 0) ok = fprintf(f, "mem_tier=%d\n", atomic_load(&g_mem_tier_file)) > 0;   // 内存档位（首次 / 档位变化才套缺省） | memory tier (defaults apply only on first run / tier change)
     if (ok && atomic_load(&g_mem_notice)) ok = fprintf(f, "mem_notice=1\n") > 0;
@@ -414,7 +418,7 @@ int dm_custom_safe_mode(char *what, size_t n) {
     for (int b = 0; b < 3; b++) { int v = atomic_load(&g_val[bk_key[b]]), on = b == 0 ? v == FPS_120 : v != 0; if (on && atomic_load(&g_bak[b]) < 0) atomic_store(&g_bak[b], v); }
     if (atomic_load(&g_val[K_FPS]) == FPS_120) { atomic_store(&g_val[K_FPS], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s120 帧档 → 60", o ? "、" : ""); }
     if (atomic_load(&g_val[K_RT])) { atomic_store(&g_val[K_RT], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s光追阴影 → 关（AO 随它关）", o ? "、" : ""); }
-    if (atomic_load(&g_val[K_UPSCALE])) { atomic_store(&g_val[K_UPSCALE], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%sMetalFX 空间超分 → 关", o ? "、" : ""); dm_3d_quality_mode_set(0); }
+    if (atomic_load(&g_val[K_UPSCALE])) { atomic_store(&g_val[K_UPSCALE], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s" DM_STR_METALFX " 空间超分 → 关", o ? "、" : ""); dm_3d_quality_mode_set(0); }
     for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1);
     if (!ch) snprintf(what, n, "实验性功能本来都关着");
     else { save(); atomic_fetch_add(&g_repaint, 1); }
@@ -496,7 +500,7 @@ static int profile_shown(void) { return q3d_for_fps(pending_value(K_Q3D), profil
 static void graphics_select_profile(int value) {
     if (value < 0 || value > profile_max() || value == profile_shown()) return;
     atomic_store(&g_pend[K_Q3D], value);
-    LOG("图形设置：MetalFX 档位 → %d（点应用生效）", value);
+    LOG("图形设置：" DM_STR_METALFX " 档位 → %d（点应用生效）", value);
 }
 static void graphics_select_res(int value) {
     if (value < 0 || value >= DM_RES_LEVELS || value == pending_value(K_RES)) return;

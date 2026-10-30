@@ -26,6 +26,13 @@ int main(void) {
     atomic_store(&g_loaded, 0); CHECK(dm_custom_get("upscale") == 1 && dm_custom_get("q3d") == 2); CHECK(dm_3d_profile_get() == 4);
     // Apple：同一文件给档位 2 | Apple: the same file yields profile 2
     up_ok = 1; CHECK(dm_3d_profile_get() == 2); up_ok = 0;
+    // 免费回城迁移（内审 I-03）：旧文件的 free_tp=0 迁移一次到开；带 free_tp_v2 的 0 是玩家关的，保持关；存盘带标记 | free town portal migration (internal audit I-03): an old file's free_tp=0 migrates once to on; a 0 with free_tp_v2 is the player's choice and stays off; saves carry the marker
+    f = fopen(path, "w"); CHECK(f); fputs("free_tp=0\nq3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("free_tp") == 1);
+    f = fopen(path, "w"); CHECK(f); fputs("q3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("free_tp") == 1);
+    f = fopen(path, "w"); CHECK(f); fputs("free_tp=0\nfree_tp_v2=1\nq3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("free_tp") == 0);
+    save(); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("free_tp") == 0);
+    { char txt[2048] = {0}; f = fopen(path, "r"); CHECK(f); fread(txt, 1, sizeof txt - 1, f); fclose(f); CHECK(strstr(txt, "free_tp=0\n") && strstr(txt, "free_tp_v2=1\n")); }
+    f = fopen(path, "w"); CHECK(f); fputs("upscale=1\nq3d=2\nq3d_v2=1\nrender_res=3\n", f); fclose(f); atomic_store(&g_loaded, 0);
     // 行打包 | row packing
     int v[6], n;
     n = graphics_rows_pack(1, 1, 1, 1, v); CHECK(n == 6 && v[0] == ROW_RES && v[1] == ROW_FPSHUD && v[2] == ROW_FPS && v[3] == ROW_UPSCALE && v[4] == ROW_PROFILE && v[5] == ROW_RT);   // Apple 全开：布局原位 | Apple, everything: layout order

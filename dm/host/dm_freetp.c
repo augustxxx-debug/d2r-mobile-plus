@@ -126,7 +126,7 @@ static void revoke(uint8_t *mb, uint64_t unit, int srv) {
 }
 void dm_freetp_client_step(uint8_t *mb, uint64_t pl) {   // 游戏主线程每帧（dm_actions.c），pl = 客户端玩家；不在局里传 0 | Every frame on the game main thread (dm_actions.c), pl = the client player; pass 0 when not in a run
     if (!mb || !pl) { if (!dm_freetp_enabled()) atomic_store(&g_req, 0); return; }   // 关着时不在局里点的回城钮不留到进局后才生效 | while off, a portal tap outside a run is not carried into the next run
-    int on = dm_freetp_enabled(); static int was = -1; if (on != was) { was = on; LOG("免费回城：%s", on ? "开（自定义页 free_tp）：挂回城技能、回城钮免费" : "关（缺省）：不挂回城技能、回城钮用回城书 / 卷轴"); }
+    int on = dm_freetp_enabled(); static int was = -1; if (on != was) { was = on; LOG("免费回城：%s", on ? "开（自定义页 free_tp）：挂回城技能、回城钮免费" : "关（自定义页 free_tp）：不挂回城技能、回城钮用回城书 / 卷轴"); }
     if (!on) { revoke(mb, pl, 0); unbind_stale(mb, pl); if (atomic_exchange(&g_req, 0)) use_scroll(mb, pl); return; }
     grant(mb, pl, 0);
 }
