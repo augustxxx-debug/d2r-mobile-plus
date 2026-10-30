@@ -187,8 +187,8 @@ static void render(aout *a, void *data, uint32_t bytes) {
       if (df) fwrite(data, 1, bytes, df); }
     { int q = nq_phase(); atomic_fetch_add_explicit(&g_nq_calls[q], 1, memory_order_relaxed); if (a->dry) atomic_fetch_add_explicit(&g_nq_dry[q], 1, memory_order_relaxed); }   // 通知线程 QoS 对照：按当前相记 | Notification thread QoS comparison: recorded per current phase
 }
-// 声卡重开失败的定时重试不刷日志：au_open 的日志只在第 1 次与每 20 次记。持 g_aos_lock 改
-// Periodic reopen retries do not flood the log: au_open logs only on the 1st and every 20th attempt. Changed under g_aos_lock
+// 声卡重开失败的定时重试不刷日志：au_open 的日志只在第 1 次与每 20 次记。au_open 只在持 g_aos_lock 时调，这个标记也只在锁内读写（B080：初次打开原先不持锁，可能被别的通道的重试静音）
+// Periodic reopen retries do not flood the log: au_open logs only on the 1st and every 20th attempt. au_open only runs under g_aos_lock and this flag is only read and written under it (B080: the first open used to run unlocked and could be silenced by another channel's retry)
 static int g_au_quiet;
 static void *null_sink(void *p);
 // 声卡丢了：记下等重试，在播就让静音接收端接手（游戏音频节奏不断），由它定时重开（dev_retry）。持 g_aos_lock、a->au 已空时调
@@ -435,9 +435,9 @@ HLE_FORCE("_ZN2nn5audio12OpenAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventEPKcRKN
     int slot = -1; for (int i = 0; i < AOMAX; i++) if (!g_aos[i]) { slot = i; break; }
     if (slot < 0) die("AudioOut 同时打开超过 %d 个", AOMAX);
     g_aos[slot] = a;
-    pthread_mutex_unlock(&g_aos_lock);
     LOG("audio::OpenAudioOut %s 声道 %d %s", name ? name : "(默认)", ch, real_audio() ? "真出声" : "静音接收端");
-    if (real_audio()) au_open(a);   // 开不了就 a->au 为空，开始播放时走静音接收端 | if it cannot be opened, a->au is null, and playback goes to the silent sink when it starts
+    if (real_audio()) au_open(a);   // 持 g_aos_lock（B080）。开不了就 a->au 为空，开始播放时走静音接收端 | under g_aos_lock (B080). If it cannot be opened, a->au is null, and playback goes to the silent sink when it starts
+    pthread_mutex_unlock(&g_aos_lock);
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn5audio13StartAudioOutEPNS0_8AudioOutE", "开始播放", Result, h_au_Start, void *g) {
