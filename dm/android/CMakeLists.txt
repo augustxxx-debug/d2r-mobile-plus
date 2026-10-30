@@ -22,6 +22,7 @@ get_filename_component(DM_PATH_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../.. ABSOLUTE)
 foreach(map "${CMAKE_BINARY_DIR}=build" "${DM_GEN_DIR}=gen" "${CMAKE_ANDROID_NDK}=ndk" "${DM_PATH_ROOT}=src")
   add_compile_options("-ffile-prefix-map=${map}")
 endforeach()
+add_subdirectory(../third_party/spirv-tools ${CMAKE_CURRENT_BINARY_DIR}/spirv-tools)   # 先于引擎：Adreno 750 载入时内联辅助函数 | before the engine: Adreno 750 helper inlining at load
 add_subdirectory(../gfx/vulkan ${CMAKE_CURRENT_BINARY_DIR}/vulkan)
 
 set(DM ${CMAKE_CURRENT_SOURCE_DIR}/..)
@@ -108,6 +109,15 @@ add_executable(dmhost ${HOST}/main.c)
 target_link_libraries(dmhost PRIVATE -Wl,--whole-archive dmcore -Wl,--no-whole-archive)
 target_link_options(dmhost PRIVATE -Wl,--no-undefined -Wl,-z,nostart-stop-gc -Wl,--export-dynamic)   # 导出符号：崩溃回溯里 dladdr 能认出宿主函数 | export symbols: dladdr in crash backtraces can name host functions
 
+# 加载页小库 libdmload.so：只含公共加载页核心 + 多语表 + JNI 胶水，不依赖宿主库（导入包拷进来之前 libdm.so 装不了，见 loadpage_jni.c）
+# Loading page library libdmload.so: only the shared loading page core + i18n table + JNI glue, independent of the host library (libdm.so cannot load before the import pack is copied in, see loadpage_jni.c)
+add_library(dmload SHARED ${HOST}/dm_loadpage.c ${HOST}/dm_manifest.c ${HOST}/dm_i18n.c ${CMAKE_CURRENT_SOURCE_DIR}/loadpage_jni.c)
+target_compile_definitions(dmload PRIVATE DM_LOADPAGE_STANDALONE=1)
+target_compile_options(dmload PRIVATE -O1 -g -Wall -std=gnu17)
+target_include_directories(dmload PRIVATE ${HOST} ${CMAKE_CURRENT_SOURCE_DIR}/compat/include)   # compat：dm_i18n.c 的 TargetConditionals.h 替身 | compat: the stand-in TargetConditionals.h for dm_i18n.c
+target_link_libraries(dmload PRIVATE log m)
+target_link_options(dmload PRIVATE -Wl,--no-undefined)
+
 # App 用的共享库：main.c 以 -Dmain=dm_main 编（同 iOS），JNI 入口 jni_android.c
 # Shared library for the App: main.c built with -Dmain=dm_main (as on iOS), JNI entry jni_android.c
 # 独立目标只重命名 App 入口，避免影响同目录的命令行目标。
@@ -116,8 +126,15 @@ target_link_options(dmhost PRIVATE -Wl,--no-undefined -Wl,-z,nostart-stop-gc -Wl
 add_library(dm_app_main OBJECT ${HOST}/main.c)
 target_link_libraries(dm_app_main PRIVATE dmcore)
 target_compile_definitions(dm_app_main PRIVATE main=dm_main)
-add_library(dm SHARED $<TARGET_OBJECTS:dm_app_main> ${CMAKE_CURRENT_SOURCE_DIR}/jni_android.c ${CMAKE_CURRENT_SOURCE_DIR}/text_input_jni.c ${CMAKE_CURRENT_SOURCE_DIR}/touch_android_jni.c ${CMAKE_CURRENT_SOURCE_DIR}/overlay_validate.c ${DM_OVERLAY_HEADER})
+add_library(dm SHARED $<TARGET_OBJECTS:dm_app_main> ${CMAKE_CURRENT_SOURCE_DIR}/jni_android.c ${CMAKE_CURRENT_SOURCE_DIR}/text_input_jni.c ${CMAKE_CURRENT_SOURCE_DIR}/touch_android_jni.c ${CMAKE_CURRENT_SOURCE_DIR}/pad_android.c ${CMAKE_CURRENT_SOURCE_DIR}/overlay_validate.c ${CMAKE_CURRENT_SOURCE_DIR}/sharelog_android.c ${CMAKE_CURRENT_SOURCE_DIR}/perfhint_android.c ${DM_OVERLAY_HEADER})
 target_include_directories(dm PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_definitions(dm PRIVATE $<$<CONFIG:Debug>:DM_ANDROID_DEBUG_ENV=1>)
 target_link_libraries(dm PRIVATE -Wl,--whole-archive dmcore -Wl,--no-whole-archive android)
 target_link_options(dm PRIVATE -Wl,--no-undefined -Wl,-z,nostart-stop-gc -Wl,-Bsymbolic)   # 汇编按页寻址宿主全局（adrp + :lo12:）：库内符号就地绑定，不许被抢占 | assembly addresses host globals by page (adrp + :lo12:): symbols bind locally inside the library and cannot be preempted
+
+# 手机上生成导入包时用的贴图块线性 ↔ 线性转换库：romfs_art.py / gen_widestash_art.py 经 DM_DESWIZZLE_LIB 加载（电脑上它们用 clang 现编同两份源码，同 -O2）
+# The block-linear <-> linear texture library used when making the import pack on the phone: romfs_art.py / gen_widestash_art.py load it through DM_DESWIZZLE_LIB
+# (on a computer they compile the same two sources with clang on the fly, also -O2)
+add_library(dmdeswizzle SHARED ${DM}/gfx/tex/nvn_deswizzle.c ${DM}/gfx/nvn/nvn_tex.c)
+target_include_directories(dmdeswizzle PRIVATE ${DM}/gfx/nvn ${DM}/gfx/tex)
+target_compile_options(dmdeswizzle PRIVATE -O2)

@@ -1,0 +1,20 @@
+// 子组语义（固定 LocalSize 变体，编译时 -DLS=32/64/128）：与 sg.comp 同一套记录，用来分辨特化常量 LocalSize 下 gl_SubgroupInvocationID 读 0 是不是编译形状问题
+// Subgroup semantics (fixed LocalSize variant, compiled with -DLS=32/64/128): same records as sg.comp, to tell whether gl_SubgroupInvocationID reading 0 under a specialization-constant LocalSize is a compile-shape problem
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+#extension GL_KHR_shader_subgroup_vote : require
+#ifndef LS
+#define LS 32
+#endif
+layout(local_size_x = LS) in;
+layout(std430, binding = 0) buffer Out { uvec4 o[]; };
+void main() {
+    uint i = gl_LocalInvocationIndex;
+    uvec4 b = subgroupBallot(true);
+    uint sh = subgroupShuffle(i + 1000u, (gl_SubgroupInvocationID + 16u) & 31u);
+    uint shx = subgroupShuffleXor(i + 1000u, 16u);
+    bool all32 = subgroupAll(i < 32u);
+    o[gl_WorkGroupID.x * gl_WorkGroupSize.x + i] = uvec4(gl_SubgroupSize | (gl_SubgroupID << 8) | (gl_SubgroupInvocationID << 16) | (gl_NumSubgroups << 24), subgroupBallotBitCount(b), sh, shx | (all32 ? 0x80000000u : 0u));
+}

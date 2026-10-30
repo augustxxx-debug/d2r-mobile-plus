@@ -1,0 +1,232 @@
+// 加载页核心（dm_loadpage.c）回归：进度合成（两段权重、单段退化、回报倒退不倒退、跳阶段补完成）、剩余时间与细节行、失败 / 完成文案、
+// 素材选择（横 / 竖）与 cover 裁切（Duo 内屏 3142×2160、iPhone 17 Pro 402×874 两种方向、安卓 20:9 2400×1080）、布局在安全区内、汇总日志行。时钟全由测试传入。
+// Regression for the loading page core (dm_loadpage.c): progress composition (two weighted stages, single-stage degenerate case, no regression on backward reports,
+// skipped stages marked complete), ETA and the detail line, failure / done text, art selection (landscape / portrait) and cover crop (Duo inner 3142×2160, iPhone 17 Pro 402×874
+// both orientations, Android 20:9 2400×1080), layout inside the safe area, the summary log line. The clock is passed in by the test throughout.
+#include "../dm_loadpage.c"
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+const char *dm_ui(const char *key) { return dm_ui_group(key, DM_LG_ZH); }   // 不链 dm_i18n.c：按中文列取 | dm_i18n.c is not linked: take the Chinese column
+#include "../dm_i18n_tab.h"
+const char *dm_ui_group(const char *key, int group) {
+    for (size_t i = 0; i < sizeof k_dm_i18n / sizeof *k_dm_i18n; i++) if (!strcmp(k_dm_i18n[i].k, key))
+        return group == DM_LG_ZH ? k_dm_i18n[i].zh : group == DM_LG_ES ? k_dm_i18n[i].es : group == DM_LG_MX ? k_dm_i18n[i].mx : group == DM_LG_RU ? k_dm_i18n[i].ru : group == DM_LG_KO ? k_dm_i18n[i].ko : k_dm_i18n[i].en;
+    return key;
+}
+static int checks, fails;
+#define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
+#define NEAR(a, b) (fabs((a) - (b)) < 0.51)
+static int rect_in(dm_lp_rect r, double x0, double y0, double x1, double y1) { return r.x >= x0 - 1e-6 && r.y >= y0 - 1e-6 && r.x + r.w <= x1 + 1e-6 && r.y + r.h <= y1 + 1e-6; }
+
+int main(void) {
+    dm_lp_text t; dm_lp_detail d = { 0 };
+    // 1. 两段权重（手机端生成的路：导入 90 秒 + 着色器缓存 270 秒）→ 导入占 25%。导入走到一半 = 12%，导入完成 = 25%，着色器一半 = 62%，全完 = 100%
+    // 1. Two weighted stages (on-phone generation path: import 90 s + shader cache 270 s) → import is 25%. Import half way = 12%, import done = 25%, shaders half way = 62%, all done = 100%
+    int two[] = { DM_LP_IMPORT, DM_LP_SHADERS }; int w_two[] = { 90000, 270000 };
+    dm_loadpage_begin(two, 2, w_two, 1000);
+    CHECK(dm_loadpage_state() == DM_LP_RUNNING); CHECK(dm_loadpage_percent() == 0); CHECK(dm_loadpage_stage() == -1);
+    dm_loadpage_set(0, 0.5, NULL, 2000); CHECK(dm_loadpage_percent() == 12); CHECK(dm_loadpage_stage() == 0);
+    dm_loadpage_set(0, 1.0, NULL, 3000); CHECK(dm_loadpage_percent() == 25);
+    dm_loadpage_set(1, 0.5, NULL, 4000); CHECK(dm_loadpage_percent() == 62); CHECK(dm_loadpage_stage() == 1);
+    // 回报倒退：着色器阶段报回 0.2、导入阶段再报 0.3，总进度都不动 | backward reports: shaders back to 0.2, import again at 0.3 - overall unchanged
+    dm_loadpage_set(1, 0.2, NULL, 4100); CHECK(dm_loadpage_percent() == 62);
+    dm_loadpage_set(0, 0.3, NULL, 4200); CHECK(dm_loadpage_percent() == 62); CHECK(dm_loadpage_stage() == 1);
+    dm_loadpage_set(1, 1.0, NULL, 5000); CHECK(dm_loadpage_percent() == 100); CHECK(dm_loadpage_state() == DM_LP_RUNNING);   // 到 100% 还不算完成，要平台 finish | 100% is not done yet: the platform must call finish
+    dm_loadpage_finish(5500); CHECK(dm_loadpage_state() == DM_LP_DONE); CHECK(dm_loadpage_music_wanted() == 0);
+    CHECK(!strncmp(dm_loadpage_last_line(), "加载页：完成，", strlen("加载页：完成，")));   // 安卓交给宿主写进 boot.log 的那一行 | the line Android hands to the host for boot.log
+    dm_loadpage_text(&t, 5600); CHECK(!strcmp(t.title, "准备完成，正在进入游戏")); CHECK(!strcmp(t.percent, "100%"));
+    CHECK(dm_loadpage_stage_ms(0) == 1000 + 2000 - 2000);   // 导入 2000→3000 | import 2000→3000
+    CHECK(dm_loadpage_stage_ms(1) == 1000);                 // 着色器 4000→5000 | shaders 4000→5000
+    char sum[256]; dm_loadpage_summary(sum, sizeof sum, 5600); CHECK(!strcmp(sum, "导入 1.0 秒 · 着色器缓存 1.0 秒 · 合计 4.5 秒"));
+
+    // 2. 自定义权重：导入 60 秒 + 着色器 240 秒 → 导入 20%；给 0 的那项用缺省 | 2. Custom weights: import 60 s + shaders 240 s → import 20%; a 0 entry takes the default
+    int w2[] = { 60000, 240000 };
+    dm_loadpage_begin(two, 2, w2, 0); dm_loadpage_set(0, 1.0, NULL, 10); CHECK(dm_loadpage_percent() == 20);
+    int w3[] = { 0, 8500 };   // 导入缺省 8.5 秒 + 着色器 8.5 秒 → 50% | import default 8.5 s + shaders 8.5 s → 50%
+    dm_loadpage_begin(two, 2, w3, 0); dm_loadpage_set(0, 1.0, NULL, 10); CHECK(dm_loadpage_percent() == 50);
+    // 2b. 电脑出的导入包那条路（缺省权重）：导入 → 准备 = 85 : 15；导入完成 85%，准备一半 92%，导入阶段副文不再说「几分钟」 | 2b. Computer-made pack path (default weights): import → prepare = 85 : 15; import done 85%, prepare half way 92%; the import hint no longer says "a few minutes"
+    int kp[] = { DM_LP_IMPORT, DM_LP_PREPARE }; dm_loadpage_begin(kp, 2, NULL, 0);
+    dm_loadpage_set(0, 0.5, NULL, 10); CHECK(dm_loadpage_percent() == 42); dm_loadpage_text(&t, 10); CHECK(!strcmp(t.title, "正在导入游戏内容")); CHECK(strstr(t.sub, "分钟") == NULL && strstr(t.sub, "请稍候") != NULL);
+    dm_loadpage_set(0, 1.0, NULL, 20); CHECK(dm_loadpage_percent() == 85);
+    dm_loadpage_set(1, 0.5, NULL, 30); CHECK(dm_loadpage_percent() == 92); dm_loadpage_text(&t, 30); CHECK(!strcmp(t.title, "正在准备进入游戏"));
+
+    // 3. 单段退化（iOS 只有下载）：几成就是几成 | 3. Single-stage degenerate case (iOS has only the download): the fraction is the overall
+    int one[] = { DM_LP_DOWNLOAD };
+    dm_loadpage_begin(one, 1, NULL, 0);
+    d.bytes_total = 4130000000LL; d.bytes_done = 1527900000LL; dm_loadpage_set(0, 0.37, &d, 1000); CHECK(dm_loadpage_percent() == 37);
+    dm_loadpage_text(&t, 1000); CHECK(!strcmp(t.title, "正在下载游戏内容")); CHECK(!strcmp(t.percent, "37%"));
+    CHECK(strstr(t.body, "1.5 / 4.1 GB") != NULL); CHECK(strstr(t.body, "MB/s") == NULL);   // 还没有第二个采样点：不显示速度 | no second sample yet: no speed
+    CHECK(strstr(t.body, "正在估算剩余时间") != NULL);                                     // 没过 2 秒：不估 | under 2 s: no estimate
+    CHECK(!strcmp(t.sub, "第一次要几分钟，请留在这个页面"));
+    d.bytes_done = 1540000000LL; dm_loadpage_set(0, 0.373, &d, 2000);   // 1 秒 12.1 MB → 12.1 MB/s | 12.1 MB in 1 s → 12.1 MB/s
+    dm_loadpage_text(&t, 2000); CHECK(strstr(t.body, "12.1 MB/s") != NULL);
+    d.bytes_done = 1552100000LL; dm_loadpage_set(0, 0.3758, &d, 3000);
+    dm_loadpage_text(&t, 3000); CHECK(strstr(t.body, "预计还要 4 分钟") != NULL);   // 剩 2.58 GB ÷ 12.1 MB/s ≈ 213 秒 → 4 分钟（有字节与速度就按它们估） | 2.58 GB left ÷ 12.1 MB/s ≈ 213 s → 4 min (bytes and speed win when known)
+    dm_loadpage_note("把游戏资源文件夹拷进「我的 iPhone → D2R Mobile」"); dm_loadpage_text(&t, 3000); CHECK(strstr(t.body, "拷进") != NULL);   // 平台说明替换正文 | platform note replaces the body
+    dm_loadpage_note(NULL); dm_loadpage_text(&t, 3000); CHECK(strstr(t.body, "GB") != NULL);
+    dm_loadpage_hint("dmLoadHintShaders"); dm_loadpage_text(&t, 3000); CHECK(strstr(t.sub, "着色器") != NULL); dm_loadpage_hint(NULL);
+
+    // 4. 跳阶段：直接报第 3 个阶段 = 前两个算完成；文件计数进细节行 | 4. Skipping: reporting stage 3 directly marks the first two complete; the file count goes into the detail line
+    int six[] = { DM_LP_PATCH, DM_LP_ASSETS, DM_LP_OVERLAY, DM_LP_PACKS, DM_LP_SHADERS, DM_LP_INSTALL };
+    dm_loadpage_begin(six, 6, NULL, 0);
+    memset(&d, 0, sizeof d); d.items_done = 1234; d.items_total = 7062;
+    dm_loadpage_set(4, 1234.0 / 7062, &d, 100000);
+    CHECK(dm_loadpage_stage() == 4); CHECK(dm_loadpage_stage_ms(0) == 0 || dm_loadpage_stage_ms(0) >= 0);
+    double expect = (20000 + 30000 + 20000 + 30000 + 270000 * 1234.0 / 7062) / 385000.0;
+    CHECK(fabs(dm_loadpage_overall() - expect) < 1e-9);
+    dm_loadpage_text(&t, 100000); CHECK(!strcmp(t.title, "正在准备着色器缓存")); CHECK(strstr(t.body, "第 1234 / 7062 个文件") != NULL); CHECK(strstr(t.sub, "只做这一次") != NULL);
+    // 5. 失败：标题换、正文 = 原因、音乐停、进度留在原处 | 5. Failure: title changes, body = reason, music stops, progress stays
+    int before = dm_loadpage_percent();
+    dm_loadpage_fail("磁盘空间不足（还差 1.2 GB）", 101000); CHECK(!strncmp(dm_loadpage_last_line(), "加载页：失败于阶段", strlen("加载页：失败于阶段")));
+    CHECK(dm_loadpage_state() == DM_LP_FAILED); CHECK(dm_loadpage_music_wanted() == 0); CHECK(dm_loadpage_percent() == before);
+    dm_loadpage_text(&t, 101000); CHECK(!strcmp(t.title, "无法继续准备游戏内容")); CHECK(strstr(t.body, "1.2 GB") != NULL); CHECK(strstr(t.sub, "诊断日志") != NULL);
+    dm_loadpage_set(4, 1.0, NULL, 102000); CHECK(dm_loadpage_percent() == before);   // 失败后不再动 | frozen after failure
+
+    // 6. 素材选择与 cover 裁切 | 6. Art selection and cover crop
+    int bw, bh; dm_lp_rect r;
+    CHECK(!strcmp(dm_loadpage_bg_name(951, 669, &bw, &bh), "loadpage_bg_land.jpg") && bw == 2048 && bh == 1152);   // Duo 内屏 | Duo inner
+    CHECK(!strcmp(dm_loadpage_bg_name(402, 874, &bw, &bh), "loadpage_bg_port.jpg") && bw == 1152 && bh == 2048);   // iPhone 17 Pro 竖 | iPhone 17 Pro portrait
+    CHECK(!strcmp(dm_loadpage_bg_name(874, 402, NULL, NULL), "loadpage_bg_land.jpg"));
+    // Duo 内屏 3142×2160（1.455:1）在 2048×1152（1.778:1）上：高对齐，宽取 1152×1.455 = 1676，水平居中 | Duo inner on the landscape image: height fitted, width 1676, centred horizontally
+    dm_loadpage_cover(2048, 1152, 3142, 2160, 0.5, 0.58, &r);
+    CHECK(NEAR(r.h, 1152) && NEAR(r.w, 1675.7) && NEAR(r.x, 186.2) && NEAR(r.y, 0));
+    // 安卓 20:9 横 2400×1080（2.222:1）：宽对齐，高取 2048/2.222 = 921.6，焦点 0.58 → y = 0.58×1152 − 460.8 = 207.4 | Android 20:9 landscape: width fitted, height 921.6, focus 0.58 → y = 207.4
+    dm_loadpage_cover(2048, 1152, 2400, 1080, 0.5, 0.58, &r);
+    CHECK(NEAR(r.w, 2048) && NEAR(r.h, 921.6) && NEAR(r.x, 0) && NEAR(r.y, 207.4));
+    // iPhone 17 Pro 竖 1206×2622（0.46:1）在 1152×2048 上：高对齐，宽 2048×0.46 = 942，水平居中 | iPhone 17 Pro portrait on the portrait image: height fitted, width 942, centred
+    dm_loadpage_cover(1152, 2048, 1206, 2622, 0.5, 0.58, &r);
+    CHECK(NEAR(r.h, 2048) && NEAR(r.w, 941.9) && NEAR(r.x, 105.0) && NEAR(r.y, 0));
+    // 极端：很矮很宽（32:9）焦点压到图底 → 裁切框贴底不越界 | extreme: very wide (32:9) pushes the focus to the bottom → the crop hugs the bottom edge, never past it
+    dm_loadpage_cover(2048, 1152, 3200, 900, 0.5, 0.9, &r); CHECK(NEAR(r.y + r.h, 1152) && r.y >= 0);
+    dm_loadpage_cover(2048, 1152, 3200, 900, 0.5, 0.0, &r); CHECK(NEAR(r.y, 0));
+    dm_loadpage_cover(0, 0, 100, 100, 0.5, 0.5, &r); CHECK(r.w == 1 && r.h == 1);   // 坏输入不除零 | bad input does not divide by zero
+
+    // 7. 布局：条与四行字都在安全区内；竖屏条铺满内容宽；横屏条 62%；bar_fill 跟总进度；灵动岛 / 挖孔内缩生效 | 7. Layout: bar and text inside the safe area; portrait bar spans the content width; landscape bar 62%; bar_fill follows overall; island / cutout insets honoured
+    dm_loadpage_begin(two, 2, w_two, 0); dm_loadpage_set(0, 0.5, NULL, 1); dm_loadpage_set(1, 0.16, NULL, 2);   // 25% + 75%×0.16 = 37% | 25% + 75% × 0.16 = 37%
+    CHECK(dm_loadpage_percent() == 37);
+    dm_lp_layout L; dm_lp_screen duo = { 951, 669, 0, 0, 0, 0 }; dm_loadpage_layout(&duo, &L);
+    CHECK(L.landscape && !strcmp(L.bg_name, "loadpage_bg_land.jpg") && NEAR(L.bg_dst.w, 951) && NEAR(L.bg_dst.h, 669));
+    CHECK(rect_in(L.bar, 0, 0, 951, 669) && rect_in(L.title, 0, 0, 951, 669) && rect_in(L.sub, 0, 0, 951, 669) && rect_in(L.brand, 0, 0, 951, 669));
+    CHECK(NEAR(L.bar.w, (951 - 56) * 0.62) && NEAR(L.bar_fill.w, L.bar.w * 0.37)); CHECK(L.title_pt == 24 && L.body_pt == 18 && L.sub_pt == 14);
+    CHECK(L.title.y + L.title.h <= L.bar.y && L.bar.y + L.bar.h <= L.body.y && L.body.y + L.body.h <= L.sub.y && L.sub.y + L.sub.h <= 669 - 44 + 1e-6);   // 自上而下：标题 / 条 / 正文 / 副文 | top down: title / bar / body / sub
+    CHECK(NEAR(L.percent.x + L.percent.w, L.bar.x + L.bar.w));   // 百分数右缘对齐条尾 | percent right edge aligned with the bar end
+    CHECK(!strcmp(L.logo_name, "loadpage_logo.png") && L.logo_w == 1600 && L.logo_h == 600);
+    CHECK(NEAR(L.logo.w, (951 - 56) * 0.58) && NEAR(L.logo.h, L.logo.w * 600 / 1600) && NEAR(L.logo.x + L.logo.w / 2, 951 / 2.0));   // 横屏：58% 宽、等比、居中 | landscape: 58% wide, aspect kept, centred
+    CHECK(NEAR(L.logo.y + L.logo.h / 2, 669 * 0.36) && L.logo.y + L.logo.h <= L.title.y - 24 + 1e-6 && L.logo.y >= 28 - 1e-6);
+    dm_lp_screen ip = { 402, 874, 0, 59, 0, 34 }; dm_loadpage_layout(&ip, &L);   // iPhone 竖屏：顶 59 / 底 34 安全区 | iPhone portrait: 59 top / 34 bottom safe area
+    CHECK(!L.landscape && !strcmp(L.bg_name, "loadpage_bg_port.jpg") && NEAR(L.bar.w, 402 - 56) && NEAR(L.bar.x, 28));
+    CHECK(L.sub.y + L.sub.h <= 874 - 34 + 1e-6 && L.brand.y >= 59 + 28 - 1e-6);
+    CHECK(NEAR(L.logo.w, (402 - 56) * 0.86) && NEAR(L.logo.x + L.logo.w / 2, 201) && NEAR(L.logo.y + L.logo.h / 2, 874 * 0.30) && L.logo.y >= 59 + 28 - 1e-6);   // 竖屏：86% 宽、居中、中心 0.30h、在顶部安全区下 | portrait: 86% wide, centred, centre at 0.30h, below the top safe area
+    dm_lp_screen ipl = { 874, 402, 59, 0, 59, 21 }; dm_loadpage_layout(&ipl, &L);   // iPhone 横屏：左右 59 灵动岛、底 21 | iPhone landscape: 59 left / right (island), 21 bottom
+    CHECK(L.landscape && L.bar.x >= 59 + 28 - 1e-6 && L.bar.x + L.bar.w <= 874 - 59 - 28 + 1e-6 && L.sub.y + L.sub.h <= 402 - 21 + 1e-6);
+    dm_lp_screen an = { 873, 393, 0, 0, 0, 0 }; dm_loadpage_layout(&an, &L);   // 安卓 20:9（2400×1080 @2.75） | Android 20:9 (2400×1080 @2.75)
+    CHECK(L.landscape && rect_in(L.bar, 0, 0, 873, 393) && rect_in(L.title, 0, 0, 873, 393) && L.bar.w <= 900);
+    dm_lp_screen big = { 2000, 1200, 0, 0, 0, 0 }; dm_loadpage_layout(&big, &L); CHECK(NEAR(L.bar.w, 900));   // 很宽的屏：条不超过 900 点 | very wide screen: the bar stays within 900 pt
+    dm_lp_screen tiny = { 100, 50, 0, 0, 0, 0 }; dm_loadpage_layout(&tiny, &L); CHECK(L.bar.w > 0 && L.bar.h > 0 && L.logo.w >= 0 && L.logo.h >= 0);   // 很小的屏不出负宽（字标缩到放得下或 0） | a tiny screen never yields negative widths (the wordmark shrinks to fit or to 0)
+    dm_lp_screen big2 = { 2000, 1200, 0, 0, 0, 0 }; dm_loadpage_layout(&big2, &L); CHECK(NEAR(L.logo.w, 560));   // 大屏字标不超过 560 点 | on a big screen the wordmark stays within 560 pt
+    dm_lp_screen landi = { 874, 402, 59, 0, 59, 21 }; dm_loadpage_layout(&landi, &L); CHECK(L.logo.y + L.logo.h <= L.title.y - 24 + 1e-6 && L.logo.y >= 28 - 1e-6);   // 矮横屏：字标压缩到标题之上 | short landscape: the wordmark is squeezed above the title
+    // 静音开关：缺省有声音 → 进行中放；点一下静音就不放；begin 不改它；失败停；开关在右上角安全区内，不压字标 / 字标图；点击判定 | mute toggle: sound on by default → plays while running; one tap mutes; begin keeps it; failure stops; the button sits top right inside the safe area, clear of the wordmark; hit test
+    CHECK(!strcmp(dm_loadpage_music_name(), "loadpage_loop.m4a") && dm_loadpage_muted() == 0 && dm_loadpage_music_wanted() == 1);
+    CHECK(dm_loadpage_toggle_muted() == 1 && dm_loadpage_music_wanted() == 0);
+    dm_loadpage_begin(two, 2, w_two, 0); CHECK(dm_loadpage_muted() == 1 && dm_loadpage_music_wanted() == 0);
+    CHECK(dm_loadpage_toggle_muted() == 0 && dm_loadpage_music_wanted() == 1);
+    dm_loadpage_fail("x", 1); CHECK(dm_loadpage_music_wanted() == 0); dm_loadpage_set_muted(0);
+    dm_loadpage_layout(&duo, &L); CHECK(NEAR(L.mute.x + L.mute.w, 951 - 28) && NEAR(L.mute.y, 22) && L.mute.w == 40 && L.mute.y + L.mute.h <= L.logo.y && L.brand.x + L.brand.w <= L.mute.x);
+    CHECK(dm_loadpage_hit_mute(&L, L.mute.x + 20, L.mute.y + 20) && dm_loadpage_hit_mute(&L, L.mute.x - 10, L.mute.y - 10) && !dm_loadpage_hit_mute(&L, L.mute.x - 20, L.mute.y + 20) && !dm_loadpage_hit_mute(&L, 475, 400));
+    dm_loadpage_layout(&ip, &L); CHECK(NEAR(L.mute.x + L.mute.w, 402 - 28) && L.mute.y >= 59 - 6 && L.mute.y + L.mute.h <= L.logo.y);   // iPhone 竖屏：在灵动岛下方 | iPhone portrait: below the island
+    dm_loadpage_layout(&ipl, &L); CHECK(L.mute.x + L.mute.w <= 874 - 59 - 28 + 1e-6);                                                    // 横屏：避开右侧灵动岛 | landscape: clear of the island on the right
+
+    // 8. 没开始就 finish / set：不崩、状态不变；begin 超过上限的阶段数被截 | 8. finish / set before begin: no crash, state unchanged; begin with too many stages is clamped
+    dm_loadpage_begin(two, 0, NULL, 0); CHECK(dm_loadpage_state() == DM_LP_IDLE); dm_loadpage_set(0, 0.5, NULL, 1); dm_loadpage_finish(2); CHECK(dm_loadpage_state() == DM_LP_IDLE);
+    dm_loadpage_text(&t, 3); CHECK(t.title[0] != 0);
+    int many[12] = { DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT, DM_LP_IMPORT };
+    dm_loadpage_begin(many, 12, NULL, 0); dm_loadpage_set(7, 1.0, NULL, 1); CHECK(dm_loadpage_percent() == 100); dm_loadpage_set(11, 0.5, NULL, 2); CHECK(dm_loadpage_percent() == 100);
+    // 9. 其他语言列取得到（英文 / 韩文），占位符同序 | 9. Other language columns resolve (English / Korean) with matching placeholders
+    dm_loadpage_ui_set_group(DM_LG_EN); dm_loadpage_begin(two, 2, w_two, 0); memset(&d, 0, sizeof d); d.items_done = 5; d.items_total = 9; dm_loadpage_set(1, 0.5, &d, 1);
+    dm_loadpage_text(&t, 1); CHECK(!strcmp(t.title, "Preparing the shader cache")); CHECK(strstr(t.body, "File 5 of 9") != NULL);
+    dm_loadpage_ui_set_group(DM_LG_KO); dm_loadpage_text(&t, 1); CHECK(strstr(t.body, "5 / 9") != NULL); dm_loadpage_ui_set_group(-1);
+
+    // 10. 社区信息：没给 = 不显示、布局不变；给了（进行中）= 两行 + 复制钮贴底、在安全区内、进度组整体上移、不重叠；完成后不显示；失败仍显示；
+    //     复制值按语言（中文先群号、英文先链接、只有一项用那一项）；复制反馈 2 秒；手柄模式；判定区；begin 不清社区信息
+    // 10. Community info: not given = not shown, layout unchanged; given (running) = two lines + copy button at the bottom, inside the safe area, the progress group moved up, no overlap;
+    //     not shown after done; still shown on failure; the copy value by language (Chinese prefers the number, English the link, a single item is used as is); 2 s copy feedback; controller mode; hit area; begin keeps the info
+    {
+        dm_lp_screen thor = { 832.5, 468.3, 0, 0, 0, 0 }, oppo = { 792, 363.4, 30, 0, 0, 0 }; dm_lp_layout L0, L1;   // 奥丁 1920×1080 @369 dpi、OPPO 2772×1272 @560 dpi（左侧挖孔约 30 点） | Thor 1920×1080 @369 dpi, OPPO 2772×1272 @560 dpi (left cutout about 30 pt)
+        dm_loadpage_begin(two, 2, w_two, 0); dm_loadpage_set(0, 0.3, NULL, 10);
+        dm_loadpage_layout(&thor, &L0); CHECK(L0.comm == 0 && !dm_loadpage_community_shown()); CHECK(!strcmp(dm_loadpage_copy_value(), ""));
+        dm_loadpage_text(&t, 20); CHECK(!t.comm1[0] && !t.comm2[0] && !t.copy[0]); CHECK(!dm_loadpage_hit_copy(&L0, L0.sub.x + 10, L0.sub.y + 5));
+        dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus", NULL);
+        CHECK(dm_loadpage_community_shown()); CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678"));
+        dm_lp_screen scr[2] = { thor, oppo };
+        for (int k = 0; k < 2; k++) { dm_loadpage_layout(&scr[k], &L1); double W = scr[k].w, H = scr[k].h;
+            CHECK(L1.comm == 1); CHECK(rect_in(L1.comm1, scr[k].inset_l, 0, W - scr[k].inset_r, H - scr[k].inset_b) && rect_in(L1.comm2, 0, 0, W, H - scr[k].inset_b) && rect_in(L1.copy, 0, 0, W - scr[k].inset_r, H - scr[k].inset_b));
+            CHECK(L1.sub.y + L1.sub.h <= L1.comm1.y - 10); CHECK(L1.comm1.y + L1.comm1.h <= L1.comm2.y); CHECK(L1.comm1.x + L1.comm1.w <= L1.copy.x - 8);
+            CHECK(NEAR(L1.copy.x + L1.copy.w, W - scr[k].inset_r - 28)); CHECK(NEAR(L1.comm1.x, scr[k].inset_l + 28)); CHECK(L1.copy.h >= 22 && L1.copy.w >= 100 && L1.comm_pt == 12 && L1.comm_alpha > 0 && L1.comm_alpha < 255); CHECK(L1.copy.y >= L1.comm1.y && L1.copy.y + L1.copy.h <= L1.comm2.y + L1.comm2.h);
+            CHECK(L1.logo.y + L1.logo.h <= L1.title.y - 24 + 1e-6); CHECK(L1.comm2.y + L1.comm2.h <= H - scr[k].inset_b - 16 + 1e-6); }
+        dm_loadpage_layout(&thor, &L1); CHECK(L1.title.y < L0.title.y && L1.bar.y < L0.bar.y);
+        CHECK(dm_loadpage_hit_copy(&L1, L1.copy.x + 5, L1.copy.y + 5) && dm_loadpage_hit_copy(&L1, L1.copy.x - 6, L1.copy.y) && !dm_loadpage_hit_copy(&L1, L1.copy.x - 12, L1.copy.y + 5) && !dm_loadpage_hit_mute(&L1, L1.copy.x + 5, L1.copy.y + 5));
+        dm_loadpage_text(&t, 30); CHECK(!strcmp(t.comm1, "官方免费渠道：QQ 群 1129913678 · GitHub")); CHECK(!strcmp(t.comm2, "本软件免费，付费购买均为倒卖")); CHECK(!strcmp(t.copy, "复制群号") && t.copy_state == 0);
+        dm_loadpage_copied(1, 0, 1000); dm_loadpage_text(&t, 1500); CHECK(!strcmp(t.copy, "已复制") && t.copy_state == 1);
+        dm_loadpage_text(&t, 3001); CHECK(!strcmp(t.copy, "复制群号") && t.copy_state == 0);
+        dm_loadpage_copied(0, 1, 4000); dm_loadpage_text(&t, 4100); CHECK(!strcmp(t.copy, "复制失败") && t.copy_state == -1); dm_loadpage_text(&t, 6100); CHECK(t.copy_state == 0);
+        CHECK(dm_loadpage_pad_mode() == 0); dm_loadpage_pad(1); CHECK(dm_loadpage_pad_mode() == 1); dm_loadpage_pad(0); CHECK(dm_loadpage_pad_mode() == 0);
+        dm_loadpage_ui_set_group(DM_LG_EN); CHECK(!strcmp(dm_loadpage_copy_value(), "https://github.com/augustxxx-debug/d2r-mobile-plus"));
+        dm_loadpage_text(&t, 7000); CHECK(!strcmp(t.copy, "Copy link") && strstr(t.comm1, "QQ group 1129913678 · GitHub"));
+        dm_loadpage_community("1129913678", NULL, NULL); CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678")); dm_loadpage_text(&t, 7000); CHECK(!strcmp(t.copy, "Copy number") && !strstr(t.comm1, "GitHub"));
+        dm_loadpage_ui_set_group(-1); dm_loadpage_community("", "https://github.com/a/b", ""); CHECK(!strcmp(dm_loadpage_copy_value(), "https://github.com/a/b"));
+        dm_loadpage_text(&t, 7000); CHECK(!strcmp(t.comm1, "官方免费渠道：GitHub") && !strcmp(t.copy, "复制链接"));
+        dm_loadpage_begin(two, 2, w_two, 8000); CHECK(dm_loadpage_community_shown());   // begin 不清 | begin keeps it
+        dm_loadpage_fail("x", 8100); CHECK(dm_loadpage_community_shown());
+        dm_loadpage_begin(two, 2, w_two, 9000); dm_loadpage_finish(9100); CHECK(!dm_loadpage_community_shown()); dm_loadpage_layout(&thor, &L1); CHECK(L1.comm == 0);
+        dm_loadpage_copied(1, 0, 9200); dm_loadpage_text(&t, 9300); CHECK(!t.copy[0]);   // 不显示时复制不记 | no copy recorded when hidden
+        dm_loadpage_begin(two, 2, w_two, 9400); dm_loadpage_community(NULL, NULL, NULL); CHECK(!dm_loadpage_community_shown());
+        // 有官网（用户 10-29）：显示官网（去 https:// 与结尾斜杠）+ 群号，复制群号（各语言都是）；只有官网时显示并复制官网 | with a site (user 10-29): site + number shown, the number is copied (every language); a site alone is shown and copied
+        dm_loadpage_begin(two, 2, w_two, 9500); dm_loadpage_community("1129913678", "https://github.com/a/b", "https://d2rplus.augustusplay.com/");
+        CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678")); dm_loadpage_text(&t, 9600);
+        CHECK(!strcmp(t.comm1, "官方免费渠道：官网 d2rplus.augustusplay.com · QQ 群 1129913678")); CHECK(!strcmp(t.copy, "复制群号"));
+        dm_loadpage_ui_set_group(DM_LG_EN); CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678")); dm_loadpage_text(&t, 9600); CHECK(!strcmp(t.copy, "Copy number") && strstr(t.comm1, "d2rplus.augustusplay.com · QQ group 1129913678")); dm_loadpage_ui_set_group(-1);
+        dm_loadpage_copied(1, 0, 9700); dm_loadpage_community(NULL, NULL, "https://x.example/"); CHECK(dm_loadpage_community_shown()); dm_loadpage_text(&t, 12000); CHECK(!strcmp(t.comm1, "官方免费渠道：官网 x.example"));
+        CHECK(!strcmp(dm_loadpage_copy_value(), "https://x.example/") && !strcmp(t.copy, "复制官网"));
+        // 提示页（权限）：三层字、无百分数、不画条、标题整宽、不放音乐、不显示页脚；begin 清掉提示 | notice page (permission): three levels, no percent, no bar, full-width title, no music, no footer; begin clears it
+        dm_loadpage_prompt("dmLoadPermTitle", "用来读取 X", "dmLoadPermHint"); CHECK(dm_loadpage_prompting() && dm_loadpage_state() == DM_LP_IDLE);
+        dm_loadpage_text(&t, 13000); CHECK(!strcmp(t.title, "需要「所有文件访问」权限") && !strcmp(t.body, "用来读取 X") && strstr(t.sub, "打开系统设置") && !t.percent[0] && !t.comm1[0]);
+        dm_loadpage_layout(&oppo, &L1); CHECK(L1.show_bar == 0 && L1.comm == 0 && NEAR(L1.title.w, L1.bar.w) && L1.mute.w == 0 && !dm_loadpage_hit_mute(&L1, 0, 0)); CHECK(dm_loadpage_music_wanted() == 0);
+        dm_loadpage_begin(two, 2, w_two, 13100); CHECK(!dm_loadpage_prompting()); dm_loadpage_layout(&oppo, &L1); CHECK(L1.show_bar == 1);
+        { const int gs[5] = { DM_LG_ZH, DM_LG_EN, DM_LG_ES, DM_LG_RU, DM_LG_KO }; dm_loadpage_layout(&oppo, &L1);
+          for (int k = 0; k < 5; k++) { dm_loadpage_ui_set_group(gs[k]); const char *ks[3] = { "dmLoadPermTitle", "dmLoadPermBody", "dmLoadPermHint" }; const double pts[3] = { 24, 18, 14 };
+            for (int q = 0; q < 3; q++) { const char *s = dm_loadpage_ui(ks[q]); double est = 0;
+              for (const unsigned char *c = (const unsigned char *)s; *c; ) { if (*c < 0x80) { est += 0.55; c++; } else if (*c < 0xe0) { est += 0.6; c += 2; } else { est += 1.0; c += 3; } }
+              est *= pts[q]; if (est > L1.bar.w) printf("  宽度：组 %d 键 %s 估 %.0f > %.0f\n", gs[k], ks[q], est, L1.bar.w); CHECK(est <= L1.bar.w); } }
+          dm_loadpage_ui_set_group(-1); }
+        // 关字标（安卓，PLUS 图标背景）：不画字标、文字字标为空；图标外框落在安全区顶与标题之间、在内容宽内；有没有页脚进度组位置不变；iOS（开）不受影响
+        // wordmark off (Android, PLUS icon background): no wordmark image, empty text wordmark; the icon box sits between the safe top and the title, within the content width; the progress group does not move with or without a footer; on (iOS) unaffected
+        { dm_lp_screen scr2[2] = { thor, oppo }; dm_loadpage_set_wordmark(0);
+          for (int k = 0; k < 2; k++) { dm_lp_layout A, B; double W = scr2[k].w;
+            dm_loadpage_begin(two, 2, w_two, 14000); dm_loadpage_community(NULL, NULL, NULL); dm_loadpage_layout(&scr2[k], &A);
+            dm_loadpage_community("1129913678", NULL, "https://d2rplus.augustusplay.com/"); dm_loadpage_layout(&scr2[k], &B);
+            CHECK(A.logo.w == 0 && A.logo_name == NULL && NEAR(A.title.y, B.title.y) && NEAR(A.bg_dst.y, B.bg_dst.y) && NEAR(A.bg_dst.h, B.bg_dst.h));
+            double iy0 = B.bg_dst.y + B.bg_dst.h * 0.030, iy1 = B.bg_dst.y + B.bg_dst.h * 0.824, ix0 = B.bg_dst.x + B.bg_dst.w * 0.274, ix1 = B.bg_dst.x + B.bg_dst.w * 0.727;
+            CHECK(iy0 >= scr2[k].inset_t + 28 - 0.5 && iy1 <= B.title.y - 18 + 0.5); CHECK(ix0 >= scr2[k].inset_l + 28 - 0.5 && ix1 <= W - scr2[k].inset_r - 28 + 0.5);
+            CHECK(iy1 - iy0 > 120);   // 图标别缩得太小 | the icon must not shrink too far
+            CHECK(B.bg_src.w == B.bg_w && B.bg_src.h == B.bg_h);
+            dm_loadpage_text(&t, 14100); CHECK(t.brand[0] == 0); }
+          dm_loadpage_set_wordmark(1); dm_loadpage_layout(&thor, &L1); CHECK(L1.logo.w > 0 && L1.logo_name != NULL); dm_loadpage_text(&t, 14200); CHECK(t.brand[0] != 0);
+          dm_loadpage_community(NULL, NULL, NULL); }
+        // 六套文字：第一行估宽（拉丁 / 西里尔 0.55 个字号、汉字 / 韩文 1.0 个字号）放得进 OPPO 的行宽，按钮字放得进 108 点（左右各留 6 点，手柄 A 图标另占一个字号 + 6 点）
+        // six text sets: the first line's estimated width (Latin / Cyrillic 0.55 em, CJK / Hangul 1.0 em) fits OPPO's line width; button labels fit 128 pt (the controller A glyph takes 22 more)
+        dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus", "https://d2rplus.augustusplay.com/"); dm_loadpage_layout(&oppo, &L1);
+        int groups[5] = { DM_LG_ZH, DM_LG_EN, DM_LG_ES, DM_LG_RU, DM_LG_KO };
+        for (int k = 0; k < 5; k++) { dm_loadpage_ui_set_group(groups[k]);
+            const char *keys[6] = { "dmLoadCommQqGh", "dmLoadCommFree", "dmLoadCommSiteQq", "dmLoadCommCopyQq", "dmLoadCommCopyGh", "dmLoadCommCopySite" };
+            for (int q = 0; q < 6; q++) { char s[256]; if (q == 2) snprintf(s, sizeof s, dm_loadpage_ui(keys[q]), "d2rplus.augustusplay.com", "1129913678"); else snprintf(s, sizeof s, dm_loadpage_ui(keys[q]), "1129913678"); double est = 0;
+                for (const unsigned char *c = (const unsigned char *)s; *c; ) { if (*c < 0x80) { est += 0.55; c++; } else if (*c < 0xe0) { est += 0.6; c += 2; } else { est += 1.0; c += 3; } }
+                est *= L1.comm_pt; double room = q < 3 ? L1.comm1.w : L1.copy.w - 12 - (L1.comm_pt + 6);
+                if (est > room) printf("  宽度：组 %d 键 %s 估 %.0f > %.0f\n", groups[k], keys[q], est, room);
+                CHECK(est <= room); } }
+        dm_loadpage_ui_set_group(-1); dm_loadpage_community(NULL, NULL, NULL);
+    }
+
+    printf("t_loadpage：%d 项检查，%d 项失败\n", checks, fails);
+    return fails ? 1 : 0;
+}

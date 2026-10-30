@@ -17,12 +17,22 @@ extern "C" int xbg_completion_wait_selftest(char *report,size_t bytes);
 #include "xbg_framebuffer.h"
 #include "xbg_clear.h"
 #include "xbg_blit.h"
+#include "xbg_adreno_policy.h"
+#ifdef XBG_HAVE_SPIRV_OPT
+#include "spirv-tools/optimizer.hpp"
+#endif
 #include "xbg_bc_policy.h"
+#include "xbg_astc.h"
 #include "xbg_writeback_policy.h"
 #include "xbg_clear_spv.h"
 #include "xbg_bright_spv.h"
 #include "xbg_spirv_quad.h"
 #include "xbg_spirv_warp.h"
+#include "xbg_spirv_mali.h"
+#include "xbg_page.h"
+#include "xbg_spirv_laneid.h"
+#include "xbg_laneid_probe_run.h"
+#include "xbg_laneid_spv.h"
 #include "xbg_spirv_ldc.h"
 #include "xbg_spirv_temps.h"
 #include "xbg_spirv_raster.h"
@@ -51,6 +61,7 @@ __attribute__((weak)) float dm_bright_k(void);
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <signal.h>
+#include <dirent.h>
 #if defined(__ANDROID__)
 #include <ucontext.h>
 #endif
@@ -224,6 +235,21 @@ std::atomic<int> timing_any{0};bool tls_gate=true,img_fast=true;
 // in memory and in every texture fetch. Adreno 730 samples all of BC1-7. Exception kept: the iOS ASTC pack copies ASTC
 // blocks into the game's BC arrays, which needs a decoded destination.
 bool native_bc=false;uint64_t native_bc_images=0,decoded_bc_images=0;int64_t image_bytes_live=0,bc_image_bytes_live=0,bc_data_bytes_live=0;   // live image memory (driver sizes) and BC payload
+// 设备没有 BC 但有 ASTC 时，BC3（0x44 / 0x48）在上传时逐块转成 ASTC 4x4（xbg_astc.c），每像素 1 字节而不是软解的 4 字节：OPPO（Mali）上软解
+// 图像 604 MB 里 BC3 占 547 MB。透明度恒定的块与软解差 ≤ 2 级，透明度有变化的块有损（双平面、48 级端点）。标记 gfx-bc-astc = 1 / 0，
+// 否则 DM_GFX_BC_ASTC（安卓 App 设 1）；设备 ASTC 4x4 不能采样 / 线性过滤 / 传输时不用。
+// Without BC but with ASTC, BC3 (0x44 / 0x48) is transcoded per block to ASTC 4x4 on upload (xbg_astc.c): 1 byte per pixel instead of
+// the software decode's 4. On the OPPO (Mali) BC3 was 547 of the 604 MB of decoded images. Uniform-alpha blocks stay within 2 levels of the
+// decode; varying-alpha blocks are lossy (dual plane, 48-level endpoints). Marker gfx-bc-astc = 1 / 0, else DM_GFX_BC_ASTC (the Android
+// app sets 1); not used when the device's ASTC 4x4 cannot be sampled, linearly filtered or transferred.
+bool bc_astc=false;uint64_t astc_bc_images=0;
+// ASTC UNORM 视图解到 RGBA8（VK_EXT_astc_decode_mode，安卓壳开了扩展才有）：缺省解码精度是半精度浮点，Arm 建议 LDR 贴图解到 8 位，纹理缓存占用减半。
+// 标记 gfx-astc-u8 = 1 / 0，否则 DM_GFX_ASTC_U8（缺省 1）；sRGB 的 ASTC 按规范本来就解到 8 位，不挂。
+// ASTC UNORM views decode to RGBA8 (VK_EXT_astc_decode_mode, only when the Android shell enabled it): the default decode precision is half
+// float; Arm recommends 8-bit decoding for LDR textures, halving the texture cache footprint. Marker gfx-astc-u8 = 1 / 0, else DM_GFX_ASTC_U8
+// (default 1); sRGB ASTC decodes to 8 bits by the specification already and is left alone.
+bool astc_u8=false;
+int64_t bc_format_bytes_live[16]={};   // BC 图的驱动内存按 NVN 格式（0x41–0x50）分，PERF 行列出，看软解里谁占得多 | BC image memory by NVN format (0x41–0x50), listed in the PERF line to see which decoded formats dominate
 bool no_mutable_images=true;uint64_t mutable_upgrades=0;unsigned mutable_test=0; // mutable_test (marker gfx-mutable-test = N): force the upgrade on every Nth color image when first sampled (test)
 struct Image;void upgrade_mutable(Image &im);
 bool perf_timing=true; // always-on wall-time breakdown for NVN PERF (exclusive deltas)
@@ -581,7 +607,12 @@ struct Job{Slot *slot;VkFence fence;VkCommandPool pool;};std::vector<Job> jobs;
 uint64_t queued=0,waits=0,wait_ns=0;   // render thread only
 void run(){
     for(;;){Job j;{std::unique_lock<std::mutex> l(mu);cv.wait(l,[]{return stop || !jobs.empty();});if(jobs.empty())return;j=jobs.front();jobs.erase(jobs.begin());}
-        VkResult r=vkWaitForFences(cfg.device,1,&j.fence,VK_TRUE,std::max<uint64_t>(cfg.fence_timeout_ns,10000000000ull));
+        const uint64_t timeout=std::max<uint64_t>(cfg.fence_timeout_ns,10000000000ull);
+        VkResult r=vkWaitForFences(cfg.device,1,&j.fence,VK_TRUE,timeout);
+        // 栅栏一直不亮而驱动又不报 DEVICE_LOST 时，这里只剩 VK_TIMEOUT；把它说清楚，别让崩在后面的检查里只留下一个 2。
+        // When the fence never signals and the driver does not report DEVICE_LOST, all that is left here is VK_TIMEOUT; say so,
+        // so the fatal check later does not leave just a 2 in the crash report.
+        if(r==VK_TIMEOUT)xbg_logf("NVN command pool reset: the slot's fence did not signal within %llu ms (GPU hang)",(unsigned long long)(timeout/1000000ull));
         if(r==VK_SUCCESS)r=vkResetCommandPool(cfg.device,j.pool,0);
         {std::lock_guard<std::mutex> l(mu);j.slot->reset_result=r;j.slot->reset_busy=false;}cv.notify_all();}
 }
@@ -630,7 +661,7 @@ bool slot_pools_enabled=true,readback_cached=false;
 // samples_report_seen: the game has recorded a samples-passed report (D2R never does: its ~8 pending reports a frame are
 // all timestamps).
 bool heavy_timestamps=false;extern uint64_t pass_fast_hits;   // gfx-heavy-timestamps = '1': timestamp reports end the pass with full barriers, as before
-bool no_occlusion_queries=false,samples_report_seen=false;uint64_t samples_reports=0,samples_reported=0,counter_ops[3]={};extern uint64_t pipeline_fast_hits;extern bool pipe_memo;extern uint64_t pipe_memo_hits,pipe_memo_misses;extern uint64_t snap_front_hits,snap_map_hits,snap_invalidations,snap_invalidated;extern std::atomic<uint64_t> quad_rewrites,warp_rewrites,ldc_folds,temps_forwarded,nan_minmax_swaps;namespace vcache{extern bool enabled;extern uint64_t hits,hit_bytes,fills,fill_bytes,refills,volatiles,untracked,flushes;size_t live();VkDeviceSize arena_bytes();}   // counter_ops: resets, timestamp reports, samples reports recorded
+bool no_occlusion_queries=false,samples_report_seen=false;uint64_t samples_reports=0,samples_reported=0,counter_ops[3]={};extern uint64_t pipeline_fast_hits;extern bool pipe_memo;extern uint64_t pipe_memo_hits,pipe_memo_misses;extern uint64_t snap_front_hits,snap_map_hits,snap_invalidations,snap_invalidated;extern std::atomic<uint64_t> quad_rewrites,warp_rewrites,laneid_rewrites,mali_guards,mali_clips,mali_nonwritables,ldc_folds,temps_forwarded,nan_minmax_swaps;namespace vcache{extern bool enabled;extern uint64_t hits,hit_bytes,fills,fill_bytes,refills,volatiles,untracked,flushes;size_t live();VkDeviceSize arena_bytes();}   // counter_ops: resets, timestamp reports, samples reports recorded
 // Resident uniform texel copies (texel_acquire, before descriptors()).
 struct TexelKey{uint64_t base,bytes;uint32_t format;bool operator==(const TexelKey &o)const{return base==o.base&&bytes==o.bytes&&format==o.format;}};
 struct TexelKeyHash{size_t operator()(const TexelKey &k)const{uint64_t x=k.base*0x9E3779B97F4A7C15ull^k.bytes*0xC2B2AE3D27D4EB4Full^k.format;x^=x>>29;return size_t(x*0xBF58476D1CE4E5B9ull);}};
@@ -690,6 +721,8 @@ void snapshot_invalidate(uint64_t address,uint64_t bytes);
 // word is made inaccessible, so a read of it that bypasses nvnEventGetValue faults and is counted (NVN PERF evguard), then
 // the page is opened again. Applying the event opens it first. Pages the dirty tracker or wtrack protect would conflict:
 // run it with gfx-vcache=0, gfx-tex-dirty=0 and gfx-wtrack=0.
+// 宿主页大小（xbg_page.h），evguard 与 wtrack 的 mprotect 都按它对齐 | the host page size (xbg_page.h); evguard and wtrack align their mprotect calls to it
+const xbg_page hostpage=xbg_page_host();
 namespace evguard {
 bool enabled=false;constexpr int slots_n=64;
 std::atomic<uintptr_t> page[slots_n],word[slots_n];   // guarded page; the pending event word in it (one per slot)
@@ -697,25 +730,25 @@ std::atomic<uint64_t> exact{0},other{0},writes{0},guards{0};std::atomic<uintptr_
 // The first faulting access of a guarded page and who made it: the caller (LR; bionic's memcpy is a leaf), x0-x5 at the fault,
 // and the pending event word on that page, so a bulk copy that crosses the word can be told from one that stops before it.
 std::atomic<uintptr_t> last_lr{0},last_word{0},last_x[6];std::atomic<uintptr_t> callers[8];std::atomic<uint64_t> caller_hits[8];
-inline uintptr_t pg(uintptr_t a){return a&~uintptr_t(4095);}
+inline uintptr_t pg(uintptr_t a){return xbg_page_floor(a,hostpage);}
 void reclose();
 void guard(uint64_t addr){if(!enabled)return;uintptr_t p=pg(uintptr_t(addr));
     for(int i=0;i<slots_n;i++)if(page[i].load()==p && word[i].load()==uintptr_t(addr))return;
     bool shut=false;for(int i=0;i<slots_n;i++)if(page[i].load()==p)shut=true;
     for(int i=0;i<slots_n;i++){uintptr_t z=0;if(word[i].compare_exchange_strong(z,uintptr_t(addr))){page[i]=p;break;}}
-    if(!shut){mprotect(reinterpret_cast<void*>(p),4096,PROT_NONE);++guards;}reclose();}
-void open(uintptr_t p){mprotect(reinterpret_cast<void*>(p),4096,PROT_READ|PROT_WRITE);for(int i=0;i<slots_n;i++)if(page[i].load()==p){page[i]=0;word[i]=0;}}
+    if(!shut){mprotect(reinterpret_cast<void*>(p),hostpage.size,PROT_NONE);++guards;}reclose();}
+void open(uintptr_t p){mprotect(reinterpret_cast<void*>(p),hostpage.size,PROT_READ|PROT_WRITE);for(int i=0;i<slots_n;i++)if(page[i].load()==p){page[i]=0;word[i]=0;}}
 // A faulting access opens its page but keeps the pending words; reclose() shuts such pages again (at every guard(), and
 // after each engine copy), so later reads of a word that is still pending fault too.
 std::atomic<bool> reopened[slots_n];std::atomic<uint64_t> engine_opens{0},recloses{0};
-void reclose(){for(int i=0;i<slots_n;i++)if(reopened[i].exchange(false)){uintptr_t p=page[i].load();if(p){mprotect(reinterpret_cast<void*>(p),4096,PROT_NONE);++recloses;}}}
+void reclose(){for(int i=0;i<slots_n;i++)if(reopened[i].exchange(false)){uintptr_t p=page[i].load();if(p){mprotect(reinterpret_cast<void*>(p),hostpage.size,PROT_NONE);++recloses;}}}
 // The engine's own copies of guest memory (stream_buffer) open the guarded pages they cover for the copy and shut them
 // after, so the guard stays on for guest reads; they are counted (engine_opens), not reported as faults.
 struct EngineRead{uintptr_t pages[8];int n=0;
     EngineRead(const void *src,size_t bytes){if(!enabled || !bytes)return;uintptr_t lo=pg(uintptr_t(src)),hi=pg(uintptr_t(src)+bytes-1);
         for(int i=0;i<slots_n && n<8;i++){uintptr_t q=page[i].load();if(!q || q<lo || q>hi)continue;bool dup=false;for(int k=0;k<n;k++)if(pages[k]==q)dup=true;
-            if(!dup){mprotect(reinterpret_cast<void*>(q),4096,PROT_READ|PROT_WRITE);pages[n++]=q;++engine_opens;}}}
-    ~EngineRead(){for(int k=0;k<n;k++){bool still=false;for(int i=0;i<slots_n;i++)if(page[i].load()==pages[k])still=true;if(still)mprotect(reinterpret_cast<void*>(pages[k]),4096,PROT_NONE);}}
+            if(!dup){mprotect(reinterpret_cast<void*>(q),hostpage.size,PROT_READ|PROT_WRITE);pages[n++]=q;++engine_opens;}}}
+    ~EngineRead(){for(int k=0;k<n;k++){bool still=false;for(int i=0;i<slots_n;i++)if(page[i].load()==pages[k])still=true;if(still)mprotect(reinterpret_cast<void*>(pages[k]),hostpage.size,PROT_NONE);}}
 };
 void unguard(uint64_t addr){if(!enabled)return;uintptr_t p=pg(uintptr_t(addr));for(int i=0;i<slots_n;i++)if(page[i].load()==p){open(p);return;}}
 int fault(void *a,int w,void *uc){uintptr_t x=uintptr_t(a),p=pg(x);bool mine=false,hit=false;
@@ -728,7 +761,7 @@ int fault(void *a,int w,void *uc){uintptr_t x=uintptr_t(a),p=pg(x);bool mine=fal
         for(int i=0;i<6;i++)last_x[i]=uintptr_t(mc.regs[i]);
         for(int i=0;i<8;i++){uintptr_t z=0;if(callers[i].load()==lr || callers[i].compare_exchange_strong(z,lr) || callers[i].load()==lr){++caller_hits[i];break;}}}
 #endif
-    mprotect(reinterpret_cast<void*>(p),4096,PROT_READ|PROT_WRITE);for(int i=0;i<slots_n;i++)if(page[i].load()==p)reopened[i]=true;return 1;}
+    mprotect(reinterpret_cast<void*>(p),hostpage.size,PROT_READ|PROT_WRITE);for(int i=0;i<slots_n;i++)if(page[i].load()==p)reopened[i]=true;return 1;}
 }
 void apply_event(uint64_t addr,uint32_t mode,uint32_t v){
     evguard::unguard(addr);snapshot_invalidate(addr,4);auto ptr=reinterpret_cast<uint32_t*>(addr);
@@ -808,7 +841,7 @@ Slot &recording_slot(){
         s.readback.cached=readback_cached;
         if(!s.fence){VkFenceCreateInfo f{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VK(vkCreateFence(cfg.device,&f,nullptr,&s.fence));}
         if(!s.timestamps && timestamp_bits){VkQueryPoolCreateInfo q{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};q.queryType=VK_QUERY_TYPE_TIMESTAMP;q.queryCount=2;VK(vkCreateQueryPool(cfg.device,&q,nullptr,&s.timestamps));}
-        bind_cache_reset();if(s.pool){if(s.reset_queued){poolreset::finish(s);s.reset_queued=false;VK(s.reset_result);}else VK(vkResetCommandPool(cfg.device,s.pool,0));}else{VK(vkResetCommandBuffer(s.cmd,0));if(s.pro)VK(vkResetCommandBuffer(s.pro,0));}VkCommandBufferBeginInfo b{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};b.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;VK(vkBeginCommandBuffer(s.cmd,&b));
+        bind_cache_reset();if(s.pool){if(s.reset_queued){poolreset::finish(s);s.reset_queued=false;if(s.reset_result==VK_TIMEOUT)xbg_fatalf("The GPU did not finish this slot's work within %llu ms (fence wait timed out), so the device is hung",(unsigned long long)(std::max<uint64_t>(cfg.fence_timeout_ns,10000000000ull)/1000000ull));else VK(s.reset_result);}else VK(vkResetCommandPool(cfg.device,s.pool,0));}else{VK(vkResetCommandBuffer(s.cmd,0));if(s.pro)VK(vkResetCommandBuffer(s.pro,0));}VkCommandBufferBeginInfo b{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};b.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;VK(vkBeginCommandBuffer(s.cmd,&b));
         if(s.timestamps){vkCmdResetQueryPool(s.cmd,s.timestamps,0,2);vkCmdWriteTimestamp(s.cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,s.timestamps,0);}
         s.recording=true;s.ops=0;
         const uint64_t frame=stats.presents.load()+1;
@@ -930,8 +963,10 @@ void perf_frame(){
     xbg_logf("NVN PERF storage_snapshots_per_frame=%.1f union_mb_per_frame=%.2f",storage_snap_count/f,storage_pages.size()*4096.0/1048576.0/tf);storage_pages.clear();storage_snap_count=0;
     xbg_logf("NVN PERF wtrack copied_kb_per_frame=%.1f dirty_pages_per_frame=%.1f mismatches=%llu fallbacks=%llu",wtrack::copied_bytes/1024.0/f,wtrack::dirty_pages/f,(unsigned long long)wtrack::mismatches,(unsigned long long)wtrack::fallbacks);wtrack::copied_bytes=wtrack::dirty_pages=0;
     xbg_logf("NVN PERF uniform_trimmed_bindings=%llu snap_mb_per_frame other=%.2f vertex=%.2f index=%.2f storage=%.2f texel=%.2f uniform=%.2f requested vertex=%.2f index=%.2f storage=%.2f",(unsigned long long)uniform_trimmed,snap_site_bytes[0]/1048576.0/f,snap_site_bytes[1]/1048576.0/f,snap_site_bytes[2]/1048576.0/f,snap_site_bytes[3]/1048576.0/f,snap_site_bytes[4]/1048576.0/f,snap_site_bytes[5]/1048576.0/f,snap_site_req[1]/1048576.0/f,snap_site_req[2]/1048576.0/f,snap_site_req[3]/1048576.0/f);for(auto &b:snap_site_bytes)b=0;for(auto &b:snap_site_req)b=0;
-    xbg_logf("NVN PERF quad_rewrites=%llu warp_rewrites=%llu ldc_folds=%llu temps_forwarded=%llu nan_minmax=%llu",(unsigned long long)quad_rewrites.load(std::memory_order_relaxed),(unsigned long long)warp_rewrites.load(std::memory_order_relaxed),(unsigned long long)ldc_folds.load(std::memory_order_relaxed),(unsigned long long)temps_forwarded.load(std::memory_order_relaxed),(unsigned long long)nan_minmax_swaps.load(std::memory_order_relaxed));
-    xbg_logf("NVN PERF snapfront front_hits=%.1f map_hits=%.1f invalidations=%.1f erased=%.1f",snap_front_hits/f,snap_map_hits/f,snap_invalidations/f,snap_invalidated/f);xbg_logf("NVN PERF textures bc_native=%llu bc_decoded=%llu live_images=%.1fMB bc_images=%.1fMB bc_payload=%.1fMB",(unsigned long long)native_bc_images,(unsigned long long)decoded_bc_images,image_bytes_live/1048576.0,bc_image_bytes_live/1048576.0,bc_data_bytes_live/1048576.0);snap_front_hits=snap_map_hits=snap_invalidations=snap_invalidated=0;
+    xbg_logf("NVN PERF mali guards=%llu clipcull=%llu nonwritable=%llu",(unsigned long long)mali_guards.load(std::memory_order_relaxed),(unsigned long long)mali_clips.load(std::memory_order_relaxed),(unsigned long long)mali_nonwritables.load(std::memory_order_relaxed));xbg_logf("NVN PERF quad_rewrites=%llu warp_rewrites=%llu laneid_rewrites=%llu ldc_folds=%llu temps_forwarded=%llu nan_minmax=%llu",(unsigned long long)quad_rewrites.load(std::memory_order_relaxed),(unsigned long long)warp_rewrites.load(std::memory_order_relaxed),(unsigned long long)laneid_rewrites.load(std::memory_order_relaxed),(unsigned long long)ldc_folds.load(std::memory_order_relaxed),(unsigned long long)temps_forwarded.load(std::memory_order_relaxed),(unsigned long long)nan_minmax_swaps.load(std::memory_order_relaxed));
+    xbg_logf("NVN PERF snapfront front_hits=%.1f map_hits=%.1f invalidations=%.1f erased=%.1f",snap_front_hits/f,snap_map_hits/f,snap_invalidations/f,snap_invalidated/f);{static const char *const bc_names[16]={"BC1","BC1A","BC2","BC3","BC1s","BC1As","BC2s","BC3s","BC4","BC4s","BC5","BC5s","BC7","BC7s","BC6s","BC6u"};char by[256];int at=0;by[0]=0;
+     for(int i=0;i<16 && at<int(sizeof(by))-24;i++)if(bc_format_bytes_live[i]>0)at+=snprintf(by+at,sizeof(by)-at,"%s%s:%.1f",at?",":" by_format_MB=",bc_names[i],bc_format_bytes_live[i]/1048576.0);
+     xbg_logf("NVN PERF textures bc_native=%llu bc_decoded=%llu bc_astc=%llu live_images=%.1fMB bc_images=%.1fMB bc_payload=%.1fMB%s",(unsigned long long)native_bc_images,(unsigned long long)decoded_bc_images,(unsigned long long)astc_bc_images,image_bytes_live/1048576.0,bc_image_bytes_live/1048576.0,bc_data_bytes_live/1048576.0,by);}snap_front_hits=snap_map_hits=snap_invalidations=snap_invalidated=0;
     if(bright::enabled){xbg_logf("NVN PERF bright applied=%.2f k=%.2f",bright::applied/f,bright::last_k);bright::applied=0;}
     if(tex_dirty){xbg_logf("NVN PERF texdirty tracked=%.1f checks=%.1f changed=%.1f",tex_dirty_tracked/f,tex_dirty_checks/f,tex_dirty_changed/f);tex_dirty_tracked=tex_dirty_checks=tex_dirty_changed=0;}
     if(vcache::enabled){xbg_logf("NVN PERF vcache hits=%.1f (%.2fMB) fills=%.1f (%.2fMB) refills=%.2f volatile=%llu untracked=%llu flushes=%llu entries=%zu arena=%.1fMB pools=%d",vcache::hits/f,vcache::hit_bytes/1048576.0/f,vcache::fills/f,vcache::fill_bytes/1048576.0/f,vcache::refills/f,(unsigned long long)vcache::volatiles,(unsigned long long)vcache::untracked,(unsigned long long)vcache::flushes,vcache::live(),vcache::arena_bytes()/1048576.0,[]{int live=0,used=0;uint64_t adds=0;if(nvn_dirty_slot_stats)nvn_dirty_slot_stats(&live,&used,&adds);return used;}());vcache::hits=vcache::hit_bytes=vcache::fills=vcache::fill_bytes=vcache::refills=0;}
@@ -1073,8 +1108,8 @@ Region regions[max_regions];std::atomic<unsigned> nregions{0};struct sigaction p
 // Re-enable writes to the tracked pages in [a,a+len) and mark them dirty. Signal-safe: atomics and mprotect only.
 bool unprotect(uintptr_t a,size_t len){if(!len || a>UINTPTR_MAX-len)return false;bool any=false;unsigned n=nregions.load(std::memory_order_acquire);
     for(unsigned i=0;i<n;i++){uintptr_t b=regions[i].begin.load(std::memory_order_relaxed),e=regions[i].end.load(std::memory_order_relaxed);
-        uintptr_t lo=std::max(a,b),hi=std::min(a+len,e);if(lo>=hi)continue;size_t p0=(lo-b)>>12,p1=(hi-1-b)>>12;
-        if(mprotect(reinterpret_cast<void*>(b+(p0<<12)),(p1-p0+1)<<12,PROT_READ|PROT_WRITE))continue;
+        uintptr_t lo=std::max(a,b),hi=std::min(a+len,e);if(lo>=hi)continue;size_t p0=(lo-b)>>hostpage.shift,p1=(hi-1-b)>>hostpage.shift;
+        if(mprotect(reinterpret_cast<void*>(b+(p0<<hostpage.shift)),(p1-p0+1)<<hostpage.shift,PROT_READ|PROT_WRITE))continue;
         for(size_t pg=p0;pg<=p1;pg++)regions[i].dirty[pg].store(1,std::memory_order_release);any=true;}
     return any;}
 void handler(int sig,siginfo_t *si,void *uc){
@@ -1091,12 +1126,12 @@ bool activate(Tracked &t){
     if(!installed){   // a host that routes faults to xbg_wtrack_fault marks this installed (xbg_wtrack_use_host_hooks)
         struct sigaction sa{};sa.sa_sigaction=handler;sa.sa_flags=SA_SIGINFO|SA_ONSTACK|SA_NODEFER;sigemptyset(&sa.sa_mask);if(sigaction(SIGSEGV,&sa,&previous)){enabled=false;return false;}installed=true;}
     unsigned n=nregions.load();if(n>=max_regions)return false;
-    t.pbegin=uintptr_t(t.address)&~uintptr_t(4095);uintptr_t pend=(uintptr_t(t.address)+t.bytes+4095)&~uintptr_t(4095);
+    t.pbegin=xbg_page_floor(uintptr_t(t.address),hostpage);uintptr_t pend=xbg_page_ceil(uintptr_t(t.address)+t.bytes,hostpage);
     for(unsigned i=0;i<n;i++){uintptr_t b=regions[i].begin.load(),e=regions[i].end.load();if(t.pbegin<e && pend>b)return false;} // overlapping regions unsupported
     // Pages the HLE's dirty-page tracker has ever protected (the vertex/index cache) are its for good: its fault hook runs
     // first and takes a fault on such a page as already handled, so a protection of ours there would re-fault forever.
-    if(nvn_dirty_since && nvn_dirty_tracked)for(uintptr_t pg=t.pbegin;pg<pend;pg+=4096){const void *q=reinterpret_cast<const void*>(pg);if(nvn_dirty_tracked(q,1) && nvn_dirty_since(q,1,0)){xbg_logf("NVN wtrack region refused addr=%#llx: page %#llx belongs to the dirty-page tracker",(unsigned long long)t.address,(unsigned long long)pg);return false;}}
-    size_t npages=(pend-t.pbegin)>>12;
+    if(nvn_dirty_since && nvn_dirty_tracked)for(uintptr_t pg=t.pbegin;pg<pend;pg+=hostpage.size){const void *q=reinterpret_cast<const void*>(pg);if(nvn_dirty_tracked(q,1) && nvn_dirty_since(q,1,0)){xbg_logf("NVN wtrack region refused addr=%#llx: page %#llx belongs to the dirty-page tracker",(unsigned long long)t.address,(unsigned long long)pg);return false;}}
+    size_t npages=(pend-t.pbegin)>>hostpage.shift;
     auto *dirty=new std::atomic<uint8_t>[npages];for(size_t i=0;i<npages;i++)dirty[i].store(0);
     for(auto &v:t.v){
         VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};ci.size=t.bytes;ci.usage=arena_usage;ci.sharingMode=VK_SHARING_MODE_EXCLUSIVE;VK(vkCreateBuffer(cfg.device,&ci,nullptr,&v.buffer));
@@ -1110,7 +1145,7 @@ bool activate(Tracked &t){
     t.npages=npages;xbg_logf("NVN wtrack region=%u addr=%#llx bytes=%zu pages=%zu",n,(unsigned long long)t.address,t.bytes,t.npages);return true;
 }
 void copy_page(Tracked &t,Version &v,size_t pg){
-    uint64_t lo=std::max<uint64_t>(t.address,t.pbegin+(pg<<12)),hi=std::min<uint64_t>(t.address+t.bytes,t.pbegin+((pg+1)<<12));
+    uint64_t lo=std::max<uint64_t>(t.address,t.pbegin+(pg<<hostpage.shift)),hi=std::min<uint64_t>(t.address+t.bytes,t.pbegin+((pg+1)<<hostpage.shift));
     if(hi>lo){memcpy(v.mapped+(lo-t.address),reinterpret_cast<const void*>(uintptr_t(lo)),size_t(hi-lo));copied_bytes+=hi-lo;}
 }
 bool snapshot(uint64_t address,size_t bytes,Buffer &out){
@@ -1122,7 +1157,7 @@ bool snapshot(uint64_t address,size_t bytes,Buffer &out){
     for(size_t pg=0;pg<t.npages;){
         if(!r.dirty[pg].exchange(0,std::memory_order_acq_rel)){++pg;continue;}
         size_t end=pg+1;while(end<t.npages && r.dirty[end].exchange(0,std::memory_order_acq_rel))++end;
-        if(mprotect(reinterpret_cast<void*>(t.pbegin+(pg<<12)),(end-pg)<<12,PROT_READ)){enabled=false;xbg_logf("NVN wtrack mprotect failed errno=%d; disabled",errno);return false;}
+        if(mprotect(reinterpret_cast<void*>(t.pbegin+(pg<<hostpage.shift)),(end-pg)<<hostpage.shift,PROT_READ)){enabled=false;xbg_logf("NVN wtrack mprotect failed errno=%d; disabled",errno);return false;}
         for(size_t i=pg;i<end;i++)for(auto &v:t.v)v.stale[i]=1;dirty_pages+=end-pg;pg=end;
     }
     Version *pick=nullptr;
@@ -1134,7 +1169,7 @@ bool snapshot(uint64_t address,size_t bytes,Buffer &out){
     // Spot check for writes the fault path missed: 16 pages per use, cycling through the range (a full pass of a 19.6 MB
     // buffer every ~300 uses, about the old rate). Reading the copy back is slow (arena memory on Adreno 730 reads at
     // ~1.1 GB/s), so the former check of the whole range every 240 uses read 19.6 MB in one frame, ~18 ms at that speed.
-    ++t.uses;{size_t bad=0;for(unsigned k=0;k<16 && k<t.npages;k++){size_t pg=t.verify_next++%t.npages;uint64_t lo=std::max<uint64_t>(t.address,t.pbegin+(pg<<12)),hi=std::min<uint64_t>(t.address+t.bytes,t.pbegin+((pg+1)<<12));
+    ++t.uses;{size_t bad=0;for(unsigned k=0;k<16 && k<t.npages;k++){size_t pg=t.verify_next++%t.npages;uint64_t lo=std::max<uint64_t>(t.address,t.pbegin+(pg<<hostpage.shift)),hi=std::min<uint64_t>(t.address+t.bytes,t.pbegin+((pg+1)<<hostpage.shift));
             if(hi>lo && memcmp(pick->mapped+(lo-t.address),reinterpret_cast<const void*>(uintptr_t(lo)),size_t(hi-lo))){++bad;copy_page(t,*pick,pg);}}
         if(bad){mismatches+=bad;xbg_logf("NVN wtrack MISMATCH addr=%#llx pages=%zu (untracked writes; resynced)",(unsigned long long)t.address,bad);}}
     if(!pick->coherent){VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};mr.memory=pick->memory;mr.size=VK_WHOLE_SIZE;VK(vkFlushMappedMemoryRanges(cfg.device,1,&mr));}
@@ -1275,6 +1310,8 @@ VkFormat decoded_format(uint32_t pixels) {
     case XBG_R16_SNORM:return VK_FORMAT_R16_SNORM;
     case XBG_RG16_SNORM:return VK_FORMAT_R16G16_SNORM;
     case XBG_RGBA16_SFLOAT:return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case XBG_R8_UNORM:return VK_FORMAT_R8_UNORM;
+    case XBG_RG8_UNORM:return VK_FORMAT_R8G8_UNORM;
     default:xbg_fatalf("Invalid decoded BC pixel format %u",pixels);
     }
 }
@@ -1309,7 +1346,7 @@ void capability_report(){
 }
 struct Image {
     tex_t source{}; uint64_t provenance_epoch=0,provenance_writer=0;unsigned provenance_write_site=0; VkImage image{};VkDeviceMemory memory{};VkFormat fmt{};VkImageLayout layout=VK_IMAGE_LAYOUT_UNDEFINED;
-    VkImageAspectFlags aspects{};VkImageUsageFlags usage{};uint32_t width{},height{},depth=1,levels{},layers{},bpp{};VkSampleCountFlagBits samples=VK_SAMPLE_COUNT_1_BIT;bool uploaded=false,gpu_written=false,decoded=false,mutable_format=false;VkImageCreateInfo create{}; // create: as created (no pNext), for upgrade_mutable
+    VkImageAspectFlags aspects{};VkImageUsageFlags usage{};uint32_t width{},height{},depth=1,levels{},layers{},bpp{};VkSampleCountFlagBits samples=VK_SAMPLE_COUNT_1_BIT;bool uploaded=false,gpu_written=false,decoded=false,astc=false,mutable_format=false;VkImageCreateInfo create{}; // create: as created (no pNext), for upgrade_mutable
     uint64_t cpu_hash=0,checked_submission=UINT64_MAX,last_write=0;uint32_t stable_checks=0;int64_t mem_bytes=0,bc_bytes=0,bc_data=0;
     // 最近一次经 get_image 取用时的 slot_serial：等于当前值，说明这次提交里已有命令用过它（gfx-upload-prologue 据此判断能否提前上传）。
     // slot_serial at the last get_image of this image: equal to the current value means a command of this submission already used it
@@ -1317,7 +1354,7 @@ struct Image {
     uint64_t slot_use=0;
     uint64_t dirty_stamp=0,dirty_seen=0;   // tex_dirty: the tracker stamp of the checked content (0: not tracked yet) and the tracker generation last checked
     std::map<std::array<uint32_t,8>,VkImageView> views;std::vector<std::vector<uint64_t>> fb_keys; // fb_keys: persistent framebuffers using these views
-    ~Image(){image_bytes_live-=mem_bytes;bc_image_bytes_live-=bc_bytes;bc_data_bytes_live-=bc_data;forget_framebuffers(*this);for(auto &v:views)vkDestroyImageView(cfg.device,v.second,nullptr);if(image)vkDestroyImage(cfg.device,image,nullptr);if(memory)vkFreeMemory(cfg.device,memory,nullptr);}
+    ~Image(){image_bytes_live-=mem_bytes;bc_image_bytes_live-=bc_bytes;if(bc_bytes)bc_format_bytes_live[(source.d.format-0x41)&15]-=bc_bytes;bc_data_bytes_live-=bc_data;forget_framebuffers(*this);for(auto &v:views)vkDestroyImageView(cfg.device,v.second,nullptr);if(image)vkDestroyImage(cfg.device,image,nullptr);if(memory)vkFreeMemory(cfg.device,memory,nullptr);}
     void transition(VkCommandBuffer cmd,VkImageLayout next){
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.oldLayout=layout;b.newLayout=next;b.image=image;b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
         b.subresourceRange={aspects,0,levels,0,layers};b.srcAccessMask=layout==VK_IMAGE_LAYOUT_UNDEFINED?0:VK_ACCESS_MEMORY_WRITE_BIT|VK_ACCESS_MEMORY_READ_BIT;b.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
@@ -1327,6 +1364,7 @@ struct Image {
         if(!v || !v->set_format || v->format==source.d.format)return fmt;
         if(decoded){
             need(xbg_bc_view_compatible(source.d.format,v->format),"BC texture view must retain compression and signedness");
+            if(astc)return v->format==0x48?VK_FORMAT_ASTC_4x4_SRGB_BLOCK:VK_FORMAT_ASTC_4x4_UNORM_BLOCK;   // BC3 转码图：视图同为 BC3 | transcoded BC3: views are BC3 too
             xbg_bc_format info;need(xbg_bc_format_info(v->format,&info)==0,"Invalid BC view format");
             return decoded_format(info.pixels);
         }
@@ -1359,6 +1397,8 @@ struct Image {
         VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};vi.image=image;vi.viewType=type;vi.format=vf;vi.subresourceRange={aspects,base,n,layer,ls};
         vi.subresourceRange.aspectMask=view_aspects;
         VkImageViewUsageCreateInfo vu{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};vu.usage=view_usage;vi.pNext=&vu;
+        VkImageViewASTCDecodeModeEXT dm{VK_STRUCTURE_TYPE_IMAGE_VIEW_ASTC_DECODE_MODE_EXT};
+        if(astc_u8 && vf==VK_FORMAT_ASTC_4x4_UNORM_BLOCK && !attachment && !storage){dm.decodeMode=VK_FORMAT_R8G8B8A8_UNORM;vu.pNext=&dm;}
         unsigned view_code=v&&v->set_format?v->format:source.d.format;
         if(!attachment && !storage && (view_code==0x37 || view_code==0x6d))vi.components.a=VK_COMPONENT_SWIZZLE_ONE;
         VkImageView result;VK(vkCreateImageView(cfg.device,&vi,nullptr,&result));views[key]=result;return result;
@@ -1631,11 +1671,16 @@ Image &get_image_slow(const tex_t *t,bool upload){CPU_SCOPE(Image);
         need(t->d.target==0 || t->d.target==1 || t->d.target==2 || t->d.target==3 || t->d.target==4 || t->d.target==5 || t->d.target==6 || t->d.target==7 || t->d.target==8 || t->d.target==9,"Unsupported texture target (1D/3D/buffer handled separately)");
         auto p=std::make_shared<Image>();p->source=*t;p->provenance_epoch=provenance.epoch((t->mem && t->off>=0 && uint64_t(t->off)<=uint64_t(t->mem)?uint64_t(t->mem)-uint64_t(t->off):0));p->width=t->d.width;p->height=(t->d.target==0 || t->d.target==3)?1:t->d.height;p->depth=t->d.target==2?t->d.depth:1;p->levels=t->d.levels;p->layers=t->L.layers;p->aspects=aspect(t->d.format);p->samples=VkSampleCountFlagBits(std::max(1,t->d.samples));
         need(p->width && p->height && p->levels && p->levels<=16 && p->layers,"Invalid texture dimensions");
+        // 设备不能线性过滤 R16G16_UNORM（Mali-G925 实测：optimalTilingFeatures 缺 FILTER_LINEAR）时，BC4/BC5 解码成 8 位通道，
+        // 否则带线性过滤的采样器会拿不到可过滤格式。 | When the device cannot linearly filter R16G16_UNORM (Mali-G925: no FILTER_LINEAR),
+        // BC4/BC5 decode to 8-bit channels so linear-filtered samplers stay valid.
+        {static int bc8=-1;if(bc8<0){VkFormatProperties q;vkGetPhysicalDeviceFormatProperties(cfg.physical,VK_FORMAT_R16G16_UNORM,&q);bc8=!(q.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);if(bc8)xbg_logf("NVN caps bc 8bit: R16G16_UNORM optimalFeatures=%#x lacks SAMPLED_IMAGE_FILTER_LINEAR",q.optimalTilingFeatures);}if(bc8)xbg_bc_8bit_channels=1;}
         xbg_bc_format info;p->decoded=xbg_bc_format_info(t->d.format,&info)==0;
         if(p->decoded && native_bc && p->samples==VK_SAMPLE_COUNT_1_BIT){const VkFormatFeatureFlags need_bc=VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT|VK_FORMAT_FEATURE_TRANSFER_SRC_BIT|VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
             VkFormatProperties np;vkGetPhysicalDeviceFormatProperties(cfg.physical,format(t->d.format),&np);if((np.optimalTilingFeatures&need_bc)==need_bc)p->decoded=false;}
         if(xbg_bc_format_info(t->d.format,&info)==0)++(p->decoded?decoded_bc_images:native_bc_images);
-        if(p->decoded){p->bpp=info.bytes_per_pixel;p->fmt=decoded_format(info.pixels);need(p->samples==VK_SAMPLE_COUNT_1_BIT,"BC texture cannot be multisampled");}
+        if(p->decoded && bc_astc && (t->d.format==0x44 || t->d.format==0x48) && p->samples==VK_SAMPLE_COUNT_1_BIT){p->astc=true;p->bpp=16;p->fmt=t->d.format==0x48?VK_FORMAT_ASTC_4x4_SRGB_BLOCK:VK_FORMAT_ASTC_4x4_UNORM_BLOCK;++astc_bc_images;}   // bpp = 每块字节 | bpp = bytes per block
+        else if(p->decoded){p->bpp=info.bytes_per_pixel;p->fmt=decoded_format(info.pixels);need(p->samples==VK_SAMPLE_COUNT_1_BIT,"BC texture cannot be multisampled");}
         else {p->fmt=format(t->d.format);p->bpp=t->L.bpb;if(t->d.format==0x32 && depth16_as_d24)p->fmt=VK_FORMAT_X8_D24_UNORM_PACK32;}
         VkFormatProperties fp;vkGetPhysicalDeviceFormatProperties(cfg.physical,p->fmt,&fp);
         VkImageUsageFlags usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -1648,7 +1693,7 @@ Image &get_image_slow(const tex_t *t,bool upload){CPU_SCOPE(Image);
         if(t->d.target==8 || t->d.target==9)ci.flags|=VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
         VkImageFormatProperties supported;VK(vkGetPhysicalDeviceImageFormatProperties(cfg.physical,ci.format,ci.imageType,ci.tiling,ci.usage,ci.flags,&supported));need(supported.sampleCounts&p->samples,"Texture sample count unsupported for actual format/usage");need(p->samples==VK_SAMPLE_COUNT_1_BIT || p->levels==1,"Multisample textures cannot have mipmaps");
         VK(vkCreateImage(cfg.device,&ci,nullptr,&p->image));p->create=ci;VkMemoryRequirements r;vkGetImageMemoryRequirements(cfg.device,p->image,&r);
-        p->mem_bytes=int64_t(r.size);image_bytes_live+=p->mem_bytes;if(xbg_bc_format_info(t->d.format,&info)==0){p->bc_bytes=p->mem_bytes;p->bc_data=int64_t(t->L.size);bc_image_bytes_live+=p->bc_bytes;bc_data_bytes_live+=p->bc_data;}
+        p->mem_bytes=int64_t(r.size);image_bytes_live+=p->mem_bytes;if(xbg_bc_format_info(t->d.format,&info)==0){p->bc_bytes=p->mem_bytes;p->bc_data=int64_t(t->L.size);bc_image_bytes_live+=p->bc_bytes;bc_format_bytes_live[(t->d.format-0x41)&15]+=p->bc_bytes;bc_data_bytes_live+=p->bc_data;}
         VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=r.size;ai.memoryTypeIndex=memory_type(r.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);VK(vkAllocateMemory(cfg.device,&ai,nullptr,&p->memory));VK(vkBindImageMemory(cfg.device,p->image,p->memory,0));
         it=images.emplace(t->serial,std::move(p)).first;image_index_dirty=true;++memo_check_gen;++memo_bump[4];provenance_image("CREATE",t,*it->second);
     }
@@ -1695,6 +1740,11 @@ Image &get_image_slow(const tex_t *t,bool upload){CPU_SCOPE(Image);
             if(native_blocks){ // ASTC etc.: copy whole blocks, rows of blocks
                 uint32_t bx=(w+cbw-1)/cbw,by=(h+cbh-1)/cbh;linear.resize(begin+size_t(bx)*by*depth*im.bpp);
                 need(nvn_deswizzle(&t->d,level,layer,t->mem,linear.data()+begin,size_t(bx)*im.bpp)==0,"Compressed texture deswizzle failed");
+                VkBufferImageCopy c{};c.bufferOffset=begin;c.imageSubresource={im.aspects,level,layer,1};c.imageExtent={w,h,depth};copies.push_back(c);continue;}
+            if(im.astc){   // BC3 块解开排布后原地转成 ASTC 块（同为 16 字节一块） | BC3 blocks deswizzled, then transcoded in place (16 bytes either way)
+                uint32_t bx=(w+3)/4,by=(h+3)/4;size_t n=size_t(bx)*by*depth*16;linear.resize(begin+n);
+                need(nvn_deswizzle(&t->d,level,layer,t->mem,linear.data()+begin,size_t(bx)*16)==0,"BC3 image deswizzle failed");
+                need(xbg_bc3_to_astc_linear(w,h,depth,linear.data()+begin,n,0,0,linear.data()+begin,n)==0,"BC3 to ASTC transcode failed");
                 VkBufferImageCopy c{};c.bufferOffset=begin;c.imageSubresource={im.aspects,level,layer,1};c.imageExtent={w,h,depth};copies.push_back(c);continue;}
             linear.resize(begin+size_t(w)*h*depth*im.bpp);
             if(im.decoded){
@@ -1878,6 +1928,56 @@ void warp_rewrite(std::vector<uint32_t> &words,uint32_t stage,const char *key,co
         xbg_logf("NVN warp32 shader=%s loader=%s subgroupSize=%u rewrites=%zu",key,loader,subgroup.subgroupSize,k);
     }
 }
+// Mali 载入改写（xbg_spirv_mali.cpp）：子组窄于 32 道时给 shuffle 加越界保护（5 个按 32 道线程束写的计算着色器的蝶形归约），设备没有
+// shaderClipDistance / shaderCullDistance 时去掉从不写入的 gl_PerVertex ClipDistance / CullDistance（Mali 驱动编译这种声明曾崩），设备没有
+// vertexPipelineStoresAndAtomics 时给顶点 / 细分 / 几何阶段只读的存储块补 NonWritable。标记 gfx-mali / DM_GFX_MALI：0 关、1 三项都开、
+// 2（缺省）按设备能力自动开；Adreno 740 三项能力都有，自动模式下不改任何模块。两个载入路径都做，在 warp32 改写之前。
+// Mali load-time rewrites (xbg_spirv_mali.cpp): a range guard on shuffles when subgroups are narrower than 32 lanes (the butterfly
+// reductions of the 5 compute shaders written for 32-lane warps), stripping never-written gl_PerVertex ClipDistance / CullDistance when the
+// device lacks shaderClipDistance / shaderCullDistance (the Mali driver compiler once crashed on them), and NonWritable on read-only storage
+// blocks of vertex / tessellation / geometry stages when the device lacks vertexPipelineStoresAndAtomics. Marker gfx-mali / DM_GFX_MALI:
+// 0 off, 1 all three on, 2 (default) each by device capability; the Adreno 740 has all three capabilities, so auto mode changes no module
+// there. Both module loaders apply it, before the warp32 rewrite.
+bool mali_guard=false,mali_clip=false,mali_nonwritable=false;std::atomic<uint64_t> mali_guards{0},mali_clips{0},mali_nonwritables{0};
+void mali_rewrite(std::vector<uint32_t> &words,uint32_t stage,const char *key,const char *loader){
+    std::vector<uint32_t> out;
+    if(mali_guard && stage==5){size_t k=xbg_spirv_shuffle_guard(words.data(),words.size(),subgroup.subgroupSize,out);
+        if(k){validate_capabilities(out,stage);words.swap(out);mali_guards.fetch_add(k,std::memory_order_relaxed);xbg_logf("NVN mali shuffle guard shader=%s loader=%s subgroupSize=%u shuffles=%zu",key,loader,subgroup.subgroupSize,k);}}
+    if(stage>3)return;
+    if(mali_clip && xbg_spirv_strip_clipcull(words.data(),words.size(),out)){words.swap(out);mali_clips.fetch_add(1,std::memory_order_relaxed);}
+    if(mali_nonwritable && xbg_spirv_nonwritable(words.data(),words.size(),out)){words.swap(out);mali_nonwritables.fetch_add(1,std::memory_order_relaxed);}
+}
+// 子组 lane 号改走 ballot（xbg_spirv_laneid.cpp）：Adreno 740 驱动 512.676.53 在含 shuffle 的计算着色器里把 SubgroupLocalInvocationId 读成 0，warp32 改写
+// 靠它选线程束，于是 GPU 挂起。放在 warp32 改写之后，只改计算着色器。按启动自检（laneid_probe，下）启用：标记 gfx-laneid-ballot / DM_GFX_LANEID_BALLOT
+// = 0 关、1 强开、2（默认）自检判定 builtin 不可用时才开。
+// Subgroup lane id through ballot (xbg_spirv_laneid.cpp): the Adreno 740 driver 512.676.53 reads SubgroupLocalInvocationId as 0 in compute shaders that
+// shuffle; the warp32 rewrite selects warps with it, so the GPU hangs. After the warp32 rewrite, compute shaders only. Enabled by the start-up self-test
+// (laneid_probe, below): marker gfx-laneid-ballot / DM_GFX_LANEID_BALLOT = 0 off, 1 force on, 2 (default) on only when the self-test finds the builtin unusable.
+int laneid_ballot=2;bool laneid_active=false;std::atomic<uint64_t> laneid_rewrites{0};
+void laneid_rewrite(std::vector<uint32_t> &words,uint32_t stage,const char *key,const char *loader){
+    if(!laneid_active || stage!=5)return;
+    std::vector<uint32_t> out;size_t k=xbg_spirv_laneid_ballot(words.data(),words.size(),out);
+    if(k){validate_capabilities(out,stage);words.swap(out);laneid_rewrites.fetch_add(k,std::memory_order_relaxed);xbg_logf("NVN laneid shader=%s loader=%s lane_loads=%zu",key,loader,k);}
+}
+// 启动自检：跑一次嵌入的同形探针（xbg_laneid_probe.comp：64 线程、有 shuffle，各写自己的 gl_SubgroupInvocationID），数不同值。返回 1 可用、0 不可用、-1 没跑成。
+// Start-up self-test: run the embedded probe once (xbg_laneid_probe.comp: 64 invocations, with a shuffle, each writes its gl_SubgroupInvocationID) and count the
+// distinct values. Returns 1 usable, 0 unusable, -1 could not run.
+// 执行体与回收规则在 xbg_laneid_probe_run.cpp（先解除映射再释放；fence 没等到就先等队列静止，等不到就不回收）。等待时限缺省 2 s，DM_GFX_LANEID_PROBE_TIMEOUT_NS 可改
+// （设 0 复现超时路径）。| The body and its teardown rules live in xbg_laneid_probe_run.cpp (unmap before free; a missed fence waits the queue idle first and keeps the
+// objects if it cannot). The wait limit defaults to 2 s; DM_GFX_LANEID_PROBE_TIMEOUT_NS overrides it (0 reproduces the timeout path).
+int laneid_probe(unsigned &distinct,unsigned &expect){
+    distinct=0;expect=subgroup.subgroupSize<64?subgroup.subgroupSize:64;if(!expect)return -1;
+    if(!(subgroup.supportedStages&VK_SHADER_STAGE_COMPUTE_BIT) || !(subgroup.supportedOperations&VK_SUBGROUP_FEATURE_SHUFFLE_BIT))return -1;
+    static const XbgProbeVk vk{vkCreateBuffer,vkDestroyBuffer,vkGetBufferMemoryRequirements,vkAllocateMemory,vkFreeMemory,vkBindBufferMemory,vkMapMemory,vkUnmapMemory,
+        vkCreateDescriptorSetLayout,vkDestroyDescriptorSetLayout,vkCreatePipelineLayout,vkDestroyPipelineLayout,vkCreateShaderModule,vkDestroyShaderModule,vkCreateComputePipelines,vkDestroyPipeline,
+        vkCreateDescriptorPool,vkDestroyDescriptorPool,vkAllocateDescriptorSets,vkUpdateDescriptorSets,vkAllocateCommandBuffers,vkFreeCommandBuffers,vkBeginCommandBuffer,vkEndCommandBuffer,
+        vkCmdBindPipeline,vkCmdBindDescriptorSets,vkCmdDispatch,vkCmdPipelineBarrier,vkCreateFence,vkDestroyFence,vkQueueSubmit,vkWaitForFences,vkQueueWaitIdle};
+    uint64_t timeout=2000000000ull;if(const char *e=getenv("DM_GFX_LANEID_PROBE_TIMEOUT_NS"))timeout=strtoull(e,nullptr,10);
+    XbgProbeIn in{cfg.device,cfg.queue,command_pool,&memories,xbg_laneid_probe_cs,sizeof(xbg_laneid_probe_cs),expect,timeout};XbgProbeOut out;
+    int rc=xbg_laneid_probe_run(vk,in,out);distinct=out.distinct;
+    if(out.submitted && out.wait!=VK_SUCCESS)xbg_logf("NVN laneid probe fence wait=%d timeout_ns=%llu queue idle=%d released=%d",int(out.wait),(unsigned long long)timeout,int(out.idle),int(out.released));
+    return rc;
+}
 // Two exact clean-ups of the translator's output, after the rewrites above (they match its form), in both module loaders. Each
 // is off unless the host asks; the Android app sets both to 1, and a marker file (1 / 0) still wins.
 // - Constant-buffer component fold (xbg_spirv_ldc.cpp; DM_GFX_LDC_FOLD, marker gfx-ldc-fold): an LDC with a computed address
@@ -1913,6 +2013,32 @@ void tidy_rewrite(std::vector<uint32_t> &words){
     if(ldc_fold){size_t k=xbg_spirv_ldc_fold(words.data(),words.size(),out);if(k){words.swap(out);ldc_folds.fetch_add(k,std::memory_order_relaxed);}}
     if(forward_temps){size_t k=xbg_spirv_forward_temps(words.data(),words.size(),out);if(k){words.swap(out);temps_forwarded.fetch_add(k,std::memory_order_relaxed);}}
 }
+// gfx-inline：子组指令写在被调用的辅助函数里的着色器（导入包里 187 个），载入时把辅助函数全部内联进入口（SPIRV-Tools 的
+// merge-return、inline-entry-points-exhaustive、eliminate-dead-functions，与 spirv-opt 同名三步，结果逐字节相同）；
+// Adreno 750 族缺省打开，见 xbg_adreno_policy.h。SPIRV-Tools 只编进安卓包（XBG_HAVE_SPIRV_OPT），别的平台这一步不存在。
+// gfx-inline: a shader whose subgroup instructions sit in a called helper (187 in the import pack) gets every helper inlined
+// into the entry point at load (the SPIRV-Tools passes merge-return, inline-entry-points-exhaustive and
+// eliminate-dead-functions, the same three as spirv-opt, byte-identical output); on by default on the Adreno 750 family, see
+// xbg_adreno_policy.h. SPIRV-Tools is built into the Android package only (XBG_HAVE_SPIRV_OPT); elsewhere this step is absent.
+bool inline_helpers=false;
+bool helper_has_subgroup(const std::vector<uint32_t> &w){
+    std::unordered_set<uint32_t> entry;uint32_t cur=0;bool in=false;
+    for(size_t i=5;i<w.size();){const uint32_t op=w[i]&0xffff,wc=w[i]>>16;if(!wc || i+wc>w.size())return false;
+        if(op==15 && wc>2)entry.insert(w[i+2]);else if(op==54 && wc>2){cur=w[i+2];in=true;}else if(op==56)in=false;
+        else if(op>=333 && op<=366 && in && !entry.count(cur))return true;i+=wc;}
+    return false;
+}
+bool inline_rewrite(std::vector<uint32_t> &words,const std::string &key){
+    if(!inline_helpers || !helper_has_subgroup(words))return false;
+#ifdef XBG_HAVE_SPIRV_OPT
+    spvtools::Optimizer o(SPV_ENV_VULKAN_1_1);o.RegisterPass(spvtools::CreateMergeReturnPass());o.RegisterPass(spvtools::CreateInlineExhaustivePass());o.RegisterPass(spvtools::CreateEliminateDeadFunctionsPass());
+    std::vector<uint32_t> out;if(o.Run(words.data(),words.size(),&out) && !helper_has_subgroup(out)){words.swap(out);return true;}
+    xbg_logf("NVN shader %s: inlining its helpers failed; the bundle is used as it is (gfx-inline)",key.c_str());
+#else
+    (void)key;
+#endif
+    return false;
+}
 // Diagnostic (files/dm/spv-override/<key>.spv): this SPIR-V replaces the bundle's, for offline-optimized test modules.
 bool spv_override(const std::string &key,std::vector<uint32_t> &words){
     std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');std::string path=(cut==std::string::npos?dir:dir.substr(0,cut))+"/spv-override/"+key+".spv";
@@ -1935,7 +2061,11 @@ Shader *load_shader(const void *control){
     // gfx-shader-reuse：预热线程已改写过这个着色器时直接取用；2 时照样改写，与取来的逐字比对。
     // gfx-shader-reuse: take the warm-up threads' rewrite of this shader when there is one; with 2, rewrite as well and compare word by word.
     std::vector<uint32_t> reused;const bool have_reused=shader_reuse && !ab_off("shreuse") && warm::take_rewritten(key,reused);
-    if(!have_reused || shader_reuse==2){quad_rewrite(words,h.stage,key.c_str(),"runtime");warp_rewrite(words,h.stage,key.c_str(),"runtime");tidy_rewrite(words);
+    // 预热线程取来的已经内联过（load_module 同一步）；只有自己改写时才内联，免得在图形线程上重做一遍（大着色器 40–90 ms）。
+    // What the warm-up hands over is already inlined (the same step in load_module); inline only when rewriting here, so the
+    // graphics thread does not redo it (40-90 ms on the large shaders).
+    bool inlined=have_reused && shader_reuse!=2 && inline_helpers && helper_has_subgroup(words);
+    if(!have_reused || shader_reuse==2){inlined=inline_rewrite(words,key);quad_rewrite(words,h.stage,key.c_str(),"runtime");mali_rewrite(words,h.stage,key.c_str(),"runtime");warp_rewrite(words,h.stage,key.c_str(),"runtime");laneid_rewrite(words,h.stage,key.c_str(),"runtime");tidy_rewrite(words);
         if(have_reused && reused!=words){++shader_reuse_mismatches;xbg_logf("NVN shader reuse MISMATCH %s stage=%u words=%zu/%zu",key.c_str(),h.stage,reused.size(),words.size());}}
     else words.swap(reused);
     if(have_reused)++shaders_reused;
@@ -1947,7 +2077,7 @@ Shader *load_shader(const void *control){
     if(h.stage==0){p->input_classes.resize(p->inputs.size());need(xbg_vertex_input_classes(words.data(),words.size(),p->inputs.data(),p->inputs.size(),p->input_classes.data())==0,"Unsupported vertex input scalar interface");}
     load_t3=timing_clock();
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};ci.codeSize=words.size()*4;ci.pCode=words.data();VK(vkCreateShaderModule(cfg.device,&ci,nullptr,&p->module));warm::register_module(p->module,key);Shader *out=p.get();shaders.emplace(key,std::move(p));++stats.shader_loads;++hud::shaders;const uint64_t load_t4=timing_clock();hud::shader_ns+=load_t4-load_t0;
-    xbg_logf("NVN shader %s stage=%u loaded words=%zu ms read=%.2f rewrite=%.2f analyse=%.2f module=%.2f reused=%d",key.c_str(),h.stage,words.size(),(load_t1-load_t0)/1e6,(load_t2-load_t1)/1e6,(load_t3-load_t2)/1e6,(load_t4-load_t3)/1e6,int(have_reused));return out;
+    xbg_logf("NVN shader %s stage=%u loaded words=%zu ms read=%.2f rewrite=%.2f analyse=%.2f module=%.2f reused=%d inlined=%d",key.c_str(),h.stage,words.size(),(load_t1-load_t0)/1e6,(load_t2-load_t1)/1e6,(load_t3-load_t2)/1e6,(load_t4-load_t3)/1e6,int(have_reused),int(inlined));return out;
 }
 // nvnProgramSetShaders assigns a new serial, and NVN shader control/code memory
 // must stay unchanged while a program uses it: cache resolved shaders by serial
@@ -2024,6 +2154,7 @@ void report_pipeline_cache(){
 // serialized create-info key, with shader modules identified by a stable hash of their bundle key). At start-up,
 // background threads rebuild those pipelines from the list; a draw that needs one takes it ready-made.
 // files/gfx-no-warm disables building (recording continues).
+namespace pipeguard{std::string compute_key(const std::string &key);std::string graphics_key(const std::vector<std::string> &keys);bool skipped(const std::string &key);void begin(const std::string &key);void end(const std::string &key,bool ok);void record(const std::string &key,const char *why);}
 namespace warm {
 std::mutex mu;std::unordered_map<VkShaderModule,uint64_t> ids;
 uint64_t fnv(const std::string &s){uint64_t h=1469598103934665603ull;for(unsigned char c:s){h^=c;h*=1099511628211ull;}return h|(1ull<<63);}
@@ -2057,7 +2188,7 @@ VkShaderModule load_module(const std::string &key){
     fseek(f,0,SEEK_END);long n=ftell(f);rewind(f);if(n<32 || n>16*1024*1024){fclose(f);return VK_NULL_HANDLE;}std::vector<uint8_t> b(static_cast<size_t>(n));bool ok=fread(b.data(),1,b.size(),f)==b.size();fclose(f);if(!ok)return VK_NULL_HANDLE;
     xbg_shader_header h;memcpy(&h,b.data(),sizeof(h));if(h.magic!=0x31534758 || h.version!=1 || h.spirv_bytes%4)return VK_NULL_HANDLE;
     size_t off=sizeof(h)+size_t(h.binding_count)*sizeof(xbg_shader_binding)+size_t(h.input_count)*4+h.c1_bytes;if(off+h.spirv_bytes!=b.size())return VK_NULL_HANDLE;
-    std::vector<uint32_t> w(h.spirv_bytes/4);memcpy(w.data(),b.data()+off,h.spirv_bytes);spv_override(key,w);quad_rewrite(w,h.stage,key.c_str(),"warm");warp_rewrite(w,h.stage,key.c_str(),"warm");tidy_rewrite(w);
+    std::vector<uint32_t> w(h.spirv_bytes/4);memcpy(w.data(),b.data()+off,h.spirv_bytes);spv_override(key,w);inline_rewrite(w,key);quad_rewrite(w,h.stage,key.c_str(),"warm");mali_rewrite(w,h.stage,key.c_str(),"warm");warp_rewrite(w,h.stage,key.c_str(),"warm");laneid_rewrite(w,h.stage,key.c_str(),"warm");tidy_rewrite(w);
     if(keep_rewritten){std::lock_guard<std::mutex> l(mu);rewritten.emplace(key,w);}
     VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};ci.codeSize=w.size()*4;ci.pCode=w.data();VkShaderModule m;if(vkCreateShaderModule(cfg.device,&ci,nullptr,&m)!=VK_SUCCESS)return VK_NULL_HANDLE;
     std::lock_guard<std::mutex> l(mu);auto ins=modules.emplace(key,m);if(!ins.second){vkDestroyShaderModule(cfg.device,m,nullptr);return ins.first->second;}return m;
@@ -2110,7 +2241,9 @@ bool build(const Rec &rec){
     VkPipelineDynamicStateCreateInfo dy{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};dy.flags=r.u();uint32_t nd=r.u();if(nd>64)return false;std::vector<VkDynamicState> ds(nd);for(auto &x:ds)x=VkDynamicState(r.u());dy.dynamicStateCount=nd;dy.pDynamicStates=ds.data();
     if(r.bad || r.i!=r.n)return false;
     ci.stageCount=ns;ci.pStages=st;ci.pVertexInputState=&v;ci.pInputAssemblyState=&a;ci.pTessellationState=ht?&t:nullptr;ci.pViewportState=&vp;ci.pRasterizationState=&rs;ci.pMultisampleState=&m;ci.pDepthStencilState=&d;ci.pColorBlendState=&b;ci.pDynamicState=&dy;ci.layout=layout;ci.renderPass=pass;
-    uint64_t c0=timing_clock();VkPipeline pl;if(vkCreateGraphicsPipelines(cfg.device,pipeline_cache,1,&ci,nullptr,&pl)!=VK_SUCCESS)return false;
+    const std::string guard=pipeguard::graphics_key(rec.keys);if(pipeguard::skipped(guard))return false;
+    uint64_t c0=timing_clock();VkPipeline pl;pipeguard::begin(guard);const VkResult made=vkCreateGraphicsPipelines(cfg.device,pipeline_cache,1,&ci,nullptr,&pl);pipeguard::end(guard,made==VK_SUCCESS);
+    if(made!=VK_SUCCESS){char why[64];snprintf(why,sizeof why,"failed to build (result=%d)",int(made));pipeguard::record(guard,why);return false;}
     if(timing_clock()-c0>=compile_ns)++compiled;
     std::string bytes(reinterpret_cast<const char*>(rec.words.data()),rec.words.size()*4);
     std::lock_guard<std::mutex> l(mu);if(!ready.emplace(bytes,pl).second)vkDestroyPipeline(cfg.device,pl,nullptr);return true;
@@ -2187,6 +2320,64 @@ void pstat_log(VkPipeline pl){
         std::string en=ex[i].name;for(auto &c:en)if(c==' ')c='_';
         xbg_logf("NVN PSTAT pipeline=%p what=%s exec=%u stages=%#x name=%s subgroup=%u%s",(void*)pl,pstat_what().c_str(),i,unsigned(ex[i].stages),en.c_str(),ex[i].subgroupSize,line.c_str());}
 }
+// 有的驱动在自己的着色器编译器里崩掉建管线的调用（Adreno 750：libllvm-qgl.so 段错误，计算与像素着色器都有，#153、#166），
+// 有的直接报错（Adreno 650：-13）。每个建管线的线程（游戏的图形线程、预热线程、异步线程）建之前把这条管线的着色器写进自己的
+// 记号文件 gfx-pipe-inflight.<槽>，建完删掉；下次启动还在的就是上次死时正在建的。并发建的线程不止一个，进程也可能只是正好
+// 在那几毫秒里被系统杀掉，所以要连着两次启动都在场的才记进 gfx-pipe-skip（崩点固定的那条两次都在，旁边碰巧在建的很少两次都在），之后用它的派发 / 绘制一律跳过（少一个
+// 效果，不再每次启动都崩）。驱动报错的当场记下跳过。删掉 gfx-pipe-skip 即恢复。条目：计算管线是 c: 加着色器键，图形管线是
+// g: 加各阶段键（+ 连接），只跳这一种组合，不连累共用同一顶点着色器的其它绘制。没有前缀的旧条目是 v2.0.1 在没有内联
+// （gfx-inline）时记的，读到就作废：内联后多半能编，真还崩就再记一次。
+// Some drivers crash inside their own shader compiler while building a pipeline (Adreno 750: a segfault in libllvm-qgl.so,
+// on compute and pixel shaders alike, #153, #166); others return an error (Adreno 650: -13). Every thread that builds
+// pipelines (the game's graphics thread, the warm-up threads, the async thread) writes the pipeline's shaders to its own marker
+// gfx-pipe-inflight.<slot> before the build and removes it afterwards; a marker the next boot still finds was being built when
+// the last one died. Several threads build at once, and the process may just have been killed during those milliseconds, so an entry goes into gfx-pipe-skip only when it was in flight on two boots
+// in a row (the one the crash is pinned to is there both times; a bystander rarely is), and its dispatches / draws are skipped
+// from then on (one effect fewer instead of a crash on every boot). A driver error is recorded on the spot. Deleting
+// gfx-pipe-skip restores them. Entries: a compute pipeline is c: and its shader key, a graphics pipeline is g: and its stage
+// keys joined by +, so only that combination is skipped and other draws sharing its vertex shader are not. Entries without a
+// prefix were recorded by v2.0.1 without inlining (gfx-inline) and are dropped when read: inlined, the shader most likely
+// builds, and if it still crashes it is recorded again.
+namespace pipeguard{
+std::mutex mu;std::unordered_set<std::string> skip,told,proven;bool loaded=false;std::atomic<int> slots{0};
+std::string base(){std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');return cut==std::string::npos?dir:dir.substr(0,cut);}
+std::string marker(){thread_local const int slot=slots.fetch_add(1);return base()+"/gfx-pipe-inflight."+std::to_string(slot);}
+// 有阶段认不出键（引擎自己的模块没登记）就返回空串：这条管线不进兜底，免得不同的管线撞成同一个条目。
+// An empty string when a stage has no known key (the engine's own modules are not registered): that pipeline is left out
+// of the guard, so different pipelines cannot collide into one entry.
+std::string compute_key(const std::string &key){return "c:"+key;}
+std::string graphics_key(const std::vector<std::string> &keys){std::string k="g:";for(size_t i=0;i<keys.size();i++){if(keys[i].empty())return {};if(i)k+='+';k+=keys[i];}return k;}
+void record_locked(const std::string &key,const char *why){
+    if(!skip.insert(key).second)return;
+    if(FILE *f=fopen((base()+"/gfx-pipe-skip").c_str(),"ab")){fprintf(f,"%s\n",key.c_str());fclose(f);}
+    xbg_logf("NVN pipeline %s %s; it is skipped from now on (gfx-pipe-skip)",key.c_str(),why);
+}
+void record(const std::string &key,const char *why){if(key.empty())return;std::lock_guard<std::mutex> l(mu);record_locked(key,why);}
+std::vector<std::string> lines(const std::string &path){std::vector<std::string> out;char line[512];
+    if(FILE *f=fopen(path.c_str(),"rb")){while(fgets(line,sizeof line,f)){line[strcspn(line,"\r\n")]=0;if(*line)out.push_back(line);}fclose(f);}return out;}
+// 引擎初始化时、预热线程开始建管线之前调用：那之后记号文件就是这次启动的了。
+// Called while the engine initializes, before the warm-up threads build anything: from then on the markers are this boot's.
+void load(){
+    std::lock_guard<std::mutex> l(mu);if(loaded)return;loaded=true;const std::string b=base();
+    size_t stale=0;for(auto &k:lines(b+"/gfx-pipe-skip")){if(!k.compare(0,2,"c:") || !k.compare(0,2,"g:"))skip.insert(k);else ++stale;}
+    if(stale){std::string keep;for(auto &k:skip)keep+=k+"\n";if(FILE *f=fopen((b+"/gfx-pipe-skip").c_str(),"wb")){fputs(keep.c_str(),f);fclose(f);}
+        xbg_logf("NVN pipelines skipped by an older version dropped=%zu (gfx-pipe-skip)",stale);}
+    std::unordered_set<std::string> now;
+    if(DIR *d=opendir(b.c_str())){while(dirent *e=readdir(d))if(!strncmp(e->d_name,"gfx-pipe-inflight",17)){const std::string path=b+"/"+e->d_name;for(auto &k:lines(path))if(!k.compare(0,2,"c:") || !k.compare(0,2,"g:"))now.insert(k);remove(path.c_str());}closedir(d);}
+    const std::string suspect=b+"/gfx-pipe-suspect";std::unordered_set<std::string> before;for(auto &k:lines(suspect))before.insert(k);
+    std::string keep;
+    for(auto &k:now){if(before.count(k))record_locked(k,"was being built when the last two boots ended");else{keep+=k+"\n";xbg_logf("NVN pipeline %s was being built when the last boot ended",k.c_str());}}
+    if(keep.empty())remove(suspect.c_str());else if(FILE *f=fopen(suspect.c_str(),"wb")){fputs(keep.c_str(),f);fclose(f);}
+    if(!skip.empty())xbg_logf("NVN pipelines skipped=%zu (gfx-pipe-skip)",skip.size());
+}
+bool skipped(const std::string &key){if(key.empty())return false;load();std::lock_guard<std::mutex> l(mu);if(!skip.count(key))return false;if(told.insert(key).second)xbg_logf("NVN pipeline %s skipped (gfx-pipe-skip)",key.c_str());return true;}
+// 一条管线第一次建成之后就不再写记号：同样的着色器换状态再建不会走到编译器的另一条路，也省掉之后的文件操作。
+// Once a pipeline has built once it is no longer marked: rebuilding the same shaders with other state does not take the
+// compiler down a different path, and later builds do not pay for the file operations.
+thread_local bool marking=false;
+void begin(const std::string &key){if(key.empty()){marking=false;return;}load();{std::lock_guard<std::mutex> l(mu);marking=!proven.count(key);}if(marking)if(FILE *f=fopen(marker().c_str(),"wb")){fprintf(f,"%s\n",key.c_str());fclose(f);}}
+void end(const std::string &key,bool ok){if(!marking)return;marking=false;remove(marker().c_str());if(ok){std::lock_guard<std::mutex> l(mu);proven.insert(key);}}
+}
 void pipeline_lookup(PipelineLease &out,const XbgPipelineKey &key,bool cacheable,const VkGraphicsPipelineCreateInfo *graphics,const VkComputePipelineCreateInfo *compute,bool may_skip=false){
     static std::string bytes;bytes.clear();   // reused key buffer (graphics thread only)
     if(cacheable){
@@ -2198,8 +2389,12 @@ void pipeline_lookup(PipelineLease &out,const XbgPipelineKey &key,bool cacheable
     if(graphics && cacheable && warm::take(bytes,out.pipeline)){++warm::hits;}
     // A draw that may be skipped gets no pipeline while its build is queued (warm::async_request); it is not cached.
     else if(graphics && cacheable && may_skip && warm::async_request(*graphics,key,bytes)){out.pipeline=VK_NULL_HANDLE;out.transient=true;++warm::async_skips;return;}
-    else if(graphics){uint64_t t0=timing_clock();VkGraphicsPipelineCreateInfo g=*graphics;if(pipe_stats)g.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;VK(vkCreateGraphicsPipelines(cfg.device,pipeline_cache,1,&g,nullptr,&out.pipeline));if(pipe_stats)pstat_log(out.pipeline);uint64_t dt=timing_clock()-t0;if(dt>=compile_ns)++pipelines_unsaved;++warm::creates;warm::create_ns+=dt;++hud::pipelines;hud::pipeline_ns+=dt;warm::create_max_ns=std::max(warm::create_max_ns,dt);if(cacheable)warm::record(*graphics,key);}
-    else{uint64_t t0=timing_clock();VkComputePipelineCreateInfo cc=*compute;if(pipe_stats)cc.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;VK(vkCreateComputePipelines(cfg.device,pipeline_cache,1,&cc,nullptr,&out.pipeline));++pipelines_unsaved;++hud::pipelines;hud::pipeline_ns+=timing_clock()-t0;if(pipe_stats)pstat_log(out.pipeline);}
+    else if(graphics){std::vector<std::string> keys;{std::lock_guard<std::mutex> l(warm::mu);for(uint32_t i=0;i<graphics->stageCount;i++){auto it=warm::ids.find(graphics->pStages[i].module);keys.push_back(it==warm::ids.end()?std::string():warm::id_keys[it->second]);}}
+        const std::string guard=pipeguard::graphics_key(keys);if(pipeguard::skipped(guard)){out.pipeline=VK_NULL_HANDLE;out.transient=true;return;}
+        uint64_t t0=timing_clock();VkGraphicsPipelineCreateInfo g=*graphics;if(pipe_stats)g.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;pipeguard::begin(guard);const VkResult made=vkCreateGraphicsPipelines(cfg.device,pipeline_cache,1,&g,nullptr,&out.pipeline);pipeguard::end(guard,made==VK_SUCCESS);
+        if(made!=VK_SUCCESS){char why[64];snprintf(why,sizeof why,"failed to build (result=%d)",int(made));pipeguard::record(guard,why);out.pipeline=VK_NULL_HANDLE;out.transient=true;return;}
+        if(pipe_stats)pstat_log(out.pipeline);uint64_t dt=timing_clock()-t0;if(dt>=compile_ns)++pipelines_unsaved;++warm::creates;warm::create_ns+=dt;++hud::pipelines;hud::pipeline_ns+=dt;warm::create_max_ns=std::max(warm::create_max_ns,dt);if(cacheable)warm::record(*graphics,key);}
+    else{uint64_t t0=timing_clock();VkComputePipelineCreateInfo cc=*compute;if(pipe_stats)cc.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;const std::string shader_key=pipeguard::compute_key(state.shader[5]->key);pipeguard::begin(shader_key);const VkResult made=vkCreateComputePipelines(cfg.device,pipeline_cache,1,&cc,nullptr,&out.pipeline);pipeguard::end(shader_key,made==VK_SUCCESS);if(made!=VK_SUCCESS){char why[64];snprintf(why,sizeof why,"failed to build (result=%d)",int(made));pipeguard::record(shader_key,why);out.pipeline=VK_NULL_HANDLE;out.transient=true;return;}++pipelines_unsaved;++hud::pipelines;hud::pipeline_ns+=timing_clock()-t0;if(pipe_stats)pstat_log(out.pipeline);}
     if(!cacheable){out.transient=true;return;}
     if(pipeline_objects.size()==pipeline_object_limit){
         // All prior draws/dispatches waited their fence. This lookup occurs
@@ -2297,7 +2492,7 @@ VkSampler sampler_slow(const samp_par &p,Image &im,VkFormat viewed,bool integer_
     VkSamplerCreateInfo s{};int result=xbg_sampler_from_nvn(&input,&limits,&s);
     if(result)xbg_fatalf("NVN sampler %s result=%d min=%u mag=%u wrap=%u/%u/%u lod=%g/%g bias=%g aniso=%g compare=%u/%u border=%g,%g,%g,%g texture=%llu format=%#x vk=%u mirrorEnabled=%u",xbg_sampler_error(result),result,p.minf,p.magf,p.ws,p.wt,p.wr,p.lod_min,p.lod_max,p.lod_bias,p.aniso,p.cmp_mode,p.cmp_func,p.border[0],p.border[1],p.border[2],p.border[3],(unsigned long long)im.source.serial,im.source.d.format,unsigned(viewed),sampler_mirror_clamp_enabled);
     const VkFormatProperties &fp=format_properties(viewed);
-    if((s.minFilter==VK_FILTER_LINEAR || s.magFilter==VK_FILTER_LINEAR) && !(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))xbg_fatalf("NVN sampler linear filtering unsupported min=%u mag=%u compare=%u/%u format=%#x vk=%u optimalFeatures=%#x texture=%llu",p.minf,p.magf,p.cmp_mode,p.cmp_func,im.source.d.format,unsigned(viewed),fp.optimalTilingFeatures,(unsigned long long)im.source.serial);
+    if((s.minFilter==VK_FILTER_LINEAR || s.magFilter==VK_FILTER_LINEAR) && !(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))xbg_fatalf("NVN sampler linear filtering unsupported min=%u mag=%u compare=%u/%u format=%#x vk=%u optimalFeatures=%#x texture=%llu decoded=%d imfmt=%u",p.minf,p.magf,p.cmp_mode,p.cmp_func,im.source.d.format,unsigned(viewed),fp.optimalTilingFeatures,(unsigned long long)im.source.serial,int(im.decoded),unsigned(im.fmt));
     need(s.pNext==nullptr,"Unexpected sampler extension chain");
     auto bits=[](float f){uint32_t u;memcpy(&u,&f,4);return u;};
     std::array<uint32_t,16> key{s.flags,uint32_t(s.magFilter),uint32_t(s.minFilter),uint32_t(s.mipmapMode),uint32_t(s.addressModeU),uint32_t(s.addressModeV),uint32_t(s.addressModeW),bits(s.mipLodBias),s.anisotropyEnable,bits(s.maxAnisotropy),s.compareEnable,uint32_t(s.compareOp),bits(s.minLod),bits(s.maxLod),uint32_t(s.borderColor),s.unnormalizedCoordinates};
@@ -3129,7 +3324,7 @@ void after_dispatch(Commands &c){
     ++applied;
 }
 }
-void dispatch(const p_dispatch &p){preflight_cpu_reads();CPU_SCOPE(Dispatch);provenance_log("DISPATCH shader=%s",state.shader[5]?state.shader[5]->key.c_str():"null");need(state.shader[5],"Dispatch has no genuine compute shader");need(p.x>=0 && p.y>=0 && p.z>=0,"Negative compute dispatch");if(!p.x||!p.y||!p.z)return;need(uint32_t(p.x)<=properties.limits.maxComputeWorkGroupCount[0] && uint32_t(p.y)<=properties.limits.maxComputeWorkGroupCount[1] && uint32_t(p.z)<=properties.limits.maxComputeWorkGroupCount[2],"Compute dispatch exceeds device limit");Commands c;Descriptors &d=acquire_descriptors();descriptors(d,c,true);VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};ci.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;ci.stage.module=state.shader[5]->module;ci.stage.pName="main";ci.layout=d.pipeline_layout;PipelineLease pipeline;{CPU_SCOPE(Pipeline);XbgPipelineKey key;bool cacheable=xbg_compute_pipeline_key(key,ci,d.entry->definition.view());pipeline_lookup(pipeline,key,cacheable,nullptr,&ci);}vkCmdBindPipeline(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline.pipeline);vkCmdBindDescriptorSets(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,d.pipeline_layout,0,1,&d.set,uint32_t(d.dynamic_offsets.size()),d.dynamic_offsets.data());int prof_dispatch=pass_prof_compute_begin(c.command,p);vkCmdDispatch(c.command,p.x,p.y,p.z);pass_prof_complete(c.command,prof_dispatch);bright::after_dispatch(c);VkMemoryBarrier b{VK_STRUCTURE_TYPE_MEMORY_BARRIER};b.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;b.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(c.command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&b,0,nullptr,0,nullptr);c.finish();++perf.dispatches;d.defer_writeback();++stats.dispatches;}
+void dispatch(const p_dispatch &p){preflight_cpu_reads();CPU_SCOPE(Dispatch);provenance_log("DISPATCH shader=%s",state.shader[5]?state.shader[5]->key.c_str():"null");need(state.shader[5],"Dispatch has no genuine compute shader");need(p.x>=0 && p.y>=0 && p.z>=0,"Negative compute dispatch");if(!p.x||!p.y||!p.z)return;if(pipeguard::skipped(pipeguard::compute_key(state.shader[5]->key)))return;need(uint32_t(p.x)<=properties.limits.maxComputeWorkGroupCount[0] && uint32_t(p.y)<=properties.limits.maxComputeWorkGroupCount[1] && uint32_t(p.z)<=properties.limits.maxComputeWorkGroupCount[2],"Compute dispatch exceeds device limit");Commands c;Descriptors &d=acquire_descriptors();descriptors(d,c,true);VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};ci.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;ci.stage.module=state.shader[5]->module;ci.stage.pName="main";ci.layout=d.pipeline_layout;PipelineLease pipeline;{CPU_SCOPE(Pipeline);XbgPipelineKey key;bool cacheable=xbg_compute_pipeline_key(key,ci,d.entry->definition.view());pipeline_lookup(pipeline,key,cacheable,nullptr,&ci);}if(!pipeline.pipeline){c.finish();return;}vkCmdBindPipeline(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline.pipeline);vkCmdBindDescriptorSets(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,d.pipeline_layout,0,1,&d.set,uint32_t(d.dynamic_offsets.size()),d.dynamic_offsets.data());int prof_dispatch=pass_prof_compute_begin(c.command,p);vkCmdDispatch(c.command,p.x,p.y,p.z);pass_prof_complete(c.command,prof_dispatch);bright::after_dispatch(c);VkMemoryBarrier b{VK_STRUCTURE_TYPE_MEMORY_BARRIER};b.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;b.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(c.command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&b,0,nullptr,0,nullptr);c.finish();++perf.dispatches;d.defer_writeback();++stats.dispatches;}
 
 struct MaskedClear {
     VkShaderModule vs{},fs{};VkPipelineLayout layout{};VkPipeline pipeline{};
@@ -3323,11 +3518,12 @@ void copy_texture_buffer(const p_copy_b2t &request,bool to_buffer){preflight_cpu
         size_t row,image,source_bytes;
         need(nvn_copy_pitch(p.r.width,p.r.height,p.r.depth,bw,bh,bpb,state.copy_stride,state.copy_image_stride,&row,&image,&source_bytes) && row%bpb==0 && source_bytes<=256ull*1024*1024,"Invalid BC copy row stride/extent");
         need(p.src<=UINT64_MAX-source_bytes,"BC copy address overflow");
-        size_t bytes=size_t(p.r.width)*p.r.height*p.r.depth*im.bpp;
+        size_t bytes=im.astc?((size_t(p.r.width)+3)/4)*((size_t(p.r.height)+3)/4)*p.r.depth*16:size_t(p.r.width)*p.r.height*p.r.depth*im.bpp;
         if(!im.gpu_written && !(p.tex->d.flags&0x10)){invalidate_cpu_range(uint64_t(uintptr_t(p.tex->mem)),p.tex->L.size);
             if(guest_texture_write(p.tex,level,layer,p.r,reinterpret_cast<const uint8_t*>(p.src),row,image)){im.uploaded=false;im.checked_submission=UINT64_MAX;return;}}
         need(bytes<=256ull*1024*1024,"Decoded BC staging exceeds memory bound");std::vector<uint8_t> decoded(bytes);
-        int result=xbg_decode_bc_linear(p.tex->d.format,p.r.width,p.r.height,p.r.depth,reinterpret_cast<const void*>(p.src),source_bytes,row,image,decoded.data(),decoded.size());
+        int result=im.astc?xbg_bc3_to_astc_linear(p.r.width,p.r.height,p.r.depth,reinterpret_cast<const void*>(p.src),source_bytes,row,image,decoded.data(),decoded.size())
+            :xbg_decode_bc_linear(p.tex->d.format,p.r.width,p.r.height,p.r.depth,reinterpret_cast<const void*>(p.src),source_bytes,row,image,decoded.data(),decoded.size());
         if(result)xbg_fatalf("NVN BC staging decode failed format=%#x level=%u result=%d",p.tex->d.format,level,result);
         Buffer buffer=stream_buffer(bytes,decoded.data(),bytes,false);Commands command;im.transition(command.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         VkBufferImageCopy region{};region.bufferOffset=buffer.offset;region.imageSubresource=copy_layers(im,level,layer,p.r);region.imageOffset=copy_offset(im,p.r);region.imageExtent=copy_extent(im,p.r);
@@ -3390,7 +3586,8 @@ void copy_texture(const p_copy_t2t &p){preflight_cpu_reads();Image &s=get_image(
         return;
     }
     need(!(s.fmt>=VK_FORMAT_ASTC_4x4_UNORM_BLOCK && s.fmt<=VK_FORMAT_ASTC_12x12_SRGB_BLOCK && d.source.d.format>=0x41 && d.source.d.format<=0x50 && !d.decoded),"ASTC blocks into a native BC texture: the ASTC pack needs decoded BC (marker gfx-native-bc = 0)");
-    if(s.decoded || d.decoded)need(s.decoded && d.decoded && xbg_bc_view_compatible(s.source.d.format,d.source.d.format),"BC texture copy must retain compression and signedness");
+    if((s.decoded || d.decoded) && !(d.astc && !s.decoded && s.fmt==d.fmt))   // ASTC 源拷进同格式的 BC3 转码图：块原样 | ASTC source into a transcoded BC3 of the same format: blocks as they are
+        need(s.decoded && d.decoded && xbg_bc_view_compatible(s.source.d.format,d.source.d.format),"BC texture copy must retain compression and signedness");
     need((uint32_t(p.flags)&~3u)==0 && s.fmt==d.fmt && s.aspects==d.aspects && s.samples==d.samples,"Texture copy requires matching formats/aspects and supported flags");
     uint32_t sl=p.has_sv&&p.sv.set_levels?p.sv.base_level:0,dl=p.has_dv&&p.dv.set_levels?p.dv.base_level:0,sa=p.has_sv&&p.sv.set_layers?p.sv.min_layer:0,da=p.has_dv&&p.dv.set_layers?p.dv.min_layer:0;
     region_check(s,sl,sa,p.sr);region_check(d,dl,da,p.dr);need(&s!=&d,"Same-image copy needs overlap validation");need((s.source.d.target==2)==(d.source.d.target==2),"Mixed volume/array copy requires slice mapping");
@@ -3699,15 +3896,42 @@ extern "C" int xbg_game_initialize(const xbg_game_config *c,char *error,size_t b
      {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-defer-events").c_str(),"rb");defer_events=0;if(m){int c=fgetc(m);defer_events=c=='1'?1:c=='2'?2:0;fclose(m);}else if(const char *e=getenv("DM_GFX_DEFER_EVENTS")){int v=atoi(e);defer_events=v==1?1:v==2?2:0;}xbg_logf("NVN defer events=%d (marker gfx-defer-events)",int(defer_events));{FILE *eg=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-event-guard").c_str(),"rb");evguard::enabled=eg!=nullptr;if(eg)fclose(eg);if(evguard::enabled)xbg_logf("NVN event guard on (marker gfx-event-guard)");}{FILE *v=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-vcache").c_str(),"rb");vcache::enabled=false;if(v){vcache::enabled=fgetc(v)!='0';fclose(v);}else if(const char *e=getenv("DM_GFX_VCACHE"))vcache::enabled=atoi(e)!=0;xbg_logf("NVN vertex/index cross-frame cache=%d tracker=%d (marker gfx-vcache)",int(vcache::enabled),int(nvn_dirty_since!=nullptr));}
      {FILE *v=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-tex-dirty").c_str(),"rb");tex_dirty=false;if(v){tex_dirty=fgetc(v)!='0';fclose(v);}else if(const char *e=getenv("DM_GFX_TEX_DIRTY"))tex_dirty=atoi(e)!=0;
       xbg_logf("NVN texture checks through the dirty tracker=%d (marker gfx-tex-dirty)",int(tex_dirty));}{FILE *b=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-native-bc").c_str(),"rb");native_bc=false;if(b){native_bc=fgetc(b)!='0';fclose(b);}else if(const char *e=getenv("DM_GFX_NATIVE_BC"))native_bc=atoi(e)!=0;xbg_logf("NVN native BC textures=%d (marker gfx-native-bc)",int(native_bc));}
+     {FILE *b=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-bc-astc").c_str(),"rb");bc_astc=false;if(b){bc_astc=fgetc(b)!='0';fclose(b);}else if(const char *e=getenv("DM_GFX_BC_ASTC"))bc_astc=atoi(e)!=0;
+      const VkFormatFeatureFlags need_astc=VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT|VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT|VK_FORMAT_FEATURE_TRANSFER_SRC_BIT|VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+      VkFormatProperties au{},as{};vkGetPhysicalDeviceFormatProperties(cfg.physical,VK_FORMAT_ASTC_4x4_UNORM_BLOCK,&au);vkGetPhysicalDeviceFormatProperties(cfg.physical,VK_FORMAT_ASTC_4x4_SRGB_BLOCK,&as);
+      const bool astc_ok=(au.optimalTilingFeatures&need_astc)==need_astc && (as.optimalTilingFeatures&need_astc)==need_astc;const bool asked=bc_astc;bc_astc=asked && astc_ok;
+      xbg_logf("NVN BC3 textures without native BC as ASTC 4x4=%d (marker gfx-bc-astc; asked=%d device_astc=%d)",int(bc_astc),int(asked),int(astc_ok));}
+     {FILE *b=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-astc-u8").c_str(),"rb");bool want=true;if(b){want=fgetc(b)!='0';fclose(b);}else if(const char *e=getenv("DM_GFX_ASTC_U8"))want=atoi(e)!=0;
+      const char *ext=getenv("DM_VK_ASTC_DECODE_MODE");astc_u8=want && ext && ext[0]=='1';
+      xbg_logf("NVN ASTC UNORM views decode to RGBA8=%d (marker gfx-astc-u8; asked=%d extension=%d)",int(astc_u8),int(want),int(ext && ext[0]=='1'));}
      {FILE *b=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-noload").c_str(),"rb");noload_enabled=false;if(b){noload_enabled=fgetc(b)!='0';fclose(b);}else if(const char *e=getenv("DM_GFX_NOLOAD"))noload_enabled=atoi(e)!=0;xbg_logf("NVN proven full-overwrite first draws skip the color load=%d (marker gfx-noload; A/B target noload)",int(noload_enabled));}{FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-bright").c_str(),"rb");bright::enabled=true;if(q){bright::enabled=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_BRIGHT"))bright::enabled=atoi(e)!=0;xbg_logf("NVN 3D brightening=%d (marker gfx-bright; A/B target bright)",int(bright::enabled));}{FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-perf-sample").c_str(),"rb");perf_sample=32;if(m){if(fscanf(m,"%u",&perf_sample)!=1)perf_sample=32;fclose(m);}else if(const char *e=getenv("DM_GFX_PERF_SAMPLE"))perf_sample=unsigned(atoi(e));perf_frame_timed=perf_sample!=0;perf_timed_frames=0;xbg_logf("NVN perf timing every %u frames (marker gfx-perf-sample; 0 = off)",perf_sample);}}
     for(auto &sl:slots)sl=Slot{};slot_index=0;pass_prof_enabled=false;pass_prof_next=300;pass_prof_period=600;pass_prof_until=UINT64_MAX;pass_prof_frame=UINT64_MAX;pass_prof_draws=0;pass_prof_queries=pass_prof_slots=pass_prof_skipped_slots=0;perf=Perf{};for(auto &c:perf_timing_before)c=XbgCpuTiming::Counter{};static_arena.cached=false;support_static.clear();format_property_cache.clear();for(auto &k:format_flat_known)k=false;
     VkPhysicalDeviceShaderDrawParametersFeatures draw_parameters{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES};VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};features.pNext=&draw_parameters;vkGetPhysicalDeviceFeatures2(cfg.physical,&features);if(cfg.enabled_shader_draw_parameters && !draw_parameters.shaderDrawParameters){if(error&&bytes)snprintf(error,bytes,"shaderDrawParameters unsupported");return -1;}
     VkCommandPoolCreateInfo cp{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};cp.queueFamilyIndex=cfg.queue_family;cp.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;VkResult r=vkCreateCommandPool(cfg.device,&cp,nullptr,&command_pool);if(r!=VK_SUCCESS){if(error&&bytes)snprintf(error,bytes,"vkCreateCommandPool=%d",r);return r;}
     VkPipelineCacheCreateInfo cache{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};std::vector<uint8_t> cache_data=load_pipeline_cache();cache.initialDataSize=cache_data.size();cache.pInitialData=cache_data.empty()?nullptr:cache_data.data();r=vkCreatePipelineCache(cfg.device,&cache,nullptr,&pipeline_cache);if(r!=VK_SUCCESS){vkDestroyCommandPool(cfg.device,command_pool,nullptr);command_pool=VK_NULL_HANDLE;if(error&&bytes)snprintf(error,bytes,"vkCreatePipelineCache=%d",r);return r;}
-    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-quad-derivatives").c_str(),"rb");quad_derivatives=false;
-     if(q){quad_derivatives=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_QUAD_DERIVATIVES"))quad_derivatives=atoi(e)!=0;xbg_logf("NVN quad shuffles to fine derivatives=%d (marker gfx-quad-derivatives)",int(quad_derivatives));}
-    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-warp32").c_str(),"rb");warp32=false;
-     if(q){warp32=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_WARP32"))warp32=atoi(e)!=0;xbg_logf("NVN 32-lane warps in wider subgroups=%d subgroup=%u (marker gfx-warp32)",int(warp32),subgroup.subgroupSize);}
+    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');std::string base=cut==std::string::npos?dir:dir.substr(0,cut);
+     const bool rewrites_fault=xbg_adreno_rewrites_fault(properties.vendorID,properties.deviceName);
+     if(rewrites_fault)xbg_logf("NVN Adreno 750-799 (device \"%s\"): the quad-derivative and warp32 rewrites default off; a marker file still turns either on",properties.deviceName);
+     auto sw=[&](const char *marker,const char *env){FILE *q=fopen((base+marker).c_str(),"rb");const bool present=q!=nullptr;int c=-1;if(q){c=fgetc(q);fclose(q);}return xbg_adreno_rewrite_option(present,c,getenv(env),rewrites_fault);};
+     quad_derivatives=sw("/gfx-quad-derivatives","DM_GFX_QUAD_DERIVATIVES");
+     warp32=sw("/gfx-warp32","DM_GFX_WARP32");
+     xbg_logf("NVN quad shuffles to fine derivatives=%d (marker gfx-quad-derivatives)",int(quad_derivatives));
+     xbg_logf("NVN 32-lane warps in wider subgroups=%d subgroup=%u (marker gfx-warp32)",int(warp32),subgroup.subgroupSize);
+     {FILE *q=fopen((base+"/gfx-inline").c_str(),"rb");if(q){inline_helpers=fgetc(q)!='0';fclose(q);}else inline_helpers=xbg_adreno_compiler_needs_inline(properties.vendorID,properties.deviceName);
+#ifndef XBG_HAVE_SPIRV_OPT
+      if(inline_helpers)xbg_logf("NVN helper inlining is not built into this package; shaders load as they are");inline_helpers=false;
+#endif
+      xbg_logf("NVN shaders with subgroup helpers are inlined at load=%d (marker gfx-inline)",int(inline_helpers));}}
+    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-mali").c_str(),"rb");int mode=2;
+     if(q){int c=fgetc(q);mode=c=='0'?0:c=='1'?1:2;fclose(q);}else if(const char *e=getenv("DM_GFX_MALI")){int v=atoi(e);mode=v==0?0:v==1?1:2;}
+     VkPhysicalDeviceFeatures have{};vkGetPhysicalDeviceFeatures(cfg.physical,&have);const uint32_t sg=subgroup.subgroupSize;const bool narrow=sg && sg<32 && !(sg&(sg-1));
+     mali_guard=mode!=0 && narrow;mali_clip=mode==1 || (mode==2 && (!have.shaderClipDistance || !have.shaderCullDistance));mali_nonwritable=mode==1 || (mode==2 && !have.vertexPipelineStoresAndAtomics);
+     xbg_logf("NVN mali rewrites mode=%d shuffle_guard=%d strip_clipcull=%d nonwritable=%d subgroup=%u clip=%u cull=%u vertexStores=%u (marker gfx-mali)",mode,int(mali_guard),int(mali_clip),int(mali_nonwritable),sg,have.shaderClipDistance,have.shaderCullDistance,have.vertexPipelineStoresAndAtomics);}
+    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-laneid-ballot").c_str(),"rb");laneid_ballot=2;
+     if(q){int c=fgetc(q);laneid_ballot=c=='0'?0:c=='1'?1:2;fclose(q);}else if(const char *e=getenv("DM_GFX_LANEID_BALLOT")){int v=atoi(e);laneid_ballot=v==0?0:v==1?1:2;}
+     unsigned distinct=0,expect=0;int probe=laneid_ballot==2?laneid_probe(distinct,expect):-2;   // -2: 没自检 | not probed
+     laneid_active=laneid_ballot==1 || (laneid_ballot==2 && probe==0);
+     xbg_logf("NVN subgroup lane id through ballot=%d mode=%d probe=%d distinct=%u expect=%u (marker gfx-laneid-ballot; 0 off 1 on 2 auto; probe 1 usable 0 unusable -1 not run)",int(laneid_active),laneid_ballot,probe,distinct,expect);}
     {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');std::string base=cut==std::string::npos?dir:dir.substr(0,cut);
      auto dm=[&](const char *marker,const char *env){FILE *q=fopen((base+marker).c_str(),"rb");bool on=false;if(q){on=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv(env))on=atoi(e)!=0;return on;};
      ldc_fold=dm("/gfx-ldc-fold","DM_GFX_LDC_FOLD");forward_temps=dm("/gfx-forward-temps","DM_GFX_FORWARD_TEMPS");nan_minmax=dm("/gfx-nan-minmax","DM_GFX_NAN_MINMAX");
@@ -3715,7 +3939,7 @@ extern "C" int xbg_game_initialize(const xbg_game_config *c,char *error,size_t b
      xbg_logf("NVN translator output clean-up: component fold=%d (marker gfx-ldc-fold) forwarded temporaries=%d (marker gfx-forward-temps)",int(ldc_fold),int(forward_temps));
      {FILE *q=fopen((base+"/gfx-shader-reuse").c_str(),"rb");shader_reuse=0;if(q){int c=fgetc(q);shader_reuse=c=='0'?0:c=='2'?2:1;fclose(q);}else if(const char *e=getenv("DM_GFX_SHADER_REUSE"))shader_reuse=atoi(e);
       warm::keep_rewritten=shader_reuse!=0;xbg_logf("NVN shader loads take the warm-up's rewritten SPIR-V=%d (marker gfx-shader-reuse; 2 also rewrites and compares)",shader_reuse);}}
-    xbg_module_id_hook=warm::module_id;{std::string lp=warm::list_path();FILE *nw=fopen((lp.substr(0,lp.find_last_of('/'))+"/gfx-no-warm").c_str(),"rb");warm::enabled=!nw;if(nw)fclose(nw);}warm::start();
+    pipeguard::load();xbg_module_id_hook=warm::module_id;{std::string lp=warm::list_path();FILE *nw=fopen((lp.substr(0,lp.find_last_of('/'))+"/gfx-no-warm").c_str(),"rb");warm::enabled=!nw;if(nw)fclose(nw);}warm::start();
     wtrack::enabled=false;state=State{};state.color.logic_op=3;state.color.alpha_func=8;for(unsigned i=0;i<8;i++)state.blend[i]={i,2,1,2,1,1,1};stats.reset();timing=XbgCpuTiming(timing_clock);pipeline_counts={};pipeline_before={};pipeline_tick=0;timing_active=false;timing_first=timing_last=0;live_profile_used=false;descriptor_detail=false;descriptor_timing=XbgDescriptorTiming{};descriptor_root=nullptr;draw_detail=false;draw_timing=XbgDrawTiming{};draw_root=nullptr;completed=0;last_attachment_trace=UINT64_MAX;sampler_mirror_clamp_enabled=VK_FALSE;failed=false;error_text[0]=0;initialized=true;
     {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-sync-submit").c_str(),"rb");bool sync_submit=false;if(m){sync_submit=fgetc(m)=='1';fclose(m);}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-async-pool-reset").c_str(),"rb");poolreset::enabled=false;if(w){poolreset::enabled=fgetc(w)!='0';fclose(w);}else if(const char *e=getenv("DM_GFX_ASYNC_POOL_RESET"))poolreset::enabled=atoi(e)!=0;poolreset::start();xbg_logf("NVN async command pool reset=%d (marker gfx-async-pool-reset)",int(poolreset::enabled));}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-bindcache").c_str(),"rb");if(w){bind_cache_enabled=false;fclose(w);}}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-imgcache").c_str(),"rb");if(w){img_cache_enabled=false;fclose(w);}}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-pass-profile").c_str(),"rb");if(w){pass_prof_enabled=true;unsigned long long from=0,period=0,count=0;if(fscanf(w,"%llu %llu %llu",&from,&period,&count)>=2){pass_prof_next=from;pass_prof_period=period?period:1;if(count)pass_prof_until=from+count;}fclose(w);}}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-descmemo").c_str(),"rb");if(w){desc_memo_enabled=false;fclose(w);}xbg_logf("NVN descmemo enabled=%d",int(desc_memo_enabled));}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-dynpartial").c_str(),"rb");if(w){dyn_partial_enabled=false;fclose(w);}}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-xmemo").c_str(),"rb");if(w){xmemo_enabled=false;fclose(w);}xbg_logf("NVN cross-frame memo enabled=%d",int(xmemo_enabled));}{auto marker=[&](const char *name){FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+name).c_str(),"rb");int c=-1;if(w){c=fgetc(w);fclose(w);}return c;};persistent_fb_enabled=marker("/gfx-no-persistent-fb")<0;slot_pools_enabled=marker("/gfx-no-slot-pools")<0;readback_cached=marker("/gfx-readback-cached")=='1' || (marker("/gfx-readback-cached")<0 && getenv("DM_GFX_READBACK_CACHED") && *getenv("DM_GFX_READBACK_CACHED")=='1');texel_memo_enabled=marker("/gfx-no-texel-memo")<0;no_occlusion_queries=marker("/gfx-no-occlusion")=='1';samples_report_seen=false;open_occlusion=OpenOcclusion{};occlusion_queries_started=0;occlusion_batch_enabled=marker("/gfx-query-per-draw")!='1' && marker("/gfx-no-query-batch")<0;heavy_timestamps=marker("/gfx-heavy-timestamps")=='1';xbg_logf("NVN persistent framebuffers=%d slot command pools=%d cached readback=%d texel memo=%d (markers gfx-no-persistent-fb, gfx-no-slot-pools, gfx-readback-cached, gfx-no-texel-memo)",int(persistent_fb_enabled),int(slot_pools_enabled),int(readback_cached),int(texel_memo_enabled));}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-wtrack").c_str(),"rb");wtrack::marker=-1;if(w){wtrack::marker=fgetc(w)=='1'?1:0;fclose(w);}wtrack::enabled=wtrack::marker==1;}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-no-wtrack").c_str(),"rb");if(w){wtrack::enabled=false;wtrack::marker=0;fclose(w);}xbg_logf("NVN wtrack enabled=%d (markers gfx-no-wtrack, gfx-wtrack=0)",int(wtrack::enabled));}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-mutable-images").c_str(),"rb");no_mutable_images=true;if(w){no_mutable_images=fgetc(w)!='1';fclose(w);}xbg_logf("NVN mutable-format images=%d (marker gfx-mutable-images)",int(!no_mutable_images));}{FILE *w=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-mutable-test").c_str(),"rb");mutable_test=0;if(w){if(fscanf(w,"%u",&mutable_test)!=1)mutable_test=0;fclose(w);}if(mutable_test)xbg_logf("NVN mutable upgrade test every %u images (marker gfx-mutable-test)",mutable_test);}
      /* Android: no guest memory remapping probe. */

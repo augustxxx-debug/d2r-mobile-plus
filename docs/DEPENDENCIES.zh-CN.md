@@ -49,6 +49,26 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 | adb | 随 Android SDK | 开发调试时看日志、推文件（玩家不需要） | <https://developer.android.com/tools/adb> |
 | Docker（可选） | — | 用 `dm/android/docker/` 的现成构建环境 | <https://www.docker.com> |
 
+## 安卓安装包随附的组件
+
+安卓 APK 带着在手机上生成导入包要用的工具（`assets/dmgen/runtime.zip` 与 `lib/arm64-v8a/libdmgen_*.so`，由 `dm/android/tools/gen_runtime.sh` 编出）、一款开源界面字体，以及 App 本身编入的第三方代码，都不是游戏内容。许可证原文随包在 `assets/dmgen/THIRD_PARTY_NOTICES.txt`（与 [`dm/android/THIRD_PARTY_NOTICES.txt`](../dm/android/THIRD_PARTY_NOTICES.txt) 同一份，由 `dm/android/tools/third_party_notices.py` 生成）；下表是 APK 里的实际版本，与上面电脑上装的 Python 包版本不同。
+
+| 组件 | APK 里的版本 | 许可证 |
+|---|---|---|
+| CPython（Chaquopy 的安卓构建），含 OpenSSL 3.5.9、SQLite 3、XZ Utils 5.4.6、bzip2 1.0.8、expat 2.8.5、libffi、libmpdec 2.5.1 | 3.13.16 | PSF-2.0；OpenSSL 为 Apache-2.0；SQLite 为公有领域；其余见许可证清单 |
+| Chaquopy（Python 构建与轮子） | target 3.13.16-0 | MIT |
+| NumPy / OpenBLAS / libgfortran / LLVM libc++ | 1.26.2 / 0.2.20 / 4.9 / 18 | BSD-3-Clause / BSD-3-Clause / GPL-3.0 附 GCC 运行库例外 / Apache-2.0 附 LLVM 例外 |
+| python-lz4（含 LZ4） | 4.3.3 | BSD-3-Clause（LZ4：BSD-2-Clause） |
+| fontTools | 4.67.0 | MIT |
+| Capstone | 5.0.7 | BSD-3-Clause |
+| Pillow，含 FreeType、HarfBuzz、zlib-ng | 13.0.0、2.14.3、14.5.0、2.3.3 | MIT-CMU；FTL；MIT；Zlib |
+| zlib（Python 的 zlib 模块） | 1.3.1 | Zlib |
+| SPIRV-Tools / SPIRV-Headers | 提交 `28f99f74` / `86f980c7` | Apache-2.0 / MIT |
+| .NET NativeAOT 运行时（着色器翻译工具），含 Ryujinx 着色器翻译器 | 10.0.13；Ryujinx 1.3.2 | MIT |
+| 霞鹜文楷（LXGW WenKai）Medium | v1.530 | SIL Open Font License 1.1 |
+| Kotlin 标准库与 JetBrains annotations（Android Gradle 插件自动带入，在 `classes.dex`） | 2.2.10；13.0 | Apache-2.0 |
+| libdeflate、bcdec、`nvn.h`、deko3d 布局算法（编入 `libdm.so` / `libdmdeswizzle.so`，见下一节） | 1.26；v0.985；—；— | MIT；MIT（MIT / Unlicense 二选一）；MIT；Zlib |
+
 ## 可选
 
 | 工具 | 用来做什么 | 官方地址 |
@@ -78,6 +98,7 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 | `dm/third_party/libdeflate` | 解压 | MIT | <https://github.com/ebiggers/libdeflate> |
 | `dm/gfx/vulkan/engine/third_party/bcdec` | 安卓 Vulkan 图形层里解压 BC 贴图（与上面的 bcdec 同源，单独固定了版本） | MIT 或 Unlicense（任选） | <https://github.com/iOrange/bcdec> |
 | `dm/gfx/vulkan/engine/third_party/pillow_reference` | Pillow 的 BC6 解码参考表，只用于 Vulkan 图形层的测试 | HPND（Pillow 的许可证） | <https://github.com/python-pillow/Pillow> |
+| `dm/third_party/spirv-tools` | SPIRV-Tools 的优化器库和它引用的 SPIR-V 头文件，编进安卓包，用来在 Adreno 750 这一族上内联着色器的辅助函数 | Apache 2.0（SPIR-V 头文件：Khronos 的 MIT 式许可） | <https://github.com/KhronosGroup/SPIRV-Tools>、<https://github.com/KhronosGroup/SPIRV-Headers> |
 | `dm/third_party/ryujinx` | Ryujinx 1.3.2 的着色器翻译库（三个项目，未修改），把 Switch 原版着色器翻译成 SPIR-V | MIT | <https://github.com/Ryubing> |
 | `dm/gfx/nvn/include/nvn.h` | 图形接口声明 | MIT | 文件头注明作者 |
 | `dm/gfx/nvn/nvn_tex.c` 中的排布尺寸算法 | 移植自 deko3d | zlib | <https://github.com/devkitPro/deko3d> |

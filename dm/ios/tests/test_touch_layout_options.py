@@ -47,6 +47,12 @@ for voice in (False, True):
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
     assert defaults[keys.index('free_tp')] == 0   # 免费回城缺省关（用户 2026-10-30） | free town portal off by default (user 2026-10-30)
 os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
+# 平台限制：DM_TARGET=android 的自定义页没有 icloud 行，其余行序不变（宿主 dm_custom.c custom_row 在没有 iCloud 的平台同样跳过）| per-platform: under DM_TARGET=android the Custom page has no icloud row, the other rows keep their order (the host's custom_row skips it likewise)
+os.environ['DM_TARGET'] = 'android'; layout = importlib.reload(layout)
+assert 'icloud' not in [k for k, _ in layout._CUSTOM_ALL] and [k for k, _ in layout._CUSTOM_ALL][5:7] == ['item_notes', 'pot_pick'], layout._CUSTOM_ALL
+assert 'i == K_ICLOUD && !dm_icloud_supported()' in host_src
+os.environ.pop('DM_TARGET'); layout = importlib.reload(layout)
+assert 'icloud' in [k for k, _ in layout._CUSTOM_ALL]
 host = host_src
 assert 'TouchCustom_touch_swap_above_near' in host
 print('PASS touch layout options: generated radio pair, labels, defaults, host order (default and MOVIE_FFMPEG=1) and scrolling row extent')
@@ -82,6 +88,14 @@ assert isinstance(g_nodes['TouchGraphicsApplyHint']['fields']['style/fontColor']
 assert g_nodes['TouchGraphicsApplyHint']['fields']['style/fontColor'].startswith('$FontColor')
 assert g_nodes['TouchGraphicsProfile']['fields']['onUpdateMessage'].endswith('SetD2RUpscaleProfile')
 assert '@dmGraphicsFrameRate60' in graphics_out and '@dmGraphicsUpscaling' in graphics_out
+# 图形页说明按平台分：iOS 原文案，安卓中性文案、整段说明不提 MetalFX（B079）| Graphics page hint per platform: iOS keeps its text, Android is neutral and does not mention MetalFX (B079)
+_and_row = [l for l in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../i18n/ui_text.tsv'), encoding='utf-8') if l.startswith('dmAndGraphicsApplyHint\t')]
+assert len(_and_row) == 1 and 'MetalFX' not in _and_row[0].rsplit('\t', 1)[0]
+assert g_nodes['TouchGraphicsApplyHint']['fields']['text'] == '@dmGraphicsApplyHint'
+os.environ['DM_TARGET'] = 'android'; layout = importlib.reload(layout)
+_and_out, _ = layout._graphics_page(graphics_src)
+assert '@dmAndGraphicsApplyHint' in _and_out and '@dmGraphicsApplyHint' not in _and_out
+os.environ.pop('DM_TARGET'); layout = importlib.reload(layout)
 assert 'Row Offline' not in g_nodes and 'Row Online' not in g_nodes
 assert not g_nodes['OptionsTable'].get('children')
 assert g_nodes['TouchGraphicsRows']['type'] == 'Widget'

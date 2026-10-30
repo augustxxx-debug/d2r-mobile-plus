@@ -1283,6 +1283,19 @@ def _boss_bar_top(text):
     ta['children'] = []
     return json.dumps(j, ensure_ascii=False, indent=1), 1
 PRESENT['controller/hudmonsterhealthhd.json'] = _boss_bar_top
+# 手柄版底栏（原版布局原样）里腰带下面的十字键提示（Belt 的 HotkeyLabelTemplate，原位 y 98）：字号档两种模式共用、我们放大了，键帽图跟着变大，
+# 在 417 高的底栏里往下长出屏幕、被底边截掉一半（缺陷台账 B030，iOS 同源 B017）。上提 36（16:9 下约 18 像素），与技能格下的 A / B / X / Y 提示同一条中线
+# The D-pad hints under the belt in the controller bottom bar (the original layout as is; Belt's HotkeyLabelTemplate, originally y 98): the font profiles are shared by both
+# modes and we enlarged them, so the key-cap glyphs grew and ran below the 417-high bar, cut in half by the screen edge (defect ledger B030, iOS twin B017). Raised by 36
+# (about 18 pixels at 16:9), on the same centre line as the A / B / X / Y hints under the skill slots
+PAD_BELT_HINT_Y = 62
+def pad_hud(text):
+    s, n = re.subn(r'("type"\s*:\s*"TextBoxWidget"\s*,\s*"name"\s*:\s*"HotkeyLabelTemplate"\s*,\s*"fields"\s*:\s*\{\s*"rect"\s*:\s*\{\s*"x"\s*:\s*8\s*,\s*"y"\s*:\s*)98\b',
+                   lambda m: m.group(1) + str(PAD_BELT_HINT_Y), text)
+    assert n == 1, n
+    return s
+
+
 def pad_boss_pct(text):   # 手柄版怪物血条 = 原版布局原样（条挂在目标头顶），只在进度条右边加同一个空字的 TouchBossPct，宿主每帧写「NN%」（同触屏版，dm_cursor.c ui_boss_pct_pump 按名字找，不分模式） | Controller layout monster health bar = the original layout as is (the bar hangs above the target's head), only adding the same empty-text TouchBossPct to the right of the progress bar, into which the host writes "NN%" every frame (same as the touch version; dm_cursor.c ui_boss_pct_pump finds it by name regardless of mode)
     j = json.loads(re.sub(r',(\s*[\]}])', r'\1', text))
     ta = next(c for c in j['children'] if c.get('name') == 'TargetAttached'); hp = next(c for c in ta['children'] if c.get('name') == 'Health')
@@ -1386,7 +1399,8 @@ def _drop_rows(*rows):
 # Custom reuses the native Video destination; Graphics uses a new layout and
 # leaves the native Game Settings destination intact. The host owns only our controls.
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes', 'icloud', 'pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above', 'free_tp')   # fps_hud 显示帧数已搬到图形页第二行（用户 2026-10-28）| fps_hud Show frame rate moved to Graphics row 2 (user 2026-10-28)
+# 平台限制：DM_TARGET=android（d2rm_android.py 传）不出 icloud 行（安卓没有 iCloud；宿主 dm_custom.c custom_row 同样跳过，行号对齐） | per-platform: DM_TARGET=android (passed by d2rm_android.py) omits the icloud row (no iCloud on Android; the host's dm_custom.c custom_row skips it too, so row numbers agree)
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes') + (() if os.environ.get('DM_TARGET') == 'android' else ('icloud',)) + ('pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above', 'free_tp')   # fps_hud 显示帧数已搬到图形页第二行（用户 2026-10-28）| fps_hud Show frame rate moved to Graphics row 2 (user 2026-10-28)
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines
@@ -1662,7 +1676,8 @@ def _graphics_page(text):
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}},
         label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 720, 1000, 180), toggle('TouchGraphicsUpscale', 720),
-        profile, rt_row, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 1260, 1670, 300),
+        # 说明文案按平台分：安卓没有 MetalFX，用中性文案 dmAndGraphicsApplyHint | Hint text per platform: Android has no MetalFX, so it uses the neutral dmAndGraphicsApplyHint
+        profile, rt_row, label('TouchGraphicsApplyHint', 'dmAndGraphicsApplyHint' if os.environ.get('DM_TARGET') == 'android' else 'dmGraphicsApplyHint', 0, 1260, 1670, 300),
         {'type': 'NineTileImageWidget', 'name': 'TouchGraphicsSel', 'fields': {
             'rect': {'x': 99999, 'y': 0, 'width': 1700, 'height': 180}, 'backgroundColor': [0, 0, 0, 0],
             'filename': 'Controller/PANEL/ControllerSelector/ControllerSelectorBorder', 'tileScale': 0.5}}]}
@@ -1752,11 +1767,13 @@ def _row_height(fn):
         return text.replace(a, '"rowHeight": 180'), n + text.count(a)
     return g
 for _k in ('soundoptionspanelhd.json', 'gameplayoptionspanelhd.json', 'onlinegameoptionspanelhd.json'): PRESENT[_k] = _row_height(PRESENT[_k])
-# 手柄版三页同样用 180：原版分组标题下的分割线（$OptionsDividerRect）在本宿主里要配 180 的行距才落在标题行与下一行之间，100 时横穿下一行文字
-# （用户报：安卓手柄模式音频页「分组金黄色分割线乱了」，iOS 手柄模式同样；原先只改了「游戏设定」，「音频」「游戏」漏了）。回归 tests/test_options_divider_rows.py
-# The controller copies of all three pages use 180 too: the stock section divider under a title ($OptionsDividerRect) only lands between the title row and
-# the next row with a 180 pitch in this host; at 100 it crosses the next row's text (user report: Android controller-mode Audio page, iOS controller mode alike;
-# only Game Settings had been changed, Audio and Gameplay were missed). Regression: tests/test_options_divider_rows.py
+# 手柄版三页同样用 180：我们的大字号档 BIG_FONT 把 $OptionsDividerRect 从原版 y 90 挪到 y 150（配触屏 180 行距，见 build_profile 上方注释），这个档是全局的
+# （两种模式共用），所以凡带分割线的原版表格都必须是 180 行距；仍用原版 100 时，y 150 的分割线落进下一行文字（用户报：安卓手柄模式音频页「分组金黄色分割线乱了」，
+# iOS 手柄模式同样；原先只改了「游戏设定」，「音频」「游戏」漏了）。回归与几何不变量（110 ≤ 分割线 y < 行距）：tests/test_options_divider_rows.py
+# The controller copies of all three pages use 180 too: our large-font profile BIG_FONT moves $OptionsDividerRect from the stock y 90 to y 150 (to suit the touch
+# 180 pitch, see the comment above build_profile), and that profile is global (both modes), so every stock table carrying a divider must use the 180 pitch; at the
+# stock 100 the divider at y 150 falls into the next row's text (user report: Android controller-mode Audio page; iOS controller mode alike; only Game Settings had
+# been changed, Audio and Gameplay were missed). Regression and the geometric invariant (110 <= divider y < row pitch): tests/test_options_divider_rows.py
 for _k in ('soundoptionspanelhd.json', 'gameplayoptionspanelhd.json', 'onlinegameoptionspanelhd.json'): PAD_ROOT[_k] = _row_height(PAD_ROOT[_k])
 
 def _widget_block(s, name):

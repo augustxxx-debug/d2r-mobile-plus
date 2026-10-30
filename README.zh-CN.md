@@ -194,6 +194,14 @@ cd d2r-mobile-plus
 
 **已知问题（内存，免费签名）**：免费开发者账号出的包没有 `increased-memory-limit` 权益，单进程上限约 3375 MB（两台实测机同值）。120 帧档长时间游玩时 footprint 在约 2.7 GB 处趋平，系统会**持续发内存告警**（iPhone 17 Pro 43 分钟实测约 700 次），但没有被系统结束。已知的宿主侧泄漏（退役对象未销毁）已修复，退役对象、命令分配器、视图缓存都会回收；既有长测里 footprint 在后段趋平（cd5ea07 的 60 分钟局第 30 分钟后约 +0.008 MiB/s），但各局后段斜率不完全一致（b57a76f 的 43 分钟局后 15–20 分钟约 +0.07 MiB/s），当前候选包是否完全无残余增长以它自己的长测为准。剩余增长主要是游戏自己的内存池逐步计入 footprint，宿主回收不了。用付费开发者账号带权益出包后上限约 6 GB，这个问题消失。
 
+## Android（高通 Adreno 候选）
+
+Plus 的 Android 版沿用上游的 NVN→Vulkan 路线（`dm/android/`、`dm/gfx/vulkan/`），支持高通 Adreno（在 Adreno 740 掌机上验过：营地与战斗 60 FPS、120 帧档、手柄），从这一包起也支持 Arm Mali（在天玑 9600 Pro、Mali-G2 Ultra 的手机上验过：营地 60 FPS，战斗约 45–52 FPS，手机发热后会更低）。不支持 BC 贴图的显卡（Mali）载入时把 BC3 贴图转成 ASTC，省约 400 MB 内存；透明度有渐变的贴图透明精度略有损失。安装包不含游戏内容：把自己的游戏文件（`ExeFS` 与 `data`）放进手机 `Download/S2X/D2R Mobile/`，打开 App，第一次会在手机上自己生成导入包（骁龙 8 Gen 2 约 7 分钟），界面楷体用随包的霞鹜文楷。仍可在电脑上做导入包（`dm/tools/d2rm_android.py`）。详见 [docs/ANDROID.zh-CN.md](docs/ANDROID.zh-CN.md)。
+
+本轮 Android 适配（相对上游 Android 后端）：崩溃围栏接入后台 / 前台 / 内存告警；暂停菜单「分享诊断日志」（脱敏、系统分享面板）；显示版本与构建号同源；原生出图尺寸 + 图形页「渲染分辨率」档；120 帧档（屏幕 ≥ 120 Hz 时出现，自动切高刷模式）；「显示帧数」；实体手柄（Xbox 键位、B / BACK 不退出、手柄 / 触屏模式切换）；3D 画面加亮上限 2；Adreno 740 驱动绕法（warp32 掩码按车道号算、lane 号自检）。
+
+**已知问题（安卓）：玩的头一个小时里内存会上涨。** 在 Adreno 740 掌机上每 90 秒换一关、五幕轮流跑了 65 分钟（60 帧档，中途进后台 3 次）：加载新区域时内存上涨，之后趋平——12 关第一轮约每秒 0.55 MB，第四轮约每秒 0.03 MB；App 没有被系统关掉、也没收到内存告警。一小时以上、8 GB 及以下内存的手机还没测；玩久了变卡就重开一次 App。
+
 ## 验证与限制
 
 当前预览已通过重点宿主几何／分类测试、iOS 触控测试、通知生成器检查及签名实机构建。任务语音问题经过修改前复现与修改后复测。实际执行与尚未执行的检查见[验证说明](docs/PLUS.zh-CN.md#验证)。
@@ -204,6 +212,10 @@ cd d2r-mobile-plus
 
 ## 致谢与许可
 
-基于 [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile)，感谢原作者及贡献者。保留既有版权声明及 [MIT 许可证](LICENSE)。《暗黑破坏神 II：狱火重生》及其资源的权利归相应权利人所有。本项目为独立社区项目。
+基于 [D2R Mobile](https://github.com/jhaizhou-ops/d2r-mobile)，感谢原作者及贡献者。保留既有版权声明及 [MIT 许可证](LICENSE)。《暗黑破坏神 II：狱火重生》及其资源的权利归相应权利人所有。本项目为独立社区项目。 加载页（导入 / 准备游戏内容）的背景图由 App 图标合成（上游 D2R Mobile 的图标加上我们的 PLUS 字样，字形为 Cormorant Garamond，SIL Open Font License 1.1）：图标居中、四周渐隐到黑。字标图（iOS 仍在用）与循环音乐为本项目自制、程序化生成（`dm/tools/gen_loadpage_logo.py`、`dm/tools/gen_loadpage_music.py`，CC0 1.0），字标用 [Cinzel Decorative](https://github.com/google/fonts/tree/main/ofl/cinzeldecorative)（Natanael Gama，SIL Open Font License 1.1）排版；安装包不含任何原版素材。
 
 **字体。** 公开包内嵌 [霞鹜文楷](https://github.com/lxgw/LxgwWenKai)（LXGW WenKai，Medium 字重，作者 LXGW，源自 Fontworks 的 Klee One）作为可选主界面字体，按游戏与本项目实际用字子集，西文字形与图标仍用游戏自带字体。霞鹜文楷以 [SIL Open Font License 1.1](https://openfontlicense.org/) 发布，保留字体名「霞鹜」「霞鶩」「落霞孤鹜」「落霞孤鶩」「LXGW」；许可证原文（OFL.txt）随字体放在构建环境中，未作修改。内嵌的是 OFL 意义上的修改版：v1.530 的 Medium 字面，按实际用字子集并与游戏字体合并，合并后的字体使用游戏字体的注册名而不是保留字体名。字体的版权声明与完整许可证文本随每个包一起分发，位于包内 `UIFonts/FONT_LICENSE.txt`（构建时写在生成字体旁边；字体来自 public 目录而旁边没有许可证文件时构建失败，来自 private 目录的字体只有带 `DM_PRIVATE_FONT=1` 的自用构建才接受）。字体文件不进仓库，由出包者从上游 Release 自行获取。感谢 LXGW 提供这款字体。
+
+安卓安装包随附霞鹜文楷（LXGW WenKai）Medium v1.530，作者 LXGW，按 [SIL Open Font License 1.1](https://openfontlicense.org) 授权（许可证随包在 `assets/dmgen/font/OFL.txt`；来源 https://github.com/lxgw/LxgwWenKai）。手机端生成导入包时用它替换界面字体里的中日文字形；包里的字体文件未作改动。
+
+安卓安装包还随附在手机上生成导入包用的工具：CPython 3.13（Chaquopy 的安卓构建，含 OpenSSL、SQLite 及 CPython 内含的各库）、NumPy、OpenBLAS、python-lz4、fontTools、Capstone、Pillow（含 FreeType、HarfBuzz、zlib-ng）、zlib、SPIRV-Tools，以及用 .NET NativeAOT 从 Ryujinx 着色器翻译器编出的翻译工具；App 本身还编入了 Kotlin 标准库、libdeflate、bcdec、nvn.h 声明和移植自 deko3d 的算法，感谢各位作者。版本与许可证见 [docs/DEPENDENCIES.zh-CN.md](docs/DEPENDENCIES.zh-CN.md#安卓安装包随附的组件)；许可证原文随包在 `assets/dmgen/THIRD_PARTY_NOTICES.txt`（与 [dm/android/THIRD_PARTY_NOTICES.txt](dm/android/THIRD_PARTY_NOTICES.txt) 同一份）。

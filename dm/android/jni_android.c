@@ -23,13 +23,18 @@
 #include "vulkan_present.h"
 #include "touch_android.h"
 #include "lifecycle_dispatch.h"
+#include "fence_glue.h"
+#include "sharelog_android.h"
+#include "../host/dm_i18n.h"
+#include <sys/system_properties.h>
+#include <time.h>
 #include "overlay_validate.h"
 #include "dm_overlay_contract.h"
 #include <sys/stat.h>
 #include <unistd.h>
 
 void front_android_set_window(void *win, int w, int h);
-void front_android_set_refresh(float hz);
+void front_android_set_refresh(float hz, float max_hz);
 int dm_main(int argc, char **argv);
 void front_android_boot_failed(int code);
 
@@ -83,7 +88,9 @@ static void *log_pump(void *arg) {
 }
 static void log_init(void) {
     static int initialized; if (initialized) return; initialized = 1;
-    char p[1200]; snprintf(p, sizeof p, "%s/boot.log", g_runtime); g_logf = fopen(p, "a");
+    // 本局 boot.log、上一局 boot.previous.log（同 iOS 的 boot.txt / boot.previous.txt）：启动时把上一局的改名，日志不再无上限追加；分享诊断日志取这两份
+    // This run's boot.log, the previous run's boot.previous.log (as iOS's boot.txt / boot.previous.txt): the previous one is renamed at start, so the log no longer grows without bound; share diagnostics takes both
+    char p[1200], q[1200]; snprintf(p, sizeof p, "%s/boot.log", g_runtime); snprintf(q, sizeof q, "%s/boot.previous.log", g_runtime); rename(p, q); g_logf = fopen(p, "a");
     int fds[2]; if (pipe(fds)) return;
     dup2(fds[1], 2); close(fds[1]); setvbuf(stderr, NULL, _IOLBF, 0);
     pthread_t th; if (!pthread_create(&th, NULL, log_pump, (void *)(intptr_t)fds[0])) pthread_detach(th);
@@ -113,6 +120,43 @@ static int link_romfs(const char *romfs) {
     return n;
 }
 
+// 「分享诊断日志」（五项适配之一；实现 sharelog_android.c，iOS 版 dm_sharelog.m）：游戏主线程只起一条工作线程（客体线程的栈不适合做文件与 JNI），
+// 工作线程组装 + 脱敏到 files/share/<文件名>，再经 text_input_jni.c 的桥让 Java 弹系统分享面板（DiagProvider 给 content:// 权限）。
+// 测试开关 DM_TEST_SHARELOG_CLOSE=<秒>（与 iOS 同名）：不弹面板，导出文件另拷到 files/sharelog_test.txt 供回归核内容。同一时间只做一份。
+// "Share Diagnostics" (one of the five adaptations; implementation sharelog_android.c, iOS: dm_sharelog.m): the game main thread only starts a worker (guest thread stacks are unsuitable for file I/O and JNI);
+// the worker assembles + scrubs into files/share/<name>, then the bridge in text_input_jni.c has Java present the system share sheet (DiagProvider grants the content:// permission).
+// Test switch DM_TEST_SHARELOG_CLOSE=<seconds> (same name as iOS): no sheet; the export is also copied to files/sharelog_test.txt for regression checks. One export at a time.
+void dm_android_share_file(const char *path, const char *title);
+static _Atomic int g_share_busy;
+static void *sharelog_worker(void *arg) {
+    (void)arg;
+    char dir[1200], out[1300], model[PROP_VALUE_MAX] = "", maker[PROP_VALUE_MAX] = "", rel[PROP_VALUE_MAX] = "", soc[PROP_VALUE_MAX] = "", dev[600];
+    __system_property_get("ro.product.model", model); __system_property_get("ro.product.manufacturer", maker); __system_property_get("ro.build.version.release", rel); __system_property_get("ro.soc.model", soc);
+    snprintf(dev, sizeof dev, "%s %s / Android %s / SoC %s（GPU 与驱动见日志里的 NVN caps 行）", maker, model, rel, soc);
+    snprintf(dir, sizeof dir, "%s/share", g_files); mkdir(dir, 0700);
+    { DIR *d = opendir(dir); struct dirent *e; if (d) { while ((e = readdir(d))) if (e->d_name[0] != '.') { char old[2500]; snprintf(old, sizeof old, "%s/%s", dir, e->d_name); unlink(old); } closedir(d); } }   // 上次导出的删掉 | previous exports removed
+    const char *ver = getenv("DM_VERSION_LABEL"); char vs[64] = "", tsb[32]; { const char *v = ver ? ver : ""; size_t n = 0; for (; *v && n < sizeof vs - 1; v++) if ((*v >= '0' && *v <= '9') || *v == '.' || *v == '+') vs[n++] = *v; vs[n] = 0; }
+    time_t now = time(NULL); strftime(tsb, sizeof tsb, "%Y%m%d_%H%M%S", localtime(&now));
+    snprintf(out, sizeof out, "%s/D2RMobile_diagnostics_%s_%s.txt", dir, vs[0] ? vs : "dev", tsb);
+    // 包名从内部目录取（/data/user/<n>/<包名>/files）：包名换过（com.xiaoboluo.d2r → com.augustusplay.d2rmobileplus），-PdmAppId 也会换，不写死
+    // the package name comes from the internal directory (/data/user/<n>/<package>/files): it changed once (com.xiaoboluo.d2r → com.augustusplay.d2rmobileplus) and -PdmAppId changes it too, so it is not hard-coded
+    char app_id[256] = ""; { char t[1024]; snprintf(t, sizeof t, "%s", g_files); char *e = strrchr(t, '/'); if (e && !strcmp(e, "/files")) { *e = 0; e = strrchr(t, '/'); if (e && e[1]) snprintf(app_id, sizeof app_id, "%s", e + 1); } }
+    long n = dm_sharelog_build(g_runtime, g_files, out, ver, dev, app_id[0] ? app_id : "com.augustusplay.d2rmobileplus");
+    if (n < 0) { LOG("【红】诊断日志：打包失败"); atomic_store(&g_share_busy, 0); return NULL; }
+    LOG("诊断日志：已打包 %s（%ld 字节）", strrchr(out, '/') + 1, n);
+    const char *tc = getenv("DM_TEST_SHARELOG_CLOSE");
+    if (tc) { char tp[1300]; snprintf(tp, sizeof tp, "%s/sharelog_test.txt", g_files); FILE *a = fopen(out, "rb"), *b = fopen(tp, "wb"); if (a && b) { char buf[8192]; size_t k; while ((k = fread(buf, 1, sizeof buf, a)) > 0) fwrite(buf, 1, k, b); } if (a) fclose(a); if (b) fclose(b);
+        LOG("诊断日志：测试开关 DM_TEST_SHARELOG_CLOSE：不弹分享面板，副本在 files/sharelog_test.txt"); atomic_store(&g_share_busy, 0); return NULL; }
+    dm_android_share_file(out, dm_ui("dmPauseShareLog"));
+    atomic_store(&g_share_busy, 0); return NULL;
+}
+static void android_sharelog(void) {
+    if (atomic_exchange(&g_share_busy, 1)) { LOG("诊断日志：上一份还在导出，忽略这次点击"); return; }
+    pthread_t th; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setstacksize(&at, 256 * 1024);
+    if (pthread_create(&th, &at, sharelog_worker, NULL)) { LOG("【红】诊断日志：起不了工作线程"); atomic_store(&g_share_busy, 0); } else pthread_detach(th);
+    pthread_attr_destroy(&at);
+}
+
 static void *host_thread(void *arg) {
     (void)arg;
     char out[1200]; snprintf(out, sizeof out, "%s/out", g_runtime);
@@ -122,6 +166,7 @@ static void *host_thread(void *arg) {
     snprintf(shaders, sizeof shaders, "%s/shaders", g_runtime);
     int graphics_rc = dm_android_vk_initialize(shaders, error, sizeof error);
     if (graphics_rc) { LOG("boot: Vulkan initialization failed %d: %s", graphics_rc, error); front_android_boot_failed(-6); return NULL; }
+    { void dm_sharelog_init(void (*)(void)); dm_sharelog_init(android_sharelog); }   // 暂停菜单「分享诊断日志」（diag.c 在游戏主线程调）| pause menu "Share Diagnostics" (diag.c calls it on the game main thread)
     char *argv[] = {"dmhost", out, "main", "sdk", NULL};
     LOG("boot: dm_main %s", out);
     int rc = dm_main(4, argv);
@@ -145,10 +190,13 @@ static void load_env_file(const char *dir) {
     fclose(fp);
 }
 
-JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env, jclass cls, jstring files, jstring ext, jstring src, jstring lang) {
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env, jclass cls, jstring files, jstring ext, jstring src, jstring lang, jstring version) {
     (void)cls;
     static int started; if (started) return 0;
     const char *f = (*env)->GetStringUTFChars(env, files, NULL), *x = (*env)->GetStringUTFChars(env, ext, NULL), *s = (*env)->GetStringUTFChars(env, src, NULL), *lg = (*env)->GetStringUTFChars(env, lang, NULL);
+    // 显示版本（build.gradle 从 dm/tools/version.sh 取的 DM_VERSION_LABEL，同 iOS 的 DMVersionLabel）：进环境给宿主与分享摘要，启动日志记一行
+    // Display version (DM_VERSION_LABEL that build.gradle takes from dm/tools/version.sh, as iOS's DMVersionLabel): into the environment for the host and the share summary, one boot-log line
+    if (version) { const char *v = (*env)->GetStringUTFChars(env, version, NULL); if (v && *v) setenv("DM_VERSION_LABEL", v, 1); (*env)->ReleaseStringUTFChars(env, version, v); }
     snprintf(g_files, sizeof g_files, "%s", f); snprintf(g_ext, sizeof g_ext, "%s", x); snprintf(g_src, sizeof g_src, "%s", s);
     // 启动时间线零点：Process.getStartUptimeMillis() 是 SystemClock.uptimeMillis（CLOCK_MONOTONIC），与 now_ns 同一时钟（见 main.c proc_start_mono_ns）
     // Boot timeline zero: Process.getStartUptimeMillis() is SystemClock.uptimeMillis (CLOCK_MONOTONIC), the same clock as now_ns (see main.c proc_start_mono_ns)
@@ -185,7 +233,8 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
     // 3D render scale ceiling 0.85 (other phone platforms default to 0.75, see hle_oe.c; the env file still wins): on the Redmi K50
     // Ultra the camp and a 9-minute fight hold 60 fps with 28% more pixels than 0.75 and about 2 C more heat; when heavy scenes or
     // a hot phone drop frames, the dynamic scale steps down 0.05 at a time.
-    setenv("DM_3D_SCALE", "0.85", 0);
+    setenv("DM_3D_SCALE", "1.0", 0);   // 3D 比例缺省 1.0（奥丁 1080p 实测：0.85 战斗 59.6 fps / GPU 13.2 ms，1.0 58.9 fps、最低 53.8 / GPU 14.3 ms；动态控制器掉帧时自动退档）| 3D scale default 1.0 (Thor at 1080p: 0.85 = 59.6 fps / GPU 13.2 ms in combat, 1.0 = 58.9 fps, min 53.8 / GPU 14.3 ms; the dynamic controller steps down on drops)
+    setenv("DM_BRIGHT_MAX", "2", 0);   // 3D 画面加亮上限 2（原规则洞穴类固定 4，奥丁上观感过曝；dm_bright_cap.h）| 3D brightening exposure cap 2 (the original rule pins maze levels at 4, which reads as overexposed on the Thor; dm_bright_cap.h)
     // Vulkan 适配器先沿用同步提交；上游新增翻译线程需独立验证对象生命周期。
     // Keep synchronous submission until the new upstream translation thread's object lifetimes are verified with Vulkan.
     setenv("DM_NVN_SYNC", "1", 0);
@@ -193,17 +242,21 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
     // BC textures sampled in their own formats where the device can (the engine's gfx-native-bc; a marker file still wins):
     // on the Redmi K50 Ultra camp GPU -0.5 ms and live image memory 827 -> 320 MB.
     setenv("DM_GFX_NATIVE_BC", "1", 0);
+    // 没有 BC 的设备（Mali）上 BC3 转成 ASTC 4x4 上传（引擎的 gfx-bc-astc；设备支持 ASTC 时；标记文件仍优先）：OPPO 上软解图像 604 MB 里 BC3 占 547 MB，转后约省 410 MB。
+    // On devices without BC (Mali) BC3 uploads as ASTC 4x4 (the engine's gfx-bc-astc; where the device has ASTC; a marker file still wins):
+    // BC3 was 547 of the 604 MB of decoded images on the OPPO; about 410 MB less.
+    setenv("DM_GFX_BC_ASTC", "1", 0);
     // 片元着色器的四元组邻居交换改用精细导数（引擎的 gfx-quad-derivatives；标记文件仍优先）：Adreno 上辅助调用在子组洗牌里取到垃圾，
-    // 罪恶洞穴打斗时单位周围出现黑方块。
+    // 罪恶洞穴打斗时单位周围出现黑方块。Adreno 750–799 上引擎缺省关掉它（740 例外：根因 7579f5a 已修，例外见 8dfeb6c）（那两个驱动会丢掉设备，见 xbg_adreno_policy.h）。
     // Fragment-shader quad-neighbour shuffles go through fine derivatives (the engine's gfx-quad-derivatives; a marker file
     // still wins): on Adreno helper invocations read garbage in subgroup shuffles, and black squares appeared around units in
-    // the Den of Evil fight.
+    // the Den of Evil fight. On Adreno 750-799 the engine defaults it off (740 excepted: root cause fixed in 7579f5a, exception in 8dfeb6c) (those drivers drop the device; see xbg_adreno_policy.h).
     setenv("DM_GFX_QUAD_DERIVATIVES", "1", 0);
     // 按 32 道线程束翻译的计算着色器，在 64 道的子组里每 32 道各当一个线程束（引擎的 gfx-warp32；标记文件仍优先）：Adreno 上
-    // 杂物、草地、流体与 PPR 着色器的线程束聚合追加丢了 32–63 号车道、条目互相覆盖。
+    // 杂物、草地、流体与 PPR 着色器的线程束聚合追加丢了 32–63 号车道、条目互相覆盖。Adreno 750–799 上引擎缺省关掉它（740 例外：根因 7579f5a 已修，例外见 8dfeb6c）。
     // Compute shaders translated for 32-lane warps run every 32 lanes of a 64-lane subgroup as their own warp (the engine's
     // gfx-warp32; a marker file still wins): on Adreno the clutter, grass, fluid and PPR shaders' warp-aggregated appends lost
-    // lanes 32-63 and overwrote entries.
+    // lanes 32-63 and overwrote entries. On Adreno 750-799 the engine defaults it off (740 excepted: root cause fixed in 7579f5a, exception in 8dfeb6c).
     setenv("DM_GFX_WARP32", "1", 0);
     // 翻译器输出的两项等价整理（引擎的 gfx-ldc-fold 与 gfx-forward-temps；标记文件仍优先）：常量缓冲区按字寻址时可推出的分量下标
     // 换成常量，只写一次的临时变量直接转发。Redmi K50 Ultra 营地（比例 0.75）GPU 每帧 15.70 → 14.34 ms，结果不变。
@@ -275,6 +328,16 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
     setenv("DM_HLE_SPIN_US", "30", 0);
     if (!getenv("DM_LANG") && *lg) setenv("DM_LANG", lg, 0);   // 首次安装的语言按系统首选（同 iOS CFLocaleCopyPreferredLanguages，见 dm_i18n.c） | first-install language follows the system preference (as iOS CFLocaleCopyPreferredLanguages, see dm_i18n.c)
     if (chdir(g_files)) LOG("【红】chdir %s 失败 errno %d", g_files, errno);
+    { const char *v = getenv("DM_VERSION_LABEL"); LOG("boot: 显示版本 %s", v && *v ? v : "（无）"); }
+    { const char *v = getenv("DM_LOADPAGE_LAST"); if (v && *v) LOG("%s", v); }
+    { const char *v = getenv("DM_COMMUNITY_LAST"); if (v && *v) LOG("%s", v); }   // 加载页页脚取清单的最后一行（CommunityFetch，只有主机名、不带路径） | the loading-page footer's last manifest fetch line (CommunityFetch, host name only, no path)   // 本进程加载页的完成 / 失败行（DmActivity 交来；加载页在宿主库之前跑） | this process's loading-page finish / failure line (from DmActivity; the page runs before the host library)
+    // 导入包身份与构建输入（d2rm_android.py 写进 pack_info.txt：PRODUCT / MADE / INPUTS=font=<指纹>;weight=<档>），同 iOS 的「boot: … 构建输入 …」行；分享摘要按「boot: 导入包」取
+    // Import-pack identity and build inputs (written into pack_info.txt by d2rm_android.py: PRODUCT / MADE / INPUTS=font=<fingerprint>;weight=<level>), like iOS's "boot: ... build inputs ..." line; the share summary picks "boot: 导入包"
+    { char pi[1200], line[256], prod[96] = "?", made[48] = "?", inputs[128] = "font=none;weight=0（旧导入包没写）"; snprintf(pi, sizeof pi, "%s/dm/pack_info.txt", g_files); FILE *pf = fopen(pi, "r");
+      if (pf) { while (fgets(line, sizeof line, pf)) { line[strcspn(line, "\r\n")] = 0;
+              if (!strncmp(line, "PRODUCT=", 8)) snprintf(prod, sizeof prod, "%s", line + 8); else if (!strncmp(line, "MADE=", 5)) snprintf(made, sizeof made, "%s", line + 5); else if (!strncmp(line, "INPUTS=", 7)) snprintf(inputs, sizeof inputs, "%s", line + 7); }
+          fclose(pf); }
+      LOG("boot: 导入包 %s（%s）构建输入 %s", prod, made, inputs); }
     (*env)->ReleaseStringUTFChars(env, files, f); (*env)->ReleaseStringUTFChars(env, ext, x); (*env)->ReleaseStringUTFChars(env, src, s); (*env)->ReleaseStringUTFChars(env, lang, lg);
     if (n <= 0) return -2;
     char required[1300];
@@ -312,9 +375,21 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
 }
 
 static ANativeWindow *g_win;
-JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeRefresh(JNIEnv *env, jclass cls, jfloat hz) {
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeRefresh(JNIEnv *env, jclass cls, jfloat hz, jfloat max_hz) {
     (void)env; (void)cls;
-    front_android_set_refresh(hz);
+    front_android_set_refresh(hz, max_hz);
+}
+// 帧率档的生效目标（30 / 60 / 120）：Java 侧每秒问一次，120 时把窗口的首选显示模式切到 120 Hz（见 DmActivity.applyPreferredMode）
+// Effective frame-rate target (30 / 60 / 120): the Java side asks once a second and switches the window's preferred display mode to 120 Hz when it is 120 (DmActivity.applyPreferredMode)
+int mtl_fps_target(void);
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeFpsTarget(JNIEnv *env, jclass cls) { (void)env; (void)cls; return mtl_fps_target(); }
+// 「显示帧数」（图形页开关 fps_hud）：触控层每帧问，0 = 不画；口径与采样见 dm/host/dm_fps_hud.h（交换链实际上屏、1 秒滑动窗口、最多 2 Hz） | "Show frame rate" (Custom tab switch fps_hud): the touch overlay asks every frame, 0 = do not draw; sampling in fps_hud.h
+#include "../host/dm_fps_hud.h"
+uint64_t dm_present_count(void); int dm_custom_get(const char *key);   // 交换链实际上屏帧数（vulkan_present.cpp） | frames actually presented by the swapchain (vulkan_present.cpp)
+JNIEXPORT jlong JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativePresentCount(JNIEnv *env, jclass cls) { (void)env; (void)cls; return (jlong)dm_present_count(); }   // 触控层重绘对齐游戏上屏 | the overlay aligns its redraws with the game's presents
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeFpsHud(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls; static dm_fps_hud s; struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
+    return dm_fps_hud_sample(&s, (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec, dm_present_count(), dm_custom_get("fps_hud") > 0);
 }
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSurface(JNIEnv *env, jclass cls, jobject surface, jint w, jint h) {
     (void)cls;
@@ -337,13 +412,43 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeTouch(JNIEnv *env
     dm_touch_set(t, n);
 }
 
+// 实体手柄（pad_android.c）：Java 的 dispatchKeyEvent / dispatchGenericMotionEvent 交来；返回 true = 事件归手柄（BACK 不再退出）
+// Physical controllers (pad_android.c): handed over by Java's dispatchKeyEvent / dispatchGenericMotionEvent; true = the event belongs to the controller (BACK no longer exits)
+#include "pad_android.h"
+JNIEXPORT jboolean JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativePadKey(JNIEnv *env, jclass cls, jint device, jint vendor, jint product, jint source, jint keycode, jboolean down) {
+    (void)env; (void)cls; return dm_android_pad_key(device, vendor, product, source, keycode, down ? 1 : 0) ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT jboolean JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativePadMotion(JNIEnv *env, jclass cls, jint device, jint vendor, jint product, jint source, jfloat lx, jfloat ly, jfloat rx, jfloat ry, jfloat lt, jfloat rt, jfloat hx, jfloat hy) {
+    (void)env; (void)cls; return dm_android_pad_motion(device, vendor, product, source, lx, ly, rx, ry, lt, rt, hx, hy) ? JNI_TRUE : JNI_FALSE;
+}
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativePadDrop(JNIEnv *env, jclass cls, jint device) { (void)env; (void)cls; dm_android_pad_drop(device); }
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeHudMask(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_android_pad_hud_mask(dm_android_pad_overlay_hidden()); }
 // UI只入队：0失焦，1后台，2前台，3激活；激活也声明前台，合并2/3时不会漏恢复。
 // UI posts only: 0 unfocused, 1 background, 2 foreground, 3 active; active also declares foreground so merging 2/3 cannot lose resume.
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeFocus(JNIEnv *env, jclass cls, jint ev) {
     (void)env; (void)cls;
     dm_android_touch_focus(ev == 2 || ev == 3);
+    if (ev == 0 || ev == 1) dm_android_pad_reset();   // 失活 / 进后台：手柄的键和摇杆清零（同 iOS）| resign / background: the controller's buttons and sticks are cleared (as iOS)
+    // 崩溃围栏（闸 1，fence_glue.h）：进后台清运行标记（画面 5 秒没动 = 卡死，标记留着）、回前台重写；与 iOS main.m 的场景回调同一套。UI 线程直接调，只做文件操作
+    // Crash fence (gate 1, fence_glue.h): background clears the running marker (no present for 5 s = frozen, marker kept), foreground writes it again; the same as iOS main.m's scene callbacks. Called on the UI thread, file operations only
+    { void dm_crashfence_background(void), dm_crashfence_resume(void); static const dm_fence_hooks fence = { dm_crashfence_background, dm_crashfence_resume }; dm_android_fence_event(ev, &fence); }
     if (lifecycle_ready()) {
         dm_lifecycle_post(&g_lifecycle, ev);
         __android_log_print(ANDROID_LOG_INFO, "dm-lifecycle", "UI posted event=%d", ev);
     }
+}
+
+// 系统内存告警（DmActivity.onTrimMemory ≥ RUNNING_CRITICAL）：崩溃围栏记下，之后在前台没了算内存不足（同 iOS applicationDidReceiveMemoryWarning）
+// System memory warning (DmActivity.onTrimMemory >= RUNNING_CRITICAL): the crash fence notes it; vanishing in the foreground afterwards counts as out of memory (as iOS applicationDidReceiveMemoryWarning)
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeMemoryWarning(JNIEnv *env, jclass cls, jint level) {
+    (void)env; (void)cls;
+    if (dm_android_trim_is_warning(level)) { void dm_crashfence_note_memory(void); dm_crashfence_note_memory(); LOG("内存：系统告警 level=%d", level); }
+}
+// Activity 结束（onDestroy 且 isFinishing）：宿主优雅退出（hle_lifecycle.c：停后台线程、暂停音频、图形挂起、清崩溃围栏标记，然后 _exit(0)）。
+// 会话绑定进程：下次打开是新进程，不复用半销毁的全局对象（README「本后端尚未接入进程内第二次初始化」）
+// Activity finishing (onDestroy with isFinishing): graceful host exit (hle_lifecycle.c: stop background threads, pause audio, suspend graphics, clear the crash-fence marker, then _exit(0)).
+// The session is bound to the process: the next launch is a new process, no half-destroyed globals are reused (README: no in-process second initialisation yet)
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeShutdown(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls;
+    void dm_host_shutdown(const char *why); dm_host_shutdown("Android Activity 结束");
 }

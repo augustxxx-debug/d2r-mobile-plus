@@ -40,6 +40,9 @@ run: \
 	$(B)/t_hid_script \
 	$(B)/t_hud_dead \
 	$(B)/t_i18n \
+	$(B)/t_loadpage \
+	$(B)/t_manifest \
+	$(B)/t_loadpage_race \
 	$(B)/t_minimap_lift \
 	$(B)/t_loader_weak \
 	$(B)/t_mac_overlay \
@@ -54,9 +57,11 @@ run: \
 	$(B)/t_res_auto_policy \
 	$(B)/t_res_cap \
 	$(B)/t_update_appear \
+	$(B)/t_bright_cap \
 	$(B)/t_custom_scroll \
 	$(B)/t_sel_frame \
 	$(B)/t_hud_mask \
+	$(B)/t_fps_hud \
 	$(B)/t_uiscreen_frontend \
 	$(B)/t_padmap \
 	$(B)/t_pouch_notice \
@@ -114,10 +119,15 @@ run: \
 	$(B)/t_stick_nav
 	$(B)/t_diffrow
 	$(B)/t_res_cap
+	$(B)/t_bright_cap
 	$(B)/t_update_appear
+	$(B)/t_loadpage
+	$(B)/t_manifest
+	TSAN_OPTIONS=halt_on_error=1 $(B)/t_loadpage_race > /dev/null
 	$(B)/t_custom_scroll
 	$(B)/t_sel_frame
 	$(B)/t_hud_mask
+	$(B)/t_fps_hud
 	$(B)/t_res_auto_policy 2>/dev/null
 	$(B)/t_pouch_notice
 	$(B)/t_modal_input_gate
@@ -291,12 +301,31 @@ $(B)/t_res_cap: t_res_cap.c ../dm_res_cap.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_res_cap.c -lm
 $(B)/t_update_appear: t_update_appear.c ../dm_update.c | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_update_appear.c
+$(B)/t_bright_cap: t_bright_cap.c ../dm_bright_cap.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_bright_cap.c -lm
+$(B)/t_loadpage: t_loadpage.c ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.h ../dm_i18n_tab.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_loadpage.c -lm
+# 加载页出图核对（不在 run 里：写 PNG 到指定目录）：make render-loadpage OUT=<目录> [LANG=zh]
+# Loading page render check (not part of run: writes PNGs to a given directory): make render-loadpage OUT=<dir> [LANG=zh]
+$(B)/t_manifest: t_manifest.c ../dm_manifest.c ../dm_manifest.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_manifest.c
+
+$(B)/t_loadpage_race: t_loadpage_race.c ../dm_loadpage.c ../dm_loadpage.h | $(B)
+	clang -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=thread -I.. -o $@ t_loadpage_race.c -lm
+
+$(B)/t_loadpage_render: t_loadpage_render.m ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.c ../dm_i18n_tab.h ../../ios/Sources/dm_loadpage_cg.m | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -fobjc-arc -I.. -o $@ t_loadpage_render.m ../dm_loadpage.c ../dm_i18n.c ../../ios/Sources/dm_loadpage_cg.m -framework Foundation -framework CoreGraphics -framework CoreText -framework ImageIO -lm
+.PHONY: render-loadpage
+render-loadpage: $(B)/t_loadpage_render
+	mkdir -p $(OUT) && $(B)/t_loadpage_render ../../assets/loadpage $(OUT) $(or $(LANG),zh)
 $(B)/t_custom_scroll: t_custom_scroll.c ../dm_custom_scroll.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_custom_scroll.c
 $(B)/t_sel_frame: t_sel_frame.c ../dm_sel_frame.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_sel_frame.c
 $(B)/t_hud_mask: t_hud_mask.c ../dm_hud_mask.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_hud_mask.c
+$(B)/t_fps_hud: t_fps_hud.c ../dm_fps_hud.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_fps_hud.c
 
 $(B)/t_pouch_notice: t_pouch_notice.c ../dm_pouch.c ../dm_widget.h ../hle.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_pouch_notice.c

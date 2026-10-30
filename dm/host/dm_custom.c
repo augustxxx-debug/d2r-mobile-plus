@@ -49,6 +49,7 @@ static const int k_def[NK] = { 0,
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
 #define K_MERC (2 + VOICE_ROW)
+#define K_ICLOUD (6 + VOICE_ROW)   // iCloud 存档同步：只有 Apple 平台有（dm_icloud_supported），Android 的自定义页不出这一行 | iCloud save sync: Apple platforms only (dm_icloud_supported); the Android Custom page has no such row
 #define K_FPS (11 + VOICE_ROW)   // eco_fps：0 = 60、1 = 30（省电）、FPS_120 = 120 帧档；旧文件只有 0 / 1，旧包读到 2 当省电 30 | eco_fps: 0 = 60, 1 = 30 (power saving), FPS_120 = 120 fps mode; old files only hold 0 / 1, and old builds read 2 as power saving 30
 #define FPS_120 2
 #define K_Q3D (12 + VOICE_ROW)
@@ -58,10 +59,21 @@ static const int k_def[NK] = { 0,
 #define K_UPSCALE (NK - 3)
 #define K_RES (NK - 2)
 #define K_RT (NK - 1)
-#define N_GFX 6   // 图形页的键数：eco_fps / q3d / fps_hud / upscale / render_res / rt_shadow（自定义页的行数 = NK - N_GFX） | Number of Graphics-tab keys (Custom-page rows = NK - N_GFX)
+#define N_GFX 6   // 图形页的键数：eco_fps / q3d / fps_hud / upscale / render_res / rt_shadow（自定义页的行数 = custom_rows()） | Number of Graphics-tab keys (Custom-page rows = custom_rows())
 static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_FPSHUD || i == K_UPSCALE || i == K_RES || i == K_RT; }
+// 配置项的平台限制：没有 iCloud 的平台（Android：nvn_vk.c 强定义 0）自定义页不出 icloud 行，布局生成器按 DM_TARGET=android 同样不出（touch_layout.py _CUSTOM_KEYS），
+// 行号两边对齐；键仍在设置文件里（分享摘要照写），只是没人读。弱定义 = 支持（Apple 不变）
+// Per-platform settings: platforms without iCloud (Android: strong 0 in nvn_vk.c) get no icloud row on the Custom page, and the layout generator omits it likewise under
+// DM_TARGET=android (touch_layout.py _CUSTOM_KEYS) so row numbers agree on both sides; the key stays in the settings file (the share summary still lists it), nobody reads it. Weak = supported (Apple unchanged)
+#ifndef DM_GFX_GATE_TEST_HOOK
+__attribute__((weak)) int dm_icloud_supported(void) { return 1; }
+#else
+int dm_icloud_supported(void);
+#endif
+static int custom_row(int i) { return !graphics_key(i) && !(i == K_ICLOUD && !dm_icloud_supported()); }   // 自定义页上有这一行 | this key has a Custom-page row
+static int custom_rows(void) { int n = 0; for (int i = 0; i < NK; i++) n += custom_row(i); return n; }
 static int custom_key_at(int row) {
-    for (int i = 0; i < NK; i++) if (!graphics_key(i) && row-- == 0) return i;
+    for (int i = 0; i < NK; i++) if (custom_row(i) && row-- == 0) return i;
     return 0;
 }
 void dm_3d_quality_mode_set(int mode);
@@ -690,10 +702,10 @@ void dm_custom_ui_pump(unsigned long long root) {
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
       indent_rows(find_w(sp, "TouchCustomRows", 0), 0);
       uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64]; int oy = 0, about_bot = -1;   // about_bot：选到「关于」组的社区行时，自动滚动要把整组（含下面的鸣谢子块）滚进框 | about_bot: with the About group's community row selected, auto-scroll brings the whole group (credits sub-block below included) into view. oy：选中行相对 TouchCustomRows 的纵向偏移（「关于」组的社区行套在两层容器里，自己的矩形 y 是 0） | oy: the selected row's vertical offset within TouchCustomRows (the About group's community row sits two containers deep, its own rect y is 0)
-      int rows = NK - N_GFX + (dm_community_available() ? 1 : 0); if (sel >= rows) sel = rows - 1;   // 末尾「关于」组的社区行（dm_community.c；布局 touch_layout.py _custom_about）：有可显示的值时多一行可选，A = 打开提示框 | the About group's community row at the end (dm_community.c; layout _custom_about): one more selectable row when there is a value, A = open the box
+      int nc = custom_rows(), rows = nc + (dm_community_available() ? 1 : 0); if (sel >= rows) sel = rows - 1;   // 末尾「关于」组的社区行（dm_community.c；布局 touch_layout.py _custom_about）：有可显示的值时多一行可选，A = 打开提示框 | the About group's community row at the end (dm_community.c; layout _custom_about): one more selectable row when there is a value, A = open the box
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
           if (ev & DM_BTN_DOWN) sel = sel + 1 < rows ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
-          int ci = sel < NK - N_GFX ? custom_key_at(sel) : -1;
+          int ci = sel < nc ? custom_key_at(sel) : -1;
           if (ci < 0) { tw = find_w(sp, "TouchAboutCommunityText", 0); cw = find_w(sp, "TouchCommunityOpt", 0); uint64_t ar = find_w(sp, "TouchAboutRow", 0), ac = find_w(sp, "TouchAboutCommunityRow", 0);
               oy = (ar ? *(int32_t *)(ar + 0x74) : 0) + (ac ? *(int32_t *)(ac + 0x74) : 0); if (ar) about_bot = *(int32_t *)(ar + 0x74) + *(int32_t *)(ar + 0x7c); if ((ev & DM_BTN_A) && cw && ac) dm_community_open(4); }
           else {
@@ -737,7 +749,7 @@ void dm_custom_ui_pump(unsigned long long root) {
           if (to != shown) atomic_store(&g_pend[K_Q3D], to);
           for (int k = 0; k < 5; k++) if (TOGGLED(boxes[k]) != (k == to)) set_toggle(boxes[k], k == to);
       } }
-    for (int i = 1; i < NK; i++) { if (graphics_key(i)) continue; char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
+    for (int i = 1; i < NK; i++) { if (!custom_row(i)) continue; char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
         uint64_t w = find_w(sp, nm, 0); if (!w || !*(uint8_t *)(w + 0x50)) continue;
         int pd0 = atomic_load(&g_pend[i]), want = pd0 >= 0 ? pd0 : atomic_load(&g_val[i]);
         uint64_t z = rev_box(i) ? find_w(sp, rev_box(i), 0) : 0;   // 两项单选行（3D 画质：上下的「流畅优先」「画质优先」；换组位置）：存的仍是一个键，反面那一项是它的反面 | Two-option radio rows (3D quality: "Smoothness first" / "Quality first" stacked; swap-group position): still stores one key, the other option is its negation

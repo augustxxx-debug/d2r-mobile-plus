@@ -5,7 +5,10 @@
 package com.xiaoboluo.d2r;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.AlertDialog;
+import android.app.ApplicationExitInfo;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.hardware.display.DisplayManager;
@@ -41,13 +44,20 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Locale;
 
-public class DmActivity extends Activity implements SurfaceHolder.Callback, DisplayManager.DisplayListener {
-    static native int nativeStart(String filesDir, String extDir, String romfsSrc, String lang);
+public class DmActivity extends Activity implements SurfaceHolder.Callback, DisplayManager.DisplayListener, android.hardware.input.InputManager.InputDeviceListener {
+    static native int nativeStart(String filesDir, String extDir, String romfsSrc, String lang, String versionLabel);
     static native void nativeSurface(Object surface, int w, int h);
-    static native void nativeRefresh(float hz);
+    static native void nativeRefresh(float hz, float maxHz);
+    static native int nativeFpsTarget();                  // 帧率档生效目标 30 / 60 / 120（每秒问一次，决定首选显示模式）| effective frame-rate target 30 / 60 / 120 (asked once a second; picks the preferred display mode)
     static native void nativeTouch(int n, int[] ids, float[] xs, float[] ys);
     static native void nativeFocus(int ev);
+    static native void nativeMemoryWarning(int level);   // 崩溃围栏：系统内存告警 | crash fence: system memory warning
+    static native void nativeShutdown();                  // 宿主优雅退出（Activity 结束时）| graceful host exit (when the Activity finishes)
     static native void nativeTextResult(long id, boolean accepted, String text);
+    // 实体手柄（pad_android.c）：按键 / 轴事件交给原生，true = 归手柄（不再交给系统，B 发的 BACK 不退出）| physical controllers (pad_android.c): key / axis events go native, true = the controller's (not passed on; BACK from B does not exit)
+    static native boolean nativePadKey(int device, int vendor, int product, int source, int keycode, boolean down);
+    static native boolean nativePadMotion(int device, int vendor, int product, int source, float lx, float ly, float rx, float ry, float lt, float rt, float hx, float hy);
+    static native void nativePadDrop(int device);
 
     private static WeakReference<DmActivity> current = new WeakReference<>(null);
     private static volatile int bootFailure;
@@ -73,6 +83,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         current = new WeakReference<>(this);
         displays = getSystemService(DisplayManager.class);
         if (displays != null) displays.registerDisplayListener(this, null);
+        { android.hardware.input.InputManager im = getSystemService(android.hardware.input.InputManager.class); if (im != null) im.registerInputDeviceListener(this, null); }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         view = new SurfaceView(this);
@@ -91,13 +102,22 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // 资源在玩家放的位置读（缺省 Download/S2X/D2R Mobile/data），要「所有文件访问」权限；没有就引导去系统设置页，回来再启动
     // Resources are read where the player put them (default Download/S2X/D2R Mobile/data), which needs "all files access"; without it, guide the player to the system settings page and start after returning
     private boolean ensureFileAccess() {
-        if (Environment.isExternalStorageManager()) return true;
-        TextView t = new TextView(this);
-        t.setText(R.string.dmAndroidPermission);
-        t.setTextSize(20); t.setPadding(64, 64, 64, 64);
-        t.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getPackageName()))));
-        setContentView(t);
+        if (Environment.isExternalStorageManager()) { prompting = false; return true; }
+        // 提示页与加载页同一套样子（用户 2026-10-29「权限页没改」）：背景、字标、标题 / 正文 / 副文；点屏幕任何地方（静音钮以外）或手柄 A / START 打开系统设置
+        // The prompt looks like the loading page (user 2026-10-29 "the permission page was not changed"): background, wordmark, title / body / sub; a tap anywhere (outside the mute button) or controller A / START opens system settings
+        LoadPageView v = new LoadPageView(this);
+        LoadPageView.prompt("dmLoadPermTitle", LoadPageView.ui("dmLoadPermBody"), "dmLoadPermHint");
+        v.setOnTap(this::openFileAccessSettings);
+        loadPage = v; prompting = true; setContentView(v);
         return false;
+    }
+    private boolean prompting;
+    private void openFileAccessSettings() {
+        try { startActivity(new Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:" + getPackageName()))); }
+        catch (android.content.ActivityNotFoundException e) {   // 这台机没有按包名的那一页：退回总列表；也没有就记一行，不闪退（七审 Q7-01） | no per-app page on this device: fall back to the list; none either = log, no crash (seventh review Q7-01)
+            try { startActivity(new Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)); }
+            catch (android.content.ActivityNotFoundException e2) { android.util.Log.w("dm", "权限提示页：系统没有「所有文件访问」设置页：" + e2); }
+        }
     }
 
     // 导入包：玩家在电脑上用 dm/tools/d2rm_android.py 和自己的游戏文件做出 android 文件夹，拷到 Download/S2X/D2R Mobile/ 下；
@@ -130,31 +150,291 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             String product = packProduct(want);
             if (!BuildConfig.DM_PRODUCT.equals(product)) { showStartError(getString(R.string.dmAndroidImportVersion, product)); return false; }
             importing = true;
-            TextView t = new TextView(this);
-            t.setTextSize(20); t.setPadding(64, 64, 64, 64); t.setText(getString(R.string.dmAndroidImporting, 0));
-            setContentView(t);
+            // 加载页（LoadPageView，核心在 dm/host/dm_loadpage.c）：单阶段「导入」，进度按字节报，页面自己算速度与剩余时间 | the loading page (LoadPageView, core in dm/host/dm_loadpage.c): the single stage "import", progress in bytes, the page computes speed and ETA itself
+            showLoadPage();
+            LoadPageView.begin(new int[] {LoadPageView.IMPORT}, null);
             new Thread(() -> {
                 String error = null;
-                try { importPack(source, runtime, percent -> runOnUiThread(() -> t.setText(getString(R.string.dmAndroidImporting, percent)))); }
+                try { importPack(source, runtime, (done, total) -> LoadPageView.set(0, total > 0 ? (double) done / total : 0, 0, 0, done, total)); }
                 catch (IOException e) { error = e.getMessage() == null ? e.toString() : e.getMessage(); }
                 String failure = error;
                 runOnUiThread(() -> {
                     importing = false;
-                    if (failure != null) showStartError(getString(R.string.dmAndroidImportFailed, failure));
-                    else startHost();
+                    if (failure != null) { LoadPageView.fail(failure); showStartError(getString(R.string.dmAndroidImportFailed, failure)); }
+                    else { LoadPageView.finish(); startHost(); }
                 });
             }, "dm-import").start();
             return false;
         }
+        // 没有导入包、也没导入过，或导入的是给别的版本做的：App 带了生成器（-PdmGenRuntime 出的包）就在手机上用玩家自己的游戏文件现做，不用电脑。
+        // 开发时直接推进来的（有 out/main.patched.bin、没有 pack_info.txt）不动
+        // No import pack and nothing imported, or what was imported was made for another version: when the App carries the generator (built with -PdmGenRuntime)
+        // it makes the pack on the phone from the player's own game files, without a computer. Files pushed directly during development (out/main.patched.bin, no pack_info.txt) are left alone;
+        // an unfinished swap of a generated pack (install.pending / import.part left over) is not a push and is generated again (fourth audit A4-04)
+        String product = packProduct(have);
+        File ext = getExternalFilesDir(null);
+        boolean pushed = PackGenerator.pushedByDeveloper(have, runtime, ext == null ? null : new File(ext, "dm"));
+        if (generating || (want == null && !pushed && !BuildConfig.DM_PRODUCT.equals(product) && generatorAvailable())) { generate(source.getParentFile(), runtime); return false; }
         // 已导入的是给别的版本做的（App 升级了、导入包没重做）：同样要重做导入包。开发时直接推进来的没有 pack_info.txt，不核
         // The imported pack was made for another version (the app was updated, the pack was not remade): it has to be remade too.
         // Files pushed directly during development have no pack_info.txt and are not checked
-        String product = packProduct(have);
         if (have != null && !BuildConfig.DM_PRODUCT.equals(product)) { showStartError(getString(R.string.dmAndroidImportVersion, product)); return false; }
         return true;
     }
 
-    private interface Progress { void percent(int p); }
+    private interface Progress { void bytes(long done, long total); }
+
+    // ---- 手机端生成导入包（PackGenerator）：自动开始，进度与失败原因显示在这一页；生成线程不持有 Activity，界面每半秒从静态状态取一次 ----
+    // ---- On-phone import pack generation (PackGenerator): starts by itself, progress and failure reasons on this screen; the generation thread holds no Activity and the screen polls the static state every half second ----
+    private static volatile boolean generating;
+    private static final PackGenerator.State genState = new PackGenerator.State();
+    private static volatile String genFailure;   // 生成失败时给玩家看的原因（已按语言取好） | the failure reason shown to the player (already localised)
+    private static volatile String genFailTitle;   // 失败页标题：按失败类别（游戏文件不完整 / 版本不对 / 空间不够 / 生成出错），缺陷台账 B026 | failure screen title by kind (defect ledger B026)
+    private static volatile String genLogText;     // 已脱敏的 gen_log 全文，「分享诊断日志」打包用 | the scrubbed gen_log text, packed by "Share Diagnostics"
+    private static volatile boolean genShareOpen;  // 分享面板开着：回来时的 onResume 不清失败、不重新生成 | the share sheet is open: the onResume on return keeps the failure and does not regenerate
+    private static volatile long genStartMs = Long.MAX_VALUE;   // 这次生成开始的时刻：分享只附这之后写的步骤日志 | when this generation started: sharing attaches only step logs written since
+    private final android.os.Handler genHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    private boolean generatorAvailable() {
+        if (!new File(getApplicationInfo().nativeLibraryDir, "libdmgen_py.so").canExecute()) return false;
+        try (InputStream in = getAssets().open("dmgen/runtime.txt")) { return true; } catch (IOException e) { return false; }
+    }
+
+    private void showGenScreen(String title, String body, String hint) { showGenScreen(title, body, hint, false); }
+    private void showGenScreen(String title, String body, String hint, boolean share) {
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL); box.setPadding(64, 48, 64, 48);
+        box.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        // 三层：标题 / 正文 / 副文，字号 24 / 18 / 14（相邻比 1.29–1.33，同 CLAUDE 文案原则的层级） | three levels: title / body / sub at 24 / 18 / 14 (neighbouring ratio 1.29-1.33)
+        TextView t = new TextView(this); t.setTextSize(24); t.setText(title); box.addView(t);
+        TextView b = new TextView(this); b.setTextSize(18); b.setText(body); b.setPadding(0, 24, 0, 0); box.addView(b);
+        if (share) {   // 失败页：「分享诊断日志」（触屏点按钮；手柄 A 见 dispatchKeyEvent）| failure screen: "Share Diagnostics" (tap the button; controller A, see dispatchKeyEvent)
+            android.widget.Button btn = new android.widget.Button(this); btn.setText(R.string.dmAndroidGenShare); btn.setAllCaps(false); btn.setOnClickListener(v -> shareGenLog());
+            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.topMargin = 32; box.addView(btn, lp); btn.requestFocus();
+            hint = getString(R.string.dmAndroidGenShareHint);
+        }
+        if (hint != null) { TextView h = new TextView(this); h.setTextSize(14); h.setText(hint); h.setPadding(0, 24, 0, 0); box.addView(h); }
+        setContentView(box);
+    }
+    private void showGenFailure() { String t = genFailTitle != null ? genFailTitle : getString(R.string.dmAndroidGenFailed); showGenScreen(t, genFailure, null, genLogText != null); }
+
+    // 分享生成失败的诊断：zip 里是 gen_log.txt（结论在第一屏）+ logs/ 下各步骤的完整日志，都按 gen_log 的规则脱敏，经 DiagProvider 交给系统分享面板（缺陷台账 B026）
+    // share the generation failure diagnostics: a zip with gen_log.txt (the verdict on the first screen) + every step's full log under logs/, all scrubbed by the gen_log
+    // rules, handed to the system share sheet through DiagProvider (defect ledger B026)
+    private void shareGenLog() {
+        final String text = genLogText; if (text == null) return;
+        final File gen = new File(getFilesDir(), "dmgen"), zip = new File(new File(getFilesDir(), "share"), "D2R-Mobile-Plus-gen-" + new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new java.util.Date()) + ".zip");
+        final String nativeDir = getApplicationInfo().nativeLibraryDir, appHome = getFilesDir().getParent(), apkDir = new File(nativeDir).getParentFile().getParent(), appId = getPackageName();
+        new Thread(() -> {
+            try {
+                File[] old = zip.getParentFile().listFiles((d, n) -> n.startsWith("D2R-Mobile-Plus-gen-")); if (old != null) for (File f : old) f.delete();
+                java.util.Map<String, byte[]> e = new java.util.LinkedHashMap<>(); e.put("gen_log.txt", text.getBytes(StandardCharsets.UTF_8));
+                for (File f : PackGenerator.stepLogs(gen, genStartMs)) {
+                    String name = "logs/" + f.getParentFile().getName() + "_" + f.getName();
+                    e.put(name, PackGenerator.scrubLog(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8), apkDir, appHome, appId).getBytes(StandardCharsets.UTF_8));
+                }
+                PackGenerator.writeZip(zip, e);
+                runOnUiThread(() -> {
+                    Intent send = new Intent(Intent.ACTION_SEND); send.setType("application/zip"); send.putExtra(Intent.EXTRA_STREAM, DiagProvider.uriFor(this, zip));
+                    send.putExtra(Intent.EXTRA_SUBJECT, zip.getName()); send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    genShareOpen = true;
+                    try { startActivity(Intent.createChooser(send, getString(R.string.dmAndroidGenShare))); } catch (Exception x) { genShareOpen = false; android.util.Log.w("dm", "share gen: " + x); }
+                });
+            } catch (IOException x) { android.util.Log.w("dm", "share gen: " + x); }
+        }, "dm-gen-share").start();
+    }
+
+    // 环境段（脱敏：不含设备名、序列号、账号）：App 版本、机型、安卓版本、SoC / GPU 驱动、ABI、内存、两处剩余空间、产物代号 | the environment section (scrubbed: no
+    // device name, serial or account): App version, model, Android version, SoC / GPU driver, ABI, memory, free space in both places, product code
+    static String envReport(Context c, File internal, File shared, String product) {
+        StringBuilder b = new StringBuilder();
+        b.append("App：").append(BuildConfig.DM_VERSION_LABEL).append("（版本 ").append(BuildConfig.VERSION_NAME).append("，构建号 ").append(BuildConfig.VERSION_CODE).append("）\n");
+        b.append("机型：").append(android.os.Build.MANUFACTURER).append(' ').append(android.os.Build.MODEL).append("\n");
+        b.append("安卓：").append(android.os.Build.VERSION.RELEASE).append("（API ").append(android.os.Build.VERSION.SDK_INT).append("）\n");
+        String soc = android.os.Build.VERSION.SDK_INT >= 31 ? android.os.Build.SOC_MANUFACTURER + " " + android.os.Build.SOC_MODEL : android.os.Build.HARDWARE;
+        b.append("SoC：").append(soc).append("；平台 ").append(prop("ro.board.platform")).append("；GPU 驱动 vulkan=").append(prop("ro.hardware.vulkan")).append(" egl=").append(prop("ro.hardware.egl")).append("\n");
+        b.append("ABI：").append(String.join(", ", android.os.Build.SUPPORTED_ABIS)).append("\n");
+        try { ActivityManager am = (ActivityManager) c.getSystemService(Context.ACTIVITY_SERVICE); ActivityManager.MemoryInfo mi = new ActivityManager.MemoryInfo(); am.getMemoryInfo(mi);
+              b.append(String.format(Locale.ROOT, "内存：共 %.1f GB，可用 %.1f GB\n", mi.totalMem / 1073741824.0, mi.availMem / 1073741824.0)); } catch (RuntimeException ignored) {}
+        b.append(String.format(Locale.ROOT, "剩余空间：内部存储 %.1f GB，共享存储 %.1f GB\n", freeGb(internal), freeGb(shared)));
+        b.append("产物代号：").append(product != null ? product : BuildConfig.DM_PRODUCT).append("\n");
+        return b.toString();
+    }
+    private static double freeGb(File f) { try { return new android.os.StatFs(f.getPath()).getAvailableBytes() / 1073741824.0; } catch (RuntimeException e) { return -1; } }
+    private static String prop(String key) {   // getprop 读系统属性（App 可读的公开属性；读不到写 ?） | read a system property with getprop (public properties an App may read; ? when unreadable)
+        try { Process p = new ProcessBuilder("getprop", key).redirectErrorStream(true).start();
+              try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) { String v = r.readLine(); p.waitFor(); return v == null || v.trim().isEmpty() ? "?" : v.trim(); } }
+        catch (IOException | InterruptedException e) { return "?"; }
+    }
+
+
+    // 生成进度画在加载页上（LoadPageView，核心 dm/host/dm_loadpage.c）：七个阶段与 PackGenerator.Step 一一对应（收尾那步记作「安装」），着色器那步按已生成的
+    // .xgs 个数报几成与「第 N / M 个」，其余步骤只报阶段（剩余时间由核心按权重外推）。失败时加载页记失败，但仍换成文字页把完整原因（含 gen_log 位置）给玩家看。
+    // Generation progress is drawn on the loading page (LoadPageView, core dm/host/dm_loadpage.c): seven stages one-to-one with PackGenerator.Step (the closing step counts
+    // as "install"); the shader step reports its fraction and "N / M" from the .xgs files made so far, the other steps only their stage (the core extrapolates the time
+    // left from the weights). On failure the loading page records it, but the screen switches to the text page so the player gets the full reason (with the gen_log location).
+    static final int[] GEN_STAGES = {LoadPageView.PREPARE, LoadPageView.PATCH, LoadPageView.ASSETS, LoadPageView.OVERLAY, LoadPageView.PACKS, LoadPageView.SHADERS, LoadPageView.INSTALL};
+    private final Runnable genPoll = new Runnable() {
+        @Override public void run() {
+            if (isDestroyed()) return;   // 已销毁的实例不再处理完成 / 失败，也不再投递（外审 EXT6-05） | a destroyed instance no longer handles finish / failure nor reposts (external review EXT6-05)
+            if (genFailure != null) { LoadPageView.fail(genFailTitle != null ? genFailTitle : genFailure); showGenFailure(); return; }
+            if (!generating) { LoadPageView.finish(); if (resumed) startHost(); return; }
+            PackGenerator.State s = genState;
+            if (s.step == PackGenerator.Step.SHADERS && s.shaderDir != null) s.shadersMade = PackGenerator.count(new File(s.shaderDir), ".xgs");
+            if (s.step == PackGenerator.Step.SHADERS) LoadPageView.set(PackGenerator.loadStage(s.step), Math.min(1.0, (double) s.shadersMade / PackGenerator.SHADERS), s.shadersMade, PackGenerator.SHADERS, 0, 0);
+            else LoadPageView.set(PackGenerator.loadStage(s.step), 0, 0, 0, 0, 0);
+            genHandler.postDelayed(this, 500);
+        }
+    };
+
+    // base = Download/S2X/D2R Mobile（玩家放 ExeFS 与 data 的地方），runtime = files/dm | base = Download/S2X/D2R Mobile (where the player puts ExeFS and data), runtime = files/dm
+    private void generate(File base, File runtime) {
+        genHandler.removeCallbacks(genPoll);
+        if (genFailure != null) { showGenFailure(); return; }
+        showLoadPage();   // 阶段状态在原生侧（静态），Activity 重建时只换一个新视图接上 | stage state lives natively (static); a recreated Activity just attaches a new view
+        if (generating) { genHandler.post(genPoll); return; }   // Activity 重建：生成线程还在跑，只接回界面 | the Activity was recreated: the generation thread is still running; only reattach the screen
+        // 资源目录与 startHost 同一条规则（缺省 data，没有就沿用早先的 Download/data） | resource directory by the same rule as startHost (data by default, else the earlier Download/data)
+        File data = new File(base, "data"), earlier = new File(base.getParentFile().getParentFile(), "data");
+        if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
+        java.util.List<String> missing = PackGenerator.missingInputs(base);
+        if (data != new File(base, "data") && new File(data, "build_manifest.psv").isFile()) missing.remove("data/build_manifest.psv");
+        if (!missing.isEmpty()) { failEarly(base, data, getString(R.string.dmAndroidGenFailFiles), getString(R.string.dmAndroidGenNeedFiles, String.join(", ", missing)), "缺 " + String.join("、", missing)); return; }
+        File gen = new File(getFilesDir(), "dmgen");
+        long free = new android.os.StatFs(getFilesDir().getPath()).getAvailableBytes() + treeBytes(new File(gen, "root"));
+        // 调试包演练「空间不足」（缺陷台账 B026 先红后绿）：am start … --el dmTestFreeBytes <字节> 当作剩余空间；正式包不认 | debug builds rehearse "out of space"
+        // (defect ledger B026 red-then-green): am start ... --el dmTestFreeBytes <bytes> is taken as the free space; release builds ignore it
+        if (BuildConfig.DEBUG && getIntent().hasExtra("dmTestFreeBytes")) free = getIntent().getLongExtra("dmTestFreeBytes", free);
+        if (free < PackGenerator.SPACE_NEEDED) { String f = android.text.format.Formatter.formatShortFileSize(this, free);
+            failEarly(base, data, getString(R.string.dmAndroidGenFailSpace), getString(R.string.dmAndroidGenNoSpace, f), String.format(Locale.ROOT, "剩余空间 %s，生成需要约 %d GB（缓存 + 中间产物 + 成品）", f, PackGenerator.SPACE_NEEDED >> 30)); return; }
+        generating = true; genState.reset(); genLogText = null; genFailTitle = null; genStartMs = System.currentTimeMillis() - 2000;
+        LoadPageView.begin(GEN_STAGES, PackGenerator.LOAD_WEIGHTS_MS); genHandler.post(genPoll);
+        final File dataDir = data; final String nativeDir = getApplicationInfo().nativeLibraryDir;
+        final String appHome = getFilesDir().getParent(), apkDir = new File(nativeDir).getParentFile().getParent(), appId = getPackageName();   // gen_log.txt 脱敏用 | for scrubbing gen_log.txt
+        final android.content.res.AssetManager assets = getAssets(); final android.content.Context app = getApplicationContext();
+        final int jobs = Math.max(1, Runtime.getRuntime().availableProcessors());
+        new Thread(() -> {
+            String failure = null, title = null; java.util.Deque<String> tail = PackGenerator.newTail(); File log = new File(gen, "gen.log");
+            try {
+                unpackIfChanged(assets, "dmgen/runtime.zip", "dmgen/runtime.txt", new File(gen, "rt"));
+                unpackIfChanged(assets, "dmgen/src.zip", "dmgen/src.sha256", new File(gen, "src"));
+                File queries = new File(gen, "queries"); PackGenerator.deleteTree(queries); queries.mkdirs();
+                for (String q : assets.list("dmgen/queries")) try (InputStream in = assets.open("dmgen/queries/" + q)) { Files.copy(in, new File(queries, q).toPath()); }
+                // 开源楷体（有就带，见 PackGenerator.environment）：字体、OFL 许可证、font.txt | the bundled open-licence Kai font when present (see PackGenerator.environment): font, OFL licence, font.txt
+                File font = new File(gen, "font"); PackGenerator.deleteTree(font); String[] fonts = assets.list("dmgen/font");
+                if (fonts != null && fonts.length > 0) { font.mkdirs(); for (String q : fonts) try (InputStream in = assets.open("dmgen/font/" + q)) { Files.copy(in, new File(font, q).toPath()); } }
+                // 脚本要的目录形状：<游戏>/ExeFS、<游戏>/RomFS/data，用符号链接指到玩家放的地方（只读，清理时不跟链接） | the layout the script wants: <game>/ExeFS, <game>/RomFS/data, as symlinks to where the player put them (read only; cleaning never follows links)
+                File game = new File(gen, "game"); PackGenerator.deleteTree(game); new File(game, "RomFS").mkdirs();
+                Os.symlink(new File(base, "ExeFS").getPath(), new File(game, "ExeFS").getPath());
+                linkData(dataDir, new File(game, "RomFS/data"));   // 逐个文件链接，不带点的 build.config 链成 .build.config（八审 P1-1） | per-file links; an undotted build.config is linked as .build.config
+                File out = new File(gen, "out"); PackGenerator.deleteTree(out);
+                int exit = PackGenerator.run(PackGenerator.command(new File(nativeDir), gen, game, out), PackGenerator.environment(new File(nativeDir), gen, jobs), new File(gen, "src"), log, genState, tail);
+                PackGenerator.Failure kind = PackGenerator.classify(exit, new java.util.ArrayList<>(tail), genState.failKind);
+                if (kind == PackGenerator.Failure.NONE) {
+                    PackGenerator.install(new File(out, "android"), runtime);
+                    for (String d : new String[]{"root", "out", "game"}) PackGenerator.deleteTree(new File(gen, d));   // 缓存与中间产物约 1 GB，做完就删 | caches and intermediates are about 1 GB; removed when done
+                } else {
+                    String[] tb = failureText(app, kind, exit, new java.util.ArrayList<>(tail), gen); title = tb[0]; failure = tb[1];
+                }
+            } catch (IOException | ErrnoException | InterruptedException | RuntimeException e) {
+                String m = e.getMessage() == null ? e.toString() : e.getMessage();
+                boolean space = m.contains("No space left") || m.contains("ENOSPC");
+                title = app.getString(space ? R.string.dmAndroidGenFailSpace : R.string.dmAndroidGenFailed);
+                failure = space ? app.getString(R.string.dmAndroidGenNoSpace, android.text.format.Formatter.formatShortFileSize(app, new android.os.StatFs(gen.getPath()).getAvailableBytes()))
+                        : app.getString(R.string.dmAndroidGenInterrupted, m);
+                tail.addLast("[java] " + e);
+            }
+            if (failure != null) {   // 日志放到玩家看得到的地方，反馈时附上；结论在第一屏（缺陷台账 B026） | put the log where the player can see it, to attach when reporting; the verdict on the first screen (defect ledger B026)
+                String output; try { output = log.isFile() ? new String(Files.readAllBytes(log.toPath()), StandardCharsets.UTF_8) : "（生成脚本没有输出）\n"; } catch (IOException e) { output = "（读不到 gen.log：" + e + "）\n"; }
+                for (String l : tail) if (l.startsWith("[java] ")) output += l + "\n";
+                String text = PackGenerator.scrubLog(PackGenerator.genLog(title, failure, genState.summary, envReport(app, getFilesDirStatic(app), base, genState.product),
+                        PackGenerator.listInputs(new File(base, "ExeFS"), dataDir), output), apkDir, appHome, appId);
+                genLogText = text;
+                try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) { o.write(text.getBytes(StandardCharsets.UTF_8)); }   // 脱敏后再写（四审 A4-09）| scrubbed before writing (fourth audit A4-09)
+                catch (IOException ignored) {}
+            }
+            genFailTitle = title;
+            genFailure = failure;
+            generating = false;
+        }, "dm-generate").start();
+    }
+
+    // 生成器看到的 <游戏>/RomFS/data：玩家 data 里每个文件链一个同名链接（只读，清理时不跟链接）；只有不带点的 build.config 时链成 .build.config
+    // （电脑上常被存成无点名，运行时也认它，见 jni_android.c；生成器只读带点的，八审 P1-1）
+    // <game>/RomFS/data as the generator sees it: one link per file in the player's data (read only; cleaning never follows links); when there is only an undotted
+    // build.config it is linked as .build.config (often saved without the dot on a computer; the runtime accepts it too, see jni_android.c; the generator reads only the dotted name, eighth review P1-1)
+    private static void linkData(File data, File into) throws IOException, ErrnoException {
+        if (!into.mkdirs() && !into.isDirectory()) throw new IOException("mkdir " + into);
+        String[] names = data.list(); if (names == null) return;
+        boolean dotted = new File(data, ".build.config").isFile();
+        for (String n : names) {
+            String as = !dotted && n.equals("build.config") ? ".build.config" : n;
+            Os.symlink(new File(data, n).getPath(), new File(into, as).getPath());
+        }
+    }
+
+    private static String stepLabelFor(android.content.Context c, PackGenerator.Step step) {
+        int id;
+        switch (step) {
+            case PATCH: id = R.string.dmAndroidGenStepPatch; break;
+            case ASSETS: id = R.string.dmAndroidGenStepAssets; break;
+            case OVERLAY: id = R.string.dmAndroidGenStepOverlay; break;
+            case PACKS: id = R.string.dmAndroidGenStepPacks; break;
+            case SHADERS: id = R.string.dmAndroidGenStepShaders; break;
+            case FINISH: id = R.string.dmAndroidGenStepFinish; break;
+            default: id = R.string.dmAndroidGenStepPrepare;
+        }
+        return c.getString(id);
+    }
+
+    // 开始生成之前就停下（缺 main / sdk / build_manifest、空间不够）：同样写 gen_log（结论 + 环境 + 输入文件）并给「分享诊断日志」| stopped before generating (missing
+    // main / sdk / build_manifest, not enough space): write gen_log all the same (verdict + environment + input files) and offer "Share Diagnostics"
+    private void failEarly(File base, File data, String title, String reason, String why) {
+        genState.reset(); genState.summary.add(why); genStartMs = Long.MAX_VALUE;   // 没跑生成：不附任何步骤日志 | nothing was generated: no step logs attached
+        String nativeDir = getApplicationInfo().nativeLibraryDir;
+        String text = PackGenerator.scrubLog(PackGenerator.genLog(title, reason, genState.summary, envReport(this, getFilesDir(), base, null),
+                PackGenerator.listInputs(new File(base, "ExeFS"), data), "（没有开始生成）\n"), new File(nativeDir).getParentFile().getParent(), getFilesDir().getParent(), getPackageName());
+        try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) { o.write(text.getBytes(StandardCharsets.UTF_8)); } catch (IOException ignored) {}
+        genFailTitle = title; genFailure = reason; genLogText = text; showGenFailure();
+    }
+    private static File getFilesDirStatic(Context c) { return c.getFilesDir(); }
+
+    // 失败类别 → 标题与正文（玩家看得懂的说法 + 下一步，缺陷台账 B026）：文件问题列出生成器核出的那几句 | failure kind -> title and body (in players' words + the
+    // next step, defect ledger B026): for file problems, list the sentences the generator's check produced
+    private static String[] failureText(Context app, PackGenerator.Failure kind, int exit, java.util.List<String> tail, File gen) {
+        StringBuilder files = new StringBuilder();
+        synchronized (genState.summary) { for (String s : genState.summary) if (((s.startsWith("游戏文件核对：") && !s.contains("都在")) || s.contains("内容不对")) && !s.contains("不影响")) files.append(s.replace("游戏文件核对：", "")).append('\n'); }
+        switch (kind) {
+            case NEED_FILES: return new String[]{app.getString(R.string.dmAndroidGenFailFiles), app.getString(R.string.dmAndroidGenNeedFiles, PackGenerator.missingDetail(tail))};
+            case BAD_FILES: return new String[]{app.getString(R.string.dmAndroidGenFailFiles), files + app.getString(R.string.dmAndroidGenFailFilesNext)};
+            case VERSION: return new String[]{app.getString(R.string.dmAndroidGenFailVersion), files + app.getString(R.string.dmAndroidGenFailVersionNext)};
+            case NO_SPACE: return new String[]{app.getString(R.string.dmAndroidGenFailSpace), app.getString(R.string.dmAndroidGenNoSpace, android.text.format.Formatter.formatShortFileSize(app, new android.os.StatFs(gen.getPath()).getAvailableBytes()))};
+            case STEP_FAILED: return new String[]{app.getString(R.string.dmAndroidGenFailInternal), app.getString(R.string.dmAndroidGenFailInternalNext, stepLabelFor(app, genState.step))};
+            default: return new String[]{app.getString(R.string.dmAndroidGenFailed), app.getString(R.string.dmAndroidGenInterrupted, "exit " + exit)};
+        }
+    }
+
+    private static long treeBytes(File f) {
+        if (java.nio.file.Files.isSymbolicLink(f.toPath())) return 0;
+        if (!f.isDirectory()) return f.length();
+        long n = 0; File[] list = f.listFiles();
+        if (list != null) for (File c : list) n += treeBytes(c);
+        return n;
+    }
+
+    // 资产里的 zip 与它的版本记录：记录变了才重新解开（先解到 .part 再改名） | a zip in the assets and its version record: unpacked again only when the record changed (into .part, then renamed)
+    private static void unpackIfChanged(android.content.res.AssetManager assets, String zip, String stamp, File dest) throws IOException {
+        String want;
+        try (InputStream in = assets.open(stamp)) { want = new String(in.readAllBytes(), StandardCharsets.UTF_8); }
+        File mark = new File(dest, ".stamp");
+        if (want.equals(readText(mark))) return;
+        File part = new File(dest.getPath() + ".part");
+        PackGenerator.deleteTree(part); part.mkdirs();
+        try (InputStream in = assets.open(zip)) { PackGenerator.unzip(in, part); }
+        Files.write(new File(part, ".stamp").toPath(), want.getBytes(StandardCharsets.UTF_8));
+        PackGenerator.deleteTree(dest);
+        if (!part.renameTo(dest)) throw new IOException("rename " + dest.getName());
+    }
 
     private static void importPack(File source, File runtime, Progress progress) throws IOException {
         for (String item : IMPORT_ITEMS) if (!new File(source, item).exists()) throw new IOException("missing " + item);
@@ -163,12 +443,11 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         long sum = 0;
         for (String item : IMPORT_ITEMS) sum += treeSize(new File(source, item));
         final long total = sum;
-        long[] done = {0}; int[] shown = {-1};
+        long[] done = {0, 0};   // 已拷字节、上次回报时的字节 | bytes copied, bytes at the last report
         byte[] buffer = new byte[1 << 20];
         for (String item : IMPORT_ITEMS) copyTree(new File(source, item), new File(part, item), buffer, bytes -> {
             done[0] += bytes;
-            int p = (int) (done[0] * 100 / Math.max(1, total));
-            if (p != shown[0]) { shown[0] = p; progress.percent(p); }
+            if (done[0] - done[1] >= (4L << 20) || done[0] == total) { done[1] = done[0]; progress.bytes(done[0], total); }   // 每 4 MB 报一次（页面按字节算速度与剩余） | report every 4 MB (the page computes speed and ETA from bytes)
         });
         for (String item : IMPORT_ITEMS) {
             File from = new File(part, item), to = new File(runtime, item);
@@ -208,8 +487,64 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (f.exists() && !f.delete()) throw new IOException("delete " + f.getName());
     }
 
+    // 调试包：am start … --ez dmLoadPageDemo true 用模拟进度走一遍手机端生成的六个阶段（改写程序 → 整理资源 → 界面覆盖层 → 着色器打包 → 着色器缓存 N/6931 → 安装，缺省权重按奥丁实测 371 秒分；演示压缩到约 45 秒）；不起宿主，走完 3 秒后退出。
+    // 真实接线（并线后）：PackGenerator.State 的 step / shadersMade 逐步调 LoadPageView.set(阶段, 几成, 已做, 总数)，第二次启动不报这些阶段
+    // Debug builds: am start … --ez dmLoadPageDemo true runs the loading page through the six on-phone generation stages (patch → assets → overlay → packs → shaders N/6931 → install, default weights by the 371 s Thor measurement; compressed to about 45 s for the demo); the host is not started, the activity exits 3 s after the end.
+    // Real wiring (after the merge): PackGenerator.State's step / shadersMade call LoadPageView.set(stage, fraction, done, total) step by step; a second launch does not report these stages
+    private boolean loadPageDemo;
+    private boolean loadPageDemoRun() {
+        if (!BuildConfig.DEBUG || !getIntent().getBooleanExtra("dmLoadPageDemo", false)) return false;
+        if (loadPageDemo) return true; loadPageDemo = true;
+        showLoadPage();
+        LoadPageView.begin(new int[] {LoadPageView.PATCH, LoadPageView.ASSETS, LoadPageView.OVERLAY, LoadPageView.PACKS, LoadPageView.SHADERS, LoadPageView.INSTALL}, null);
+        new Thread(() -> {
+            try {
+                for (int st = 0; st < 4; st++) for (int i = 0; i <= 20; i++) { LoadPageView.set(st, i / 20.0, 0, 0, 0, 0); Thread.sleep(150); }   // 前四步各 3 秒 | the first four steps 3 s each
+                int sec = Math.max(5, getIntent().getIntExtra("dmLoadPageDemoSec", 30)), step = Math.max(1, 6931 / (sec * 10));   // --ei dmLoadPageDemoSec N：着色器那段走 N 秒（验页脚用） | shader stage lasts N s (for checking the footer)
+                for (int i = 0; i <= 6931; i += step) { LoadPageView.set(4, i / 6931.0, i, 6931, 0, 0); Thread.sleep(100); }                  // 着色器 6931 条，缺省约 30 秒 | 6931 shaders, about 30 s by default
+                for (int i = 0; i <= 10; i++) { LoadPageView.set(5, i / 10.0, 0, 0, 0, 0); Thread.sleep(200); }
+                LoadPageView.finish(); Thread.sleep(3000);
+            } catch (InterruptedException e) { /* 退出 | exiting */ }
+            runOnUiThread(this::finish);
+        }, "dm-loadpage-demo").start();
+        return true;
+    }
+
+    // 加载页（导入 / 首启生成 / 调试演示）：换上页面，同时（每个进程一次）在后台按「自己服务器 → GitHub raw」取一次清单给页脚的官方免费渠道（CommunityFetch）。
+    // 普通启动不走这里，不联网。调试包可用 am start … --es dmUpdateUrls "<地址…>" 换地址（验「只配 raw」「全失败」等）
+    // Loading page (import / first-launch generation / debug demo): put the page up and, once per process, fetch the manifest in the background from "own server → GitHub raw"
+    // for the footer's official free channels (CommunityFetch). A normal start never comes here and does not touch the network. Debug builds can swap the addresses with
+    // am start … --es dmUpdateUrls "<addresses…>" (to check "raw only", "all fail" and so on)
+    private LoadPageView loadPage;
+    private static boolean communityStarted;
+    static volatile String communityLast = "";
+    private void showLoadPage() { prompting = false; loadPage = new LoadPageView(this); setContentView(loadPage); startCommunityFetch(); }
+    // 首启要生成 / 导入时尽早开始取（权限提示页那一刻就开始，玩家去系统设置的几秒里清单通常已经回来，加载页一出来页脚就在）；
+    // 判据同 ensureImported：内部目录里还没有本版本的导入内容。普通启动不满足，不联网
+    // Start fetching as early as possible when the first launch will generate / import (already at the permission prompt: the manifest is usually back during the seconds
+    // the player spends in system settings, so the footer is there as soon as the loading page appears); same test as ensureImported: the internal directory has no content
+    // for this version yet. A normal start does not qualify and makes no network access
+    private void prefetchCommunity() {
+        if (communityStarted || libraryLoaded || started) return;
+        String have = readText(new File(getFilesDir(), "dm/pack_info.txt"));
+        if (!BuildConfig.DM_PRODUCT.equals(packProduct(have))) startCommunityFetch();
+    }
+    private void startCommunityFetch() {
+        if (communityStarted) return; communityStarted = true;
+        String cfg = BuildConfig.DEBUG && getIntent().getStringExtra("dmUpdateUrls") != null ? getIntent().getStringExtra("dmUpdateUrls") : BuildConfig.DM_UPDATE_URLS;
+        final java.util.List<String> urls = CommunityFetch.urls(cfg); final File cache = new File(getFilesDir(), "community_manifest.json");
+        final String ua = "D2RMobilePlus-Android/" + BuildConfig.VERSION_NAME;
+        new Thread(() -> {
+            try { new CommunityFetch(urls, cache, CommunityFetch.urlConnection(ua), LoadPageView::manifest, line -> { android.util.Log.i("dm", line); communityLast = line; }, Thread::sleep)
+                    .run((qq, gh, site, from) -> LoadPageView.community(qq, gh, site)); }
+            catch (InterruptedException | RuntimeException e) { android.util.Log.w("dm", "社区信息：拉取线程出错，不显示：" + e); }
+        }, "dm-community").start();
+    }
+
     private void startHost() {
         if (bootFailure != 0) { showBootFailure(); return; }
+        if (loadPageDemoRun()) return;
+        if (!started && !importing && resumed) prefetchCommunity();
         if (started || importing || !resumed || !ensureFileAccess()) return;
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         if (!libraryLoaded && !ensureImported(new File(downloads, "S2X/D2R Mobile/android"))) return;
@@ -253,8 +588,19 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         File data = new File(downloads, "S2X/D2R Mobile/data"), earlier = new File(downloads, "data");
         if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
         String src = data.getAbsolutePath();
-        int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag());
+        { File ext2 = getExternalFilesDir(null), internal2 = new File(getFilesDir(), "dm");   // 与上面 / jni_android.c 同一条运行目录规则 | same runtime-directory rule as above / jni_android.c
+          writeExitReasons(new File(internal2, "out/main.patched.bin").canRead() || ext2 == null ? internal2 : new File(ext2, "dm")); }   // 分享诊断日志附系统退出原因 | exit reasons for share diagnostics
+        // 本进程里加载页走过（导入 / 手机端生成）就把它的完成 / 失败行交给宿主写进 boot.log（分享诊断日志的「加载页：」摘要） | if the loading page ran in this process
+        // (import / on-phone generation), hand its finish / failure line to the host for boot.log (the 「加载页：」 share-diagnostics summary)
+        try { String lp = LoadPageView.lastLine(); if (lp != null && !lp.isEmpty()) Os.setenv("DM_LOADPAGE_LAST", lp, true); } catch (ErrnoException | UnsatisfiedLinkError ignored) {}
+        try { if (!communityLast.isEmpty()) Os.setenv("DM_COMMUNITY_LAST", communityLast, true); } catch (ErrnoException ignored) {}   // 社区信息拉取的最后一行，同上进 boot.log | the community fetch's last line, into boot.log likewise
+        int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
         if (result < 0) {
+            // 触屏资源缺失 / 与这版不配套（App 升级后覆盖层的输入变了）：带生成器的包把已生成内容标成过期、重启进程，重启后自动在加载页重新生成。
+            // 每个版本只自动重试一次，再不行才显示原提示（免得循环）
+            // Touch overlay missing / not matching this version (the overlay inputs changed with an app update): a package with the generator marks the generated content stale and restarts
+            // the process, which then regenerates it on the loading page. At most one automatic retry per version; after that the original message shows (no loop)
+            if ((result == -9 || result == -10) && regenerateAfterUpdate()) return;
             int resource = switch (result) {
                 case -2 -> R.string.dmAndroidMissingData;
                 case -3 -> R.string.dmAndroidMissingModules;
@@ -269,6 +615,21 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         started = true;
         touchOverlay.setInputEnabled(true);
         nativeFocus(3);
+        modeHandler.removeCallbacks(modePoll); modeHandler.post(modePoll);
+    }
+
+    private boolean regenerateAfterUpdate() {
+        File info = new File(getFilesDir(), "dm/pack_info.txt"); String have = readText(info);
+        android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE); long tried = sp.getLong("overlay_regen_for", 0);
+        if (have == null || !generatorAvailable() || tried == BuildConfig.VERSION_CODE) return false;
+        try { Files.write(info.toPath(), PackGenerator.markStale(have).getBytes(StandardCharsets.UTF_8)); }
+        catch (IOException e) { android.util.Log.w("dm", "触屏资源与这版不配套，标记过期失败：" + e); return false; }
+        sp.edit().putLong("overlay_regen_for", BuildConfig.VERSION_CODE).commit();
+        android.util.Log.i("dm", "触屏资源与这版 App 不配套（App 升级过）：已标记过期，重启后自动重新生成");
+        Intent i = getPackageManager().getLaunchIntentForPackage(getPackageName());
+        if (i != null) { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK); startActivity(i); }
+        finishAffinity(); Runtime.getRuntime().exit(0);   // 原生库已加载，生成要在加载之前做：换一个干净进程 | the native library is loaded and generation must run before that: start a clean process
+        return true;
     }
 
     private void showStartError(String message) {
@@ -384,16 +745,104 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     }
 
     private void updateRefresh() {
-        if (libraryLoaded) nativeRefresh(view.getDisplay() == null ? 0 : view.getDisplay().getRefreshRate());
+        if (!libraryLoaded) return;
+        android.view.Display d = view.getDisplay(); if (d == null) { nativeRefresh(0, 0); return; }
+        nativeRefresh(d.getRefreshRate(), maxRefresh(d));
     }
+    // 与当前模式同尺寸的最高刷新率（120 档要不要出现、生不生效）| the highest refresh rate among the modes with the current mode's size (whether the 120 stop appears and takes effect)
+    private static float maxRefresh(android.view.Display d) {
+        android.view.Display.Mode cur = d.getMode(); float best = d.getRefreshRate();
+        for (android.view.Display.Mode m : d.getSupportedModes()) if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight() && m.getRefreshRate() > best) best = m.getRefreshRate();
+        return best;
+    }
+    // 帧率档 120 时把窗口的首选显示模式切到同尺寸的最高刷新率（≥ 119 Hz）；其余档回系统默认（0）。每秒问一次宿主，变了才设（设置页「应用」后一秒内生效）
+    // With the 120 stop, switch the window's preferred display mode to the highest refresh rate of the same size (>= 119 Hz); the other stops go back to the system default (0).
+    // The host is asked once a second and the mode is set only on change (takes effect within a second of Apply on the settings page)
+    private int preferredModeId = -1;
+    private final android.os.Handler modeHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable modePoll = new Runnable() { @Override public void run() { applyPreferredMode(); modeHandler.postDelayed(this, 1000); } };
+    private void applyPreferredMode() {
+        if (!started || view.getDisplay() == null) return;
+        android.view.Display d = view.getDisplay(); int want = 0;
+        if (nativeFpsTarget() == 120) { android.view.Display.Mode cur = d.getMode(); float best = 0;
+            for (android.view.Display.Mode m : d.getSupportedModes()) if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight() && m.getRefreshRate() >= 119f && m.getRefreshRate() > best) { best = m.getRefreshRate(); want = m.getModeId(); } }
+        if (want == preferredModeId) return;
+        preferredModeId = want; WindowManager.LayoutParams lp = getWindow().getAttributes(); lp.preferredDisplayModeId = want; getWindow().setAttributes(lp);
+        android.util.Log.i("dm", "display mode: preferredDisplayModeId=" + want + " (fps target " + nativeFpsTarget() + ")");
+    }
+    // 实体手柄：按键与轴都先交原生（pad_android.c 判断来源与键位；手柄来源的 BACK 当 B 吃掉）；不归手柄的照常交给系统
+    // Physical controllers: keys and axes go native first (pad_android.c decides source and mapping; BACK from a controller counts as B and is swallowed); anything else goes to the system as usual
+    @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) {
+        // 首启生成 / 导入的加载页上吞掉返回与手柄 B（玩家按 B 习惯是「取消」，原来会把 App 切到后台、久了可能被系统清掉；离开仍可按 Home）
+        // On the first-launch generation / import loading page, swallow BACK and controller B (players press B to cancel; it used to send the App to the
+        // background, where the system may later clean it up; Home still leaves)
+        // 权限提示页：手柄 A / START 松开时打开系统设置（只有手柄的玩家） | permission prompt: controller A / START on release opens system settings (controller-only players)
+        if (!started && prompting && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_START)) {
+            if (e.getAction() == android.view.KeyEvent.ACTION_UP) openFileAccessSettings(); return true; }
+        // 加载页上的手柄（§2.7）：切到手柄模式；页脚显示时 A 键 = 复制群号 / 链接 | controller on the loading page (§2.7): switch to controller mode; with the footer shown, A = copy the number / link
+        if (!started && (generating || importing || loadPageDemo) && loadPage != null && loadPage.isAttachedToWindow() && loadPage.padKey(e)) return true;
+        if (!started && (generating || importing || loadPageDemo) && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) return true;
+        // 生成失败页（§2.7）：手柄 A 松开 = 分享诊断日志（触屏点按钮）| generation failure screen (§2.7): controller A on release = Share Diagnostics (touch taps the button)
+        if (!started && !generating && genFailure != null && genLogText != null && e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A) { if (e.getAction() == android.view.KeyEvent.ACTION_UP) shareGenLog(); return true; }
+        if (started && (e.getAction() == android.view.KeyEvent.ACTION_DOWN || e.getAction() == android.view.KeyEvent.ACTION_UP)) {
+            android.view.InputDevice d = e.getDevice(); int vendor = d != null ? d.getVendorId() : 0, product = d != null ? d.getProductId() : 0;
+            if (nativePadKey(e.getDeviceId(), vendor, product, e.getSource(), e.getKeyCode(), e.getAction() == android.view.KeyEvent.ACTION_DOWN)) return true;
+        }
+        return super.dispatchKeyEvent(e);
+    }
+    @Override public boolean dispatchGenericMotionEvent(android.view.MotionEvent e) {
+        if (started && (e.getSource() & android.view.InputDevice.SOURCE_JOYSTICK) == android.view.InputDevice.SOURCE_JOYSTICK && e.getAction() == android.view.MotionEvent.ACTION_MOVE) {
+            android.view.InputDevice d = e.getDevice(); int vendor = d != null ? d.getVendorId() : 0, product = d != null ? d.getProductId() : 0;
+            boolean zrz = d != null && d.getMotionRange(android.view.MotionEvent.AXIS_Z, e.getSource()) != null;   // 右摇杆：有 Z/RZ 用 Z/RZ，否则 RX/RY | right stick: Z/RZ when present, else RX/RY
+            float rx = e.getAxisValue(zrz ? android.view.MotionEvent.AXIS_Z : android.view.MotionEvent.AXIS_RX), ry = e.getAxisValue(zrz ? android.view.MotionEvent.AXIS_RZ : android.view.MotionEvent.AXIS_RY);
+            float lt = Math.max(e.getAxisValue(android.view.MotionEvent.AXIS_LTRIGGER), e.getAxisValue(android.view.MotionEvent.AXIS_BRAKE)), rt = Math.max(e.getAxisValue(android.view.MotionEvent.AXIS_RTRIGGER), e.getAxisValue(android.view.MotionEvent.AXIS_GAS));
+            if (nativePadMotion(e.getDeviceId(), vendor, product, e.getSource(), e.getAxisValue(android.view.MotionEvent.AXIS_X), e.getAxisValue(android.view.MotionEvent.AXIS_Y), rx, ry, lt, rt, e.getAxisValue(android.view.MotionEvent.AXIS_HAT_X), e.getAxisValue(android.view.MotionEvent.AXIS_HAT_Y))) return true;
+        }
+        return super.dispatchGenericMotionEvent(e);
+    }
+    @Override public void onInputDeviceAdded(int id) {}
+    @Override public void onInputDeviceRemoved(int id) { if (started) nativePadDrop(id); }
+    @Override public void onInputDeviceChanged(int id) {}
     @Override public void onDisplayAdded(int id) { updateRefresh(); }
     @Override public void onDisplayRemoved(int id) { updateRefresh(); }
     @Override public void onDisplayChanged(int id) { updateRefresh(); }
-    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
+    // 回到前台时生成失败的结论作废、重新判断：玩家可能刚补好游戏文件或腾出空间 | back in the foreground a generation failure is dropped and judged afresh: the player may have just added the game files or freed space
+    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); if (!generating && !genShareOpen) genFailure = null; genShareOpen = false; startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
     @Override protected void onPause() { resumed = false; if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
     @Override protected void onStart() { super.onStart(); if (started) nativeFocus(2); }
     @Override protected void onStop() { if (started) nativeFocus(1); com.xiaoboluo.d2r.widget.HeroWidgetProvider.requestUpdate(this); super.onStop(); }
-    @Override protected void onDestroy() { if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
+    // 崩溃围栏（闸 1）：内存告警记进运行标记；Activity 真正结束时让宿主优雅退出（清标记、_exit），进程不复用
+    // Crash fence (gate 1): memory warnings go into the running marker; when the Activity really finishes the host exits gracefully (marker cleared, _exit), the process is not reused
+    @Override public void onTrimMemory(int level) { super.onTrimMemory(level); if (started) nativeMemoryWarning(level); }
+    @Override public void onLowMemory() { super.onLowMemory(); if (started) nativeMemoryWarning(TRIM_MEMORY_RUNNING_CRITICAL); }
+    // 分享诊断日志（原生工作线程经 text_input_jni.c 调）：系统分享面板，文件经 DiagProvider 以临时读权限交出 | share diagnostics (called by the native worker through text_input_jni.c): system share sheet, the file handed over through DiagProvider with a temporary read grant
+    static void shareDiagnostics(String path, String title) {
+        DmActivity a = current.get(); if (a == null) { android.util.Log.w("dm", "share: no activity"); return; }
+        a.runOnUiThread(() -> {
+            File f = new File(path); Uri uri = DiagProvider.uriFor(a, f);
+            Intent send = new Intent(Intent.ACTION_SEND); send.setType("text/plain"); send.putExtra(Intent.EXTRA_STREAM, uri); send.putExtra(Intent.EXTRA_SUBJECT, f.getName());
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            try { a.startActivity(Intent.createChooser(send, title)); } catch (Exception e) { android.util.Log.w("dm", "share: " + e); }
+        });
+    }
+    // 系统记录的最近退出原因（Android 11+ ApplicationExitInfo，代替 iOS 的 .ips 崩溃日志）：写到 files/dm/exit_reasons.txt，分享诊断日志附上；只读本 App 自己的记录
+    // The system's recent exit reasons (Android 11+ ApplicationExitInfo, in place of iOS's .ips crash logs): written to files/dm/exit_reasons.txt and attached to share diagnostics; only this App's own records
+    private void writeExitReasons(File runtime) {
+        try {
+            ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE); StringBuilder b = new StringBuilder();
+            java.text.SimpleDateFormat df = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT);
+            for (ApplicationExitInfo e : am.getHistoricalProcessExitReasons(getPackageName(), 0, 5)) {
+                b.append("time=").append(df.format(new java.util.Date(e.getTimestamp()))).append(" reason=").append(e.getReason()).append(" status=").append(e.getStatus())
+                 .append(" importance=").append(e.getImportance()).append(" pss_kb=").append(e.getPss()).append(" rss_kb=").append(e.getRss()).append(" desc=").append(e.getDescription()).append('\n');
+            }
+            try (FileOutputStream out = new FileOutputStream(new File(runtime, "exit_reasons.txt"))) { out.write(b.toString().getBytes(StandardCharsets.UTF_8)); }
+        } catch (Throwable t) { android.util.Log.w("dm", "exit reasons: " + t); }
+    }
+    @Override protected void onDestroy() {
+        genHandler.removeCallbacks(genPoll);   // 生成轮询跟着这个 Activity 走：重建后由新实例接回（generate），旧实例不再投递（外审 EXT6-05） | the generation poll belongs to this Activity: a recreated one takes over (generate), the old one stops posting (external review EXT6-05)
+        modeHandler.removeCallbacks(modePoll);
+        if (started && isFinishing()) nativeShutdown();   /* 不返回：宿主 _exit(0) | does not return: the host _exit(0)s */
+        if (displays != null) displays.unregisterDisplayListener(this); { android.hardware.input.InputManager im = getSystemService(android.hardware.input.InputManager.class); if (im != null) im.unregisterInputDeviceListener(this); } if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
     @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) immersive(); else releaseTouches(); }
 
     @Override public void surfaceCreated(SurfaceHolder h) {}

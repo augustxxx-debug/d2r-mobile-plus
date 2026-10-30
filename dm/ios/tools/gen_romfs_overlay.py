@@ -136,6 +136,7 @@ with tempfile.TemporaryDirectory() as t:
     PR.update(touch_layout.build_ingame(romfs,tpad,touch_layout.PAD_VENDOR,present=False)[0])   # 手柄版商人页：刷新货架钮 | Controller layout vendor page: the refresh shop stock button
     lp,lt=touch_layout.read_layout(romfs,'controller/console/mainmenupanelhd.json'); o=os.path.join(tpad,'pad_mainmenu.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_info_sizes(touch_layout.pad_legend_size(touch_layout.pad_mainmenu(lt)))); PR[lp.lower()]=o   # 手柄版主菜单：构建号与新版本提示、底部提示条与角色信息框字号 | Controller layout main menu: build number and new version notice, bottom legend and info box sizes
     lp,lt=touch_layout.read_layout(romfs,'controller/console/mainmenubuttonribbonhd.json'); o=os.path.join(tpad,'pad_ribbon.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_ribbon(lt, movies=os.environ.get('MOVIE_FFMPEG')=='1')); PR[lp.lower()]=o   # 手柄版主菜单按钮栏；不解码过场时拿掉「电影动画」
+    lp,lt=touch_layout.read_layout(romfs,'controller/hudpanelhd.json'); o=os.path.join(tpad,'pad_hud.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_hud(lt)); PR[lp.lower()]=o   # 手柄版底栏：腰带下的十字键提示上提（B030） | Controller bottom bar: raise the D-pad hints under the belt (B030)
     lp,lt=touch_layout.read_layout(romfs,'controller/hudmonsterhealthhd.json'); o=os.path.join(tpad,'pad_bosspct.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_boss_pct(lt)); PR[lp.lower()]=o   # 手柄版怪物血条：加百分比 | Controller layout monster health bar: add the percentage
     lp,lt=touch_layout.read_layout(romfs,'controller/console/characteroptionspanelhd.json'); o=os.path.join(tpad,'pad_charopt.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_bliss(lt)); PR[lp.lower()]=o   # 手柄版建角模式页：加「极乐世界」一行 | Controller-version character-creation mode page: add the "Elysium" row
     for rel,fn in (('controller/console/settingspanelhd.json',touch_layout.pad_settings),('controller/console/videooptionspanelhd.json',touch_layout.pad_custom_page)):   # 手柄版选项页：「视频」页签换成「自定义」页 | Controller options page: the "Video" tab is replaced by the "Custom" page
@@ -221,7 +222,7 @@ with tempfile.TemporaryDirectory() as t:
     # 手柄专用清单：手柄模式下不是原版字节的布局就这几份，一份不许多、一份不许少（改上面某一行时把相邻一行整行替掉过，商人页的刷新钮就从包里掉了）
     # Controller-only list: these are the only layouts that are not original bytes in controller mode, not one more and not one fewer (once, when a line above was edited, the adjacent line was replaced whole, and the vendor page's refresh button dropped out of the package)
     PAD_PAGES=('controller/bankexpansionlayouthd.json','controller/console/charactercreatepanelhd.json','controller/console/characteroptionspanelhd.json','controller/console/characterselectpanelhd.json','controller/console/loadscreenpanelhd.json','controller/console/mainmenubuttonribbonhd.json','controller/console/mainmenupanelhd.json','controller/console/settingspanelhd.json','controller/console/switch/playerinventoryexpansionlayouthd.json','controller/console/videooptionspanelhd.json',
-               'controller/controlleroverlayhd.json','controller/hirelinginventorypanelhd.json','controller/hudmonsterhealthhd.json','controller/messagelogpanelhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json','controller/vendorpanellayouthd.json')
+               'controller/controlleroverlayhd.json','controller/hirelinginventorypanelhd.json','controller/hudmonsterhealthhd.json','controller/hudpanelhd.json','controller/messagelogpanelhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json','controller/vendorpanellayouthd.json')
     PAD_PAGES=PAD_PAGES+notification_layout.MODAL_CONTROLLER_PAGES
     if sorted(k[len(LAY):] for k in PADLAY)!=sorted(PAD_PAGES): raise SystemExit('gen_romfs_overlay：手柄专用布局与清单 PAD_PAGES 不一致：多 %s，少 %s' % (sorted(set(k[len(LAY):] for k in PADLAY)-set(PAD_PAGES)), sorted(set(PAD_PAGES)-set(k[len(LAY):] for k in PADLAY))))
     def emit(repl, dst, tag, prebuilt=None):   # repl → 覆盖层（新 .build.config + 一个新数据档）写到 dst/data | repl → overlay (a new .build.config + one new data archive) written to dst/data
@@ -262,7 +263,14 @@ with tempfile.TemporaryDirectory() as t:
                     repl[key]=output
         with open(os.path.join(t,tag+'repl.tsv'),'w') as f:
             for k,v in repl.items(): f.write(f'{"" if k in MAN else "+"}{k}\t{os.path.join(t,v)}\n')   # 新增路径前加「+」（casc_overlay.py） | New paths are prefixed with "+" (casc_overlay.py)
-        subprocess.run(gen_assets.python_command(os.path.join(HERE,'..','..','tools','casc_overlay.py'),romfs,os.path.join(t,tag+'ov'),os.path.join(t,tag+'repl.tsv'),'--thin')+(['--prebuilt',prebuilt] if prebuilt else []),check=True,stdout=subprocess.DEVNULL)
+        # 写覆盖层：成功时它的输出不要（很长）；失败时原样转到本进程的 stderr 再以「[x] …」退出，里层的回溯与报错跟着进生成日志（以前 stdout 丢掉、只剩外层
+        # CalledProcessError，缺陷台账 B026）
+        # Write the overlay: its output is dropped on success (it is long); on failure it is passed through to this process's stderr unchanged and we exit with "[x] ...",
+        # so the inner traceback and error reach the generation log (previously stdout was dropped and only the outer CalledProcessError was left, defect ledger B026)
+        cp=subprocess.run(gen_assets.python_command(os.path.join(HERE,'..','..','tools','casc_overlay.py'),romfs,os.path.join(t,tag+'ov'),os.path.join(t,tag+'repl.tsv'),'--thin')+(['--prebuilt',prebuilt] if prebuilt else []),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        if cp.returncode:
+            sys.stderr.write(cp.stdout.decode('utf-8','replace')); sys.stderr.flush()
+            raise SystemExit('[x] 写覆盖层（casc_overlay.py）退出码 %d，它的输出见上' % cp.returncode)
         src=os.path.join(t,tag+'ov','data'); new=[n for n in os.listdir(src) if n.endswith('.data') and not os.path.islink(os.path.join(src,n))]
         assert len(new)==1, new
         shutil.rmtree(dst,ignore_errors=True); os.makedirs(os.path.join(dst,'data'))
