@@ -37,8 +37,12 @@ static _Atomic int g_action;  // 按钮动作（界面消息 / 手柄键攒下�
 static void (*g_consent_cb)(int);   // 非空 = 提示框正显示「自动上报崩溃」确认页（只在游戏主线程读写） | non-NULL = the box shows the crash report consent page (game main thread only)
 static _Atomic uint64_t g_md_ev;    // 闸门攒给框的按下沿（A / X / B） | press edges collected for the box
 static _Atomic unsigned g_sw_touch, g_sw_key, g_leak; static _Atomic int g_after; static _Atomic unsigned g_after_n;
-int dm_diagup_modal(void) { return atomic_load(&g_show) != 0; }
-int dm_diagup_hit_answer(void) { return atomic_load(&g_show) ? 0 : -1; }
+// 统计告知框（dm_telebox.c）与这个框同一类弹窗：吞触屏的各处（dm_cursor.c、dm_custom.c）都问 dm_diagup_modal，这里一并答、一并转发；不带它的单测用弱定义 | the statistics notice is the same kind of modal: every place that swallows touch asks dm_diagup_modal, answered and forwarded here; weak for unit tests without it
+__attribute__((weak)) int dm_telebox_modal(void) { return 0; }
+__attribute__((weak)) void dm_telebox_ui_tap(uint64_t root, int x, int y) { (void)root; (void)x; (void)y; }
+int dm_diagup_own_modal(void) { return atomic_load(&g_show) != 0; }
+int dm_diagup_modal(void) { return atomic_load(&g_show) != 0 || dm_telebox_modal(); }
+int dm_diagup_hit_answer(void) { return dm_diagup_modal() ? 0 : -1; }
 static int stick_off(int32_t v) { return v > -8000 && v < 8000; }
 // 手柄闸门（hle_hid.c 取手柄处最后调，做法同 dm_community_input_gate）：开着时键与两根摇杆全清零、按下沿留给框；关掉后这些键全松开、摇杆回到 1/4 以内之前也不交给游戏 | controller gate (last at the controller poll, as dm_community_input_gate): while up everything is zeroed and press edges go to the box; after it closes nothing reaches the game until keys are released and sticks are back inside a quarter
 void dm_diagup_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
@@ -262,6 +266,7 @@ static uint64_t du_host(uint64_t root, int *which) {   // 确认页在自定义�
 }
 // 触屏抬起（dm_cursor.c 鼠标泵交来，弹窗开着时）：用控件自己的命中判断，只认露出来的按钮，其余吞掉（同 dm_community_ui_tap） | touch lift while the box is up: the widgets' own hit test, only shown buttons, the rest swallowed
 void dm_diagup_ui_tap(uint64_t root, int x, int y) {
+    if (dm_telebox_modal()) { dm_telebox_ui_tap(root, x, y); return; }
     atomic_fetch_add(&g_sw_touch, 1);
     uint64_t p = du_host(root, NULL); if (!p || atomic_load(&g_show) != 2) return;
     uint64_t xy = (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)y << 32;

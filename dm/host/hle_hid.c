@@ -382,6 +382,8 @@ __attribute__((weak)) void dm_community_input_gate(uint64_t *bt, int32_t *lx, in
 __attribute__((weak)) void dm_community_input_leak(int leaked) { (void)leaked; }
 __attribute__((weak)) void dm_diagup_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) { (void)bt; (void)lx; (void)ly; (void)rx; (void)ry; }   // 上传诊断 / 自动上报确认框的同款闸门（dm_diagup.c） | the same gate for the diagnostic upload / crash report consent box
 __attribute__((weak)) void dm_diagup_input_leak(int leaked) { (void)leaked; }
+__attribute__((weak)) void dm_telebox_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) { (void)bt; (void)lx; (void)ly; (void)rx; (void)ry; }   // 统计告知框（dm_telebox.c） | the statistics notice
+__attribute__((weak)) void dm_telebox_input_leak(int leaked) { (void)leaked; }
 static void fill(NpadState *s, uint32_t id, uint32_t style) {
     pthread_once(&g_receipt_once, receipt_init);
     DM_PROF(0, "taps", ui_taps_step());
@@ -392,6 +394,8 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     { void dm_savemgr_pump(void); dm_savemgr_pump(); }   // 存档管理：入口显隐与面板（dm_savemgr.c）| save management: entries and the panel
     { void dm_community_pump(void); dm_community_pump(); }   // 社区入口：入口显隐与游戏内提示框（dm_community.c） | community entry: entry show / hide and the in-game notice box (dm_community.c)   // 崩溃围栏的主菜单游戏内提示框（dm_crashfence.c） | the crash fence's in-game notice box on the main menu       // 选角页的构建号与新版本提示（dm_update.c） | build number and new-version notice on the character select page (dm_update.c)
     { void dm_crashreport_pump(void); dm_crashreport_pump(); }   // 自动上报崩溃：启动判定、后台尝试的结果、重试（dm_crashreport.c） | automatic crash reports: launch decision, results of background attempts, retries
+    { void dm_telemetry_pump(void); dm_telemetry_pump(); }   // 设备与使用统计：队列与闲时发送（dm_telemetry.c） | device and usage statistics: queue and idle sending
+    { void dm_telebox_pump(void); dm_telebox_pump(); }       // 统计告知框（dm_telebox.c） | the statistics notice
     { void dm_diagup_pump(void); dm_diagup_pump(); }   // 上传诊断报告：结果、看门狗与游戏内提示框（dm_diagup.c） | diagnostic upload: results, watchdog and the in-game box (dm_diagup.c)   // 社区入口：入口显隐与游戏内提示框（dm_community.c） | community entry: entry show / hide and the in-game notice box (dm_community.c)   // 崩溃围栏的主菜单游戏内提示框（dm_crashfence.c） | the crash fence's in-game notice box on the main menu       // 选角页的构建号与新版本提示（dm_update.c） | build number and new-version notice on the character select page (dm_update.c)
     { void dm_actions_pump(void); DM_PROF(0, "actions", dm_actions_pump()); }     // 商人买卖 / 加点入口与读数（dm_actions.c） | vendor buy/sell / stat point entry and readout (dm_actions.c)
     { void dm_world_pump(void); DM_PROF(0, "world", dm_world_pump()); }   // 点世界目标 = 交互（dm_world.c） | tapping a world target = interact (dm_world.c)
@@ -445,6 +449,8 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
       dm_community_input_gate(&s->buttons, &s->lx, &s->ly, &s->rx, &s->ry); dm_community_input_leak(s->buttons || s->lx || s->ly || s->rx || s->ry); }
     { void dm_diagup_input_gate(uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *), dm_diagup_input_leak(int);
       dm_diagup_input_gate(&s->buttons, &s->lx, &s->ly, &s->rx, &s->ry); dm_diagup_input_leak(s->buttons || s->lx || s->ly || s->rx || s->ry); }
+    { void dm_telebox_input_gate(uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *), dm_telebox_input_leak(int);
+      dm_telebox_input_gate(&s->buttons, &s->lx, &s->ly, &s->rx, &s->ry); dm_telebox_input_leak(s->buttons || s->lx || s->ly || s->rx || s->ry); }
     s->attributes = ATTR_CONNECTED;
     atomic_store_explicit(&g_sampled_right,(uint32_t)s->rx|((uint64_t)(uint32_t)s->ry<<32),memory_order_release);
     receipt(s, id, style, km, read_start_ns);

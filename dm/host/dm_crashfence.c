@@ -249,6 +249,8 @@ void dm_crashfence_ui_tap(uint64_t root, int x, int y) {
     for (int k = 0; ok && k < 3; k++) if (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)ok + 0x48))(ok, (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)(y + dy[k]) << 32) & 1) { atomic_store(&g_ack, 1); return; }
     LOG("崩溃围栏：提示框开着时点按 (%d,%d) → 没点在「确定」上，吞掉", x, y);
 }
+// 统计告知框（dm_telebox.c）等它收起：要提示（g_show = 1）和显示着都算；dm_crashfence_modal 只算真显示着（输入闸门用，B083） | the statistics notice waits for it: pending (g_show = 1) and shown both count; dm_crashfence_modal counts only really shown (for the input gate, B083)
+int dm_crashfence_busy(void) { return atomic_load(&g_show) != 0; }
 void dm_crashfence_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
     int st = atomic_load(&g_show); if (!st) { atomic_store(&g_modal, 0); atomic_store(&g_focus, 0); return; }
     // 控件挂在哪：触屏版在主菜单面板下；手柄版在左侧按钮栏面板 MainMenuButtonRibbon 下（它画在主菜单之上，提示框才能盖住按钮栏、整屏居中：touch_layout._safe_into）

@@ -285,12 +285,12 @@ _FE_ROWS = _fe_btn('TouchCommunityFe', 1175, '@dmCommunityFe', 'PanelManager:Clo
 def pad_ribbon(s, movies=False):   # 手柄版主菜单左侧按钮栏 = 原版布局 + 一行 + 崩溃围栏 / 社区两个框。编进过场解码（MOVIE_FFMPEG=1）的包保留原版「电影动画」、列已满不加这一行，框照放
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
     if movies:
-        return s[:i].rstrip(' ') + _SAFE_PAD + _COMM + '    ' + s[i:]
+        return s[:i].rstrip(' ') + _SAFE_PAD + _COMM + _TELE + '    ' + s[i:]
     s = _sub1(s, '"rect": { "x": 164, "y": 1175 },', '"rect": { "x": 99999, "y": 99999 },')   # 电影动画挪走，那一格给「加入社区讨论」 | Cinematics away, its slot goes to Join
     s = _sub1(s, '"down": { "name": "Cinematics" }', '"down": { "name": "TouchCommunityFe" }')
     s = _sub1(s, '"up": { "name": "Cinematics" }', '"up": { "name": "TouchCommunityFe" }')
     i = s.rstrip().rfind(']')
-    return s[:i].rstrip(' ') + _FE_ROWS + _SAFE_PAD + _COMM + '    ' + s[i:]
+    return s[:i].rstrip(' ') + _FE_ROWS + _SAFE_PAD + _COMM + _TELE + '    ' + s[i:]
 def pad_mainmenu(s):   # 手柄版主菜单 = 原版布局原样 + 上面这组控件（加在根 children 末尾） | Controller layout main menu = the original layout as is + the group of widgets above (appended at the end of the root children)
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
     return s[:i].rstrip(' ') + _UPDATE_PAD + '    ' + s[i:]
@@ -412,6 +412,18 @@ def _diagbox():
                        ('TouchDiagCopy', '@dmDiagCopy'), ('TouchDiagCancel', '@dmDiagCancel'), ('TouchDiagClose', '@dmDiagClose'), ('TouchDiagEnable', '@dmAutoCrashEnable'))))
 _DIAG = _diagbox()
 assert len(re.findall(r'"name": "TouchDiag\w+"', _DIAG)) == 26   # 边框 15 片、标题、三行字、七颗按钮（第七颗「开启」只在自动上报确认页露出） | 15 tiles, title, three lines, seven buttons (the seventh, Enable, only on the crash report consent page)
+# 设备与使用统计的告知框 v1（dm/host/dm_telebox.c）：同一套做法，自己一套切片 Ztouch_tele；标题 48 + 正文十行 36（靠左）+ 副文 28 + 按键说明 28（手柄模式才有字）+ 两颗原版前端按钮。全部屏外起步、字空着、不带锚点，挂在主菜单两种面板末尾（画在最上层）；只首次到主菜单弹一次
+# Notice v1 of the device and usage statistics (dm/host/dm_telebox.c): same approach, its own slices Ztouch_tele; title 48 + ten body lines 36 (left aligned) + secondary 28 + key legend 28 (text only in controller mode) + two original front-end buttons. All start off screen, empty, unanchored, at the end of both main-menu panels (drawn topmost); shown once on first reaching the main menu
+def _telebox():
+    return (''.join('        { "type": "ImageWidget", "name": "TouchTeleTile%d%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 52, "height": 24 }, "filename": "Ztouch_tele/tile%d%d" } },\n' % (r, c, r, c) for r in range(5) for c in range(3))
+            + _co_text('TouchTeleTitle', 48, '$FontColorGoldYellow', width=2580)
+            + ''.join(_co_text('TouchTeleDesc%d' % k, 36, '$FontColorLightGold', align='left', width=2580) for k in range(10))
+            + _co_text('TouchTeleDesc10', 28, '$FontColorLightGray', width=2580)
+            + _co_text('TouchTeleDesc11', 28, '$FontColorLightGray', width=2580)
+            + ''.join(_btn(n, 99999, t, 'PanelManager:ClosePanel:' + n, x=99999, anchor=False) for n, t in (('TouchTeleAgree', '@dmTeleAgree'), ('TouchTeleDecline', '@dmTeleDecline'))))
+_TELE = _telebox()
+_TELE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchTele\w+)"', _TELE))
+assert _TELE_STUB.count('\n') == 30   # 边框 15 片、标题、正文十行、副文、按键说明、两颗按钮 | 15 tiles, title, ten body lines, secondary, key legend, two buttons
 _COMM_ROW = (('TouchCommunity', '@dmCommunityJoin', 1028),)   # 暂停菜单「加入社区讨论」行（借「保存并退出」按钮的图和字，消息空操作，宿主当信号收）；没有可显示的值时宿主把它挪出屏幕 | the pause menu's "Join the community" row (Save-and-Exit's image and font, a no-op message the host takes as a signal); without a value the host moves it off screen
 _SAFE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchSafe\w+)"', _SAFE))
 assert _SAFE_STUB.count('\n') == 20   # 边框 15 片、标题、正文三行、确定 | 15 frame tiles, title, three body lines, OK
@@ -426,7 +438,7 @@ def _pc_mainmenu(s):
     i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
     px, py, row = _fe_touch_row(FE_TOUCH_ROW)
     if (px, py) != (-FE_PLAY_W // 2, FE_PLAY_Y): s = _sub1(s, '"rect": { "x": -303, "y": 1865 },', '"rect": { "x": %d, "y": %d },' % (px, py)); i = s.rstrip().rfind(']')
-    return (s[:i].rstrip(' ') + _UPDATE + _SAFE + row + _COMM + '    ' + s[i:], n + 3)
+    return (s[:i].rstrip(' ') + _UPDATE + _SAFE + row + _COMM + _TELE + '    ' + s[i:], n + 3)
 # 触屏首页的「加入社区讨论」（用户 2026-10-28 再定：主菜单只留这一行，开含「关于」段的社区框）。触屏首页没有左列（_pc_ribbon 整块删了），钮放在「进入游戏」旁边，三种版式：
 #   below      = 「进入游戏」正下方、居中，前端中号按钮（缺省；用户最新一条要求）
 #   row_right  = 同一行：「进入游戏」原位原大不动，右边一颗小一号（中号）的次级钮，底边对齐，间隔 FE_GAP
@@ -532,7 +544,7 @@ PCFRONT = {
 PCFRONT_PLAIN = ('mainmenubuttonribbonhd.json', 'mainmenulinkshd.json')
 # 触屏首页继承层要列出的子控件名：_pc_mainmenu 加的每一个都要列上（漏列的不建——社区入口那颗钮与提示框先前就漏了，触屏首页看不到钮、点了也找不到框）
 # Child names the touch front page's inheriting layer must list: every widget _pc_mainmenu adds (unlisted ones are not built -- the community button and box were missed before, so the touch front page showed no button and the box could not be found)
-_PCMAIN_STUB = _UPDATE_STUB + _SAFE_STUB + '        { "type": "ButtonWidget", "name": "TouchCommunityFe" },\n' + _COMM_STUB
+_PCMAIN_STUB = _UPDATE_STUB + _SAFE_STUB + '        { "type": "ButtonWidget", "name": "TouchCommunityFe" },\n' + _COMM_STUB + _TELE_STUB
 def build_pcfront(romfs, outdir):
     """键鼠版底层布局阉割后另放新目录 1touchbase_lay/<名>（原路径保持原版，手柄模式的原版页继承的是它）；手柄版（controller/console/<名>，生成器会搬进触屏目录）换成原包「键鼠界面 + 手柄焦点」那层（controller/<名>，继承键鼠版底层）——
     这样手柄键仍能在选角页上走（X 进选角页；冒烟与触屏脚本的进局键序用「X 进选角页 → LoadCharacter」）；那层里的键位提示控件照例挪走。
@@ -1454,7 +1466,7 @@ def _drop_rows(*rows):
 # leaves the native Game Settings destination intact. The host owns only our controls.
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
 # 平台限制：DM_TARGET=android（d2rm_android.py 传）不出 icloud 行（安卓没有 iCloud；宿主 dm_custom.c custom_row 同样跳过，行号对齐） | per-platform: DM_TARGET=android (passed by d2rm_android.py) omits the icloud row (no iCloud on Android; the host's dm_custom.c custom_row skips it too, so row numbers agree)
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes') + (() if os.environ.get('DM_TARGET') == 'android' else ('icloud',)) + ('pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above', 'free_tp', 'belt_refill', 'auto_crash')   # fps_hud 显示帧数已搬到图形页第二行（用户 2026-10-28）| fps_hud Show frame rate moved to Graphics row 2 (user 2026-10-28)
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes') + (() if os.environ.get('DM_TARGET') == 'android' else ('icloud',)) + ('pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above', 'free_tp', 'belt_refill', 'tel_stats', 'auto_crash')   # fps_hud 显示帧数已搬到图形页第二行（用户 2026-10-28）| fps_hud Show frame rate moved to Graphics row 2 (user 2026-10-28)
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines

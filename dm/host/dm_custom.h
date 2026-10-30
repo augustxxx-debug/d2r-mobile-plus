@@ -32,6 +32,10 @@ const char *dm_mem_model(void);
 int dm_custom_mem_notice_due(void);    // 内存 0 档、低内存提示还没确认过 | memory tier 0 and the low-memory notice not yet confirmed
 void dm_custom_mem_notice_done(void);  // 玩家点了确定：记进设置文件，以后不再提示 | the player tapped OK: saved, never shown again
 
+// 设备与使用统计（键 tel_stats，缺省关，dm_telemetry.c）与告知框 v1（dm_telebox.c）：tel_notice 记答过的版本；同意 = 两个开关都开，不同意 = 都关，当场存盘 | device and usage statistics (key tel_stats, off by default) and notice v1: tel_notice records the answered version; agree = both switches on, decline = both off, saved at once
+int dm_custom_tel_stats(void);    // 开着且答过告知框 | on and the notice answered
+int dm_custom_tel_notice(void);   // 答过的告知版本，0 = 没答过 | the answered notice version, 0 = none
+void dm_custom_tel_answer(int yes);
 int dm_custom_auto_crash(void);   // 自动上报崩溃：开着且同意过（dm_crashreport.c） | automatic crash reports: on and agreed
 int dm_custom_dir(char *p, size_t n);   // 设置文件所在目录（iOS Documents；Mac 存档已提交目录的上一级，没挂上时按 $DM_SAVE）；0 = 还不知道 | directory of the settings file (iOS Documents; on Mac the parent of the committed save directory, $DM_SAVE before mounting); 0 = not known yet
 int dm_custom_safe_mode(char *what, size_t n);   // 崩溃围栏：实验性功能全关并写回（120 帧 → 60、光追阴影、MetalFX）；返回改了几项 | crash fence: turn every experimental feature off and save (120 fps -> 60, ray-traced shadows, MetalFX); returns how many items changed
