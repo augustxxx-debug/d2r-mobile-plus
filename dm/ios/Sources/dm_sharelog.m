@@ -17,6 +17,9 @@
 #include <sys/sysctl.h>
 #include "../../host/dm_i18n.h"
 #include "../../host/dm_custom.h"
+#include "../../host/dm_diagup.h"
+#include "../../host/dm_crashreport.h"
+#import <Metal/Metal.h>
 #import "dm_diagnostic_scrub.h"
 #import "dm_diagnostic_read.h"
 #import "dm_crashlog.h"
@@ -39,16 +42,17 @@ static NSString *last_line(NSData *d, const char *key) {
 static void perf_block(NSMutableString *h, NSString *title, NSData *d) {
     [h appendFormat:@"\n—— %@ ——\n", title];
     if (!d) { [h appendString:@"（没有这份日志）\n"]; return; }
-    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "存档管理：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "超分档位：", "内存档位：", "内存档位预留：", "光追阴影：机器判定", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追阴影：局部回退 至第", "光追阴影：主光", "光追阴影：阴影图 第", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追质量：", "光追降分辨率：", "光追阴影：GPU", "自定义设置：读盘", "输入模式：", "社区入口：清单", "社区入口：已显示", "社区入口：复制", "Metal 抓帧层：", "光追内存：预算", "光追内存：第", "光追内存：告警", "内存 至帧", "【内存告警】", "游戏难度：", "线程同步：", "加载页：" };
+    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "存档管理：", "诊断上传：", "自动上报：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "超分档位：", "内存档位：", "内存档位预留：", "光追阴影：机器判定", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追阴影：局部回退 至第", "光追阴影：主光", "光追阴影：阴影图 第", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追质量：", "光追降分辨率：", "光追阴影：GPU", "自定义设置：读盘", "输入模式：", "社区入口：清单", "社区入口：已显示", "社区入口：复制", "Metal 抓帧层：", "光追内存：预算", "光追内存：第", "光追内存：告警", "内存 至帧", "【内存告警】", "游戏难度：", "线程同步：", "加载页：" };
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) { NSString *l = last_line(d, keys[i]); [h appendFormat:@"%@\n", l ?: [NSString stringWithFormat:@"（没有「%@」行）", @(keys[i])]]; }
 }
 // 日志里的路径会带系统用户主目录（Mac 上是 /Users/<用户名>，iPhone 上是 /var/mobile）：导出时一律换成 ~，不把用户名带出去
 // Paths in the log carry the system user's home directory (/Users/<username> on Mac, /var/mobile on iPhone): on export always replace it with ~ so the username does not leak out
 static NSDate *g_t0;   // 本次启动时刻（dm_sharelog_boot） | Time of this launch (dm_sharelog_boot)
-static NSURL *build_file(void) {
+// 打包整份（已脱敏）：导出用每份日志 2 MiB、崩溃日志 256 KiB；上传按服务端上限给更小的值（diag_collect）。原日志文件不动
+// Build the whole text (scrubbed): the export uses 2 MiB per log and 256 KiB of crash log; the upload passes smaller values from the server limit (diag_collect). Original log files are untouched
+static NSData *build_data(NSUInteger log_limit, NSUInteger crash_limit, NSUInteger *cur_len, NSData **prev_out) {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
-    const NSUInteger log_limit = 2 * 1024 * 1024;
     unsigned long long cur_omitted = 0, prev_omitted = 0;
     NSData *cur = dm_diagnostic_read_tail([doc stringByAppendingPathComponent:@"boot.txt"],log_limit,&cur_omitted);
     NSData *prev = dm_diagnostic_read_tail([doc stringByAppendingPathComponent:@"boot.previous.txt"],log_limit,&prev_omitted);
@@ -69,7 +73,7 @@ static NSURL *build_file(void) {
     [h appendFormat:@"温控档位 %ld 低电量模式 %@ 电量 %.0f%% %@\n", (long)pi.thermalState, pi.lowPowerModeEnabled ? @"开" : @"关", battery_level < 0 ? -1.0 : battery_level * 100, bs >= 0 && bs <= 3 ? bst[bs] : @"未知"];   // 中文一律走 %@：NSString 的 %s 不按 UTF-8 解 | Chinese always goes through %@: NSString's %s does not decode as UTF-8
     // 崩溃围栏：MetricKit 送来的最新一份系统崩溃诊断（main.m 存的 Documents/dm_crash_last.json），摘要一行、全文附在末尾 | crash fence: the newest system crash diagnostic delivered by MetricKit (Documents/dm_crash_last.json saved by main.m), one summary line, full text attached at the end
     NSString *crash_path = [doc stringByAppendingPathComponent:@"dm_crash_last.json"], *crash_sum = nil;
-    NSData *crash = dm_crashlog_section([fm fileExistsAtPath:crash_path] ? crash_path : nil, 256 * 1024, &crash_sum);
+    NSData *crash = dm_crashlog_section([fm fileExistsAtPath:crash_path] ? crash_path : nil, crash_limit, &crash_sum);
     [h appendFormat:@"%@\n", crash_sum];
     [h appendFormat:@"物理内存 %.1f GB 可用存储 %.1f GB 本次已运行 %.0f 分钟\n", pi.physicalMemory / 1073741824.0, [fsa[NSFileSystemFreeSize] doubleValue] / 1073741824.0, -g_t0.timeIntervalSinceNow / 60];
     mtl_metalfx_status graphics = {0}; mtl_metalfx_snapshot(&graphics);
@@ -86,7 +90,7 @@ static NSURL *build_file(void) {
       [h appendFormat:@"Memory tier=%d limitMB=%d physMB=%d model=%s | atLaunch renderRes=%d profile=%s | now renderRes=%d profile=%s\n", tier, lim, phys, dm_mem_model(), r0,
           q0 >= 0 && q0 < 5 ? profiles[q0] : "unknown", dm_render_res_level(), up ? (qn >= 0 && qn < 4 ? profiles[qn] : "unknown") : profiles[4]]; }
     [h appendString:@"Enhanced preferences (applied):"];
-    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above", "free_tp" };
+    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "auto_crash" };
     for (unsigned i=0;i<sizeof custom/sizeof *custom;i++) [h appendFormat:@" %s=%d",custom[i],dm_custom_get(custom[i])];
     [h appendString:@"\n"];
     [h appendFormat:@"Log export: at most %lu bytes per log; omitted prefix bytes current=%llu previous=%llu. Original log files are unchanged.\n", (unsigned long)log_limit,cur_omitted,prev_omitted];
@@ -98,10 +102,6 @@ static NSURL *build_file(void) {
         if (d) [out appendData:d]; };
     part(@"本局日志 boot.txt", cur); part(@"上一局日志 boot.previous.txt", prev);
     [out appendData:crash];   // 末尾：系统崩溃日志（随整份一起脱敏） | at the end: the system crash log (scrubbed together with the whole file)
-    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"sharelog"];   // 只放这一份导出：每次重建这个目录（我们自己的，不碰别的） | Hold only this one export: rebuild this directory every time (it is our own; nothing else is touched)
-    [fm removeItemAtPath:dir error:nil]; [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-    df.dateFormat = @"yyyyMMdd_HHmmss";
-    NSString *p = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@(dm_ui("dmShareLogFile")), build, [df stringFromDate:NSDate.date]]];
     // Tail truncation can remove the path that originally identified a name.
     // Read directory names only (never save contents), so recent standalone
     // character-name messages are still redacted from the exported copy.
@@ -114,9 +114,22 @@ static NSURL *build_file(void) {
             if ([fm fileExistsAtPath:save]) [character_names addObject:name];
         }
     }
-    NSData *fin = dm_diagnostic_scrub_names(out,NSHomeDirectory(),NSBundle.mainBundle.bundleIdentifier,character_names);
+    if (cur_len) *cur_len = cur.length;
+    if (prev_out) *prev_out = prev;
+    return dm_diagnostic_scrub_names(out,NSHomeDirectory(),NSBundle.mainBundle.bundleIdentifier,character_names);
+}
+static NSURL *build_file(void) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+    NSUInteger cur_len = 0; NSData *prev = nil;
+    NSData *fin = build_data(2 * 1024 * 1024, 256 * 1024, &cur_len, &prev);
+    NSString *build = [NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"] description] ?: @"未知";
+    NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyyMMdd_HHmmss";
+    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"sharelog"];   // 只放这一份导出：每次重建这个目录（我们自己的，不碰别的） | Hold only this one export: rebuild this directory every time (it is our own; nothing else is touched)
+    [fm removeItemAtPath:dir error:nil]; [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    NSString *p = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@(dm_ui("dmShareLogFile")), build, [df stringFromDate:NSDate.date]]];
     if (![fin writeToFile:p atomically:YES]) { plog("诊断日志：【红】导出文件写不进 %s", p.UTF8String); return nil; }
-    plog("诊断日志：已打包 %s（%lu 字节：本局 %lu、上一局 %s）", p.lastPathComponent.UTF8String, (unsigned long)fin.length, (unsigned long)cur.length,
+    plog("诊断日志：已打包 %s（%lu 字节：本局 %lu、上一局 %s）", p.lastPathComponent.UTF8String, (unsigned long)fin.length, (unsigned long)cur_len,
          prev ? [NSString stringWithFormat:@"%lu", (unsigned long)prev.length].UTF8String : "没有");
     if (getenv("DM_TEST_SHARELOG_CLOSE")) [fin writeToFile:[doc stringByAppendingPathComponent:@"sharelog_test.txt"] atomically:YES];
     return [NSURL fileURLWithPath:p];
@@ -155,5 +168,79 @@ static void on_click(void) {   // 宿主在游戏主线程调：玩家点了「�
         });
     });
 }
-void dm_sharelog_boot(void) { g_t0 = NSDate.date; dm_sharelog_init(on_click); }   // main.m 起宿主前调一次 | main.m calls this once before starting the host
+// ---- 上传诊断报告的外壳（状态机与提示框 dm/host/dm_diagup.c，网络与签名 dm_diag_upload.swift） | shell of the diagnostic upload (state machine and box: dm/host/dm_diagup.c; network and signing: dm_diag_upload.swift) ----
+// 地址只来自构建注入的 Info.plist DMDiagnosticUploadOrigin（出包时 DM_DIAGNOSTIC_ORIGIN，源码里没有）；空或不合格 = 不开上传，「分享诊断日志」照旧直接导出。地址不写日志
+// The origin comes only from the build-injected Info.plist key DMDiagnosticUploadOrigin (DM_DIAGNOSTIC_ORIGIN at packaging, never in the source); empty or invalid = no upload, Share Diagnostics exports as before. The origin is never logged
+void dm_diagup_net_start(unsigned token, unsigned job, const char *origin, const char *meta, const char *key_path, char *(*collect)(long, void *), void *ctx,
+                         void (*done)(unsigned, int, const char *, long long, int, int, int));   // dm_diag_upload.swift
+void dm_diagup_net_cancel(void);
+int dm_diagup_net_origin_ok(const char *origin);
+static NSString *diag_origin(void) { NSString *o = [NSBundle.mainBundle.infoDictionary[@"DMDiagnosticUploadOrigin"] description]; return o.length && dm_diagup_net_origin_ok(o.UTF8String) ? o : nil; }
+static int diag_configured(void) { return diag_origin() != nil; }
+// 外壳的 Swift 任务在后台线程调：按每份日志上限 limit 打一整份（崩溃日志给一半），过 dm_diagnostic_scrub_names 再过上传专用的 dm_diagnostic_scrub_upload；交回 malloc 的 C 串（NUL 换成 ?） | called on the Swift task's background thread
+static char *diag_collect(long limit, void *ctx) { (void)ctx;
+    @autoreleasepool {
+        NSUInteger lim = limit > 0 ? (NSUInteger)limit : 0; NSData *d = dm_diagnostic_scrub_upload(build_data(lim, MIN((NSUInteger)256 * 1024, lim / 2), NULL, NULL)); if (!d) return NULL;
+        char *p = malloc(d.length + 1); if (!p) return NULL; memcpy(p, d.bytes, d.length); p[d.length] = 0;
+        for (NSUInteger i = 0; i < d.length; i++) if (!p[i]) p[i] = '?';
+        plog("诊断上传：已收集并脱敏 %lu 字节（每份日志上限 %lu）", (unsigned long)d.length, (unsigned long)lim);
+        return p;
+    }
+}
+static void diag_done(unsigned token, int outcome, const char *detail, long long expires_at, int flags, int retry_after, int retention_days) {
+    void dm_diagup_result(unsigned, int, const char *, long long, int, int, int); dm_diagup_result(token, outcome, detail, expires_at, flags, retry_after, retention_days);
+}
+static const char *diag_locale(void) { static const char *const g[] = { "en", "zh-Hans", "es-ES", "es-MX", "ru", "ko" }; int k = dm_lang_group(); return k >= 0 && k < 6 ? g[k] : "en"; }   // 游戏界面语言（DM_LG_*） | the game's UI language
+static NSString *diag_meta(void) {
+    NSDictionary *inf = NSBundle.mainBundle.infoDictionary; NSOperatingSystemVersion os = NSProcessInfo.processInfo.operatingSystemVersion;
+    char hw[64] = "unknown"; size_t hn = sizeof hw; sysctlbyname("hw.machine", hw, &hn, NULL, 0);
+#if TARGET_OS_SIMULATOR
+    snprintf(hw, sizeof hw, "simulator");
+#endif
+    // 元数据只有这六项：版本、构建号、源码提交、硬件型号（不是设备名）、系统版本、游戏语言；不合格的值由 Swift 换成缺省 | exactly six metadata fields; invalid values are replaced by Swift
+    return [NSString stringWithFormat:@"app_version=%@\nbuild=%@\nsource_revision=%@\nmodel=%s\nos_version=%ld.%ld.%ld\nlocale=%s",
+        [inf[@"CFBundleShortVersionString"] description] ?: @"", [inf[@"CFBundleVersion"] description] ?: @"", [inf[@"DMSourceCommit"] description] ?: @"",
+        hw, (long)os.majorVersion, (long)os.minorVersion, (long)os.patchVersion, diag_locale()];
+}
+static void diag_start(unsigned token, unsigned job) {   // 游戏主线程调，立即返回 | called on the game main thread, returns at once
+    NSString *meta = diag_meta(); NSString *o = diag_origin();
+    if (!o) { diag_done(token, 10, "origin", 0, 0, 0, 0); return; }
+    dm_diagup_net_start(token, job, o.UTF8String, meta.UTF8String, NULL, diag_collect, NULL, diag_done);   // 私钥在钥匙串（key_path 空） | the private key is in the Keychain (key_path NULL)
+}
+static int diag_copy(const char *s) {   // 同 dm_update.m ios_copy：到主线程写 UIPasteboard | as ios_copy in dm_update.m
+    NSString *t = @(s ?: ""); __block int ok = 0;
+    void (^w)(void) = ^{ UIPasteboard.generalPasteboard.string = t; ok = [UIPasteboard.generalPasteboard.string isEqualToString:t]; };
+    if (NSThread.isMainThread) w(); else dispatch_sync(dispatch_get_main_queue(), w);
+    return ok;
+}
+// ---- 自动上报崩溃的外壳（策略与次数 dm/host/dm_crashreport.c，网络与盘上报告 dm_diag_upload.swift） | shell of the automatic crash report (policy and counts: dm_crashreport.c; network and the report on disk: dm_diag_upload.swift) ----
+// 内容 = 报告头（自动上报标记 + 围栏状态一行 + GPU）+ 整份 build_data（版本 / 机型 / 设置摘要 / 日志尾部 / MetricKit 诊断），每份日志最多 128 KiB；整份过 dm_diagnostic_scrub_names 与 dm_diagnostic_scrub_upload
+// Contents = report head (automatic marker + fence line + GPU) + the whole build_data (version / model / settings summary / log tails / MetricKit diagnostic), at most 128 KiB per log; the whole text passes dm_diagnostic_scrub_names and dm_diagnostic_scrub_upload
+void dm_crashreport_net_start(unsigned token, const char *origin, const char *meta, const char *key_path, const char *dir, char *(*collect)(long, void *), void *ctx,
+                              void (*done)(unsigned, int, const char *, long long, int, int, int));   // dm_diag_upload.swift
+void dm_crashreport_net_cancel(void);
+static char *crash_collect(long limit, void *ctx) {
+    @autoreleasepool {
+        NSUInteger lim = limit > 0 ? MIN((NSUInteger)limit, (NSUInteger)128 * 1024) : 0; const char *fence = ctx;
+        id<MTLDevice> gpu = MTLCreateSystemDefaultDevice();
+        NSString *head = [NSString stringWithFormat:@"D2R Mobile Plus crash report (automatic)\n%s\ngpu %@ family_apple9=%d\n\n", fence ? fence : "fence unknown", gpu.name ?: @"unknown", gpu ? [gpu supportsFamily:MTLGPUFamilyApple9] : 0];
+        NSMutableData *all = [[head dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+        NSData *body = build_data(lim, MIN((NSUInteger)128 * 1024, lim), NULL, NULL); if (body) [all appendData:body];
+        __block NSString *dev = nil; void (^name)(void) = ^{ dev = UIDevice.currentDevice.name; }; if (NSThread.isMainThread) name(); else dispatch_sync(dispatch_get_main_queue(), name);
+        NSData *d = dm_diagnostic_scrub_upload(dm_diagnostic_scrub_literals(all, dev && ![@[@"iPhone", @"iPad", @"iPod touch"] containsObject:dev] ? @[dev] : @[])); if (!d) return NULL;
+        char *p = malloc(d.length + 1); if (!p) return NULL; memcpy(p, d.bytes, d.length); p[d.length] = 0;
+        for (NSUInteger i = 0; i < d.length; i++) if (!p[i]) p[i] = '?';
+        plog("自动上报：已收集并脱敏 %lu 字节（每份日志上限 %lu）", (unsigned long)d.length, (unsigned long)lim);
+        return p;
+    }
+}
+static void crash_done(unsigned token, int outcome, const char *detail, long long expires_at, int flags, int retry_after, int retention_days) { (void)expires_at; (void)retention_days; dm_crashreport_result(token, outcome, detail, flags, retry_after); }
+static void crash_start(unsigned token, const char *fence, const char *dir) {   // 游戏主线程调，立即返回 | called on the game main thread, returns at once
+    NSString *o = diag_origin(); if (!o) { crash_done(token, 10, "origin", 0, 0, 0, 0); return; }
+    static char fence_copy[160]; snprintf(fence_copy, sizeof fence_copy, "%s", fence ? fence : "");   // 一次只有一个尝试（dm_crashreport.c 保证），放静态区 | one attempt at a time
+    dm_crashreport_net_start(token, o.UTF8String, diag_meta().UTF8String, NULL, dir, crash_collect, fence_copy, crash_done);
+}
+static const dm_crashreport_shell_t crash_shell = { diag_configured, crash_start, dm_crashreport_net_cancel };
+static const dm_diagup_shell_t diag_shell = { diag_configured, diag_start, dm_diagup_net_cancel, on_click, diag_copy };   // 「导出到本地」= 原分享面板 | Export locally = the original share sheet
+void dm_sharelog_boot(void) { g_t0 = NSDate.date; dm_sharelog_init(on_click); dm_diagup_init(&diag_shell); dm_crashreport_init(&crash_shell); plog("诊断上传：%s", diag_configured() ? "已配置上传地址（分享诊断日志先开上传提示框）" : "未配置上传地址（分享诊断日志直接导出）"); }   // main.m 起宿主前调一次 | main.m calls this once before starting the host
 void dm_sharelog_share(void) { on_click(); }   // 游戏外的界面直接调（资源下载页的「分享诊断日志」按钮，main.m AssetVC） | called directly from screens outside the game (the "Share diagnostic log" button on the asset download page, main.m AssetVC)

@@ -49,6 +49,8 @@ SRC=\
 	dm_bright.c \
 	dm_cloudsync.c \
 	dm_community.c \
+	dm_diagup.c \
+	dm_crashreport.c \
 	dm_cursor.c \
 	dm_cursor_item.c \
 	dm_custom.c \
@@ -134,3 +136,12 @@ dmhost: $(QA_STAMP) $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h to
 # Older-API host (graphics backend without Metal 4, target macOS 15.0): the same tree and the same source, with just one more compile switch; not in the default targets, run make dmhost_m3 when needed
 dmhost_m3: $(QA_STAMP) $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
 	clang $(CFLAGS_M3) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -weak_framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
+
+# 上传诊断报告的 Mac 验收宿主（diagup_mac.m + iOS 同一份 Swift 网络代码编成的 dylib）：普通 dmhost 不带；DM_DIAG_ORIGIN 没设时行为同 dmhost
+# Mac acceptance host for the diagnostic upload (diagup_mac.m + a dylib built from the same Swift network code as iOS): plain dmhost does not carry it; without DM_DIAG_ORIGIN it behaves as dmhost
+DIAG_UPLOAD_LIB = dm_diag_upload.dylib
+$(DIAG_UPLOAD_LIB): ../ios/Sources/dm_diag_upload.swift
+	swiftc -emit-library -O -swift-version 6 -module-name DmDiagUpload -Xlinker -install_name -Xlinker @rpath/dm_diag_upload.dylib $< -o $@
+dmhost_diag: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH) diagup_mac.m dm_diagup.h $(DIAG_UPLOAD_LIB)
+	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) diagup_mac.m $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) ./$(DIAG_UPLOAD_LIB) -Wl,-rpath,@loader_path -framework Cocoa -framework QuartzCore -framework Metal -weak_framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
+

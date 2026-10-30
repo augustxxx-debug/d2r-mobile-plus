@@ -11,6 +11,8 @@
 // UI: the 「自定义」(Custom) page of the options panel (borrowing the original game's video page VideoOptionsPanel), one original-game checkbox per row, widget name TouchCustom_<key> (_custom_page in the layout touch_layout.py). Checking only records a pending value;
 // only 「应用」(Apply) (OptionsPanelMessage:AcceptChanges) makes it take effect and saves to disk, 「放弃」(Discard) (CancelChanges) throws away the pending values, and 「默认」(Default) (ResetToDefaults) sets the pending values back to each key's default (power-saving mode off, the rest on; Apply still has to be tapped)
 #include "dm_custom.h"
+#include "dm_crashreport.h"
+#include "dm_diagup.h"
 #include "dm_community.h"
 #include "dm_res_cap.h"
 #include "dm_custom_scroll.h"
@@ -38,13 +40,13 @@ static const char *const k_keys[] = { "lang",
 #if VOICE_ROW
     "voice",
 #endif
-    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "fps_hud", "upscale", "render_res", "rt_shadow", "rt_ao" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
+    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "auto_crash", "fps_hud", "upscale", "render_res", "rt_shadow", "rt_ao" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
 static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
@@ -56,6 +58,13 @@ static const int k_def[NK] = { 0,
 #define K_TOUCH_SWAP (15 + VOICE_ROW)
 // free_tp（免费回城，dm_freetp.c）缺省开（用户 2026-10-30，RC2 起）：RC1.2 / 安卓 1.0.x 缺省关且存盘写全部键，它们留下的 free_tp=0 分不出是不是玩家关的，所以另记 free_tp_v2：没有这个标记的旧文件迁移一次到开；存盘都带标记，之后玩家再关就一直是关
 // free_tp (free town portal, dm_freetp.c) on by default (user 2026-10-30, from RC2): RC1.2 / Android 1.0.x shipped it off and saved every key, so their free_tp=0 cannot be told from a player choice; hence the free_tp_v2 marker: an old file without it migrates once to on; every save writes the marker, so a later off by the player stays off
+// auto_crash（自动上报崩溃，dm_crashreport.c）缺省关；第一次打开要在游戏内确认框里同意（dm_diagup.c），同意记一行 auto_crash_ok=1（点「应用」才写）。文件里只有 auto_crash=1 没有同意记录 = 当关 | auto_crash (automatic crash reports) off by default; the first enable needs consent in the in-game box, recorded as auto_crash_ok=1 (written on Apply). auto_crash=1 without that record counts as off
+#define K_AUTOCRASH (NK - 6)
+__attribute__((weak)) int dm_diagup_modal(void) { return 0; }   // 不带提示框模块的单测用这几份；产品里 dm_diagup.c / dm_crashreport.c 的强定义替换 | for unit tests without those modules; the strong definitions replace them in the product
+__attribute__((weak)) void dm_diagup_consent_open(void (*cb)(int)) { if (cb) cb(0); }
+__attribute__((weak)) void dm_crashreport_setting_changed(int on) { (void)on; }
+static _Atomic int g_ac_ok;           // 文件里有同意记录 | consent on file
+static _Atomic int g_ac_ok_pending;   // 确认框里同意了、还没点「应用」 | agreed in the box, Apply not tapped yet
 #define K_FPSHUD (NK - 5)   // fps_hud 显示帧数：图形页第二行（原在自定义页末行）| fps_hud Show frame rate: Graphics tab row 2 (was the last Custom row)
 #define K_UPSCALE (NK - 4)
 #define K_RES (NK - 3)
@@ -197,6 +206,7 @@ static void load_once(void) {
         if (i == K_VOICE) { int x = atoi(eq + 1); if (x == 0 || x == 1) voice = v[K_VOICE] = x; }
 #endif
         if (!strcmp(ln, "merc_pot_v2")) merc = eq[1] != '0';
+        if (!strcmp(ln, "auto_crash_ok")) atomic_store(&g_ac_ok, eq[1] == '1');
         if (!strcmp(ln, "exp_off_backup")) for (int b = 0; b < 3; b++) { const char *q = strstr(eq + 1, k_bak_name[b]); size_t L = strlen(k_bak_name[b]);
             if (q && q[L] == ':' && q[L + 1] >= '0' && q[L + 1] <= '9') atomic_store(&g_bak[b], q[L + 1] - '0'); } }
     if (f) fclose(f);
@@ -413,6 +423,7 @@ static void save(void) {
     for (int i = 0; ok && i < NK; i++) { if (i == 0 && (atomic_load(&g_lang_explicit) < 0 || g_lang_test)) continue; if (i == K_VOICE && (atomic_load(&g_voice_explicit) < 0 || g_voice_test)) continue; if (key_other_platform(i)) continue; ok = fprintf(f, "%s=%d\n", k_keys[i], atomic_load(&g_val[i])) > 0; }   // lang / voice 只在玩家真改过之后才写进文件
     if (ok) ok = fprintf(f, "q3d_v2=1\n") > 0;
     if (ok) ok = fprintf(f, "free_tp_v2=1\n") > 0;
+    if (ok && atomic_load(&g_ac_ok)) ok = fprintf(f, "auto_crash_ok=1\n") > 0;
     if (ok && atomic_load(&g_merc_explicit) >= 0) ok = fprintf(f, "merc_pot_v2=%d\n", atomic_load(&g_merc_explicit)) > 0;
     if (ok && atomic_load(&g_mem_tier_file) >= 0) ok = fprintf(f, "mem_tier=%d\n", atomic_load(&g_mem_tier_file)) > 0;   // 内存档位（首次 / 档位变化才套缺省） | memory tier (defaults apply only on first run / tier change)
     if (ok && atomic_load(&g_mem_notice)) ok = fprintf(f, "mem_notice=1\n") > 0;
@@ -455,7 +466,7 @@ static int exp_restore_pending(void) {
 void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     (void)arg; if (!cat || !act || strcmp(cat, "OptionsPanelMessage")) return;
     load_once();
-    if (!strcmp(act, "AcceptChanges")) { int ch = 0, res_changed = 0;
+    if (!strcmp(act, "AcceptChanges")) { int ch = 0, res_changed = 0, ac0 = atomic_load(&g_val[K_AUTOCRASH]);
         // Migrate the former fifth radio option to the independent enable switch.
         if (atomic_load(&g_pend[K_Q3D]) == 4) { atomic_store(&g_pend[K_Q3D], 0); atomic_store(&g_pend[K_UPSCALE], 0); }
         for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_RES) res_changed = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd == 3); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd == 3 ? "Quality" : "Adaptive", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
@@ -463,9 +474,11 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
         { int had = 0; for (int b = 0; b < 3; b++) had |= atomic_exchange(&g_bak[b], -1) >= 0;   // 应用 = 玩家已经决定：崩溃围栏的备份用完即清 | Apply = the player has decided: the crash-fence backup is cleared
           if (had) { ch = 1; LOG("自定义设置：应用，清掉崩溃围栏的实验项备份"); } }
         if (res_changed) res_notify();
+        { int ac = atomic_load(&g_val[K_AUTOCRASH]); if (ac && atomic_exchange(&g_ac_ok_pending, 0) && !atomic_exchange(&g_ac_ok, 1)) ch = 1;   // 同意随「应用」生效 | consent takes effect with Apply
+          if (ac != ac0) dm_crashreport_setting_changed(ac); }
         atomic_fetch_add(&g_repaint, 1);
         if (ch) save(); }
-    else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); atomic_fetch_add(&g_repaint, 1); }
+    else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_ac_ok_pending, 0); atomic_fetch_add(&g_repaint, 1); }
     else if (!strcmp(act, "ResetToDefaults")) {
         // Preserve upstream global defaults across the two enhanced tabs. Language/voice stay unchanged.
         for (int i = 1 + VOICE_ROW; i < NK; i++) atomic_store(&g_pend[i], tier_def(i, dm_mem_tier()));   // 本内存档位的缺省 | this memory tier's defaults
@@ -733,6 +746,13 @@ void dm_graphics_ui_pump(unsigned long long root) {
         if (*(uint8_t *)(sp + 0x1a0) != dirty) { *(uint8_t *)(sp + 0x1a0) = dirty; LOG("图形设置：有未应用改动 → %d", dirty); } }
     else { static int warned; if (!warned++) LOG("【红】图形设置：原生选项页类型校验失败，不写改动标记"); }
 }
+// 确认框的答复（dm_diagup.c tick，游戏主线程）：同意 = 待定值勾上、重摆勾选框，点「应用」才生效并记下同意；不同意 = 什么都不变 | the consent box's answer: agreed = pending on, checkbox repainted, effective and recorded on Apply; declined = nothing changes
+static void ac_consent_cb(int yes) {
+    LOG("自定义设置：自动上报崩溃确认框 → %s", yes ? "同意（点「应用」生效）" : "不开启");
+    if (yes) { atomic_store(&g_ac_ok_pending, 1); atomic_store(&g_pend[K_AUTOCRASH], 1); }
+    atomic_fetch_add(&g_repaint, 1);
+}
+int dm_custom_auto_crash(void) { load_once(); return atomic_load(&g_loaded) && atomic_load(&g_val[K_AUTOCRASH]) && atomic_load(&g_ac_ok); }
 void dm_custom_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
     static dm_wref seen[NK];   // 每行最近见到的勾选框（带界面代号：重建后取到 0 = 页刚出现） | Most recently seen checkbox of each row (with UI generation: 0 after a rebuild = page just appeared)
@@ -749,7 +769,7 @@ void dm_custom_ui_pump(unsigned long long root) {
     // Controller mode: the original options page's focus only recognizes its own rows in the table and cannot reach our checkboxes. D-pad up/down selects a row
     // (the original controller selection frame TouchCustomSel frames that row), A toggles the checkbox (handled below as "the player tapped it"), and all other
     // buttons go to the original as before
-    { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); static int sel; static dm_wref sel_sp; int pad = dm_padmode_current() && !dm_ui_modal_active(root) && !dm_community_shown();   // 社区提示框显示着时 A / B 归它（dm_community.c） | while the community box shows, A / B belong to it (dm_community.c)
+    { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); static int sel; static dm_wref sel_sp; int pad = dm_padmode_current() && !dm_ui_modal_active(root) && !dm_community_shown() && !dm_diagup_modal();   // 社区提示框显示着时 A / B 归它（dm_community.c） | while the community box shows, A / B belong to it (dm_community.c)
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
       indent_rows(find_w(sp, "TouchCustomRows", 0), 0);
       uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64]; int oy = 0, about_bot = -1;   // about_bot：选到「关于」组的社区行时，自动滚动要把整组（含下面的鸣谢子块）滚进框 | about_bot: with the About group's community row selected, auto-scroll brings the whole group (credits sub-block below included) into view. oy：选中行相对 TouchCustomRows 的纵向偏移（「关于」组的社区行套在两层容器里，自己的矩形 y 是 0） | oy: the selected row's vertical offset within TouchCustomRows (the About group's community row sits two containers deep, its own rect y is 0)
@@ -814,6 +834,8 @@ void dm_custom_ui_pump(unsigned long long root) {
             int zon = TOGGLED(z), to = on != shown ? (on ? 1 : shown) : zon != !shown ? (zon ? 0 : shown) : shown;
             if (to != shown) { atomic_store(&g_pend[i], to); LOG("自定义设置：%s → %d（点「应用」生效）",k_keys[i],to); }
             if (TOGGLED(w) != to) set_toggle(w, to); if (TOGGLED(z) != !to) set_toggle(z, !to); continue; }
+        // 自动上报崩溃：第一次勾上先开确认框，勾选框退回去；同意了才算改（ac_consent_cb） | automatic crash reports: the first tick opens the consent box and the checkbox falls back; it only counts once agreed
+        if (i == K_AUTOCRASH && on && !shown && !atomic_load(&g_ac_ok) && !atomic_load(&g_ac_ok_pending)) { set_toggle(w, 0); if (!dm_diagup_modal()) dm_diagup_consent_open(ac_consent_cb); continue; }
         if (on != shown) { atomic_store(&g_pend[i], on); LOG("自定义设置：%s 勾选框 → %s（点「应用」生效）", k_keys[i], on ? "勾上" : "取消"); } }
     // 语言那一行下面的「点应用后把 App 关掉重开」提示（TouchCustomLangHint，布局里先放在屏外）：勾选框此刻显示的值与正在跑的语言不一致时挪到标签正下方（横坐标取标签的）
     // The "tap Apply, then close and reopen the app" hint under the language row (TouchCustomLangHint, placed off screen in the layout): moved right under the label (taking the label's x) when the value the checkboxes currently show differs from the language now running

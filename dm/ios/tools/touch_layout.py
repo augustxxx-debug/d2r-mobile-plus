@@ -381,6 +381,23 @@ INSERT['controller/console/charactercreatepanelhd.json'] = (INSERT['controller/c
 _COMM = _community() + _SAVEBOX
 _COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(Touch(?:Comm|Save)\w+)"', _COMM))
 assert _COMM_STUB.count('\n') == 42 + 39   # 边框 15 片、标题、两行渠道（边框 4 + 标签 + 值 + 复制钮 + 钮上的字）× 2、免费声明、分隔线、页脚 3、确定、焦点框 4 | 15 tiles, title, 2 × (4 border + label + value + copy + its text), free, divider, 3 footer, OK, 4 focus
+# 「上传诊断报告」提示框（dm/host/dm_diagup.c）：与社区入口提示框同一套做法——边框 15 片（自己一套切片 Ztouch_diag）+ 标题 + 正文两行（36 号）+ 副文一行（28 号，§2.6）
+# + 六颗原版前端按钮（上传 / 重试 / 导出到本地 / 复制编号 / 取消 / 关闭，宿主按状态露出至多三颗）。全部屏外起步、字空着、不带锚点，挂在暂停菜单面板（两份）末尾、社区框之后（画在最上层）；
+# 点「分享诊断日志」且构建配了上传地址时由宿主打开，没配就不出现（原导出链路不变）
+# The "Upload diagnostic report" box (dm/host/dm_diagup.c): same approach as the community box - 15 frame tiles (its own slices Ztouch_diag) + title + two body lines (36) + one secondary line (28, §2.6)
+# + six original front-end buttons (Upload / Retry / Export locally / Copy number / Cancel / Close; the host shows at most three by state). All start off screen, empty, unanchored, appended to the pause menu panel (both) after the community box (drawn topmost);
+# the host opens it when Share Diagnostics is tapped and the build has an upload origin; otherwise it never appears (the original export path is unchanged)
+def _diagbox():
+    return (''.join('        { "type": "ImageWidget", "name": "TouchDiagTile%d%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 52, "height": 24 }, "filename": "Ztouch_diag/tile%d%d" } },\n' % (r, c, r, c) for r in range(5) for c in range(3))
+            + _co_text('TouchDiagTitle', 48, '$FontColorGoldYellow')
+            + _co_text('TouchDiagDesc0', 36, '$FontColorLightGold')     # 正文：事实（内容 / 结果 / 报告编号） | body: facts (contents / result / report number)
+            + _co_text('TouchDiagDesc1', 36, '$FontColorLightGold')     # 正文：第二条事实（原因 / 保留天数 / 等待秒数） | body: second fact (reason / retention / wait)
+            + _co_text('TouchDiagDesc2', 28, '$FontColorLightGray')     # 副文：动作提示或状态反馈；手柄模式写按键说明 | secondary: action hint or status; key legend in controller mode
+            + ''.join(_btn(n, 99999, t, 'PanelManager:ClosePanel:' + n, x=99999, anchor=False) for n, t in
+                      (('TouchDiagUpload', '@dmDiagUpload'), ('TouchDiagRetry', '@dmDiagRetry'), ('TouchDiagExport', '@dmDiagExport'),
+                       ('TouchDiagCopy', '@dmDiagCopy'), ('TouchDiagCancel', '@dmDiagCancel'), ('TouchDiagClose', '@dmDiagClose'), ('TouchDiagEnable', '@dmAutoCrashEnable'))))
+_DIAG = _diagbox()
+assert len(re.findall(r'"name": "TouchDiag\w+"', _DIAG)) == 26   # 边框 15 片、标题、三行字、七颗按钮（第七颗「开启」只在自动上报确认页露出） | 15 tiles, title, three lines, seven buttons (the seventh, Enable, only on the crash report consent page)
 _COMM_ROW = (('TouchCommunity', '@dmCommunityJoin', 1028),)   # 暂停菜单「加入社区讨论」行（借「保存并退出」按钮的图和字，消息空操作，宿主当信号收）；没有可显示的值时宿主把它挪出屏幕 | the pause menu's "Join the community" row (Save-and-Exit's image and font, a no-op message the host takes as a signal); without a value the host moves it off screen
 _SAFE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchSafe\w+)"', _SAFE))
 assert _SAFE_STUB.count('\n') == 20   # 边框 15 片、标题、正文三行、确定 | 15 frame tiles, title, three body lines, OK
@@ -830,9 +847,10 @@ def pad_pause(s, garden, share=True):   # share=False（Mac App）：没有系�
     elif share: ys, comm = {'Settings': (578, 653), 'Exit': (878, 278), 'MessageLog': (428, 778)}, 903
     else: ys, comm = {'Settings': (578, 653), 'Exit': (878, 278)}, 778
     ex = (('TouchPadStore', '@strGoldDeposit', 528), ('TouchCommunity', '@dmCommunityJoin', comm))
-    if garden: return _pause_no_help(ys, hide=('Help', 'LootFilter') + hs, restart_y=403, extra=ex, tail=_COMM)(s)[0]
+    tail = _COMM + (_DIAG if share else '')   # 上传诊断报告从「分享诊断日志」行进入：没有这一行（Mac App）就不放 | reached from the Share Diagnostics row: without that row (Mac App) it is left out
+    if garden: return _pause_no_help(ys, hide=('Help', 'LootFilter') + hs, restart_y=403, extra=ex, tail=tail)(s)[0]
     s = _sub1(s, '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBGClassic"', '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBG"')
-    return _pause_no_help(ys, hide=('Help',) + hs, restart_y=403, extra=ex, tail=_COMM)(s)[0]
+    return _pause_no_help(ys, hide=('Help',) + hs, restart_y=403, extra=ex, tail=tail)(s)[0]
 # 编年史保留。只有键鼠版布局，套在手柄外框里；列表行 / 分类筛选 / 查看奖励 / 下拉都认点击。页内的关闭按钮被外框盖住：在外框右上角凹槽放关闭按钮，
 # 发原 CloseButton 的消息，关掉后回到暂停菜单；单放一个加宽的容器，2868×1320 下金色包围盒 (2413,40)–(2438,77)。
 # 页签不在这里处理：点页签由触摸层翻成 ZL / ZR（一件事只留一个执行者；先前盖在页签上的透明按钮与它并存、一次点击切两回，已撤）
@@ -1418,7 +1436,7 @@ def _drop_rows(*rows):
 # leaves the native Game Settings destination intact. The host owns only our controls.
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
 # 平台限制：DM_TARGET=android（d2rm_android.py 传）不出 icloud 行（安卓没有 iCloud；宿主 dm_custom.c custom_row 同样跳过，行号对齐） | per-platform: DM_TARGET=android (passed by d2rm_android.py) omits the icloud row (no iCloud on Android; the host's dm_custom.c custom_row skips it too, so row numbers agree)
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes') + (() if os.environ.get('DM_TARGET') == 'android' else ('icloud',)) + ('pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above', 'free_tp')   # fps_hud 显示帧数已搬到图形页第二行（用户 2026-10-28）| fps_hud Show frame rate moved to Graphics row 2 (user 2026-10-28)
+_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes') + (() if os.environ.get('DM_TARGET') == 'android' else ('icloud',)) + ('pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above', 'free_tp', 'auto_crash')   # fps_hud 显示帧数已搬到图形页第二行（用户 2026-10-28）| fps_hud Show frame rate moved to Graphics row 2 (user 2026-10-28)
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines
@@ -1556,6 +1574,7 @@ def _custom_page(text):
            '"filename": "Controller/PANEL/ControllerSelector/ControllerSelectorBorder", "tileScale": 0.5 } },\n'
            '            ] },\n        ] },\n'
            + _COMM   # 社区入口提示框：面板的直接子控件、在滚动区之后（画在列表之上，不被滚动区裁剪） | the community box: a direct child of the panel after the scroll view (drawn above the list, not clipped by it)
+           + _DIAG   # 「自动上报崩溃」第一次打开时的确认框（dm_diagup.c 确认页，宿主只在这一页用这份）| the first-enable consent box for automatic crash reports (the consent page of dm_diagup.c)
            + '    ]\n}\n')
     return out, len(_CUSTOM_ALL) + 3
 PRESENT['controller/console/videooptionspanelhd.json'] = _custom_page

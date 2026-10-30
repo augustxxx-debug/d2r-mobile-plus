@@ -39,14 +39,14 @@ class IosSummary(unittest.TestCase):
     def test_fps_and_profile_on_one_line(self):
         # 帧率档与超分档要在摘要同一行看出联动（用户 2026-10-29：120 帧档不给高画质，设置是高画质时生效是均衡）
         # The frame rate and the upscale profile must show their link on one summary line (user 2026-10-29: no Quality at 120 fps; a saved Quality runs as Balanced)
-        build = block(SHARE, 'static NSURL *build_file(void) {')
+        build = block(SHARE, 'static NSData *build_data(')
         line = next(l for l in build.splitlines() if 'FPS target=' in l)
         self.assertIn('profileSelected=', line); self.assertIn('profileEffective=', line); self.assertIn('qualityCapped120=', line)
 
     def test_memory_tier_launch_and_now(self):
         # 内存档位：启动时生效的值与当前设置并列（用户 2026-10-29：局中调低不还内存，渲染档在启动时定预留）；预留行进摘要键
         # Memory tier: launch values next to the current settings (user 2026-10-29: lowering mid-run returns no memory, the render level fixes the reserve at launch); the reserve line is a summary key
-        build = block(SHARE, 'static NSURL *build_file(void) {')
+        build = block(SHARE, 'static NSData *build_data(')
         line = next(l for l in build.splitlines() if 'Memory tier=' in l)
         self.assertIn('atLaunch', line); self.assertIn('now renderRes', line)
         keys = re.search(r'static const char \*keys\[\] = \{([^}]*)\}', block(SHARE, 'static void perf_block(')).group(1)
@@ -71,7 +71,7 @@ class CrashFence(unittest.TestCase):
     """崩溃围栏：系统崩溃日志附在导出末尾、先于脱敏；摘要有「崩溃围栏：」行与崩溃日志摘要行（iOS / Mac 两端）。
     Crash fence: the system crash log is appended at the end of the export, before scrubbing; the summary has the crash-fence line and the crash-log summary line (both iOS and Mac)."""
     def test_ios_crash_section_before_scrub(self):
-        build = block(SHARE, 'static NSURL *build_file(void) {')
+        build = block(SHARE, 'static NSData *build_data(')
         self.assertIn('dm_crashlog_section(', build)
         i = build.index('[out appendData:crash]'); j = build.index('dm_diagnostic_scrub_names(out')
         self.assertLess(i, j, 'crash section is appended before the export is scrubbed')

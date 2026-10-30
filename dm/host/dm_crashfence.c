@@ -41,6 +41,7 @@ enum { CF_OTHER, CF_CRASH, CF_HANG, CF_MEM };
 static const char *const k_cf_name[4] = { "原因不明", "闪退", "卡死", "内存不足" };
 static const char *const k_cf_msg[4] = { "dmSafeModeMsgOther", "dmSafeModeMsgCrash", "dmSafeModeMsgHang", "dmSafeModeMsgMem" };
 static int g_started, g_streak, g_marked, g_test, g_mark_switch, g_cause, g_cause_arg, g_msg = CF_OTHER;
+static int g_prev_on, g_prev_cause, g_prev_arg, g_prev_streak; static char g_prev_hist[9];   // 上一局（算数的）异常退出留下的（自动上报用，dm_crashreport.c） | what the previous counted abnormal exit left (for automatic crash reports)
 static char g_hist[9];   // 这一串里前几次的原因（'0'–'3'） | causes of the earlier exits in this streak ('0'-'3')
 static _Atomic int g_notice;
 static char g_sig_path[1100], g_sig_body[64]; static int g_sig_len;   // 信号处理里用：标记路径与不含 cause 的正文，写标记时备好 | for the signal handler: marker path and the body without cause, prepared when the marker is written
@@ -64,6 +65,7 @@ static const char *test_env(void) {
     return NULL;
 }
 const char *dm_crashfence_test_env(void) { return test_env(); }
+int dm_crashfence_prev(int *cause, int *arg, int *streak, char *hist, size_t hn) { if (cause) *cause = g_prev_cause; if (arg) *arg = g_prev_arg; if (streak) *streak = g_prev_streak; if (hist && hn) snprintf(hist, hn, "%s", g_prev_hist); return g_prev_on; }
 static int marker_write(void) {   // 先写临时文件再换名：写到一半被杀不会留下半个标记 | write a temporary file first, then rename: being killed halfway leaves no half marker
     char p[1100], t[1120]; if (!marker_path(p, sizeof p)) return 0;
     g_sig_len = snprintf(g_sig_body, sizeof g_sig_body, "streak=%d\n%shist=%s\n", g_streak, g_test ? "test=1\n" : "", g_hist); snprintf(g_sig_path, sizeof g_sig_path, "%s", p);
@@ -114,6 +116,7 @@ int dm_crashfence_start(void) {
     if (k >= 0 && !was_test) hist_push(c);
     if (k < 0) g_hist[0] = 0;
     cause_text(why, sizeof why, c, arg);
+    g_prev_on = k >= 0 && !was_test; g_prev_cause = c; g_prev_arg = arg; g_prev_streak = g_streak; snprintf(g_prev_hist, sizeof g_prev_hist, "%s", g_hist);
     if (k >= 0 && was_test) LOG("崩溃围栏：上一局异常退出（测试局，不计；连续 %d 次不变；%s）", g_streak, why);
     else if (g_streak) LOG("崩溃围栏：上一局异常退出（%s）（第 %d 次连续）%s", why, g_streak, test ? "（测试开关 DM_TEST_CRASH_MARK）" : "");
     else LOG("崩溃围栏：上一局正常结束");

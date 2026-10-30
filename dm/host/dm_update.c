@@ -17,12 +17,15 @@
 #include "dm_i18n.h"
 #include "dm_cursor.h"
 #include "dm_uiscreen.h"
+#include "dm_crashreport.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdatomic.h>
 #include <pthread.h>
 
+__attribute__((weak)) const char *dm_crashreport_note(void) { return NULL; }   // 不带自动上报模块的单测用；产品里 dm_crashreport.c 的强定义替换 | for unit tests without that module
+__attribute__((weak)) const char *dm_crashreport_note_arg(void) { return ""; }
 static int g_own = -1; static char g_label[64]; static void (*g_on_select)(void);   // g_own 只用来判「初始化过没有」，比新旧在外壳 | g_own only tells whether init ran; comparing versions is on the shell side
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER; static struct { int build, urgent; char ver[24], note[160]; } g_offer;   // g_mu 护 g_offer | g_mu guards g_offer
 static _Atomic int g_safe_l = -1, g_dirty, g_appear, g_fg;   // g_safe_l < 0 = 外壳还没给左安全区，先不写字（免得字先出在安全区里再跳一下）。g_dirty：还要重写几帧（>0 时每帧找控件、写字、摆位置；写完一次后再跟 30 帧，等文字框量出新宽度） | g_safe_l < 0 = the shell has not supplied the left safe area yet, so do not write text for now (to avoid the text first showing inside the safe area and then jumping). g_dirty: how many more frames to rewrite (when >0, every frame find widgets, write text, set positions; after one write keep following for 30 more frames, waiting for the text box to measure the new width)
@@ -56,6 +59,7 @@ void dm_update_safe_left(int units) { atomic_store(&g_safe_l, units < 0 ? 0 : un
 void dm_update_foreground(void) { if (g_own >= 0) atomic_store(&g_fg, 1); }
 // 模式切换事务完成、界面整套重建之后（dm_mode_items.h 登记的「进」）：控件全是新的、字是空的，重写一遍。重建时游戏不发 OpenPanel MainMenuPanel，等不到下面那条消息
 // After the mode switch transaction completes and the whole UI has been rebuilt (the "enter" registered in dm_mode_items.h): the widgets are all new and their text is empty, so write it again. During the rebuild the game does not send OpenPanel MainMenuPanel, so the message below never arrives
+void dm_update_redraw(void) { if (g_own >= 0) atomic_store(&g_dirty, 30); }   // 选角页那行字要重写（自动上报崩溃的结果提示来了 / 到时了） | the select-page line needs rewriting (automatic crash report notice arrived / expired)
 void dm_update_mode_enter(void) { if (g_own >= 0) atomic_store(&g_dirty, 30); }
 void dm_update_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c 转来，游戏主线程） | UI message callback (forwarded from diag.c, game main thread)
     if (g_own < 0 || strcmp(cat, "PanelManager")) return;
@@ -115,7 +119,9 @@ void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Ca
 #else
     const char *nonet = dm_str(b, "dmUpdNoNet");
 #endif
-    set_text(b, nt, normal ? t : fail == 1 ? nonet : fail ? ft : "");
+    // 自动上报崩溃的结果（dm_crashreport.c）只占这一行、只在没有新版本提示时显示 20 秒，排在「查更新失败」前面（它只有一次机会被看到） | the automatic crash report result (dm_crashreport.c) uses this line only, for 20 s, only without a new-version notice, ahead of the update-check failure (it gets one chance to be seen)
+    char cr[96]; const char *crk = normal ? NULL : dm_crashreport_note(); if (crk) { const char *fm = dm_str(b, crk); if (strstr(fm, "%s")) snprintf(cr, sizeof cr, fm, dm_crashreport_note_arg()); else snprintf(cr, sizeof cr, "%s", fm); }
+    set_text(b, nt, normal ? t : crk ? cr : fail == 1 ? nonet : fail ? ft : "");
     snprintf(t, sizeof t, dm_str(b, "dmUpdNewUrgent"), ver, note); set_text(b, de, urg ? t : ""); set_text(b, ti, urg ? dm_str(b, "dmUpdUrgentTitle") : "");
     if (pad) { place(bg, urg ? xr / 2 - 700 : 99999, urg ? 1506 : 99999); place(ti, xr / 2 - 700, 1524); place(de, xr / 2 - 700, 1610); }
     else place(bg, urg ? -700 : 99999, urg ? 1506 : 99999);
