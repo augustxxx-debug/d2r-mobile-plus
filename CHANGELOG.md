@@ -6,6 +6,12 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Unreleased]
 
+## [Android 1.0.2] - unreleased
+
+Upgrade over 1.0.1 (same package name and signing certificate; saves and the game files on the phone stay).
+
+- **Sound no longer disappears for good after leaving the game**: if the system dropped the audio stream while the game was in the background, sound stayed off until the game was restarted. The game now reopens the audio stream when you come back and, if that fails, keeps retrying about every 1.5 seconds until sound returns.
+
 ## [Android 1.0.1] - unreleased
 
 Upgrade over 1.0.0 (same package name and signing certificate; saves and the game files on the phone stay). After the upgrade the first launch rebuilds its touch resources once.
