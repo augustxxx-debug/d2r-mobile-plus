@@ -93,9 +93,14 @@ class FilesTest(unittest.TestCase):
         r = genfail.check_files(self.game, self.rows); self.assertEqual(genfail.kind_of(r), '')
         self.assertIn('（另有 1 个可选文件没放或大小不同：配音档案、提取清单等，生成用不到，不影响）', genfail.describe(r, 6))
 
-    def test_only_manifest_size_differs_is_version(self):
+    def test_only_manifest_larger_is_version(self):
         put(os.path.join(self.game, 'RomFS/data/build_manifest.psv'), b'B' * 120)
         self.assertEqual(genfail.kind_of(genfail.check_files(self.game, self.rows)), 'version')
+
+    def test_only_manifest_smaller_is_files(self):   # 偏小 = 没拷完，标题与正文一致（B054） | smaller = incomplete copy, title and body agree (B054)
+        put(os.path.join(self.game, 'RomFS/data/build_manifest.psv'), b'B' * 2)
+        r = genfail.check_files(self.game, self.rows)
+        self.assertEqual(genfail.kind_of(r), 'files'); self.assertTrue(any('可能没拷完' in l for l in genfail.describe(r, 6)))
 
     def test_undotted_build_config_asks_to_rename(self):
         os.rename(os.path.join(self.game, 'RomFS/data/.build.config'), os.path.join(self.game, 'RomFS/data/build.config'))
@@ -185,6 +190,15 @@ class PhoneMarkersTest(unittest.TestCase):
         self.assertIn('@summary 游戏文件核对：缺 data/.build.config（隐藏文件，要一起拷）', out)
         self.m.after_failure(str(e.exception.code))   # 已定类：收尾不再改判 | already classified: the wrap-up does not reclassify
         self.assertEqual(self.m.FAILED, ['files'])
+
+    def test_manifest_smaller_on_phone_is_files(self):   # 手机标记：清单偏小 → @fail files，正文是「游戏文件不完整」（B054） | phone markers: a smaller manifest -> @fail files, the text says incomplete files (B054)
+        import genfail
+        with tempfile.TemporaryDirectory() as g, mock.patch.object(genfail, 'load_manifest', return_value=[('RomFS/data/build_manifest.psv', 100, '0' * 64)]):
+            os.makedirs(os.path.join(g, 'RomFS/data')); put(os.path.join(g, 'RomFS/data/build_manifest.psv'), b'B' * 2)
+            o = io.StringIO()
+            with contextlib.redirect_stdout(o), self.assertRaises(SystemExit) as e: self.m.files_check(g)
+        self.assertIn('@fail files', o.getvalue().splitlines())
+        self.assertTrue(str(e.exception.code).startswith('[x] 游戏文件不完整：'))
 
 
 if __name__ == '__main__': unittest.main()

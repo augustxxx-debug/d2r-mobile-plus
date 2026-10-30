@@ -127,15 +127,15 @@ def _mb(n):
 
 
 def kind_of(res):
-    """'' = 能生成；'version' = 不是这一版（主程序模块号不同，或必需文件里两个以上偏大，或只有版本清单不同）；'files' = 缺 / 没拷完 / 要改名 / 剔零档案
-    '' = can generate; 'version' = another version (main module id differs, or two or more required files are larger, or only the version manifests differ);
+    """'' = 能生成；'version' = 不是这一版（主程序模块号不同，或必需文件里两个以上偏大，或只有版本清单偏大；偏小是没拷完，与 describe 一致）；'files' = 缺 / 没拷完 / 要改名 / 剔零档案
+    '' = can generate; 'version' = another version (main module id differs, or two or more required files are larger, or only the version manifests are larger; smaller means an incomplete copy, as describe says);
     'files' = missing / incompletely copied / needs renaming / zero-stripped archive"""
     if res['main_id'] and res['main_id'] != MAIN_MODULE_ID: return 'version'
     if res['missing'] or res['rename'] or res['holes']: return 'files'
     if not res['size']: return ''
     if sum(1 for _, want, got in res['size'] if got > want) >= 2: return 'version'
     ver = {'RomFS/data/build_manifest.psv', 'RomFS/data/.build.config'}
-    return 'version' if all(p in ver for p, _, _ in res['size']) else 'files'
+    return 'version' if all(p in ver and got > want for p, want, got in res['size']) else 'files'
 
 
 def describe(res, total):
