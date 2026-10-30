@@ -27,7 +27,12 @@ int main(void) {
     int dropA = dm_render_res_rt_drop(); CHECK(dropA == 0);   // 读不到设置：按「不降」答，但不记死 | settings unreadable: answer "no drop" without latching
     // 阶段 B：上限 2900 MB（1 档）、设置目录已给 | stage B: limit 2900 MB (tier 1), settings directory given
     dm_mem_measure_set(2900, 12288, "iPhoneTest,1"); dm_custom_init(dir);
-    CHECK(dm_custom_loaded()); CHECK(dm_mem_tier() == 1); CHECK(dm_rt_shadow_setting() == 1); CHECK(dm_render_res_level() == 3);
+    CHECK(dm_custom_loaded()); CHECK(dm_mem_tier() == 1); CHECK(dm_rt_shadow_setting() == 1);
+    // 光追 AO：缺省关；要设置开且光追阴影开才生效，阴影关时设置值保留 | ray-traced AO: off by default; effective only with the setting and ray-traced shadows on, the setting is kept while shadows are off
+    int dm_rt_ao_setting(void); CHECK(dm_rt_ao_setting() == 0); CHECK(dm_custom_get("rt_ao") == 0);
+    atomic_store(&g_val[K_RTAO], 1); CHECK(dm_rt_ao_setting() == 1);
+    atomic_store(&g_val[K_RT], 0); CHECK(dm_rt_ao_setting() == 0); CHECK(dm_custom_get("rt_ao") == 1);
+    atomic_store(&g_val[K_RT], 1); CHECK(dm_rt_ao_setting() == 1); atomic_store(&g_val[K_RTAO], 0); CHECK(dm_render_res_level() == 3);
     CHECK(dm_render_res_rt_drop() == 1);   // 修前这里是 0（已在阶段 A 记死）| before the fix this was 0 (latched in stage A)
     // 读到设置之后才记死：之后改设置不再变（整局不变的语义不变）| it latches once the settings were read: later setting changes no longer move it (the run-long semantics stay)
     atomic_store(&g_val[K_RT], 0); CHECK(dm_render_res_rt_drop() == 1);

@@ -1645,13 +1645,23 @@ def _graphics_page(text):
     rt_row = {'type': 'Widget', 'name': 'TouchGraphicsRtRow', 'fields': {
         'rect': {'x': 0, 'y': 1080, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsRtText', 'dmGraphicsRtShadow', 0, 0, 1000, 180), toggle('TouchGraphicsRtShadow', 0)]}
+    # 光追 AO（实验性）：光追阴影下一行，同门槛；文字下方一行副文（CLAUDE.md §2.6：28 号、说明灰、$ReducedSpacing）说明能干啥，阴影没开时宿主换成「需先开启光追阴影」并把勾选框置灰（dm_graphics_ui_pump）
+    # Ray-traced AO (experimental): the row below ray-traced shadows, same gate; one subtext line under the caption (CLAUDE.md §2.6: 28 pt, description grey, $ReducedSpacing) says what it does; with shadows off the host swaps it for "turn on ray-traced shadows first" and greys out the checkbox (dm_graphics_ui_pump)
+    def ao_note(name, key):
+        n = label(name, key, 0, 116, 1290, 60)
+        n['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
+        return n
+    ao_row = {'type': 'Widget', 'name': 'TouchGraphicsRtAoRow', 'fields': {
+        'rect': {'x': 0, 'y': 1260, 'width': 1730, 'height': 180}}, 'children': [
+        label('TouchGraphicsRtAoText', 'dmGraphicsRtAo', 0, 0, 1000, 180), ao_note('TouchGraphicsRtAoNote', 'dmGraphicsRtAoNote'),
+        ao_note('TouchGraphicsRtAoNeedRt', 'dmGraphicsRtAoNeedRt'), toggle('TouchGraphicsRtAo', 0)]}
     # 显示帧数（fps_hud，缺省开；原在自定义页末行，用户 2026-10-28 要求放图形页第二行）：一行勾选框，宿主 dm_graphics_ui_pump 读写 TouchGraphicsFpsHud
     # Show frame rate (fps_hud, on by default; was the last Custom row, moved to Graphics row 2 at the user's request on 2026-10-28): one checkbox row, read and written by the host's dm_graphics_ui_pump via TouchGraphicsFpsHud
     fpshud_row = {'type': 'Widget', 'name': 'TouchGraphicsFpsHudRow', 'fields': {
         'rect': {'x': 0, 'y': 360, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsFpsHudText', 'dmCustomFpsHud', 0, 0, 1000, 180), toggle('TouchGraphicsFpsHud', 0)]}
     rows = {'type': 'Widget', 'name': 'TouchGraphicsRows', 'fields': {
-        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1580}}, 'children': [title, res_row, fpshud_row,
+        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1760}}, 'children': [title, res_row, fpshud_row,
         label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 540, 1000, 180), fps_note,
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsFps', 'fields': {
             'rect': {'x': 1110, 'y': 595, 'width': 480, 'height': 72},
@@ -1662,7 +1672,7 @@ def _graphics_page(text):
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}},
         label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 720, 1000, 180), toggle('TouchGraphicsUpscale', 720),
-        profile, rt_row, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 1260, 1670, 300),
+        profile, rt_row, ao_row, label('TouchGraphicsApplyHint', 'dmGraphicsApplyHint', 0, 1440, 1670, 300),
         {'type': 'NineTileImageWidget', 'name': 'TouchGraphicsSel', 'fields': {
             'rect': {'x': 99999, 'y': 0, 'width': 1700, 'height': 180}, 'backgroundColor': [0, 0, 0, 0],
             'filename': 'Controller/PANEL/ControllerSelector/ControllerSelectorBorder', 'tileScale': 0.5}}]}

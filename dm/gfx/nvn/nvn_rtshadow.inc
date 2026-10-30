@@ -34,6 +34,7 @@
 //   per-frame constant / instance / picking / copy buffers live in a fenced slot ring (≤ 8), reused only after the GPU finished that submission, all busy → no trace this frame; switching off / module failure releases everything through defer_obj_release (after in-flight submissions), rebuilt on the next switch-on.
 // Gate: supportsRaytracing and GPU family ≥ Apple9 and a model allowlist (iOS app on a Mac recognized by isiOSAppOnMac); switch: DM_RT_SHADOW=0/1 pins it, otherwise dm_rt_shadow_setting(); DM_RT_POINT=0 turns off point lights only.
 // Timing: the ray-tracing compute encoder goes through pg_compute (DM_NVN_PASSGPU); Metal 4 path only, the module is empty under DM_NVN_M3.
+__attribute__((weak)) int dm_rt_ao_setting(void) { return 0; }   // 宿主设置页提供强定义（光追 AO，依赖光追阴影）；缺省关 | The host settings page provides the strong definition (ray-traced AO, depends on ray-traced shadows); off by default
 __attribute__((weak)) int dm_rt_shadow_setting(void) { return 0; }   // 宿主设置页提供强定义；缺省关 | The host settings page provides the strong definition; off by default
 __attribute__((weak)) float dm_rt_shadow_ambient(void) { return 0.45f; }
 __attribute__((weak)) int dm_ingame_now(void) { return 1; }   // 宿主 diag.c 提供强定义（读到受控玩家 = 局内）；单测里当局内 | the host's diag.c provides the strong definition (controlled player read = in a run); unit tests count as in a run   // 调试叠加的环境项（阴影里保留的亮度比例） | Ambient term of the debug overlay (brightness kept inside shadow)
@@ -65,6 +66,7 @@ static int g_rts_plain;   // 旧接口版：draw 里照样引用（恒 0） | ol
 static uint64_t rts_lcopy_rid(NvShader *sh, void **tex) { (void)sh; (void)tex; return 0; }
 int mtl_rt_shadow_supported(void) { return 0; }
 #else
+#define RTS_AO_RADIUS 6.f   // 光追 AO 缺省半径（世界单位）| default ray-traced AO radius (world units)
 #define RTS_MAX_INST 4096
 #define RTS_BUILDS_PER_FRAME 32   // 每帧最多新建这么多 BLAS（新网格首次出现时），其余下一帧再建 | At most this many new BLAS per frame (when new meshes first appear), the rest next frame
 #define RTS_BUILD_TRIS 60000      // 每帧新建 BLAS 的三角形上限（第一个不受限）。局部回退后配额满的绘制照原版画进阴影图、不再拖整帧回原版，所以按耗时压小：进营地一次冒出两百多个网格摊到十来帧建，免得一帧建 20 万三角形的尖峰把自动降档推到底 | triangle cap for the BLAS built per frame (the first is not capped). With partial fallback a draw over quota goes into the map as original instead of sending the whole frame back, so the cap is kept small for cost: the 200+ meshes of the camp are spread over a dozen frames rather than one 200k-triangle spike pushing the automatic downgrade to the bottom
@@ -190,7 +192,7 @@ static struct {
     double hang_t; int hang_seen, hang_events;   // GPU 挂起保护：已看过的挂起计数、上次挂起事件时刻、事件数 | GPU hang protection: hang count already seen, time of the last hang event, number of events
     rts_gov gov; rts_lvl_params eff; int auto_on, lvl_pin; double pause_until;   // pause_until：GPU 挂起保护的暂停到这个时刻（0 = 没暂停） | pause_until: the hang-protection pause lasts until this time (0 = not paused)
     double ts_tick, rt_sum, fr_sum; uint64_t rt_n, fr_n, n_lvl_down, n_lvl_up, n_gov_skip;   // 自动降档：档位状态、本档实际参数、时间戳每拍毫秒、600 帧统计 | automatic downgrade: level state, effective parameters, ms per timestamp tick, 600-frame counters
-    int ao_on, ao_rays, ao_done, ao_applied; float ao_radius, ao_strength; id<MTLComputePipelineState> ps_ao, ps_aoblur, ps_ao_a; id<MTLTexture> ao_half, ao_tmp, ao_full; uint64_t n_ao_traced, n_ao_applied, n_ao_missed;   // 光追 AO（实验性）：设置、管线、半分辨率 / 模糊 / 全分辨率贴图、统计 | ray-traced AO (experimental): settings, pipelines, half-res / blur / full-res textures, counters
+    int ao_on, ao_pin, ao_rays, ao_done, ao_applied; float ao_radius, ao_strength; id<MTLComputePipelineState> ps_ao, ps_aoblur, ps_ao_a; id<MTLTexture> ao_half, ao_tmp, ao_full; uint64_t n_ao_traced, n_ao_applied, n_ao_missed;   // 光追 AO（实验性）：设置、管线、半分辨率 / 模糊 / 全分辨率贴图、统计 | ray-traced AO (experimental): settings, pipelines, half-res / blur / full-res textures, counters
     // 光追内存（2026-10-28 真机内存 P1 之后）：budget0 = 网格缓存上限的设置值（DM_RT_SHADOW_CACHE_MB，缺省 64 MB），budget = 按预算 / 告警收紧后的生效值；mem_avail = 光追建好时离系统内存上限（0 = 不知道）
     // ray-tracing memory (after the 2026-10-28 device memory P1): budget0 = the configured mesh cache cap (DM_RT_SHADOW_CACHE_MB, 64 MB by default), budget = the effective one after the budget / warnings tighten it; mem_avail = distance to the system memory limit when ray tracing was set up (0 = unknown)
     uint64_t cache_hold_until, n_evict_hot, n_cache_refuse;   // 网格缓存防抖：帧开头淘汰到上一帧刚用过的网格（工作集比上限大）后 600 帧内，缓存到上限就不新建 | mesh cache anti-thrash: for 600 frames after the frame-start eviction hit a mesh used in the previous frame (working set larger than the cap), no new mesh is created while the cache is at the cap
@@ -300,9 +302,9 @@ static int rts_on(void) {
         { const char *sh = getenv("DM_RT_SUN_HALF"); g_rts.sun_half = sh ? atoi(sh) != 0 : 0; }   // 太阳射线半分辨率 + 深度感知上采样（七审三轮起缺省关：第 0、1 档全分辨率，第 2 档起自动半分辨率；1 = 一直半分辨率） | half-resolution sun rays + depth-aware upsampling (default on; 0 = full resolution)
         { const char *pa = getenv("DM_RT_POINT_ALL"); g_rts.point_all = pa && atoi(pa) != 0; if (pa) MLOG("光追点光：%s（测试开关 DM_RT_POINT_ALL=%s）", g_rts.point_all ? "原版不投影的灯也挑（对照，会出双影）" : "只挑原版投影的灯", pa); }   // 缺省只挑原版投影的灯（RC1 双影） | by default only lights the original shadows are picked (RC1 doubled shadows)
         const char *pe = getenv("DM_RT_POINT"), *pn = getenv("DM_RT_POINT_N"); g_rts.point_on = pe ? atoi(pe) != 0 : 0;   // 点光影缺省关（B022，用户 2026-10-30 定 A）：这一版原版不画点光阴影图，光追点光影全是额外加的——地窖里一盏离地 8 的低灯给人物拉出原版没有的大黑影、随人物挪动摆方向（双影 / 随朝向转）；DM_RT_POINT=1 打开 | point-light shadows off by default (B022, user decision A 2026-10-30): this build of the original draws no point-light shadow maps, so ray-traced point shadows are purely added - in the cellar a low light 8 units up threw a large dark shadow the original does not have, swinging as the player moves (double shadow / turns with facing); DM_RT_POINT=1 turns them on g_rts.point_n = pn ? atoi(pn) : 2; if (g_rts.point_n > 4) g_rts.point_n = 4; if (g_rts.point_n < 1) g_rts.point_on = 0;
-        // 光追 AO（实验性，计划第 5 步）：缺省关，DM_RT_AO=1 开；半径（世界单位）、强度（0–1，HDR 乘 1 − 强度 × 遮挡）、每像素射线数 | ray-traced AO (experimental, plan step 5): off by default, DM_RT_AO=1 turns it on; radius (world units), strength (0–1, the HDR is multiplied by 1 − strength × occlusion), rays per pixel
+        // 光追 AO（实验性，计划第 5 步）：跟图形页设置（dm_rt_ao_setting，rts_on 每帧读），DM_RT_AO=0/1 钉住；半径（世界单位）、强度（0–1，HDR 乘 1 − 强度 × 遮挡）、每像素射线数 | ray-traced AO (experimental, plan step 5): follows the Graphics setting (dm_rt_ao_setting, read every frame by rts_on), DM_RT_AO=0/1 pins it; radius (world units), strength (0–1, the HDR is multiplied by 1 − strength × occlusion), rays per pixel
         { const char *ao = getenv("DM_RT_AO"), *ar = getenv("DM_RT_AO_RADIUS"), *as = getenv("DM_RT_AO_STRENGTH"), *an = getenv("DM_RT_AO_RAYS");
-          g_rts.ao_on = ao && atoi(ao) != 0; g_rts.ao_radius = ar ? (float)atof(ar) : 6.f; if (!(g_rts.ao_radius > 0 && g_rts.ao_radius <= 100)) g_rts.ao_radius = 6.f;
+          g_rts.ao_pin = ao ? atoi(ao) != 0 : -1; g_rts.ao_on = g_rts.ao_pin > 0; g_rts.ao_radius = ar ? (float)atof(ar) : RTS_AO_RADIUS; if (!(g_rts.ao_radius > 0 && g_rts.ao_radius <= 2000)) g_rts.ao_radius = RTS_AO_RADIUS;
           g_rts.ao_strength = as ? (float)atof(as) : 0.6f; if (!(g_rts.ao_strength >= 0 && g_rts.ao_strength <= 1)) g_rts.ao_strength = 0.6f; g_rts.ao_rays = an ? atoi(an) : 4; if (g_rts.ao_rays < 1 || g_rts.ao_rays > 16) g_rts.ao_rays = 4; }
         // 自动降档：缺省开（DM_RT_AUTO=0 关）；DM_RT_LEVEL=<0–3> 钉住档位（同时关掉自动） | automatic downgrade: on by default (DM_RT_AUTO=0 turns it off); DM_RT_LEVEL=<0–3> pins a level (and turns automatic off)
         { const char *ae = getenv("DM_RT_AUTO"), *le = getenv("DM_RT_LEVEL"); g_rts.lvl_pin = le ? atoi(le) : -1; if (g_rts.lvl_pin > RTS_LVL_MAX) g_rts.lvl_pin = RTS_LVL_MAX;
@@ -310,6 +312,8 @@ static int rts_on(void) {
         // 前缀与宿主 dm_rt_shadow_setting 的「光追阴影：生效」同一个：钉住时不走宿主那条，分享诊断日志的摘要照样取得到 | same prefix as "光追阴影：生效" in the host dm_rt_shadow_setting: when pinned that path is skipped, and the share-diagnostics summary still finds the line
         if (e) MLOG("光追阴影：生效 %s（测试开关 DM_RT_SHADOW=%s 钉住%s）", atoi(e) && g_rts.gate ? "开" : "关", e, g_rts.gate ? "" : "，机器不可用，仍不生效");
     }
+    // 图形页改了光追 AO：下一帧起按新值定方案（贴图跟档位一起建 / 放，rts 帧头）；DM_RT_AO 钉住时不看设置 | the Graphics tab changed ray-traced AO: the plan follows from the next frame (the textures are built / released with the level, at the frame start); DM_RT_AO pins it and the setting is not read
+    if (g_rts.ao_pin < 0) { int a = dm_rt_ao_setting() != 0; if (a != g_rts.ao_on) { g_rts.ao_on = a; g_rts.plan_w = g_rts.plan_h = 0; rts_lvl_update(); } }
     int v = !g_rts.gate || g_rts.failed || g_gcap_on ? 0 : rts_flip(g_rts.on == -2 ? dm_rt_shadow_setting() != 0 : g_rts.on); int fe_off = v && !rts_ingame(); if (fe_off) v = 0;   // GPU 抓帧前后关掉（g_gcap_on，见 nvn_mtl.m gcap_present）：Metal 抓帧层碰到光追对象就崩，只能整个释放 | off around a GPU capture (g_gcap_on, see gcap_present in nvn_mtl.m): the Metal capture layer crashes on ray-tracing objects, so everything is released
     if (!v) g_rts.hang_seen = atomic_load(&g_gpu_hang_n);   // 光追关着时的挂起不算光追的 | hangs while ray tracing is off do not count against it
     if (!v) g_rts.memw_seen = atomic_load(&g_mem_warn_n);   // 光追关着时的内存告警与光追无关（没东西可放），再开时不按旧告警降档 | memory warnings while ray tracing is off have nothing to release and do not lower the level on the next switch-on
@@ -465,8 +469,7 @@ static int rts_setup(void) {
            g_rts.soft > 0 ? "全分辨率" : g_rts.sun_half ? "1/2 分辨率" : "全分辨率（第 2 档起 1/2）", g_rts.point_on ? [NSString stringWithFormat:@"≤ %d 盏、1/%d 分辨率", g_rts.point_n, g_rts.point_div].UTF8String : "关", bias, nb,
            nl > -1 ? [NSString stringWithFormat:@"N·L < %.2f 不追、记在影里（同原版阴影贴图）", nl].UTF8String : "也追", g_rts.part ? "开" : "关", g_rts.point_all ? "否（DM_RT_POINT_ALL=1）" : "是", getenv("DM_RT_FRONTEND") && atoi(getenv("DM_RT_FRONTEND")) ? "也光追（DM_RT_FRONTEND=1）" : "照原版"); }
     if (g_rts.point_on) MLOG("光追点光：%s", g_rts.point_all ? "原版不投影的灯也挑（DM_RT_POINT_ALL=1 对照，会和原版叠出双影）" : "只挑原版本来投影的灯（记录第 +2 texel 的 .w 为 0），光追只替换原版的影，不给随身光 / 召唤物光圈加影");
-    if (g_rts.ao_on) MLOG("光追 AO：开（实验性，DM_RT_AO=1）：半分辨率每像素 %d 条半球射线、半径 %.1f、强度 %.2f、5×5 深度感知模糊后上采样，主通道之后乘到画面上；自动降档 1 档起关", g_rts.ao_rays, g_rts.ao_radius, g_rts.ao_strength);
-    else MLOG("光追 AO：关（实验性，DM_RT_AO=1 打开）");
+    MLOG("光追 AO：参数 %s：半分辨率每像素 %d 条半球射线、半径 %.1f、强度 %.2f、5×5 深度感知模糊后上采样，主通道之后乘到画面上；自动降档 1 档起关", g_rts.ao_pin >= 0 ? (g_rts.ao_pin ? "rt_ao=1（DM_RT_AO 钉住）" : "rt_ao=0（DM_RT_AO 钉住）") : "跟图形页设置", g_rts.ao_rays, g_rts.ao_radius, g_rts.ao_strength);
     g_rts.mem_avail = rts_avail_bytes(); g_rts.plan_w = g_rts.plan_h = 0;   // 预算在第一次知道渲染尺寸时定（rts_mem_replan） | the budget plan is made the first time the render size is known (rts_mem_replan)
     rts_alpha_start();
     return 1;
@@ -716,7 +719,7 @@ static void rts_frame_begin(uint64_t f) {
     if (g_rts.ao_done && !g_rts.ao_applied) g_rts.n_ao_missed++;   // 上一帧算了 AO 却没乘上去（主通道之后没再挂 HDR） | last frame traced AO but never applied it (the HDR was not attached again after the main pass)
     g_rts.ao_done = g_rts.ao_applied = 0;
     if (!g_rts.eff.ao && (g_rts.ao_half || g_rts.ao_tmp || g_rts.ao_full)) {   // 降档关了 AO：三张贴图等在途提交做完放掉，升回来再建 | AO switched off by the downgrade: the three textures are released after in-flight submissions and rebuilt on the way back up
-        defer_obj_release(g_rts.ao_half); defer_obj_release(g_rts.ao_tmp); defer_obj_release(g_rts.ao_full); g_rts.ao_half = g_rts.ao_tmp = g_rts.ao_full = nil; MLOG("光追 AO：降档关掉，贴图放掉（升回 0 档再建）"); }
+        defer_obj_release(g_rts.ao_half); defer_obj_release(g_rts.ao_tmp); defer_obj_release(g_rts.ao_full); g_rts.ao_half = g_rts.ao_tmp = g_rts.ao_full = nil; MLOG("光追 AO：降档或设置关掉，贴图放掉（升回 0 档且开着时再建）"); }
     if (!g_rts.eff.point_on && (g_rts.pmask || g_rts.pmaskf)) { rts_point_release(); MLOG("光追点光：本档关点光，两张点光遮罩放掉（升回有点光的档再建）"); }   // 第 3 档 / 内存最低档：点光遮罩不用就放（原先一直留着，原生档约 24 MB） | level 3 / the memory floor: point masks are released when unused (they used to stay, about 24 MB at native resolution)
     // 软阴影（RC1 起缺省开）只在第 0、1 档生效：降到第 2 档起两张全分辨率 RG8（Duo 原生约 2 × 11.4 MB）原先一直留到整个光追拆掉，现在等在途提交做完放掉，升回来再建（资源审查）
     // Soft shadows (on by default from RC1) apply only at levels 0 and 1: from level 2 the two full-resolution RG8 textures (about 2 × 11.4 MB at Duo native) used to stay until the whole RT teardown; now they are released after in-flight submissions and rebuilt when the level comes back (resource review)
