@@ -488,7 +488,7 @@ int main(void) { @autoreleasepool {
     //     the automatic downgrade cannot step above the floor; the budget plan (default fits → unchanged, otherwise AO off / mesh cache shrunk / floor 3 in order); level B: warnings while ray tracing is off do not touch it
     { int a1[1] = {0}; uint64_t b0 = g_rts.budget0; g_rts.budget0 = g_rts.budget = 64ull << 20; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0;   // 设置值换了：方案按新设置值重算 | the configured cap changed: the plan is redone for it
       #define FULL() do { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); } while (0)   // 帧开头的处理要有光追调用才进得去（空帧不经过模块） | the frame-start handling needs a ray-tracing call to run (an empty frame does not go through the module)
-      g_rts.memw = (rts_memw){0}; g_rts.gov.lvl = 0; g_rts.ao_on = 1; rts_lvl_update();
+      g_rts.memw = (rts_memw){0}; g_rts.gov.lvl = 0; g_rts.ao_pin = 1; g_rts.ao_on = 1; rts_lvl_update();
       for (int i = 0; i < 6 && !g_rts.ao_full; i++) @autoreleasepool { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); }
       EXPECT("26 告警前 AO 三张贴图在", 1, g_rts.ao_half && g_rts.ao_tmp && g_rts.ao_full);
       __weak id w_ao = nil; @autoreleasepool { w_ao = g_rts.ao_full; }
@@ -521,7 +521,7 @@ int main(void) { @autoreleasepool {
       uint64_t n0 = g_rts.memw.n, k0 = g_rts.key_ns; mtl_note_memory_warning(); for (int i = 0; i < 3; i++) @autoreleasepool { frame_open(); sh(0); frame_close(); }
       EXPECT("26 B 级 光追关：告警不处理（计数不变）", 0, (long long)(g_rts.memw.n - n0)); EXPECT("26 B 级 光追关：不建网格、不算键", 1, g_rts.nmesh == 0 && g_rts.key_ns == k0 && !g_rts.tlas);
       g_rts.on = 1; EXPECT("26 再开后光追生效", 1, until_applied(a1, 1)); EXPECT("26 再开后不按关着时的告警降档", 1, g_rts.memw.n == n0 && g_rts.gov.lvl == 0 && g_rts.memw.floor == 0);
-      g_rts.ao_on = 0; g_rts.budget0 = g_rts.budget = b0; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0; rts_lvl_update();
+      g_rts.ao_pin = -1; g_rts.ao_on = 0; g_rts.budget0 = g_rts.budget = b0; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0; rts_lvl_update();
       #undef FULL
     }
 #endif
@@ -554,6 +554,11 @@ int main(void) { @autoreleasepool {
       printf("28 稳定后 10 帧新建 BLAS %llu 个，缓存最多 %.2f MB\n", (unsigned long long)(g_rts.n_builds - nb0), worst / 1048576.0);
       EXPECT("28 工作集比预算大：稳定后 10 帧不再新建 BLAS（不每帧淘汰重建）", 0, (long long)(g_rts.n_builds - nb0)); EXPECT("28 帧末缓存不超预算 1 MB 太多（≤ 预算 + 一帧建的量）", 1, worst <= (2u << 20));
       EXPECT("28 GPU 无错", 1, ok28); g_rts.budget = b0; EXPECT("28 预算恢复后光追照常", 1, until_applied((int[]){0}, 1)); }
+    // 29. 玩家路径（没有 DM_RT_SHADOW，g_rts.on == -2）：启动读配置只跑一次，自动降档的状态不被每帧重置（RC1.x 玩家的光追因此永远不降档）
+    // 29. Player path (no DM_RT_SHADOW, g_rts.on == -2): the start-up configuration runs once and the automatic-downgrade state is not reset every frame (because of this, RC1.x players' ray tracing never stepped down)
+    { g_rts.on = -2; g_rts.gov.n = 77; g_rts.gov.lvl = 2; rts_on(); rts_on();
+      EXPECT("29 玩家路径：降档器样本不被重置", 77, g_rts.gov.n); EXPECT("29 玩家路径：档位不被重置", 2, g_rts.gov.lvl); EXPECT("29 玩家路径：仍是跟设置", -2, g_rts.on);
+      g_rts.ao_pin = -1; g_rts.ao_on = 1; rts_on(); EXPECT("29 光追 AO 跟设置（这里的弱定义 = 关）", 0, g_rts.ao_on); g_rts.ao_pin = 1; g_rts.ao_on = 1; rts_on(); EXPECT("29 DM_RT_AO 钉住时不看设置", 1, g_rts.ao_on); g_rts.ao_pin = -1; g_rts.ao_on = 0; }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

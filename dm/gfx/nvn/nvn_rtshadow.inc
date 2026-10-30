@@ -284,7 +284,8 @@ static int rts_ingame(void) {
     return ig;
 }
 static int rts_on(void) {
-    if (g_rts.on < 0) {
+    // 只读一次（-1 = 还没读）。-2 = 跟图形页设置：原先写成 on < 0，玩家路径（没有 DM_RT_SHADOW）每帧都重跑这一段，自动降档每帧被重置、永远不降 | read once (-1 = not read yet). -2 = follow the Graphics setting: this used to be on < 0, so on the player path (no DM_RT_SHADOW) the block ran every frame, resetting the automatic downgrade so it never stepped down
+    if (g_rts.on == -1) {
         const char *e = getenv("DM_RT_SHADOW"); g_rts.gate = mtl_rt_shadow_supported(); g_rts.dbg = getenv("DM_RT_SHADOW_DBG") ? atoi(getenv("DM_RT_SHADOW_DBG")) : 0;
         g_rts.on = e ? atoi(e) != 0 : -2;
         { const char *ie = getenv("DM_RT_INDOOR"); g_rts.indoor_force = ie ? atoi(ie) != 0 : -1; g_rts.indoor = -1; if (ie) MLOG("光追阴影：室内判定钉成 %s（测试开关 DM_RT_INDOOR=%s）", g_rts.indoor_force ? "室内" : "室外", ie); }
