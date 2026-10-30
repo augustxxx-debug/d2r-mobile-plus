@@ -6,6 +6,10 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 ## [Unreleased]
 
+- **Free Town Portal is on by default** (user, 2026-10-30; both platforms): new installs and settings files without the key start with it on. A settings file that already holds it off stays off: RC1.2 and Android 1.0.1 / 1.0.2 wrote every key on save, so a player who changed any option there keeps it off until they turn it on in Options → Custom.
+
+## [1.0.0-rc1.2] - 2026-10-30
+
 - **Free Town Portal is now an option, off by default** (user, 2026-10-30): Options → Custom → "Free Town Portal (no tome/scroll)". Off is the original game: no free portal skill in the skill tree, and the touch portal button uses the Tome of Town Portal (or a scroll) on the character, consumed as in the original game; with none it shows "No Town Portal tome or scroll" and opens no portal. On: the town portal skill appears under General Skills and works on whatever button you bind it to (e.g. LT + A), and the touch portal button casts it; neither needs a tome or scroll. An empty RT (ZR) is no longer used as a free town portal under either setting; it is an ordinary skill slot. Settings files from earlier versions count as off; turning it off during a run removes the skill at once and buttons bound to it become empty.
 - **Controller: the Gameplay options page opens on the Game Difficulty row** (RC1.1 on-device B057, follow-ups B064): from the pause menu, after switching tabs with LB / RB, and after switching touch → controller on the page the focus lands on (or returns to) the difficulty row and Left / Right / A / Down stay with it; outside a run (main-menu Options) the uneditable row is skipped. Down hands the focus back to the row it came from even after the page was rebuilt.
 - **Touch: the "Join the community" box responds at all three entries** (RC1.1 on-device B058): main menu, pause menu and Options → Custom → About. View / Copy / OK are hit even where the original hit-test gives the box no size, and a small finger drift while the box is open no longer turns into front-end scrolling.
@@ -27,14 +31,14 @@ Everything below lists all changes in 1.0.0-rc1 and earlier relative to the upst
 - Known issue (experience line): in touch mode the experience line may occasionally not show (mostly on the first run after a fresh install); toggling "Show frame rate" once under Options → Graphics brings it back. To be fixed in the next release.
 - Known issue (memory, free signing): per-process limit about 3375 MB; in long 120 fps sessions the footprint levels off near 2.7 GB with continuous system memory warnings but no termination; the known host-side leak is fixed and any residual growth is judged by the current candidate's own long run; gone with a paid account carrying `increased-memory-limit` (about 6 GB).
 
-## [Android 1.0.2] - unreleased
+## [Android 1.0.2] - 2026-10-30
 
 Upgrade over 1.0.1 (same package name and signing certificate; saves and the game files on the phone stay). After the upgrade the first launch rebuilds its touch resources once.
 
 - **Sound no longer disappears for good after leaving the game**: if the system dropped the audio stream while the game was in the background, sound stayed off until the game was restarted. The game now reopens the audio stream when you come back and, if that fails, keeps retrying about every 1.5 seconds until sound returns.
 - **Options → Graphics**: the note at the bottom of the page no longer describes MetalFX, which only exists on iOS.
 
-## [Android 1.0.1] - unreleased
+## [Android 1.0.1] - 2026-10-30
 
 Upgrade over 1.0.0 (same package name and signing certificate; saves and the game files on the phone stay). After the upgrade the first launch rebuilds its touch resources once.
 

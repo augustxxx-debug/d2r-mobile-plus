@@ -18,13 +18,13 @@
 //   - Casting = the step main+0x6e77f0(game, player, x, y, 1 = right hand, skill node) inside the server handler (0x6d4470) of the right-click cast-on-ground packet 0x0c; it requires the node passed in to be the right-click skill node,
 //     so during the call skill chain +0x10 (right-click skill) is temporarily pointed at 411 and put back after the call, leaving the right-click skill the player chose unchanged. Target point = at the feet.
 //   - In town (town standing mode 5), when dead, or while casting, the original game refuses the cast (tapping again while casting returns 1 and no second portal appears).
-// 开关：自定义页「免费回城」（键 free_tp，缺省关，用户 2026-10-30 定：按 RT 不扣东西随手开门不该是缺省）。测试可用 DM_TEST_FREETP_ON=0|1 盖过设置（不写设置文件）。
+// 开关：自定义页「免费回城」（键 free_tp，缺省开，用户 2026-10-30 定，RC2 起；RC1.2 / 安卓 1.0.1 曾缺省关）。测试可用 DM_TEST_FREETP_ON=0|1 盖过设置（不写设置文件）。
 //   开着：挂 411（技能树「综合技能」里可绑键）、回城钮 = 免费回城；回城书 / 卷轴照原版可用，只是不再需要。
 //   关着：完全原版——不挂 411（技能树里没有它）；回城钮 = 原版「使用」身上的回城书（有次数的优先）→ 背包里的回城卷轴 → 腰带里的回城卷轴，
 //   走 dm_item_use 那条原版使用路径（扣数、城里不让用等全由原版判）；一样都没有就弹一句系统提示、不开门。
 //   两种设置下都不再接管手柄 ZR（原先「ZR 空着 = 免费回城」，用户 2026-10-30 去掉）：ZR 永远是普通技能格。
 //   局中开 → 关：玩家身上已挂的 411 用原版删技能 main+0x5aeed0 摘掉（客户端 / 服务端各一次，施法中 / 死亡时等下一拍），绑着它的键清成空格；关 → 开：下一拍就挂上（立即生效）。
-// Switch: the Custom page's "Free Town Portal" (key free_tp, off by default; user 2026-10-30: free portals on RT that consume nothing should not be the default). Tests can override the setting with DM_TEST_FREETP_ON=0|1 (the settings file is not written).
+// Switch: the Custom page's "Free Town Portal" (key free_tp, on by default; user 2026-10-30, from RC2; RC1.2 / Android 1.0.1 shipped it off). Tests can override the setting with DM_TEST_FREETP_ON=0|1 (the settings file is not written).
 //   On: 411 is attached (bindable under "General Skills" in the skill tree), the portal button = free town portal; tomes / scrolls still work as in the original game, they are just no longer needed.
 //   Off: fully original -- 411 is not attached (it does not appear in the skill tree); the portal button = the original game "uses" the Tome of Town Portal (one with charges first) -> a Scroll of Town Portal in the inventory -> one in the belt,
 //   through the original use path of dm_item_use (charges deducted, refused in town, etc., all judged by the original game); with none of them, one system notice and no portal.

@@ -34,6 +34,7 @@ Both features below are in development and **expected to open for testing in ear
 | Loading indicators | Anchors both the fire-logo animation and red save/loading symbol; prepares placement before revealing the widget | Implemented; captured frame sequences reviewed |
 | Quest log touch | Accepts stationary releases longer than the normal tap deadline on quest-specific controls | Implemented; automated tests and device reproduction |
 | Optional font | Build-time main-font override with missing-character fallback and `DM_UI_FONT_WEIGHT` stroke-darkening levels | Experimental; ARKai_T inspected locally on device, darkening level 3 accepted on an iPhone Duo, broader layout coverage pending |
+| Free Town Portal | Options → Custom, on by default: the touch portal button and the skill-tree portal skill consume no tome or scroll; off is the original game | Implemented; on-by-default not yet checked on a device |
 
 These are changes on top of upstream commit [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). The branch adds experimental MetalFX spatial upscaling; it does not introduce multiplayer or frame generation. Upstream performance measurements and platform support claims are not new benchmarks for this fork.
 
