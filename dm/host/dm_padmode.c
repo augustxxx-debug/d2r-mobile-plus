@@ -511,6 +511,7 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
         else { int n = dm_hud_slider_players(0, 7, v); if (n != shown) { dm_hud_request_players(n); g_diff_pend = n; shown = n; LOG("游戏难度：选项页滑块 → %d 档（下一拍生效）", n); } }
     }
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current();
+    { static int was_pad = -1; if (was_pad == 0 && pad) g_diff_home = frame + 60; was_pad = pad; }   // 在页上切到手柄模式：同进页，缺省焦点落难度行（审计复核：在页上切输入模式） | switching to controller mode on the page: like entering it, the default focus lands on the difficulty row
     // 手柄焦点链（RC1.1 B015）：原版这页的焦点只在原版表格里走，第一行再按上什么也不做（不循环）。焦点在表格第一个可见行上按上 = 焦点交给难度行：
     // 把焦点管理器的焦点控件（[界面根+0xd0]+0x190）换成我们的滑块——原版的焦点金框照这个指针画，就画到难度行上（dm_actions.c 腰带补满也是这样摆焦点）。
     // 难度行上：左 / 右 = −1 / +1 档（1、8 到头不动），A = +1 档（8 后回 1），同其它行一样改了立刻生效；下 = 焦点交回刚才那一行；上不动。
@@ -543,7 +544,11 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
           // Default focus on entry (RC1.1 on-device B057: entering the Gameplay page in controller mode focused "Show Items"): the difficulty row is the page's first row, so within 60
           // frames of the page being shown / rebuilt, when the game puts its default focus on the table's first row it moves to the difficulty row instead (Down still returns to that first row);
           // if the focus is elsewhere by then (the player moved), it is left alone
-          if (g_diff_home && (frame > g_diff_home || (F && !in_first))) g_diff_home = 0;
+          // 只在局内落（局外这一行不可调，审计 P2-4）；焦点还指着上一页的控件时继续等，只有落在本页别的行上才算玩家动过（审计 P2-3：从 LB / RB 切进来的第一帧焦点还在上一页）
+          // only in a run (outside one the row cannot be changed, audit P2-4); while the focus still points at the previous page's widget keep waiting, only a focus on another row of
+          // this page means the player moved (audit P2-3: on the first frame after switching in with LB / RB the focus is still on the previous page)
+          int in_page = fn && pm_find(gp, fn, 0) == F;
+          if (g_diff_home && (frame > g_diff_home || !shown || (in_page && !in_first))) g_diff_home = 0;
           if (g_diff_home && in_first) { g_diff_home = 0; back = F; *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：进页缺省焦点放到难度行（原版给的是 %s）", fn); }
           else if (in_first && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
               back = F; *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：手柄焦点上移到难度行（从 %s）", fn); } } }
