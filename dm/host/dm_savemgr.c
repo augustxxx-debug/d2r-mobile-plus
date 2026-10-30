@@ -80,7 +80,7 @@ static void set_box(const char *title, const char *sub, const char *note, const 
 static void rows_clear(void) { if (!g_rows) g_rows = calloc(MAX_ROWS, sizeof *g_rows); g_nrows = 0; g_page = 0; g_foc = 0; }
 static row_t *row_add(const char *text, const char *tag, int kind, int idx) { if (g_nrows >= MAX_ROWS) return NULL; row_t *r = &g_rows[g_nrows++]; memset(r, 0, sizeof *r); strlcpy(r->text, text, sizeof r->text); strlcpy(r->tag, tag ? tag : "", sizeof r->tag); r->kind = kind; r->idx = idx; return r; }
 static void go(int st) { atomic_store(&g_st, st); atomic_store(&g_shown, 0); }
-static const char *err_key(int rc) { switch (rc) { case DM_PKG_E_ZIP: case DM_PKG_E_NOTOURS: return "dmSaveErrZip"; case DM_PKG_E_CHECK: return "dmSaveErrCheck"; case DM_PKG_E_TOONEW: return "dmSaveErrNew"; case DM_PKG_E_LIMIT: case DM_PKG_E_PATH: return "dmSaveErrBad"; case DM_PKG_E_SPACE: return "dmSaveErrSpace"; case DM_PKG_E_STARFULL: return "dmSaveErrStar"; case DM_PKG_E_CONVERT: return "dmSaveErrConvert"; default: return "dmSaveErrIo"; } }
+static const char *err_key(int rc) { switch (rc) { case DM_PKG_E_ZIP: case DM_PKG_E_NOTOURS: return "dmSaveErrZip"; case DM_PKG_E_CHECK: return "dmSaveErrCheck"; case DM_PKG_E_TOONEW: return "dmSaveErrNew"; case DM_PKG_E_LIMIT: case DM_PKG_E_PATH: return "dmSaveErrBad"; case DM_PKG_E_SPACE: return "dmSaveErrSpace"; case DM_PKG_E_STARFULL: return "dmSaveErrStar"; case DM_PKG_E_CONVERT: return "dmSaveErrConvert"; case DM_PKG_E_COOP: return "dmSaveErrCoop"; default: return "dmSaveErrIo"; } }
 static int g_msg_back;   // 消息框确定后回哪一页（S_NONE = 收起）| where OK on the message box returns to
 static void show_fail(int rc, int back) { rows_clear(); set_box(S("dmSaveFailTitle"), S(err_key(rc)), S("dmSaveFailSub"), S("dmSaveOk"), NULL); g_msg_back = back; go(S_MSG); LOG("存档管理：失败提示 代码 %d", rc); }
 static void show_msg(const char *title, const char *sub, int back) { rows_clear(); set_box(title, sub, NULL, S("dmSaveOk"), NULL); g_msg_back = back; go(S_MSG); }
@@ -105,11 +105,11 @@ static void stash_label(const char *nm, char *o, size_t n) { snprintf(o, n, S("d
 static void show_home(void) { rows_clear(); row_add(S("dmSaveExport"), NULL, RK_PLAIN, 0); row_add(S("dmSaveImport"), NULL, RK_PLAIN, 1); row_add(S("dmSaveBackupNow"), NULL, RK_PLAIN, 2); row_add(S("dmSaveBackupList"), NULL, RK_PLAIN, 3); set_box(S("dmSaveMgrRow"), S("dmSaveMgrSub"), NULL, S("dmSaveBack"), NULL); go(S_HOME); }
 static void export_page(void) {
     rows_clear(); const char *sv = save_dir(); DIR *d = opendir(sv); struct dirent *e;
-    while (d && (e = readdir(d))) { if (e->d_name[0] == '.' || e->d_name[0] == '_') continue; char p[1400]; snprintf(p, sizeof p, "%s/%s/%s.d2s", sv, e->d_name, e->d_name); size_t L = 0; FILE *f = fopen(p, "rb"); if (!f) continue; uint8_t *b = malloc(1 << 20); if (b) { L = fread(b, 1, 1 << 20, f); dm_pkg_char c; memset(&c, 0, sizeof c); if (dm_savepkg_parse_d2s(b, L, &c)) { char t[200]; char_row_text(&c, t, sizeof t); row_t *r = row_add(t, S("dmSaveSelected"), RK_CHAR, 0); if (r) r->on = 1; } free(b); } fclose(f); }
+    while (d && (e = readdir(d))) { if (e->d_name[0] == '.' || e->d_name[0] == '_' || dm_savepkg_is_coop_char(sv, e->d_name)) continue; char p[1400]; snprintf(p, sizeof p, "%s/%s/%s.d2s", sv, e->d_name, e->d_name); size_t L = 0; FILE *f = fopen(p, "rb"); if (!f) continue; uint8_t *b = malloc(1 << 20); if (b) { L = fread(b, 1, 1 << 20, f); dm_pkg_char c; memset(&c, 0, sizeof c); if (dm_savepkg_parse_d2s(b, L, &c)) { char t[200]; char_row_text(&c, t, sizeof t); row_t *r = row_add(t, S("dmSaveSelected"), RK_CHAR, 0); if (r) r->on = 1; } free(b); } fclose(f); }
     if (d) closedir(d);
     row_t *r = row_add(S("dmSaveStashRow"), S("dmSaveSelected"), RK_STASH, 0); if (r) { snprintf(r->text, sizeof r->text, "%s", S("dmSaveStashRow")); char *pct = strstr(r->text, " · %s"); if (pct) *pct = 0; r->on = 1; }
     r = row_add(S("dmSaveSettingsRow"), S("dmSaveNotSelected"), RK_SETTINGS, 0);
-    set_box(S("dmSaveExport"), S("dmSaveExportSub"), NULL, S("dmSaveExportGo"), S("dmSaveBack")); go(S_EXPORT);
+    set_box(S("dmSaveExport"), S("dmSaveExportSub"), dm_savepkg_coop_count(sv) ? S("dmSaveCoopNote") : NULL, S("dmSaveExportGo"), S("dmSaveBack")); go(S_EXPORT);
 }
 static void preview_tag(row_t *r) {
     if (r->kind == RK_CHAR) { dm_pkg_char *c = &g_view.chars[r->idx]; char st[80] = "";
@@ -133,9 +133,9 @@ static void preview_page(void) {
 static void bklist_page(void) {
     g_nbk = dm_savepkg_backup_list(save_dir(), g_bk, 64); rows_clear();
     for (int i = 0; i < g_nbk; i++) { char when[32], sz[24], t[200]; time_t tt = (time_t)g_bk[i].when; struct tm tm; localtime_r(&tt, &tm); strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tm); if (g_bk[i].size >= 1 << 20) snprintf(sz, sizeof sz, "%.1f MB", g_bk[i].size / 1048576.0); else snprintf(sz, sizeof sz, "%lld KB", g_bk[i].size / 1024 + 1); snprintf(t, sizeof t, S("dmSaveBkRow"), when, S(g_bk[i].is_auto ? "dmSaveBkAuto" : "dmSaveBkManual"), g_bk[i].chars, sz); row_add(t, g_bk[i].starred ? "★" : "", RK_PLAIN, i); }
-    const char *note = NULL;
+    const char *note = dm_savepkg_coop_count(save_dir()) ? S("dmSaveCoopNote") : NULL;
 #ifdef __ANDROID__
-    note = S("dmAndSaveBackupPath");
+    if (!note) note = S("dmAndSaveBackupPath");
 #endif
     set_box(S("dmSaveBackupList"), S(g_nbk ? "dmSaveBkKeep" : "dmSaveBkEmpty"), note, S("dmSaveBack"), NULL); go(S_BKLIST);
 }

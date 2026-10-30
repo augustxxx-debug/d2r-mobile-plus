@@ -145,6 +145,14 @@ int dm_savepkg_rename_d2s(uint8_t *b, size_t n, const char *newname) {
     memset(b + 0x12b, 0, 0x30); memcpy(b + 0x12b, newname, L); uint32_t c = d2s_ck(b, n); b[12] = (uint8_t)c; b[13] = (uint8_t)(c >> 8); b[14] = (uint8_t)(c >> 16); b[15] = (uint8_t)(c >> 24); return 1;
 }
 
+// ---- 联机角色隔离（用户 2026-10-31 02:2x，防作弊：联机存档禁止任何形式互通 / 导入 / 导出）。联机线的约定落地前是占位：角色目录里有 *.sw_coop 标记文件，或存档根下的 coop/、_coop/ 目录。
+// 约定定了只改这两个函数。导出和备份都不带联机角色；包里有标记就整包拒绝；同名的本机联机角色不被覆盖。没有签名，改过的包可以去掉标记，所以这只是这一端的隔离，真正的防线是联机主机校验
+// ---- Co-op character isolation (user, 2026-10-31, anti-cheat: co-op saves must not move in any form). A placeholder until the co-op line settles its convention: a *.sw_coop marker in a character directory, or a coop/ or _coop/ directory at the save root.
+// Only these two functions change when it is settled. Exports and backups leave co-op characters out; a package with a marker is refused whole; a local co-op character of the same name is never overwritten. Nothing is signed and a tampered package can drop the marker, so this is only this side's isolation; the real defence is the co-op host's validation
+static int coop_path(const char *rel) { const char *b = strrchr(rel, '/'); b = b ? b + 1 : rel; size_t n = strlen(b); if (n >= 8 && !strcmp(b + n - 8, ".sw_coop")) return 1; const char *s = strchr(rel, '/'); size_t a = s ? (size_t)(s - rel) : strlen(rel); return (a == 4 && !strncmp(rel, "coop", 4)) || (a == 5 && !strncmp(rel, "_coop", 5)); }
+int dm_savepkg_is_coop_char(const char *root, const char *phys) { pth d; snprintf(d, sizeof d, "%s/%s", root, phys); DIR *dp = opendir(d); if (!dp) return 0; struct dirent *e; int hit = 0; while (!hit && (e = readdir(dp))) hit = coop_path(e->d_name); closedir(dp); return hit; }
+int dm_savepkg_coop_count(const char *save) { DIR *dp = opendir(save); if (!dp) return 0; struct dirent *e; int n = 0; while ((e = readdir(dp))) { if (e->d_name[0] == '.') continue; n += dm_savepkg_is_coop_char(save, e->d_name); } closedir(dp); return n; }
+
 // ---- 名单文件（根目录 sw_elysium.txt / dm_stash_topup.txt，一行一个角色名，按行跟角色走）| Name lists (one character per line; lines travel with the character)
 static int list_has(const char *root, const char *file, const char *name) { pth p; snprintf(p, sizeof p, "%s/%s", root, file); FILE *f = fopen(p, "r"); if (!f) return 0; char ln[128]; int hit = 0; while (!hit && fgets(ln, sizeof ln, f)) { ln[strcspn(ln, "\r\n")] = 0; hit = !strcmp(ln, name); } fclose(f); return hit; }
 static int list_set(const char *root, const char *file, const char *name, int on) {
@@ -156,7 +164,7 @@ static int list_set(const char *root, const char *file, const char *name, int on
 
 // ---- 枚举存档树（按客体名：APFS 上的物理别名还原，见 hle_fs.c）| Walk a save tree by guest name (physical aliases on APFS are resolved, see hle_fs.c)
 typedef struct { char rel[256], unit[64], phys[1400]; int cls; long long size; int64_t mt; char sha[65]; } pf;
-typedef struct { pf *v; int n, cap, skipped; } pfl;
+typedef struct { pf *v; int n, cap, skipped, coop; } pfl;
 static int guest_of(const char *parent, const char *phys, char *o, size_t n) { pth p; snprintf(p, sizeof p, "%s/%s", parent, phys); ssize_t k = PKG_GUEST_GET(p, o, n - 1); if (k >= 0) { o[k] = 0; return 1; } strlcpy(o, phys, n); return 1; }
 static int pf_add(pfl *l, const char *rel, const char *phys, const struct stat *st) {
     char unit[64] = ""; int c = dm_savepkg_path_class(rel, unit, sizeof unit); if (c <= 0) { l->skipped++; return 0; }
@@ -174,7 +182,7 @@ static int walk(const char *root, pfl *l) {
     DIR *d = opendir(root); if (!d) return -1; struct dirent *e; int rc = 0;
     while (!rc && (e = readdir(d))) { if (e->d_name[0] == '.') continue; pth full; snprintf(full, sizeof full, "%s/%s", root, e->d_name); struct stat st; if (lstat(full, &st)) continue;
         char g[256]; guest_of(root, e->d_name, g, sizeof g);
-        if (S_ISREG(st.st_mode)) { rc = pf_add(l, g, full, &st); continue; } if (!S_ISDIR(st.st_mode)) continue; if (g[0] == '_') continue;
+        if (S_ISREG(st.st_mode)) { rc = pf_add(l, g, full, &st); continue; } if (!S_ISDIR(st.st_mode)) continue; if (g[0] == '_') continue; if (coop_path(g) || dm_savepkg_is_coop_char(root, e->d_name)) { l->coop++; continue; }   // 联机角色整个不进来 | co-op characters stay out entirely
         DIR *d2 = opendir(full); if (!d2) continue; struct dirent *e2;
         while (!rc && (e2 = readdir(d2))) { if (e2->d_name[0] == '.') continue; pth f2; snprintf(f2, sizeof f2, "%s/%s", full, e2->d_name); struct stat s2; if (lstat(f2, &s2) || !S_ISREG(s2.st_mode)) continue;
             char g2[256], rel[600]; guest_of(full, e2->d_name, g2, sizeof g2); snprintf(rel, sizeof rel, "%s/%s", g, g2); rc = pf_add(l, rel, f2, &s2); }
@@ -269,7 +277,7 @@ int dm_savepkg_export(const char *tree, const char *out_zip, const dm_pkg_export
         for (int i = 0; i < all.n && !rc; i++) { size_t bn = 0; uint8_t *b = read_all(all.v[i].phys, MAX_FILE, &bn); if (!b || zip_put(f, &z[i + 1], all.v[i].rel, b, bn)) rc = DM_PKG_E_IO; free(b); if (!rc && o->progress && o->progress(i + 1, all.n)) rc = DM_PKG_E_IO; }
         if (!rc && zip_end(f, z, all.n + 1)) rc = DM_PKG_E_IO; }
     if (f && fflush(f)) rc = DM_PKG_E_IO; if (f && !rc && fsync(fileno(f))) rc = DM_PKG_E_IO; if (f) fclose(f); if (!rc && rename(tmp, out_zip)) rc = DM_PKG_E_IO; if (rc) unlink(tmp);
-    LOG("存档管理：导出 %s（%d 个文件，跳过 %d 个不属于存档的文件）", rc ? "失败" : "完成", all.n, all.skipped);
+    LOG("存档管理：导出 %s（%d 个文件，跳过 %d 个不属于存档的文件、%d 个联机角色）", rc ? "失败" : "完成", all.n, all.skipped, all.coop);
     free(mj); free(z); free(all.v); return rc;
 }
 
@@ -332,9 +340,11 @@ void dm_savepkg_stage_cancel(const char *save) { pth t, p; stage_paths(save, t, 
 int dm_savepkg_inspect(const char *zip, const char *save, int restore, dm_pkg_view *v) {
     memset(v, 0, sizeof *v); pth tmp, pend, failed; stage_paths(save, tmp, pend); snprintf(failed, sizeof failed, "%s.import.failed", save); rm_tree(tmp); rm_tree(failed);
     zf z; int rc = zf_open(&z, zip); jn *m = NULL; uint8_t *mj = NULL; v->chars = calloc(DM_PKG_MAX_CHARS, sizeof *v->chars); if (!v->chars) rc = DM_PKG_E_IO; if (rc) goto done;
+    for (int i = 0; i < z.n; i++) if (coop_path(z.e[i].name)) { LOG("存档管理：包里有联机角色标记，整包拒绝"); rc = DM_PKG_E_COOP; goto done; }
     const zr *me = zf_find(&z, "manifest.json"); if (!me) { rc = DM_PKG_E_NOTOURS; goto done; } int zerr = 0; mj = zf_read(&z, me, MAX_MANIFEST, &zerr); if (!mj) { rc = zerr; goto done; }
     const char *mp = (const char *)mj; m = jval(&mp, 0); if (!m || m->t != J_OBJ) { rc = DM_PKG_E_NOTOURS; goto done; } ws(&mp); if (*mp) { rc = DM_PKG_E_NOTOURS; goto done; } if (strcmp(jstrv(m, "format"), "d2rmp-saves")) { rc = DM_PKG_E_NOTOURS; goto done; }
     v->format_major = (int)jnum(m, "format_major", 0); v->format_minor = (int)jnum(m, "format_minor", 0); v->save_gen = (int)jnum(m, "save_gen", 0); if (v->format_major < 1) { rc = DM_PKG_E_NOTOURS; goto done; } if (v->format_major > DM_PKG_FORMAT_MAJOR || v->save_gen > DM_PKG_SAVE_GEN) { rc = DM_PKG_E_TOONEW; goto done; }
+    { int cp = jnum(m, "coop", 0) != 0; jn *cl = jget(m, "characters"); if (cl && cl->t == J_ARR) for (jn *c = cl->kid; c; c = c->next) cp |= jnum(c, "coop", 0) != 0; if (cp) { LOG("存档管理：manifest 标了联机角色，整包拒绝"); rc = DM_PKG_E_COOP; goto done; } }
     jn *src = jget(m, "source"); strlcpy(v->platform, jstrv(src, "platform"), sizeof v->platform); strlcpy(v->commit, jstrv(src, "commit"), sizeof v->commit); strlcpy(v->build, jstrv(src, "build"), sizeof v->build); strlcpy(v->version, jstrv(src, "version"), sizeof v->version); strlcpy(v->game_build, jstrv(m, "game_build"), sizeof v->game_build); strlcpy(v->exported_at, jstrv(m, "exported_at"), sizeof v->exported_at); strlcpy(v->kind, jstrv(m, "kind"), sizeof v->kind);
     strlcpy(v->source_format, jget(m, "source_format") ? jstrv(m, "source_format") : "d2r-switch-plus", sizeof v->source_format); if (!v->source_format[0]) strlcpy(v->source_format, "unknown", sizeof v->source_format); strlcpy(v->source_version, jstrv(m, "source_version"), sizeof v->source_version); strlcpy(v->converted_from, jstrv(m, "converted_from"), sizeof v->converted_from);   // converted_from 为 null 时 jstrv 给空串 | jstrv gives "" when converted_from is null
     jn *files = jget(m, "files"); if (!files || files->t != J_ARR) { rc = DM_PKG_E_NOTOURS; goto done; }
@@ -355,7 +365,8 @@ int dm_savepkg_inspect(const char *zip, const char *save, int restore, dm_pkg_vi
         if (jnum(c, "valid", 1) && (jnum(c, "class", -1) != pc.cls || jnum(c, "level", -1) != pc.level || jnum(c, "hardcore", -1) != pc.hardcore || (int64_t)jnum(c, "last_played", -1) != (int64_t)pc.last_played)) { free(l.v); rc = DM_PKG_E_CHECK; goto done; } char us[65]; unit_sha(&l, nm, us); if (strcmp(us, jstrv(c, "unit_sha256"))) { free(l.v); rc = DM_PKG_E_CHECK; goto done; }
         x->cls = pc.cls; x->level = pc.level; x->progress = pc.progress; x->hardcore = pc.hardcore; x->expansion = pc.expansion; x->last_played = pc.last_played;
         int dup = 0; for (int k = 0; k < v->nchars - 1; k++) if (ieq_ascii(v->chars[k].name, nm)) dup = 1; if (dup) continue;   // 同包里只差大小写的第二个：标无法导入 | the second of two names differing only in case: cannot be imported
-        char lg[64], lp[256]; if (local_char(save, nm, lg, sizeof lg, lp, sizeof lp)) { strlcpy(x->local, lg, sizeof x->local); pth lroot; snprintf(lroot, sizeof lroot, "%s/%s", save, lp); pfl ll = {0}; DIR *ld = opendir(lroot); struct dirent *le; if (ld) { while ((le = readdir(ld))) { if (le->d_name[0] == '.') continue; pth f2; snprintf(f2, sizeof f2, "%s/%s", lroot, le->d_name); struct stat s2; char g2[256], rel[600]; guest_of(lroot, le->d_name, g2, sizeof g2); snprintf(rel, sizeof rel, "%s/%s", lg, g2); if (!lstat(f2, &s2) && S_ISREG(s2.st_mode)) pf_add(&ll, rel, f2, &s2); } closedir(ld); }
+        char lg[64], lp[256]; if (local_char(save, nm, lg, sizeof lg, lp, sizeof lp) && dm_savepkg_is_coop_char(save, lp)) { strlcpy(x->local, lg, sizeof x->local); continue; }   // 同名的是本机联机角色：不能覆盖，这一行保持「无法导入」| the same name is a local co-op character: it must not be overwritten, this row stays "cannot import"
+        if (local_char(save, nm, lg, sizeof lg, lp, sizeof lp)) { strlcpy(x->local, lg, sizeof x->local); pth lroot; snprintf(lroot, sizeof lroot, "%s/%s", save, lp); pfl ll = {0}; DIR *ld = opendir(lroot); struct dirent *le; if (ld) { while ((le = readdir(ld))) { if (le->d_name[0] == '.') continue; pth f2; snprintf(f2, sizeof f2, "%s/%s", lroot, le->d_name); struct stat s2; char g2[256], rel[600]; guest_of(lroot, le->d_name, g2, sizeof g2); snprintf(rel, sizeof rel, "%s/%s", lg, g2); if (!lstat(f2, &s2) && S_ISREG(s2.st_mode)) pf_add(&ll, rel, f2, &s2); } closedir(ld); }
             qsort(ll.v, (size_t)ll.n, sizeof *ll.v, cmp_pf); char ls[65] = ""; int same = 0; if (!strcmp(lg, nm)) { int bad = 0; for (int k = 0; k < ll.n; k++) bad |= hash_file(&ll.v[k]); if (!bad) { unit_sha(&ll, lg, ls); same = !strcmp(ls, us); } } free(ll.v); pth ld2; snprintf(ld2, sizeof ld2, "%s/%s/%s.d2s", save, lp, lg); size_t ln = 0; uint8_t *lb = read_all(ld2, MAX_FILE, &ln); dm_pkg_char lc; memset(&lc, 0, sizeof lc); if (lb && dm_savepkg_parse_d2s(lb, ln, &lc)) { x->local_level = lc.level; x->local_played = lc.last_played; } free(lb); x->status = same ? DM_PKG_SAME : DM_PKG_CONFLICT; x->action = same ? DM_PKG_SKIP : restore ? DM_PKG_OVERWRITE : DM_PKG_SKIP; }
         else { x->status = DM_PKG_NEW; x->action = DM_PKG_OVERWRITE; } }
     jn *st = jget(m, "stash"); if (st && st->t == J_ARR) for (jn *c = st->kid; c && v->nstash < DM_PKG_MAX_STASH; c = c->next) { dm_pkg_stash *x = &v->stash[v->nstash++]; const char *nm = jstrv(c, "name"); strlcpy(x->name, nm, sizeof x->name); char us[65]; unit_sha(&l, nm, us); if (!is_stash_name(nm) || strcmp(us, jstrv(c, "unit_sha256"))) { free(l.v); rc = DM_PKG_E_CHECK; goto done; }
@@ -393,6 +404,7 @@ int dm_savepkg_result_take(const char *save, int *ok, int *chars, int *code) { p
 
 static int apply_char(const char *fd, const char *imp, const char *name, const char *act, const char *newname, const char *local, int ely, int top, int64_t now, FILE *fu) {
     const char *dn = !strcmp(act, "k") ? newname : name; char lg[64], lp[256];
+    if (local_char(imp, !strcmp(local, "-") ? name : local, lg, sizeof lg, lp, sizeof lp) && dm_savepkg_is_coop_char(imp, lp) && strcmp(act, "k")) { LOG("存档管理：同名的是联机角色，这一个不换入"); return 0; }   // 预览之后才变成联机角色也不覆盖 | also holds if it became a co-op character after the preview
     if (!strcmp(local, "-")) { if (!strcmp(act, "o") && local_char(imp, name, lg, sizeof lg, lp, sizeof lp)) { pth d; snprintf(d, sizeof d, "%s/%s", imp, lp); if (rm_tree(d)) return -1; } } else if (local_char(imp, local, lg, sizeof lg, lp, sizeof lp)) { pth d; snprintf(d, sizeof d, "%s/%s", imp, lp); if (rm_tree(d)) return -1; list_set(imp, "sw_elysium.txt", lg, 0); list_set(imp, "dm_stash_topup.txt", lg, 0); }
     pth sd, td; snprintf(sd, sizeof sd, "%s/%s", fd, name); snprintf(td, sizeof td, "%s/%s", imp, dn); if (mkdir(td, 0755) && errno != EEXIST) return -1; DIR *d = opendir(sd); if (!d) return -1; struct dirent *e; int rc = 0; size_t nl = strlen(name);
     while (!rc && (e = readdir(d))) { if (e->d_name[0] == '.') continue; pth s, t; snprintf(s, sizeof s, "%s/%s", sd, e->d_name); if (strncmp(e->d_name, name, nl)) { rc = -1; break; } snprintf(t, sizeof t, "%s/%s%s", td, dn, e->d_name + nl); rc = copy_verified(s, t, now);

@@ -65,6 +65,21 @@ static void sha(const void *d, size_t n, char o[65]) { uint8_t h[32]; CC_SHA256(
 static void mkpkg(const char *rel, const char *path, const char *content, int major, int gen) { static char m[4096]; char h[65]; sha(content, strlen(content), h); snprintf(m, sizeof m, "{\"format\":\"d2rmp-saves\",\"format_major\":%d,\"format_minor\":0,\"save_gen\":%d,\"source\":{\"platform\":\"android\"},\"characters\":[],\"stash\":[],\"files\":[{\"path\":\"%s\",\"unit\":\"x\",\"size\":%zu,\"sha256\":\"%s\"}]}", major, gen, path, strlen(content), h); ent e[2] = { { .name = "manifest.json", .d = (const uint8_t *)m, .n = (uint32_t)strlen(m) }, { .name = path, .d = (const uint8_t *)content, .n = (uint32_t)strlen(content) } }; mkzip(rel, e, 2, 0); }
 static int pkg_rc(const char *path) { mkpkg("evil.zip", path, "x", 1, 2); dm_pkg_view v; mkdir(R, 0755); int rc = inspect("evil.zip", "ev", 0, &v); dm_savepkg_view_free(&v); return rc; }
 
+// 联机角色隔离：导出 / 备份不带；伪造标记的包被拒；同名不覆盖；换入后还在；导入的不带标记 | co-op isolation: left out of exports and backups; forged markers are refused; same name not overwritten; survives apply; imports carry no marker
+static void t_coop(void) {
+    dm_pkg_view v; mk_save("co/save"); mk_char("co/save", "Online", 2, 30, 0, 5); puts_("co/save/Online/Online.sw_coop", "1"); puts_("co/save/coop/x.bin", "c"); char s[1024]; P(s, "co/save"); CHECK(dm_savepkg_coop_count(s) == 1, "计数");
+    CHECK(export_all("co/save", "co.zip", 1, 0) == 0, "导出"); size_t n = 0; uint8_t *z = get("co.zip", &n); int leak = 0; for (size_t i = 0; i + 6 < n; i++) if (!memcmp(z + i, "Online", 6) || !memcmp(z + i, "sw_coop", 7) || !memcmp(z + i, "coop/", 5)) leak = 1; free(z); CHECK(!leak, "联机角色进了导出包");
+    CHECK(inspect("co.zip", "co2/save", 0, &v) == 0 && v.nchars == 2 && !row(&v, "Online"), "导入预览没有联机角色"); commit("co2/save", &v); dm_savepkg_view_free(&v); apply("co2/save"); CHECK(!has("co2/save/Online") && !has("co2/save/Alice/Alice.sw_coop"), "导入的不带标记");
+    char nm[96]; CHECK(dm_savepkg_backup(s, "manual", NOW, NULL, &SRC, nm, sizeof nm) == 0, "备份"); dm_pkg_backup l[8]; int bn = dm_savepkg_backup_list(s, l, 8); CHECK(bn == 1 && l[0].chars == 2, "备份列表不算联机角色 %d", bn ? l[0].chars : -1); char bz[1500]; snprintf(bz, sizeof bz, "%s/%s", l[0].dir, l[0].file); CHECK(dm_savepkg_inspect(bz, s, 1, &v) == 0 && !row(&v, "Online"), "恢复选不到联机角色"); dm_savepkg_stage_cancel(s); dm_savepkg_view_free(&v);
+    // 负例：伪造标记 | negative cases: forged markers
+    mkpkg("f1.zip", "Alice/Alice.sw_coop", "1", 1, 2); CHECK(inspect("f1.zip", "co3/save", 0, &v) == DM_PKG_E_COOP, "标记文件"); dm_savepkg_view_free(&v);
+    mkpkg("f2.zip", "coop/x.bin", "1", 1, 2); CHECK(inspect("f2.zip", "co3/save", 0, &v) == DM_PKG_E_COOP, "coop 目录"); dm_savepkg_view_free(&v);
+    mkpkg("f3.zip", "_coop/x.bin", "1", 1, 2); CHECK(inspect("f3.zip", "co3/save", 0, &v) == DM_PKG_E_COOP, "_coop 目录"); dm_savepkg_view_free(&v);
+    static const char *const mf[] = { "{\"format\":\"d2rmp-saves\",\"format_major\":1,\"save_gen\":2,\"coop\":true,\"files\":[]}", "{\"format\":\"d2rmp-saves\",\"format_major\":1,\"save_gen\":2,\"characters\":[{\"name\":\"Alice\",\"coop\":true}],\"files\":[]}" }; for (int i = 0; i < 2; i++) { ent e1[1] = { { .name = "manifest.json", .d = (const uint8_t *)mf[i], .n = (uint32_t)strlen(mf[i]) } }; mkzip("f4.zip", e1, 1, 0); CHECK(inspect("f4.zip", "co3/save", 0, &v) == DM_PKG_E_COOP, "manifest 标记 %d", i); dm_savepkg_view_free(&v); } uint8_t x[3] = {1, 2, 3}; static const char m0[] = "{\"format\":\"d2rmp-saves\",\"format_major\":1,\"save_gen\":2,\"files\":[]}"; ent e2[2] = { { .name = "manifest.json", .d = (const uint8_t *)m0, .n = sizeof m0 - 1 }, { .name = "Bob/Bob.sw_coop", .d = x, .n = 3 } }; mkzip("f5.zip", e2, 2, 0); CHECK(inspect("f5.zip", "co3/save", 0, &v) == DM_PKG_E_COOP, "manifest 外藏标记"); dm_savepkg_view_free(&v); CHECK(!has("co3/save.import.tmp"), "拒绝后清临时");
+    // 同名是本机联机角色：不能覆盖；换入后联机角色还在 | the same name is a local co-op character: not overwritten; co-op characters survive apply
+    mk_char("co4/save", "Alice", 1, 40, 0, 9); puts_("co4/save/Alice/Alice.sw_coop", "1"); mk_char("co4/save", "Online", 2, 30, 0, 5); puts_("co4/save/Online/Online.sw_coop", "1"); CHECK(inspect("co.zip", "co4/save", 0, &v) == 0 && row(&v, "Alice")->status == DM_PKG_BAD, "同名联机角色标无法导入"); row(&v, "Alice")->action = DM_PKG_OVERWRITE; commit("co4/save", &v); dm_savepkg_view_free(&v); CHECK(apply("co4/save") == 1, "换入"); n = 0; z = get("co4/save/Alice/Alice.d2s", &n); dm_pkg_char c; CHECK(z && dm_savepkg_parse_d2s(z, n, &c) && c.level == 40, "联机角色没被覆盖"); free(z); CHECK(has("co4/save/Online/Online.d2s") && has("co4/save/法师/法师.d2s"), "联机角色还在，其他照常进来");
+    mk_char("co5/save", "Alice", 1, 40, 0, 9); CHECK(inspect("co.zip", "co5/save", 0, &v) == 0, "校验"); row(&v, "Alice")->action = DM_PKG_OVERWRITE; commit("co5/save", &v); dm_savepkg_view_free(&v); puts_("co5/save/Alice/Alice.sw_coop", "1"); apply("co5/save"); n = 0; z = get("co5/save/Alice/Alice.d2s", &n); CHECK(z && dm_savepkg_parse_d2s(z, n, &c) && c.level == 40, "预览后才成联机角色也不覆盖"); free(z);
+}
 static void t_names(void) {
     static const char *const ok[] = { "Alice", "法师", "Ab", "a-b", "a_b", "한글이름" }, *const bad[] = { "A", "abcdefghijklmnop", "-ab", "ab-", "a-b-c", "a_b-c", "a b", "a1b", "a/b", "a..b", "" };
     for (size_t i = 0; i < 6; i++) CHECK(dm_savepkg_name_ok(ok[i]), "应合规 %s", ok[i]); for (size_t i = 0; i < 11; i++) CHECK(!dm_savepkg_name_ok(bad[i]), "应不合规 %s", bad[i]);
@@ -174,7 +189,7 @@ static void t_cross(void) {
 
 int main(void) {
     const char *td = getenv("TMPDIR"); snprintf(R, sizeof R, "%s/t_savepkg_%d", td ? td : "/tmp", (int)getpid()); mkdir(R, 0755);
-    t_names(); t_paths(); t_d2s(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_cross();
+    t_names(); t_paths(); t_d2s(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_cross(); t_coop();
     char cmd[700]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", R); if (!fails) system(cmd); else printf("  保留现场 %s\n", R);
     printf("t_savepkg: %d 项检查，%d 项失败\n", checks, fails); return fails != 0;
 }

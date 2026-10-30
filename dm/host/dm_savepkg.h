@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum { DM_PKG_OK = 0, DM_PKG_E_IO = 1, DM_PKG_E_ZIP = 2, DM_PKG_E_NOTOURS = 3, DM_PKG_E_CHECK = 4, DM_PKG_E_TOONEW = 5, DM_PKG_E_LIMIT = 6, DM_PKG_E_PATH = 7, DM_PKG_E_SPACE = 8, DM_PKG_E_STARFULL = 9, DM_PKG_E_CONVERT = 10 };
+enum { DM_PKG_OK = 0, DM_PKG_E_IO = 1, DM_PKG_E_ZIP = 2, DM_PKG_E_NOTOURS = 3, DM_PKG_E_CHECK = 4, DM_PKG_E_TOONEW = 5, DM_PKG_E_LIMIT = 6, DM_PKG_E_PATH = 7, DM_PKG_E_SPACE = 8, DM_PKG_E_STARFULL = 9, DM_PKG_E_CONVERT = 10, DM_PKG_E_COOP = 11 };
 enum { DM_PKG_NEW = 0, DM_PKG_SAME = 1, DM_PKG_CONFLICT = 2, DM_PKG_BAD = 3 };           // 预览里每行的状态 | row state in the preview
 enum { DM_PKG_SKIP = 0, DM_PKG_OVERWRITE = 1, DM_PKG_KEEPBOTH = 2 };                      // 每行的处理（新角色导入 = OVERWRITE） | per-row action (importing a new character = OVERWRITE)
 enum { DM_PKG_FORMAT_MAJOR = 1, DM_PKG_FORMAT_MINOR = 0, DM_PKG_SAVE_GEN = 2 };           // 版本规则见设计稿 2.1 节：旧版跳过会丢东西的改动必须升 major | versioning rules: a change an old build would lose data by skipping must bump major
@@ -64,3 +64,5 @@ int dm_savepkg_backup_delete(const char *save, const dm_pkg_backup *b);
 void dm_savepkg_backup_prune(const char *save, const char *keep);                // 未标星只留最近 10 份，每个目录各算（keep 这份不删） | keep the 10 newest unstarred per directory (never deletes keep)
 long long dm_savepkg_free_bytes(const char *path);
 int dm_savepkg_rmtree(const char *path);
+int dm_savepkg_is_coop_char(const char *root, const char *phys);   // 这个角色目录是不是联机角色（占位约定见 dm_savepkg.c）| whether this character directory is a co-op character (placeholder convention in dm_savepkg.c)
+int dm_savepkg_coop_count(const char *save);
