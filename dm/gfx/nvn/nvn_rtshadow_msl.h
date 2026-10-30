@@ -197,8 +197,12 @@ static const char *k_rts_msl =
 // 点光遮罩上采样（评审阶段一）：半分辨率 → 全分辨率，2×2 双线性权重再乘深度相近度（与 rts_blur 同一口径），深度差大的邻居几乎不参与——人物边缘不再漏光 / 漏影
 // point-light mask upsampling (review phase 1): half → full resolution, bilinear 2×2 weights times depth similarity (the same measure as rts_blur), neighbours across a depth edge barely count - no more light / shadow leaking at silhouettes
 "struct PU { uint2 full; uint2 half_; };\n"
+// 双线性位置按低分辨率样本的实际取样点：太阳（rts_trace 块中心像素 g·sc + sc/2）、点光（rts_ptrace 同）、AO（rts_ao / rts_aoblur 取 2g+1）都比块的几何中心偏 +0.5 个全分辨率像素，
+// 原先按几何中心插值，背光面的 0 在某些太阳方向上仍漏到相邻受光面（B022 / 十七审：审计方用例 1/2 分辨率四个方向 22 / 68 / 74 / 5 → 13 / 12 / 4 / 10）
+// bilinear positions follow where the low-resolution samples were actually taken: the sun (rts_trace, block-centre pixel g·sc + sc/2), point lights (rts_ptrace, same) and AO (rts_ao / rts_aoblur at 2g+1) all sit +0.5 full-resolution pixel off the block's geometric centre;
+// interpolating at the geometric centre still leaked back-face 0 onto adjacent lit pixels for some sun directions (B022 / 17th review, auditor case at 1/2 over four directions: 22 / 68 / 74 / 5 → 13 / 12 / 4 / 10)
 "kernel void rts_pup(texture2d<float, access::read> pm [[texture(0)]], texture2d<float, access::write> out [[texture(1)]], depth2d<float, access::read> depth [[texture(2)]], constant PU &u [[buffer(0)]], uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= u.full.x || g.y >= u.full.y) return; float z0 = depth.read(g); float2 sc = float2(u.half_) / float2(u.full); float2 hp = (float2(g) + 0.5) * sc - 0.5; int2 q0 = int2(floor(hp)); float2 fr = hp - float2(q0);\n"   // sc = 低分辨率 / 全分辨率（1/2 或 1/4） | sc = low / full resolution (1/2 or 1/4)
+"  if (g.x >= u.full.x || g.y >= u.full.y) return; float z0 = depth.read(g); float2 sc = float2(u.half_) / float2(u.full); float2 hp = float2(g) * sc - 0.5; int2 q0 = int2(floor(hp)); float2 fr = hp - float2(q0);\n"   // sc = 低分辨率 / 全分辨率（1/2 或 1/4） | sc = low / full resolution (1/2 or 1/4)
 "  float4 acc = float4(0); float ws = 0.0;\n"
 "  for (int j = 0; j < 2; j++) for (int i = 0; i < 2; i++) { int2 q = clamp(q0 + int2(i, j), int2(0), int2(u.half_) - 1); float bw = (i ? fr.x : 1.0 - fr.x) * (j ? fr.y : 1.0 - fr.y);\n"
 "    float zq = depth.read(min(uint2((float2(q) + 0.5) / sc), u.full - 1)); float w = (bw + 1e-3) / (1.0 + 4000.0 * abs(zq - z0)); acc += pm.read(uint2(q)) * w; ws += w; }\n"
@@ -209,7 +213,7 @@ static const char *k_rts_msl =
 // the per-pixel rotation is a fixed hash (does not change per frame, no flicker), the noise is left to rts_aoblur (5×5 depth-aware) and the rts_pup upsampling; the result is multiplied onto the HDR after the main pass (rts_fs)
 "struct AOK { float4x4 invVP; uint2 size; float radius; float bias; uint seed; uint nray; float zn; float pad1; };\n"
 "kernel void rts_ao(depth2d<float, access::read> depth [[texture(0)]], texture2d<float, access::write> ao [[texture(1)]], instance_acceleration_structure as [[buffer(0)]], constant AOK &k [[buffer(1)]] RTS_AI, uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 full = uint2(depth.get_width(), depth.get_height()); uint2 fg = min(g * 2, full - 1); float z = depth.read(fg);\n"
+"  if (g.x >= k.size.x || g.y >= k.size.y) return; uint2 full = uint2(depth.get_width(), depth.get_height()); uint2 fg = min(g * 2 + 1, full - 1); float z = depth.read(fg);\n"
 "  if (z >= 1.0) { ao.write(float4(1), g); return; }\n"
 "  float3 p = rts_wp(k.invVP, fg, full, z);\n"
 "  float3 n = rts_nrm(depth, k.invVP, fg, full, z, p, k.zn); if (dot(n, n) < 0.5) { ao.write(float4(1), g); return; }\n"   // 法线朝相机、每轴取深度更接近的邻居（rts_nrm）| normal facing the camera, per-axis closer-depth neighbour (rts_nrm)
@@ -221,7 +225,7 @@ static const char *k_rts_msl =
 "    float d; if (RTS_HIT(r, as, true, d)) { float f = d / k.radius; occ += 1.0 - f * f; } }\n"
 "  ao.write(float4(1.0 - occ / float(max(k.nray, 1u))), g); }\n"
 "kernel void rts_aoblur(texture2d<float, access::read> src [[texture(0)]], texture2d<float, access::write> dst [[texture(1)]], depth2d<float, access::read> depth [[texture(2)]], constant PU &u [[buffer(0)]], uint2 g [[thread_position_in_grid]]) {\n"
-"  if (g.x >= u.half_.x || g.y >= u.half_.y) return; float z0 = depth.read(min(g * 2, u.full - 1)), acc = 0.0, ws = 0.0;\n"
+"  if (g.x >= u.half_.x || g.y >= u.half_.y) return; float z0 = depth.read(min(g * 2 + 1, u.full - 1)), acc = 0.0, ws = 0.0;\n"
 "  for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) { int2 q = clamp(int2(g) + int2(i, j), int2(0), int2(u.half_) - 1); float zq = depth.read(min(uint2(q) * 2, u.full - 1));\n"
 "    float w = 1.0 / (1.0 + 4000.0 * abs(zq - z0)); acc += src.read(uint2(q)).r * w; ws += w; }\n"
 "  dst.write(float4(acc / max(ws, 1e-6)), g); }\n"
