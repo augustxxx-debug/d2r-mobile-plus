@@ -126,7 +126,7 @@ static void preview_page(void) {
     char when[16]; strlcpy(when, g_view.exported_at, 11); char sub[260]; const char *pl = !strcmp(g_view.platform, "ios") ? "iOS" : !strcmp(g_view.platform, "ipados") ? "iPadOS" : !strcmp(g_view.platform, "android") ? "Android" : !strcmp(g_view.platform, "macos") ? "macOS" : g_view.platform; if (!strcmp(g_view.source_format, "d2r-pc")) pl = S("dmSaveFmtPc"); else if (!strcmp(g_view.source_format, "d2lod")) pl = S("dmSaveFmtLod"); else if (strcmp(g_view.source_format, "d2r-switch-plus")) pl = S("dmSaveFmtOther"); snprintf(sub, sizeof sub, S("dmSavePreviewFrom"), pl, g_view.version[0] ? g_view.version : g_view.build, when);
     const char *note = NULL;
 #ifndef __ANDROID__
-    if (dm_custom_get("icloud") && !getenv("DM_TEST_ICLOUD_OFF")) note = S("dmIosSaveCloudOn");
+    if (dm_custom_get("icloud") && !getenv("DM_TEST_ICLOUD_OFF")) note = S("dmCloudSaveOn");
 #endif
     set_box(S("dmSaveImport"), sub, note, S("dmSavePreviewGo"), S("dmSaveBack")); go(S_PREVIEW);
 }

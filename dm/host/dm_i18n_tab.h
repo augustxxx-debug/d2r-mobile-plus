@@ -1043,7 +1043,9 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmSaveCls5", "德鲁伊", "Druid", "Druida", "Druida", "Друид", "드루이드" },
     { "dmSaveCls6", "刺客", "Assassin", "Asesina", "Asesina", "Ассасин", "어쌔신" },
     { "dmSaveCls7", "术士", "Warlock", "Brujo", "Brujo", "Чернокнижник", "워록" },
-    { "dmIosSaveCloudOn", "iCloud 同步开启：导入的内容会传到其他设备", "iCloud sync is on: imports reach your other devices", "Sincronía iCloud activa: lo importado llega a tus dispositivos", "Sincronía iCloud activa: lo importado llega a tus dispositivos", "Синхронизация iCloud включена: импорт попадёт на другие устройства", "iCloud 동기화 켜짐: 가져온 내용이 다른 기기로 전송됩니다" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmCloudSaveOn", "iCloud 同步开启：导入的内容会传到其他设备", "iCloud sync is on: imports reach your other devices", "Sincronía iCloud activa: lo importado llega a tus dispositivos", "Sincronía iCloud activa: lo importado llega a tus dispositivos", "Синхронизация iCloud включена: импорт попадёт на другие устройства", "iCloud 동기화 켜짐: 가져온 내용이 다른 기기로 전송됩니다" },
+#endif
 #if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndSaveBackupPath", "备份也保存在 Download/S2X/D2R Mobile Plus/SaveBackups", "Backups are also in Download/S2X/D2R Mobile Plus/SaveBackups", "Copias también en Download/S2X/D2R Mobile Plus/SaveBackups", "Copias también en Download/S2X/D2R Mobile Plus/SaveBackups", "Копии также в Download/S2X/D2R Mobile Plus/SaveBackups", "백업은 Download/S2X/D2R Mobile Plus/SaveBackups 에도 저장됩니다" },
 #endif
