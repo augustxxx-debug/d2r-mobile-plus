@@ -686,6 +686,13 @@ void dm_graphics_ui_pump(unsigned long long root) {
     uint64_t focus = find_w(sp, "TouchGraphicsSel", 0);
     if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? dm_sel_frame_x(DM_ROW_INDENT) : 99999, y = pad ? 170 + 180 * selected : 0;
         if (r[0] != x || r[1] != y) { r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)focus + 0x10))(focus); } }
+    // 这页行数超过一屏（加了光追 AO 行）：手柄选到框外的行时滚到位，同自定义页（滚动量取法、到头判定见下面 custom 页那段）
+    // This page now has more rows than fit (the ray-traced AO row): scroll to the controller's row, same as the Custom page (offset reading and end detection: see that block below)
+    if (pad) { uint64_t rw = find_w(sp, "TouchGraphicsRows", 0), view = rw ? *(uint64_t *)(rw + 0x30) : 0, sv = view ? *(uint64_t *)(view + 0x30) : 0, dm_guest_frame(void), f = dm_guest_frame(); static uint64_t lf;
+        static int last_dir, last_off = -1, last_sel = -1; if (selected != last_sel) { last_sel = selected; last_dir = 0; last_off = -1; }
+        if (sv && f - lf >= 4) { int top = selected ? 160 + 180 * selected : 0, bot = 180 + 180 * (selected + 1), off = -*(int32_t *)(view + 0x74), vh = *(int32_t *)(sv + 0x7c); if (vh <= 0) vh = 1260; void dm_ui_wheel_on(uint64_t, int);
+            int dir = dm_custom_scroll_step(top, bot, off, vh, last_dir, last_off);
+            if (dir) { lf = f; last_dir = dir; last_off = off; dm_ui_wheel_on(sv, dir); } } }
     static const char *const captions[] = { "dmGraphicsProfileAuto", "dmGraphicsProfileEco", "dmGraphicsProfileBalanced", "dmGraphicsProfileQuality" };
     int profile = profile_shown(); if (profile < 0 || profile > 3) profile = 0;
     graphics_text(find_w(sp, "TouchGraphicsProfileText", 0), dm_str(main_base(), captions[profile]));
