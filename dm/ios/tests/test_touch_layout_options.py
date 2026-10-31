@@ -101,7 +101,7 @@ _rt = g_nodes['TouchGraphicsRtRow']['fields']['rect']; _ao = g_nodes['TouchGraph
 assert g_nodes['TouchGraphicsRtAo']['type'] == 'ToggleButtonWidget' and g_nodes['TouchGraphicsRtAoText']['fields']['text'] == '@dmGraphicsRtAo'
 for _n, _k in (('TouchGraphicsRtAoNote', '@dmGraphicsRtAoNote'), ('TouchGraphicsRtAoNeedRt', '@dmGraphicsRtAoNeedRt')):
     _f = g_nodes[_n]['fields']; assert _f['text'] == _k and _f['style/pointSize'] == 28 and _f['style/fontColor'] == '$FontColorLightGray' and _f['style/spacing'] == '$ReducedSpacing', _f
-    assert _f['rect']['y'] >= 100 and _f['rect']['y'] + _f['rect']['height'] <= 180 and _f['rect']['x'] + _f['rect']['width'] <= g_nodes['TouchGraphicsRtAo']['fields']['rect']['x'], _f['rect']
+    assert _f['rect']['y'] >= 80 and _f['rect']['y'] + _f['rect']['height'] <= 150 and _f['rect']['x'] + _f['rect']['width'] <= g_nodes['TouchGraphicsRtAo']['fields']['rect']['x'], _f['rect']
 assert g_nodes['TouchGraphicsRtShadow']['type'] == 'ToggleButtonWidget' and g_nodes['TouchGraphicsRtText']['fields']['text'] == '@dmGraphicsRtShadow'
 # 120 帧档不给高画质（用户 2026-10-29）：档位行里一行副文（28 号、说明灰、$ReducedSpacing，CLAUDE.md §2.6），宿主只在 120 帧格选着时显示；在档位文字下方、行内，不压下一行
 # 120 fps gets no Quality (user 2026-10-29): one subtext line inside the profile row (28 pt, description grey, $ReducedSpacing, CLAUDE.md §2.6), shown by the host only while the 120 fps stop is selected; below the profile caption, inside the row, never over the next row

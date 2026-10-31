@@ -1653,7 +1653,7 @@ def _graphics_page(text):
         return n
     ao_row = {'type': 'Widget', 'name': 'TouchGraphicsRtAoRow', 'fields': {
         'rect': {'x': 0, 'y': 1260, 'width': 1730, 'height': 180}}, 'children': [
-        label('TouchGraphicsRtAoText', 'dmGraphicsRtAo', 0, 0, 1000, 140), ao_note('TouchGraphicsRtAoNote', 'dmGraphicsRtAoNote'),
+        label('TouchGraphicsRtAoText', 'dmGraphicsRtAo', 0, 0, 1270, 140), ao_note('TouchGraphicsRtAoNote', 'dmGraphicsRtAoNote'),
         ao_note('TouchGraphicsRtAoNeedRt', 'dmGraphicsRtAoNeedRt'), toggle('TouchGraphicsRtAo', 0)]}
     # 显示帧数（fps_hud，缺省开；原在自定义页末行，用户 2026-10-28 要求放图形页第二行）：一行勾选框，宿主 dm_graphics_ui_pump 读写 TouchGraphicsFpsHud
     # Show frame rate (fps_hud, on by default; was the last Custom row, moved to Graphics row 2 at the user's request on 2026-10-28): one checkbox row, read and written by the host's dm_graphics_ui_pump via TouchGraphicsFpsHud
