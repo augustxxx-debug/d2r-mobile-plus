@@ -613,7 +613,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
         else if (dm_wref_get(&seen[6]) != ao) { dm_wref_set(&seen[6], ao); set_toggle(ao, want); }
         else if (TOGGLED(ao) != want) atomic_store(&g_pend[K_RTAO], TOGGLED(ao));
     }
-    { uint64_t n1 = find_w(sp, "TouchGraphicsRtAoNote", 0), n2 = find_w(sp, "TouchGraphicsRtAoNeedRt", 0); if (n1) ui_show_ours(n1, ao_avail); if (n2) ui_show_ours(n2, !ao_avail); }
+    { uint64_t n1 = find_w(sp, "TouchGraphicsRtAoNote", 0), n2 = find_w(sp, "TouchGraphicsRtAoNeedRt", 0); if (n1) ui_show_ours(n1, ao_avail); if (n2) ui_show_ours(n2, rt_ok && !ao_avail); }
     // 显示帧数（fps_hud，图形页第二行，缺省开）：勾选框与超分开关同一套处理 | Show frame rate (fps_hud, Graphics row 2, on by default): the checkbox is handled like the upscale switch
     uint64_t fpshud = find_w(sp, "TouchGraphicsFpsHud", 0);
     if (fpshud) {
