@@ -30,7 +30,7 @@
 import hashlib, os, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__)); DM = os.path.dirname(HERE); IOS = os.path.join(DM, 'ios'); GT = os.path.join(DM, 'gfx', 'tools')
-sys.path.insert(0, HERE); from d2rm_pack import ROOT, PY, MODS, say, die, run, step   # 共用 iOS 壳工具的执行与跳步框架（含 Windows 换行处理） | the run-and-skip framework shared with the iOS shell tool (including the Windows line-ending handling)
+sys.path.insert(0, HERE); from gen_common import ROOT, PY, MODS, say, die, run, step
 
 
 def tool(var, name):
@@ -209,7 +209,7 @@ def main():
     run([PY, os.path.join(IOS, 'tools', 'gen_romfs_overlay.py'), romfs, os.path.join(stage, 'overlay')], cwd=IOS, env={'DM_ROMFS_SRC': romfs, 'DM_TARGET': T}, log=os.path.join(stage, 'gen_overlay.log'), what='生成覆盖层')   # DM_TARGET：布局按平台限制配置项（touch_layout.py，安卓不出 iCloud 行） | DM_TARGET: per-platform settings rows in the layout (touch_layout.py, no iCloud row on Android)
     sys.path.insert(0, os.path.join(DM, 'android', 'tools')); import stage_touch_assets
     hud = hud_dir()
-    stage_touch_assets.stage(os.path.join(gen, 'TouchArt'), hud, os.path.join(stage, 'overlay'))
+    stage_touch_assets.stage(os.path.join(gen, 'TouchArt'), hud, os.path.join(stage, 'overlay'), T)
     if T == 'ohos':   # 鸿蒙前端从 ui-art/ 取技能键标签与技能剪影（剪影是彩色原图，银灰在绘制时做，同 iOS） | the HarmonyOS front end takes the skill-button labels and skill silhouettes from ui-art/ (the silhouettes are the colour originals; the silver is applied when drawing, as on iOS)
         os.makedirs(os.path.join(stage, 'ui-art'))
         for n in ['lbl_main.png'] + ['lbl_f%d.png' % i for i in range(1, 9)] + ['sil_dm_native_skill_%d.png' % i for i in range(9)]:

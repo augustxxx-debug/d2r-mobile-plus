@@ -47,7 +47,7 @@ string(REPLACE "\n" ";" overlay_inputs "${overlay_inputs}")
 list(TRANSFORM overlay_inputs PREPEND "${DM_REPO_ROOT}/")
 set(DM_OVERLAY_HEADER ${CMAKE_CURRENT_BINARY_DIR}/dm_overlay_contract.h)
 add_custom_command(OUTPUT ${DM_OVERLAY_HEADER}
-  COMMAND ${Python3_EXECUTABLE} ${DM_OVERLAY_TOOL} --repo-root ${DM_REPO_ROOT} --header ${DM_OVERLAY_HEADER}
+  COMMAND ${Python3_EXECUTABLE} ${DM_OVERLAY_TOOL} --repo-root ${DM_REPO_ROOT} --target android --header ${DM_OVERLAY_HEADER}
   DEPENDS ${overlay_inputs} VERBATIM)
 
 # Python 保留 Makefile 续行边界，避免 CMake 列表的反斜杠转义吞掉源码行。

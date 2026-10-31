@@ -3,7 +3,7 @@
 做法 = 把每一行作为新条目追加进原版字符串表 ui.json（RomFS 覆盖层，与 touch_strings 同一套机制）：zhCN / zhTW 列 = 中文（繁体玩家读简体比读英文顺），
 esES 列 = Español，esMX 列 = Español MX（空 = 同 Español；只在拉美官方用词与 esES 不同时填），ruRU 列 = Русский，koKR 列 = 한국어，其余 7 种语言列 = English。
 这样布局里写「@键」、宿主用原版取串 main+0x7f5630 取，语言切换由原版自己重装字符串表完成（SetLanguage，r34 起不剪），不用我们另跟语言。"""
-import csv, json, os, re
+import csv, json, os, re, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TABLE = os.path.join(HERE, '..', '..', 'i18n', 'ui_text.tsv')
@@ -42,19 +42,23 @@ EN_LIMITS = (
 EN_HAS_ZH = {'dmCustomLangZh', 'dmCustomLangHintZh'}
 # 平台专属键（CLAUDE.md §2.8，内审 I-02）：另一端的编译期表和覆盖层都不带；--check 查文字列里的平台词
 # Platform-only keys (CLAUDE.md section 2.8, internal audit I-02): left out of the other platform's compile-time table and overlay; --check looks for platform words in the text columns
-IOS_ONLY = re.compile(r'dm(Graphics(Upscaling|UpscaleProfile|Profile[A-Z].*|ApplyHint|RtShadow.*)|CustomFx.+|CustomIcloud.*|Cloud[A-Z].*|GpuOld.+|Tv[A-Z].*)')
+# dmDl / dmOld / dmIpadMode / dmUpdNoNet：iOS 资源下载、老机型补充包、签名工具 iPad 模式、系统联网设置提示（内审 J-01） | iOS asset download, the older-device pack, the signing tool's iPad mode, the system's network setting hint (internal audit J-01)
+IOS_ONLY = re.compile(r'dm(Graphics(Upscaling|UpscaleProfile|Profile[A-Z].*|ApplyHint|RtShadow.*)|CustomFx.+|CustomIcloud.*|Cloud[A-Z].*|GpuOld.+|Tv[A-Z].*|Dl[A-Z].*|Old[A-Z].*|IpadMode[A-Z].*|UpdNoNet)')
 ANDROID_ONLY = re.compile(r'dm(Android[A-Z].*|And[A-Z].*|LoadPerm[A-Z].*)')
-IOS_WORDS = ('MetalFX', 'Metal', 'iCloud', 'Apple', 'TestFlight', 'Xcode', 'MetricKit', 'Dynamic Island', '灵动岛')
-ANDROID_WORDS = ('Vulkan', 'Turnip', 'Download/S2X', '宝塔')
 def platform_of(k): return 'ios' if IOS_ONLY.fullmatch(k) else 'android' if ANDROID_ONLY.fullmatch(k) else ''
 def check_platform_words():
     """没标 iOS 专属的文字不得含 iOS 词，没标安卓专属的不得含安卓词。返回违规的 [(键, 词)]。 | Text not marked iOS-only must not hold iOS words, and likewise for Android. Returns the violations as [(key, word)]."""
+    sys.path.insert(0, HERE); import platform_words   # 词表不随手机端生成器进安卓包（dm/android/tools/pack_gen_assets.py） | the word lists stay out of the Android package's on-phone generator
     bad = []
     for r in rows():
         k, plat, text = r[0], platform_of(r[0]), '\n'.join(r[1:])
-        bad += [(k, w) for w in IOS_WORDS if plat != 'ios' and w in text]
-        bad += [(k, w) for w in ANDROID_WORDS if plat != 'android' and w in text]
+        bad += [(k, w) for w in platform_words.IOS_WORDS if plat != 'ios' and w in text]
+        bad += [(k, w) for w in platform_words.ANDROID_WORDS if plat != 'android' and w in text]
     return bad
+
+def filter_table(text, drop):
+    """ui_text.tsv 的文字去掉 drop 那一端的专属行，其余逐字不动；再过滤一次结果不变。手机端生成器带的表（pack_gen_assets.py）与覆盖层指纹的安卓视图（overlay_contract.py）都用它 | The text of ui_text.tsv without drop's platform-only rows, everything else untouched; filtering again changes nothing. Used by the table the on-phone generator carries (pack_gen_assets.py) and by the overlay fingerprint's Android view (overlay_contract.py)"""
+    return ''.join(l for l in text.splitlines(keepends=True) if platform_of(l.split('\t', 1)[0].strip()) != drop)
 
 def rows():
     """[(键, 中文, English, Español, Español MX, Русский, 한국어)]；Español MX 空 = 同 Español。"""
@@ -87,7 +91,8 @@ def build(romfs, outdir, repl):
     clash = [r[0] for r in rs if r[0] in have]
     if clash: raise SystemExit('dm_i18n：键和原版重名：%s' % clash)
     col = lambda l, zh, en, es, mx, ru, ko: zh if l in ('zhCN', 'zhTW') else es if l == 'esES' else mx if l == 'esMX' else ru if l == 'ruRU' else ko if l == 'koKR' else en
-    other = 'ios' if os.environ.get('DM_TARGET') == 'android' else 'android'   # 这个覆盖层不带另一端的键；编号按全表，两端同一个键同一个 id | this overlay leaves out the other platform's keys; ids follow the full table, so a key has one id on both
+    other = 'ios' if os.environ.get('DM_TARGET') == 'android' else 'android'   # 这个覆盖层不带另一端的键 | this overlay leaves out the other platform's keys
+    if other == 'ios': rs = [r for r in rs if platform_of(r[0]) != 'ios']   # 安卓按过滤后的表编号：手机上的表（pack_gen_assets.py）已没有这些行，电脑上要出一样的字节 | Android numbers the filtered table: the phone's table no longer has these rows, and a computer must produce the same bytes
     add = [{'id': ID0 + i, 'Key': k, **{l: col(l, zh, en, es, mx, ru, ko) for l in LANGS}} for i, (k, zh, en, es, mx, ru, ko) in enumerate(rs) if platform_of(k) != other]
     end = text.rstrip().rindex(']')
     body = ',\n'.join('  ' + json.dumps(e, ensure_ascii=False) for e in add)
@@ -109,7 +114,6 @@ def header():
     return '\n'.join(out + ['};', ''])
 
 if __name__ == '__main__':
-    import sys
     if sys.argv[1:] == ['--header']: sys.stdout.write(header())
     elif sys.argv[1:] == ['--check']:   # 单测：表与入库的头文件一致 | unit test: the table matches the checked-in header file
         h = os.path.join(HERE, '..', '..', 'host', 'dm_i18n_tab.h')

@@ -5,9 +5,11 @@
 #ifdef __ANDROID__
 #define DM_STR_ICLOUD "云同步"
 #define DM_STR_METALFX "超分"
+#define DM_STR_METAL "GPU"
 #else
 #define DM_STR_ICLOUD "iCloud"
 #define DM_STR_METALFX "MetalFX"
+#define DM_STR_METAL "Metal"
 #endif
 #include <stdatomic.h>
 #include <stdint.h>

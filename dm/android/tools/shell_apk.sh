@@ -156,5 +156,7 @@ fi
 # 加载页素材四件（dm/assets/loadpage：背景两张由 App 图标合成，字标图与音乐自制 CC0）是唯一许可的 assets/ 顶层文件 | the four loading-page assets (self-made, CC0, dm/assets/loadpage) are the only allowed top-level assets/ files
 bad=$(unzip -l "$A" | awk '{print $4}' | grep -v '^assets/dmgen/' | grep -vxE 'assets/loadpage_(bg_land\.jpg|bg_port\.jpg|logo\.png|loop\.m4a)' | grep -E '\.(xgs|patched\.bin|data)$|^assets/|overlay|derived\.tsv' | head -3)
 [ -z "$bad" ] || die "APK 里带了不该有的文件：$bad"
+# 包内容审计（CLAUDE.md §2.8，B089）：解到最里层扫平台词并列体积，报告在 package_audit.md | package content audit: unpack to the innermost level, scan for platform words and list sizes; the report is package_audit.md
+python3 -I "$DM/tools/package_audit.py" android "$A" --out "$O/package_audit.md" || die "包内容审计不通过：$O/package_audit.md"
 BT2=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1); vc=$("$BT2/aapt" dump badging "$A" 2>/dev/null | sed -n "s/.*versionCode='\([0-9]*\)'.*versionName='\([^']*\)'.*/\1 \2/p" | head -1); [ "$vc" = "$DM_BUILD $DM_VERSION" ] || die "APK 版本号不对：$vc（应 $DM_BUILD $DM_VERSION）"
 t "好了（${KIND}）：${A}（$(($(stat -f %z "$A") / 1048576)) MB）；版本 $DM_VERSION（$DM_BUILD）；核了真表里 $n 个源码里没有的字符串，原生库里 0 处；APK 里没有游戏程序 / 着色器包 / 覆盖层，也没有本机路径"

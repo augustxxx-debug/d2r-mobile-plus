@@ -29,6 +29,8 @@ static _Atomic int g_safe_l = -1, g_dirty, g_appear, g_fg;   // g_safe_l < 0 = �
 
 // label = 显示版本（空 = 退回写构建号） | label = display version (empty = fall back to the build number)
 void dm_update_init(int own_build, const char *label, void (*on_select)(void)) { g_own = own_build; if (label && *label) strlcpy(g_label, label, sizeof g_label); else snprintf(g_label, sizeof g_label, "%d", own_build); g_on_select = on_select; atomic_store(&g_dirty, 30); }   // 不在这里置「选角页出现」：启动时游戏自己会发一次 OpenPanel CharacterSelectPanel，这里再置就每次启动查两遍 | Do not set "character select page appears" here: at startup the game sends OpenPanel CharacterSelectPanel once by itself, and setting it here too would check twice on every startup
+// 只给显示版本（安卓：没有 iOS 那套更新提示，只要提示框「关于」段的版本行），不算初始化 | the display version only (Android: no update note like iOS, only the About section's version line); does not count as init
+void dm_update_set_label(const char *label) { if (label && *label) strlcpy(g_label, label, sizeof g_label); }
 // 外壳查完的结果：任意线程调。new_build > 0 = 有比自己新的构建（ver = 版本文件里给人看的版本号，空 = 写构建号；note = 一句话更新说明，UTF-8；urgent = 建议立即更新）；0 = 没有，撤掉已有提示
 // Result of the shell's check: callable from any thread. new_build > 0 = there is a build newer than ours (ver = the human version from the version file, empty = show the build number; note = one-sentence update note, UTF-8; urgent = immediate update recommended); 0 = none, remove any existing notice
 void dm_update_offer(int new_build, const char *ver, const char *note, int urgent) {
@@ -108,7 +110,12 @@ void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Ca
     int normal = build > 0 && !urgent, urg = build > 0 && urgent, fail = build > 0 ? 0 : atomic_load(&g_fail);
     snprintf(t, sizeof t, dm_str(b, "dmUpdNew"), ver);
     char ft[192]; if (g_site[0]) snprintf(ft, sizeof ft, dm_str(b, "dmUpdFailSite"), g_site); else snprintf(ft, sizeof ft, "%s", dm_str(b, "dmUpdFail"));
-    set_text(b, nt, normal ? t : fail == 1 ? dm_str(b, "dmUpdNoNet") : fail ? ft : "");
+#ifdef __ANDROID__
+    const char *nonet = ft;   // dmUpdNoNet 指的是 iOS 系统设置，只有 iOS 外壳会置 fail = 1 | dmUpdNoNet points at the iOS system settings and only the iOS shell sets fail = 1
+#else
+    const char *nonet = dm_str(b, "dmUpdNoNet");
+#endif
+    set_text(b, nt, normal ? t : fail == 1 ? nonet : fail ? ft : "");
     snprintf(t, sizeof t, dm_str(b, "dmUpdNewUrgent"), ver, note); set_text(b, de, urg ? t : ""); set_text(b, ti, urg ? dm_str(b, "dmUpdUrgentTitle") : "");
     if (pad) { place(bg, urg ? xr / 2 - 700 : 99999, urg ? 1506 : 99999); place(ti, xr / 2 - 700, 1524); place(de, xr / 2 - 700, 1610); }
     else place(bg, urg ? -700 : 99999, urg ? 1506 : 99999);

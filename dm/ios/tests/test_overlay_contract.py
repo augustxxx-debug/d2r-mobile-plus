@@ -68,6 +68,17 @@ class OverlayContractTests(unittest.TestCase):
         (generated / "cache.bin").write_bytes(b"generated result")
         self.assertEqual(expected, contract.source_fingerprint(root))
 
+    def test_android_view_ignores_ios_only_rows(self):
+        # 安卓包里的表去掉了 iOS 专属行（pack_gen_assets.py）：App 按全表算、手机按过滤表算，指纹要一样 | the Android package's table has no iOS-only rows: the App hashes the full table, the phone the filtered one, and they must agree
+        full, filtered = self.source("full", "\n"), self.source("filtered", "\n")
+        common = "键\t中文\ndmUpdNew\t新版本\n"
+        (full / "dm/i18n/ui_text.tsv").write_text(common + "dmCloudTitle\tiCloud\ndmOldQuit\tq\n", encoding="utf-8")
+        (filtered / "dm/i18n/ui_text.tsv").write_text(common, encoding="utf-8")
+        self.assertEqual(contract.source_fingerprint(full, "android"), contract.source_fingerprint(filtered, "android"))
+        self.assertNotEqual(contract.source_fingerprint(full), contract.source_fingerprint(filtered))
+        (filtered / "dm/i18n/ui_text.tsv").write_text(common + "dmUpdOther\tx\n", encoding="utf-8")
+        self.assertNotEqual(contract.source_fingerprint(full, "android"), contract.source_fingerprint(filtered, "android"))
+
     def test_missing_source_dependency_fails(self):
         root = self.source("repo", "\n")
         (root / "dm/ios/tools/gen_assets.py").unlink()

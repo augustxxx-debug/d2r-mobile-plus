@@ -42,7 +42,7 @@ class AssetContract(unittest.TestCase):
             self.assertFalse((overlay / 'touchart').exists())
             (hud / 'glyph.png').write_bytes(b'synthetic-hud')
             stage.stage(native, hud, overlay)
-            fingerprint = stage.overlay_contract.source_fingerprint(Path(__file__).resolve().parents[3])
+            fingerprint = stage.overlay_contract.source_fingerprint(Path(__file__).resolve().parents[3], 'android')
             entries = stage.overlay_contract.verify_manifest(overlay, fingerprint)
             self.assertIn('touchart/dm_native_skill_8.png', entries)
             self.assertIn('hud_v4_ui/glyph.png', entries)

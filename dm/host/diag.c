@@ -80,7 +80,7 @@ static void l3mem_report(uint32_t tick, uint64_t seq) {
     if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &count) == KERN_SUCCESS)
         footprint = vi.phys_footprint;
     uint64_t task_ns = now_ns() - t;
-    LOG("[dm] L3MEM 拍 %u 堆在用 %llu Metal已分配 %llu 句柄 %d phys_footprint %llu 耗时_ns %llu malloc_ns %llu metal_ns %llu fd_ns %llu task_ns %llu 线程 dm-l3mem 序号 %llu",
+    LOG("[dm] L3MEM 拍 %u 堆在用 %llu " DM_STR_METAL "已分配 %llu 句柄 %d phys_footprint %llu 耗时_ns %llu malloc_ns %llu metal_ns %llu fd_ns %llu task_ns %llu 线程 dm-l3mem 序号 %llu",
         tick,
         (unsigned long long)ms.size_in_use, (unsigned long long)metal, handles,
         (unsigned long long)footprint, (unsigned long long)(now_ns() - started),

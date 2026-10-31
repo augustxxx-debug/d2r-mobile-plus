@@ -149,6 +149,14 @@ static int tier_def(int i, int tier) {   // 本档缺省：只有 q3d（MetalFX 
 
 const char *dm_save_commitdir(void);
 static int key_index(const char *k) { if (k) for (int i = 0; i < NK; i++) if (!strcmp(k, k_keys[i])) return i; return -1; }
+// 这一端没有的设置项：不写进日志与设置文件（§2.8，B092；旧文件里的这一行读进来也没有作用） | a setting this platform does not have: stays out of the log and the settings file (B092; the line in an old file has no effect)
+static int key_other_platform(int i) { (void)i;
+#ifdef __ANDROID__
+    return !strcmp(k_keys[i], "icloud");
+#else
+    return 0;
+#endif
+}
 static char g_dir[1024];   // iOS 外壳启动时给的 Documents（main.m）：启动期（存档挂上之前）就要能读，覆盖层选择用 | Documents given by the iOS shell at startup (main.m): must be readable already during startup (before the save is mounted), used for overlay selection
 void dm_custom_init(const char *dir) { if (dir) strlcpy(g_dir, dir, sizeof g_dir); }
 // 设置文件所在目录：iOS 是外壳给的 Documents；Mac 是存档已提交目录的上一级，存档还没挂上时按 $DM_SAVE（挂上后已提交目录就是它）——崩溃围栏在宿主入口就要读写这里
@@ -225,7 +233,7 @@ static void load_once(void) {
     // 读盘行按键表写全每个键（分享诊断日志的摘要靠它看出玩家开了什么；原先写死到 eco_fps，后加的 fps_hud / upscale / render_res 等都不在）
     // The load line lists every key from the key table (the diagnostic share summary relies on it; it used to stop at eco_fps, so later keys such as fps_hud / upscale / render_res were missing)
     char kv[512]; size_t o = 0; kv[0] = 0;
-    for (int i = 1 + VOICE_ROW; i < NK && o < sizeof kv; i++) o += (size_t)snprintf(kv + o, sizeof kv - o, " %s=%d", k_keys[i], v[i]);
+    for (int i = 1 + VOICE_ROW; i < NK && o < sizeof kv; i++) if (!key_other_platform(i)) o += (size_t)snprintf(kv + o, sizeof kv - o, " %s=%d", k_keys[i], v[i]);
     if (!atomic_exchange(&g_loaded, 1)) {
         LOG("自定义设置：读盘 %s%s lang=%d%s%s%s", p, f ? "" : "（没有文件，全按缺省）", v[0], lang < 0 ? "（没写，按当前语言）" : "", vlog, kv);
         int lim = atomic_load(&g_mem_limit_mb), phys = atomic_load(&g_mem_phys_mb); char pg[16] = "?"; if (phys >= 0) snprintf(pg, sizeof pg, "%.1f", phys / 1024.0);
@@ -389,7 +397,7 @@ int dm_render_res_rt_drop(void) {
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
-    for (int i = 0; ok && i < NK; i++) { if (i == 0 && (atomic_load(&g_lang_explicit) < 0 || g_lang_test)) continue; if (i == K_VOICE && (atomic_load(&g_voice_explicit) < 0 || g_voice_test)) continue; ok = fprintf(f, "%s=%d\n", k_keys[i], atomic_load(&g_val[i])) > 0; }   // lang / voice 只在玩家真改过之后才写进文件
+    for (int i = 0; ok && i < NK; i++) { if (i == 0 && (atomic_load(&g_lang_explicit) < 0 || g_lang_test)) continue; if (i == K_VOICE && (atomic_load(&g_voice_explicit) < 0 || g_voice_test)) continue; if (key_other_platform(i)) continue; ok = fprintf(f, "%s=%d\n", k_keys[i], atomic_load(&g_val[i])) > 0; }   // lang / voice 只在玩家真改过之后才写进文件
     if (ok) ok = fprintf(f, "q3d_v2=1\n") > 0;
     if (ok) ok = fprintf(f, "free_tp_v2=1\n") > 0;
     if (ok && atomic_load(&g_merc_explicit) >= 0) ok = fprintf(f, "merc_pot_v2=%d\n", atomic_load(&g_merc_explicit)) > 0;

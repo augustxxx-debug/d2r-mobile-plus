@@ -325,7 +325,7 @@ with tempfile.TemporaryDirectory() as t:
 # Finalize after all sidecars/ASTC metadata; each variant has its own complete manifest.
 import overlay_contract
 from pathlib import Path
-source_sha = overlay_contract.source_fingerprint(Path(__file__).resolve().parents[3])
+source_sha = overlay_contract.source_fingerprint(Path(__file__).resolve().parents[3], os.environ.get('DM_TARGET'))
 for directory in GENERATED_OVERLAYS:
     overlay_contract.write_manifest(directory, source_sha)
     overlay_contract.verify_manifest(directory, source_sha)
