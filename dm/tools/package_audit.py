@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """包内容审计（CLAUDE.md §2.8）：把 IPA / APK / .app 解到最里层（含 zip 内 zip）扫另一端的平台词，并列体积。
 用法：package_audit.py <ios|android> <包或 .app 目录> [--out 报告.md]。有未登记的命中、或 src.zip 里有白名单外的文件，退出码 1。
-不分大小写。CASC .data 里压缩存放的文字也解开扫（覆盖层），解不完就算不通过；给目录也行，比如手机端生成的 overlay。
+不分大小写。CASC .data 里压缩存放的文字也解开扫（覆盖层：zlib、BLTE 的 N / Z 块），解不完、不认识的编码都算不通过；给目录也行，比如手机端生成的 overlay。
 命中只有这几种能放行：EXEMPT 里的第三方运行时与许可证原文（改不得）、手机端生成器源码（不是文案）、字体与图片的二进制数据（偶然的字节）；原生库里整串是登记过的标识符（SYMBOLS）；iOS 主程序内嵌的原版游戏映像段。
 Package content audit: unpacks an IPA / APK / .app down to the innermost level (zips inside zips included), scans for the other platform's words and lists sizes.
 Usage: package_audit.py <ios|android> <package or .app directory> [--out report.md]. Exit 1 on an unregistered hit, or on a file in src.zip outside the whitelist.
-Any case. Text stored compressed in CASC .data (the overlay) is inflated and scanned too, and a stream that cannot be inflated fails the audit; a directory works as well, such as an overlay made on the phone.
+Any case. Text stored compressed in CASC .data (the overlay: zlib, BLTE N / Z chunks) is decoded and scanned too, and a stream that cannot be decoded or an unknown encoding fails the audit; a directory works as well, such as an overlay made on the phone.
 Only these may pass: in EXEMPT, third-party runtimes and licence texts (not ours to change), the on-phone generator's source (not UI text), binary data of fonts and images (chance bytes); strings in native libraries that are registered identifiers as a whole (SYMBOLS); the original game image segments embedded in the iOS main program."""
-import argparse, collections, importlib.util, io, re, struct, sys, zipfile, zlib
+import argparse, collections, hashlib, importlib.util, io, re, struct, sys, zipfile, zlib
 from pathlib import Path
 
 DM = Path(__file__).resolve().parents[1]
@@ -45,35 +45,86 @@ def is_symbol(data, start, end):
 
 
 ARCHIVE_LIMIT = 1 << 31   # 一个 .data 解开后的总上限 2 GiB，超了算失败而不是少扫 | at most 2 GiB inflated per .data; beyond it the audit fails rather than scanning less
-INCOMPLETE_MIN = 256     # 解到这么多还出错才算真有一段流；更短的是字节巧合长得像 zlib 头，比这还短的损坏流分不出来 | an error after this much means a real stream; shorter ones are chance bytes that look like a zlib header, and a damaged stream shorter than this cannot be told apart
+INCOMPLETE_MIN = 256     # 解到这么多还出错才明说是坏流；更短的留在原样字节里，由「未识别的二进制段」兜住 | an error after this much is named as a damaged stream; shorter ones stay in the plain bytes and fail as an unrecognized binary segment
 FEED = 256
+# 合法的 zlib 头：CM = 8、窗口 CINFO ≤ 7、FCHECK 对、没有预设字典（外审 X-04）；以及 BLTE 容器的魔数 | every legal zlib header: CM = 8, window CINFO ≤ 7, FCHECK right, no preset dictionary (external review X-04); and the BLTE container magic
+ARCHIVE_MARK = re.compile(b'BLTE|' + b'|'.join(re.escape(bytes((c, f))) for c in range(0x08, 0x88, 0x10) for f in range(256) if (c << 8 | f) % 31 == 0 and not f & 0x20))
+BINARY = re.compile(rb'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')   # 文本里不该有的控制字符 | control characters text should not hold
+
+
+def inflate(data, pos, end, budget):
+    """从 pos 解一段 zlib，流式喂入防解压炸弹。返回 (解出的, 结束位置, 失败原因 | None) | inflates one zlib stream from pos, fed in small pieces against bombs. Returns (output, end position, reason or None)"""
+    d = zlib.decompressobj(); chunks, size, off = [], 0, pos
+    try:
+        while off < end and not d.eof:
+            feed = data[off:min(off + FEED, end)]
+            piece = d.decompress(feed, 1 << 24); chunks.append(piece); size += len(piece); off += len(feed) - len(d.unconsumed_tail) - len(d.unused_data)
+            if size > budget: return b''.join(chunks), off, '超过上限'
+    except zlib.error:
+        return b''.join(chunks), off, '数据错'
+    return b''.join(chunks), off, None if d.eof else '被截断'
+
+
+def parse_blte(data, pos, budget):
+    """解一个 BLTE 容器：头表、每块的长度和 MD5 都要对；只认 N（原样）和 Z（zlib）。LZ4、加密、递归和未知编码解不开，明确失败，不当明文放过（外审 X-04）。
+    返回 (解出的, 结束位置, 失败说明 | None)，头表字节不算内容 | Decodes one BLTE container: the table, each chunk's size and MD5 must hold; only N (plain) and Z (zlib) are known. LZ4, encryption, nesting and unknown modes cannot be decoded and fail outright instead of passing as plain text (external review X-04). Returns (output, end, failure or None); table bytes are not content."""
+    if pos + 12 > len(data): return b'', pos + 4, 'BLTE 头表不全'
+    head, flags, count = struct.unpack_from('>IBB', data, pos + 4)[0], data[pos + 8], int.from_bytes(data[pos + 9:pos + 12], 'big')
+    if flags != 0x0f or not count or head != 12 + 24 * count or pos + head > len(data): return b'', pos + 4, 'BLTE 头表解析不了（头长 %d、标志 %#x、块数 %d）' % (head, flags, count)
+    out, off, size = [], pos + head, 0
+    for i in range(count):
+        csize, usize = struct.unpack_from('>II', data, pos + 12 + 24 * i)
+        if not csize or off + csize > len(data): return b''.join(out), pos + 4, 'BLTE 第 %d 块越界（长 %d）' % (i, csize)
+        chunk = data[off:off + csize]; off += csize
+        if hashlib.md5(chunk).digest() != data[pos + 16 + 24 * i + 4:pos + 16 + 24 * i + 20]: return b''.join(out), off, 'BLTE 第 %d 块 MD5 不符' % i
+        mode = chunk[:1]
+        if mode == b'N': piece = chunk[1:]
+        elif mode == b'Z':
+            piece, used, why = inflate(chunk, 1, len(chunk), budget - size)
+            if why or used != len(chunk): return b''.join(out), off, 'BLTE 第 %d 块 zlib 没解完（%s）' % (i, why or '尾部有多余字节')
+        else: return b''.join(out), off, 'BLTE 第 %d 块编码 %r 不支持，内容没扫' % (i, mode)
+        if len(piece) != usize: return b''.join(out), off, 'BLTE 第 %d 块解出 %d 字节，头表写 %d' % (i, len(piece), usize)
+        out.append(piece); size += len(piece)
+        if size > budget: return b''.join(out), off, '超过上限'
+    return b''.join(out), off, None
 
 
 def split_archive(data, limit=ARCHIVE_LIMIT):
-    """把 .data 分成解开的 zlib 段和其余原样字节，都按全部词扫；压缩流本身的字节丢掉，短词在里面只会碰巧命中（外审 X-03）。不解析档案格式：裸 n 条目、BLTE N 块、档案头都落在原样字节里。
-    返回 (解开的, 原样的, 没解完的说明)；有说明就算审计失败。
-    Splits a .data into inflated zlib segments and the remaining plain bytes, both scanned for every word; the compressed bytes themselves are dropped, short words there only match by chance (external review X-03). The archive format is not parsed: raw n entries, BLTE N chunks and headers all land in the plain bytes.
-    Returns (inflated, plain, notes on what could not be inflated); any note fails the audit."""
+    """把 .data 分成解开的内容和其余原样字节，都按全部词扫；压缩流和 BLTE 头表本身的字节丢掉，短词在里面只会碰巧命中（外审 X-03）。
+    原样字节里剩下的只能是文本（裸 n 条目）和首尾的 0 填充；不是文本的就是不认识的编码，算失败，不当明文扫完就放过（外审 X-04）。各段之间用 0 隔开，词不会跨段拼出来（内审 N-01）。
+    返回 (解开的, 原样的, 覆盖缺口的说明)；有说明就算审计失败。
+    Splits a .data into decoded content and the remaining plain bytes, both scanned for every word; the compressed bytes and BLTE tables themselves are dropped, short words there only match by chance (external review X-03).
+    What remains plain may only be text (raw n entries) and NUL padding at its ends; anything else is an unknown encoding and fails rather than passing after a plain scan (external review X-04). Segments are joined with NUL so no word forms across them (internal audit N-01).
+    Returns (decoded, plain, notes on coverage gaps); any note fails the audit."""
     out, plain, notes, pos, kept, total = [], [], [], 0, 0, 0
     while True:
-        pos = data.find(b'\x78', pos)
-        if pos < 0 or pos + 2 > len(data): break
-        if data[pos + 1] not in (0x01, 0x5e, 0x9c, 0xda) or (data[pos] << 8 | data[pos + 1]) % 31: pos += 1; continue
-        d = zlib.decompressobj(); chunks, size, off, why = [], 0, pos, '被截断'
-        try:
-            while off < len(data) and not d.eof:
-                feed = data[off:off + FEED]
-                piece = d.decompress(feed, 1 << 24); chunks.append(piece); size += len(piece); off += len(feed) - len(d.unconsumed_tail) - len(d.unused_data)
-                if total + size > limit: why = '超过 %d 字节上限' % limit; break
-        except zlib.error:
-            why = '数据错'
-        if d.eof and total + size <= limit:
-            out.append(b''.join(chunks)); total += size; plain.append(data[kept:pos]); pos = kept = off; continue
-        if size >= INCOMPLETE_MIN or off - pos >= INCOMPLETE_MIN: notes.append('第 %d 字节起的 zlib 段没解完（%s，已解 %d 字节）' % (pos, why, size))
-        if why.startswith('超过'): break
+        m = ARCHIVE_MARK.search(data, pos)
+        if not m: break
+        pos = m.start()
+        if m.group() == b'BLTE':
+            piece, end, why = parse_blte(data, pos, limit - total)
+            if why: notes.append('第 %d 字节起：%s' % (pos, why))
+            if why and '上限' in why: return b'\0'.join(out), b'\0'.join(plain), notes
+            if end > pos + 4:   # 头表对得上才算容器，块内出错也已写进说明 | a table that holds makes it a container; errors inside are already noted
+                out.append(piece); total += len(piece); plain.append(data[kept:pos]); pos = kept = end
+            else: pos += 4
+            continue
+        piece, end, why = inflate(data, pos, len(data), limit - total)
+        if why is None:
+            out.append(piece); total += len(piece); plain.append(data[kept:pos]); pos = kept = end; continue
+        if why.startswith('超过'):
+            notes.append('第 %d 字节起的 zlib 段没解完（%s，已解 %d 字节）' % (pos, why, len(piece))); return b'\0'.join(out), b'\0'.join(plain), notes
+        if len(piece) >= INCOMPLETE_MIN or end - pos >= INCOMPLETE_MIN: notes.append('第 %d 字节起的 zlib 段没解完（%s，已解 %d 字节）' % (pos, why, len(piece)))
         pos += 1
     plain.append(data[kept:])
-    return b'\0'.join(out), b''.join(plain), notes
+    plain = [p.strip(b'\0') for p in plain]; plain = [p for p in plain if p]
+    binary = []
+    for p in plain:
+        try: p.decode('utf-8')
+        except UnicodeDecodeError: binary.append(p); continue
+        if BINARY.search(p): binary.append(p)
+    if binary: notes.append('有 %d 段共 %d 字节不是文本，也不是认识的压缩格式，内容没扫（开头 %s）' % (len(binary), sum(map(len, binary)), binary[0][:8].hex()))
+    return b'\0'.join(out), b'\0'.join(plain), notes
 
 
 INCOMPLETE = []   # walk 里解不完的 .data，audit 收尾时算进未登记 | .data files walk could not inflate; audit counts them as unregistered

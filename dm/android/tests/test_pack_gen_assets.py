@@ -87,7 +87,7 @@ class PackageAudit(unittest.TestCase):
 
     def test_split(self):
         data = b'junk' + zlib.compress(b'iPhone text') + b'more' + zlib.compress(b'second')
-        self.assertEqual(self.pa.split_archive(data), (b'iPhone text\0second', b'junkmore', []))
+        self.assertEqual(self.pa.split_archive(data), (b'iPhone text\0second', b'junk\0more', []))
 
     def audit_one(self, data, platform='ios'):
         with tempfile.TemporaryDirectory() as temp:
@@ -102,7 +102,7 @@ class PackageAudit(unittest.TestCase):
     def test_blte_n_chunk(self):
         raw = b'{"text":"Android-only option"}'; chunk = b'N' + raw
         blte = b'BLTE' + struct.pack('>I', 36) + b'\x0f\0\0\1' + struct.pack('>II', len(chunk), len(raw)) + hashlib.md5(chunk).digest() + chunk
-        self.assertEqual(self.audit_one(blte), [('overlay.data', 'Android', 1)])
+        self.assertEqual(self.audit_one(blte), [('overlay.data!zlib', 'Android', 1)])
 
     def test_large_stream(self):
         data = zlib.compress(random.Random(20261031).randbytes(17 * 1024 * 1024) + b'\0Vulkan only\0' * 10000)
@@ -111,7 +111,7 @@ class PackageAudit(unittest.TestCase):
 
     # 解不完必须失败并写明原因 | what cannot be inflated must fail, with the reason
     def incomplete(self, data):
-        bad = self.audit_one(data); self.assertEqual(len(bad), 1, bad); return bad[0][1]
+        bad = self.audit_one(data); self.assertTrue(bad); return ' '.join(b[1] for b in bad)
 
     def test_incomplete(self):
         rng = random.Random(1); c = zlib.compress(bytes(rng.choice(b'abcdefghij klmnop') for _ in range(400000)))
@@ -125,7 +125,51 @@ class PackageAudit(unittest.TestCase):
         self.assertEqual(inflated, b''); self.assertEqual(len(notes), 1); self.assertIn('上限', notes[0])
 
     def test_chance_header_is_not_a_stream(self):
-        self.assertEqual(self.audit_one(b'\x78\x9c' + b'junk' * 20), [])
+        self.assertEqual(self.audit_one(b'x^ junk, not a stream ' * 20), [])
+
+    # 外审 X-04：低窗口 zlib 要解开扫；解不开的编码、不是文本的残留都要失败并写明，不能当明文扫完放过 | external review X-04: low-window zlib is inflated and scanned; encodings that cannot be decoded and non-text remains fail with a statement, not pass after a plain scan
+    def blte(self, chunk, usize):
+        return b'BLTE' + struct.pack('>I', 36) + b'\x0f\0\0\1' + struct.pack('>II', len(chunk), usize) + hashlib.md5(chunk).digest() + chunk
+
+    def test_low_window_zlib(self):
+        for wbits in (9, 10, 12, 14, 15):
+            c = zlib.compressobj(9, wbits=wbits); data = c.compress(b'Vulkan only ' * 100) + c.flush()
+            self.assertEqual(self.audit_one(data), [('overlay.data!zlib', 'Vulkan', 100)], wbits)
+
+    def test_blte_unknown_modes(self):
+        last = b'ulkan only .'; lz4 = b'\x30Vul\x03\x00' + bytes([len(last) << 4]) + last   # 解开是 VulVulVulkan only .，压缩字节里没有这个词 | decodes to VulVulVulkan only .; the word is not in the encoded bytes
+        for mode, body in ((b'4', (19).to_bytes(4, 'little') + lz4), (b'E', b'\x11' * 40), (b'F', b'\x22' * 40), (b'?', b'\x33' * 40)):
+            self.assertIn('不支持', self.incomplete(self.blte(mode + body, 19)), mode)
+
+    def test_blte_broken(self):
+        good = self.blte(b'Ntext', 4)
+        self.assertIn('MD5', self.incomplete(good[:-1] + b'x'))
+        self.assertIn('越界', self.incomplete(good[:-1]))
+        self.assertIn('头表', self.incomplete(b'BLTE' + b'\xff' * 20))
+        self.assertIn('解出', self.incomplete(self.blte(b'Ntext', 9)))
+        z = zlib.compress(b'text'); self.assertIn('多余', self.incomplete(self.blte(b'Z' + z + b'tail', 4)))
+
+    def test_blte_two_chunks_join(self):   # 词跨块也要能扫到 | a word across chunks is still found
+        a, b = b'NVul', b'Zx' ; b = b'Z' + zlib.compress(b'kan only')
+        head = b'BLTE' + struct.pack('>I', 60) + b'\x0f\0\0\2' + struct.pack('>II', len(a), 3) + hashlib.md5(a).digest() + struct.pack('>II', len(b), 8) + hashlib.md5(b).digest()
+        self.assertEqual(self.audit_one(head + a + b), [('overlay.data!zlib', 'Vulkan', 1)])
+
+    def test_real_shape_is_clean(self):   # 实包的样子：容器后面没有残留 | the shape of a real package: nothing left over
+        data = self.blte(b'Z' + zlib.compress(b'plain game text'), 15) + zlib.compress(b'more') + b'\0' * 16
+        self.assertEqual(self.pa.split_archive(data), (b'plain game text\0more', b'', []))
+
+    def test_not_text_fails(self):
+        last = b'ulkan only .'; lz4 = b'\x30Vul\x03\x00' + bytes([len(last) << 4]) + last
+        for data in (lz4, b'\x78\x9c' + b'junk' * 20, zlib.compress(b'Vulkan only ' * 100)[:-1], zlib.compress(b'short')[:-1], b'\xff\xfe\x01binary'):
+            self.assertIn('不是文本', self.incomplete(data), data)
+
+    # 内审 N-01：N 块开头的词、原样段的拼接边界 | internal audit N-01: a word opening an N chunk, and the seam between plain segments
+    def test_word_opening_n_chunk(self):
+        raw = b'Android first'; self.assertEqual(self.audit_one(self.blte(b'N' + raw, len(raw))), [('overlay.data!zlib', 'Android', 1)])
+
+    def test_no_word_across_seams(self):
+        self.assertEqual(self.audit_one(b'Vulk' + zlib.compress(b'x') + b'an'), [])
+        self.assertEqual(self.audit_one(zlib.compress(b'Vulk') + zlib.compress(b'an')), [])
 
     def test_made_up_identifier(self):
         for name in (b'VK_STRUCTURE_TYPE_METALFX_HINT', b'mtl_metalfx_show_hint', b'front_metal_layer'):
