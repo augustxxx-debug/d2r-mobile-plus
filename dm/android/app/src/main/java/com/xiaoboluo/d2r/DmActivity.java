@@ -854,11 +854,6 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             try { a.startActivityForResult(i, REQ_SAVE_EXPORT); } catch (Exception e) { android.util.Log.w("dm", "save export: " + e); nativeSaveExported(false); }
         });
     }
-    private static final long SAVE_PICK_MAX = 320L << 20;   // 与原生 zf_open 的上限相同：选错大文件不把盘写满 | same as the native zf_open limit: picking a huge file by mistake must not fill the disk
-    private static boolean saveCopy(java.io.InputStream in, java.io.OutputStream out, long max) throws java.io.IOException {
-        if (in == null || out == null) return false;
-        byte[] buf = new byte[1 << 16]; int n; long total = 0; while ((n = in.read(buf)) > 0) { total += n; if (total > max) return false; out.write(buf, 0, n); } out.flush(); return true;
-    }
     @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (req != REQ_SAVE_PICK && req != REQ_SAVE_EXPORT) return;
@@ -867,14 +862,14 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (req == REQ_SAVE_PICK) {
             if (uri == null) { nativeSavePicked(null); return; }
             new Thread(() -> {
-                boolean ok = false; try (java.io.InputStream in = cr.openInputStream(uri); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { ok = saveCopy(in, out, SAVE_PICK_MAX); } catch (Exception e) { android.util.Log.w("dm", "save pick copy: " + e); }
+                boolean ok = false; try (java.io.InputStream in = cr.openInputStream(uri); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { ok = SaveCopy.copy(in, out, SaveCopy.PICK_MAX); } catch (Exception e) { android.util.Log.w("dm", "save pick copy: " + e); }
                 if (!ok) tmp.delete();
                 nativeSavePicked(ok ? tmp.getPath() : "!copy");   // 拷失败不是取消：原生那边给失败提示 | a failed copy is not a cancel: the native side shows the failure
             }, "dm-save-pick").start();
         } else {
             if (uri == null || src == null) { nativeSaveExported(false); return; }
             new Thread(() -> {
-                boolean ok = false; try (java.io.InputStream in = new java.io.FileInputStream(src); java.io.OutputStream out = cr.openOutputStream(uri, "wt")) { ok = saveCopy(in, out, Long.MAX_VALUE); } catch (Exception e) { android.util.Log.w("dm", "save export copy: " + e); }
+                boolean ok = false; try (java.io.InputStream in = new java.io.FileInputStream(src); java.io.OutputStream out = cr.openOutputStream(uri, "wt")) { ok = SaveCopy.copy(in, out, Long.MAX_VALUE); } catch (Exception e) { android.util.Log.w("dm", "save export copy: " + e); }
                 nativeSaveExported(ok);
             }, "dm-save-export").start();
         }
