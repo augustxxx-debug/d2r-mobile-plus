@@ -449,6 +449,27 @@ int main(void) { @autoreleasepool {
         #undef HOLD
         #undef SELECT
         memset(&R, 0, sizeof R); }
+#ifdef RTS_INDOOR_SET
+      // 26. 室内主光（七审三轮第 8 条，「按照暗黑 4 逻辑做」）：太阳图的绘制一律不画（没进 TLAS 的也不画），不追太阳、不用遮罩，不算失败；非太阳图（俯视接触软影）照画；
+      //     第 3 档也留 1 盏点光（室外第 3 档照旧关）；深度预渲染的绘制当点光遮挡体 | 26. indoor key light (seventh review round 3 item 8, "the Diablo IV way"): sun-map draws are never drawn (not even outside the TLAS), the sun is neither traced nor its mask used, not a failure; non-sun maps (top-down contact shadow) are drawn;
+      //     level 3 keeps 1 point light (outdoor level 3 still turns them off); depth-prepass draws serve as point-light occluders
+      { int po0 = g_rts.point_on; g_rts.point_on = 0; RTS_INDOOR_SET(1); run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("点光影关（B022 方案 A，缺省）：室内判定不进室内模式", 0, g_rts.indoor_on); EXPECT("点光影关：太阳照常追", 1, g_rts.have_sun); g_rts.point_on = 1;
+        RTS_INDOOR_SET(1); RTS_HYST_RESET(); int bo0 = g_rts.backoff; long long sw0 = RTS_SWITCHES(); uint64_t d0 = g_rts.n_indoor_drop, lost0 = g_rts.n_skip_lost;
+        run_frame(1, b2, 2, &ok); enc = run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("室内：太阳图两次绘制都不编码", 0, enc); EXPECT("室内：记了不画的太阳图绘制", 1, g_rts.n_indoor_drop - d0 >= 4); EXPECT("室内：太阳遮罩不用（绑全分辨率全亮那张）", 1, rts_mask_tex() == g_rts.mask_lit && g_rts.mask_lit.width == 640 && g_rts.mask_lit.height == 360);
+        { uint8_t px = 0; [g_rts.mask_lit getBytes:&px bytesPerRow:640 fromRegion:MTLRegionMake2D(600, 300, 1, 1) mipmapLevel:0];   // _rt 变体按像素坐标读：远处像素也得是 1.0（原先 1x1 白贴图越界读是 0 = 整屏全影） | the _rt variants read by pixel coordinates: a far pixel must be 1.0 too (the 1x1 white texture read out of bounds gives 0 = full shadow everywhere)
+          EXPECT("全亮遮罩：(600, 300) 处也是 1.0", 255, px); } EXPECT("室内：不追太阳", 0, g_rts.have_sun);
+        frame_open(); prepass(); shadow_pass(); int ep = sdraw(g_idx, 48, NVN_DRAW_PRIMITIVE_POINTS, 0x2b);
+        g_sp = &g_small; shadow_pass(); g_sp = &g_sdepth; g_dt = &g_small; g_lvp = other; int es = sh(2); g_dt = &g_sdepth; g_lvp = tilt; int npp = g_rts.nprepass; main_pass(); hdr_again(); ok13 = frame_close() && ok13;
+        EXPECT("室内：没进 TLAS 的太阳图绘制也不画", 1, ep); EXPECT("室内：非太阳图（俯视软影）照画", 0, es); EXPECT("室内：深度预渲染的绘制进了遮挡体", 1, npp >= 1);
+        run_frame(1, b2, 2, &ok); EXPECT("室内：不算失败（不退避）", bo0, g_rts.backoff); EXPECT("室内：画面没切换", sw0, RTS_SWITCHES()); EXPECT("室内：不记「省画后没追成」", lost0, g_rts.n_skip_lost);
+        int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = 3; run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("室内第 3 档：点光留 1 盏、排除随身光", 1, g_rts.eff.point_on && g_rts.eff.point_n == 1 && g_rts.eff.excl_player);
+        RTS_INDOOR_SET(0); run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("回到室外第 3 档：点光照旧关", 0, g_rts.eff.point_on); EXPECT("回到室外：太阳图照常省画 / 光追", 1, RTS_MAP_CLEARED());
+        g_rts.gov.lvl = lv0; RTS_INDOOR_SET(-1); g_rts.point_on = po0; }
+#endif
       EXPECT("局部回退各节 GPU 无错", 1, ok13);
       #undef UNTIL_PART
       g_lvp = NULL; RTS_PART_SET(0); }
@@ -467,7 +488,7 @@ int main(void) { @autoreleasepool {
     //     the automatic downgrade cannot step above the floor; the budget plan (default fits → unchanged, otherwise AO off / mesh cache shrunk / floor 3 in order); level B: warnings while ray tracing is off do not touch it
     { int a1[1] = {0}; uint64_t b0 = g_rts.budget0; g_rts.budget0 = g_rts.budget = 64ull << 20; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0;   // 设置值换了：方案按新设置值重算 | the configured cap changed: the plan is redone for it
       #define FULL() do { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); } while (0)   // 帧开头的处理要有光追调用才进得去（空帧不经过模块） | the frame-start handling needs a ray-tracing call to run (an empty frame does not go through the module)
-      g_rts.memw = (rts_memw){0}; g_rts.gov.lvl = 0; g_rts.ao_on = 1; rts_lvl_update();
+      g_rts.memw = (rts_memw){0}; g_rts.gov.lvl = 0; g_rts.ao_pin = 1; g_rts.ao_on = 1; rts_lvl_update();
       for (int i = 0; i < 6 && !g_rts.ao_full; i++) @autoreleasepool { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); }
       EXPECT("26 告警前 AO 三张贴图在", 1, g_rts.ao_half && g_rts.ao_tmp && g_rts.ao_full);
       __weak id w_ao = nil; @autoreleasepool { w_ao = g_rts.ao_full; }
@@ -500,7 +521,7 @@ int main(void) { @autoreleasepool {
       uint64_t n0 = g_rts.memw.n, k0 = g_rts.key_ns; mtl_note_memory_warning(); for (int i = 0; i < 3; i++) @autoreleasepool { frame_open(); sh(0); frame_close(); }
       EXPECT("26 B 级 光追关：告警不处理（计数不变）", 0, (long long)(g_rts.memw.n - n0)); EXPECT("26 B 级 光追关：不建网格、不算键", 1, g_rts.nmesh == 0 && g_rts.key_ns == k0 && !g_rts.tlas);
       g_rts.on = 1; EXPECT("26 再开后光追生效", 1, until_applied(a1, 1)); EXPECT("26 再开后不按关着时的告警降档", 1, g_rts.memw.n == n0 && g_rts.gov.lvl == 0 && g_rts.memw.floor == 0);
-      g_rts.ao_on = 0; g_rts.budget0 = g_rts.budget = b0; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0; rts_lvl_update();
+      g_rts.ao_pin = -1; g_rts.ao_on = 0; g_rts.budget0 = g_rts.budget = b0; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0; rts_lvl_update();
       #undef FULL
     }
 #endif
@@ -533,6 +554,11 @@ int main(void) { @autoreleasepool {
       printf("28 稳定后 10 帧新建 BLAS %llu 个，缓存最多 %.2f MB\n", (unsigned long long)(g_rts.n_builds - nb0), worst / 1048576.0);
       EXPECT("28 工作集比预算大：稳定后 10 帧不再新建 BLAS（不每帧淘汰重建）", 0, (long long)(g_rts.n_builds - nb0)); EXPECT("28 帧末缓存不超预算 1 MB 太多（≤ 预算 + 一帧建的量）", 1, worst <= (2u << 20));
       EXPECT("28 GPU 无错", 1, ok28); g_rts.budget = b0; EXPECT("28 预算恢复后光追照常", 1, until_applied((int[]){0}, 1)); }
+    // 29. 玩家路径（没有 DM_RT_SHADOW，g_rts.on == -2）：启动读配置只跑一次，自动降档的状态不被每帧重置（RC1.x 玩家的光追因此永远不降档）
+    // 29. Player path (no DM_RT_SHADOW, g_rts.on == -2): the start-up configuration runs once and the automatic-downgrade state is not reset every frame (because of this, RC1.x players' ray tracing never stepped down)
+    { g_rts.on = -2; g_rts.gov.n = 77; g_rts.gov.lvl = 2; rts_on(); rts_on();
+      EXPECT("29 玩家路径：降档器样本不被重置", 77, g_rts.gov.n); EXPECT("29 玩家路径：档位不被重置", 2, g_rts.gov.lvl); EXPECT("29 玩家路径：仍是跟设置", -2, g_rts.on);
+      g_rts.ao_pin = -1; g_rts.ao_on = 1; rts_on(); EXPECT("29 光追 AO 跟设置（这里的弱定义 = 关）", 0, g_rts.ao_on); g_rts.ao_pin = 1; g_rts.ao_on = 1; rts_on(); EXPECT("29 DM_RT_AO 钉住时不看设置", 1, g_rts.ao_on); g_rts.ao_pin = -1; g_rts.ao_on = 0; }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

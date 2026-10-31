@@ -34,13 +34,13 @@ int main(void) {
     { char txt[2048] = {0}; f = fopen(path, "r"); CHECK(f); fread(txt, 1, sizeof txt - 1, f); fclose(f); CHECK(strstr(txt, "free_tp=0\n") && strstr(txt, "free_tp_v2=1\n")); }
     f = fopen(path, "w"); CHECK(f); fputs("upscale=1\nq3d=2\nq3d_v2=1\nrender_res=3\n", f); fclose(f); atomic_store(&g_loaded, 0);
     // 行打包 | row packing
-    int v[6], n;
-    n = graphics_rows_pack(1, 1, 1, 1, v); CHECK(n == 6 && v[0] == ROW_RES && v[1] == ROW_FPSHUD && v[2] == ROW_FPS && v[3] == ROW_UPSCALE && v[4] == ROW_PROFILE && v[5] == ROW_RT);   // Apple 全开：布局原位 | Apple, everything: layout order
-    n = graphics_rows_pack(1, 1, 0, 1, v); CHECK(n == 5 && v[4] == ROW_RT);                   // 档位行藏着：光追上移一格（原行为）| profile hidden: ray tracing one slot up (original behaviour)
+    int v[7], n;
+    n = graphics_rows_pack(1, 1, 1, 1, v); CHECK(n == 7 && v[6] == ROW_RTAO && v[0] == ROW_RES && v[1] == ROW_FPSHUD && v[2] == ROW_FPS && v[3] == ROW_UPSCALE && v[4] == ROW_PROFILE && v[5] == ROW_RT);   // Apple 全开：布局原位 | Apple, everything: layout order
+    n = graphics_rows_pack(1, 1, 0, 1, v); CHECK(n == 6 && v[4] == ROW_RT && v[5] == ROW_RTAO);                   // 档位行藏着：光追上移一格（原行为）| profile hidden: ray tracing one slot up (original behaviour)
     n = graphics_rows_pack(1, 1, 0, 0, v); CHECK(n == 4 && v[3] == ROW_UPSCALE);
     n = graphics_rows_pack(0, 0, 0, 0, v); CHECK(n == 2 && v[0] == ROW_FPSHUD && v[1] == ROW_FPS);                  // Android：只剩帧率 | Android: only the frame rate
     n = graphics_rows_pack(1, 0, 0, 0, v); CHECK(n == 3 && v[0] == ROW_RES && v[1] == ROW_FPSHUD && v[2] == ROW_FPS);   // 显示帧数行永远在第二 | the Show-frame-rate row is always second   // Android（渲染分辨率档由安卓前端实现，无超分）：分辨率 + 帧率 | Android (render-resolution level by the Android front end, no upscaling): resolution + frame rate
-    n = graphics_rows_pack(0, 0, 1, 1, v); CHECK(n == 3 && v[0] == ROW_FPSHUD && v[1] == ROW_FPS && v[2] == ROW_RT);   // 没有超分时档位行不可能出现 | the profile row cannot appear without upscaling
+    n = graphics_rows_pack(0, 0, 1, 1, v); CHECK(n == 4 && v[0] == ROW_FPSHUD && v[1] == ROW_FPS && v[2] == ROW_RT && v[3] == ROW_RTAO);   // 没有超分时档位行不可能出现 | the profile row cannot appear without upscaling
     // 自定义页的平台限制：有 iCloud 时 icloud 行在，没有时整页少一行、后面的行号前移（与 touch_layout.py DM_TARGET=android 对齐）
     // Per-platform Custom rows: with iCloud the icloud row exists; without it the page has one row fewer and later rows move up (matching touch_layout.py DM_TARGET=android)
     icloud_ok = 1; int rows_apple = custom_rows(); CHECK(rows_apple == NK - N_GFX && custom_key_at(6) == K_ICLOUD);

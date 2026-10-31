@@ -1561,8 +1561,8 @@ static void res_census(unsigned long long frame, unsigned long long rss_mb) {
         for (id o in g_res_ever.allObjects) { int k = [o conformsToProtocol:@protocol(MTLBuffer)] ? 1 : 0; unsigned long long b = (unsigned long long)[(id<MTLResource>)o allocatedSize];
             if ([g_res_objects containsObject:o]) { nl[k]++; bl[k] += b; } else { nr[k]++; br[k] += b; } }
         pthread_mutex_unlock(&g_res_mu);
-        MLOG("驻留普查 至帧 %llu：常驻 %llu MB，显卡已分配 %llu MB；驻留集里 贴图 %lu 个 %llu MB、缓冲 %lu 个 %llu MB；已退役未销毁 贴图 %lu 个 %llu MB、缓冲 %lu 个 %llu MB", frame, rss_mb, (unsigned long long)(g_dev.currentAllocatedSize >> 20),
-             nl[0], bl[0] >> 20, nl[1], bl[1] >> 20, nr[0], br[0] >> 20, nr[1], br[1] >> 20);
+        MLOG("驻留普查 至帧 %llu：常驻 %llu MB，显卡已分配 %llu MB；驻留集里 贴图 %lu 个 %llu MB、缓冲 %lu 个 %llu MB；已退役未销毁 贴图 %lu 个 %llu MB、缓冲 %lu 个 %llu MB；未登记（显卡已分配 − 以上合计：MetalFX / drawable / 管线 / 命令分配器等框架内部）%lld MB", frame, rss_mb, (unsigned long long)(g_dev.currentAllocatedSize >> 20),
+             nl[0], bl[0] >> 20, nl[1], bl[1] >> 20, nr[0], br[0] >> 20, nr[1], br[1] >> 20, (long long)(g_dev.currentAllocatedSize >> 20) - (long long)((bl[0] + bl[1] + br[0] + br[1]) >> 20));   // 真机光追关长测「显卡已分配」+730 MB 而驻留集个数不变：这一项直接看出增长在不在我们登记过的对象里 | device RT-off long test: GPU allocated +730 MB with a flat residency count; this item shows directly whether the growth is in objects we registered
     }
 }
 unsigned long long mtl_gpu_allocated_mb(void) { id<MTLDevice> d = g_dev; return d ? (unsigned long long)(d.currentAllocatedSize >> 20) : 0; }   // 显卡已分配（图形层还没起时 0）；任何线程可调 | GPU allocated (0 before the graphics layer starts); callable from any thread
@@ -5249,6 +5249,7 @@ static void mp_check(int i, uint64_t ticket) {
 // Only the 3D world is touched: UI, text and the health orbs are composited after tone mapping; highlights are compressed by PQ and do not blur into a sheet of white as a final whole-screen multiply would. The normal / readable tile merge / freeze paths all just read this table, so it takes effect in one place.
 // k is given every frame by the host's dm_bright_k() (dm/host/dm_bright.c: 1 out of game, 4 for maze-type areas, 4 where the original game's picture does not follow day and night, the rest derived from the original game's ambient brightness, with smooth transitions; default cap 2, dm_bright_cap.h); no rewrite when k ~= 1.
 // The highlight protection is monotonic (B098): output luminance = max(original luminance, shoulder(brightened luminance)), color = the original and brightened colors mixed with one weight to reach it; CPU copy with unit test dm/host/tests/t_bright_lut.c.
+__attribute__((weak)) int dm_bright_indoor(void) { return 0; }   // 宿主 dm_bright.c 给强定义；图形单测里恒室外 | the host dm_bright.c provides the strong definition; always outdoor in the graphics unit tests
 __attribute__((weak)) float dm_bright_k(void) { return 1.0f; }   // 宿主 dm_bright.c 提供强定义；图形单测不链宿主时不加亮 | The host's dm_bright.c provides the strong definition; no brightening when graphics unit tests do not link the host
 static const char k_lut_msl[] =
 "#include <metal_stdlib>\nusing namespace metal;\n"

@@ -29,6 +29,7 @@
 #include "dm_bright_cap.h"
 #include <math.h>
 #include <mach/mach.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -60,14 +61,20 @@ static double target_logk(int *why, int *area, int *I, double *ang) {
     return e * log(4.0);
 }
 
+// 室内 / 地下（规则 ②迷宫类、③原版画面不随昼夜）：光追阴影据此按暗黑 4 的做法让点光主导、不画固定方向的「太阳」影（nvn_rtshadow.inc）。
+// dm_bright_k 每帧算目标时更新（出图线程写），光追模块在渲染线程读，原子；读取画面期间保持上一关的值，局外为 0
+// Indoor / underground (rule (2) maze-type, (3) original picture not following day and night): ray-traced shadows use it to let point lights lead and drop the fixed-direction "sun" shadow, the Diablo IV way (nvn_rtshadow.inc).
+// Updated whenever dm_bright_k computes its target every frame (written on the present thread), read by the ray-tracing module on the render thread, atomic; kept from the previous level during the loading screen, 0 outside a run
+static _Atomic int g_indoor;
+int dm_bright_indoor(void) { return atomic_load(&g_indoor); }
 float dm_bright_k(void) {   // 图形层每帧调（单线程：出图 / 回放线程） | called every frame by the graphics layer (single thread: the present / replay thread)
     static int fixed = -2; static float kf;
     if (fixed == -2) { const char *e = getenv("DM_BRIGHT_K"); fixed = e != NULL; if (e) { kf = (float)atof(e); LOG("DM_BRIGHT_K=%g：3D 画面曝光由测试开关固定", kf); } }
-    if (fixed) return kf;
+    if (fixed) { int why, area, I; double ang; target_logk(&why, &area, &I, &ang); atomic_store(&g_indoor, why == 2 || why == 3); return kf; }   // 曝光固定时室内判定照样跟着走（光追阴影要用） | with the exposure fixed the indoor verdict is still tracked (ray-traced shadows use it)
     static double logk = 0; static uint64_t last; static int lwhy = -1, larea = -2; static uint64_t llog; static double ltgt = -1;
     uint64_t t = now_ns();
     { int dm_loadscreen_up(void); if (dm_loadscreen_up()) { last = t; static int tr = -1; static unsigned n; if (tr < 0) tr = getenv("DM_BRIGHT_TRACE") != NULL; if (tr && n++ % 6 == 0) LOG("3D 画面加亮：k %.3f（读取画面中，保持）", exp(logk)); return (float)exp(logk); } }   // 读取画面（进出局、走进洞口）：保持当前 k，撤掉后从原值平滑走到新目标，不先掉回 1 | loading screen (entering/leaving a run, walking into a cave entrance): keep the current k, and after it is taken down move smoothly from the old value to the new target without dropping back to 1 first
-    int why, area, I; double ang; double tgt = target_logk(&why, &area, &I, &ang);
+    int why, area, I; double ang; double tgt = target_logk(&why, &area, &I, &ang); atomic_store(&g_indoor, why == 2 || why == 3);
     // 上限 DM_BRIGHT_MAX（dm_bright_cap.h；缺省 2，三端一致，B098）：目标超过就按上限算，再平滑 | cap DM_BRIGHT_MAX (dm_bright_cap.h; default 2 on every platform, B098): a target above it is replaced by it, then smoothed
     { static double maxk = -1; if (maxk < 0) { int bad; const char *e = getenv("DM_BRIGHT_MAX"); maxk = dm_bright_max_parse(e, &bad); if (bad) LOG("【红】DM_BRIGHT_MAX 非法：%s（要求 1–4），按缺省 %g", e, maxk); else LOG("3D 画面加亮上限 %g（%s）", maxk, e && *e ? "DM_BRIGHT_MAX" : "缺省"); }
       tgt = dm_bright_cap_logk(tgt, maxk); }

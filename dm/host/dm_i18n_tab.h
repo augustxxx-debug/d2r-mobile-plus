@@ -808,6 +808,15 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmGraphicsRtShadow", "光追阴影（实验性）", "Ray-traced shadows (experimental)", "Sombras por trazado de rayos (experimental)", "Sombras por trazado de rayos (experimental)", "Трассировка теней (эксперимент)", "레이 트레이싱 그림자 (실험적)" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsRtAo", "光追 AO（实验性）", "Ray-traced AO (experimental)", "AO por trazado de rayos (experimental)", "AO por trazado de rayos (experimental)", "Трассировка AO (эксперимент)", "레이 트레이싱 AO (실험적)" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsRtAoNote", "让墙脚、石缝和贴地处的阴影更实，会增加 GPU 负担、可能降低帧率", "Firmer contact shadows; heavier on the GPU, may lower FPS", "Sombras de contacto firmes; más GPU, puede bajar FPS", "Sombras de contacto firmes; más GPU, puede bajar FPS", "Чётче тени у стен; нагружает GPU, может снизить FPS", "벽 밑·틈의 그림자가 더 진해짐, GPU 부담 증가·프레임 저하 가능" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsRtAoNeedRt", "需先开启光追阴影", "Turn on ray-traced shadows first", "Activa primero las sombras por trazado de rayos", "Activa primero las sombras por trazado de rayos", "Сначала включите трассировку теней", "레이 트레이싱 그림자를 먼저 켜세요" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmIpadModeTitle", "画面两边有黑边？", "Black bars on both sides?", "¿Barras negras a los lados?", "¿Barras negras a los lados?", "Чёрные полосы по бокам?", "양쪽에 검은 띠가 보이나요?" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
