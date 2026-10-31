@@ -24,6 +24,6 @@ case "${1:-}" in
       echo "$P-$k 已出：$(ls "$O" | wc -l | tr -d ' ') 个文件"; done;;
   fresh)   # 产物是不是当前改写器出的：build_src.sha256 与当前 patch_nso.py 比（内审 M-03）。fresh <产物目录> | whether a build output came from the current rewriter: compare build_src.sha256 with the current patch_nso.py (internal audit M-03). fresh <output directory>
     HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); O=${2:?产物目录}; want=$(shasum -a 256 "$HERE/patch_nso.py" | cut -d' ' -f1); have=$(cut -d' ' -f1 "$O/build_src.sha256" 2>/dev/null)
-    [ "$have" = "$want" ] || { echo "🔴 产物 $O 不是当前 patch_nso.py 出的（产物记录 ${have:-没有}，当前 $want）：跑 product.sh build" >&2; exit 1; };;
+    [ "$have" = "$want" ] || { echo "🔴 产物 $O 不是当前 patch_nso.py 出的（产物记录 ${have:-没有}，当前 ${want}）：跑 product.sh build" >&2; exit 1; };;
   *) echo "用法：product.sh name|path <种类> | rev | build | fresh <产物目录>" >&2; exit 2;;
 esac
