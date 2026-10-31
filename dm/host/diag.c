@@ -1205,6 +1205,7 @@ static void c2s_obs(const uint64_t *regs) {
     if (n >= 1 && b[0] == 0x20) cube_diag_req(regs[0], regs[1], b, n);   // 合成读数 | Transmute readout
     dm_bossrush_c2s(regs[0], regs[1], b, n);
     { void dm_rift_c2s(uint64_t, const uint8_t *, uint32_t); dm_rift_c2s(regs[0], b, n); }
+    { void dm_bag_c2s(uint64_t *); dm_bag_c2s((uint64_t *)(uintptr_t)regs); }   // 护身符页放置过滤（dm_bag.c） | Charm page placement filter (dm_bag.c)
     { void dm_stack_c2s(uint64_t *); dm_stack_c2s((uint64_t *)(uintptr_t)regs); }   // 药水真堆叠：喝一口只扣 1（dm_stack.c；会换掉 x2 / x3 指向的包） | True potion stacking: one sip takes off just 1 (dm_stack.c; replaces the packet x2 / x3 point to)
     { void dm_pouch_c2s(uint64_t *); dm_pouch_c2s((uint64_t *)(uintptr_t)regs); }   // 珍宝匣：符文 / 宝石 / 材料拖进共享页时改道进高级仓库（dm_pouch.c；会换掉 x2 / x3 指向的包） | Trove: runes / gems / materials dragged into the shared tab are rerouted into the advanced stash tabs (dm_pouch.c; replaces the packet x2 / x3 point to)
     { void dm_shoprefresh_c2s(uint64_t, uint64_t, const uint8_t *, uint32_t); dm_shoprefresh_c2s(regs[0], regs[1], b, n); }   // 商人交易页「刷新货架」（dm_shoprefresh.c）   // 首领连战：玩家点了连战的门（门只是外观，换关由 dm_bossrush.c 做） | Vendor trade page 「刷新货架」(Refresh Stock) (dm_shoprefresh.c)   // Boss rush: the player tapped the boss rush door (the door is appearance only; the level change is done by dm_bossrush.c)

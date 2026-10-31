@@ -7,9 +7,11 @@
 # The host dm/host/dm_bag.c handles the strip, keycaps and counts.
 import os, re, shutil
 
-COLS, ROWS = 12, 7
-GRID = (158, 599)
-STRIP_X, TAB_W, TAB_H, TAB_STEP = 78, 76, 117, 124
+# 页签形态的参数和宿主共用一份（dm/host/dm_bag_layout.h），换方案只改那里 | Tab form parameters are shared with the host (dm/host/dm_bag_layout.h); a new design only changes that file
+P = {m.group(1): int(m.group(2)) for m in re.finditer(r'#define DM_BAG_(\w+) (-?\d+)', open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'host', 'dm_bag_layout.h'), encoding='utf-8').read())}
+COLS, ROWS = P['COLS'], P['ROWS']
+GRID = (P['GRID_X'], P['GRID_Y'])
+TAB_W, TAB_H = P['TAB_W'], P['TAB_H']
 OFF = 99999
 BG_U, BG_V = 56, 19                # 底图左上角的面板坐标 | Panel coordinates of the base image's top-left corner
 BG_SIZE = (644, 712)
@@ -74,16 +76,13 @@ def rects(s):
 
 def widgets():
     t = ''
-    HI = '            { "type": "ImageWidget", "name": "TouchBagHi", "fields": { "rect": { "x": %d, "y": %d, "scale": 0.5 }, "filename": "Controller/Panel/zsbag/BagTabHi" } },\n' % (STRIP_X, GRID[1])
     for k in range(2):
-        y = GRID[1] + k * TAB_STEP
         t += ('            { "type": "ButtonWidget", "name": "TouchBagTab%d", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": %d, "scale": 0.5 }, "filename": "Controller/Panel/zsbag/BagTab%d", '
-              '"onClickMessage": "PanelManager:ClosePanel:TouchBagTab%d" } },\n') % (k, STRIP_X, y, 2 * TAB_W, 2 * TAB_H, k, k)
-    t += HI
+              '"onClickMessage": "PanelManager:ClosePanel:TouchBagTab%d" } },\n') % (k, P['TAB_X'] + k * P['TAB_DX'], P['TAB_Y'] + k * P['TAB_DY'], 2 * TAB_W, 2 * TAB_H, k, k)
+    t += '            { "type": "ImageWidget", "name": "TouchBagHi", "fields": { "rect": { "x": %d, "y": %d, "scale": 0.5 }, "filename": "Controller/Panel/zsbag/BagTabHi" } },\n' % (P['TAB_X'], P['TAB_Y'])
     for k in range(2):
-        y = GRID[1] + k * TAB_STEP
         t += ('            { "type": "TextBoxWidget", "name": "TouchBagCount%d", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": 40 }, "text": "", '
-              '"style": { "fontColor": "$FontColorLightGold", "pointSize": 28, "spacing": "$ReducedSpacing", "alignment": { "h": "center", "v": "center" } } } },\n') % (k, STRIP_X - 8, y + TAB_H - 40, TAB_W + 16)
+              '"style": { "fontColor": "$FontColorLightGold", "pointSize": 28, "spacing": "$ReducedSpacing", "alignment": { "h": "center", "v": "center" } } } },\n') % (k, P['TAB_X'] + k * P['TAB_DX'] + P['COUNT_DX'], P['TAB_Y'] + k * P['TAB_DY'] + P['COUNT_DY'], P['COUNT_W'])
     t += '            { "type": "ImageWidget", "name": "TouchBagDot", "fields": { "rect": { "x": %d, "y": %d, "scale": 0.5 }, "filename": "Controller/Panel/zsbag/BagDot" } },\n' % (OFF, 0)
     for nm, act in (('TouchBagKeyL', 'tabLeft'), ('TouchBagKeyR', 'tabRight')):
         t += '            { "type": "ButtonLegendWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": 0, "width": 0, "height": 162 }, "text": { "style": "$StyleButtonLegend" }, "presets": [ { "action": "%s" } ] } },\n' % (nm, OFF, act)

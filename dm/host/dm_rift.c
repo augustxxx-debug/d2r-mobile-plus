@@ -170,7 +170,7 @@ static void rec_pre_commit(const char *wd) {
         else { static int n; if (n++ < 20) LOG("秘境：进度待落盘，这次提交没有改写 %s 的角色档，等下一次", RS.who); } }
     pthread_mutex_unlock(&RS.mu);
 }
-__attribute__((constructor)) static void rec_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[3] = rec_pre_commit; }
+__attribute__((constructor)) static void rec_hook_install(void) { extern void (*g_dm_pre_commit_hook[6])(const char *); g_dm_pre_commit_hook[3] = rec_pre_commit; }
 
 // ---- 通关点数（秘境里人物能力要跟上怪物成长；配套技能硬点上限 40，见 dm_actions.c skill_cap_pump）：
 //   最高通关层每 PTS_EVERY 层给 PTS_SKILL 个技能点、PTS_STAT 个属性点，按角色、按最高通关层只发一次；侧文件键 pts = 已发到最高通关第几层

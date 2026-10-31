@@ -531,4 +531,11 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCreditsSep", "、", ", ", ", ", ", ", ", ", ", " },
     { "dmAboutVersion", "版本 %s", "Version %s", "Versión %s", "Versión %s", "Версия %s", "버전 %s" },
     { "dmCommunityFe", "加入社区讨论", "Community", "Comunidad", "Comunidad", "Сообщество", "커뮤니티" },
+    { "dmCharmFull", "护身符页满了", "Charm page is full", "La página de amuletos está llena", "La página de amuletos está llena", "Страница амулетов заполнена", "부적 페이지가 가득 찼습니다" },
+    { "dmCharmSellFull", "背包满了，卖不出去", "Bag is full, can't sell", "El inventario está lleno, no se puede vender", "El inventario está lleno, no se puede vender", "Рюкзак полон, продать нельзя", "가방이 가득 차서 팔 수 없습니다" },
+    { "dmCharmRestore", "有护身符没能放回护身符页，已保留", "Some charms could not return to the charm page; they are kept", "Algunos amuletos no volvieron a su página; se conservan", "Algunos amuletos no volvieron a su página; se conservan", "Некоторые амулеты не вернулись на страницу; они сохранены", "일부 부적을 페이지로 되돌리지 못했습니다. 보존되어 있습니다" },
+    { "dmCharmTradeHint", "护身符暂时不能从这里放入交易", "Charms cannot go into a trade from here yet", "Los amuletos aún no pueden entrar en un intercambio desde aquí", "Los amuletos aún no pueden entrar en un intercambio desde aquí", "Амулеты пока нельзя добавить в обмен отсюда", "아직 여기서 부적을 거래에 넣을 수 없습니다" },
+    { "dmCharmHintStash", "存入仓库", "To stash", "Al alijo", "Al alijo", "В тайник", "보관함으로" },
+    { "dmCharmHintSell", "卖出", "Sell", "Vender", "Vender", "Продать", "판매" },
+    { "dmCharmHintCube", "放入魔盒", "To cube", "Al cubo", "Al cubo", "В куб", "큐브로" },
 };

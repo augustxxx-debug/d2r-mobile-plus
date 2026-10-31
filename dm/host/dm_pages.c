@@ -348,4 +348,4 @@ void dm_pages_tick(uint64_t G, uint64_t player, uint8_t *b) {   // 服务端拍�
     if (dir) { pthread_mutex_lock(&g_pmu); pages_flip(b, G, player, dir); pthread_mutex_unlock(&g_pmu); }
 }
 static void pages_hook(const char *wd) { pthread_mutex_lock(&g_pmu); pages_pre_commit(wd); pthread_mutex_unlock(&g_pmu); }
-__attribute__((constructor)) static void pages_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[0] = pages_hook; }
+__attribute__((constructor)) static void pages_hook_install(void) { extern void (*g_dm_pre_commit_hook[6])(const char *); g_dm_pre_commit_hook[0] = pages_hook; }

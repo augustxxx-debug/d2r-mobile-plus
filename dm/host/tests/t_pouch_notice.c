@@ -1,7 +1,7 @@
 // UI feedback must not wait for the paused server; chat must never duplicate UI.
 #include "../dm_pouch.c"
 #include <assert.h>
-void (*g_dm_pre_commit_hook[5])(const char *);
+void (*g_dm_pre_commit_hook[6])(const char *);
 uint64_t dm_fs_commit_count(void) { assert(!"notice test must not access saves"); return 0; }
 void dm_fs_save_poison(int e) { (void)e; assert(!"notice test must not write saves"); }
 void *dm_memfind(const uint8_t *h, size_t hn, const uint8_t *n, size_t nn) { (void)h; (void)hn; (void)n; (void)nn; assert(!"notice test must not inspect game memory"); return NULL; }
