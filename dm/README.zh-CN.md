@@ -37,7 +37,7 @@ English: [README.md](README.md)
 
 每个模块的输出在产物目录里：`<名>.patched.bin`（改写后的映像，键页与补丁区接在后面）、`<名>.fixups.tsv`（布局）、`<名>.gates.tsv`（门表）、`<名>.sites.tsv`、`<名>.cuts.tsv`、`<名>.obs.tsv`。
 
-产物有代号，写在 [PRODUCT](PRODUCT) 一行里；`tools/product.sh build` 用同一个改写器出三种产物到 `$DM_ROOT/build/cache/dm/out/<代号>-<种类>`：
+产物有代号，写在 [PRODUCT](PRODUCT) 第一行（第二行登记 `patch_nso.py` 的指纹，出包前 `tools/product.sh lock` 核对，改了改写器没看代号就失败）；`tools/product.sh build` 用同一个改写器出三种产物到 `$DM_ROOT/build/cache/dm/out/<代号>-<种类>`：
 
 | 种类 | 规则集 | 用在哪 |
 |---|---|---|
@@ -79,7 +79,7 @@ App 把 `host/` 与 `gfx/` 的源码直接编进去，前端接口 `host/front.h
 
 | 位置 | 内容 |
 |---|---|
-| `PRODUCT` | 当前改写产物的代号，一行 |
+| `PRODUCT` | 第一行：当前改写产物的代号。第二行：对应的 `patch_nso.py` 指纹 |
 | `tools/` | 改写器 `patch_nso.py`、产物脚本 `product.sh`、读游戏资源存储的 `dmx.py`、构建期改写资源存储的 `casc_overlay.py`，以及一批读码与分析脚本 |
 | `host/` | 宿主：装载、系统调用与系统库接管、Mac 前端、游戏内功能；`host/tests/` 是单元测试 |
 | `gfx/` | 图形层：`nvn/`（接口层与 Metal 回放）、`tex/`（贴图格式与解排布）、`tools/`（着色器翻译链）、`tests/` |

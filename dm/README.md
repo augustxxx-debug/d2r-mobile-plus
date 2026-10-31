@@ -37,7 +37,7 @@ The rewritten code is never modified again at run time: thread slot numbers are 
 
 The output for each module is in the build output directory: `<name>.patched.bin` (the rewritten image, with the key page and the patch area appended), `<name>.fixups.tsv` (layout), `<name>.gates.tsv` (gate table), `<name>.sites.tsv`, `<name>.cuts.tsv`, `<name>.obs.tsv`.
 
-Build outputs have a codename, written as the single line of [PRODUCT](PRODUCT); `tools/product.sh build` uses the same rewriter to produce three kinds of build output in `$DM_ROOT/build/cache/dm/out/<codename>-<kind>`:
+Build outputs have a codename, written on the first line of [PRODUCT](PRODUCT) (the second line records the `patch_nso.py` fingerprint; `tools/product.sh lock` checks it before packaging, so changing the rewriter without looking at the codename fails); `tools/product.sh build` uses the same rewriter to produce three kinds of build output in `$DM_ROOT/build/cache/dm/out/<codename>-<kind>`:
 
 | Kind | Ruleset | Where it is used |
 |---|---|---|
@@ -79,7 +79,7 @@ The App compiles the sources of `host/` and `gfx/` in directly. The front-end in
 
 | Location | Contents |
 |---|---|
-| `PRODUCT` | The codename of the current rewrite build output, one line |
+| `PRODUCT` | Line 1: the codename of the current rewrite build output. Line 2: the `patch_nso.py` fingerprint for it |
 | `tools/` | The rewriter `patch_nso.py`, the build output script `product.sh`, `dmx.py` for reading the game's resource storage, `casc_overlay.py` for rewriting the resource storage at build time, and a batch of code-reading and analysis scripts |
 | `host/` | The host: loading, system call and system library takeover, the Mac front end, in-game features; `host/tests/` holds the unit tests |
 | `gfx/` | The graphics layer: `nvn/` (interface layer and Metal replay), `tex/` (texture formats and deswizzling), `tools/` (shader translation chain), `tests/` |
