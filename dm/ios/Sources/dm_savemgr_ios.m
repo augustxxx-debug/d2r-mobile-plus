@@ -38,7 +38,11 @@ static void on_share(const char *path) {
         a.completionWithItemsHandler = ^(UIActivityType t, BOOL done, NSArray *items, NSError *e) { (void)t; (void)items; (void)e; dm_savemgr_share_done(done); };
         a.view.accessibilityIdentifier = @"dmSaveShare"; UIPopoverPresentationController *pp = a.popoverPresentationController;   // iPad 上是弹出框：锚在画面正中 | a popover on iPad: anchored at the centre
         if (pp) { pp.sourceView = vc.view; pp.sourceRect = CGRectMake(CGRectGetMidX(vc.view.bounds), CGRectGetMidY(vc.view.bounds), 1, 1); pp.permittedArrowDirections = 0; }
-        [vc presentViewController:a animated:YES completion:nil]; });
+        [vc presentViewController:a animated:YES completion:nil];
+#ifdef DM_QA_BUILD
+        const char *qa = getenv("DM_TEST_SHARE_CLOSE"); if (qa) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atoi(qa) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [a dismissViewControllerAnimated:YES completion:^{ dm_savemgr_share_done(0); }]; });   // 系统面板脚本点不到：QA 构建到点收起（CLAUDE.md §2.9）；代码收起不走 completionWithItemsHandler | the system panel cannot be tapped by a script: QA builds close it on time; closing from code skips the completion handler
+#endif
+    });
 }
 // boot_thread 调：挂存档与 iCloud 同步之前 | called on boot_thread, before mount and iCloud sync
 void dm_savemgr_boot_ios(void) {
