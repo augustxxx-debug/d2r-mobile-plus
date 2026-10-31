@@ -3,14 +3,14 @@
 //   nativeSurface：交来 / 收回 ANativeWindow（front_android.c）；nativeTouch：整组触点（front.h dm_touch_set）；nativeFocus：场景生命周期（同 iOS 1 / 2 / 3 + 后台挂起）。
 // 目录约定（都不进 APK，见 dm/android/README）：
 //   <外部私有目录>/dm/out/   改写产物（*.patched.bin 与各表，patch_nso.py DM_TARGET=android 出），开发时 adb push
-//   资源目录（缺省 /sdcard/Download/S2X/D2R Mobile/data）  玩家的 18 个 .data 档案 + .build.config；App 在内部目录建 romfs/data/ 逐个链接过去
+//   资源目录（缺省 /sdcard/Download/S2X/D2R Mobile Plus/data）  玩家的 18 个 .data 档案 + .build.config；App 在内部目录建 romfs/data/ 逐个链接过去
 //   <内部目录>/save、temp            存档与临时文件
 // JNI entry of the App form (Java side app/src/main/java/com/xiaoboluo/d2r/DmActivity.java): counterpart of iOS's main.m startup chain + front_ios.m's lifecycle / touch forwarding.
 //   nativeStart: prepare directories and environment variables (as iOS boot_prepare: DM_ROMFS / DM_SAVE / DM_TEMP, cwd), connect stderr to a log file + logcat, start the host thread running dm_main.
 //   nativeSurface: hand over / take back the ANativeWindow (front_android.c); nativeTouch: the whole set of touch points (front.h dm_touch_set); nativeFocus: scene lifecycle (as iOS 1 / 2 / 3 + background suspend).
 // Directory conventions (none of these go into the APK, see dm/android/README):
 //   <external private dir>/dm/out/   rewriter products (*.patched.bin and tables, from patch_nso.py DM_TARGET=android), adb push during development
-//   resource dir (default /sdcard/Download/S2X/D2R Mobile/data)  the player's 18 .data archives + .build.config; the App creates romfs/data/ in the internal dir linking to each of them
+//   resource dir (default /sdcard/Download/S2X/D2R Mobile Plus/data)  the player's 18 .data archives + .build.config; the App creates romfs/data/ in the internal dir linking to each of them
 //   <internal dir>/save, temp        saves and temporary files
 #include "../host/dm.h"
 #include "../host/front.h"
@@ -135,7 +135,7 @@ static void *sharelog_worker(void *arg) {
     snprintf(dev, sizeof dev, "%s %s / Android %s / SoC %s（GPU 与驱动见日志里的 NVN caps 行）", maker, model, rel, soc);
     snprintf(dir, sizeof dir, "%s/share", g_files); mkdir(dir, 0700);
     { DIR *d = opendir(dir); struct dirent *e; if (d) { while ((e = readdir(d))) if (e->d_name[0] != '.') { char old[2500]; snprintf(old, sizeof old, "%s/%s", dir, e->d_name); unlink(old); } closedir(d); } }   // 上次导出的删掉 | previous exports removed
-    const char *ver = getenv("DM_VERSION_LABEL"); char vs[64] = "", tsb[32]; { const char *v = ver ? ver : ""; size_t n = 0; for (; *v && n < sizeof vs - 1; v++) if ((*v >= '0' && *v <= '9') || *v == '.' || *v == '+') vs[n++] = *v; vs[n] = 0; }
+    const char *ver = getenv("DM_VERSION_LABEL"); char vs[64] = "", tsb[32]; { const char *v = ver ? ver : ""; size_t n = 0; for (; *v && n < sizeof vs - 1; v++) { if ((*v >= '0' && *v <= '9') || (*v >= 'a' && *v <= 'z') || (*v >= 'A' && *v <= 'Z') || *v == '.' || *v == '+') vs[n++] = *v; else if (n && vs[n - 1] != '_') vs[n++] = '_'; } while (n && vs[n - 1] == '_') n--; vs[n] = 0; }   // 「1.0.2 · 975d53d」→ 1.0.2_975d53d：分隔不能丢，否则版本和提交黏在一起（B091） | the separator stays, or the version and commit run together (B091)
     time_t now = time(NULL); strftime(tsb, sizeof tsb, "%Y%m%d_%H%M%S", localtime(&now));
     snprintf(out, sizeof out, "%s/D2RMobile_diagnostics_%s_%s.txt", dir, vs[0] ? vs : "dev", tsb);
     // 包名从内部目录取（/data/user/<n>/<包名>/files）：包名换过（com.xiaoboluo.d2r → com.augustusplay.d2rmobileplus），-PdmAppId 也会换，不写死
@@ -204,7 +204,7 @@ static void *host_thread(void *arg) {
 static void load_env_file(const char *dir) {
     char path[1300]; snprintf(path, sizeof path, "%s/env", dir);
     FILE *fp = fopen(path, "r"); if (!fp) return;
-    char line[512];
+    static char line[16384];   // 长 DM_KEYS 不能被截断（真机验证 N4） | a long DM_KEYS must not be cut
     while (fgets(line, sizeof line, fp)) {
         line[strcspn(line, "\r\n")] = 0;
         char *eq = strchr(line, '=');
@@ -220,7 +220,7 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
     const char *f = (*env)->GetStringUTFChars(env, files, NULL), *x = (*env)->GetStringUTFChars(env, ext, NULL), *s = (*env)->GetStringUTFChars(env, src, NULL), *lg = (*env)->GetStringUTFChars(env, lang, NULL);
     // 显示版本（build.gradle 从 dm/tools/version.sh 取的 DM_VERSION_LABEL，同 iOS 的 DMVersionLabel）：进环境给宿主与分享摘要，启动日志记一行
     // Display version (DM_VERSION_LABEL that build.gradle takes from dm/tools/version.sh, as iOS's DMVersionLabel): into the environment for the host and the share summary, one boot-log line
-    if (version) { const char *v = (*env)->GetStringUTFChars(env, version, NULL); if (v && *v) setenv("DM_VERSION_LABEL", v, 1); (*env)->ReleaseStringUTFChars(env, version, v); }
+    if (version) { const char *v = (*env)->GetStringUTFChars(env, version, NULL); if (v && *v) { void dm_update_set_label(const char *); setenv("DM_VERSION_LABEL", v, 1); dm_update_set_label(v); } (*env)->ReleaseStringUTFChars(env, version, v); }
     snprintf(g_files, sizeof g_files, "%s", f); snprintf(g_ext, sizeof g_ext, "%s", x); snprintf(g_src, sizeof g_src, "%s", s);
     // 启动时间线零点：Process.getStartUptimeMillis() 是 SystemClock.uptimeMillis（CLOCK_MONOTONIC），与 now_ns 同一时钟（见 main.c proc_start_mono_ns）
     // Boot timeline zero: Process.getStartUptimeMillis() is SystemClock.uptimeMillis (CLOCK_MONOTONIC), the same clock as now_ns (see main.c proc_start_mono_ns)
