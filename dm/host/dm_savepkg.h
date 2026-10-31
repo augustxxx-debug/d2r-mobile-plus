@@ -36,6 +36,7 @@ typedef struct {
     char platform[16], commit[48], build[24], version[40], game_build[24], exported_at[24], kind[12];
     char source_format[20], source_version[24], converted_from[48];   // 数据来自哪种格式 / 那种格式的版本 / 谁转换过（空 = 没转换）。第一期只有恒等转换 | which format the data came from / its version / what converted it (empty = not converted). Phase 1 only has the identity conversion
     int nchars, nstash, has_settings, settings_action, skipped_unknown, nfiles;
+    char custom[16][2][20]; int ncustom;    // 包里的玩法开关（白名单键，值 0 / 1）；设置这一行选覆盖时写回 | the package's gameplay switches (allow-listed keys, values 0 / 1); written back when the settings row is set to overwrite
     long long total_bytes;
     dm_pkg_char *chars;                     // DM_PKG_MAX_CHARS 个，dm_savepkg_view_free 释放 | DM_PKG_MAX_CHARS entries, released by dm_savepkg_view_free
     dm_pkg_stash stash[DM_PKG_MAX_STASH];
@@ -53,7 +54,7 @@ int dm_savepkg_export(const char *tree, const char *out_zip, const dm_pkg_export
 // 拷路径；src 可以就是 dst（自拷在 iOS / Mac 上被库的重叠检查当场终止，安卓不查）。内联：缓冲区大小看得见才走带检查的版本，单测才拦得住 | copy a path; src may be dst (a self-copy is killed by the library's overlap check on iOS / Mac, Android does not check). Inline: only with the buffer size in view does the checked version run, so the unit test can catch it
 static inline __attribute__((always_inline)) void dm_savepkg_path_set(char *dst, size_t n, const char *src) { if (dst != src) strlcpy(dst, src, n); }
 int dm_savepkg_inspect(const char *zip, const char *save, int restore, dm_pkg_view *v);   // 校验并解到 <save>.import.tmp，不碰存档；restore = 从备份恢复（缺省处理改成覆盖） | validates and extracts into <save>.import.tmp; the save is untouched; restore = from a backup (actions default to overwrite)
-int dm_savepkg_stage_commit(const char *save, const dm_pkg_view *v, const char *const *custom_kv);   // 确认：写 plan.tsv、原子改名成 <save>.import | confirm: write plan.tsv and atomically rename to <save>.import
+int dm_savepkg_stage_commit(const char *save, const dm_pkg_view *v, const char *const *custom_kv);   // 确认：写 plan.tsv、原子改名成 <save>.import。custom_kv 空 = 设置这一行选了覆盖就用包里的开关 | confirm: write plan.tsv and atomically rename to <save>.import. NULL custom_kv = the package's switches when the settings row is set to overwrite
 void dm_savepkg_stage_cancel(const char *save);
 void dm_savepkg_view_free(dm_pkg_view *v);
 int dm_savepkg_apply_pending(const char *save, const char *custom_dir, int64_t now, const dm_pkg_source *src);   // 启动期、挂存档与云同步之前调：0 = 没有待应用，1 = 换入成功，-1 = 失败（存档不变） | at boot, before mount and cloud sync: 0 = nothing pending, 1 = applied, -1 = failed (save unchanged)
