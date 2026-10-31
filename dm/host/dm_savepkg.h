@@ -48,6 +48,7 @@ int dm_savepkg_name_ok(const char *name);   // 角色名规则（hle_charname.c�
 int dm_savepkg_path_class(const char *rel, char *unit, size_t un);   // 路径白名单：-1 不安全（整包拒绝）/ 0 不认识（跳过）/ 1 角色 / 2 共享仓库 / 3 设置 | path allow-list: -1 unsafe (reject) / 0 unknown (skip) / 1 character / 2 stash / 3 settings
 int dm_savepkg_keepboth_name(const char *name, char *out, size_t n, int (*taken)(const char *candidate, void *ctx), void *ctx);   // 「保留两份」取新名，全部被占用返回 0 | new name for keep-both; 0 when all are taken
 int dm_savepkg_parse_d2s(const uint8_t *b, size_t n, dm_pkg_char *out);   // 头部校验 + 字段；1 = 有效 | header validation + fields; 1 = valid
+int dm_savepkg_swcharm_ok(const uint8_t *b, size_t n);   // .swcharm 头与逐件长度；1 = 有效 | .swcharm header and item lengths; 1 = valid
 int dm_savepkg_rename_d2s(uint8_t *b, size_t n, const char *newname);     // 改名字段并重算校验和；1 = 成功 | patch the name and recompute the checksum; 1 = done
 
 int dm_savepkg_export(const char *tree, const char *out_zip, const dm_pkg_export_opts *o, const dm_pkg_source *src);   // tree = 不会再变的目录（快照或挂载之前的已提交目录） | tree = a directory that will not change (a snapshot, or the committed directory before mount)

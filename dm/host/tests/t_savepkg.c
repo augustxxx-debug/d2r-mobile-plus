@@ -134,6 +134,20 @@ static void t_d2s(void) {
 // 导出把缓冲区本身传给分享那一步：自拷在 iOS / Mac 上进程当场终止 | an export hands the buffer itself to the share step: a self-copy kills the process on iOS / Mac
 static char g_pathbuf[64];
 static void t_path_set(void) { char *volatile same = g_pathbuf; dm_savepkg_path_set(g_pathbuf, sizeof g_pathbuf, "/a/b.zip"); dm_savepkg_path_set(g_pathbuf, sizeof g_pathbuf, same); CHECK(!g_selfcopy, "不能自拷 %d 次", g_selfcopy); CHECK(!strcmp(g_pathbuf, "/a/b.zip"), "自拷后内容不变 [%s]", g_pathbuf); dm_savepkg_path_set(g_pathbuf, sizeof g_pathbuf, "/c.zip"); CHECK(!strcmp(g_pathbuf, "/c.zip"), "换路径 [%s]", g_pathbuf); }
+static size_t mk_charm(uint8_t *b, int cnt, int x, int y, int len) { memcpy(b, "SWCH", 4); b[4] = 1; b[5] = b[6] = b[7] = 0; b[8] = (uint8_t)cnt; b[9] = (uint8_t)(cnt >> 8); size_t o = 10; for (int i = 0; i < cnt; i++) { b[o] = (uint8_t)x; b[o + 1] = (uint8_t)y; b[o + 2] = (uint8_t)len; b[o + 3] = (uint8_t)(len >> 8); memset(b + o + 4, 0x5a, (size_t)len); o += 4 + (size_t)len; } return o; }
+static void t_swcharm(void) {
+    static uint8_t b[200000]; size_t n = mk_charm(b, 0, 0, 0, 1); CHECK(n == 10 && dm_savepkg_swcharm_ok(b, n), "0 件有效（已迁移）");
+    n = mk_charm(b, 2, 14, 10, 3); CHECK(dm_savepkg_swcharm_ok(b, n), "边界坐标有效"); CHECK(!dm_savepkg_swcharm_ok(b, n - 1), "短一字节要拒"); b[n] = 0; CHECK(!dm_savepkg_swcharm_ok(b, n + 1), "多一字节要拒"); CHECK(!dm_savepkg_swcharm_ok(b, 9), "头不全要拒");
+    b[0] = 0x58; CHECK(!dm_savepkg_swcharm_ok(b, n), "魔数错要拒"); n = mk_charm(b, 1, 0, 0, 1); b[4] = 2; CHECK(!dm_savepkg_swcharm_ok(b, n), "版本错要拒");
+    n = mk_charm(b, 165, 0, 0, 1024); CHECK(dm_savepkg_swcharm_ok(b, n), "165 件满长有效"); n = mk_charm(b, 166, 0, 0, 1); CHECK(!dm_savepkg_swcharm_ok(b, n), "166 件要拒");
+    n = mk_charm(b, 1, 15, 0, 1); CHECK(!dm_savepkg_swcharm_ok(b, n), "x 越界要拒"); n = mk_charm(b, 1, 0, 11, 1); CHECK(!dm_savepkg_swcharm_ok(b, n), "y 越界要拒"); n = mk_charm(b, 1, 0, 0, 1025); CHECK(!dm_savepkg_swcharm_ok(b, n), "长度超限要拒"); n = mk_charm(b, 1, 0, 0, 0); CHECK(!dm_savepkg_swcharm_ok(b, n), "长度 0 要拒");
+    char u[64]; CHECK(dm_savepkg_path_class("Alice/Alice.swcharm", u, sizeof u) == 1, "白名单");
+    // 跟着角色走：导出、换入、保留两份改名，内容不变 | it travels with the character: export, apply and the keep-both rename leave the content unchanged
+    dm_pkg_view v; size_t g = 0; n = mk_charm(b, 2, 3, 4, 8); mk_char("sc/save", "Alice", 1, 30, 0, 100); put("sc/save/Alice/Alice.swcharm", b, n); CHECK(export_all("sc/save", "sc.zip", 0, 0) == 0, "导出");
+    mk_char("sc2/save", "Alice", 1, 25, 0, 50); CHECK(inspect("sc.zip", "sc2/save", 0, &v) == 0, "校验"); dm_pkg_char *a = row(&v, "Alice"); CHECK(a && a->status == DM_PKG_CONFLICT, "同名冲突"); a->action = DM_PKG_KEEPBOTH; strcpy(a->newname, "Alice-A"); commit("sc2/save", &v); dm_savepkg_view_free(&v); CHECK(apply("sc2/save") == 1, "保留两份换入"); uint8_t *d = get("sc2/save/Alice-A/Alice-A.swcharm", &g); CHECK(d && g == n && !memcmp(d, b, n), "改名后内容一致"); free(d);
+    // 包里头坏：这一行无法导入，别的角色不受影响 | a bad header in the package: that row cannot be imported, other characters are not affected
+    mk_char("sb/save", "Alice", 1, 30, 0, 100); mk_char("sb/save", "Bobby", 2, 31, 0, 101); put("sb/save/Alice/Alice.swcharm", "SWXX0000000", 11); CHECK(export_all("sb/save", "sb.zip", 0, 0) == 0, "坏头导出"); mkdir(R, 0755); CHECK(inspect("sb.zip", "sb2/save", 0, &v) == 0, "坏头校验"); a = row(&v, "Alice"); dm_pkg_char *o = row(&v, "Bobby"); CHECK(a && a->status == DM_PKG_BAD && a->level == 30, "坏头无法导入"); CHECK(o && o->status == DM_PKG_NEW, "别的角色照常"); dm_savepkg_view_free(&v);
+}
 static void t_roundtrip(void) {
     mk_save("a/save"); mk_save("b/save"); char sv[1024]; CHECK(export_all("a/save", "p.zip", 1, 1) == 0, "导出");
     size_t n = 0; uint8_t *z = get("p.zip", &n); CHECK(z && n > 30 && !memcmp(z + 30, "manifest.json", 13), "manifest 第一条"); uint8_t *hit = z; int leak = 0; for (size_t i = 0; i + 15 < n; i++) if (!memcmp(hit + i, "_cloudinbox", 11) || !memcmp(hit + i, "Alice 2", 7) || !memcmp(hit + i, "placeholder", 11) || !memcmp(hit + i, "icloud-conflict", 15)) leak = 1; CHECK(!leak, "不属于存档的东西进了包"); free(z);
@@ -244,7 +258,7 @@ static void t_cross(void) {
 
 int main(void) {
     const char *td = getenv("TMPDIR"); snprintf(R, sizeof R, "%s/t_savepkg_%d", td ? td : "/tmp", (int)getpid()); mkdir(R, 0755);
-    t_path_set(); t_names(); t_paths(); t_d2s(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_cross(); t_coop(); t_mirror_dirs();
+    t_path_set(); t_names(); t_paths(); t_d2s(); t_swcharm(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_cross(); t_coop(); t_mirror_dirs();
     char cmd[700]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", R); if (!fails) system(cmd); else printf("  保留现场 %s\n", R);
     printf("t_savepkg: %d 项检查，%d 项失败\n", checks, fails); return fails != 0;
 }

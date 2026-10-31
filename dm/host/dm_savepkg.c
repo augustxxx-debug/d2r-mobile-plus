@@ -95,7 +95,7 @@ int dm_savepkg_name_ok(const char *name) {
 }
 static int is_stash_name(const char *s) { if (strncmp(s, "ModernSharedStash", 17) && strncmp(s, "SharedStash", 11)) return 0; for (; *s; s++) if (!((*s | 0x20) >= 'a' && (*s | 0x20) <= 'z') && !(*s >= '0' && *s <= '9')) return 0; return 1; }
 static int char_ext_ok(const char *e) {
-    static const char *const k[] = { "d2s", "d2s.meta", "key", "ctl", "map", "sw_kills", "swpage", "swpouch", "sw_rift" };
+    static const char *const k[] = { "d2s", "d2s.meta", "key", "ctl", "map", "sw_kills", "swpage", "swpouch", "sw_rift", "swcharm" };
     for (size_t i = 0; i < sizeof k / sizeof *k; i++) if (!strcmp(e, k[i])) return 1;
     return e[0] == 'm' && e[1] == 'a' && e[2] >= '0' && e[2] <= '9' && !e[3];
 }
@@ -140,6 +140,13 @@ int dm_savepkg_parse_d2s(const uint8_t *b, size_t n, dm_pkg_char *o) {
     char nm[64]; memcpy(nm, b + 0x12b, e - 0x12b); nm[e - 0x12b] = 0; if (!utf8_ok(nm)) return 0;
     if (o) { strlcpy(o->name, nm, sizeof o->name); o->cls = cls; o->level = lvl; o->progress = b[0x15]; o->hardcore = (b[0x14] & 0x04) != 0; o->expansion = (b[0x14] & 0x20) != 0; o->last_played = rd32(b + 0x20); }
     return 1;
+}
+// 护身符页侧文件头（交接/护身符页_格式变更_20261031.md）：魔数 SWCH、版本 1、保留 3 字节、件数 u16，然后逐件 x、y、长度 u16、位流。大符出界和重叠要物品表，进局重建时查
+// Charm page side file (see that format note): magic SWCH, version 1, 3 reserved bytes, u16 count, then per item x, y, u16 length, bitstream. Large charms out of bounds and overlaps need the item tables and are checked when the page is rebuilt on entry
+int dm_savepkg_swcharm_ok(const uint8_t *b, size_t n) {
+    if (n < 10 || memcmp(b, "SWCH", 4) || b[4] != 1) return 0; uint32_t cnt = rd16(b + 8); if (cnt > 165) return 0; size_t o = 10;
+    for (uint32_t i = 0; i < cnt; i++) { if (n - o < 4 || b[o] >= 15 || b[o + 1] >= 11) return 0; uint32_t L = rd16(b + o + 2); if (L < 1 || L > 1024 || n - o - 4 < L) return 0; o += 4 + (size_t)L; }
+    return o == n;
 }
 int dm_savepkg_rename_d2s(uint8_t *b, size_t n, const char *newname) {
     size_t L = strlen(newname); if (n < 0x15b || L > 15 || !dm_savepkg_parse_d2s(b, n, NULL)) return 0;
@@ -382,6 +389,7 @@ int dm_savepkg_inspect(const char *zip, const char *save, int restore, dm_pkg_vi
         if (!dm_savepkg_name_ok(nm)) continue; pth dp; snprintf(dp, sizeof dp, "%s/%s/%s.d2s", fd, nm, nm); size_t bn = 0; uint8_t *b = read_all(dp, MAX_FILE, &bn); dm_pkg_char pc; memset(&pc, 0, sizeof pc); int ok = b && dm_savepkg_parse_d2s(b, bn, &pc) && !strcmp(pc.name, nm); free(b); if (!ok) continue;
         if (jnum(c, "valid", 1) && (jnum(c, "class", -1) != pc.cls || jnum(c, "level", -1) != pc.level || jnum(c, "hardcore", -1) != pc.hardcore || (int64_t)jnum(c, "last_played", -1) != (int64_t)pc.last_played)) { free(l.v); rc = DM_PKG_E_CHECK; goto done; } char us[65]; unit_sha(&l, nm, us); if (strcmp(us, jstrv(c, "unit_sha256"))) { free(l.v); rc = DM_PKG_E_CHECK; goto done; }
         x->cls = pc.cls; x->level = pc.level; x->progress = pc.progress; x->hardcore = pc.hardcore; x->expansion = pc.expansion; x->last_played = pc.last_played;
+        pth cp; snprintf(cp, sizeof cp, "%s/%s/%s.swcharm", fd, nm, nm); struct stat cs; if (!lstat(cp, &cs)) { size_t cn = 0; uint8_t *cb = read_all(cp, MAX_FILE, &cn); int cok = cb && dm_savepkg_swcharm_ok(cb, cn); free(cb); if (!cok) { LOG("存档管理：护身符页文件头不对，这个角色无法导入"); continue; } }   // 头坏不能当空页 | a bad header must not pass as an empty page
         char lg[64], lp[256]; if (local_char(save, nm, lg, sizeof lg, lp, sizeof lp) && dm_savepkg_is_coop_char(save, lp)) { strlcpy(x->local, lg, sizeof x->local); continue; }   // 同名的是本机联机角色：不能覆盖，这一行保持「无法导入」| the same name is a local co-op character: it must not be overwritten, this row stays "cannot import"
         if (local_char(save, nm, lg, sizeof lg, lp, sizeof lp)) { strlcpy(x->local, lg, sizeof x->local); pth lroot; snprintf(lroot, sizeof lroot, "%s/%s", save, lp); pfl ll = {0}; DIR *ld = opendir(lroot); struct dirent *le; if (ld) { while ((le = readdir(ld))) { if (le->d_name[0] == '.') continue; pth f2; snprintf(f2, sizeof f2, "%s/%s", lroot, le->d_name); struct stat s2; char g2[256], rel[600]; guest_of(lroot, le->d_name, g2, sizeof g2); snprintf(rel, sizeof rel, "%s/%s", lg, g2); if (!lstat(f2, &s2) && S_ISREG(s2.st_mode)) pf_add(&ll, rel, f2, &s2); } closedir(ld); }
             qsort(ll.v, (size_t)ll.n, sizeof *ll.v, cmp_pf); char ls[65] = ""; int same = 0; if (!strcmp(lg, nm)) { int bad = 0; for (int k = 0; k < ll.n; k++) bad |= hash_file(&ll.v[k]); if (!bad) { unit_sha(&ll, lg, ls); same = !strcmp(ls, us); } } free(ll.v); pth ld2; snprintf(ld2, sizeof ld2, "%s/%s/%s.d2s", save, lp, lg); size_t ln = 0; uint8_t *lb = read_all(ld2, MAX_FILE, &ln); dm_pkg_char lc; memset(&lc, 0, sizeof lc); if (lb && dm_savepkg_parse_d2s(lb, ln, &lc)) { x->local_level = lc.level; x->local_played = lc.last_played; } free(lb); x->status = same ? DM_PKG_SAME : DM_PKG_CONFLICT; x->action = same ? DM_PKG_SKIP : restore ? DM_PKG_OVERWRITE : DM_PKG_SKIP; }
