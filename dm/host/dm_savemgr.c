@@ -135,7 +135,9 @@ static void preview_page(void) {
 #else
     if (!strcmp(g_view.platform, "ios")) pl = "iOS"; else if (!strcmp(g_view.platform, "ipados")) pl = "iPadOS"; else if (!strcmp(g_view.platform, "android")) pl = "Android";
 #endif
-     if (!strcmp(g_view.source_format, "d2r-pc")) pl = S("dmSaveFmtPc"); else if (!strcmp(g_view.source_format, "d2lod")) pl = S("dmSaveFmtLod"); else if (strcmp(g_view.source_format, "d2r-switch-plus")) pl = S("dmSaveFmtOther"); snprintf(sub, sizeof sub, S("dmSavePreviewFrom"), pl, g_view.version[0] ? g_view.version : g_view.build, when);
+     if (!strcmp(g_view.source_format, "d2r-pc")) pl = S("dmSaveFmtPc"); else if (!strcmp(g_view.source_format, "d2lod")) pl = S("dmSaveFmtLod"); else if (strcmp(g_view.source_format, "d2r-switch-plus")) pl = S("dmSaveFmtOther"); const char *ver = g_view.version[0] ? g_view.version : g_view.build;
+    if (g_restore) strlcpy(sub, S("dmSaveRestoreMerge"), sizeof sub);   // 恢复只合并，这里说清楚（内审 I-04）| restore merges, say so here
+    else if (ver[0]) snprintf(sub, sizeof sub, S("dmSavePreviewFrom"), pl, ver, when); else snprintf(sub, sizeof sub, S("dmSavePreviewFromNoVer"), pl, when);
     const char *note = NULL;
 #ifndef __ANDROID__
     if (dm_custom_get("icloud") && !getenv("DM_TEST_ICLOUD_OFF")) note = S("dmCloudSaveOn");
@@ -144,7 +146,7 @@ static void preview_page(void) {
 }
 static void bklist_page(void) {
     g_nbk = dm_savepkg_backup_list(save_dir(), g_bk, 64); rows_clear();
-    for (int i = 0; i < g_nbk; i++) { char when[32], sz[24], t[200]; time_t tt = (time_t)g_bk[i].when; struct tm tm; localtime_r(&tt, &tm); strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tm); if (g_bk[i].size >= 1 << 20) snprintf(sz, sizeof sz, "%.1f MB", g_bk[i].size / 1048576.0); else snprintf(sz, sizeof sz, "%lld KB", g_bk[i].size / 1024 + 1); snprintf(t, sizeof t, S("dmSaveBkRow"), when, S(g_bk[i].is_auto ? "dmSaveBkAuto" : "dmSaveBkManual"), g_bk[i].chars, sz); row_add(t, g_bk[i].starred ? "★" : "", RK_PLAIN, i); }
+    for (int i = 0; i < g_nbk; i++) { char when[32], sz[24], t[200]; time_t tt = (time_t)g_bk[i].when; struct tm tm; localtime_r(&tt, &tm); strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tm); if (g_bk[i].size >= 1 << 20) snprintf(sz, sizeof sz, "%.1f MB", g_bk[i].size / 1048576.0); else snprintf(sz, sizeof sz, "%lld KB", g_bk[i].size / 1024 + 1); snprintf(t, sizeof t, S("dmSaveBkRow"), when, S(g_bk[i].is_auto ? "dmSaveBkAuto" : "dmSaveBkManual")); char tg[96], tc[80]; snprintf(tc, sizeof tc, S("dmSaveBkTag"), g_bk[i].chars, sz); snprintf(tg, sizeof tg, "%s%s", g_bk[i].starred ? "★ " : "", tc); row_add(t, tg, RK_PLAIN, i); }
     const char *note = dm_savepkg_coop_count(save_dir()) ? S("dmSaveCoopNote") : NULL;
 #ifdef __ANDROID__
     if (!note) note = S("dmAndSaveBackupPath");
@@ -155,7 +157,7 @@ static void bkitem_page(void) { rows_clear(); dm_pkg_backup *b = &g_bk[g_bk_sel]
 static void start_import(int restore, const char *path) { g_restore = restore; if (g_view_ok) { dm_savepkg_view_free(&g_view); g_view_ok = 0; } job_start(J_INSPECT, path); }
 static void request_pick(void) {
 #ifdef DM_QA_BUILD
-    { const char *t = getenv("DM_TEST_SAVEPKG_IN"); if (t) { if (!strcmp(t, "cancel")) { LOG("存档管理：测试旁路：取消选文件"); return; } start_import(0, t); return; } }   // 系统选文件驱动不了，QA 构建直接给路径（CLAUDE.md §2.9）| the system picker cannot be driven, QA builds take a path directly
+    { const char *t = getenv("DM_TEST_SAVEPKG_IN"); if (t) { if (!strcmp(t, "cancel")) { LOG("存档管理：测试旁路：取消选文件"); dm_savemgr_picked(NULL); return; } start_import(0, t); return; } }   // 系统选文件驱动不了，QA 构建直接给路径（CLAUDE.md §2.9）| the system picker cannot be driven, QA builds take a path directly
 #endif
     if (!g_pick) { show_fail(DM_PKG_E_IO, S_HOME); return; } atomic_store(&g_pick_wait, 1); LOG("存档管理：打开系统选文件"); g_pick();
 }
@@ -205,6 +207,7 @@ void dm_savemgr_on_uimsg(const char *cat, const char *act, const char *arg) { if
 
 // ---- 弹窗：输入 | The box: input
 static _Atomic uint64_t g_md_ev; static _Atomic int g_after;
+static int foc_btn(int i) { return g_nbtn == 2 ? 1 - i : i; }   // 焦点从左到右：两颗按钮时 btn1 在左 | focus runs left to right: with two buttons btn1 is on the left
 static int stick_off(int32_t v) { return v > -8000 && v < 8000; }
 void dm_savemgr_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     static uint64_t prev, pdir, held; static int stick; static dm_stick_nav nav;
@@ -212,7 +215,7 @@ void dm_savemgr_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, 
     if (!dm_savemgr_modal()) { if (atomic_load(&g_after)) { int centred = stick_off(*lx) && stick_off(*ly) && stick_off(*rx) && stick_off(*ry); held &= *bt; if (centred) stick = 0; if (held || stick) { *bt = 0; *lx = *ly = *rx = *ry = 0; } else atomic_store(&g_after, 0); } prev = *bt; pdir = 0; dm_stick_nav_reset(&nav); return; }
     held = *bt; stick = !(stick_off(*lx) && stick_off(*ly) && stick_off(*rx) && stick_off(*ry)); atomic_store(&g_after, 1);
     uint64_t down = *bt & ~prev; prev = *bt; int32_t vy = (*ly < 0 ? -*ly : *ly) >= (*ry < 0 ? -*ry : *ry) ? *ly : *ry; uint64_t dir = dm_stick_nav_dirs(&nav, *lx, vy) & (DM_BTN_UP | DM_BTN_DOWN);
-    uint64_t ev = down & (DM_BTN_A | DM_BTN_B | DM_BTN_UP | DM_BTN_DOWN | DM_BTN_L | DM_BTN_R); if (dir & ~pdir) ev |= dir; pdir = dir; if (ev) atomic_fetch_or(&g_md_ev, ev); *bt = 0; *lx = *ly = *rx = *ry = 0;
+    uint64_t ev = down & (DM_BTN_A | DM_BTN_B | DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_L | DM_BTN_R); if (dir & ~pdir) ev |= dir; pdir = dir; if (ev) atomic_fetch_or(&g_md_ev, ev); *bt = 0; *lx = *ly = *rx = *ry = 0;
 }
 typedef struct { int valid, vh, ox, oy, nrows, x0, x1, row_y0, btn_y, btn_x[2], nbtn; float s; } tapgeo; static tapgeo g_tap;
 #define ROW_H 88
@@ -262,13 +265,13 @@ void dm_savemgr_pump(void) {
     entries(b, root);
     // 启动后第一次到前端：换入结果 | first time at the front end after boot: the apply result
     { static int checked; const char *sv = save_dir(); if (!checked && sv && !dm_uiscreen_ingame() && box_host(root) && !dm_savemgr_modal()) { checked = 1; int ok = 0, ch = 0, code = 0; if (dm_savepkg_result_take(sv, &ok, &ch, &code)) { LOG("存档管理：换入结果 %s（%d 个角色）", ok ? "成功" : "失败", ch); if (ok) { char t[160]; snprintf(t, sizeof t, S("dmSaveResultOk"), ch); show_msg(t, S("dmSaveResultOkSub"), S_NONE); } else { show_msg(S("dmSaveResultFail"), S("dmSaveFailSub"), S_NONE); } } } }
-    int st = atomic_load(&g_st);
 #ifdef DM_QA_BUILD
     qa_pump(root);
 #endif
+    int st = atomic_load(&g_st);   // 驱动动作之后才读：它可能刚进 S_WORK | read after the driver: it may have just entered S_WORK
     // 外壳回调与后台活的结果，都在这里接（游戏主线程）| shell callbacks and job results are taken here (game main thread)
     if (atomic_exchange(&g_picked_new, 0)) { char p[1400]; pthread_mutex_lock(&g_mu); strlcpy(p, g_picked, sizeof p); pthread_mutex_unlock(&g_mu); atomic_store(&g_pick_wait, 0); if (p[0]) start_import(0, p); else { LOG("存档管理：取消选文件"); if (g_home_import) show_home(); else close_box(); } st = atomic_load(&g_st); }
-    { int sd = atomic_exchange(&g_share_done, 0); if (sd) { char d[1400]; snprintf(d, sizeof d, "%s.export.tmp", save_dir()); dm_savepkg_rmtree(d); LOG("存档管理：系统面板关闭（%s）", sd > 0 ? "已保存" : "没保存"); if (st == S_WORK) show_msg(S(sd > 0 ? "dmSaveExportDone" : "dmSaveExportCancel"), sd > 0 ? S("dmSaveExportDoneSub") : "", S_HOME); st = atomic_load(&g_st); } }
+    { int sd = atomic_exchange(&g_share_done, 0); if (sd) { char d[1400]; snprintf(d, sizeof d, "%s.export.tmp", save_dir()); dm_savepkg_rmtree(d); LOG("存档管理：系统面板关闭（%s）", sd > 0 ? "已保存" : "没保存"); if (atomic_load(&g_st) == S_WORK) show_msg(S(sd > 0 ? "dmSaveExportDone" : "dmSaveExportCancel"), sd > 0 ? S("dmSaveExportDoneSub") : "", S_HOME); st = atomic_load(&g_st); } }
     if (st == S_WORK && atomic_exchange(&g_job_done, 0)) { int rc = atomic_load(&g_job_rc), j = g_job; g_job = J_NONE;
         if (j == J_INSPECT) { if (rc) show_fail(rc, g_home_import || g_restore ? S_HOME : S_NONE); else preview_page(); }
         else if (j == J_BACKUP) { if (rc) show_fail(rc, S_HOME); else show_msg(S("dmSaveBackupDone"), S("dmSaveBkKeep"), S_HOME); }
@@ -284,8 +287,9 @@ void dm_savemgr_pump(void) {
     // 手柄事件 | controller events
     { uint64_t ev = atomic_exchange(&g_md_ev, 0); if (!pad) ev = 0; int shown = atomic_load(&g_shown) == 1; if (ev && shown) { int pages = g_nrows ? (g_nrows + PER_PAGE - 1) / PER_PAGE : 1, on = g_nrows - g_page * PER_PAGE; if (on > PER_PAGE) on = PER_PAGE; if (on < 0) on = 0; int total = on + g_nbtn;
           if ((ev & DM_BTN_UP) && g_foc > 0) g_foc--; if ((ev & DM_BTN_DOWN) && g_foc + 1 < total) g_foc++;
+          if (g_nbtn == 2 && g_foc >= on) { if (ev & DM_BTN_LEFT) g_foc = on; if (ev & DM_BTN_RIGHT) g_foc = on + 1; }
           if ((ev & DM_BTN_L) && g_page > 0) { g_page--; g_foc = 0; } if ((ev & DM_BTN_R) && g_page + 1 < pages) { g_page++; g_foc = 0; }
-          if (ev & DM_BTN_A) { if (g_foc < on) row_action(&g_rows[g_page * PER_PAGE + g_foc]); else if (g_foc - on < g_nbtn) btn_action(g_foc - on); }
+          if (ev & DM_BTN_A) { if (g_foc < on) row_action(&g_rows[g_page * PER_PAGE + g_foc]); else if (g_foc - on < g_nbtn) btn_action(foc_btn(g_foc - on)); }
           else if (ev & DM_BTN_B) { if (g_nbtn && st != S_WORK && st != S_RESTART) btn_action(g_nbtn - 1); }
           st = atomic_load(&g_st); if (!st) return; } }
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840; int ox, oy; float s; co_origin(p, xr, &ox, &oy, &s);
@@ -303,7 +307,7 @@ void dm_savemgr_pump(void) {
     tapgeo g = { 1, vh, ox, oy, on, cx - 860, cx + 860, y0 + row_y0, y0 + btn_y, { 0, 0 }, g_nbtn, s };
     for (int k = 0; k < 2; k++) { char nm[32], nt[32]; snprintf(nm, sizeof nm, "TouchSaveBtn%d", k); snprintf(nt, sizeof nt, "TouchSaveBtnText%d", k); if (k >= g_nbtn) { co_place(W(nm), 99999, 99999); co_place(W(nt), 99999, 99999); co_text(b, W(nt), ""); continue; } int bx = g_nbtn == 1 ? cx - BTN_W / 2 : k == 0 ? cx + 20 : cx - BTN_W - 20; g.btn_x[k] = bx; co_place(W(nm), bx, y0 + btn_y); co_place(W(nt), bx, y0 + btn_y + 2); strlcpy(line, g_btn[k], sizeof line); dm_community_fit(line, sizeof line, 36, BTN_W - 40); co_text(b, W(nt), line); }
     g_tap = g;
-    if (pad && (on || g_nbtn)) { if (g_foc >= on + g_nbtn) g_foc = on + g_nbtn - 1; if (g_foc < on) co_rect_lines(b, p, "TouchSaveFocus", "focus_h", "focus_v", cx - 860, y0 + row_y0 + g_foc * ROW_H, 1720, ROW_H, 4); else { int k = g_foc - on; co_rect_lines(b, p, "TouchSaveFocus", "focus_h", "focus_v", g.btn_x[k] - 8, y0 + btn_y - 8, BTN_W + 16, BTN_H + 16, 4); } } else co_rect_hide(p, "TouchSaveFocus");
+    if (pad && (on || g_nbtn)) { if (g_foc >= on + g_nbtn) g_foc = on + g_nbtn - 1; if (g_foc < on) co_rect_lines(b, p, "TouchSaveFocus", "focus_h", "focus_v", cx - 860, y0 + row_y0 + g_foc * ROW_H, 1720, ROW_H, 4); else { int k = foc_btn(g_foc - on); co_rect_lines(b, p, "TouchSaveFocus", "focus_h", "focus_v", g.btn_x[k] - 8, y0 + btn_y - 8, BTN_W + 16, BTN_H + 16, 4); } } else co_rect_hide(p, "TouchSaveFocus");
 #undef W
     if (atomic_load(&g_shown) == 0) { atomic_store(&g_shown, 1); LOG("存档管理：已显示 页 %d（%d 行，框高 %d）", st, g_nrows, H); }
 }
