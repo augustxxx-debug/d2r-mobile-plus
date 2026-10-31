@@ -206,8 +206,12 @@ def vault_tab(s):
     # Personal stash page number (dm_pages.c): our own text widget, no longer borrowing the original game's shared page number block (SharedStashTabContainer / CurrentSharedStashText). Off screen by default; the host moves it in on personal pages
     pg = {'type': 'Widget', 'name': 'TouchPgPage', 'fields': {'rect': {'x': 99999, 'y': 0, 'width': 1730, 'height': 1300}}, 'children': [
         _vt_text('TouchPgPage_Text', 675, 1159, 322, 64, '$FontColorGoldYellow', '$MediumFontSize', 'center')]}
+    # 个人页的药水叠数（dm_stack.c 按格摆，平时在屏外）：同物品栏 TouchQtyN，副文 28 号、金色、右下对齐
+    # Potion counts on the personal page (placed per cell by dm_stack.c, off screen otherwise): same as TouchQtyN in the inventory, 28 pt secondary text, gold, bottom right
+    qty = {'type': 'Widget', 'name': 'TouchQtyStash', 'fields': {'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1300}}, 'children': [
+        {'type': 'TextBoxWidget', 'name': 'TouchQtyS%02d' % i, 'fields': {'rect': {'x': 99999, 'y': 0, 'width': 90, 'height': 44}, 'text': '', 'style': {'fontColor': '$FontColorGoldYellow', 'pointSize': '$MediumFontSize', 'spacing': '$ReducedSpacing', 'dropShadow': '$DefaultDropShadow', 'alignment': {'h': 'right', 'v': 'bottom'}}}} for i in range(24)]}
     end = s.rstrip().rstrip('}').rstrip(); assert end.endswith(']'); at = len(end) - 1
-    return s[:at].rstrip().rstrip(',') + ',\n        ' + json.dumps(pg, ensure_ascii=False) + ',\n        ' + json.dumps(vault_widgets(), ensure_ascii=False) + '\n    ' + s[at:]
+    return s[:at].rstrip().rstrip(',') + ',\n        ' + json.dumps(pg, ensure_ascii=False) + ',\n        ' + json.dumps(qty, ensure_ascii=False) + ',\n        ' + json.dumps(vault_widgets(), ensure_ascii=False) + '\n    ' + s[at:]
 
 def overlay_layout(text):
     i = text.find('"name": "Background"'); j = text.find('"TabBarWidget", "name": "Tabs"')

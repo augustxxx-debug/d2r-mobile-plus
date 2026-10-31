@@ -110,6 +110,11 @@ static uint32_t cube_packet(uint64_t player, const uint8_t *pk, uint32_t len, ui
 
 // 命令分派入口（diag.c c2s_obs，regs：x0 游戏、x1 玩家、x2 包、x3 长度，可改）。包字段照 main+0x2cecf0：+6 目标类型，+0xa 物品 id
 // Command dispatch entry (c2s_obs in diag.c; regs: x0 game, x1 player, x2 packet, x3 length, writable). Fields as in main+0x2cecf0: +6 target type, +0xa item id
+// 商店卖出：一叠 ≥2 瓶的 0x33 先拦下弹数量框（dm_stack_box_gate），选了再由客户端重新发。卖 1 / 卖半 = 服务端先拆出这么多瓶，再卖拆出来的那件
+// Selling to a vendor: a 0x33 for a stack of 2+ bottles is held back and the quantity box opens; after the choice the client sends it again. Sell 1 / half = the server first splits that many off, then the split-off item is sold
+static _Atomic uint32_t g_box_id; static int g_box_n; static _Atomic int g_box_sell;
+static _Atomic uint64_t g_sell_req;   // 物品 id << 8 | 档（1 卖 1、2 卖半） | item id << 8 | mode (1 sell 1, 2 sell half)
+static _Atomic uint32_t g_cli_pid; static _Atomic uint32_t g_sell_go, g_sell_pass;   // 这件可以卖了 / 这件的 0x33 放行 | this item may now be sold / let this item's 0x33 through
 void dm_stack_c2s(uint64_t *regs) {
     static int inside; uint64_t G = regs[0], player = regs[1]; uint8_t *pk = (uint8_t *)(uintptr_t)regs[2]; uint32_t len = (uint32_t)regs[3];
     { static int lg = -1; if (lg < 0) lg = getenv("DM_TEST_STACK_PKT") != NULL; if (lg && pk && len >= 1 && pk[0] != 0x01 && pk[0] != 0x02 && pk[0] != 0x03 && pk[0] != 0x04 && pk[0] != 0x6d) { char h[160]; int k = 0; for (uint32_t i = 0; i < len && i < 40; i++) k += snprintf(h + k, sizeof h - k, "%02x", pk[i]); LOG("堆叠：包 %s", h); } }   // 测试开关：记命令包 | Test switch: log command packets
@@ -118,6 +123,10 @@ void dm_stack_c2s(uint64_t *regs) {
     if (pk[0] == 0x20) { int g = cube_gate(G, player); static uint8_t cp[96]; uint32_t cl;
         if (g == 1) { memset(noop, 0, sizeof noop); noop[0] = 0x26; noop[6] = 0xff; regs[2] = (uint64_t)(uintptr_t)noop; regs[3] = sizeof noop; }
         else if (g == 2 && (cl = cube_packet(player, pk, len, cp, sizeof cp))) { regs[2] = (uint64_t)(uintptr_t)cp; regs[3] = cl; LOG("堆叠：方块里的叠拆成单瓶后重写合成清单（%u 字节）", cl); }
+        return; }
+    // 只给本机玩家弹框（联机客机没有这个框，照原版） | The box is only for the local player (a co-op guest has no such box and keeps the original behaviour)
+    if (pk[0] == 0x33 && len >= 9) { memcpy(&id, pk + 5, 4); uint32_t pass = id; if (atomic_compare_exchange_strong(&g_sell_pass, &pass, 0)) return;
+        uint64_t it = dm_diag_srv_item(id); if (it && *(uint32_t *)(player + 8) == atomic_load(&g_cli_pid) && is_potion(it) && qty(it) >= 2) { g_box_n = qty(it); atomic_store(&g_box_sell, 1); atomic_store(&g_box_id, id); LOG("堆叠：卖出 %d 瓶的一叠（id %u）先弹数量框", g_box_n, id); static uint8_t rej[64]; if (len <= sizeof rej) { memcpy(rej, pk, len); memset(rej + 5, 0xff, 4); regs[2] = (uint64_t)(uintptr_t)rej; } }   // 物品 id 换成不存在的：服务端走拒绝路径回复客户端，「等待交易确认」才会撤 | Replace the item id with a nonexistent one: the server replies through its reject path, which is what dismisses the "waiting for trade" prompt
         return; }
     if (pk[0] == 0x26 && len >= 0x24) memcpy(&id, pk + 0xa, 4);
     else if (pk[0] == 0x53 && len >= 5) memcpy(&id, pk + 1, 4);
@@ -171,12 +180,17 @@ void dm_stack_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
             LOG("堆叠：拆分 %.3s×%d（档 %d，页 %d）→ 拆出 %d 次，原叠剩 %d", (const char *)&c, n, m, page, done, qty(it));
             if (!done) atomic_store(&g_notice_full, 1); else { int dm_request_save(void); dm_request_save(); } }
         else LOG("堆叠：拆分请求 id %u 已不是一叠，不做", id); } }
+    { uint64_t r = atomic_exchange(&g_sell_req, 0); if (r) { uint32_t id = (uint32_t)(r >> 8); uint64_t it = dm_diag_srv_item(id), d = it ? *(uint64_t *)(it + 0x10) : 0;
+        if (d && qty(it) >= 2) { int n = qty(it), page = *(uint8_t *)(d + 0x55) > 4 ? 0 : *(uint8_t *)(d + 0x55); uint32_t nid = split_off(G, player, it, (r & 0xff) == 2 ? n / 2 : 1, page); LOG("堆叠：卖出先拆：%d 瓶 → 拆出 id %u，原叠剩 %d", n, nid, qty(it)); if (nid) atomic_store(&g_sell_go, nid); else atomic_store(&g_notice_full, 1); } } }
     if (atomic_exchange(&g_notice_full, 0)) { void dm_game_notice(uint8_t *, const char *); dm_game_notice(b, dm_str(b, "dmStackNoRoom")); }
     uint32_t tq = *(uint32_t *)(G + 0x170); if (!(tq % 5)) normalize(G, player);
     static int per = -1; if (per < 0) { const char *e = getenv("DM_TEST_STACK_LOG"); per = e ? atoi(e) : 0; }
     // 测试开关 DM_TEST_STACK_BELTQ=<拍>：腰带第 1 列底格那瓶改成 5 瓶（造「腰带里有一叠」：手动把一叠拖进腰带的现场）
     // Test switch DM_TEST_STACK_BELTQ=<tick>: set the bottom bottle of belt column 1 to 5 (sets up "a stack in the belt", as when a stack is dragged there by hand)
     { static int at = -1; if (at < 0) { const char *e = getenv("DM_TEST_STACK_BELTQ"); at = e ? atoi(e) : 0; } if (at && tq >= (uint32_t)at) { at = 0; for (uint64_t it = inv_first(player), k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break; if (*(uint32_t *)(it + 0xc) == 2 && pp && *(int32_t *)(pp + 0x10) == 0) { set_qty(player, it, 5); LOG("测试 DM_TEST_STACK_BELTQ：腰带槽 0 改成 5 瓶"); break; } it = *(uint64_t *)(d + 0xb0); } } }
+    // 测试开关 DM_TEST_STACK_TOSTASH=<拍>：背包第一叠药水走原版包放进个人仓库 (3,3)（人要在箱子旁）
+    // Test switch DM_TEST_STACK_TOSTASH=<tick>: put the first potion stack in the inventory into the personal stash at (3,3) with the original packets (the player must be next to the stash)
+    { static int at = -1; if (at < 0) { const char *e = getenv("DM_TEST_STACK_TOSTASH"); at = e ? atoi(e) : 0; } if (at && tq >= (uint32_t)at) { at = 0; for (uint64_t it = inv_first(player), k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break; if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && pp && is_potion(it) && qty(it) >= 2) { void (*disp)(uint64_t, uint64_t, uint8_t *, uint32_t) = (void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(b + 0x6e5b40); uint32_t id = *(uint32_t *)(it + 8), x = *(uint32_t *)(pp + 0x10), y = *(uint32_t *)(pp + 0x14), pg = 0, tp = 4, cx = 3, cy = 3; uint8_t a1[17] = { 0x19 }, a2[17] = { 0x18 }; memcpy(a1 + 1, &id, 4); memcpy(a1 + 5, &x, 4); memcpy(a1 + 9, &y, 4); memcpy(a1 + 13, &pg, 4); memcpy(a2 + 1, &id, 4); memcpy(a2 + 5, &cx, 4); memcpy(a2 + 9, &cy, 4); memcpy(a2 + 13, &tp, 4); *(uint32_t *)(G + 0x19050) = 1; disp(G, player, a1, 17); disp(G, player, a2, 17); *(uint32_t *)(G + 0x19050) = 0; d = *(uint64_t *)(it + 0x10); LOG("堆叠：id %u 数量 %d 进仓库，现在页 %d", id, qty(it), d ? *(uint8_t *)(d + 0x55) : -1); break; } it = *(uint64_t *)(d + 0xb0); } } }
     // 测试开关 DM_TEST_CHARM_Y=<拍>（护身符袋探针）：背包第一件护身符依次走原版包放到 (0,5)、方块、背包 (4,1) 对照，每步记玩家属性 0–60 的和，看页 0 第 4 行以下是否还生效
     // Test switch DM_TEST_CHARM_Y=<tick> (charm bag probe): move the first charm in the inventory to (0,5), the cube, then the inventory at (4,1) with the original packets, logging the sum of player stats 0-60 at each step, to see whether it still counts below row 4 of page 0
     { static int at = -1, st; if (at < 0) { const char *e = getenv("DM_TEST_CHARM_Y"); at = e ? atoi(e) : 0; }
@@ -207,7 +221,7 @@ void dm_stack_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
 #define NDIG 24
 #define CELL 98   // 背包网格 (216, 893)、一格 98 布局单位（布局文件） | Inventory grid at (216, 893), 98 layout units per cell (layout file)
 #define OFF 99999
-static _Atomic uint32_t g_box_id; static int g_box_n;
+
 static uint64_t find_w(uint64_t w, const char *name, int dep) {
     if (!w || dep > 14) return 0; const char *nm = (const char *)*(uint64_t *)(w + 8); if (nm && !strcmp(nm, name)) return w;
     uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
@@ -223,13 +237,13 @@ static void w_text(uint64_t w, const char *t) {   // 同 dm_pouch.c w_text | Sam
 static uint64_t cli_item(uint32_t id) { return ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(B + 0x45f5f0))((uint64_t)(uintptr_t)(B + 0x2d603a0 + 4 * 0x400), id & 0x7f, id, 4); }
 int dm_stack_box_open(void) { return atomic_load(&g_box_id) != 0; }
 static void box_close(void) { if (atomic_exchange(&g_box_id, 0)) LOG("堆叠：拆分框收起"); }
-static void box_choose(int m) { uint32_t id = atomic_load(&g_box_id); if (!id) return; atomic_store(&g_split_req, (uint64_t)id << 8 | (uint64_t)m); box_close(); }
+static void box_choose(int m) { uint32_t id = atomic_load(&g_box_id); if (!id) return; if (!atomic_load(&g_box_sell)) atomic_store(&g_split_req, (uint64_t)id << 8 | (uint64_t)m); else if (m == 3) atomic_store(&g_sell_go, id); else atomic_store(&g_sell_req, (uint64_t)id << 8 | (uint64_t)m); box_close(); }
 // 打开拆分框：背包或个人页里叠数 ≥ 2 的药水（ci 取自手柄光标 / 按下点）。返回 1 = 开了
 // Open the split box: a potion stack of 2 or more in the inventory or a personal page (ci from the controller cursor / press point). Returns 1 = opened
 int dm_stack_open(const dm_cursor_item_info *ci) {
     if (!B || !ci->potion || (ci->container != DM_ITEM_AT_INVENTORY && ci->container != DM_ITEM_AT_STASH) || ci->stack) return 0;
     uint64_t it = cli_item(ci->id); int n = it ? qty(it) : 0; if (n < 2) return 0;
-    g_box_n = n; atomic_store(&g_box_id, ci->id); LOG("堆叠：拆分框打开 %s×%d（id %u）", ci->code, n, ci->id); return 1;
+    g_box_n = n; atomic_store(&g_box_sell, 0); atomic_store(&g_box_id, ci->id); LOG("堆叠：拆分框打开 %s×%d（id %u）", ci->code, n, ci->id); return 1;
 }
 // 手柄：按住 X 0.4 秒打开；开着时 A 拆 1、Y 拆半、X 全部、B 取消，这几个键不给游戏（dm_cursor.c cursor_apply 每帧调，仅手柄模式）
 // Controller: hold X for 0.4 s to open; while open A splits 1, Y half, X all, B cancels, and these keys do not reach the game (called every frame from cursor_apply in dm_cursor.c, controller mode only)
@@ -244,31 +258,57 @@ void dm_stack_pad(uint64_t *buttons, uint64_t now_ns) {
 // A press while the box is open: a hit on a button chooses here (with the widget's own hit test); anywhere else only closes the box (same as the pouch list). Either way the press does not reach the game
 int dm_stack_box_gate(int x, int y) {
     if (!dm_stack_box_open() || !B) return 0; uint64_t root = *(uint64_t *)(B + 0x2f05458);
-    static const char *const bt[] = { "TouchQtyOne", "TouchQtyHalf", "TouchQtyAll" };
-    for (int i = 0; i < 3; i++) { uint64_t w = find_w(root, bt[i], 1); if (w && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32)) & 1)) { box_choose(i + 1); return 1; } }
+    static const char *const bt[2][3] = { { "TouchQtyOne", "TouchQtyHalf", "TouchQtyAll" }, { "TouchQtySellOne", "TouchQtySellHalf", "TouchQtySellAll" } }; int sl = atomic_load(&g_box_sell) != 0;
+    for (int i = 0; i < 3; i++) { uint64_t w = find_w(root, bt[sl][i], 1); if (w && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32)) & 1)) { box_choose(i + 1); return 1; } }
     box_close(); return 1;
 }
 void dm_stack_on_uimsg(const char *cat, const char *act, const char *arg) {
     if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return;
-    if (!strcmp(arg, "TouchQtyOne")) box_choose(1); else if (!strcmp(arg, "TouchQtyHalf")) box_choose(2); else if (!strcmp(arg, "TouchQtyAll")) box_choose(3);
+    if (!strcmp(arg, "TouchQtyOne")) box_choose(1); else if (!strcmp(arg, "TouchQtyHalf")) box_choose(2); else if (!strcmp(arg, "TouchQtyAll")) box_choose(3); else if (!strcmp(arg, "TouchQtySellOne")) box_choose(1); else if (!strcmp(arg, "TouchQtySellHalf")) box_choose(2); else if (!strcmp(arg, "TouchQtySellAll")) box_choose(3);
+}
+// 个人仓库页的叠数角标：物品在玩家物品栏页 4（别的页签不是这批物品，角标收起）
+// Count badges on the personal stash page: the items are on page 4 of the player's container (the other tabs show other items, so the badges are put away)
+static void stash_badges(uint8_t *b, uint64_t pl) {
+    static uint64_t last; uint64_t root = *(uint64_t *)(b + 0x2f05458), bk = root ? find_w(root, "BankExpansionLayout", 12) : 0, pool = bk ? find_w(bk, "TouchQtyStash", 2) : 0; if (!pool) return;
+    uint64_t tabs = find_w(bk, "BankTabs", 3), g = find_w(bk, "grid", 3); int show = *(uint8_t *)(bk + 0x50) && tabs && g && *(int32_t *)(tabs + 0xdc4) == 0 && *(uint8_t *)(g + 0x50);
+    if (!show && last == pool) return;   // 收过了：不再每帧扫 | Already put away: no need to scan every frame
+    last = show ? 0 : pool; char nm[20]; int nd = 0; uint64_t inv = pl ? *(uint64_t *)(pl + 0x90) : 0;
+    if (show) for (uint64_t it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0, k = 0; it && k < 2048 && nd < NDIG; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
+        if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 4 && pp && is_potion(it)) { int q = qty(it);
+            if (q >= 2) { snprintf(nm, sizeof nm, "TouchQtyS%02d", nd++); uint64_t w = find_w(pool, nm, 1); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, *(int32_t *)(g + 0x70) + CELL * *(int32_t *)(pp + 0x10), *(int32_t *)(g + 0x74) + CELL * *(int32_t *)(pp + 0x14) + 60); } }
+        it = *(uint64_t *)(d + 0xb0); }
+    for (; nd < NDIG; nd++) { snprintf(nm, sizeof nm, "TouchQtyS%02d", nd); w_move(find_w(pool, nm, 1), OFF, 0); }
 }
 void dm_stack_ui(uint8_t *b, uint64_t inv_panel, uint64_t pl) {   // 游戏主线程每帧（dm_pouch.c ui_pump；物品栏面板开着才来） | Game main thread every frame (ui_pump in dm_pouch.c; only while the inventory panel is open)
     B = b; char nm[20]; int nd = 0; uint64_t inv = pl ? *(uint64_t *)(pl + 0x90) : 0;
+    if (pl) atomic_store(&g_cli_pid, *(uint32_t *)(pl + 8));
     for (uint64_t it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0, k = 0; it && k < 2048 && nd < NDIG; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
         if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && pp && is_potion(it)) { int q = qty(it);
             if (q >= 2) { snprintf(nm, sizeof nm, "TouchQtyN%02d", nd++); uint64_t w = find_w(inv_panel, nm, 3); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, 216 + CELL * *(int32_t *)(pp + 0x10), 893 + CELL * *(int32_t *)(pp + 0x14) + 60); } }
         it = *(uint64_t *)(d + 0xb0); }
     for (; nd < NDIG; nd++) { snprintf(nm, sizeof nm, "TouchQtyN%02d", nd); w_move(find_w(inv_panel, nm, 3), OFF, 0); }
+    stash_badges(b, pl);
+    { uint32_t id = atomic_load(&g_sell_go); static int tries; if (id) { uint64_t root = *(uint64_t *)(b + 0x2f05458), vp = root ? find_w(root, "VendorPanelLayout", 12) : 0, ci = cli_item(id); int r = 0;
+        if (vp && *(uint8_t *)(vp + 0x50) && ci) { atomic_store(&g_sell_pass, id); r = ((int (*)(uint64_t, uint64_t, int, int, int, int))(b + 0x433e50))(pl, ci, 1, 0, 1, 0); if (!r) atomic_store(&g_sell_pass, 0); }   // 距上次交易不足 500 ms 时它会拒，下一帧再试 | it refuses within 500 ms of the last trade, so try again next frame
+        if (r || ++tries > 180 || !(vp && *(uint8_t *)(vp + 0x50))) { LOG("堆叠：卖出 id %u → %d（试了 %d 帧）", id, r, tries); tries = 0; atomic_store(&g_sell_go, 0); } } }
     int open = dm_stack_box_open(), bx = open ? 420 : OFF;
     w_move(find_w(inv_panel, "TouchQtyBg", 3), bx, 900);
     w_move(find_w(inv_panel, "TouchQtyTitle", 3), bx + 20, 920);
-    w_move(find_w(inv_panel, "TouchQtyOne", 3), bx + 139, 990); w_move(find_w(inv_panel, "TouchQtyHalf", 3), bx + 139, 1070); w_move(find_w(inv_panel, "TouchQtyAll", 3), bx + 139, 1150);
-    if (open) { char t[96]; snprintf(t, sizeof t, dm_str(b, "dmStackTitle"), g_box_n); w_text(find_w(inv_panel, "TouchQtyTitle", 3), t); }
+    { int sl = open && atomic_load(&g_box_sell), ks = sl ? bx : OFF, kb = open && !sl ? bx : OFF; static const char *const n0[] = { "TouchQtyOne", "TouchQtyHalf", "TouchQtyAll" }, *const n1[] = { "TouchQtySellOne", "TouchQtySellHalf", "TouchQtySellAll" };
+      for (int i = 0; i < 3; i++) { int y = 990 + 80 * i; w_move(find_w(inv_panel, n0[i], 3), kb == OFF ? OFF : kb + 139, y); w_move(find_w(inv_panel, n1[i], 3), ks == OFF ? OFF : ks + 139, y); } }
+    if (open) { char t[96]; snprintf(t, sizeof t, dm_str(b, atomic_load(&g_box_sell) ? "dmStackSellTitle" : "dmStackTitle"), g_box_n); w_text(find_w(inv_panel, "TouchQtyTitle", 3), t); }
 }
 void dm_stack_panel_closed(void) { box_close(); }
 // 测试开关 DM_TEST_STACK_SPLIT=<帧>:<档>：到帧对背包第一叠药水走一次拆分（不经界面）；DM_TEST_STACK_BOX=<帧>：到帧打开拆分框（截图用）
 // Test switches DM_TEST_STACK_SPLIT=<frame>:<mode>: at that frame split the first potion stack in the inventory (no UI); DM_TEST_STACK_BOX=<frame>: open the split box at that frame (for screenshots)
 void dm_stack_test(uint8_t *b, uint64_t pl, uint64_t fr) {
+    // 测试开关 DM_TEST_STACK_SELL=<帧>：把背包第一叠药水卖给当前商人（走原版交易函数），记卖价和金币
+    // Test switch DM_TEST_STACK_SELL=<frame>: sell the first potion stack in the inventory to the current vendor (through the original trade function), logging the price and gold
+    { static int at = -1, st; static int g0; if (at < 0) { const char *e = getenv("DM_TEST_STACK_SELL"); at = e ? atoi(e) : 0; } int (*gs)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(b + 0x5b9290);
+      if (at && st == 1 && fr >= (uint64_t)at + 60) { st = 2; LOG("堆叠：卖出后金币 %d（卖前 %d）", gs(pl, 14, 0), g0); }
+      { uint64_t root = *(uint64_t *)(b + 0x2f05458), vp = root ? find_w(root, "VendorPanelLayout", 12) : 0; if (at && !st && fr >= (uint64_t)at && !(vp && *(uint8_t *)(vp + 0x50))) { static int lg; if (!lg++) LOG("堆叠：商人页没开，先不卖"); return; } }   // 没开商人页调交易函数会崩 | Calling the trade function without the vendor page open crashes
+      if (at && !st && fr >= (uint64_t)at) { st = 1; g0 = gs(pl, 14, 0); for (uint64_t it = inv_first(pl), k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break;
+            if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && is_potion(it) && qty(it) >= 2) { uint64_t npc = ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d607a0), *(uint32_t *)(b + 0x2d5ebfc) & 0x7f, *(uint32_t *)(b + 0x2d5ebfc), 1); int pr = npc ? ((int (*)(uint64_t, uint64_t, int, uint64_t, int, int))(b + 0x572ec0))(pl, it, *(uint8_t *)(b + 0x2d20b88), *(uint64_t *)(b + 0x2d5ec18), *(int16_t *)(npc + 4), 1) : -1; int r = ((int (*)(uint64_t, uint64_t, int, int, int, int))(b + 0x433e50))(pl, it, 1, 0, 1, 0); LOG("堆叠：卖 id %u 数量 %d：卖价 %d，商人 %#llx，返回 %d，金币 %d", *(uint32_t *)(it + 8), qty(it), pr, (unsigned long long)npc, r, g0); break; } it = *(uint64_t *)(d + 0xb0); } } }
     static int at = -1, m, bx = -1; if (at < 0) { const char *e = getenv("DM_TEST_STACK_SPLIT"); if (!e || sscanf(e, "%d:%d", &at, &m) != 2) at = 0; e = getenv("DM_TEST_STACK_BOX"); bx = e ? atoi(e) : 0; }
     { static int sip = -1; if (sip < 0) { const char *e = getenv("DM_TEST_STACK_SIP"); sip = e ? atoi(e) : 0; } if (sip && fr >= (uint64_t)sip) { sip = 0; void dm_belt_use(int, int); dm_belt_use(0, 0); LOG("测试 DM_TEST_STACK_SIP：喝第 1 列一瓶"); } }
     { static int m = -1; if (m < 0) { const char *e = getenv("DM_TEST_STACK_SIPM"); m = e ? atoi(e) : 0; } if (m && fr >= (uint64_t)m) { m = 0; void dm_belt_use_merc(int, int); dm_belt_use_merc(0, 0); LOG("测试 DM_TEST_STACK_SIPM：第 1 列喂佣兵一瓶"); } }
