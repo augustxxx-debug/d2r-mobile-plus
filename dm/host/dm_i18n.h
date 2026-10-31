@@ -6,10 +6,12 @@
 #define DM_STR_ICLOUD "云同步"
 #define DM_STR_METALFX "超分"
 #define DM_STR_METAL "GPU"
+#define DM_STR_METAL_NS "gpu_ns"
 #else
 #define DM_STR_ICLOUD "iCloud"
 #define DM_STR_METALFX "MetalFX"
 #define DM_STR_METAL "Metal"
+#define DM_STR_METAL_NS "metal_ns"
 #endif
 #include <stdatomic.h>
 #include <stdint.h>

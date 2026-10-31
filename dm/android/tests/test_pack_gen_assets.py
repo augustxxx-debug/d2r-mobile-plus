@@ -67,10 +67,12 @@ class PackageAudit(unittest.TestCase):
 
     def test_words(self):
         hit = lambda word, text: bool(self.w.pattern(word).search(text))
+        self.assertTrue(hit('iPhone', b'iPhones')); self.assertTrue(hit('iPad', b'iPadOS')); self.assertTrue(hit('MetalFX', b'MetalFXSpatial'))
         self.assertTrue(hit('Xcode', b'docs/NO_XCODE')); self.assertTrue(hit('iPhone', b'IPHONE')); self.assertTrue(hit('iOS', b'on iOS')); self.assertTrue(hit('iOS', b'NO_IOS'))
-        for word, text in (('Metal', b'Metallic'), ('Metal', b'metal_roughness'), ('iOS', b'BIOS'), ('iOS', b'ios_base'), ('Android', b'android::String8'), ('Apple', b'apple_lod3')): self.assertFalse(hit(word, text), text)
+        for word, text in (('Metal', b'Metallic'), ('Metal', b'metal_roughness'), ('iOS', b'BIOS'), ('iOS', b'ios_base'), ('Android', b'android::String8'), ('Apple', b'apple_lod3'), ('iPad', b'IPAddressText')): self.assertFalse(hit(word, text), text)
 
     def test_symbol_and_text(self):
+        one = b'\0MetalFX\0'; self.assertFalse(self.pa.is_symbol(one, 1, 8))   # 单词文字不算（内审 L-01） | a single-word text is no symbol
         data = b'\0dm_icloud_supported\0iCloud sync failed\0'
         spots = [m.span() for m in self.w.pattern('iCloud').finditer(data)]
         self.assertEqual([self.pa.is_symbol(data, *s) for s in spots], [True, False])

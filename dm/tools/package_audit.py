@@ -2,11 +2,11 @@
 """包内容审计（CLAUDE.md §2.8）：把 IPA / APK / .app 解到最里层（含 zip 内 zip）扫另一端的平台词，并列体积。
 用法：package_audit.py <ios|android> <包或 .app 目录> [--out 报告.md]。有未登记的命中、或 src.zip 里有白名单外的文件，退出码 1。
 不分大小写。CASC .data 里压缩存放的文字也解开扫（覆盖层）；给目录也行，比如手机端生成的 overlay。
-命中只有这几种能放行：EXEMPT 里的第三方运行时与许可证原文（改不得）、手机端生成器源码（不是文案）、字体与图片的二进制数据（偶然的字节）；原生库里整串都是标识符的；iOS 主程序内嵌的原版游戏映像段。
+命中只有这几种能放行：EXEMPT 里的第三方运行时与许可证原文（改不得）、手机端生成器源码（不是文案）、字体与图片的二进制数据（偶然的字节）；原生库里整串是登记过的标识符（SYMBOLS）；iOS 主程序内嵌的原版游戏映像段。
 Package content audit: unpacks an IPA / APK / .app down to the innermost level (zips inside zips included), scans for the other platform's words and lists sizes.
 Usage: package_audit.py <ios|android> <package or .app directory> [--out report.md]. Exit 1 on an unregistered hit, or on a file in src.zip outside the whitelist.
 Any case. Text stored compressed in CASC .data (the overlay) is inflated and scanned too; a directory works as well, such as an overlay made on the phone.
-Only these may pass: in EXEMPT, third-party runtimes and licence texts (not ours to change), the on-phone generator's source (not UI text), binary data of fonts and images (chance bytes); strings in native libraries that are identifiers as a whole; the original game image segments embedded in the iOS main program."""
+Only these may pass: in EXEMPT, third-party runtimes and licence texts (not ours to change), the on-phone generator's source (not UI text), binary data of fonts and images (chance bytes); strings in native libraries that are registered identifiers as a whole (SYMBOLS); the original game image segments embedded in the iOS main program."""
 import argparse, collections, importlib.util, io, re, struct, sys, zipfile, zlib
 from pathlib import Path
 
@@ -34,10 +34,14 @@ def game_image_ranges(data):
     return out
 
 
+# 原生库里允许带平台词的标识符，逐个登记：单词的界面文字（MetalFX、iCloud）不能靠「整串是标识符」混过去（内审 L-01）。多了新的就审一眼再加 | the identifiers in native libraries allowed to hold a platform word, each registered: single-word UI text (MetalFX, iCloud) must not pass as an identifier (internal audit L-01). Look before adding a new one
+SYMBOLS = re.compile(rb'VK_STRUCTURE_TYPE_[A-Z0-9_]+|mtl_metalfx_[a-z_]+|dm_icloud_supported|icloud|front_metal_layer')
+
+
 def is_symbol(data, start, end):
-    """原生库里这个词所在的那一串整串都是标识符：链接符号、枚举名、设置键，不是给人看的文字 | in a native library, the whole string holding the word is an identifier: a link symbol, an enum name, a settings key, not text for people"""
+    """原生库里这个词所在的那一串整串是登记过的标识符（Vulkan 枚举名、公共代码的符号、设置键） | in a native library, the whole string holding the word is a registered identifier (Vulkan enum names, shared-code symbols, a settings key)"""
     s = data.rfind(b'\0', max(0, start - 4096), start) + 1; e = data.find(b'\0', end, end + 4096)
-    return re.fullmatch(rb'[A-Za-z_][A-Za-z0-9_.$]*', data[s:e if e >= 0 else end + 4096]) is not None
+    return SYMBOLS.fullmatch(data[s:e if e >= 0 else end + 4096]) is not None
 
 
 def inflate_all(data):
@@ -67,8 +71,8 @@ def walk(source, prefix=''):
                 yield prefix + name, data; continue
             yield from walk(((n, (lambda z=inner, n=n: z.read(n))) for n in inner.namelist() if not n.endswith('/')), prefix + name + '!')
         else:
-            # .data 是压缩档案，原始字节只有偶然的巧合，只扫解开后的文字 | a .data is a compressed archive, its raw bytes hold only chance matches; scan the inflated text
-            yield prefix + name + '!zlib' if name.lower().endswith('.data') else prefix + name, inflate_all(data) if name.lower().endswith('.data') else data
+            yield prefix + name, data
+            if name.lower().endswith('.data'): yield prefix + name + '!zlib', inflate_all(data)
 
 
 def source_of(package):
@@ -101,8 +105,11 @@ def audit(platform, package):
             name = path.split('src.zip!', 1)[1]; inner.append((name, len(data)))
             if name not in allowed: bad.append((path, '白名单外的文件', 0))
         ranges = game_image_ranges(data) if platform == 'ios' else []
+        raw_archive = path.lower().endswith('.data')
         native = path.endswith('.so') or bool(ranges)
         for w, pat in pats:
+            # .data 的原始字节也扫（按原样存的条目，内审 L-03），但短词在压缩数据里只是巧合 | a .data's raw bytes are scanned too (entries stored as is, internal audit L-03), but short words there are chance matches
+            if raw_archive and w in platform_words.AMBIGUOUS: continue
             spots = [m.span() for m in pat.finditer(data)]
             mine = [(s, e) for s, e in spots if not any(a <= s < b for a, b in ranges)]
             if len(mine) < len(spots): passed['iOS 主程序内嵌的原版游戏映像（__DMmainW / __DMsdkW），不是我们写的'][w] += len(spots) - len(mine)
