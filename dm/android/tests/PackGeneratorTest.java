@@ -26,6 +26,12 @@ public class PackGeneratorTest {
 
     public static void main(String[] args) throws Exception {
         // 过期标记：只改 PRODUCT 行，其余原样；没有 PRODUCT 行就补一行 | stale marking: only the PRODUCT line changes; without one, one is added
+        // 双目录（B093）：新目录有东西就用新目录；新目录空、旧目录有东西用旧目录；都没有用新目录 | two directories: the new one when it holds something; the old one when only it does; with neither, the new one
+        { File d = java.nio.file.Files.createTempDirectory("dl").toFile(), plus = new File(d, "S2X/D2R Mobile Plus"), old = new File(d, "S2X/D2R Mobile");
+          equal(plus, PackGenerator.gameBase(d));
+          new File(old, "data").mkdirs(); plus.mkdirs(); equal(old, PackGenerator.gameBase(d));
+          new File(plus, "ExeFS").mkdirs(); equal(plus, PackGenerator.gameBase(d));
+          for (String n : new String[] {"S2X/D2R Mobile Plus/ExeFS", "S2X/D2R Mobile Plus", "S2X/D2R Mobile/data", "S2X/D2R Mobile", "S2X"}) new File(d, n).delete(); d.delete(); }
         equal("A=1\nPRODUCT=stale-overlay\nB=2\n", PackGenerator.markStale("A=1\nPRODUCT=3.3.94012-r44\nB=2\n"));
         equal("PRODUCT=stale-overlay\nX=1", PackGenerator.markStale("X=1"));
         File base = temp();

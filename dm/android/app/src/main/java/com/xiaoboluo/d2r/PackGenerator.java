@@ -19,10 +19,10 @@ import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
-// 手机端生成导入包（不用电脑）：玩家把 Switch 版的 ExeFS（main、sdk）放到 Download/S2X/D2R Mobile/ExeFS、游戏资源照旧放 data，
+// 手机端生成导入包（不用电脑）：玩家把 Switch 版的 ExeFS（main、sdk）放到 Download/S2X/D2R Mobile Plus/ExeFS、游戏资源照旧放 data，
 // App 发现还没有导入包就自己跑 dm/tools/d2rm_android.py（与电脑上同一份脚本，App 自带 Python 3.13、NativeAOT 翻译工具、SPIRV-Tools，见 dm/android/tools/gen_runtime.sh），
 // 产物与电脑上 make_pack.sh 做的逐字节相同，做好后像导入包一样换进 files/dm/。这里只放与安卓界面无关的部分（javac 就能单测，见 tests/PackGeneratorTest.java）。
-// On-phone import pack generation (no computer): the player puts the Switch ExeFS (main, sdk) in Download/S2X/D2R Mobile/ExeFS and the game resources in data as before;
+// On-phone import pack generation (no computer): the player puts the Switch ExeFS (main, sdk) in Download/S2X/D2R Mobile Plus/ExeFS and the game resources in data as before;
 // when the App finds no import pack it runs dm/tools/d2rm_android.py itself (the same script as on a computer; the App carries Python 3.13, the NativeAOT translator and SPIRV-Tools, see
 // dm/android/tools/gen_runtime.sh). The output is byte-identical to make_pack.sh on a computer and is swapped into files/dm/ like an import pack. Only the parts unrelated to the Android UI live
 // here (unit-testable with plain javac, see tests/PackGeneratorTest.java).
@@ -34,7 +34,19 @@ final class PackGenerator {
     static final int SHADERS = 6931;   // 6,927 个游戏着色器 + 4 个查询核（dmsh_vk.py + pack_builtin_queries.py） | 6,927 game shaders + 4 query kernels
     static final long SPACE_NEEDED = 3L << 30;   // 缓存约 0.3 GB + 中间产物 0.7 GB + 成品 0.7 GB，留余量 | caches ~0.3 GB + intermediates 0.7 GB + result 0.7 GB, with headroom
 
-    // 玩家放游戏文件的地方（Download/S2X/D2R Mobile）缺哪几样 | which game files are missing where the player puts them (Download/S2X/D2R Mobile)
+    // 玩家放游戏文件的地方（用户 2026-10-30，B093）：先认 Download/S2X/D2R Mobile Plus，里面没东西再认旧的 D2R Mobile，老玩家不用搬 9 GB 数据；都没有就按新名字提示
+    // Where the player puts the game files: Download/S2X/D2R Mobile Plus first, the old D2R Mobile when the new one holds nothing, so existing players need not move 9 GB; with neither, the new name
+    static File gameBase(File downloads) {
+        File plus = new File(downloads, "S2X/D2R Mobile Plus"), old = new File(downloads, "S2X/D2R Mobile");
+        return !holdsGameFiles(plus) && holdsGameFiles(old) ? old : plus;
+    }
+
+    private static boolean holdsGameFiles(File dir) {
+        for (String name : new String[] {"data", "ExeFS", "android"}) if (new File(dir, name).exists()) return true;
+        return false;
+    }
+
+    // 玩家放游戏文件的地方（gameBase）缺哪几样 | which game files are missing where the player puts them (gameBase)
     static List<String> missingInputs(File base) {
         List<String> missing = new ArrayList<>();
         for (String f : INPUTS) if (!new File(base, f).isFile()) missing.add(f);

@@ -99,8 +99,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (c != null) { c.hide(WindowInsets.Type.systemBars()); c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE); }
     }
 
-    // 资源在玩家放的位置读（缺省 Download/S2X/D2R Mobile/data），要「所有文件访问」权限；没有就引导去系统设置页，回来再启动
-    // Resources are read where the player put them (default Download/S2X/D2R Mobile/data), which needs "all files access"; without it, guide the player to the system settings page and start after returning
+    // 资源在玩家放的位置读（缺省 Download/S2X/D2R Mobile Plus/data），要「所有文件访问」权限；没有就引导去系统设置页，回来再启动
+    // Resources are read where the player put them (default Download/S2X/D2R Mobile Plus/data), which needs "all files access"; without it, guide the player to the system settings page and start after returning
     private boolean ensureFileAccess() {
         if (Environment.isExternalStorageManager()) { prompting = false; return true; }
         // 提示页与加载页同一套样子（用户 2026-10-29「权限页没改」）：背景、字标、标题 / 正文 / 副文；点屏幕任何地方（静音钮以外）或手柄 A / START 打开系统设置
@@ -288,7 +288,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         }
     };
 
-    // base = Download/S2X/D2R Mobile（玩家放 ExeFS 与 data 的地方），runtime = files/dm | base = Download/S2X/D2R Mobile (where the player puts ExeFS and data), runtime = files/dm
+    // base = PackGenerator.gameBase（玩家放 ExeFS 与 data 的地方），runtime = files/dm | base = PackGenerator.gameBase (where the player puts ExeFS and data), runtime = files/dm
     private void generate(File base, File runtime) {
         genHandler.removeCallbacks(genPoll);
         if (genFailure != null) { showGenFailure(); return; }
@@ -547,7 +547,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (!started && !importing && resumed) prefetchCommunity();
         if (started || importing || !resumed || !ensureFileAccess()) return;
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-        if (!libraryLoaded && !ensureImported(new File(downloads, "S2X/D2R Mobile/android"))) return;
+        File gameBase = PackGenerator.gameBase(downloads);
+        if (!libraryLoaded && !ensureImported(new File(gameBase, "android"))) return;
         if (gameFrame.getParent() == null) setContentView(gameFrame);
         if (!libraryLoaded) {
             // 与 jni_android.c 选运行目录同一条规则：内部目录有主程序就用内部目录，否则用外部私有目录
@@ -580,12 +581,12 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (ext == null) { showStartError(getString(R.string.dmAndroidStorage)); return; }
         nativeSurface(view.getHolder().getSurface(), view.getWidth(), view.getHeight());
         updateRefresh();
-        // 资源目录缺省 Download/S2X/D2R Mobile/data；没有这个目录、而早先的 Download/data 在时沿用早先的位置，已装好的手机不必搬数据。
+        // 资源目录缺省 Download/S2X/D2R Mobile Plus/data（旧目录见 PackGenerator.gameBase）；没有这个目录、而早先的 Download/data 在时沿用早先的位置，已装好的手机不必搬数据。
         // 按目录判断而不按 .build.config：它也可以由导入的覆盖层提供，资源目录里就没有。
-        // The resource directory defaults to Download/S2X/D2R Mobile/data; when that directory does not exist but the earlier
+        // The resource directory defaults to Download/S2X/D2R Mobile Plus/data (old directory: PackGenerator.gameBase); when that directory does not exist but the earlier
         // Download/data does, the earlier one is kept, so existing installs need not move their data. The test is the directory,
         // not .build.config: the imported overlay can provide that file, and then the resource directory has none.
-        File data = new File(downloads, "S2X/D2R Mobile/data"), earlier = new File(downloads, "data");
+        File data = new File(gameBase, "data"), earlier = new File(downloads, "data");
         if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
         String src = data.getAbsolutePath();
         { File ext2 = getExternalFilesDir(null), internal2 = new File(getFilesDir(), "dm");   // 与上面 / jni_android.c 同一条运行目录规则 | same runtime-directory rule as above / jni_android.c

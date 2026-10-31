@@ -24,7 +24,7 @@ python3 dm/tools/d2rm_android.py <Switch 版 3.3.94012 的 Update 目录> <输�
 
 它改写游戏程序（安卓目标）、把全部着色器翻成 Vulkan 包、生成触屏覆盖层与几张数据表，写出 `<输出目录>/android/`。需要的工具见脚本开头（Python 包、.NET SDK、Vulkan SDK 里的 `spirv-opt` / `spirv-val` / `glslc`），缺什么它会逐项报。
 
-把这个 `android` 文件夹整个拷到手机的 `Download/S2X/D2R Mobile/` 下，游戏资源（`RomFS/data` 整个目录）拷成同一处的 `data`。打开 App：发现新的导入包就拷进内部目录 `files/dm/`（显示进度，第一次一两分钟），然后启动。导入包要与 App 同一版本（`pack_info.txt` 里的产物代号与 App 编入的相同），不同时 App 会说明。导入完，手机上的 `android` 文件夹可以删掉；导入包里有游戏内容，只给自己用。
+把这个 `android` 文件夹整个拷到手机的 `Download/S2X/D2R Mobile Plus/` 下，游戏资源（`RomFS/data` 整个目录）拷成同一处的 `data`。打开 App：发现新的导入包就拷进内部目录 `files/dm/`（显示进度，第一次一两分钟），然后启动。导入包要与 App 同一版本（`pack_info.txt` 里的产物代号与 App 编入的相同），不同时 App 会说明。导入完，手机上的 `android` 文件夹可以删掉；导入包里有游戏内容，只给自己用。
 
 ## 本地构建
 
@@ -59,7 +59,7 @@ APK 和 Git 仓库均不含游戏程序、着色器、游戏美术或存档。�
 | 应用内部 `files/dm/shaders/` | 与游戏及 Vulkan 后端匹配的仓外 `.xgs` 包 |
 | 应用内部 `files/dm/overlay/` | 必需 CASC 触摸覆盖层，含 `overlay.manifest`，由匹配源码及用户资源生成 |
 | 应用内部 `files/dm/overlay/touchart/`、`files/dm/overlay/hud_v4_ui/` | 由 `stage_touch_assets.py` 放入的技能图集及其银色剪影、地图图标、圆框、底栏素材，以及技能钮底座（仓库的 `dm/ios/Sources/ControlArt/dm_mobile_socket.png`）。触屏控件与 iOS 同一套画法（`dm/ios/Sources/DmTouchControlArt.h`、`DmTouchOverlay.m`），摇杆用代码画 |
-| 共享 `Download/S2X/D2R Mobile/data/` | 用户资源档案及 `.build.config`，需要安卓“所有文件访问”授权；没有这个目录、而早先的 `Download/data/` 在时，App 沿用 `Download/data/` |
+| 共享 `Download/S2X/D2R Mobile Plus/data/` | 用户资源档案及 `.build.config`，需要安卓“所有文件访问”授权；没有这个目录、而早先的 `Download/data/` 在时，App 沿用 `Download/data/` |
 | 应用内部 `files/dm/derived.tsv`、`files/dm/pack_info.txt` | 从游戏文件生成的数据表（不含游戏内容的发布包启动时读）；导入包的产物代号与生成时刻 |
 | 应用内部 `files/save/` | 存档，升级时必须保留 |
 | 应用内部 `files/temp/`、`files/dm/boot.log` | 临时文件及追加写入的启动日志 |

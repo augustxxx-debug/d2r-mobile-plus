@@ -5,7 +5,7 @@
 # 用法：d2rm_android.py <游戏文件目录> <输出目录>
 #   游戏文件目录 = Switch 版 3.3.94012 的 Update 目录，里面有 ExeFS/{main,sdk} 与 RomFS/data/…（怎么从自己的游戏导出）
 #   工作目录（缓存与中间产物）：环境变量 DM_ROOT，缺省 ~/dm-work；每一步做过就跳过
-# 之后：把 android 文件夹整个拷到手机的 Download/S2X/D2R Mobile/ 下（和放游戏资源的 data 文件夹并排），打开 App 就会导入；导入完可以删掉这份。
+# 之后：把 android 文件夹整个拷到手机的 Download/S2X/D2R Mobile Plus/ 下（和放游戏资源的 data 文件夹并排），打开 App 就会导入；导入完可以删掉这份。
 # 需要：Python 3.9+ 与 pillow numpy lz4 capstone unicorn；.NET SDK（编着色器翻译工具）；Vulkan SDK 里的 spirv-opt、spirv-val、glslc
 #   （Mac：brew install spirv-tools shaderc；Windows / Linux：LunarG Vulkan SDK；glslc 也可以用安卓 NDK 里的）。缺什么本工具开头会逐项报。
 # 手机上：App（带 -PdmGenRuntime 构建的）发现没有导入包时自己跑这个脚本（PackGenerator.java），工具由环境变量给（DMSH_XLATE / SPIRV_OPT / SPIRV_VAL / DM_PREBUILT_QUERIES，
@@ -19,7 +19,7 @@
 # Usage: d2rm_android.py <game files directory> <output directory>
 #   game files directory = the Update directory of the Switch version 3.3.94012, with ExeFS/{main,sdk} and RomFS/data/... (how to export them from your own game: docs/GAME_FILES)
 #   working directory (caches and intermediate products): environment variable DM_ROOT, default ~/dm-work; each step that is done is skipped
-# Then: copy the whole android folder to Download/S2X/D2R Mobile/ on the phone (next to the data folder with the game resources); opening the App imports it, and afterwards this copy can be deleted.
+# Then: copy the whole android folder to Download/S2X/D2R Mobile Plus/ on the phone (next to the data folder with the game resources); opening the App imports it, and afterwards this copy can be deleted.
 # Needs: Python 3.9+ with pillow numpy lz4 capstone unicorn; the .NET SDK (to build the shader translation tool); spirv-opt, spirv-val and glslc from the Vulkan SDK
 #   (Mac: brew install spirv-tools shaderc; Windows / Linux: the LunarG Vulkan SDK; glslc can also come from the Android NDK). The tool lists anything missing at the start.
 # On the phone: the App (built with -PdmGenRuntime) runs this script itself when it finds no import pack (PackGenerator.java), with the tools given by environment variables
@@ -257,7 +257,7 @@ def main():
     size = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(final) for f in fs)
     if T == 'ohos': say('好了：%s（%.0f MB）。在手机上建一个「D2R Mobile」文件夹，把这个 dm 文件夹和游戏资源（%s 整个拷过去，叫 data）并排放进去，'
                         '打开应用按提示选「D2R Mobile」导入。这里面有游戏内容，请只自己用' % (final, size / 1048576, os.path.join(romfs, 'data')))
-    else: say('好了：%s（%.0f MB）。把这个 android 文件夹整个拷到手机的 Download/S2X/D2R Mobile/ 下（游戏资源放在同一处的 data 文件夹：%s 整个拷过去），'
+    else: say('好了：%s（%.0f MB）。把这个 android 文件夹整个拷到手机的 Download/S2X/D2R Mobile Plus/ 下（游戏资源放在同一处的 data 文件夹：%s 整个拷过去），'
               '打开 App 会自己导入。这里面有游戏内容，请只自己用' % (final, size / 1048576, os.path.join(romfs, 'data')))
 
 
