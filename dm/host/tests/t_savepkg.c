@@ -137,10 +137,10 @@ static void t_path_set(void) { char *volatile same = g_pathbuf; dm_savepkg_path_
 static size_t mk_charm(uint8_t *b, int cnt, int x, int y, int len) { memcpy(b, "SWCH", 4); b[4] = 1; b[5] = b[6] = b[7] = 0; b[8] = (uint8_t)cnt; b[9] = (uint8_t)(cnt >> 8); size_t o = 10; for (int i = 0; i < cnt; i++) { b[o] = (uint8_t)x; b[o + 1] = (uint8_t)y; b[o + 2] = (uint8_t)len; b[o + 3] = (uint8_t)(len >> 8); memset(b + o + 4, 0x5a, (size_t)len); o += 4 + (size_t)len; } return o; }
 static void t_swcharm(void) {
     static uint8_t b[200000]; size_t n = mk_charm(b, 0, 0, 0, 1); CHECK(n == 10 && dm_savepkg_swcharm_ok(b, n), "0 件有效（已迁移）");
-    n = mk_charm(b, 2, 14, 10, 3); CHECK(dm_savepkg_swcharm_ok(b, n), "边界坐标有效"); CHECK(!dm_savepkg_swcharm_ok(b, n - 1), "短一字节要拒"); b[n] = 0; CHECK(!dm_savepkg_swcharm_ok(b, n + 1), "多一字节要拒"); CHECK(!dm_savepkg_swcharm_ok(b, 9), "头不全要拒");
+    n = mk_charm(b, 2, 11, 6, 3); CHECK(dm_savepkg_swcharm_ok(b, n), "边界坐标有效"); CHECK(!dm_savepkg_swcharm_ok(b, n - 1), "短一字节要拒"); b[n] = 0; CHECK(!dm_savepkg_swcharm_ok(b, n + 1), "多一字节要拒"); CHECK(!dm_savepkg_swcharm_ok(b, 9), "头不全要拒");
     b[0] = 0x58; CHECK(!dm_savepkg_swcharm_ok(b, n), "魔数错要拒"); n = mk_charm(b, 1, 0, 0, 1); b[4] = 2; CHECK(!dm_savepkg_swcharm_ok(b, n), "版本错要拒");
-    n = mk_charm(b, 165, 0, 0, 1024); CHECK(dm_savepkg_swcharm_ok(b, n), "165 件满长有效"); n = mk_charm(b, 166, 0, 0, 1); CHECK(!dm_savepkg_swcharm_ok(b, n), "166 件要拒");
-    n = mk_charm(b, 1, 15, 0, 1); CHECK(!dm_savepkg_swcharm_ok(b, n), "x 越界要拒"); n = mk_charm(b, 1, 0, 11, 1); CHECK(!dm_savepkg_swcharm_ok(b, n), "y 越界要拒"); n = mk_charm(b, 1, 0, 0, 1025); CHECK(!dm_savepkg_swcharm_ok(b, n), "长度超限要拒"); n = mk_charm(b, 1, 0, 0, 0); CHECK(!dm_savepkg_swcharm_ok(b, n), "长度 0 要拒");
+    n = mk_charm(b, 84, 0, 0, 1024); CHECK(dm_savepkg_swcharm_ok(b, n), "84 件满长有效"); n = mk_charm(b, 85, 0, 0, 1); CHECK(!dm_savepkg_swcharm_ok(b, n), "85 件要拒");
+    n = mk_charm(b, 1, 12, 0, 1); CHECK(!dm_savepkg_swcharm_ok(b, n), "x 越界要拒"); n = mk_charm(b, 1, 0, 7, 1); CHECK(!dm_savepkg_swcharm_ok(b, n), "y 越界要拒"); n = mk_charm(b, 1, 0, 0, 1025); CHECK(!dm_savepkg_swcharm_ok(b, n), "长度超限要拒"); n = mk_charm(b, 1, 0, 0, 0); CHECK(!dm_savepkg_swcharm_ok(b, n), "长度 0 要拒");
     char u[64]; CHECK(dm_savepkg_path_class("Alice/Alice.swcharm", u, sizeof u) == 1, "白名单");
     // 跟着角色走：导出、换入、保留两份改名，内容不变 | it travels with the character: export, apply and the keep-both rename leave the content unchanged
     dm_pkg_view v; size_t g = 0; n = mk_charm(b, 2, 3, 4, 8); mk_char("sc/save", "Alice", 1, 30, 0, 100); put("sc/save/Alice/Alice.swcharm", b, n); CHECK(export_all("sc/save", "sc.zip", 0, 0) == 0, "导出");

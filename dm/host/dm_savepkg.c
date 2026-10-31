@@ -144,8 +144,8 @@ int dm_savepkg_parse_d2s(const uint8_t *b, size_t n, dm_pkg_char *o) {
 // 护身符页侧文件头（交接/护身符页_格式变更_20261031.md）：魔数 SWCH、版本 1、保留 3 字节、件数 u16，然后逐件 x、y、长度 u16、位流。大符出界和重叠要物品表，进局重建时查
 // Charm page side file (see that format note): magic SWCH, version 1, 3 reserved bytes, u16 count, then per item x, y, u16 length, bitstream. Large charms out of bounds and overlaps need the item tables and are checked when the page is rebuilt on entry
 int dm_savepkg_swcharm_ok(const uint8_t *b, size_t n) {
-    if (n < 10 || memcmp(b, "SWCH", 4) || b[4] != 1) return 0; uint32_t cnt = rd16(b + 8); if (cnt > 165) return 0; size_t o = 10;
-    for (uint32_t i = 0; i < cnt; i++) { if (n - o < 4 || b[o] >= 15 || b[o + 1] >= 11) return 0; uint32_t L = rd16(b + o + 2); if (L < 1 || L > 1024 || n - o - 4 < L) return 0; o += 4 + (size_t)L; }
+    if (n < 10 || memcmp(b, "SWCH", 4) || b[4] != 1) return 0; uint32_t cnt = rd16(b + 8); if (cnt > 84) return 0; size_t o = 10;   // 背包 12×7（rc2-storage 定稿）| the inventory is 12 x 7
+    for (uint32_t i = 0; i < cnt; i++) { if (n - o < 4 || b[o] >= 12 || b[o + 1] >= 7) return 0; uint32_t L = rd16(b + o + 2); if (L < 1 || L > 1024 || n - o - 4 < L) return 0; o += 4 + (size_t)L; }
     return o == n;
 }
 int dm_savepkg_rename_d2s(uint8_t *b, size_t n, const char *newname) {
