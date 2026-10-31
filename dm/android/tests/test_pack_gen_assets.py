@@ -4,9 +4,11 @@ The repo files the on-phone generator ships in the APK: only the whitelisted gen
 import importlib.util
 from pathlib import Path
 import re
+import struct
 import tempfile
 import unittest
 import zipfile
+import zlib
 
 TOOLS = Path(__file__).resolve().parents[1] / 'tools'
 spec = importlib.util.spec_from_file_location('pack_gen_assets', TOOLS / 'pack_gen_assets.py')
@@ -55,6 +57,33 @@ class SourceZip(unittest.TestCase):
             pga.write_zip(root / 'dm', names, b)
             self.assertEqual(a.read_bytes(), b.read_bytes())
             with zipfile.ZipFile(a) as z: self.assertEqual(z.read('dm/i18n/ui_text.tsv').decode('utf-8'), '键\t中文\ndmUpdNew\t新版本\n')
+
+
+class PackageAudit(unittest.TestCase):
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location('package_audit', DM / 'tools/package_audit.py')
+        self.pa = importlib.util.module_from_spec(spec); spec.loader.exec_module(self.pa)
+        self.w = self.pa.platform_words
+
+    def test_words(self):
+        hit = lambda word, text: bool(self.w.pattern(word).search(text))
+        self.assertTrue(hit('Xcode', b'docs/NO_XCODE')); self.assertTrue(hit('iPhone', b'IPHONE')); self.assertTrue(hit('iOS', b'on iOS')); self.assertTrue(hit('iOS', b'NO_IOS'))
+        for word, text in (('Metal', b'Metallic'), ('Metal', b'metal_roughness'), ('iOS', b'BIOS'), ('iOS', b'ios_base'), ('Android', b'android::String8'), ('Apple', b'apple_lod3')): self.assertFalse(hit(word, text), text)
+
+    def test_symbol_and_text(self):
+        data = b'\0dm_icloud_supported\0iCloud sync failed\0'
+        spots = [m.span() for m in self.w.pattern('iCloud').finditer(data)]
+        self.assertEqual([self.pa.is_symbol(data, *s) for s in spots], [True, False])
+
+    def test_game_image_only(self):
+        seg = struct.pack('<II16sQQQQ', 0x19, 72, b'__DMsdkW', 0, 0, 100, 50) + b'\0' * 16
+        head = struct.pack('<I', 0xfeedfacf) + b'\0' * 12 + struct.pack('<I', 1) + b'\0' * 12
+        self.assertEqual(self.pa.game_image_ranges(head + seg), [(100, 150)])
+        self.assertEqual(self.pa.game_image_ranges(b'not a mach-o'), [])
+
+    def test_inflate(self):
+        data = b'junk' + zlib.compress(b'iPhone text') + b'more' + zlib.compress(b'second')
+        self.assertEqual(self.pa.inflate_all(data), b'iPhone text\0second')
 
 
 if __name__ == '__main__':

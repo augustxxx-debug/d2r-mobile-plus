@@ -42,8 +42,8 @@ EN_LIMITS = (
 EN_HAS_ZH = {'dmCustomLangZh', 'dmCustomLangHintZh'}
 # 平台专属键（CLAUDE.md §2.8，内审 I-02）：另一端的编译期表和覆盖层都不带；--check 查文字列里的平台词
 # Platform-only keys (CLAUDE.md section 2.8, internal audit I-02): left out of the other platform's compile-time table and overlay; --check looks for platform words in the text columns
-# dmDl / dmOld / dmIpadMode / dmUpdNoNet：iOS 资源下载、老机型补充包、签名工具 iPad 模式、系统联网设置提示（内审 J-01） | iOS asset download, the older-device pack, the signing tool's iPad mode, the system's network setting hint (internal audit J-01)
-IOS_ONLY = re.compile(r'dm(Graphics(Upscaling|UpscaleProfile|Profile[A-Z].*|ApplyHint|RtShadow.*)|CustomFx.+|CustomIcloud.*|Cloud[A-Z].*|GpuOld.+|Tv[A-Z].*|Dl[A-Z].*|Old[A-Z].*|IpadMode[A-Z].*|UpdNoNet)')
+# dmDl / dmOld / dmIpadMode / dmUpdNoNet / dmPackBad：iOS 资源下载、老机型补充包、签名工具 iPad 模式、系统联网设置提示、安装包自检（内审 J-01 / K-01） | iOS asset download, the older-device pack, the signing tool's iPad mode, the system's network setting hint, the install package self-check (internal audit J-01 / K-01)
+IOS_ONLY = re.compile(r'dm(Graphics(Upscaling|UpscaleProfile|Profile[A-Z].*|ApplyHint|RtShadow.*)|CustomFx.+|CustomIcloud.*|Cloud[A-Z].*|GpuOld.+|Tv[A-Z].*|Dl[A-Z].*|Old[A-Z].*|IpadMode[A-Z].*|UpdNoNet|PackBad[A-Z].*)')
 ANDROID_ONLY = re.compile(r'dm(Android[A-Z].*|And[A-Z].*|LoadPerm[A-Z].*)')
 def platform_of(k): return 'ios' if IOS_ONLY.fullmatch(k) else 'android' if ANDROID_ONLY.fullmatch(k) else ''
 def check_platform_words():
@@ -52,8 +52,8 @@ def check_platform_words():
     bad = []
     for r in rows():
         k, plat, text = r[0], platform_of(r[0]), '\n'.join(r[1:])
-        bad += [(k, w) for w in platform_words.IOS_WORDS if plat != 'ios' and w in text]
-        bad += [(k, w) for w in platform_words.ANDROID_WORDS if plat != 'android' and w in text]
+        bad += [(k, w) for w in platform_words.IOS_WORDS if plat != 'ios' and platform_words.pattern(w).search(text.encode())]
+        bad += [(k, w) for w in platform_words.ANDROID_WORDS if plat != 'android' and platform_words.pattern(w).search(text.encode())]
     return bad
 
 def filter_table(text, drop):

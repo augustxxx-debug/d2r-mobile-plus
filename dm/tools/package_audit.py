@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """包内容审计（CLAUDE.md §2.8）：把 IPA / APK / .app 解到最里层（含 zip 内 zip）扫另一端的平台词，并列体积。
 用法：package_audit.py <ios|android> <包或 .app 目录> [--out 报告.md]。有未登记的命中、或 src.zip 里有白名单外的文件，退出码 1。
-命中只有四种能放行，都写在下面的 EXEMPT：第三方运行时与许可证原文（改不得）；手机端生成器源码的注释（不是文案）；字体与图片的二进制数据（偶然的字节）；iOS 主程序里原版游戏自带的串（不是我们写的）。
+不分大小写。CASC .data 里压缩存放的文字也解开扫（覆盖层）；给目录也行，比如手机端生成的 overlay。
+命中只有这几种能放行：EXEMPT 里的第三方运行时与许可证原文（改不得）、手机端生成器源码（不是文案）、字体与图片的二进制数据（偶然的字节）；原生库里整串都是标识符的；iOS 主程序内嵌的原版游戏映像段。
 Package content audit: unpacks an IPA / APK / .app down to the innermost level (zips inside zips included), scans for the other platform's words and lists sizes.
 Usage: package_audit.py <ios|android> <package or .app directory> [--out report.md]. Exit 1 on an unregistered hit, or on a file in src.zip outside the whitelist.
-Only four kinds of hit may pass, all listed in EXEMPT: third-party runtimes and licence texts (not ours to change); comments in the on-phone generator's source (not UI text); binary data of fonts and images (chance bytes); strings the original game ships inside the iOS main program (not written by us)."""
-import argparse, collections, importlib.util, io, re, sys, zipfile
+Any case. Text stored compressed in CASC .data (the overlay) is inflated and scanned too; a directory works as well, such as an overlay made on the phone.
+Only these may pass: in EXEMPT, third-party runtimes and licence texts (not ours to change), the on-phone generator's source (not UI text), binary data of fonts and images (chance bytes); strings in native libraries that are identifiers as a whole; the original game image segments embedded in the iOS main program."""
+import argparse, collections, importlib.util, io, re, struct, sys, zipfile, zlib
 from pathlib import Path
 
 DM = Path(__file__).resolve().parents[1]
@@ -15,17 +17,43 @@ EXEMPT = (
     ('android', r'assets/dmgen/runtime\.zip!.*', None, '第三方：Python 标准库与依赖，手机端生成器的运行时'),
     ('android', r'(assets/dmgen/THIRD_PARTY_NOTICES\.txt|assets/.*NOTICE.*|.*LICENSE.*)', None, '第三方许可证原文，必须随包且不得改'),
     ('android', r'lib/arm64-v8a/libdmgen_.*\.so', None, '第三方：Python、SPIRV-Tools、着色器翻译工具'),
-    ('android', r'assets/dmgen/src\.zip!(?!dm/i18n/).*', None, '手机端生成器源码里的注释与目标名，不是文案；文件集由白名单管，文案表不放行'),
+    ('android', r'assets/dmgen/src\.zip!(?!dm/i18n/).*', None, '手机端生成器源码，不是文案；文件集由白名单管，文案表不放行，生成出来的覆盖层另扫'),
     ('android', r'.*\.(ttf|png|jpg|m4a)', None, '字体、图片、音频的二进制数据，偶然的字节不是文字'),
-    ('ios', r'(Payload/)?DmIOS\.app/DmIOS|DmIOS', 'Vulkan', '原版游戏自带的串（NVN 调试回调旁），不是我们写的'),
-    ('ios', r'(Payload/)?DmIOS\.app/DmIOS|DmIOS', 'Android', '原版游戏自带的串（NVRM / BufferQueue 旁），不是我们写的'),
 )
 
 
-def pattern(word):
-    # 只认整词：Metal 不算 Metallic，iOS 不算 BIOS；MetalFX 这类后接大写的仍算 Metal | whole words only: Metallic is not Metal, BIOS is not iOS; MetalFX still counts as Metal
-    if word.isascii() and word[0].isalpha(): return re.compile(rb'(?<![A-Za-z])' + re.escape(word.encode()) + rb'(?![a-z])')
-    return re.compile(re.escape(word.encode()))
+def game_image_ranges(data):
+    """Mach-O 里内嵌原版游戏映像的段（__DMmainW / __DMsdkW）的文件区间：只有这里的命中才算原版自带（内审 K-05） | file ranges of the segments holding the embedded original game images: only hits there count as the original's own"""
+    if data[:4] != b'\xcf\xfa\xed\xfe': return []
+    ncmds = struct.unpack_from('<I', data, 16)[0]; off, out = 32, []
+    for _ in range(ncmds):
+        cmd, size = struct.unpack_from('<II', data, off)
+        if cmd == 0x19 and data[off + 8:off + 24].rstrip(b'\0') in (b'__DMmainW', b'__DMsdkW'):
+            fileoff, filesize = struct.unpack_from('<QQ', data, off + 40); out.append((fileoff, fileoff + filesize))
+        off += size
+    return out
+
+
+def is_symbol(data, start, end):
+    """原生库里这个词所在的那一串整串都是标识符：链接符号、枚举名、设置键，不是给人看的文字 | in a native library, the whole string holding the word is an identifier: a link symbol, an enum name, a settings key, not text for people"""
+    s = data.rfind(b'\0', max(0, start - 4096), start) + 1; e = data.find(b'\0', end, end + 4096)
+    return re.fullmatch(rb'[A-Za-z_][A-Za-z0-9_.$]*', data[s:e if e >= 0 else end + 4096]) is not None
+
+
+def inflate_all(data):
+    """CASC .data 里的 zlib 段全解开拼起来：覆盖层文字是压缩存放的，不解开就扫不到（内审 K-05） | every zlib segment in a CASC .data, inflated and joined: overlay text is stored compressed and cannot be scanned otherwise"""
+    out, pos = [], 0
+    while True:
+        pos = data.find(b'\x78', pos)
+        if pos < 0 or pos + 2 > len(data): return b'\0'.join(out)
+        if data[pos + 1] in (0x01, 0x5e, 0x9c, 0xda):
+            d = zlib.decompressobj()
+            try:
+                chunk = d.decompress(data[pos:pos + (1 << 24)])
+                if d.eof: out.append(chunk); pos += 2 + len(data[pos + 2:pos + (1 << 24)]) - len(d.unused_data); continue
+            except zlib.error:
+                pass
+        pos += 1
 
 
 def walk(source, prefix=''):
@@ -39,7 +67,8 @@ def walk(source, prefix=''):
                 yield prefix + name, data; continue
             yield from walk(((n, (lambda z=inner, n=n: z.read(n))) for n in inner.namelist() if not n.endswith('/')), prefix + name + '!')
         else:
-            yield prefix + name, data
+            # .data 是压缩档案，原始字节只有偶然的巧合，只扫解开后的文字 | a .data is a compressed archive, its raw bytes hold only chance matches; scan the inflated text
+            yield prefix + name + '!zlib' if name.lower().endswith('.data') else prefix + name, inflate_all(data) if name.lower().endswith('.data') else data
 
 
 def source_of(package):
@@ -63,7 +92,7 @@ def src_whitelist():
 
 def audit(platform, package):
     words = platform_words.IOS_WORDS if platform == 'android' else platform_words.ANDROID_WORDS
-    pats = [(w, pattern(w)) for w in words]
+    pats = [(w, platform_words.pattern(w)) for w in words]
     bad, passed, sizes, inner, by_file = [], collections.defaultdict(collections.Counter), collections.Counter(), [], collections.defaultdict(collections.Counter)
     allowed = src_whitelist() if platform == 'android' else None
     for path, data in walk(source_of(package)):
@@ -71,8 +100,17 @@ def audit(platform, package):
         if '/src.zip!' in path:
             name = path.split('src.zip!', 1)[1]; inner.append((name, len(data)))
             if name not in allowed: bad.append((path, '白名单外的文件', 0))
+        ranges = game_image_ranges(data) if platform == 'ios' else []
+        native = path.endswith('.so') or bool(ranges)
         for w, pat in pats:
-            n = len(pat.findall(data))
+            spots = [m.span() for m in pat.finditer(data)]
+            mine = [(s, e) for s, e in spots if not any(a <= s < b for a, b in ranges)]
+            if len(mine) < len(spots): passed['iOS 主程序内嵌的原版游戏映像（__DMmainW / __DMsdkW），不是我们写的'][w] += len(spots) - len(mine)
+            if native:
+                names = [(s, e) for s, e in mine if is_symbol(data, s, e)]
+                if names: passed['原生库的链接符号、枚举名与设置键，不是文字'][w] += len(names)
+                mine = [x for x in mine if x not in names]
+            n = len(mine)
             if not n: continue
             why = exempt(platform, path, w)
             if why:

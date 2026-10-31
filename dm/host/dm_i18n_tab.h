@@ -324,10 +324,18 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmOldQuit", "退出", "Quit", "Salir", "Salir", "Выйти", "종료" },
 #endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmPackBadTitle", "这个安装包还不能玩", "This Package Is Not Ready", "Este paquete no está listo", "Este paquete no está listo", "Этот пакет ещё не играбельный", "이 설치 패키지는 아직 사용할 수 없음" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmPackBadMiss", "安装包里缺游戏内容（缺 %d 项，如 %@）。", "The package is missing game content (%d items, e.g. %@).", "Al paquete le falta contenido del juego (%d elementos, p. ej. %@).", "Al paquete le falta contenido del juego (%d elementos, p. ej. %@).", "В пакете нет игрового содержимого (не хватает %d поз., например %@).", "설치 패키지에 게임 내용이 없습니다(%d항목, 예: %@)." },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmPackBadProd", "安装包是用不同版本拼成的（壳是 %@，做进去的内容是 %@）。", "The package mixes versions (shell %@, built-in content %@).", "El paquete mezcla versiones (carcasa %@, contenido integrado %@).", "El paquete mezcla versiones (carcasa %@, contenido integrado %@).", "Пакет собран из разных версий (оболочка %@, содержимое %@).", "패키지 버전이 섞였습니다(셸 %@, 내장 내용 %@)." },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmPackBadHow", "发布页上的壳是做安装包的原料，不能直接装来玩。\n\n怎么做：在电脑上打开 github.com/jhaizhou-ops/d2r-mobile，照 docs/NO_XCODE 的第一步用 d2rm_pack.py 把你的游戏内容做进同一版本的壳，再装它输出的那个安装包。", "The shell on the releases page is build input, not an app to install.\n\nWhat to do: on a computer, open github.com/jhaizhou-ops/d2r-mobile and follow step 1 of docs/NO_XCODE — run d2rm_pack.py to build your game content into the shell of the same release, then install the package it outputs.", "La carcasa de la página de versiones es material para compilar, no una app para instalar.\n\nQué hacer: en un ordenador, abre github.com/jhaizhou-ops/d2r-mobile y sigue el paso 1 de docs/NO_XCODE: ejecuta d2rm_pack.py para meter el contenido de tu juego en la carcasa de la misma versión e instala el paquete que genere.", "La carcasa de la página de versiones es material para compilar, no una app para instalar.\n\nQué hacer: en una computadora, abre github.com/jhaizhou-ops/d2r-mobile y sigue el paso 1 de docs/NO_XCODE: ejecuta d2rm_pack.py para meter el contenido de tu juego en la carcasa de la misma versión e instala el paquete que genere.", "Оболочка со страницы релизов — это сырьё для сборки, а не готовое приложение.\n\nЧто делать: на компьютере откройте github.com/jhaizhou-ops/d2r-mobile и выполните первый шаг docs/NO_XCODE — соберите своё игровое содержимое в оболочку той же версии через d2rm_pack.py, затем установите полученный пакет.", "릴리스 페이지의 셸은 설치용 앱이 아니라 빌드 원료입니다.\n\n방법: 컴퓨터에서 github.com/jhaizhou-ops/d2r-mobile을 열고 docs/NO_XCODE 1단계대로 d2rm_pack.py로 같은 버전의 셸에 게임 내용을 넣은 뒤, 출력된 설치 패키지를 설치하세요." },
+#endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGpuOldTitle", "这台设备玩不了", "This Device Is Not Supported", "Este dispositivo no es compatible", "Este dispositivo no es compatible", "На этом устройстве игра не пойдёт", "이 기기는 지원되지 않음" },
 #endif
