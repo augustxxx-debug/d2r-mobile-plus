@@ -13,6 +13,17 @@ for args, on in (((), False), (('DM_QA_BUILD=0',), False), (('DM_QA_BUILD=',), F
     cf, dep = form(*args)
     if ('-DDM_QA_BUILD=1' in cf) != on: fail(f'{args} 的 QA 宏不对')
     if ('.qa_build_on' if on else '.qa_build_off') not in dep: fail(f'{args} 切形态不会重编：{dep[:80]}')
+# 连着切形态也要重编（内审 R2-02）：用 Makefile 里真实的戳文件规则，配一个假产物 | switching forms back to back rebuilds: the real stamp rule with a fake output
+mk = open(HOST + '/Makefile', encoding='utf-8').read(); rule = re.search(r'^\$\(QA_STAMP\):\n\t.*$', mk, re.M); form_block = re.search(r'^ifeq \(\$\(DM_QA_BUILD\),1\)\n.*?^endif\n', mk, re.M | re.S)
+if not rule or not form_block: fail('Makefile 里找不到戳文件规则')
+with tempfile.TemporaryDirectory() as d:
+    open(d + '/Makefile', 'w').write(form_block.group(0) + rule.group(0) + '\ndmhost: $(QA_STAMP)\n\techo $(QA_STAMP) > $@\n')
+    for args, want in ((['DM_QA_BUILD=1'], 'on'), ([], 'off'), (['DM_QA_BUILD=1'], 'on'), ([], 'off'), ([], 'off')):
+        subprocess.check_output(['make', '-C', d, 'dmhost', *args], stderr=subprocess.STDOUT)
+        if want not in open(d + '/dmhost').read(): fail(f'连着切形态没有重编：{args}')
+g = open(ROOT + '/android/app/build.gradle', encoding='utf-8').read()
+if "findProperty('dmQaBuild') == '1'" not in g: fail('build.gradle 的 QA 开关只认 1')
+if not re.search(r'strings .*\$L.*DM_TEST_\(UI\|', open(ROOT + '/android/tools/shell_apk.sh', encoding='utf-8').read()): fail('shell_apk.sh 出包不查 QA 入口')
 if not re.search(r'strings .*dmhost.*DM_TEST_\(UI\|', open(ROOT + '/tools/mac_app.sh', encoding='utf-8').read()): fail('mac_app.sh 出包不查 QA 入口')
 # 驱动动作之后才读状态（S-10：它可能同一帧进 S_WORK 又回报完成）| state is read after the driver
 s = open(HOST + '/dm_savemgr.c', encoding='utf-8').read(); i = s.index('void dm_savemgr_pump(void)'); p = s[i:]

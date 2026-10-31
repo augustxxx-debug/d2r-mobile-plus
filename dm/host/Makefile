@@ -127,7 +127,7 @@ dm_bright_levels.inc: ../tools/gen_bright_levels.py ../ios/tools/touch_layout.py
 	python3 ../tools/gen_bright_levels.py "$(ROMFS)" > $@.tmp && mv $@.tmp $@
 # 玩家 / QA 形态切换时重新编译：产物同名，不靠这个戳文件切回玩家形态会留着 QA 入口 | switching between player and QA forms rebuilds: the output has one name, and without this stamp a switch back keeps the QA entries
 $(QA_STAMP):
-	rm -f .qa_build_on .qa_build_off && touch $@
+	rm -f .qa_build_on .qa_build_off && sleep 1 && touch $@   # 等 1 秒：make 的时间精度是秒，戳文件要严格新于上一次的产物 | wait a second: make's timestamps are in seconds and the stamp must be strictly newer than the last output
 dmhost: $(QA_STAMP) $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
 	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -weak_framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
 # 旧接口版宿主（图形后端不用 Metal 4，目标 macOS 15.0）：同一棵树、同一份源码，只多一个编译开关；不在缺省目标里，要用时 make dmhost_m3

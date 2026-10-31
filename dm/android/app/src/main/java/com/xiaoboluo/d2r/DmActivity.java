@@ -862,9 +862,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (req == REQ_SAVE_PICK) {
             if (uri == null) { nativeSavePicked(null); return; }
             new Thread(() -> {
-                boolean ok = false; try (java.io.InputStream in = cr.openInputStream(uri); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { ok = SaveCopy.copy(in, out, SaveCopy.PICK_MAX); } catch (Exception e) { android.util.Log.w("dm", "save pick copy: " + e); }
+                boolean ok = false; String bad = "!io"; try (java.io.InputStream in = cr.openInputStream(uri); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { ok = SaveCopy.copy(in, out, SaveCopy.PICK_MAX); if (!ok && in != null) bad = "!limit"; } catch (Exception e) { android.util.Log.w("dm", "save pick copy: " + e); }
                 if (!ok) tmp.delete();
-                nativeSavePicked(ok ? tmp.getPath() : "!copy");   // 拷失败不是取消：原生那边给失败提示 | a failed copy is not a cancel: the native side shows the failure
+                nativeSavePicked(ok ? tmp.getPath() : bad);   // 拷失败不是取消：原生那边给失败提示 | a failed copy is not a cancel: the native side shows the failure
             }, "dm-save-pick").start();
         } else {
             if (uri == null || src == null) { nativeSaveExported(false); return; }
