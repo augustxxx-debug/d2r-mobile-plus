@@ -20,14 +20,21 @@ static UIViewController *top_vc(void) {   // 同 dm_sharelog.m | as dm_sharelog.
 }
 @interface DmSavePick : NSObject <UIDocumentPickerDelegate> @end
 @implementation DmSavePick
-- (void)documentPicker:(UIDocumentPickerViewController *)c didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls { (void)c; dm_savemgr_picked(urls.firstObject.fileSystemRepresentation); }
+- (void)documentPicker:(UIDocumentPickerViewController *)c didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls { (void)c; NSURL *u = urls.firstObject;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{   // 文件夹不能 asCopy：持安全作用域拷到临时目录再交给宿主；选了 App 的文件夹（上游 Documents）就只拷 save | a folder cannot be asCopy: copy to a temporary directory under security scope for the host; if an App's folder (upstream Documents) was picked, only save is copied
+        BOOL scoped = [u startAccessingSecurityScopedResource]; NSFileManager *fm = NSFileManager.defaultManager; NSString *base = [NSTemporaryDirectory() stringByAppendingPathComponent:@"dm_save_pick"]; [fm removeItemAtPath:base error:NULL]; [fm createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:NULL];
+        __block NSString *out = nil; NSError *ce = nil; [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateReadingItemAtURL:u options:NSFileCoordinatorReadingWithoutChanges error:&ce byAccessor:^(NSURL *r) {
+            NSURL *from = r; NSURL *sv = [r URLByAppendingPathComponent:@"save" isDirectory:YES]; BOOL dir = NO; if ([fm fileExistsAtPath:sv.path isDirectory:&dir] && dir) from = sv;
+            NSString *to = [base stringByAppendingPathComponent:from.lastPathComponent]; NSError *e = nil; if ([fm copyItemAtURL:from toURL:[NSURL fileURLWithPath:to] error:&e]) out = to; else NSLog(@"save pick copy: %@", e); }];
+        if (scoped) [u stopAccessingSecurityScopedResource]; dm_savemgr_picked(out.fileSystemRepresentation); });
+}
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)c { (void)c; dm_savemgr_picked(NULL); }
 @end
 static DmSavePick *g_pick_delegate;
 static void on_pick(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *vc = top_vc(); if (!vc) { dm_savemgr_picked(NULL); return; }
-        UIDocumentPickerViewController *p = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeZIP] asCopy:YES];   // asCopy：系统拷到我们的临时目录，不用管安全域访问 | asCopy: the system copies into our temporary directory, no security-scoped access to manage
+        UIDocumentPickerViewController *p = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeZIP, UTTypeFolder, UTTypeData] asCopy:NO];   // ZIP、上游文件夹、单个 .d2s / .d2i（没有注册类型，算 data），选了什么由宿主校验 | a ZIP, an upstream folder, a single .d2s / .d2i (no registered type, so data); the host validates the pick
         if (!g_pick_delegate) g_pick_delegate = [DmSavePick new]; p.delegate = g_pick_delegate; p.allowsMultipleSelection = NO; p.view.accessibilityIdentifier = @"dmSavePicker"; [vc presentViewController:p animated:YES completion:nil]; });
 }
 static void on_share(const char *path) {

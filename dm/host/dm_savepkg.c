@@ -280,7 +280,7 @@ int dm_savepkg_export(const char *tree, const char *out_zip, const dm_pkg_export
     char *mj = NULL; size_t mjn = 0; FILE *m = open_memstream(&mj, &mjn); if (!m) { free(all.v); return DM_PKG_E_IO; } char when[24]; iso_utc(o->now, when);
     fprintf(m, "{\n\"format\":\"d2rmp-saves\",\"format_major\":%d,\"format_minor\":%d,\"exported_at\":\"%s\",\"kind\":", DM_PKG_FORMAT_MAJOR, DM_PKG_FORMAT_MINOR, when); jput(m, o->kind ? o->kind : "export");
     fprintf(m, ",\n\"source\":{\"platform\":"); jput(m, src && src->platform ? src->platform : ""); fprintf(m, ",\"commit\":"); jput(m, src && src->commit ? src->commit : ""); fprintf(m, ",\"build\":"); jput(m, src && src->build ? src->build : ""); fprintf(m, ",\"version\":"); jput(m, src && src->version ? src->version : "");
-    fprintf(m, "},\n\"game_build\":"); jput(m, src && src->game_build ? src->game_build : ""); fprintf(m, ",\"source_format\":\"d2r-switch-plus\",\"source_version\":"); jput(m, src && src->game_build ? src->game_build : ""); fprintf(m, ",\"converted_from\":null,\"save_gen\":%d,\n\"includes\":{\"shared_stash\":%s,\"settings\":%s},\n\"characters\":[", DM_PKG_SAVE_GEN, o->stash ? "true" : "false", o->settings ? "true" : "false");
+    fprintf(m, "},\n\"game_build\":"); jput(m, src && src->game_build ? src->game_build : ""); fprintf(m, ",\"source_format\":"); jput(m, o->source_format ? o->source_format : "d2r-switch-plus"); fprintf(m, ",\"source_version\":"); jput(m, src && src->game_build ? src->game_build : ""); fprintf(m, ",\"converted_from\":null,\"save_gen\":%d,\n\"includes\":{\"shared_stash\":%s,\"settings\":%s},\n\"characters\":[", DM_PKG_SAVE_GEN, o->stash ? "true" : "false", o->settings ? "true" : "false");
     int first = 1; for (int i = 0; i < all.n; i++) { pf *x = &all.v[i]; size_t ul = strlen(x->unit); if (x->cls != PC_CHAR || strncmp(x->rel + ul + 1, x->unit, ul) || strcmp(x->rel + ul + 1 + ul, ".d2s")) continue;
         size_t bn = 0; uint8_t *b = read_all(x->phys, MAX_FILE, &bn); dm_pkg_char c; memset(&c, 0, sizeof c); int ok = b && dm_savepkg_parse_d2s(b, bn, &c); free(b); if (!ok) { LOG("存档管理：导出时有 1 个角色档校验不过，跳过这一条的摘要"); }
         char us[65]; unit_sha(&all, x->unit, us); fprintf(m, "%s\n{\"name\":", first ? "" : ","); jput(m, x->unit); fprintf(m, ",\"class\":%d,\"level\":%d,\"progress\":%d,\"last_played\":%u,\"hardcore\":%s,\"expansion\":%s,\"elysium\":%s,\"stash_topup\":%s,\"valid\":%s,\"unit_sha256\":\"%s\"}", c.cls, c.level, c.progress, c.last_played, c.hardcore ? "true" : "false", c.expansion ? "true" : "false", list_has(tree, "sw_elysium.txt", x->unit) ? "true" : "false", list_has(tree, "dm_stash_topup.txt", x->unit) ? "true" : "false", ok ? "true" : "false", us); first = 0; }
@@ -345,7 +345,8 @@ static int zip_junk(const char *n) {
 // 第一期只有恒等转换：我们的格式直接过；外来格式没转换过的拒绝（不把它们的文件当我们的写进存档）。files = 解好的文件目录，第二期在这里改写
 // The "convert" step of import (phase 2 plugs foreign formats in here, design doc section 9). A missing source_format = our own; converted_from present = the files are already in our format.
 // Phase 1 only has the identity conversion: our format passes; an unconverted foreign format is refused (its files must not be written into the save as if they were ours). files = the extracted directory, which phase 2 rewrites here
-static int convert_step(const char *files, dm_pkg_view *v) { (void)files; if (!strcmp(v->source_format, "d2r-switch-plus") || v->converted_from[0]) return DM_PKG_OK; LOG("存档管理：来源格式 %s 需要转换，这个版本还不支持", v->source_format); return DM_PKG_E_CONVERT; }
+// 上游写存档的代码和我们相同，恒等 | upstream writes saves with the same code as ours, so this is the identity
+static int convert_step(const char *files, dm_pkg_view *v) { (void)files; if (!strcmp(v->source_format, "d2r-switch-plus") || !strcmp(v->source_format, "d2r-mobile") || v->converted_from[0]) return DM_PKG_OK; LOG("存档管理：来源格式 %s 需要转换，这个版本还不支持", v->source_format); return DM_PKG_E_CONVERT; }
 
 // ---- 本机角色（按客体名；ASCII 大小写不同算同名，别的折叠由文件系统探测）| Local characters (by guest name; ASCII case differences count as the same name, other folding is probed on the file system)
 // Settings 既是设置目录，又是合法角色名：角色只占 Settings.<角色扩展名> 这些文件，覆盖时不动目录里的设置 | Settings is both the settings directory and a legal character name: the character owns only Settings.<character extension>; overwriting leaves the settings in the directory alone
@@ -364,6 +365,43 @@ static void stage_paths(const char *save, char *tmp, char *pend) { snprintf(tmp,
 void dm_savepkg_view_free(dm_pkg_view *v) { free(v->chars); v->chars = NULL; }
 void dm_savepkg_stage_cancel(const char *save) { pth t, p; stage_paths(save, t, p); rm_tree(t); }
 
+// ---- 上游 D2R Mobile 存档（交接/RC2_原版存档导入_可行性与设计_20261031.md）：改成包的形状后走现有校验、预览、备份、换入；只读来源
+// Upstream D2R Mobile saves: shaped into a package, then the existing validation, preview, backup and apply take over; the source is only read
+static int has_saves(const char *dir) {
+    DIR *d = opendir(dir); if (!d) return 0; struct dirent *e; int found = 0;
+    while (!found && (e = readdir(d))) { if (e->d_name[0] == '.' || e->d_name[0] == '_') continue; pth p; struct stat s; snprintf(p, sizeof p, "%s/%s/%s.d2s", dir, e->d_name, e->d_name); if (!lstat(p, &s) && S_ISREG(s.st_mode)) { found = 1; break; }
+        char st[256]; strlcpy(st, e->d_name, sizeof st); char *dot = strrchr(st, '.'); if (dot && !strcmp(dot, ".d2i")) { *dot = 0; found = is_stash_name(st); } else if (is_stash_name(st)) { snprintf(p, sizeof p, "%s/%s/%s.d2i", dir, st, st); found = !lstat(p, &s) && S_ISREG(s.st_mode); } }
+    closedir(d); return found;
+}
+// 选的可能是存档根，也可能是它的上级（App 的 Documents、拷出来的 files）；只认叫 save 的那一个，save.test、save.work、联机根都不进 | the pick may be the save root or a parent of it; only the one named save is entered, never save.test, save.work or the co-op root
+static int foreign_root(const char *in, char *root, size_t n) {
+    static const char *const k[] = { "", "/save", "/Documents/save", "/files/save" };
+    for (size_t i = 0; i < sizeof k / sizeof *k; i++) { pth p; snprintf(p, sizeof p, "%s%s", in, k[i]); if (has_saves(p)) { strlcpy(root, p, n); return 1; } }
+    return 0;
+}
+static int foreign_zip(zf *z, const char *tree) {
+    char prefix[512] = ""; int have = 0;
+    for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; if (strstr(nm, "..") || nm[0] == '/' || strchr(nm, '\\')) return DM_PKG_E_PATH; if (coop_path(nm)) { LOG("存档管理：包里有联机角色标记，整包拒绝"); return DM_PKG_E_COOP; } }
+    for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; if (zip_junk(nm)) continue; size_t L = strlen(nm); int up = L > 4 && !strcmp(nm + L - 4, ".d2s") ? 2 : L > 4 && !strcmp(nm + L - 4, ".d2i") ? 1 : 0; if (!up) continue; char t[512]; strlcpy(t, nm, sizeof t); char *sl = strrchr(t, '/'); if (!sl && up == 2) continue; if (sl) *sl = 0; else t[0] = 0;
+        if (up == 1 && t[0]) { const char *par = strrchr(t, '/'); par = par ? par + 1 : t; if (is_stash_name(par)) up = 2; } if (up == 2) { char *s2 = strrchr(t, '/'); if (s2) *s2 = 0; else t[0] = 0; } if (t[0]) strlcat(t, "/", sizeof t); if (!have || strlen(t) < strlen(prefix)) { strlcpy(prefix, t, sizeof prefix); have = 1; } }
+    if (!have) return DM_PKG_E_NOTOURS;
+    size_t pl = strlen(prefix); int cnt = 0; long long total = 0;
+    for (int i = 0; i < z->n; i++) { zr *e = &z->e[i]; if (zip_junk(e->name) || strncmp(e->name, prefix, pl)) continue; const char *rem = e->name + pl; char unit[64]; int c = dm_savepkg_path_class(rem, unit, sizeof unit); if (c != PC_CHAR && c != PC_STASH) continue;
+        if (++cnt > MAX_FILES || (total += e->usize) > MAX_TOTAL) return DM_PKG_E_LIMIT; int err = 0; uint8_t *d = zf_read(z, e, MAX_FILE, &err); if (!d) return err ? err : DM_PKG_E_IO; pth t; snprintf(t, sizeof t, "%s/%s", tree, rem); int bad = mkdirs_for(t) || write_new(t, d, e->usize); free(d); if (bad) return DM_PKG_E_IO; }
+    return cnt ? DM_PKG_OK : DM_PKG_E_NOTOURS;
+}
+int dm_savepkg_wrap_foreign(const char *in, const char *work, char *out, size_t n, int *partial) {
+    *partial = 0; strlcpy(out, in, n); struct stat st; if (stat(in, &st)) return DM_PKG_E_IO; if (coop_root(in)) { LOG("存档管理：联机存档根不能导入"); return DM_PKG_E_COOP; }
+    pth root, tree; snprintf(tree, sizeof tree, "%s/tree", work); size_t L = strlen(in); int rc = DM_PKG_OK;
+    if (S_ISDIR(st.st_mode)) { if (!foreign_root(in, root, sizeof root)) return DM_PKG_E_NOTOURS; rm_tree(work); }
+    else if (L > 4 && (!strcasecmp(in + L - 4, ".d2s") || !strcasecmp(in + L - 4, ".d2i"))) { rm_tree(work); strlcpy(root, tree, sizeof root); size_t bn = 0; uint8_t *b = read_all(in, MAX_FILE, &bn); if (!b) return DM_PKG_E_IO; pth t; const char *base = strrchr(in, '/'); base = base ? base + 1 : in;
+        if (!strcasecmp(in + L - 4, ".d2s")) { dm_pkg_char c; memset(&c, 0, sizeof c); if (!dm_savepkg_parse_d2s(b, bn, &c) || !dm_savepkg_name_ok(c.name)) { free(b); return DM_PKG_E_NOTOURS; } snprintf(t, sizeof t, "%s/%s/%s.d2s", tree, c.name, c.name); }
+        else { char stem[256]; strlcpy(stem, base, sizeof stem); stem[strlen(stem) - 4] = 0; if (!is_stash_name(stem) || bn < 4 || rd32(b) != 0xaa55aa55) { free(b); return DM_PKG_E_NOTOURS; } snprintf(t, sizeof t, "%s/%s.d2i", tree, stem); }
+        *partial = 1; rc = mkdirs_for(t) || write_new(t, b, bn) ? DM_PKG_E_IO : DM_PKG_OK; free(b); if (rc) return rc; }
+    else { zf z; if (zf_open(&z, in)) { zf_close(&z); return DM_PKG_OK; } if (zf_find(&z, "manifest.json")) { zf_close(&z); return DM_PKG_OK; } rm_tree(work); strlcpy(root, tree, sizeof root); mkdir(work, 0755); mkdir(tree, 0755); rc = foreign_zip(&z, tree); zf_close(&z); if (rc) return rc; }
+    mkdir(work, 0755); pth zip; snprintf(zip, sizeof zip, "%s/upstream.zip", work); dm_pkg_export_opts o; memset(&o, 0, sizeof o); o.nnames = -1; o.stash = 1; o.kind = "export"; o.now = (int64_t)time(NULL); o.source_format = "d2r-mobile"; static const dm_pkg_source src = { "", "", "", "", "" };
+    rc = dm_savepkg_export(root, zip, &o, &src); if (!rc) strlcpy(out, zip, n); return rc;
+}
 int dm_savepkg_inspect(const char *zip, const char *save, int restore, dm_pkg_view *v) {
     memset(v, 0, sizeof *v); if (coop_root(save)) { LOG("存档管理：联机存档根不能作为导入目标"); return DM_PKG_E_COOP; } pth tmp, pend, failed; stage_paths(save, tmp, pend); snprintf(failed, sizeof failed, "%s.import.failed", save); rm_tree(tmp); rm_tree(failed);
     zf z; int rc = zf_open(&z, zip); jn *m = NULL; uint8_t *mj = NULL; v->chars = calloc(DM_PKG_MAX_CHARS, sizeof *v->chars); if (!v->chars) rc = DM_PKG_E_IO; if (rc) goto done;

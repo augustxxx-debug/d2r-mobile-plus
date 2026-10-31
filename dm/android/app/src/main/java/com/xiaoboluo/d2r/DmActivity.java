@@ -602,6 +602,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // (import / on-phone generation), hand its finish / failure line to the host for boot.log (the 「加载页：」 share-diagnostics summary)
         try { String lp = LoadPageView.lastLine(); if (lp != null && !lp.isEmpty()) Os.setenv("DM_LOADPAGE_LAST", lp, true); } catch (ErrnoException | UnsatisfiedLinkError ignored) {}
         try { if (!communityLast.isEmpty()) Os.setenv("DM_COMMUNITY_LAST", communityLast, true); } catch (ErrnoException ignored) {}   // 社区信息拉取的最后一行，同上进 boot.log | the community fetch's last line, into boot.log likewise
+        saveDeleteTree(new File(new File(getFilesDir(), "temp"), "save_import_tree"));   // 同下 | as below
         new File(new File(getFilesDir(), "temp"), "save_import_pick.zip").delete();   // 上一局选的包（内容已校验进待应用目录）| the package picked last run (already staged)
         nativeSaveInit(Environment.isExternalStorageManager() ? downloads.getAbsolutePath() : "", "", String.valueOf(BuildConfig.VERSION_CODE));
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
@@ -837,7 +838,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     }
     // 存档管理的系统面板（text_input_jni.c，工作线程）：SAF 选包 / 存包。选到的包先拷进 files/temp 再交给宿主（宿主按普通文件读），存包从宿主的临时 ZIP 拷到玩家选的位置；拷都在后台线程
     // Save management's system panels (text_input_jni.c, worker thread): SAF pick / save. A picked package is copied into files/temp before going to the host (the host reads plain files); saving copies from the host's temporary ZIP to the place the player picked; copies run on a background thread
-    private static final int REQ_SAVE_PICK = 7101, REQ_SAVE_EXPORT = 7102;
+    private static final int REQ_SAVE_PICK = 7101, REQ_SAVE_EXPORT = 7102, REQ_SAVE_FOLDER = 7103;
     private String saveExportPath;
     static void savePick() {
         DmActivity a = current.get(); if (a == null) { nativeSavePicked(null); return; }
@@ -845,6 +846,29 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");   // 不少文件管理器不给 zip 标类型，选完由宿主校验 | many file managers do not tag zips, the host validates what is picked
             try { a.startActivityForResult(i, REQ_SAVE_PICK); } catch (Exception e) { android.util.Log.w("dm", "save pick: " + e); nativeSavePicked(null); }
         });
+    }
+    // 上游 save 目录（玩家用 root 或 debug 包拷出来的）：SAF 给不了文件路径，拷到内部临时目录再交给宿主 | an upstream save folder the player copied out: SAF gives no file path, so it is copied to an internal temporary directory for the host
+    static void savePickFolder() {
+        DmActivity a = current.get(); if (a == null) { nativeSavePicked(null); return; }
+        a.runOnUiThread(() -> {
+            try { a.startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_SAVE_FOLDER); } catch (Exception e) { android.util.Log.w("dm", "save pick folder: " + e); nativeSavePicked(null); }
+        });
+    }
+    private static void saveDeleteTree(File f) { File[] k = f.listFiles(); if (k != null) for (File c : k) saveDeleteTree(c); f.delete(); }
+    // budget[0] 文件数上限；单个大文件（游戏资源）跳过，存档没有这么大 | budget[0] caps the file count; a single large file (game resources) is skipped, no save is that large
+    private static void saveCopyTree(android.content.ContentResolver cr, Uri tree, String id, File dst, int depth, int[] budget, boolean rootLevel) throws java.io.IOException {
+        if (depth > 4) return; if (!dst.mkdirs() && !dst.isDirectory()) throw new java.io.IOException("mkdir");
+        java.util.List<String[]> kids = new java.util.ArrayList<>();
+        try (android.database.Cursor c = cr.query(android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, id), new String[] { android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID, android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME, android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE, android.provider.DocumentsContract.Document.COLUMN_SIZE }, null, null, null)) {
+            while (c != null && c.moveToNext()) kids.add(new String[] { c.getString(0), c.getString(1), c.getString(2), c.getString(3) });
+        }
+        if (rootLevel) for (String[] k : kids) if ("save".equals(k[1]) && android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(k[2])) { saveCopyTree(cr, tree, k[0], new File(dst, "save"), depth + 1, budget, false); return; }   // 选了上级就只拷 save | a parent was picked: only save is copied
+        for (String[] k : kids) {
+            String nm = k[1]; if (nm == null || nm.startsWith(".") || nm.contains("/")) continue; File to = new File(dst, nm);
+            if (android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(k[2])) { saveCopyTree(cr, tree, k[0], to, depth + 1, budget, false); continue; }
+            if (k[3] != null && Long.parseLong(k[3]) > (64L << 20)) continue; if (--budget[0] < 0) throw new java.io.IOException("too many files");
+            try (java.io.InputStream in = cr.openInputStream(android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, k[0])); java.io.OutputStream out = new java.io.FileOutputStream(to)) { saveCopy(in, out); }
+        }
     }
     static void saveExport(String path) {
         DmActivity a = current.get(); if (a == null) { nativeSaveExported(false); return; }
@@ -854,12 +878,24 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             try { a.startActivityForResult(i, REQ_SAVE_EXPORT); } catch (Exception e) { android.util.Log.w("dm", "save export: " + e); nativeSaveExported(false); }
         });
     }
+    // 选到的是 .d2s / .d2i 时宿主按扩展名和文件名分流，所以留原名；其他一律当包 | for a .d2s / .d2i the host goes by extension and name, so the original name is kept; anything else is treated as a package
+    private String saveNameOf(Uri uri) {
+        String nm = null; if (uri != null) try (android.database.Cursor c = getContentResolver().query(uri, new String[] { android.provider.OpenableColumns.DISPLAY_NAME }, null, null, null)) { if (c != null && c.moveToFirst()) nm = c.getString(0); } catch (Exception e) { android.util.Log.w("dm", "save pick name: " + e); }
+        return nm != null && !nm.contains("/") && !nm.startsWith(".") && (nm.toLowerCase(java.util.Locale.ROOT).endsWith(".d2s") || nm.toLowerCase(java.util.Locale.ROOT).endsWith(".d2i")) ? nm : "save_import_pick.zip";
+    }
     @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (req != REQ_SAVE_PICK && req != REQ_SAVE_EXPORT) return;
+        if (req != REQ_SAVE_PICK && req != REQ_SAVE_EXPORT && req != REQ_SAVE_FOLDER) return;
         if (!started) { android.util.Log.w("dm", "save panel result after the process was recreated: dropped"); return; }   // 面板开着时进程被系统杀了：这是新进程，原生库没加载，也没有等结果的界面；临时 ZIP 下次启动清 | the process was killed while the panel was open: this is a new one, the native library is not loaded and nothing is waiting; the temporary ZIP is cleared at the next start
-        Uri uri = res == RESULT_OK && data != null ? data.getData() : null; String src = saveExportPath; File tmp = new File(new File(getFilesDir(), "temp"), "save_import_pick.zip"); android.content.ContentResolver cr = getContentResolver();
-        if (req == REQ_SAVE_PICK) {
+        Uri uri = res == RESULT_OK && data != null ? data.getData() : null; String src = saveExportPath; File tmp = new File(new File(getFilesDir(), "temp"), saveNameOf(uri)); android.content.ContentResolver cr = getContentResolver();
+        if (req == REQ_SAVE_FOLDER) {
+            if (uri == null) { nativeSavePicked(null); return; }
+            File dir = new File(new File(getFilesDir(), "temp"), "save_import_tree");
+            new Thread(() -> {
+                boolean ok = false; try { saveDeleteTree(dir); saveCopyTree(cr, uri, android.provider.DocumentsContract.getTreeDocumentId(uri), dir, 0, new int[] { 4096 }, true); ok = true; } catch (Exception e) { android.util.Log.w("dm", "save pick folder copy: " + e); }
+                nativeSavePicked(ok ? dir.getPath() : null);
+            }, "dm-save-pick").start();
+        } else if (req == REQ_SAVE_PICK) {
             if (uri == null) { nativeSavePicked(null); return; }
             new Thread(() -> {
                 boolean ok = false; String bad = "!io"; try (java.io.InputStream in = cr.openInputStream(uri); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { ok = SaveCopy.copy(in, out, SaveCopy.PICK_MAX); if (!ok && in != null) bad = "!limit"; } catch (Exception e) { android.util.Log.w("dm", "save pick copy: " + e); }

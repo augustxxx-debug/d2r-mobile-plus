@@ -21,6 +21,7 @@ typedef struct {                                                                
     const char *kind;                       // "export" / "manual" / "auto" | "export" / "manual" / "auto"
     int64_t now;                            // 秒（UTC），写进 manifest | seconds (UTC), written into the manifest
     int (*progress)(int done, int total);   // 可空；返回非 0 中止 | may be NULL; non-zero aborts
+    const char *source_format;              // 空 = d2r-switch-plus | NULL = d2r-switch-plus
 } dm_pkg_export_opts;
 
 typedef struct {
@@ -54,6 +55,7 @@ int dm_savepkg_rename_d2s(uint8_t *b, size_t n, const char *newname);     // 改
 int dm_savepkg_export(const char *tree, const char *out_zip, const dm_pkg_export_opts *o, const dm_pkg_source *src);   // tree = 不会再变的目录（快照或挂载之前的已提交目录） | tree = a directory that will not change (a snapshot, or the committed directory before mount)
 // 拷路径；src 可以就是 dst（自拷在 iOS / Mac 上被库的重叠检查当场终止，安卓不查）。内联：缓冲区大小看得见才走带检查的版本，单测才拦得住 | copy a path; src may be dst (a self-copy is killed by the library's overlap check on iOS / Mac, Android does not check). Inline: only with the buffer size in view does the checked version run, so the unit test can catch it
 static inline __attribute__((always_inline)) void dm_savepkg_path_set(char *dst, size_t n, const char *src) { if (dst != src) strlcpy(dst, src, n); }
+int dm_savepkg_wrap_foreign(const char *in, const char *work, char *out, size_t n, int *partial);   // 上游存档（文件夹、无 manifest 的 ZIP、单个 .d2s / .d2i）打成包写到 work 下，out 出要校验的路径；我们自己的包原样返回。partial = 只有单个文件，旁路文件带不过来 | upstream saves (folder, ZIP without a manifest, a single .d2s / .d2i) become a package under work, out receives the path to inspect; our own packages pass through. partial = a single file, its side files do not come along
 int dm_savepkg_inspect(const char *zip, const char *save, int restore, dm_pkg_view *v);   // 校验并解到 <save>.import.tmp，不碰存档；restore = 从备份恢复（缺省处理改成覆盖） | validates and extracts into <save>.import.tmp; the save is untouched; restore = from a backup (actions default to overwrite)
 int dm_savepkg_stage_commit(const char *save, const dm_pkg_view *v, const char *const *custom_kv);   // 确认：写 plan.tsv、原子改名成 <save>.import。custom_kv 空 = 设置这一行选了覆盖就用包里的开关 | confirm: write plan.tsv and atomically rename to <save>.import. NULL custom_kv = the package's switches when the settings row is set to overwrite
 void dm_savepkg_stage_cancel(const char *save);

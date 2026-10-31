@@ -61,6 +61,10 @@ static _Atomic int g_job_done, g_job_rc; static int g_job; static char g_job_arg
 static const char **g_sel_names; static int g_sel_n, g_sel_stash, g_sel_settings;
 
 void dm_savemgr_shell(void (*pick)(void), void (*share)(const char *)) { g_pick = pick; g_share = share; }
+#ifdef __ANDROID__
+static void (*g_pick_folder)(void);   // SAF 选文件和选文件夹是两个系统面板 | SAF picks files and folders with two separate system panels
+void dm_savemgr_shell_folder(void (*pick)(void)) { g_pick_folder = pick; }
+#endif
 void dm_savemgr_set_source(const char *platform, const char *commit, const char *build, const char *version) {
     const char *in[4] = { platform, commit, build, version }; for (int i = 0; i < 4; i++) strlcpy(g_src_buf[i], in[i] ? in[i] : "", sizeof g_src_buf[i]);
     g_src.platform = g_src_buf[0]; g_src.commit = g_src_buf[1]; g_src.build = g_src_buf[2]; g_src.version = g_src_buf[3];
@@ -88,12 +92,13 @@ static int g_msg_back;   // 消息框确定后回哪一页（S_NONE = 收起）|
 static void show_fail(int rc, int back) { rows_clear(); set_box(S("dmSaveFailTitle"), S(err_key(rc)), S("dmSaveFailSub"), S("dmSaveOk"), NULL); g_msg_back = back; go(S_MSG); LOG("存档管理：失败提示 代码 %d", rc); }
 static void show_msg(const char *title, const char *sub, int back) { rows_clear(); set_box(title, sub, NULL, S("dmSaveOk"), NULL); g_msg_back = back; go(S_MSG); }
 static void show_home(void);
+static int g_view_partial;   // 上游单个文件：旁路文件带不过来 | a single upstream file: its side files do not come along
 
 // ---- 后台活 | Background work
 static void iso_stamp(char *o, size_t n) { time_t t = time(NULL); struct tm tm; localtime_r(&t, &tm); strftime(o, n, "%Y%m%d-%H%M%S", &tm); }
 static void *job_main(void *arg) {
     (void)arg; int rc = DM_PKG_E_IO; const char *sv = save_dir(); char cd[1100]; const char *custom = dm_custom_dir(cd, sizeof cd) ? cd : NULL;
-    if (g_job == J_INSPECT) { dm_pkg_view v; rc = dm_savepkg_inspect(g_job_arg, sv, g_restore, &v); if (!rc) { g_view = v; g_view_ok = 1; } else dm_savepkg_view_free(&v); }
+    if (g_job == J_INSPECT) { dm_pkg_view v; memset(&v, 0, sizeof v); char wk[1400], in[1500]; snprintf(wk, sizeof wk, "%s.foreign.tmp", sv); int part = 0; strlcpy(in, g_job_arg, sizeof in); rc = g_restore ? DM_PKG_OK : dm_savepkg_wrap_foreign(g_job_arg, wk, in, sizeof in, &part); g_view_partial = part; if (!rc) rc = dm_savepkg_inspect(in, sv, g_restore, &v); dm_savepkg_rmtree(wk); if (!rc) { g_view = v; g_view_ok = 1; } else dm_savepkg_view_free(&v); }
     else if (g_job == J_BACKUP) { char d[1400], snap[1500]; snprintf(d, sizeof d, "%s.export.tmp", sv); dm_savepkg_rmtree(d); mkdir(d, 0755); snprintf(snap, sizeof snap, "%s/snap", d); rc = dm_save_snapshot(snap) ? DM_PKG_E_IO : dm_savepkg_backup_tree(sv, snap, "manual", time(NULL), custom, &g_src, NULL, 0); dm_savepkg_rmtree(d); }
     else if (g_job == J_EXPORT) { char d[1400], snap[1500], ts[32]; snprintf(d, sizeof d, "%s.export.tmp", sv); dm_savepkg_rmtree(d); mkdir(d, 0755); snprintf(snap, sizeof snap, "%s/snap", d); iso_stamp(ts, sizeof ts); snprintf(g_share_path, sizeof g_share_path, "%s/D2RMobilePlus_saves_%s.zip", d, ts);
         if (dm_save_snapshot(snap)) rc = DM_PKG_E_IO; else { dm_pkg_export_opts o; memset(&o, 0, sizeof o); o.names = g_sel_names; o.nnames = g_sel_n; o.stash = g_sel_stash; o.settings = g_sel_settings; o.source_root = sv; o.custom_dir = custom; o.kind = "export"; o.now = time(NULL); rc = dm_savepkg_export(snap, g_share_path, &o, &g_src); } }
@@ -105,7 +110,11 @@ static void job_start(int j, const char *arg) { g_job = j; strlcpy(g_job_arg, ar
 static void fmt_date(uint32_t t, char *o, size_t n) { time_t tt = t; struct tm tm; localtime_r(&tt, &tm); strftime(o, n, "%Y-%m-%d", &tm); }
 static void char_row_text(const dm_pkg_char *c, char *o, size_t n) { char d[16], key[16], cl[64]; fmt_date(c->last_played, d, sizeof d); snprintf(key, sizeof key, "dmSaveCls%d", c->cls); strlcpy(cl, S(key), sizeof cl); snprintf(o, n, S("dmSaveRowFmt"), c->name, cl, c->level, d); if (c->hardcore) { strlcat(o, " · ", n); strlcat(o, S("dmSaveStashHard"), n); } }
 static void stash_label(const char *nm, char *o, size_t n) { snprintf(o, n, S("dmSaveStashRow"), S(strstr(nm, "HardCore") ? "dmSaveStashHard" : "dmSaveStashSoft")); }
-static void show_home(void) { rows_clear(); row_add(S("dmSaveExport"), NULL, RK_PLAIN, 0); row_add(S("dmSaveImport"), NULL, RK_PLAIN, 1); row_add(S("dmSaveBackupNow"), NULL, RK_PLAIN, 2); row_add(S("dmSaveBackupList"), NULL, RK_PLAIN, 3); set_box(S("dmSaveMgrRow"), S("dmSaveMgrSub"), NULL, S("dmSaveBack"), NULL); go(S_HOME); }
+static void show_home(void) { rows_clear(); row_add(S("dmSaveExport"), NULL, RK_PLAIN, 0); row_add(S("dmSaveImport"), NULL, RK_PLAIN, 1); row_add(S("dmSaveBackupNow"), NULL, RK_PLAIN, 2); row_add(S("dmSaveBackupList"), NULL, RK_PLAIN, 3); const char *note = NULL;
+#ifdef __ANDROID__
+    row_add(S("dmAndSaveImportFolder"), NULL, RK_PLAIN, 4); note = S("dmAndSaveUpstreamHint");
+#endif
+    set_box(S("dmSaveMgrRow"), S("dmSaveMgrSub"), note, S("dmSaveBack"), NULL); go(S_HOME); }
 static void export_page(void) {
     rows_clear(); const char *sv = save_dir(); DIR *d = opendir(sv); struct dirent *e;
     while (d && (e = readdir(d))) { if (e->d_name[0] == '.' || e->d_name[0] == '_' || dm_savepkg_is_coop_char(sv, e->d_name)) continue; char p[1400]; snprintf(p, sizeof p, "%s/%s/%s.d2s", sv, e->d_name, e->d_name); size_t L = 0; FILE *f = fopen(p, "rb"); if (!f) continue; uint8_t *b = malloc(1 << 20); if (b) { L = fread(b, 1, 1 << 20, f); dm_pkg_char c; memset(&c, 0, sizeof c); if (dm_savepkg_parse_d2s(b, L, &c)) { char t[200]; char_row_text(&c, t, sizeof t); row_t *r = row_add(t, S("dmSaveSelected"), RK_CHAR, 0); if (r) r->on = 1; } free(b); } fclose(f); }
@@ -137,11 +146,12 @@ static void preview_page(void) {
 #endif
      if (!strcmp(g_view.source_format, "d2r-pc")) pl = S("dmSaveFmtPc"); else if (!strcmp(g_view.source_format, "d2lod")) pl = S("dmSaveFmtLod"); else if (strcmp(g_view.source_format, "d2r-switch-plus")) pl = S("dmSaveFmtOther"); const char *ver = g_view.version[0] ? g_view.version : g_view.build;
     if (g_restore) strlcpy(sub, S("dmSaveRestoreMerge"), sizeof sub);   // 恢复只合并，这里说清楚（内审 I-04）| restore merges, say so here
-    else if (ver[0]) snprintf(sub, sizeof sub, S("dmSavePreviewFrom"), pl, ver, when); else snprintf(sub, sizeof sub, S("dmSavePreviewFromNoVer"), pl, when);
+    else if (ver[0]) snprintf(sub, sizeof sub, S("dmSavePreviewFrom"), pl, ver, when); else snprintf(sub, sizeof sub, S("dmSavePreviewFromNoVer"), pl, when); if (!strcmp(g_view.source_format, "d2r-mobile")) strlcpy(sub, S("dmSaveFmtUpstream"), sizeof sub);
     const char *note = NULL;
 #ifndef __ANDROID__
     if (dm_custom_get("icloud") && !getenv("DM_TEST_ICLOUD_OFF")) note = S("dmCloudSaveOn");
 #endif
+    if (g_view_partial) note = S("dmSaveUpstreamPartial");
     set_box(S("dmSaveImport"), sub, note, S("dmSavePreviewGo"), S("dmSaveBack")); go(S_PREVIEW);
 }
 static void bklist_page(void) {
@@ -155,11 +165,16 @@ static void bklist_page(void) {
 }
 static void bkitem_page(void) { rows_clear(); dm_pkg_backup *b = &g_bk[g_bk_sel]; row_add(S("dmSaveBkRestore"), NULL, RK_PLAIN, 0); row_add(S(b->starred ? "dmSaveBkUnstar" : "dmSaveBkStar"), NULL, RK_PLAIN, 1); row_add(S("dmSaveBkShare"), NULL, RK_PLAIN, 2); row_add(S("dmSaveBkDelete"), NULL, RK_PLAIN, 3); char when[32]; time_t tt = (time_t)b->when; struct tm tm; localtime_r(&tt, &tm); strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tm); set_box(S("dmSaveBackupList"), when, NULL, S("dmSaveBack"), NULL); go(S_BKITEM); }
 static void start_import(int restore, const char *path) { g_restore = restore; if (g_view_ok) { dm_savepkg_view_free(&g_view); g_view_ok = 0; } job_start(J_INSPECT, path); }
-static void request_pick(void) {
+static void request_pick(int folder) {
+    (void)folder;
 #ifdef DM_QA_BUILD
     { const char *t = getenv("DM_TEST_SAVEPKG_IN"); if (t) { if (!strcmp(t, "cancel")) { LOG("存档管理：测试旁路：取消选文件"); dm_savemgr_picked(NULL); return; } start_import(0, t); return; } }   // 系统选文件驱动不了，QA 构建直接给路径（CLAUDE.md §2.9）| the system picker cannot be driven, QA builds take a path directly
 #endif
-    if (!g_pick) { show_fail(DM_PKG_E_IO, S_HOME); return; } atomic_store(&g_pick_wait, 1); LOG("存档管理：打开系统选文件"); g_pick();
+    void (*pick)(void) = g_pick;
+#ifdef __ANDROID__
+    if (folder) pick = g_pick_folder;
+#endif
+    if (!pick) { show_fail(DM_PKG_E_IO, S_HOME); return; } atomic_store(&g_pick_wait, 1); LOG("存档管理：打开系统选文件"); pick();
 }
 static void share_now(const char *path) {
 #ifdef DM_QA_BUILD
@@ -171,7 +186,7 @@ static void share_now(const char *path) {
 static int name_taken(const char *c, void *ctx) { (void)ctx; char p[1400]; struct stat st; snprintf(p, sizeof p, "%s/%s", save_dir(), c); if (!stat(p, &st)) return 1; for (int i = 0; i < g_view.nchars; i++) if (!strcasecmp(g_view.chars[i].name, c) || !strcasecmp(g_view.chars[i].newname, c)) return 1; return 0; }
 static void row_action(row_t *r) {
     int st = atomic_load(&g_st);
-    if (st == S_HOME) { if (r->idx == 0) export_page(); else if (r->idx == 1) { g_home_import = 1; request_pick(); } else if (r->idx == 2) job_start(J_BACKUP, NULL); else bklist_page(); return; }
+    if (st == S_HOME) { if (r->idx == 0) export_page(); else if (r->idx == 1) { g_home_import = 1; request_pick(0); } else if (r->idx == 2) job_start(J_BACKUP, NULL); else if (r->idx == 3) bklist_page(); else { g_home_import = 1; request_pick(1); } return; }
     if (st == S_EXPORT) { r->on = !r->on; strlcpy(r->tag, S(r->on ? "dmSaveSelected" : "dmSaveNotSelected"), sizeof r->tag); return; }
     if (st == S_PREVIEW) {
         if (r->kind == RK_CHAR) { dm_pkg_char *c = &g_view.chars[r->idx]; if (c->status == DM_PKG_SAME || c->status == DM_PKG_BAD) return;
@@ -202,7 +217,7 @@ static void btn_action(int k) {
     case S_BKDEL: if (k == 0) { dm_savepkg_backup_delete(save_dir(), &g_bk[g_bk_sel]); LOG("存档管理：删除一份备份"); bklist_page(); } else bkitem_page(); break;
     default: break; }
 }
-void dm_savemgr_open(int from) { if (dm_uiscreen_ingame()) { LOG("存档管理：局内不打开（入口 %d）", from); return; } g_home_import = 0; { const char *sv = save_dir(); if (sv && dm_savepkg_is_coop_root(sv)) { show_msg(S("dmSaveMgrRow"), S("dmSaveCoopRoot"), S_NONE); LOG("存档管理：联机存档根，不开面板（入口 %d）", from); return; } } if (from == 3) { rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); go(S_WORK); request_pick(); LOG("存档管理：打开（入口 3）"); return; } show_home(); LOG("存档管理：打开（入口 %d）", from); }
+void dm_savemgr_open(int from) { if (dm_uiscreen_ingame()) { LOG("存档管理：局内不打开（入口 %d）", from); return; } g_home_import = 0; { const char *sv = save_dir(); if (sv && dm_savepkg_is_coop_root(sv)) { show_msg(S("dmSaveMgrRow"), S("dmSaveCoopRoot"), S_NONE); LOG("存档管理：联机存档根，不开面板（入口 %d）", from); return; } } if (from == 3) { rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); go(S_WORK); request_pick(0); LOG("存档管理：打开（入口 3）"); return; } show_home(); LOG("存档管理：打开（入口 %d）", from); }
 void dm_savemgr_on_uimsg(const char *cat, const char *act, const char *arg) { if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return; if (!strcmp(arg, "TouchSavesOpt")) dm_savemgr_open(1); else if (!strcmp(arg, "TouchSavesCc")) dm_savemgr_open(3); }
 
 // ---- 弹窗：输入 | The box: input
