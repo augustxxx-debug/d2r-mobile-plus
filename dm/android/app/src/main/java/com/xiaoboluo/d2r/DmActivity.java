@@ -861,6 +861,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
         if (req != REQ_SAVE_PICK && req != REQ_SAVE_EXPORT) return;
+        if (!started) { android.util.Log.w("dm", "save panel result after the process was recreated: dropped"); return; }   // 面板开着时进程被系统杀了：这是新进程，原生库没加载，也没有等结果的界面；临时 ZIP 下次启动清 | the process was killed while the panel was open: this is a new one, the native library is not loaded and nothing is waiting; the temporary ZIP is cleared at the next start
         Uri uri = res == RESULT_OK && data != null ? data.getData() : null; String src = saveExportPath; File tmp = new File(new File(getFilesDir(), "temp"), "save_import_pick.zip"); android.content.ContentResolver cr = getContentResolver();
         if (req == REQ_SAVE_PICK) {
             if (uri == null) { nativeSavePicked(null); return; }
