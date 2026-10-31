@@ -425,7 +425,11 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // 资产里的 zip 与它的版本记录：记录变了才重新解开（先解到 .part 再改名） | a zip in the assets and its version record: unpacked again only when the record changed (into .part, then renamed)
     private static void unpackIfChanged(android.content.res.AssetManager assets, String zip, String stamp, File dest) throws IOException {
         String want;
-        try (InputStream in = assets.open(stamp)) { want = new String(in.readAllBytes(), StandardCharsets.UTF_8); }
+        try (InputStream in = assets.open(stamp)) {   // InputStream.readAllBytes 要 API 33，minSdk 是 31（B104） | InputStream.readAllBytes needs API 33, minSdk is 31 (B104)
+            java.io.ByteArrayOutputStream all = new java.io.ByteArrayOutputStream(); byte[] b = new byte[256];
+            for (int n; (n = in.read(b)) > 0; ) all.write(b, 0, n);
+            want = all.toString(StandardCharsets.UTF_8.name());
+        }
         File mark = new File(dest, ".stamp");
         if (want.equals(readText(mark))) return;
         File part = new File(dest.getPath() + ".part");
