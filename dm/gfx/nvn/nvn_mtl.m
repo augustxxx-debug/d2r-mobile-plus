@@ -210,7 +210,7 @@ static void res_add(id<MTLResource> r) {
 #if DM_NVN_M3
     if ([r conformsToProtocol:@protocol(MTLBuffer)]) m3_buf_add((id<MTLBuffer>)r);
 #endif
-    if (g_res_census < 0) g_res_census = getenv("DM_RES_CENSUS") != NULL;
+    if (g_res_census < 0) { const char *e = getenv("DM_RES_CENSUS"); g_res_census = e && atoi(e) == 1; }
     if (g_res_census > 0) { if (!g_res_ever) g_res_ever = [NSHashTable weakObjectsHashTable]; [g_res_ever addObject:r]; }
     g_res_dirty = 1;
     pthread_mutex_unlock(&g_res_mu);
