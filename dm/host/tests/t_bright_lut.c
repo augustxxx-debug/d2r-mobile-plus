@@ -1,11 +1,12 @@
 // 3D 画面加亮调色表重写的 CPU 同式（B098）：Metal 核 lutk（dm/gfx/nvn/nvn_mtl.m）与 Vulkan xbg_bright_lut.comp 的高光保护。
 // 用合成的单调色调曲线（ACES / Reinhard / 硬剪裁，各配伽马 2.2，可带一点跨通道调色）做原表，断言：k = 1 不改表；k = 1.5 / 2 / 3 / 4 时
-// 灰阶与典型彩色曝光斜坡的输出亮度单调不减、不比原版暗、颜色只是原版与提亮后两色的同权混合；旧公式在 k = 4 下确实反转（哨兵）；
+// 灰阶与典型彩色曝光斜坡的输出亮度单调不减、不比原版暗、颜色只是原版与提亮后两色的同权混合、提亮后亮度 0.65 以下与旧公式相同；旧公式在 k = 4 下确实反转（哨兵）；
 // 两个着色器源文件里的公式与这里一致。clang -O1 -I.. -o build/t_bright_lut t_bright_lut.c -lm；运行 build/t_bright_lut <nvn_mtl.m> <xbg_bright_lut.comp>
 // CPU copy of the 3D brightening color-table rewrite (B098): the highlight protection of the Metal kernel lutk (dm/gfx/nvn/nvn_mtl.m) and Vulkan
 // xbg_bright_lut.comp. With synthetic monotonic tone curves (ACES / Reinhard / hard clip, each with gamma 2.2, optionally a little cross-channel grading)
 // as the original table it asserts: k = 1 leaves the table unchanged; at k = 1.5 / 2 / 3 / 4 the output luminance along gray and typical colored exposure
-// ramps never decreases, is never darker than the original, and the color is only an equal-weight mix of the original and brightened colors; the old
+// ramps never decreases, is never darker than the original, the color is only an equal-weight mix of the original and brightened colors, and below a
+// brightened luminance of 0.65 the result equals the old formula; the old
 // formula really reverses at k = 4 (sentinel); the formula text in both shader sources matches this one.
 #include <math.h>
 #include <stdio.h>
@@ -51,6 +52,12 @@ static void rewrite(int old, float k, const float *u, const float *o, float *out
     for (int i = 0; i < 3; i++) out[i] = o[i] + (b[i] - o[i]) * w;
 }
 // 沿一条曝光斜坡（场景颜色 col × t）走，返回输出亮度从此前峰值的最大回落；同时核「不比原版暗」「同权混合」 | walk an exposure ramp (scene color col x t), return the largest drop of the output luminance below its running peak; also check "never darker" and "equal-weight mix"
+// 提亮后亮度 < 0.65 且各通道 b ≥ o 时新旧公式应逐通道相同（暗处 / 野外白天的加亮不变）；容差 2e-4（不到 1/255 的 1/19）：亮度差 ≤ 1e-5 时新式取原值，
+// 近黑格单通道最多差 1e-5 / 0.0722 ≈ 1.4e-4
+// Where the brightened luminance < 0.65 and b >= o per channel the new and old forms must match per channel (brightening of dark areas / daytime wilderness
+// unchanged); tolerance 2e-4 (under 1/19 of 1/255): when the luminance difference is <= 1e-5 the new form keeps the original, so a near-black cell can differ
+// by at most 1e-5 / 0.0722 ~= 1.4e-4 in one channel
+static int same_as_old_bad;
 static float ramp(int old, float k, const float *col, int *darker, int *spliced) {
     float prev = -1, drop = 0; *darker = *spliced = 0;
     for (int s = 0; s <= 4000; s++) {
@@ -60,7 +67,8 @@ static float ramp(int old, float k, const float *col, int *darker, int *spliced)
         float l = luma(r); if (l > prev) prev = l; else if (prev - l > drop) drop = prev - l;
         if (l < luma(o) - 1e-5f) (*darker)++;
         if (!old) { float b[3], u2[3]; for (int i = 0; i < 3; i++) u2[i] = clampf(pq(k * pq_inv(u[i])), 0, 1); sample(u2, b);
-            float w = -1; for (int i = 0; i < 3; i++) if (fabsf(b[i] - o[i]) > 1e-4f) { float wi = (r[i] - o[i]) / (b[i] - o[i]); if (w < 0) w = wi; else if (fabsf(wi - w) > 1e-3f) (*spliced)++; } }
+            float w = -1; for (int i = 0; i < 3; i++) if (fabsf(b[i] - o[i]) > 1e-4f) { float wi = (r[i] - o[i]) / (b[i] - o[i]); if (w < 0) w = wi; else if (fabsf(wi - w) > 1e-3f) (*spliced)++; }
+            if (luma(b) < 0.649f && b[0] >= o[0] && b[1] >= o[1] && b[2] >= o[2]) { float r0[3]; rewrite(1, k, u, o, r0); for (int i = 0; i < 3; i++) if (fabsf(r0[i] - r[i]) > 2e-4f) same_as_old_bad++; } }
     }
     return drop;
 }
@@ -87,6 +95,7 @@ int main(int argc, char **argv) {
             if (ks[ki] == 4.0f) { float d2 = ramp(1, 4.0f, cols[ci], &dk, &sp); if (d2 > worst_old) worst_old = d2; }
         }
     }
+    { char why[96]; snprintf(why, sizeof why, "below the 0.65 knee the new form equals the old one (%d mismatches)", same_as_old_bad); check(same_as_old_bad == 0, why); }
     // 哨兵：旧公式在 k = 4 至少一条斜坡上反转，说明这套斜坡抓得住 B098 | sentinel: the old formula reverses on at least one ramp at k = 4, so these ramps catch B098
     { char why[96]; snprintf(why, sizeof why, "old formula reverses at k = 4 (largest drop %g)", worst_old); check(worst_old > 1e-3f, why); }
     // 两个着色器源文件的公式与上面同式 | both shader sources carry the formula above
