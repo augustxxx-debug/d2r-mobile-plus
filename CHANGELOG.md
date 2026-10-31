@@ -14,6 +14,7 @@ RC2 merges the iOS and Android lines: one tree, and both packages come from the 
 - **Community links**: the loading page and the in-game box now check `community.site` by the same rule. A manifest whose only channel is invalid no longer clears the community links you already have, and the entry stays visible.
 - **Android folder name**: game files now go in `Download/S2X/D2R Mobile Plus`. If that folder holds nothing and `Download/S2X/D2R Mobile` does, the old folder keeps working, so you do not need to move anything. Prompts and guides use the new name.
 - **Android**: the community / About box shows the version; the diagnostics file name keeps the version and commit apart.
+- **Crowded scenes**: the game's video memory pool 0 grows from 400 MB to 512 MB, so roughly 70 animated monsters on screen no longer crash the game. This sets aside 112 MB more of the game heap; pages are used only when needed.
 - **Free Town Portal is on by default** (user, 2026-10-30; both platforms): new installs start with it on, and settings from RC1.2 and Android 1.0.1 / 1.0.2 are moved to on once when you upgrade. Those versions saved every option, so an old "off" cannot be told from the old default; if you had turned it off on purpose, turn it off again in Options → Custom and it stays off. Going back to one of those versions, saving settings there and upgrading again moves it to on once more, because they drop the marker.
 
 ## [1.0.0-rc1.2] - 2026-10-30
