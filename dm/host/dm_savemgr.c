@@ -96,7 +96,7 @@ static void *job_main(void *arg) {
     if (g_job == J_INSPECT) { dm_pkg_view v; rc = dm_savepkg_inspect(g_job_arg, sv, g_restore, &v); if (!rc) { g_view = v; g_view_ok = 1; } else dm_savepkg_view_free(&v); }
     else if (g_job == J_BACKUP) { char d[1400], snap[1500]; snprintf(d, sizeof d, "%s.export.tmp", sv); dm_savepkg_rmtree(d); mkdir(d, 0755); snprintf(snap, sizeof snap, "%s/snap", d); rc = dm_save_snapshot(snap) ? DM_PKG_E_IO : dm_savepkg_backup_tree(sv, snap, "manual", time(NULL), custom, &g_src, NULL, 0); dm_savepkg_rmtree(d); }
     else if (g_job == J_EXPORT) { char d[1400], snap[1500], ts[32]; snprintf(d, sizeof d, "%s.export.tmp", sv); dm_savepkg_rmtree(d); mkdir(d, 0755); snprintf(snap, sizeof snap, "%s/snap", d); iso_stamp(ts, sizeof ts); snprintf(g_share_path, sizeof g_share_path, "%s/D2RMobilePlus_saves_%s.zip", d, ts);
-        if (dm_save_snapshot(snap)) rc = DM_PKG_E_IO; else { dm_pkg_export_opts o; memset(&o, 0, sizeof o); o.names = g_sel_names; o.nnames = g_sel_n; o.stash = g_sel_stash; o.settings = g_sel_settings; o.custom_dir = custom; o.kind = "export"; o.now = time(NULL); rc = dm_savepkg_export(snap, g_share_path, &o, &g_src); } }
+        if (dm_save_snapshot(snap)) rc = DM_PKG_E_IO; else { dm_pkg_export_opts o; memset(&o, 0, sizeof o); o.names = g_sel_names; o.nnames = g_sel_n; o.stash = g_sel_stash; o.settings = g_sel_settings; o.source_root = sv; o.custom_dir = custom; o.kind = "export"; o.now = time(NULL); rc = dm_savepkg_export(snap, g_share_path, &o, &g_src); } }
     atomic_store(&g_job_rc, rc); atomic_store(&g_job_done, 1); return NULL;
 }
 static void job_start(int j, const char *arg) { g_job = j; strlcpy(g_job_arg, arg ? arg : "", sizeof g_job_arg); atomic_store(&g_job_done, 0); rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); go(S_WORK); pthread_t th; if (pthread_create(&th, NULL, job_main, NULL)) { atomic_store(&g_job_rc, DM_PKG_E_IO); atomic_store(&g_job_done, 1); } else pthread_detach(th); }
@@ -200,7 +200,7 @@ static void btn_action(int k) {
     case S_BKDEL: if (k == 0) { dm_savepkg_backup_delete(save_dir(), &g_bk[g_bk_sel]); LOG("存档管理：删除一份备份"); bklist_page(); } else bkitem_page(); break;
     default: break; }
 }
-void dm_savemgr_open(int from) { if (dm_uiscreen_ingame()) { LOG("存档管理：局内不打开（入口 %d）", from); return; } g_home_import = 0; if (from == 3) { rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); go(S_WORK); request_pick(); LOG("存档管理：打开（入口 3）"); return; } show_home(); LOG("存档管理：打开（入口 %d）", from); }
+void dm_savemgr_open(int from) { if (dm_uiscreen_ingame()) { LOG("存档管理：局内不打开（入口 %d）", from); return; } g_home_import = 0; { const char *sv = save_dir(); if (sv && dm_savepkg_is_coop_root(sv)) { show_msg(S("dmSaveMgrRow"), S("dmSaveCoopRoot"), S_NONE); LOG("存档管理：联机存档根，不开面板（入口 %d）", from); return; } } if (from == 3) { rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); go(S_WORK); request_pick(); LOG("存档管理：打开（入口 3）"); return; } show_home(); LOG("存档管理：打开（入口 %d）", from); }
 void dm_savemgr_on_uimsg(const char *cat, const char *act, const char *arg) { if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return; if (!strcmp(arg, "TouchSavesOpt")) dm_savemgr_open(1); else if (!strcmp(arg, "TouchSavesCc")) dm_savemgr_open(3); }
 
 // ---- 弹窗：输入 | The box: input

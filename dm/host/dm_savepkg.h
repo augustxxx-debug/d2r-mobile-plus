@@ -17,6 +17,7 @@ typedef struct {                                                                
     const char *const *names; int nnames;   // nnames < 0 = 全部角色 | nnames < 0 = all characters
     int stash, settings;                    // 含共享仓库 / 含设置（设置 = Settings/ + 白名单键） | include shared stash / settings (Settings/ + the allow-listed keys)
     const char *custom_dir;                 // sw_custom.txt 所在目录，可空 | directory of sw_custom.txt, may be NULL
+    const char *source_root;                // tree 是快照时填真正的存档根（联机根判定用），可空 | the real save root when tree is a snapshot (for the co-op root check), may be NULL
     const char *kind;                       // "export" / "manual" / "auto" | "export" / "manual" / "auto"
     int64_t now;                            // 秒（UTC），写进 manifest | seconds (UTC), written into the manifest
     int (*progress)(int done, int total);   // 可空；返回非 0 中止 | may be NULL; non-zero aborts
@@ -68,5 +69,6 @@ int dm_savepkg_backup_delete(const char *save, const dm_pkg_backup *b);
 void dm_savepkg_backup_prune(const char *save, const char *keep);                // 未标星只留最近 10 份，每个目录各算（keep 这份不删） | keep the 10 newest unstarred per directory (never deletes keep)
 long long dm_savepkg_free_bytes(const char *path);
 int dm_savepkg_rmtree(const char *path);
+int dm_savepkg_is_coop_root(const char *path);   // 这个目录是不是联机存档根（字面路径或解析后的真实路径）| whether this directory is a co-op save root (literal or resolved path)
 int dm_savepkg_is_coop_char(const char *root, const char *phys);   // 这个角色目录有没有 .sw_coop 标记（约定见 dm_savepkg.c）| whether this character directory carries a .sw_coop marker (convention in dm_savepkg.c)
 int dm_savepkg_coop_count(const char *save);   // 存档根和兄弟目录 <存档根>.coop 里的联机角色数 | co-op characters in the save root and its sibling <save root>.coop
