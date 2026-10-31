@@ -5249,6 +5249,7 @@ static void mp_check(int i, uint64_t ticket) {
 // Only the 3D world is touched: UI, text and the health orbs are composited after tone mapping; highlights are compressed by PQ and do not blur into a sheet of white as a final whole-screen multiply would. The normal / readable tile merge / freeze paths all just read this table, so it takes effect in one place.
 // k is given every frame by the host's dm_bright_k() (dm/host/dm_bright.c: 1 out of game, 4 for maze-type areas, 4 where the original game's picture does not follow day and night, the rest derived from the original game's ambient brightness, with smooth transitions; default cap 2, dm_bright_cap.h); no rewrite when k ~= 1.
 // The highlight protection is monotonic (B098): output luminance = max(original luminance, shoulder(brightened luminance)), color = the original and brightened colors mixed with one weight to reach it; CPU copy with unit test dm/host/tests/t_bright_lut.c.
+__attribute__((weak)) int dm_bright_area(void) { return 0; }
 __attribute__((weak)) int dm_bright_indoor(void) { return 0; }   // 宿主 dm_bright.c 给强定义；图形单测里恒室外 | the host dm_bright.c provides the strong definition; always outdoor in the graphics unit tests
 __attribute__((weak)) float dm_bright_k(void) { return 1.0f; }   // 宿主 dm_bright.c 提供强定义；图形单测不链宿主时不加亮 | The host's dm_bright.c provides the strong definition; no brightening when graphics unit tests do not link the host
 static const char k_lut_msl[] =

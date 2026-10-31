@@ -122,7 +122,7 @@ static inline int rts_sun_from_lvp(const float *L, float sun[3]) {
 // Down: frame > 92% of the budget with ray tracing > 12% (it really is a burden); with the frame time unknown, ray tracing alone > 50%; sustained for 1 s → one level down (no step down while the frame has headroom, however costly ray tracing is); at least 1 s between changes.
 // Up: frame < 70% of the budget (ray tracing < 20% when the frame time is unknown), sustained for hold_up seconds (8 s at first) → one level up; forced back down within 5 s of a step up doubles hold_up (≤ 120 s) to avoid oscillation.
 // Returns +1 = one level down (lvl + 1), −1 = one level up, 0 = unchanged; why receives the reason (for the log)
-typedef struct { int lvl, max_lvl, n; double rt, fr, t_change, t_over, t_under, hold_up, t_up; } rts_gov;
+typedef struct { int lvl, max_lvl, min_lvl, n; double rt, fr, t_change, t_over, t_under, hold_up, t_up; } rts_gov;   // min_lvl：只往上升到这一档（玩家档定的上限，见 rts_preset_min_lvl） | min_lvl: steps up no further than this level (the ceiling set by the player level, see rts_preset_min_lvl)
 static inline void rts_gov_init(rts_gov *g, int max_lvl) { *g = (rts_gov){.max_lvl = max_lvl, .hold_up = 8, .t_over = -1, .t_under = -1, .t_change = -1e9, .t_up = -1e9, .fr = -1}; }
 static inline int rts_gov_step(rts_gov *g, double rt_ms, double fr_ms, double budget_ms, double now, const char **why) {
     if (!(rt_ms >= 0) || !(budget_ms > 0)) return 0;
@@ -140,7 +140,7 @@ static inline int rts_gov_step(rts_gov *g, double rt_ms, double fr_ms, double bu
         g->lvl++; g->t_change = now; g->t_over = g->t_under = -1;
         if (why) *why = fk ? "整帧 GPU 超预算且光追占比高" : "整帧时间不知道、光追单独超过半帧预算";
         return 1; }
-    if (under && g->lvl > 0 && now - g->t_under >= g->hold_up) {
+    if (under && g->lvl > g->min_lvl && now - g->t_under >= g->hold_up) {
         g->lvl--; g->t_change = g->t_up = now; g->t_over = g->t_under = -1;
         if (why) *why = fk ? "整帧 GPU 有余量" : "光追耗时降下来了";
         return -1; }
@@ -157,6 +157,9 @@ static inline int rts_gov_step(rts_gov *g, double rt_ms, double fr_ms, double bu
 // (the judge is the forest's main cost: Mac forest ray tracing 3.6 → 0.6 ms; characters / monsters / opaque objects stay ray traced).
 // "Pause" (original shadows) is only for the GPU-hang protection (rts_lvl_params.off, set by the caller); the quarter-resolution sun level is gone (crawling stair steps along the stone wall, user recording on the device with 79eaa3f)
 #define RTS_LVL_MAX 3
+// 玩家档（图形页「光追」，设置键 rt_level：0 关、1 低、2 中、3 高）→ 降档器能升到的最高一档：低 = 第 2 档、中 = 第 1 档、高 = 第 0 档；只往下降，不越过这一档
+// Player level (Graphics "Ray tracing", settings key rt_level: 0 off, 1 low, 2 medium, 3 high) → the highest level the downgrade may reach: low = level 2, medium = level 1, high = level 0; it only steps down from there
+static inline int rts_preset_min_lvl(int preset) { return preset >= 1 && preset <= 3 ? 3 - preset : 0; }
 typedef struct { int point_on, point_n, point_div, sun_div, soft, ao, off, no_alpha, excl_player; } rts_lvl_params;
 static inline rts_lvl_params rts_lvl_apply(int lvl, int point_on, int point_n, int point_div, int sun_half, int soft, int ao) {
     rts_lvl_params p = {point_on, point_n, point_div, sun_half ? 2 : 1, soft, ao, 0, 0, 0};

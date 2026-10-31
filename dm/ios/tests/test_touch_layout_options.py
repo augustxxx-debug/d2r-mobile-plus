@@ -40,8 +40,8 @@ for voice in (False, True):
         os.environ['MOVIE_FFMPEG'] = '1'; layout = importlib.reload(layout)
     host = host_variant(voice)
     keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
-    assert [key for key in keys if key not in ('eco_fps', 'q3d', 'fps_hud', 'upscale', 'render_res', 'rt_shadow', 'rt_ao')] == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)   # 图形页六键（含显示帧数）不在自定义页 | the five Graphics-tab keys are not Custom-page rows
-    assert keys[-4:] == ['upscale', 'render_res', 'rt_shadow', 'rt_ao']   # 末四键 = 图形页 K_UPSCALE / K_RES / K_RT / K_RTAO | last four keys = Graphics-tab K_UPSCALE / K_RES / K_RT / K_RTAO
+    assert [key for key in keys if key not in ('eco_fps', 'q3d', 'fps_hud', 'upscale', 'render_res', 'rt_level')] == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)   # 图形页六键（含显示帧数）不在自定义页 | the five Graphics-tab keys are not Custom-page rows
+    assert keys[-3:] == ['upscale', 'render_res', 'rt_level']   # 末三键 = 图形页 K_UPSCALE / K_RES / K_RTLVL | last three keys = Graphics-tab K_UPSCALE / K_RES / K_RTLVL
     assert ('voice' in keys) == voice
     defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0

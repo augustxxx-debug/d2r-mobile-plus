@@ -559,6 +559,17 @@ int main(void) { @autoreleasepool {
     { g_rts.on = -2; g_rts.gov.n = 77; g_rts.gov.lvl = 2; rts_on(); rts_on();
       EXPECT("29 玩家路径：降档器样本不被重置", 77, g_rts.gov.n); EXPECT("29 玩家路径：档位不被重置", 2, g_rts.gov.lvl); EXPECT("29 玩家路径：仍是跟设置", -2, g_rts.on);
       g_rts.ao_pin = -1; g_rts.ao_on = 1; rts_on(); EXPECT("29 光追 AO 跟设置（这里的弱定义 = 关）", 0, g_rts.ao_on); g_rts.ao_pin = 1; g_rts.ao_on = 1; rts_on(); EXPECT("29 DM_RT_AO 钉住时不看设置", 1, g_rts.ao_on); g_rts.ao_pin = -1; g_rts.ao_on = 0; }
+    // 30. 玩家档：低 / 中 / 高定上限与软影、AO；AO 被降档关掉后本关不再开回，换关再试一次
+    // 30. Player level: low / medium / high set the ceiling, soft shadows and AO; AO dropped by the downgrade stays off for the level, with one more try on the next level
+    { int pin0 = g_rts.ao_pin, on0 = g_rts.on, lp0 = g_rts.lvl_pin; g_rts.on = -2; g_rts.ao_pin = -1; g_rts.lvl_pin = -1;
+      rts_preset_set(1); EXPECT("30 低：最高第 2 档", 2, g_rts.gov.lvl); EXPECT("30 低：无软影", 0, g_rts.eff.soft); EXPECT("30 低：太阳半分辨率", 2, g_rts.eff.sun_div);
+      rts_preset_set(2); EXPECT("30 中：最高第 1 档", 1, g_rts.gov.lvl); EXPECT("30 中：无软影", 0, g_rts.eff.soft); EXPECT("30 中：太阳全分辨率", 1, g_rts.eff.sun_div); EXPECT("30 中：无 AO", 0, g_rts.eff.ao);
+      rts_preset_set(3); g_rts.ao_on = 1; rts_lvl_update(); EXPECT("30 高：第 0 档", 0, g_rts.gov.lvl); EXPECT("30 高：有软影", 1, g_rts.eff.soft); EXPECT("30 高：有 AO", 1, g_rts.eff.ao);
+      rts_area_note(5); double t0 = rts_now() - 100; g_rts.gov.t_change = t0; g_rts.gov.n = 100; g_rts.gov.fr = 30; g_rts.gov.rt = 8; g_rts.gov.t_over = t0; rts_gov_feed(8, 30, 60);
+      EXPECT("30 高超预算：降到第 1 档", 1, g_rts.gov.lvl); EXPECT("30 AO 被关后锁住", 1, g_rts.ao_latched); EXPECT("30 本关上限变第 1 档", 1, g_rts.gov.min_lvl);
+      rts_area_note(5); EXPECT("30 同一关不解锁", 1, g_rts.ao_latched); rts_area_note(0); EXPECT("30 局外不算换关", 1, g_rts.ao_latched);
+      rts_area_note(6); EXPECT("30 换关解锁", 0, g_rts.ao_latched); EXPECT("30 换关上限回第 0 档", 0, g_rts.gov.min_lvl);
+      rts_preset_set(0); EXPECT("30 关：玩家路径不开光追", 0, rts_on()); g_rts.ao_pin = pin0; g_rts.lvl_pin = lp0; g_rts.on = on0; rts_gov_init(&g_rts.gov, RTS_LVL_MAX); rts_lvl_update(); }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

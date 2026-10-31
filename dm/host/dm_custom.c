@@ -38,13 +38,13 @@ static const char *const k_keys[] = { "lang",
 #if VOICE_ROW
     "voice",
 #endif
-    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "fps_hud", "upscale", "render_res", "rt_shadow", "rt_ao" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
+    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
 static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
@@ -56,13 +56,12 @@ static const int k_def[NK] = { 0,
 #define K_TOUCH_SWAP (15 + VOICE_ROW)
 // free_tp（免费回城，dm_freetp.c）缺省开（用户 2026-10-30，RC2 起）：RC1.2 / 安卓 1.0.x 缺省关且存盘写全部键，它们留下的 free_tp=0 分不出是不是玩家关的，所以另记 free_tp_v2：没有这个标记的旧文件迁移一次到开；存盘都带标记，之后玩家再关就一直是关
 // free_tp (free town portal, dm_freetp.c) on by default (user 2026-10-30, from RC2): RC1.2 / Android 1.0.x shipped it off and saved every key, so their free_tp=0 cannot be told from a player choice; hence the free_tp_v2 marker: an old file without it migrates once to on; every save writes the marker, so a later off by the player stays off
-#define K_FPSHUD (NK - 5)   // fps_hud 显示帧数：图形页第二行（原在自定义页末行）| fps_hud Show frame rate: Graphics tab row 2 (was the last Custom row)
-#define K_UPSCALE (NK - 4)
-#define K_RES (NK - 3)
-#define K_RT (NK - 2)
-#define K_RTAO (NK - 1)   // 光追 AO（实验性，缺省关）：依赖光追阴影，见 dm_rt_ao_setting | ray-traced AO (experimental, off by default): depends on ray-traced shadows, see dm_rt_ao_setting
-#define N_GFX 7   // 图形页的键数：eco_fps / q3d / fps_hud / upscale / render_res / rt_shadow / rt_ao（自定义页的行数 = custom_rows()） | Number of Graphics-tab keys (Custom-page rows = custom_rows())
-static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_FPSHUD || i == K_UPSCALE || i == K_RES || i == K_RT || i == K_RTAO; }
+#define K_FPSHUD (NK - 4)   // fps_hud 显示帧数：图形页第二行（原在自定义页末行）| fps_hud Show frame rate: Graphics tab row 2 (was the last Custom row)
+#define K_UPSCALE (NK - 3)
+#define K_RES (NK - 2)
+#define K_RTLVL (NK - 1)   // 光追档位（实验性，缺省关）：0 关、1 低、2 中、3 高，见 dm_rt_level_setting；替换 rt_shadow / rt_ao 两个开关 | ray-tracing level (experimental, off by default): 0 off, 1 low, 2 medium, 3 high, see dm_rt_level_setting; replaces the rt_shadow / rt_ao switches
+#define N_GFX 6   // 图形页的键数：eco_fps / q3d / fps_hud / upscale / render_res / rt_level（自定义页的行数 = custom_rows()） | Number of Graphics-tab keys (Custom-page rows = custom_rows())
+static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_FPSHUD || i == K_UPSCALE || i == K_RES || i == K_RTLVL; }
 // 配置项的平台限制：没有 iCloud 的平台（Android：nvn_vk.c 强定义 0）自定义页不出 icloud 行，布局生成器按 DM_TARGET=android 同样不出（touch_layout.py _CUSTOM_KEYS），
 // 行号两边对齐；键仍在设置文件里（分享摘要照写），只是没人读。弱定义 = 支持（Apple 不变）
 // Per-platform settings: platforms without iCloud (Android: strong 0 in nvn_vk.c) get no icloud row on the Custom page, and the layout generator omits it likewise under
@@ -108,11 +107,11 @@ static int voice_running(void) { return lang_running() == 0 ? 0 : 1; }   // 没�
 // (merc_pot=1 in an old file is also on, the same result). The merc_pot line is still written with the current value, so packages of older versions read it without error
 static _Atomic int g_merc_explicit = -1;   // 文件里写着的 merc_pot_v2：-1 没写 / 0 / 1 | merc_pot_v2 as written in the file: -1 not written / 0 / 1
 
-// 崩溃围栏自动关实验项之前的原值（-1 = 没备份）：存进设置文件一行 exp_off_backup=eco_fps:2,rt_shadow:1,upscale:1；
+// 崩溃围栏自动关实验项之前的原值（-1 = 没备份）：存进设置文件一行 exp_off_backup=eco_fps:2,rt_level:2,upscale:1；
 // 玩家下次打开图形页时按它预选（勾选框恢复成原来的样子），点「应用」生效并清掉备份，「放弃」保留备份、下次打开再预选
-// Original values before the crash fence turned experimental features off (-1 = no backup): saved in the settings file as one line exp_off_backup=eco_fps:2,rt_shadow:1,upscale:1;
+// Original values before the crash fence turned experimental features off (-1 = no backup): saved in the settings file as one line exp_off_backup=eco_fps:2,rt_level:2,upscale:1;
 // the next time the player opens the Graphics tab they are pre-selected (checkboxes back as they were); Apply makes them effective and clears the backup, Discard keeps the backup and pre-selects again next time
-static const char *const k_bak_name[3] = { "eco_fps", "rt_shadow", "upscale" };
+static const char *const k_bak_name[3] = { "eco_fps", "rt_level", "upscale" };
 static _Atomic int g_bak[3] = { -1, -1, -1 };
 static _Atomic int g_repaint;
 // 内存档位（用户 2026-10-29：「要按机型考虑，不同机型运存不一样」）：按本进程内存上限（phys_footprint + os_proc_available_memory，iOS main.m 在游戏堆分配之前量一次交进来）分三档，
@@ -177,16 +176,23 @@ static int file_path(char *p, size_t n) {
 static int q3d_for_fps(int q3d, int fps) { return fps == 120 && q3d == 3 ? 2 : q3d; }
 static void save(void);
 static int fps_effective(int saved);   // 下面帧率档那里（测试开关 + 屏幕刷新率）；读盘时用它，不能走 dm_custom_get（会再进 load_once） | defined with the frame rate mode below (test switch + screen refresh); used while loading, where dm_custom_get would re-enter load_once
+// 旧设置迁移（文件里没有 rt_level 时）：阴影开 + AO 开 → 高，阴影开 → 中，阴影关 → 关（公开包只有 rt_shadow，rt_ao 只在 RC2 开发包里出现过）
+// Migrating old settings (no rt_level in the file): shadows + AO on → high, shadows on → medium, shadows off → off (public packages only have rt_shadow; rt_ao only ever appeared in RC2 development packages)
+static int rt_level_migrate(int rt, int ao) { return !rt ? 0 : ao ? 3 : 2; }
 static void load_once(void) {
     if (atomic_load(&g_loaded)) return;
     char p[1100]; if (!file_path(p, sizeof p)) return;   // 存档还没挂上：先按缺省开答，挂上后再读 | The save is not mounted yet: answer with the default (on) for now, and read again after it is mounted
     int v[NK]; for (int i = 0; i < NK; i++) v[i] = k_def[i];
     FILE *f = fopen(p, "r"); char ln[128];
     int lang = -1, voice = -1, merc = -1, qv2 = 0, ftv2 = 0, mem_was = -1, mem_ack = 0;
+    int has_rtlvl = 0, old_rt = 0, old_ao = 0;
     for (int b = 0; b < 3; b++) atomic_store(&g_bak[b], -1);   // 备份以文件为准 | the backup follows the file
     while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0';
         if (i == K_Q3D) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 4) v[i] = (int)q; else v[i] = 0; }
         if (i == K_RES) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q < DM_RES_LEVELS) v[i] = (int)q; else v[i] = 0; }
+        if (i == K_RTLVL) { char *end; long q = strtol(eq + 1, &end, 10); v[i] = end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 3 ? (int)q : 0; has_rtlvl = 1; }
+        if (!strcmp(ln, "rt_shadow")) old_rt = eq[1] != '0';
+        if (!strcmp(ln, "rt_ao")) old_ao = eq[1] != '0';
         if (i == K_FPS && eq[1] == '2' && (eq[2] == '\n' || eq[2] == '\r' || eq[2] == 0)) v[i] = FPS_120;   // 其余照旧：0 = 60、非 0 = 30 | Otherwise as before: 0 = 60, non-zero = 30
         if (!strcmp(ln, "q3d_v2")) qv2 = eq[1] == '1';
         if (!strcmp(ln, "free_tp_v2")) ftv2 = eq[1] == '1';
@@ -198,9 +204,11 @@ static void load_once(void) {
 #endif
         if (!strcmp(ln, "merc_pot_v2")) merc = eq[1] != '0';
         if (!strcmp(ln, "exp_off_backup")) for (int b = 0; b < 3; b++) { const char *q = strstr(eq + 1, k_bak_name[b]); size_t L = strlen(k_bak_name[b]);
-            if (q && q[L] == ':' && q[L + 1] >= '0' && q[L + 1] <= '9') atomic_store(&g_bak[b], q[L + 1] - '0'); } }
+            if (q && q[L] == ':' && q[L + 1] >= '0' && q[L + 1] <= '9') atomic_store(&g_bak[b], q[L + 1] - '0'); }
+        if (!strcmp(ln, "exp_off_backup") && atomic_load(&g_bak[1]) < 0) { const char *q = strstr(eq + 1, "rt_shadow:"); if (q && q[10] >= '1' && q[10] <= '9') atomic_store(&g_bak[1], 2); } }   // 旧包的围栏备份：光追开过 = 中 | a crash-fence backup from an older package: ray tracing on = medium
     if (f) fclose(f);
     if (!qv2) v[K_Q3D] = v[K_Q3D] == 1 ? 3 : 0;
+    if (!has_rtlvl) { v[K_RTLVL] = rt_level_migrate(old_rt, old_ao); if (old_rt) LOG("光追档位：旧设置 rt_shadow=%d rt_ao=%d 迁移为 rt_level=%d", old_rt, old_ao, v[K_RTLVL]); }
     if (!ftv2) { int ft = key_index("free_tp"); if (f && !v[ft]) LOG("自定义设置：旧文件的 free_tp=0 迁移为开（RC2 起缺省开，free_tp_v2）"); v[ft] = 1; }
     if (v[K_Q3D] == 4) { v[K_Q3D] = 0; v[K_UPSCALE] = 0; }
     { const char *tl = getenv("DM_TEST_LANG"); if (tl && *tl >= '0' && *tl < '0' + LANG_N) { lang = v[0] = *tl - '0'; g_lang_test = 1; LOG("自定义设置：测试开关 DM_TEST_LANG=%d（当作语言行选了 %s 并应用，不写回文件）", lang, k_lang_name[lang]); } }
@@ -366,22 +374,16 @@ enum { ROW_RES, ROW_FPSHUD, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT, ROW_RTAO 
 static int graphics_rows_pack(int res_ok, int up_ok, int prof_on, int rt_ok, int out[7]) {
     int n = 0; if (res_ok) out[n++] = ROW_RES; out[n++] = ROW_FPSHUD; out[n++] = ROW_FPS; if (up_ok) { out[n++] = ROW_UPSCALE; if (prof_on) out[n++] = ROW_PROFILE; } if (rt_ok) { out[n++] = ROW_RT; out[n++] = ROW_RTAO; } return n;
 }
-// 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义）。生效值、设置或机器判定一变就记一行「光追阴影：生效」（分享诊断日志的摘要按这个前缀取最后一行）
-// Read every frame by rts_on in nvn_rtshadow.inc (strong definition of a weak symbol). One "光追阴影：生效" (ray-traced shadows: effective) line whenever the effective value, the setting or the machine gate changes (the share-diagnostics summary takes the last line with this prefix)
-int dm_rt_shadow_setting(void) {
-    int ok = rt_shadow_ok(), set = dm_custom_get("rt_shadow") != 0, on = ok && set;
-    static _Atomic int last = -1; int key = on * 4 + set * 2 + ok;
-    if (atomic_exchange(&last, key) != key) LOG("光追阴影：生效 %s（设置 %s，机器%s）", on ? "开" : "关", set ? "开" : "关", ok ? "可用" : "不可用");
-    return on;
-}
-// 光追 AO（键 rt_ao，实验性，缺省关，图形页光追阴影下一行）：AO 的射线走光追阴影建的 TLAS，所以依赖光追阴影——阴影没开时生效值为关，设置值保留（崩溃围栏关阴影时 AO 也随它关）。
-// 图形层 rts_on 每帧读；生效值变了记一行「光追 AO：生效 rt_ao=」（分享诊断日志的摘要按「光追 AO：」前缀取）
-// Ray-traced AO (key rt_ao, experimental, off by default, the row below ray-traced shadows): the AO rays use the TLAS built for ray-traced shadows, so it depends on them - with shadows off the effective value is off and the setting is kept (the crash fence turning shadows off takes AO with it).
-// Read every frame by rts_on in the graphics layer; one "光追 AO：生效 rt_ao=" line when the effective value changes (the share-diagnostics summary takes the "光追 AO：" prefix)
-int dm_rt_ao_setting(void) {
-    int ok = rt_shadow_ok(), set = dm_custom_get("rt_ao") != 0, rt = dm_custom_get("rt_shadow") != 0, on = ok && set && rt;
-    static _Atomic int last = -1; int key = on * 8 + set * 4 + rt * 2 + ok;
-    if (atomic_exchange(&last, key) != key) LOG("光追 AO：生效 rt_ao=%d（设置 %s，光追阴影 %s，机器%s）", on, set ? "开" : "关", rt ? "开" : "关", ok ? "可用" : "不可用");
+// 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义）：玩家档 0–3，已含机器门槛和内存封顶；DM_RT_PRESET=0–3 钉住。生效值一变就记一行「光追档位：生效 rt_level=」（分享诊断日志的摘要按这个前缀取最后一行）
+// 内存档位 < 2 时高档不开放（AO、软影多两张贴图，内存紧的机器不值得）：存的还是高，生效值夹到中
+// Read every frame by rts_on in nvn_rtshadow.inc (strong definition of a weak symbol): player level 0–3, machine gate and memory cap included; DM_RT_PRESET=0–3 pins it. One "光追档位：生效 rt_level=" line whenever the effective value changes (the share-diagnostics summary takes the last line with this prefix)
+// High is not offered below memory tier 2 (AO and soft shadows add textures, not worth it on a tight machine): the stored value stays high, the effective one is clamped to medium
+static int rt_level_cap(void) { return dm_mem_tier() < 2 ? 2 : 3; }
+static int rt_level_pin(void) { static int v = -2; if (v == -2) { const char *e = getenv("DM_RT_PRESET"); v = e && *e >= '0' && *e <= '3' && !e[1] ? *e - '0' : -1; if (e && v < 0) LOG("【红】DM_RT_PRESET 非法：%s（要求 0–3），按设置", e); } return v; }
+int dm_rt_level_setting(void) {
+    int ok = rt_shadow_ok(), pin = rt_level_pin(), set = pin >= 0 ? pin : dm_custom_get("rt_level"), cap = rt_level_cap(), on = !ok ? 0 : set > cap ? cap : set;
+    static _Atomic int last = -1; int key = on * 64 + set * 8 + cap * 2 + ok;
+    if (atomic_exchange(&last, key) != key) LOG("光追档位：生效 rt_level=%d（%s %d，本机最高 %d，机器%s）", on, pin >= 0 ? "DM_RT_PRESET 钉住" : "设置", set, cap, ok ? "可用" : "不可用");
     return on;
 }
 // 光追开时启动即降一档渲染分辨率（dm_res_cap.h dm_res_rt_budget）：只在第一次被问时（iOS 前端报启动预留那一刻）按当时的光追生效值定，整局不变——游戏的渲染目标按启动尺寸建、局中改不回来。
@@ -396,8 +398,8 @@ static int rt_res_drop_decide(const char *drop_env, const char *rt_env, int gate
 }
 int dm_render_res_rt_drop(void) {
     static _Atomic int v = -1; int r = atomic_load(&v), on; if (r >= 0) return r;
-    const char *d = getenv("DM_RT_RES_DROP"), *e = getenv("DM_RT_SHADOW"); int off = d && !atoi(d);
-    r = rt_res_drop_decide(d, e, e ? rt_shadow_ok() : 0, e ? 0 : dm_rt_shadow_setting(), &on);
+    const char *d = getenv("DM_RT_RES_DROP"), *e = getenv("DM_RT_PRESET") ? NULL : getenv("DM_RT_SHADOW"); int off = d && !atoi(d);
+    r = rt_res_drop_decide(d, e, e ? rt_shadow_ok() : 0, e ? 0 : dm_rt_level_setting() > 0, &on);
     // 设置还没读到（也没用测试开关钉住）：先按「不降」答，但不记死——等读到设置再定（十四审 Q14-01：原先在设置可读之前就记死，设置里开光追永远不降）
     // Settings not read yet (and not pinned by the test switch): answer "no drop" without latching - decide once they are read (review 14 Q14-01: it used to latch before the settings were readable, so RT on in settings never dropped)
     if (!e && !dm_custom_loaded()) { static int warned; if (!warned++) LOG("【红】光追降分辨率：设置还没读到就被问（先按不降答、不记死）"); return 0; }
@@ -409,6 +411,7 @@ static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
     for (int i = 0; ok && i < NK; i++) { if (i == 0 && (atomic_load(&g_lang_explicit) < 0 || g_lang_test)) continue; if (i == K_VOICE && (atomic_load(&g_voice_explicit) < 0 || g_voice_test)) continue; if (key_other_platform(i)) continue; ok = fprintf(f, "%s=%d\n", k_keys[i], atomic_load(&g_val[i])) > 0; }   // lang / voice 只在玩家真改过之后才写进文件
+    if (ok) ok = fprintf(f, "rt_shadow=%d\n", atomic_load(&g_val[K_RTLVL]) != 0) > 0;   // 给回退到旧包用（旧包只认 rt_shadow）；本版读盘有 rt_level 时不看它 | for a rollback to an older package (it only knows rt_shadow); this version ignores it when rt_level is present
     if (ok) ok = fprintf(f, "q3d_v2=1\n") > 0;
     if (ok) ok = fprintf(f, "free_tp_v2=1\n") > 0;
     if (ok && atomic_load(&g_merc_explicit) >= 0) ok = fprintf(f, "merc_pot_v2=%d\n", atomic_load(&g_merc_explicit)) > 0;
@@ -426,17 +429,17 @@ void dm_custom_mem_notice_done(void) {
     if (atomic_exchange(&g_mem_notice, 1)) return;
     save(); LOG("内存档位：低内存提示玩家已确认，记进设置文件，以后不再提示");
 }
-// 崩溃围栏连续两次异常退出时调（dm_crashfence.c）：实验性功能全关并写回设置文件——120 帧档回 60、光追阴影关、MetalFX 空间超分关（光追 AO 只在光追里跑，随它关）。
+// 崩溃围栏连续两次异常退出时调（dm_crashfence.c）：实验性功能全关并写回设置文件——120 帧档回 60、光追关、MetalFX 空间超分关。
 // 玩家没开的项不动；改了才存盘。what 写「改了什么」给日志；返回改了几项
-// Called by the crash fence after two abnormal exits in a row (dm_crashfence.c): turn every experimental feature off and save - 120 fps mode back to 60, ray-traced shadows off, MetalFX spatial upscaling off (ray-traced AO only runs inside ray tracing and goes off with it).
+// Called by the crash fence after two abnormal exits in a row (dm_crashfence.c): turn every experimental feature off and save - 120 fps mode back to 60, ray tracing off, MetalFX spatial upscaling off.
 // Items the player did not turn on are left alone; the file is saved only if something changed. what receives "what changed" for the log; returns how many items changed
 int dm_custom_safe_mode(char *what, size_t n) {
     load_once(); size_t o = 0; int ch = 0; what[0] = 0;
     if (!atomic_load(&g_loaded)) { snprintf(what, n, "设置文件还没法读，没改"); return 0; }
-    static const int bk_key[3] = { K_FPS, K_RT, K_UPSCALE };   // 改之前记原值（已有备份不覆盖：连着两轮自动关时，第二轮看到的已经是关） | record the original before changing (an existing backup is kept: on a second automatic pass the value is already off)
+    static const int bk_key[3] = { K_FPS, K_RTLVL, K_UPSCALE };   // 改之前记原值（已有备份不覆盖：连着两轮自动关时，第二轮看到的已经是关） | record the original before changing (an existing backup is kept: on a second automatic pass the value is already off)
     for (int b = 0; b < 3; b++) { int v = atomic_load(&g_val[bk_key[b]]), on = b == 0 ? v == FPS_120 : v != 0; if (on && atomic_load(&g_bak[b]) < 0) atomic_store(&g_bak[b], v); }
     if (atomic_load(&g_val[K_FPS]) == FPS_120) { atomic_store(&g_val[K_FPS], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s120 帧档 → 60", o ? "、" : ""); }
-    if (atomic_load(&g_val[K_RT])) { atomic_store(&g_val[K_RT], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s光追阴影 → 关（AO 随它关）", o ? "、" : ""); }
+    if (atomic_load(&g_val[K_RTLVL])) { atomic_store(&g_val[K_RTLVL], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s光追 → 关", o ? "、" : ""); }
     if (atomic_load(&g_val[K_UPSCALE])) { atomic_store(&g_val[K_UPSCALE], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s" DM_STR_METALFX " 空间超分 → 关", o ? "、" : ""); dm_3d_quality_mode_set(0); }
     for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1);
     if (!ch) snprintf(what, n, "实验性功能本来都关着");
@@ -445,7 +448,7 @@ int dm_custom_safe_mode(char *what, size_t n) {
 }
 // 图形页刚打开（dm_graphics_ui_pump）：有崩溃围栏的备份就按原值预选，返回预选了几项 | The Graphics tab just opened (dm_graphics_ui_pump): with a crash-fence backup, pre-select the original values; returns how many were pre-selected
 static int exp_restore_pending(void) {
-    static const int bk_key[3] = { K_FPS, K_RT, K_UPSCALE }; int n = 0;
+    static const int bk_key[3] = { K_FPS, K_RTLVL, K_UPSCALE }; int n = 0;
     for (int b = 0; b < 3; b++) { int v = atomic_load(&g_bak[b]); if (v >= 0) { atomic_store(&g_pend[bk_key[b]], v); n++; } }
     if (n) { atomic_fetch_add(&g_repaint, 1); LOG("自定义设置：图形页打开，按崩溃围栏自动关闭前的值预选 %d 项（点应用生效，放弃则保持关闭）", n); }
     return n;
@@ -595,25 +598,10 @@ void dm_graphics_ui_pump(unsigned long long root) {
         if (dm_wref_get(&seen[1])!=upscale) { dm_wref_set(&seen[1],upscale); set_toggle(upscale,want); }
         else if (TOGGLED(upscale)!=want) atomic_store(&g_pend[K_UPSCALE],TOGGLED(upscale));
     }
-    // 光追阴影（实验性）：机器不过门槛时整行藏起来；勾选框与超分开关同一套处理 | Ray-traced shadows (experimental): the whole row is hidden on machines that fail the gate; the checkbox is handled like the upscale switch
-    int rt_ok = rt_shadow_ok(); uint64_t rtrow = find_w(sp, "TouchGraphicsRtRow", 0); if (rtrow) ui_show_ours(rtrow, rt_ok);
-    uint64_t rt = rt_ok ? find_w(sp, "TouchGraphicsRtShadow", 0) : 0;
-    if (rt) {
-        int want = pending_value(K_RT);
-        if (dm_wref_get(&seen[4]) != rt) { dm_wref_set(&seen[4], rt); set_toggle(rt, want); }
-        else if (TOGGLED(rt) != want) atomic_store(&g_pend[K_RT], TOGGLED(rt));
-    }
-    // 光追 AO（实验性）：与光追阴影同一个门槛，整行跟着藏；阴影（含没点「应用」的改动）没开时勾选框置灰、点了不算数、副文换成「需先开启光追阴影」，设置值保留
-    // Ray-traced AO (experimental): same gate as ray-traced shadows, the whole row hides with it; with shadows off (including changes not yet applied) the checkbox is greyed out, taps do not count, the subtext becomes "turn on ray-traced shadows first", and the setting is kept
-    uint64_t aorow = find_w(sp, "TouchGraphicsRtAoRow", 0); if (aorow) ui_show_ours(aorow, rt_ok);
-    uint64_t ao = rt_ok ? find_w(sp, "TouchGraphicsRtAo", 0) : 0; int ao_avail = rt && pending_value(K_RT);
-    if (ao) {
-        int want = pending_value(K_RTAO);
-        if (!ao_avail) { set_toggle_grey(ao); dm_wref_set(&seen[6], 0); }
-        else if (dm_wref_get(&seen[6]) != ao) { dm_wref_set(&seen[6], ao); set_toggle(ao, want); }
-        else if (TOGGLED(ao) != want) atomic_store(&g_pend[K_RTAO], TOGGLED(ao));
-    }
-    { uint64_t n1 = find_w(sp, "TouchGraphicsRtAoNote", 0), n2 = find_w(sp, "TouchGraphicsRtAoNeedRt", 0); if (n1) ui_show_ours(n1, ao_avail); if (n2) ui_show_ours(n2, rt_ok && !ao_avail); }
+    // WIP：光追行等第 2 节实测后再做滑块，测试包先藏起来 | WIP: the slider row waits for the measurements; hidden in the test package
+    int rt_ok = 0; uint64_t rtrow = find_w(sp, "TouchGraphicsRtRow", 0); if (rtrow) ui_show_ours(rtrow, 0);
+    uint64_t aorow = find_w(sp, "TouchGraphicsRtAoRow", 0); if (aorow) ui_show_ours(aorow, 0);
+    uint64_t rt = 0;
     // 显示帧数（fps_hud，图形页第二行，缺省开）：勾选框与超分开关同一套处理 | Show frame rate (fps_hud, Graphics row 2, on by default): the checkbox is handled like the upscale switch
     uint64_t fpshud = find_w(sp, "TouchGraphicsFpsHud", 0);
     if (fpshud) {
@@ -634,8 +622,6 @@ void dm_graphics_ui_pump(unsigned long long root) {
     if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
     if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
     int row_id = vis[selected];
-    if ((ev & DM_BTN_A) && row_id == ROW_RT && rt) { int to = !pending_value(K_RT); atomic_store(&g_pend[K_RT], to); set_toggle(rt, to); }
-    if ((ev & DM_BTN_A) && row_id == ROW_RTAO && ao && ao_avail) { int to = !pending_value(K_RTAO); atomic_store(&g_pend[K_RTAO], to); set_toggle(ao, to); }
     if ((ev & DM_BTN_A) && row_id == ROW_FPSHUD && fpshud) { int to = !pending_value(K_FPSHUD); atomic_store(&g_pend[K_FPSHUD], to); set_toggle(fpshud, to); }
     if (row_id == ROW_FPS && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
         int to = fps_pos(pending_value(K_FPS)) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
