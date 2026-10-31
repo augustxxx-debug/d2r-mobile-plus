@@ -1047,7 +1047,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCloudSaveOn", "iCloud 同步开启：导入的内容会传到其他设备", "iCloud sync is on: imports reach your other devices", "Sincronía iCloud activa: lo importado llega a tus dispositivos", "Sincronía iCloud activa: lo importado llega a tus dispositivos", "Синхронизация iCloud включена: импорт попадёт на другие устройства", "iCloud 동기화 켜짐: 가져온 내용이 다른 기기로 전송됩니다" },
 #endif
 #if defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmAndSaveBackupPath", "备份也保存在 Download/S2X/D2R Mobile Plus/SaveBackups", "Backups are also in Download/S2X/D2R Mobile Plus/SaveBackups", "Copias también en Download/S2X/D2R Mobile Plus/SaveBackups", "Copias también en Download/S2X/D2R Mobile Plus/SaveBackups", "Копии также в Download/S2X/D2R Mobile Plus/SaveBackups", "백업은 Download/S2X/D2R Mobile Plus/SaveBackups 에도 저장됩니다" },
+    { "dmAndSaveBackupPath", "备份也保存在 Download/S2X/…/SaveBackups", "Backups are also in Download/S2X/…/SaveBackups", "Copias también en Download/S2X/…/SaveBackups", "Copias también en Download/S2X/…/SaveBackups", "Копии также в Download/S2X/…/SaveBackups", "백업은 Download/S2X/…/SaveBackups 에도 저장됩니다" },
 #endif
     { "dmSaveFmtPc", "PC 版 D2R", "D2R on PC", "D2R en PC", "D2R en PC", "D2R на ПК", "PC판 D2R" },
     { "dmSaveFmtLod", "暗黑 2 毁灭之王", "Diablo II: LoD", "Diablo II: LoD", "Diablo II: LoD", "Diablo II: LoD", "디아블로 2: 파괴의 군주" },
