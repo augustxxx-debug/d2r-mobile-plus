@@ -29,6 +29,8 @@ if not re.search(r'strings .*dmhost.*DM_TEST_\(UI\|', open(ROOT + '/tools/mac_ap
 s = open(HOST + '/dm_savemgr.c', encoding='utf-8').read(); i = s.index('void dm_savemgr_pump(void)'); p = s[i:]
 if not p.index('qa_pump(root);') < p.index('int st = atomic_load(&g_st);'): fail('qa_pump 要在读状态之前')
 if 'if (atomic_load(&g_st) == S_WORK) show_msg(S(sd > 0' not in p: fail('分享完成要按当前状态判')
+# 同包重名有自己的提示，不落回「校验不符」（外审 R2-01）| a same-name package has its own message, not the generic check failure
+if 'case DM_PKG_E_DUP: return "dmSaveErrDup"' not in open(HOST + '/dm_savemgr.c', encoding='utf-8').read(): fail('DM_PKG_E_DUP 要对应 dmSaveErrDup')
 # 安卓选文件的上限（S-09）| the Android pick cap
 J = ROOT + '/android/app/src/main/java/com/xiaoboluo/d2r'; a = open(J + '/DmActivity.java', encoding='utf-8').read()
 if 'SaveCopy.copy(in, out, SaveCopy.PICK_MAX)' not in a or 'tmp.delete()' not in a: fail('安卓选文件没走上限')
