@@ -270,7 +270,7 @@ void dm_savemgr_pump(void) {
 #endif
     int st = atomic_load(&g_st);   // 驱动动作之后才读：它可能刚进 S_WORK | read after the driver: it may have just entered S_WORK
     // 外壳回调与后台活的结果，都在这里接（游戏主线程）| shell callbacks and job results are taken here (game main thread)
-    if (atomic_exchange(&g_picked_new, 0)) { char p[1400]; pthread_mutex_lock(&g_mu); strlcpy(p, g_picked, sizeof p); pthread_mutex_unlock(&g_mu); atomic_store(&g_pick_wait, 0); if (p[0]) start_import(0, p); else { LOG("存档管理：取消选文件"); if (g_home_import) show_home(); else close_box(); } st = atomic_load(&g_st); }
+    if (atomic_exchange(&g_picked_new, 0)) { char p[1400]; pthread_mutex_lock(&g_mu); strlcpy(p, g_picked, sizeof p); pthread_mutex_unlock(&g_mu); atomic_store(&g_pick_wait, 0); if (p[0] == '!') show_fail(DM_PKG_E_LIMIT, g_home_import ? S_HOME : S_NONE); else if (p[0]) start_import(0, p); else { LOG("存档管理：取消选文件"); if (g_home_import) show_home(); else close_box(); } st = atomic_load(&g_st); }
     { int sd = atomic_exchange(&g_share_done, 0); if (sd) { char d[1400]; snprintf(d, sizeof d, "%s.export.tmp", save_dir()); dm_savepkg_rmtree(d); LOG("存档管理：系统面板关闭（%s）", sd > 0 ? "已保存" : "没保存"); if (atomic_load(&g_st) == S_WORK) show_msg(S(sd > 0 ? "dmSaveExportDone" : "dmSaveExportCancel"), sd > 0 ? S("dmSaveExportDoneSub") : "", S_HOME); st = atomic_load(&g_st); } }
     if (st == S_WORK && atomic_exchange(&g_job_done, 0)) { int rc = atomic_load(&g_job_rc), j = g_job; g_job = J_NONE;
         if (j == J_INSPECT) { if (rc) show_fail(rc, g_home_import || g_restore ? S_HOME : S_NONE); else preview_page(); }
