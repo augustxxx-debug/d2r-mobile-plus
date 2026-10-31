@@ -937,7 +937,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmLoadPermTitle", "需要「所有文件访问」权限", "All files access needed", "Permiso de acceso a archivos", "Permiso de acceso a archivos", "Нужен доступ ко всем файлам", "모든 파일 접근 권한 필요" },
 #endif
 #if defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmLoadPermBody", "用来读取 Download/S2X/D2R Mobile Plus/data", "To read Download/S2X/D2R Mobile Plus/data", "Para leer Download/S2X/D2R Mobile Plus/data", "Para leer Download/S2X/D2R Mobile Plus/data", "Для чтения Download/S2X/D2R Mobile Plus/data", "Download/S2X/D2R Mobile Plus/data 읽기에 필요" },
+    { "dmLoadPermBody", "用来读取 Download/S2X/D2R Mobile Plus/data", "To read Download/S2X/D2R Mobile Plus/data", "Para leer Download/S2X/D2R Mobile Plus/data", "Para leer Download/S2X/D2R Mobile Plus/data", "Чтение Download/S2X/D2R Mobile Plus/data", "Download/S2X/D2R Mobile Plus/data 읽기에 필요" },
 #endif
 #if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmLoadPermHint", "点屏幕或按手柄 A 打开系统设置，允许后返回", "Tap or press A, allow access in Settings, come back", "Toca o pulsa A, permite el acceso y vuelve", "Toca o pulsa A, permite el acceso y vuelve", "Нажмите экран или A, разрешите доступ, вернитесь", "화면이나 A를 눌러 설정에서 허용한 뒤 돌아오세요" },

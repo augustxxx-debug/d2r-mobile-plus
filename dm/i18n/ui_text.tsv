@@ -572,7 +572,7 @@ dmLoadHintPrepare	马上进入游戏，请稍候	Entering the game shortly, plea
 dmLoadMusicOn	打开背景音乐	Turn music on	Activar la música		Включить музыку	배경 음악 켜기	加载页右上角静音钮的无障碍标签（当前静音时）| accessibility label of the loading page mute button (when muted)
 dmLoadMusicOff	关闭背景音乐	Turn music off	Desactivar la música		Выключить музыку	배경 음악 끄기	加载页右上角静音钮的无障碍标签（当前在放时）| accessibility label of the loading page mute button (when playing)
 dmLoadPermTitle	需要「所有文件访问」权限	All files access needed	Permiso de acceso a archivos		Нужен доступ ко всем файлам	모든 파일 접근 권한 필요	权限提示页标题（加载页样式，24 号字，整宽；DmActivity.ensureFileAccess）
-dmLoadPermBody	用来读取 Download/S2X/D2R Mobile Plus/data	To read Download/S2X/D2R Mobile Plus/data	Para leer Download/S2X/D2R Mobile Plus/data		Для чтения Download/S2X/D2R Mobile Plus/data	Download/S2X/D2R Mobile Plus/data 읽기에 필요	权限提示页正文（18 号字：权限的用途）
+dmLoadPermBody	用来读取 Download/S2X/D2R Mobile Plus/data	To read Download/S2X/D2R Mobile Plus/data	Para leer Download/S2X/D2R Mobile Plus/data		Чтение Download/S2X/D2R Mobile Plus/data	Download/S2X/D2R Mobile Plus/data 읽기에 필요	权限提示页正文（18 号字：权限的用途）
 dmLoadPermHint	点屏幕或按手柄 A 打开系统设置，允许后返回	Tap or press A, allow access in Settings, come back	Toca o pulsa A, permite el acceso y vuelve		Нажмите экран или A, разрешите доступ, вернитесь	화면이나 A를 눌러 설정에서 허용한 뒤 돌아오세요	权限提示页副文（14 号字：怎么做）
 dmLoadCommSiteQq	官方免费渠道：官网 %s · QQ 群 %s	Official free channels: %s · QQ group %s	Canales oficiales gratis: %s · grupo QQ %s		Бесплатные каналы: %s · группа QQ %s	공식 무료 채널: %s · QQ 그룹 %s	加载页底部社区第一行（有官网 community.site 与群号；第一个 %s = 官网主机名，第二个 = 群号；服务端说明第 13 节）
 dmLoadCommSite	官方免费渠道：官网 %s	Official free channel: %s	Canal oficial gratis: %s		Бесплатный канал: %s	공식 무료 채널: %s	加载页底部社区第一行（只有官网）
