@@ -64,7 +64,8 @@
 #define MAXF 64
 typedef struct { char path[256]; uint64_t mt; uint32_t size; uint8_t *data; } cs_file;   // path：相对存档目录 | path: relative to the save directory
 typedef struct { int n, tomb; uint64_t stamp, hash; cs_file f[MAXF]; } cs_unit;
-static const char k_magic[8] = "SWPK1\n\0\0";
+// SWPK2：换了魔数就是为了挡旧版（布局不变）。药水堆叠、大背包的存档旧版读了会丢东西，存盘再传会把丢失传给所有设备；旧版读不了 SWPK2，走「读不了，本次跳过」，这个单位既不下载也不上传。新版只写 SWPK2，两种都读 | SWPK2: the magic changed to keep old builds out (same layout). Old builds lose items from stacked-potion and large-inventory saves, and saving and uploading would spread that to every device; they cannot read SWPK2, take the "unreadable, skip this time" path, and neither download nor upload the unit. New builds write only SWPK2 and read both
+static const char k_magic[8] = "SWPK2\n\0\0", k_magic_v1[8] = "SWPK1\n\0\0";
 
 static void unit_free(cs_unit *u) { for (int i = 0; i < u->n; i++) free(u->f[i].data); u->n = 0; }
 static uint64_t fnv(uint64_t h, const void *p, size_t n) { const uint8_t *b = p; for (size_t i = 0; i < n; i++) { h ^= b[i]; h *= 0x100000001b3ull; } return h; }
@@ -202,7 +203,7 @@ static int pack_write(const char *path, const cs_unit *u) {
 }
 static int pack_read(const char *path, cs_unit *u) {   // 1 = 读到，0 = 没有这个包，-1 = 坏包 | 1 = read, 0 = no such pack, -1 = bad pack
     memset(u, 0, sizeof *u); FILE *f = fopen(path, "rb"); if (!f) return errno == ENOENT ? 0 : -1;
-    char mg[8]; uint32_t fl = 0, n = 0; int ok = fread(mg, 8, 1, f) == 1 && !memcmp(mg, k_magic, 8) && fread(&u->stamp, 8, 1, f) == 1 && fread(&fl, 4, 1, f) == 1 && fread(&n, 4, 1, f) == 1 && n <= MAXF;
+    char mg[8]; uint32_t fl = 0, n = 0; int ok = fread(mg, 8, 1, f) == 1 && (!memcmp(mg, k_magic, 8) || !memcmp(mg, k_magic_v1, 8)) && fread(&u->stamp, 8, 1, f) == 1 && fread(&fl, 4, 1, f) == 1 && fread(&n, 4, 1, f) == 1 && n <= MAXF;
     for (uint32_t i = 0; ok && i < n; i++) { cs_file *x = &u->f[i]; uint16_t pl = 0;
         ok = fread(&pl, 2, 1, f) == 1 && pl < sizeof x->path && fread(x->path, pl, 1, f) == 1 && fread(&x->mt, 8, 1, f) == 1 && fread(&x->size, 4, 1, f) == 1 && x->size <= (16u << 20);
         if (ok) { x->path[pl] = 0; x->data = malloc(x->size + 1); ok = x->data && (!x->size || fread(x->data, x->size, 1, f) == 1); u->n = (int)i + 1; }

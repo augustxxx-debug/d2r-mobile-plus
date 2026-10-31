@@ -8,6 +8,7 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 
 RC2 merges the iOS and Android lines: one tree, and both packages come from the same commit.
 
+- **iCloud: older builds stop syncing a save once a newer build has uploaded it** (RC2): newer saves can hold items older builds would lose, and those losses would otherwise upload to every device. An older build leaves the affected characters and shared stash alone (no download, no upload) until it is updated.
 - **Android, from the iOS line**: the "Join the community" box (pause menu, main menu, Options → Custom → About); the pause menu has the same rows in touch and controller mode; Game Difficulty moves to Options → Gameplay; the touch portal badge counts only tomes and scrolls a press can use; auto-potion no longer overwrites a portal press in the same tick.
 - **iOS, from the Android line**: the shared loading page for first-time preparation; the PLUS app icon; after a failed audio resume the sound card is reopened every 1.5 seconds; the D-pad hints under the belt in controller mode sit higher so they are fully visible; the frame-rate display uses the sampling shared by both platforms (1-second window, at most 2 updates a second); diagnostics redact CJK character names; the UI font replaces only code points the game font already has.
 - **Android**: when the game's version manifest is too small the failure page now says the files are incomplete instead of naming the wrong version; the permission prompt also takes confirm and Enter keys.

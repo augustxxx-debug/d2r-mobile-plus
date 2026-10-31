@@ -321,6 +321,11 @@ int main(void) {
       #undef FU
       #undef FU_LEFT
     }
+    // 魔数：只写 SWPK2；SWPK1 能读；更新的魔数读不了时这个单位两边都不动（旧版遇到 SWPK2 就是这条路）| magic: only SWPK2 is written; SWPK1 is readable; with a newer magic the unit is left alone on both sides (the path an old build takes on SWPK2)
+    { char zp[1100]; snprintf(zp, sizeof zp, "%s/cloud/Mgc.pack", R); put("MG0", "save/Mgc/Mgc.d2s", "z1", 5000); dsync("MG0", 0, 0); char hd[6] = {0}; FILE *f = fopen(zp, "r+b"); CHECK(f && fread(hd, 5, 1, f) == 1 && !strcmp(hd, "SWPK2"), "魔数：新包应写 SWPK2，实为 %s", hd);
+      if (f) { fseek(f, 0, SEEK_SET); fwrite("SWPK1", 5, 1, f); fclose(f); } put("MG1", "save/Settings/Settings.json", "{}", 1000); dsync("MG1", 1, 0); CHECK(get("MG1", "save/Mgc/Mgc.d2s") && !strcmp(get("MG1", "save/Mgc/Mgc.d2s"), "z1"), "魔数：SWPK1 的包应能下载");
+      f = fopen(zp, "r+b"); if (f) { fwrite("SWPK9", 5, 1, f); fclose(f); } put("MG0", "save/Mgc/Mgc.d2s", "z2", 6000); dsync("MG0", 1, 0); f = fopen(zp, "rb"); memset(hd, 0, sizeof hd); if (f) { CHECK(fread(hd, 5, 1, f) == 1 && !strcmp(hd, "SWPK9"), "魔数：读不了的包不该被上传覆盖，实为 %s", hd); fclose(f); }
+      CHECK(get("MG0", "save/Mgc/Mgc.d2s") && !strcmp(get("MG0", "save/Mgc/Mgc.d2s"), "z2"), "魔数：读不了的包不该动本地"); remove(zp); }
     printf("t_cloudsync: %d 项，%d 失败\n", checks, fails);
     return fails != 0;
 }
