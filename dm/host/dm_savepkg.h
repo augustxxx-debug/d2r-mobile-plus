@@ -3,6 +3,7 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 enum { DM_PKG_OK = 0, DM_PKG_E_IO = 1, DM_PKG_E_ZIP = 2, DM_PKG_E_NOTOURS = 3, DM_PKG_E_CHECK = 4, DM_PKG_E_TOONEW = 5, DM_PKG_E_LIMIT = 6, DM_PKG_E_PATH = 7, DM_PKG_E_SPACE = 8, DM_PKG_E_STARFULL = 9, DM_PKG_E_CONVERT = 10, DM_PKG_E_COOP = 11 };
 enum { DM_PKG_NEW = 0, DM_PKG_SAME = 1, DM_PKG_CONFLICT = 2, DM_PKG_BAD = 3 };           // 预览里每行的状态 | row state in the preview
@@ -48,6 +49,8 @@ int dm_savepkg_parse_d2s(const uint8_t *b, size_t n, dm_pkg_char *out);   // 头
 int dm_savepkg_rename_d2s(uint8_t *b, size_t n, const char *newname);     // 改名字段并重算校验和；1 = 成功 | patch the name and recompute the checksum; 1 = done
 
 int dm_savepkg_export(const char *tree, const char *out_zip, const dm_pkg_export_opts *o, const dm_pkg_source *src);   // tree = 不会再变的目录（快照或挂载之前的已提交目录） | tree = a directory that will not change (a snapshot, or the committed directory before mount)
+// 拷路径；src 可以就是 dst（自拷在 iOS / Mac 上被库的重叠检查当场终止，安卓不查）。内联：缓冲区大小看得见才走带检查的版本，单测才拦得住 | copy a path; src may be dst (a self-copy is killed by the library's overlap check on iOS / Mac, Android does not check). Inline: only with the buffer size in view does the checked version run, so the unit test can catch it
+static inline __attribute__((always_inline)) void dm_savepkg_path_set(char *dst, size_t n, const char *src) { if (dst != src) strlcpy(dst, src, n); }
 int dm_savepkg_inspect(const char *zip, const char *save, int restore, dm_pkg_view *v);   // 校验并解到 <save>.import.tmp，不碰存档；restore = 从备份恢复（缺省处理改成覆盖） | validates and extracts into <save>.import.tmp; the save is untouched; restore = from a backup (actions default to overwrite)
 int dm_savepkg_stage_commit(const char *save, const dm_pkg_view *v, const char *const *custom_kv);   // 确认：写 plan.tsv、原子改名成 <save>.import | confirm: write plan.tsv and atomically rename to <save>.import
 void dm_savepkg_stage_cancel(const char *save);

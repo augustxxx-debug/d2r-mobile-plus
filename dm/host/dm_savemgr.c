@@ -163,7 +163,8 @@ static void share_now(const char *path) {
 #ifdef DM_QA_BUILD
     const char *t = getenv("DM_TEST_SAVEPKG_OUT"); if (t && !strcmp(t, "cancel")) { atomic_store(&g_share_done, -1); return; } if (t) { FILE *a = fopen(path, "rb"), *b = fopen(t, "wb"); int ok = a && b; char buf[65536]; size_t n; while (ok && (n = fread(buf, 1, sizeof buf, a))) ok = fwrite(buf, 1, n, b) == n; if (a) fclose(a); if (b) fclose(b); atomic_store(&g_share_done, ok ? 1 : -1); return; }
 #endif
-    strlcpy(g_share_path, path, sizeof g_share_path); if (!g_share) { atomic_store(&g_share_done, -1); return; } g_share(path);
+    dm_savepkg_path_set(g_share_path, sizeof g_share_path, path);   // 导出传进来的就是它自己 | an export passes this very buffer
+    if (!g_share) { atomic_store(&g_share_done, -1); return; } g_share(path);
 }
 static int name_taken(const char *c, void *ctx) { (void)ctx; char p[1400]; struct stat st; snprintf(p, sizeof p, "%s/%s", save_dir(), c); if (!stat(p, &st)) return 1; for (int i = 0; i < g_view.nchars; i++) if (!strcasecmp(g_view.chars[i].name, c) || !strcasecmp(g_view.chars[i].newname, c)) return 1; return 0; }
 static void row_action(row_t *r) {

@@ -115,6 +115,9 @@ static void t_d2s(void) {
     CHECK(dm_savepkg_rename_d2s(b, sizeof b, "Alice-A"), "改名"); memset(&c, 0, sizeof c); CHECK(dm_savepkg_parse_d2s(b, sizeof b, &c) && !strcmp(c.name, "Alice-A") && c.level == 42, "改名后校验和有效");
     uint8_t v[1024]; mk_d2s(v, sizeof v, "Alice", 3, 42, 0, 1); v[4] = 0x70; uint32_t s = ck(v, sizeof v); memcpy(v + 12, &s, 4); CHECK(!dm_savepkg_parse_d2s(v, sizeof v, NULL), "未知版本要拒");
 }
+// 导出把缓冲区本身传给分享那一步：没有判断的话这里进程当场终止（Mac 上和 iOS 同一个库）| an export hands the buffer itself to the share step: without the check the process dies right here (same library on Mac and iOS)
+static char g_pathbuf[64];
+static void t_path_set(void) { char *volatile same = g_pathbuf; dm_savepkg_path_set(g_pathbuf, sizeof g_pathbuf, "/a/b.zip"); dm_savepkg_path_set(g_pathbuf, sizeof g_pathbuf, same); CHECK(!strcmp(g_pathbuf, "/a/b.zip"), "自拷后内容不变 [%s]", g_pathbuf); dm_savepkg_path_set(g_pathbuf, sizeof g_pathbuf, "/c.zip"); CHECK(!strcmp(g_pathbuf, "/c.zip"), "换路径 [%s]", g_pathbuf); }
 static void t_roundtrip(void) {
     mk_save("a/save"); mk_save("b/save"); char sv[1024]; CHECK(export_all("a/save", "p.zip", 1, 1) == 0, "导出");
     size_t n = 0; uint8_t *z = get("p.zip", &n); CHECK(z && n > 30 && !memcmp(z + 30, "manifest.json", 13), "manifest 第一条"); uint8_t *hit = z; int leak = 0; for (size_t i = 0; i + 8 < n; i++) if (!memcmp(hit + i, "_cloudinbox", 11) || !memcmp(hit + i, "Alice 2", 7) || !memcmp(hit + i, "placeholder", 11) || !memcmp(hit + i, "icloud-conflict", 15)) leak = 1; CHECK(!leak, "不属于存档的东西进了包"); free(z);
@@ -203,7 +206,7 @@ static void t_cross(void) {
 
 int main(void) {
     const char *td = getenv("TMPDIR"); snprintf(R, sizeof R, "%s/t_savepkg_%d", td ? td : "/tmp", (int)getpid()); mkdir(R, 0755);
-    t_names(); t_paths(); t_d2s(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_cross(); t_coop(); t_mirror_dirs();
+    t_path_set(); t_names(); t_paths(); t_d2s(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_cross(); t_coop(); t_mirror_dirs();
     char cmd[700]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", R); if (!fails) system(cmd); else printf("  保留现场 %s\n", R);
     printf("t_savepkg: %d 项检查，%d 项失败\n", checks, fails); return fails != 0;
 }
