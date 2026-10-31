@@ -119,6 +119,19 @@ int main(void) {
     dm_crashfence_clean("优雅退出");
     setenv("DM_TEST_CRASH_MARK", "2", 1); setenv("DM_TEST_CRASH_CAUSE", "hang", 1); restart(); dm_crashfence_start(); CHECK(g_msg == CF_HANG); CHECK(!strcmp(g_hist, "22"));
     unsetenv("DM_TEST_CRASH_MARK"); unsetenv("DM_TEST_CRASH_CAUSE"); dm_crashfence_clean("优雅退出");
+    // 15. 测试局 + 残留连续 ≥ 2：不关、不写回、不提示，连续次数不变；DM_TEST_CRASH_MARK 仍能触发；玩家局照旧关 | 15. Test run + leftover streak >= 2: no shutoff, no write-back, no notice, streak unchanged; DM_TEST_CRASH_MARK still triggers it; a player run still shuts off
+    { const char *on = "eco_fps=2\nrt_shadow=1\nupscale=1\nq3d=0\nq3d_v2=1\n", *left = "streak=2\ntest=1\nhist=00\ncause=0:0\n"; FILE *f;
+      write_settings(on); atomic_store(&g_loaded, 0); f = fopen(marker, "w"); fputs(left, f); fclose(f);
+      setenv("DM_WATCH", "90", 1); restart(); CHECK(dm_crashfence_start() == 2); CHECK(marker_streak() == 2);
+      CHECK(dm_custom_get("eco_fps") == FPS_120); CHECK(dm_custom_get("rt_shadow") == 1); CHECK(dm_custom_get("upscale") == 1); CHECK(dm_crashfence_notice_take() == 0);
+      read_settings(text, sizeof text); CHECK(!strcmp(text, on));
+      f = fopen(marker, "w"); fputs("streak=1\nhist=0\ncause=0:0\n", f); fclose(f);   // 残留来自玩家局：测试局照样加 1，但不关 | leftover from a player run: a test run still adds one, but does not shut off
+      restart(); CHECK(dm_crashfence_start() == 2); CHECK(dm_custom_get("upscale") == 1); CHECK(dm_crashfence_notice_take() == 0);
+      setenv("DM_TEST_CRASH_MARK", "2", 1); restart(); CHECK(dm_crashfence_start() == 2); CHECK(dm_custom_get("upscale") == 0); CHECK(dm_crashfence_notice_take() == 1);   // 测试开关还能验围栏本身 | the test switch can still exercise the fence itself
+      unsetenv("DM_TEST_CRASH_MARK"); unsetenv("DM_WATCH");
+      write_settings(on); atomic_store(&g_loaded, 0); f = fopen(marker, "w"); fputs(left, f); fclose(f);
+      restart(); CHECK(dm_crashfence_start() == 2); CHECK(dm_custom_get("upscale") == 0); CHECK(dm_crashfence_notice_take() == 1);   // 玩家局：同样的残留照旧关 | player run: the same leftover shuts off as before
+      read_settings(text, sizeof text); CHECK(strstr(text, "upscale=0\n")); dm_crashfence_clean("优雅退出"); }
     // 10. 没有设置目录：不写标记、不崩 | 10. No settings directory: no marker, no crash
     g_dir[0] = 0; restart(); CHECK(dm_crashfence_start() == 0); CHECK(g_marked == 0);
     printf("t_crashfence: %d checks, %d failed\n", checks, fails);

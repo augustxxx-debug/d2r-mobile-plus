@@ -122,7 +122,9 @@ int dm_crashfence_start(void) {
     g_cause = CF_OTHER; g_cause_arg = 0; g_marked = marker_write();
     if (!g_marked) LOG("【红】崩溃围栏：运行标记写不进 %s", p);
     g_crash_note_hook = cf_on_signal;
-    if (g_streak >= 2) {
+    // 测试局不执行关闭（DM_TEST_CRASH_MARK 除外）：残留的连续次数测试局既不加也不清，否则此后每局都被关实验项、写回设置 | a test run does not act (except DM_TEST_CRASH_MARK): test runs neither add to nor clear a leftover streak, so otherwise every later run would lose its experimental features and rewrite the settings
+    if (g_streak >= 2 && te && !test) LOG("崩溃围栏：残留连续 %d 次，本局是测试局（%s），不关实验项、不写回设置", g_streak, te);
+    else if (g_streak >= 2) {
         size_t n = strlen(g_hist); int a = n >= 1 ? g_hist[n - 1] - '0' : CF_OTHER, b = n >= 2 ? g_hist[n - 2] - '0' : CF_OTHER;
         g_msg = a == b ? a : CF_OTHER;   // 最近两次原因相同就说那个原因，不同就说「异常退出」 | the last two causes equal: name it; different: "quit unexpectedly"
         char what[256]; int ch = dm_custom_safe_mode(what, sizeof what);
