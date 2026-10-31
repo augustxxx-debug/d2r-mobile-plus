@@ -1,8 +1,10 @@
 """手机端生成器随 APK 带的本仓文件：只带白名单里的生成脚本与数据，不带各端的壳、测试、文档；文案表去掉 iOS 专属行；同样输入出同样字节。不读游戏内容。
 The repo files the on-phone generator ships in the APK: only the whitelisted generator scripts and data, no platform shells, tests or docs; the string table without iOS-only rows; same input, same bytes. No game content.
 """
+import hashlib
 import importlib.util
 from pathlib import Path
+import random
 import re
 import struct
 import tempfile
@@ -83,9 +85,53 @@ class PackageAudit(unittest.TestCase):
         self.assertEqual(self.pa.game_image_ranges(head + seg), [(100, 150)])
         self.assertEqual(self.pa.game_image_ranges(b'not a mach-o'), [])
 
-    def test_inflate(self):
+    def test_split(self):
         data = b'junk' + zlib.compress(b'iPhone text') + b'more' + zlib.compress(b'second')
-        self.assertEqual(self.pa.inflate_all(data), b'iPhone text\0second')
+        self.assertEqual(self.pa.split_archive(data), (b'iPhone text\0second', b'junkmore', []))
+
+    def audit_one(self, data, platform='ios'):
+        with tempfile.TemporaryDirectory() as temp:
+            p = Path(temp) / 'x.zip'
+            with zipfile.ZipFile(p, 'w') as z: z.writestr('overlay.data', data)
+            return self.pa.audit(platform, p)[0]
+
+    # 外审 X-03 的三个夹具：原样 JSON、有效 BLTE N 块、压缩后超过 16 MiB 的有效流，都要报出来 | the three fixtures of external review X-03: plain JSON, a valid BLTE N chunk, a valid stream over 16 MiB compressed; all must be reported
+    def test_raw_entry(self):
+        self.assertEqual(self.audit_one(b'{"text":"Android-only option"}'), [('overlay.data', 'Android', 1)])
+
+    def test_blte_n_chunk(self):
+        raw = b'{"text":"Android-only option"}'; chunk = b'N' + raw
+        blte = b'BLTE' + struct.pack('>I', 36) + b'\x0f\0\0\1' + struct.pack('>II', len(chunk), len(raw)) + hashlib.md5(chunk).digest() + chunk
+        self.assertEqual(self.audit_one(blte), [('overlay.data', 'Android', 1)])
+
+    def test_large_stream(self):
+        data = zlib.compress(random.Random(20261031).randbytes(17 * 1024 * 1024) + b'\0Vulkan only\0' * 10000)
+        self.assertGreater(len(data), 16 << 20)
+        self.assertEqual(self.audit_one(data), [('overlay.data!zlib', 'Vulkan', 10000)])
+
+    # 解不完必须失败并写明原因 | what cannot be inflated must fail, with the reason
+    def incomplete(self, data):
+        bad = self.audit_one(data); self.assertEqual(len(bad), 1, bad); return bad[0][1]
+
+    def test_incomplete(self):
+        rng = random.Random(1); c = zlib.compress(bytes(rng.choice(b'abcdefghij klmnop') for _ in range(400000)))
+        self.assertIn('被截断', self.incomplete(c[:len(c) // 2]))
+        self.assertIn('数据错', self.incomplete(c[:len(c) // 2] + b'\xff' * 64 + c[len(c) // 2 + 64:]))
+        short = zlib.compress(bytes(rng.choice(b'abcdefghij klmnop') for _ in range(3000))); self.assertLess(len(short), 4096); self.assertIn('数据错', self.incomplete(short[:600] + b'\xff' * 64 + short[664:]))   # 不足一次 4 KiB 也要报 | shorter than 4 KiB is reported too
+        stored = zlib.compress(random.Random(1).randbytes(300000)); self.assertIn('数据错', self.incomplete(stored[:-1] + bytes([stored[-1] ^ 1])))
+
+    def test_limit(self):
+        inflated, plain, notes = self.pa.split_archive(zlib.compress(b'x' * 100000), limit=1000)
+        self.assertEqual(inflated, b''); self.assertEqual(len(notes), 1); self.assertIn('上限', notes[0])
+
+    def test_chance_header_is_not_a_stream(self):
+        self.assertEqual(self.audit_one(b'\x78\x9c' + b'junk' * 20), [])
+
+    def test_made_up_identifier(self):
+        for name in (b'VK_STRUCTURE_TYPE_METALFX_HINT', b'mtl_metalfx_show_hint', b'front_metal_layer'):
+            data = b'\0' + name + b'\0'; self.assertFalse(self.pa.is_symbol(data, 1, 1 + len(name)), name)
+        for name in (b'VK_STRUCTURE_TYPE_EXPORT_METAL_BUFFER_INFO_EXT', b'VK_STRUCTURE_TYPE_IOS_SURFACE_CREATE_INFO_MVK', b'mtl_metalfx_scale_hint', b'dm_icloud_supported', b'icloud'):
+            data = b'\0' + name + b'\0'; self.assertTrue(self.pa.is_symbol(data, 1, 1 + len(name)), name)
 
 
 if __name__ == '__main__':

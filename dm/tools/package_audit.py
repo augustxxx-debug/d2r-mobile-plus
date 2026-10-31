@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """包内容审计（CLAUDE.md §2.8）：把 IPA / APK / .app 解到最里层（含 zip 内 zip）扫另一端的平台词，并列体积。
 用法：package_audit.py <ios|android> <包或 .app 目录> [--out 报告.md]。有未登记的命中、或 src.zip 里有白名单外的文件，退出码 1。
-不分大小写。CASC .data 里压缩存放的文字也解开扫（覆盖层）；给目录也行，比如手机端生成的 overlay。
+不分大小写。CASC .data 里压缩存放的文字也解开扫（覆盖层），解不完就算不通过；给目录也行，比如手机端生成的 overlay。
 命中只有这几种能放行：EXEMPT 里的第三方运行时与许可证原文（改不得）、手机端生成器源码（不是文案）、字体与图片的二进制数据（偶然的字节）；原生库里整串是登记过的标识符（SYMBOLS）；iOS 主程序内嵌的原版游戏映像段。
 Package content audit: unpacks an IPA / APK / .app down to the innermost level (zips inside zips included), scans for the other platform's words and lists sizes.
 Usage: package_audit.py <ios|android> <package or .app directory> [--out report.md]. Exit 1 on an unregistered hit, or on a file in src.zip outside the whitelist.
-Any case. Text stored compressed in CASC .data (the overlay) is inflated and scanned too; a directory works as well, such as an overlay made on the phone.
+Any case. Text stored compressed in CASC .data (the overlay) is inflated and scanned too, and a stream that cannot be inflated fails the audit; a directory works as well, such as an overlay made on the phone.
 Only these may pass: in EXEMPT, third-party runtimes and licence texts (not ours to change), the on-phone generator's source (not UI text), binary data of fonts and images (chance bytes); strings in native libraries that are registered identifiers as a whole (SYMBOLS); the original game image segments embedded in the iOS main program."""
 import argparse, collections, importlib.util, io, re, struct, sys, zipfile, zlib
 from pathlib import Path
@@ -35,7 +35,7 @@ def game_image_ranges(data):
 
 
 # 原生库里允许带平台词的标识符，逐个登记：单词的界面文字（MetalFX、iCloud）不能靠「整串是标识符」混过去（内审 L-01）。多了新的就审一眼再加 | the identifiers in native libraries allowed to hold a platform word, each registered: single-word UI text (MetalFX, iCloud) must not pass as an identifier (internal audit L-01). Look before adding a new one
-SYMBOLS = re.compile(rb'VK_STRUCTURE_TYPE_[A-Z0-9_]+|mtl_metalfx_[a-z_]+|dm_icloud_supported|icloud|front_metal_layer')
+SYMBOLS = re.compile(rb'VK_STRUCTURE_TYPE_(EXPORT|IMPORT)_METAL_[A-Z_]+_EXT|VK_STRUCTURE_TYPE_(METAL|IOS)_SURFACE_CREATE_INFO_(EXT|MVK)|mtl_metalfx_(auto_selected|scale_hint)|dm_icloud_supported|icloud')
 
 
 def is_symbol(data, start, end):
@@ -44,20 +44,39 @@ def is_symbol(data, start, end):
     return SYMBOLS.fullmatch(data[s:e if e >= 0 else end + 4096]) is not None
 
 
-def inflate_all(data):
-    """CASC .data 里的 zlib 段全解开拼起来：覆盖层文字是压缩存放的，不解开就扫不到（内审 K-05） | every zlib segment in a CASC .data, inflated and joined: overlay text is stored compressed and cannot be scanned otherwise"""
-    out, pos = [], 0
+ARCHIVE_LIMIT = 1 << 31   # 一个 .data 解开后的总上限 2 GiB，超了算失败而不是少扫 | at most 2 GiB inflated per .data; beyond it the audit fails rather than scanning less
+INCOMPLETE_MIN = 256     # 解到这么多还出错才算真有一段流；更短的是字节巧合长得像 zlib 头，比这还短的损坏流分不出来 | an error after this much means a real stream; shorter ones are chance bytes that look like a zlib header, and a damaged stream shorter than this cannot be told apart
+FEED = 256
+
+
+def split_archive(data, limit=ARCHIVE_LIMIT):
+    """把 .data 分成解开的 zlib 段和其余原样字节，都按全部词扫；压缩流本身的字节丢掉，短词在里面只会碰巧命中（外审 X-03）。不解析档案格式：裸 n 条目、BLTE N 块、档案头都落在原样字节里。
+    返回 (解开的, 原样的, 没解完的说明)；有说明就算审计失败。
+    Splits a .data into inflated zlib segments and the remaining plain bytes, both scanned for every word; the compressed bytes themselves are dropped, short words there only match by chance (external review X-03). The archive format is not parsed: raw n entries, BLTE N chunks and headers all land in the plain bytes.
+    Returns (inflated, plain, notes on what could not be inflated); any note fails the audit."""
+    out, plain, notes, pos, kept, total = [], [], [], 0, 0, 0
     while True:
         pos = data.find(b'\x78', pos)
-        if pos < 0 or pos + 2 > len(data): return b'\0'.join(out)
-        if data[pos + 1] in (0x01, 0x5e, 0x9c, 0xda):
-            d = zlib.decompressobj()
-            try:
-                chunk = d.decompress(data[pos:pos + (1 << 24)])
-                if d.eof: out.append(chunk); pos += 2 + len(data[pos + 2:pos + (1 << 24)]) - len(d.unused_data); continue
-            except zlib.error:
-                pass
+        if pos < 0 or pos + 2 > len(data): break
+        if data[pos + 1] not in (0x01, 0x5e, 0x9c, 0xda) or (data[pos] << 8 | data[pos + 1]) % 31: pos += 1; continue
+        d = zlib.decompressobj(); chunks, size, off, why = [], 0, pos, '被截断'
+        try:
+            while off < len(data) and not d.eof:
+                feed = data[off:off + FEED]
+                piece = d.decompress(feed, 1 << 24); chunks.append(piece); size += len(piece); off += len(feed) - len(d.unconsumed_tail) - len(d.unused_data)
+                if total + size > limit: why = '超过 %d 字节上限' % limit; break
+        except zlib.error:
+            why = '数据错'
+        if d.eof and total + size <= limit:
+            out.append(b''.join(chunks)); total += size; plain.append(data[kept:pos]); pos = kept = off; continue
+        if size >= INCOMPLETE_MIN or off - pos >= INCOMPLETE_MIN: notes.append('第 %d 字节起的 zlib 段没解完（%s，已解 %d 字节）' % (pos, why, size))
+        if why.startswith('超过'): break
         pos += 1
+    plain.append(data[kept:])
+    return b'\0'.join(out), b''.join(plain), notes
+
+
+INCOMPLETE = []   # walk 里解不完的 .data，audit 收尾时算进未登记 | .data files walk could not inflate; audit counts them as unregistered
 
 
 def walk(source, prefix=''):
@@ -71,8 +90,13 @@ def walk(source, prefix=''):
                 yield prefix + name, data; continue
             yield from walk(((n, (lambda z=inner, n=n: z.read(n))) for n in inner.namelist() if not n.endswith('/')), prefix + name + '!')
         else:
-            yield prefix + name, data
-            if name.lower().endswith('.data'): yield prefix + name + '!zlib', inflate_all(data)
+            if name.lower().endswith('.data'):
+                inflated, plain, notes = split_archive(data)
+                yield prefix + name, plain
+                yield prefix + name + '!zlib', inflated
+                for note in notes: INCOMPLETE.append((prefix + name, note, 0))
+            else:
+                yield prefix + name, data
 
 
 def source_of(package):
@@ -105,11 +129,8 @@ def audit(platform, package):
             name = path.split('src.zip!', 1)[1]; inner.append((name, len(data)))
             if name not in allowed: bad.append((path, '白名单外的文件', 0))
         ranges = game_image_ranges(data) if platform == 'ios' else []
-        raw_archive = path.lower().endswith('.data')
         native = path.endswith('.so') or bool(ranges)
         for w, pat in pats:
-            # .data 的原始字节也扫（按原样存的条目，内审 L-03），但短词在压缩数据里只是巧合 | a .data's raw bytes are scanned too (entries stored as is, internal audit L-03), but short words there are chance matches
-            if raw_archive and w in platform_words.AMBIGUOUS: continue
             spots = [m.span() for m in pat.finditer(data)]
             mine = [(s, e) for s, e in spots if not any(a <= s < b for a, b in ranges)]
             if len(mine) < len(spots): passed['iOS 主程序内嵌的原版游戏映像（__DMmainW / __DMsdkW），不是我们写的'][w] += len(spots) - len(mine)
@@ -124,6 +145,7 @@ def audit(platform, package):
                 passed[why][w] += n
                 if '/src.zip!' in path: by_file[path.split('src.zip!', 1)[1]][w] += n
             else: bad.append((path, w, n))
+    bad += INCOMPLETE; INCOMPLETE.clear()
     return bad, passed, sizes, inner, by_file
 
 
