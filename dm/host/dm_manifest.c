@@ -1,6 +1,7 @@
 // 远端更新清单的严格解析，接口与规则见 dm_manifest.h。JSON 语法检查沿用 RC1 社区入口（dm_community.c，十一审 Q11-01）那套最小解析器的写法。
 // Strict parsing of the remote update manifest; interface and rules in dm_manifest.h. The JSON syntax check follows the minimal parser of the RC1 community entry (dm_community.c, Q11-01).
 #include "dm_manifest.h"
+#include "dm_site.h"
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -102,12 +103,6 @@ static int gh_ok(const char *s) {   // 同 dm_community.c | same as dm_community
     for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (!(isalnum(c) || strchr("-._~:/?#[]@!$&'()*+,;=%", c))) return 0; }
     return 1;
 }
-static int site_ok(const char *s) {   // https:// 开头、后面至少一个字符、只含 URL 字符 | starts with https://, at least one more character, URL characters only
-    static const char pre[] = "https://"; size_t n = strlen(s);
-    if (n <= sizeof pre - 1 || n > DM_MANIFEST_GH_MAX || strncmp(s, pre, sizeof pre - 1)) return 0;
-    for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (!(isalnum(c) || strchr("-._~:/?#[]@!$&'()*+,;=%", c))) return 0; }
-    return 1;
-}
 static int ver_ok(const char *s) { if (!*s) return 0; for (; *s; s++) if (!isalnum((unsigned char)*s) && !strchr(".+-", *s)) return 0; return 1; }
 static int fail(char *why, size_t n, const char *fmt, ...) { if (why && n) { va_list a; va_start(a, fmt); vsnprintf(why, n, fmt, a); va_end(a); } return 0; }
 
@@ -125,7 +120,7 @@ int dm_manifest_parse(const char *json, size_t len, dm_manifest *out, char *why,
     if (j.n_version && !ver_ok(j.m.version)) return fail(why, why_n, "version 只许数字、字母与 .+-，且不能为空");
     if (j.n_qq && !qq_ok(j.m.qq)) return fail(why, why_n, "qq_group 须是 5–12 位数字");
     if (j.n_gh && !gh_ok(j.m.github)) return fail(why, why_n, "github 须以 https://github.com/ 开头、只含 URL 字符");
-    if (j.n_site && !site_ok(j.m.site)) return fail(why, why_n, "site 须以 https:// 开头、只含 URL 字符");
+    if (j.n_site && !dm_site_ok(j.m.site)) return fail(why, why_n, "site 须为 https:// + 主机名 + 可选路径，不带端口、@ ? #，不超过 %d 字符", DM_SITE_MAX);
     if (out) *out = j.m;
     return 1;
 }

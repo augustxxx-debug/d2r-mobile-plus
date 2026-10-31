@@ -4,6 +4,8 @@
 // the two entry messages, copy callback count and log lines, the failure branch without a clipboard callback. Temporary directories only, never real saves; "restart" = reset the static state and call dm_community_load again
 #include "../dm_custom.c"
 #include "../dm_community.c"
+#include "../dm_manifest.h"
+#include "site_contract_cases.h"
 #include "dm_touch_controls.h"
 #include <unistd.h>
 void dm_3d_quality_mode_set(int value) { (void)value; }
@@ -72,9 +74,9 @@ int main(void) {
     // 6. 清单取到了但没有字段：入口不显示、缓存删掉；重启后仍不显示 | 6. Fetched without the field: entry hidden, cache deleted; still hidden after a restart
     log_reset(); CHECK(dm_community_manifest(M_NONE, strlen(M_NONE)) == 0); CHECK(!dm_community_available()); CHECK(access(cache, F_OK) != 0); CHECK(strstr(log_text(), "社区入口：清单无字段"));
     restart(); dm_community_load(); CHECK(!dm_community_available());
-    // 7. 字段格式坏（群号带字母、链接不是 github 的 https 地址 / 带空格）：当没有字段 | 7. Malformed field (letters in the number, link not an https github address / with a space): treated as absent
+    // 7. 字段格式坏（群号带字母、链接不是 github 的 https 地址 / 带空格）：全不合规，沿用缓存（外审 RC2-E-01，原先当没有字段） | 7. Malformed field (letters in the number, link not an https github address / with a space): treated as absent
     CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1);
-    log_reset(); CHECK(dm_community_manifest(M_BAD, strlen(M_BAD)) == 0); CHECK(!dm_community_available()); CHECK(access(cache, F_OK) != 0); CHECK(strstr(log_text(), "【红】社区入口"));
+    log_reset(); CHECK(dm_community_manifest(M_BAD, strlen(M_BAD)) == -1); CHECK(dm_community_available()); CHECK(cache_has("qq_group=")); CHECK(strstr(log_text(), "【红】社区入口"));   // 全不合规：沿用缓存（外审 RC2-E-01） | all invalid: the cache stays (external review RC2-E-01)
     CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1); CHECK(dm_community_manifest(M_STR, strlen(M_STR)) == 0); CHECK(!dm_community_available());
     // 8. 只有群号：中文显示，其他语言不显示；只有链接：全部语言显示链接 | 8. Number only: shown in Chinese, hidden elsewhere; link only: every language shows the link
     CHECK(dm_community_manifest(M_QQ, strlen(M_QQ)) == 1); CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 1); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 0);
@@ -106,8 +108,8 @@ int main(void) {
     // 13. 测试开关 DM_TEST_COMMUNITY=<清单文件>：测试局从文件读清单（产品局不读） | 13. Test switch DM_TEST_COMMUNITY=<manifest file>: a test run reads the manifest from the file
     { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); FILE *f = fopen(mp, "w"); fputs(M_QQ, f); fclose(f);
       CHECK(dm_community_manifest(M_NONE, strlen(M_NONE)) == 0); t_group = DM_LG_ZH; setenv("DM_TEST_COMMUNITY", mp, 1); restart(); dm_community_load(); CHECK(dm_community_available()); unsetenv("DM_TEST_COMMUNITY"); }
-    // 14. 超长 / 越界：群号 13 位、链接 300 字符都当格式坏；缓冲不越界 | 14. Too long: a 13-digit number and a 300-character link are malformed; no buffer overrun
-    { char big[512]; snprintf(big, sizeof big, "{\"community\": { \"qq_group\": \"1234567890123\", \"github\": \"https://github.com/%0280d\" } }", 0); CHECK(dm_community_manifest(big, strlen(big)) == 0); CHECK(!dm_community_available()); }
+    // 14. 超长 / 越界：群号 13 位、链接 300 字符都当格式坏、沿用缓存；缓冲不越界 | 14. Too long: a 13-digit number and a 300-character link are malformed; no buffer overrun
+    { char big[512]; snprintf(big, sizeof big, "{\"community\": { \"qq_group\": \"1234567890123\", \"github\": \"https://github.com/%0280d\" } }", 0); CHECK(dm_community_manifest(big, strlen(big)) == -1); CHECK(dm_community_available()); }
     // 16. 十一审 Q11-01：严格 JSON 与层级——语法错 / 尾逗号 / 非对象根 / 重复字段 / 嵌套同名键 / 字符串转义 都不算有字段；深层同名键被忽略、无关字段不碍事
     // 16. Q11-01: strict JSON and nesting - syntax error / trailing comma / non-object root / duplicate field / nested same-name key / string escapes never count as the field; deeper same-name keys are ignored, unrelated fields are fine
     t_group = DM_LG_ZH;
@@ -119,10 +121,7 @@ int main(void) {
         "{\"build\":1,\"meta\":{\"community\":{\"qq_group\":\"123456\"}}}",                     // 嵌套 community | nested community
         "{\"community\": {\"qq_group\": \"123456\"}, \"community\": {\"qq_group\": \"654321\"}}",   // 重复 community | duplicate community
         "{\"community\": {\"qq_group\": \"123456\", \"qq_group\": \"654321\"}}",               // 重复 qq_group | duplicate qq_group
-        "{\"community\": {\"qq_group\": \"1234\\u0035678\"}}",                                // 转义 | escape
-        "{\"community\": {\"github\": \"https://github.com/a\\/b\"}}",                       // 转义的斜杠 | escaped slash
         "{\"community\": [\"qq_group\", \"123456\"]}",                                        // community 不是对象 | community not an object
-        "{\"community\": {\"qq_group\": 123456}}",                                              // 值不是字符串 | value not a string
         "{\"community\": {\"qq_group\": \"123456\"}, \"build\": 01}",                           // 数字语法错 | bad number
         "{\"community\": {\"qq_group\": \"123456\"}, \"note\": \"no end}",                       // 字符串没收尾 | unterminated string
         "{\"community\": {\"qq_group\": \"123456\"}, \"x\": tru}" };                              // 字面量错 | bad literal
@@ -254,8 +253,8 @@ int main(void) {
       static const char *const s4 = "{\"community\": {\"site\": \"https://d2rplus.example.com/path\"}}";   // 只有官网：外文显示、中文也显示链接 | site only: every language shows it
       CHECK(dm_community_manifest(s4, strlen(s4)) == 1); CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/path"));
       CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_SITE && chs(DM_LG_ZH, lb) == 1 && lb[0] == DM_CH_SITE);   // 只有官网：中外文都是一行官网 | website only: one website row in every language
-      static const char *const s5 = "{\"community\": {\"site\": \"https:///x\"}}";   // 没有主机名 | no host
-      CHECK(dm_community_manifest(s5, strlen(s5)) == 0);
+      static const char *const s5 = "{\"community\": {\"site\": \"https:///x\"}}";   // 没有主机名：唯一的渠道无效，沿用上面的旧值 | no host: the sole channel is invalid, the old value stays
+      CHECK(dm_community_manifest(s5, strlen(s5)) == -1); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/path"));
       // Q11-01 口径：带转义的 site 当这一项没有（链接退回 GitHub）；嵌套更深的同名 site 不认；site 不是字符串当格式坏 | Q11-01: an escaped site counts as absent (link falls back); a deeper same-name site is ignored; a non-string site is malformed
       static const char *const s6 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https:\\/\\/d2rplus.example.com\"}}";
       log_reset(); CHECK(dm_community_manifest(s6, strlen(s6)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB);
@@ -296,11 +295,11 @@ int main(void) {
             "https://localhost/", "https://.a.example/", "https://a.example./", "https://-a.example/", "https://a.example-/", "https://a_b.example/", "https://a.example:/", "https://a.example:123456/",
             "https://a.example:80x/", "https://:443/", "https://a.example:443?x",
             "https://a.example:443/", "https://a.example:443", "https://a-b.example.com:8443/d2r/v1/", "https://a.example/x:y", "https://a.example:" };   // B024：端口 / 路径里的 : 都拒 | B024: a port or a : in the path is rejected
-        for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) CHECK(!site_ok(bad[i]));
+        for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) CHECK(!dm_site_ok(bad[i]));
         static const char *const good[] = { "https://d2rplus.augustusplay.com/", "https://a.example", "https://a-b.example.com/d2r/v1/", "https://A1.Example.com/p_a-t.h~/(x)" };
-        for (size_t i = 0; i < sizeof good / sizeof *good; i++) CHECK(site_ok(good[i]));
-        char u[80]; snprintf(u, sizeof u, "https://a.example/%0*d", SITE_MAX - 18, 0); CHECK(strlen(u) == SITE_MAX && site_ok(u));   // 恰 60 收 | exactly 60 accepted
-        snprintf(u, sizeof u, "https://a.example/%0*d", SITE_MAX - 17, 0); CHECK(strlen(u) == SITE_MAX + 1 && !site_ok(u));       // 61 拒 | 61 rejected
+        for (size_t i = 0; i < sizeof good / sizeof *good; i++) CHECK(dm_site_ok(good[i]));
+        char u[80]; snprintf(u, sizeof u, "https://a.example/%0*d", DM_SITE_MAX - 18, 0); CHECK(strlen(u) == DM_SITE_MAX && dm_site_ok(u));   // 恰 60 收 | exactly 60 accepted
+        snprintf(u, sizeof u, "https://a.example/%0*d", DM_SITE_MAX - 17, 0); CHECK(strlen(u) == DM_SITE_MAX + 1 && !dm_site_ok(u));       // 61 拒 | 61 rejected
         char m[256]; snprintf(m, sizeof m, "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"%s\"}}", u);
         log_reset(); CHECK(dm_community_manifest(m, strlen(m)) == 1); CHECK(strstr(log_text(), "另一项格式坏"));   // 超长：丢这一项、退回 GitHub | too long: dropped, GitHub fallback
         CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(!cache_has("site="));
@@ -310,8 +309,8 @@ int main(void) {
         static const char *const s11 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https://a.example:443/\"}}";
         log_reset(); CHECK(dm_community_manifest(s11, strlen(s11)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(strstr(log_text(), "官网=无"));
         CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(!cache_has("site="));
-        static const char *const s12 = "{\"community\": {\"site\": \"https://a.example:443/\"}}";   // 只有它：整个字段当格式错 | the only key: the whole field is malformed
-        log_reset(); CHECK(dm_community_manifest(s12, strlen(s12)) == 0); CHECK(!dm_community_available());
+        static const char *const s12 = "{\"community\": {\"site\": \"https://a.example:443/\"}}";   // 只有它：不合规、沿用缓存（外审 RC2-E-01，完整回归在第 26 项） | the only key: invalid, the cache stays (external review RC2-E-01, full regression in case 26)
+        log_reset(); CHECK(dm_community_manifest(s12, strlen(s12)) == -1); CHECK(strstr(log_text(), "沿用缓存")); CHECK(cache_has("github="));
         FILE *fp = fopen(cache, "w"); fputs("github=https://github.com/example/d2r-mobile-plus\nsite=https://a.example:443/\n", fp); fclose(fp);
         restart(); log_reset(); dm_community_load(); CHECK(strstr(log_text(), "社区入口：缓存 ")); CHECK(strstr(log_text(), "官网=无")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB);
         CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus"));
@@ -421,6 +420,26 @@ int main(void) {
     }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
+    // 26. 外审 RC2-E-01：加载页（dm_manifest_parse）与游戏内用同一份 site 合同；给了渠道但全不合规时不得清掉有效旧缓存（安卓把加载页留下的清单交给游戏内解析）；community 明确不带渠道、结构坏仍照旧撤下
+    // 26. External review RC2-E-01: the loading page (dm_manifest_parse) and the game share one site contract; channels given but all invalid must not clear a good old cache (Android hands the loading page's manifest to the in-game parser); a community with no channels and a malformed manifest still withdraw it
+    { static const char *const old_cache = "qq_group=1129913678\n"; dm_manifest pm; char why[160], js[400], l[200];
+      #define E01_SEED() do { FILE *fp_ = fopen(cache, "w"); fputs(old_cache, fp_); fclose(fp_); restart(); dm_community_load(); t_group = DM_LG_ZH; CHECK(dm_community_available()); } while (0)
+      #define E01_ONE(site_, want_) do { const char *st_ = (site_); int w_ = (want_); snprintf(js, sizeof js, "{\"build\":1,\"note\":\"x\",\"urgent\":false,\"community\":{\"site\":\"%s\"}}", st_); \
+          E01_SEED(); int lp_ = dm_manifest_parse(js, strlen(js), &pm, why, sizeof why), ig_ = dm_community_manifest(js, strlen(js)); \
+          CHECK(lp_ == w_); CHECK(ig_ == (w_ ? 1 : -1)); CHECK(dm_community_available()); CHECK(access(cache, F_OK) == 0); if (!w_) CHECK(cache_has(old_cache)); else CHECK(cache_has("site=")); } while (0)
+      for (size_t i = 0; i < sizeof k_site_cases / sizeof *k_site_cases; i++) E01_ONE(k_site_cases[i].site, k_site_cases[i].ok);
+      for (size_t i = 0; i < sizeof k_site_long / sizeof *k_site_long; i++) { site_contract_long(l, sizeof l, k_site_long[i].len); E01_ONE(l, k_site_long[i].ok); }
+      // 别的「唯一无效渠道」形状：转义、不是字符串、空串、群号 / GitHub 不合规 | other invalid sole channels: escape, non-string, empty, bad number / GitHub
+      static const char *const keep[] = { "{\"community\":{\"qq_group\":\"1234\\u0035678\"}}", "{\"community\":{\"github\":\"https://github.com/a\\/b\"}}", "{\"community\":{\"qq_group\":123456}}", "{\"community\":{\"site\":42}}", "{\"community\":{\"site\":\"\"}}", "{\"community\":{\"qq_group\":\"12\"}}", "{\"community\":{\"github\":\"https://example.com/x\"}}" };
+      for (size_t i = 0; i < sizeof keep / sizeof *keep; i++) { E01_SEED(); log_reset(); CHECK(dm_community_manifest(keep[i], strlen(keep[i])) == -1); CHECK(dm_community_available()); CHECK(cache_has(old_cache)); CHECK(strstr(log_text(), "沿用缓存")); }
+      // 没有旧值时入口仍不显示 | with no old value the entry stays hidden
+      unlink(cache); restart(); dm_community_load(); CHECK(dm_community_manifest("{\"community\":{\"site\":\"https://example.com:443/\"}}", 49) == -1); CHECK(!dm_community_available());
+      // 该撤下的照旧撤下 | what should withdraw still does
+      static const char *const drop[] = { "{\"build\":1}", "{\"community\":{}}", "{\"community\":[1]}", "{\"community\":{\"site\":\"https://a.example\",\"site\":\"https://b.example\"}}", "{\"community\":{\"site\":\"https://a.exa" };
+      for (size_t i = 0; i < sizeof drop / sizeof *drop; i++) { E01_SEED(); CHECK(dm_community_manifest(drop[i], strlen(drop[i])) == 0); CHECK(!dm_community_available()); CHECK(access(cache, F_OK) != 0); }
+      #undef E01_ONE
+      #undef E01_SEED
+    }
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);
     fflush(stderr); printf("t_community: %d checks, %d failed\n", checks, fails);
     return fails != 0;

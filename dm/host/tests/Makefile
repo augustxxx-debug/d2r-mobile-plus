@@ -292,8 +292,8 @@ $(B)/t_diffrow: t_diffrow.c ../dm_hud.c ../dm_hud.h | $(B)
 
 $(B)/t_stick_nav: t_stick_nav.c ../dm_stick_nav.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_stick_nav.c
-$(B)/t_community: t_community.c ../dm_community.c ../dm_community.h ../dm_custom.c ../dm_custom.h ../../ios/Sources/dm_touch_controls.c ../../ios/Sources/dm_touch_controls.h | $(B)
-	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -I../../ios/Sources -o $@ t_community.c ../../ios/Sources/dm_touch_controls.c -lm
+$(B)/t_community: t_community.c site_contract_cases.h ../dm_site.h ../dm_manifest.c ../dm_manifest.h ../dm_community.c ../dm_community.h ../dm_custom.c ../dm_custom.h ../../ios/Sources/dm_touch_controls.c ../../ios/Sources/dm_touch_controls.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -I../../ios/Sources -o $@ t_community.c ../dm_manifest.c ../../ios/Sources/dm_touch_controls.c -lm
 
 $(B)/t_res_auto_policy: t_res_auto_policy.c t_metalfx_handoff_backend.c ../hle_oe.c ../dm_res_cap.h ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_res_auto_policy.c t_metalfx_handoff_backend.c
@@ -308,7 +308,7 @@ $(B)/t_loadpage: t_loadpage.c ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.h ../
 	clang -O1 -Wall -Werror -Wno-unused-function -DDM_I18N_ALL -I.. -o $@ t_loadpage.c -lm
 # 加载页出图核对（不在 run 里：写 PNG 到指定目录）：make render-loadpage OUT=<目录> [LANG=zh]
 # Loading page render check (not part of run: writes PNGs to a given directory): make render-loadpage OUT=<dir> [LANG=zh]
-$(B)/t_manifest: t_manifest.c ../dm_manifest.c ../dm_manifest.h | $(B)
+$(B)/t_manifest: t_manifest.c site_contract_cases.h ../dm_site.h ../dm_manifest.c ../dm_manifest.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_manifest.c
 
 $(B)/t_loadpage_race: t_loadpage_race.c ../dm_loadpage.c ../dm_loadpage.h | $(B)

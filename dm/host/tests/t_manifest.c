@@ -4,6 +4,7 @@
 // out-of-range values / duplicate keys / syntax errors (trailing comma, trailing content, non-object root, too deep) / oversize / BOM / escapes in community fields reject the
 // whole manifest; unknown keys and nested same-name keys are ignored; community is optional.
 #include "../dm_manifest.c"
+#include "site_contract_cases.h"
 #include <stdio.h>
 #include <string.h>
 static int checks, fails;
@@ -56,10 +57,13 @@ int main(void) {
     // community.site（服务端说明第 13 节）与线上清单的样子 | community.site (server notes section 13) and the live manifest's shape
     { const char *live = "{\"build\":1793254654,\"version\":\"1.0.0\",\"note\":\"1.0.0 RC1\",\"urgent\":false,\"community\":{\"qq_group\":\"1129913678\",\"github\":\"https://github.com/augustxxx-debug/d2r-mobile-plus\",\"site\":\"https://d2rplus.augustusplay.com/\"}}";
       CHECK(dm_manifest_parse(live, strlen(live), &m, why, sizeof why) == 1); CHECK(!strcmp(m.site, "https://d2rplus.augustusplay.com/")); CHECK(!strcmp(m.qq, "1129913678")); }
-    CHECK(ok("{" BASE ", \"community\": {\"site\": \"https://example.org/x?y=1\"}}"));
+    // 合同样例（与 t_community.c 同一张表）；带 ? 的地址在 E-01 之前这里收、游戏内拒 | contract samples (the same table as t_community.c); before E-01 an address with ? passed here and failed in the game
+    { char s[400], l[200];
+      for (size_t i = 0; i < sizeof k_site_cases / sizeof *k_site_cases; i++) { snprintf(s, sizeof s, "{" BASE ", \"community\": {\"site\": \"%s\"}}", k_site_cases[i].site); CHECK(k_site_cases[i].ok ? ok(s) : no(s)); CHECK(dm_site_ok(k_site_cases[i].site) == k_site_cases[i].ok); }
+      for (size_t i = 0; i < sizeof k_site_long / sizeof *k_site_long; i++) { site_contract_long(l, sizeof l, k_site_long[i].len); CHECK((int)strlen(l) == k_site_long[i].len); snprintf(s, sizeof s, "{" BASE ", \"community\": {\"site\": \"%s\"}}", l); CHECK(k_site_long[i].ok ? ok(s) : no(s)); } }
     CHECK(no("{" BASE ", \"community\": {\"site\": \"http://example.org/\"}}")); CHECK(no("{" BASE ", \"community\": {\"site\": \"https://\"}}"));
     CHECK(no("{" BASE ", \"community\": {\"site\": \"https://a b/\"}}")); CHECK(no("{" BASE ", \"community\": {\"site\": \"https:\\/\\/a\"}}"));
-    CHECK(no("{" BASE ", \"community\": {\"site\": 1}}")); CHECK(no("{" BASE ", \"community\": {\"site\": \"https://a/\", \"site\": \"https://b/\"}}"));
+    CHECK(no("{" BASE ", \"community\": {\"site\": 1}}")); CHECK(no("{" BASE ", \"community\": {\"site\": \"https://a.example/\", \"site\": \"https://b.example/\"}}"));
     CHECK(ok("{" BASE ", \"community\": {\"qq_group\": \"12345\", \"discord\": \"x\", \"min_build\": 3}, \"min_build\": 5}"));   // 未知键忽略 | unknown keys ignored
     // 重复键 | duplicate keys
     CHECK(no("{" BASE ", \"build\": 2}")); CHECK(no("{" BASE ", \"urgent\": true}"));
