@@ -279,12 +279,13 @@ static void stash_badges(uint8_t *b, uint64_t pl) {
         it = *(uint64_t *)(d + 0xb0); }
     for (; nd < NDIG; nd++) { snprintf(nm, sizeof nm, "TouchQtyS%02d", nd); w_move(find_w(pool, nm, 1), OFF, 0); }
 }
+int dm_bag_page(void);
 void dm_stack_ui(uint8_t *b, uint64_t inv_panel, uint64_t pl) {   // 游戏主线程每帧（dm_pouch.c ui_pump；物品栏面板开着才来） | Game main thread every frame (ui_pump in dm_pouch.c; only while the inventory panel is open)
     B = b; char nm[20]; int nd = 0; uint64_t inv = pl ? *(uint64_t *)(pl + 0x90) : 0;
     if (pl) atomic_store(&g_cli_pid, *(uint32_t *)(pl + 8));
     for (uint64_t it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0, k = 0; it && k < 2048 && nd < NDIG; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
-        if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && pp && is_potion(it)) { int q = qty(it);
-            if (q >= 2) { snprintf(nm, sizeof nm, "TouchQtyN%02d", nd++); uint64_t w = find_w(inv_panel, nm, 3); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, 216 + CELL * *(int32_t *)(pp + 0x10), 893 + CELL * *(int32_t *)(pp + 0x14) + 60); } }
+        if (!dm_bag_page() && *(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && pp && is_potion(it)) { int q = qty(it);
+            if (q >= 2) { snprintf(nm, sizeof nm, "TouchQtyN%02d", nd++); uint64_t w = find_w(inv_panel, nm, 3); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, 158 + CELL * *(int32_t *)(pp + 0x10), 599 + CELL * *(int32_t *)(pp + 0x14) + 60); } }
         it = *(uint64_t *)(d + 0xb0); }
     for (; nd < NDIG; nd++) { snprintf(nm, sizeof nm, "TouchQtyN%02d", nd); w_move(find_w(inv_panel, nm, 3), OFF, 0); }
     stash_badges(b, pl);

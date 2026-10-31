@@ -453,12 +453,14 @@ static void ui_pump(void) {
     static int shown = -1; int gen = atomic_load(&g_ugen); if (gen != shown) { char n[16]; snprintf(n, sizeof n, "%d", atomic_load(&g_ucount)); w_text(find_w(boxw, "TouchPouchCount", 1), n); shown = gen; if (g_tip) tip_show(root, 1); }
     if (atomic_exchange(&g_pouch_tap, 0)) tip_show(root, !g_tip);
     if (g_tip) tip_show(root, 1);   // 文字控件量尺寸要晚一两帧（fitToText）：开着时每帧对齐 | Text widgets measure their size a frame or two late (fitToText): align every frame while open
+    { void dm_bag_ui(uint8_t *, uint64_t, uint64_t, uint64_t); dm_bag_ui(B, inv, boxw, cli_player()); }   // 大背包图标条（dm_bag.c） | Large-bag strip (dm_bag.c)
     { void dm_stack_ui(uint8_t *, uint64_t, uint64_t); dm_stack_ui(B, boxw, cli_player()); }   // 药水叠数与拆分框（dm_stack.c） | Potion counts and the split box (dm_stack.c)
 }
 
 void dm_pouch_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c）：我们的两个按钮发 ClosePanel:TouchPouch / TouchStore | UI message callback (diag.c): our two buttons send ClosePanel:TouchPouch / TouchStore
     { void dm_stack_on_uimsg(const char *, const char *, const char *); dm_stack_on_uimsg(cat, act, arg); }
     if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return;
+    { void dm_bag_on_uimsg(const char *); dm_bag_on_uimsg(arg); }
     if (!strcmp(arg, "TouchPouch")) atomic_store(&g_pouch_tap, 1);
     else if (!strcmp(arg, "TouchStore") || !strcmp(arg, "TouchPadStore")) atomic_store(&g_store_req, 1);   // TouchPadStore = 手柄版暂停菜单的「存放」行（touch_layout.py pad_pause） | TouchPadStore = the "Deposit" row of the controller pause menu (touch_layout.py pad_pause)
 }

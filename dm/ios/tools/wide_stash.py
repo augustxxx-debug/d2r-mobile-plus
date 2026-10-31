@@ -15,7 +15,7 @@
 # 1 pixel = 2 layout units; widening of 392 units = 196 pixels = 4 cells.
 import json, os, re, shutil, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import touch_layout
+import bag_layout, touch_layout
 
 HERE = os.path.dirname(os.path.abspath(__file__)); ART = __import__('gen_paths').gen_dir('NativeHUD', 'widestash')   # 构建时由 gen_widestash_art.py / gen_vault_cover.py 生成 | Generated at build time by gen_widestash_art.py / gen_vault_cover.py
 COLS = 14; EX = 392   # 加宽布局单位 | Widening in layout units
@@ -254,6 +254,10 @@ def build(romfs, outdir, repl):
             o = 4 + row * 240 + 16
             if inv[o:o + 2] != b'\x0a\x0a': raise SystemExit('wide_stash：%s 第 %d 行不是 10×10（原版表变了？）' % (path, row))
             inv[o] = COLS
+        # 大背包：玩家各职业行（10×4）改 12×7，见 bag_layout.py；佣兵、方块、交易等别的行不动 | Large bag: the player class rows (10×4) become 12×7, see bag_layout.py; other rows (mercenary, cube, trade...) are left alone
+        for row in (0, 1, 2, 3, 4, 12, 13, 14, 15, 16, 17, 18, 19, 27, 28, 29):
+            o = 4 + row * 240 + 16
+            if inv[o:o + 2] == b'\x0a\x04': inv[o] = bag_layout.COLS; inv[o + 1] = bag_layout.ROWS
         # 佣兵加装备位（秘境 10 层解锁，产物 r39 起配服务端那道门）：佣兵行（第 11 行，第二套第 26 行）原版只定义了右手 / 身 / 左手 / 头四个部位的格子，
         # 项链 / 右戒 / 左戒 / 腰带 / 鞋 / 手套（格序 4–9）全是 −1；服务端放置校验 main+0x65032c 对非玩家主人固定读第 11 行，四个坐标全负就拒。
         # 这里照玩家行（第 0 行）的相对位置补上：玩家面板原点在 x = 320，佣兵面板在 0；第二套整体再偏 (+80, +60)（两行已有四格的差）。每格 20 字节：左 右 上 下 + 1 个整数
