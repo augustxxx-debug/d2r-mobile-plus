@@ -39,7 +39,7 @@ static char dir[64], cache[128], logp[128];
 static int copies; static char copied[256];
 static int copy_ok(const char *s) { copies++; snprintf(copied, sizeof copied, "%s", s); return 1; }
 static int copy_bad(const char *s) { (void)s; return 0; }
-static void restart(void) { g_qq[0] = g_gh[0] = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0); }
+static void restart(void) { g_qq[0] = g_gh[0] = g_site[0] = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0); }
 static char *log_text(void) { static char t[16384]; fflush(stderr); FILE *f = fopen(logp, "r"); size_t n = f ? fread(t, 1, sizeof t - 1, f) : 0; t[n] = 0; if (f) fclose(f); return t; }
 static void log_reset(void) { fflush(stderr); if (ftruncate(fileno(stderr), 0) == 0) rewind(stderr); }   // 截断并回到文件头（只重开文件会从旧偏移接着写、前面留一段空洞） | truncate and rewind (reopening alone keeps writing at the old offset, leaving a hole at the front)
 static int cache_has(const char *s) { FILE *f = fopen(cache, "r"); char t[512] = {0}; if (!f) return 0; fread(t, 1, sizeof t - 1, f); fclose(f); return strstr(t, s) != NULL; }
@@ -74,7 +74,7 @@ int main(void) {
     // 6. 清单取到了但没有字段：入口不显示、缓存删掉；重启后仍不显示 | 6. Fetched without the field: entry hidden, cache deleted; still hidden after a restart
     log_reset(); CHECK(dm_community_manifest(M_NONE, strlen(M_NONE)) == 0); CHECK(!dm_community_available()); CHECK(access(cache, F_OK) != 0); CHECK(strstr(log_text(), "社区入口：清单无字段"));
     restart(); dm_community_load(); CHECK(!dm_community_available());
-    // 7. 字段格式坏（群号带字母、链接不是 github 的 https 地址 / 带空格）：全不合规，沿用缓存（外审 RC2-E-01，原先当没有字段） | 7. Malformed field (letters in the number, link not an https github address / with a space): treated as absent
+    // 7. 字段格式坏（群号带字母、链接不是 github 的 https 地址 / 带空格）：全不合规，沿用缓存（外审 RC2-E-01，原先当没有字段） | 7. Malformed field (letters in the number, link not an https github address / with a space): all invalid, the cache stays (external review RC2-E-01; used to count as absent)
     CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1);
     log_reset(); CHECK(dm_community_manifest(M_BAD, strlen(M_BAD)) == -1); CHECK(dm_community_available()); CHECK(cache_has("qq_group=")); CHECK(strstr(log_text(), "【红】社区入口"));   // 全不合规：沿用缓存（外审 RC2-E-01） | all invalid: the cache stays (external review RC2-E-01)
     CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1); CHECK(dm_community_manifest(M_STR, strlen(M_STR)) == 0); CHECK(!dm_community_available());
@@ -309,7 +309,7 @@ int main(void) {
         static const char *const s11 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https://a.example:443/\"}}";
         log_reset(); CHECK(dm_community_manifest(s11, strlen(s11)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(strstr(log_text(), "官网=无"));
         CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(!cache_has("site="));
-        static const char *const s12 = "{\"community\": {\"site\": \"https://a.example:443/\"}}";   // 只有它：不合规、沿用缓存（外审 RC2-E-01，完整回归在第 26 项） | the only key: invalid, the cache stays (external review RC2-E-01, full regression in case 26)
+        static const char *const s12 = "{\"community\": {\"site\": \"https://a.example:443/\"}}";   // 只有它：不合规、沿用缓存（外审 RC2-E-01，完整回归在第 27 项） | the only key: invalid, the cache stays (external review RC2-E-01, full regression in case 27)
         log_reset(); CHECK(dm_community_manifest(s12, strlen(s12)) == -1); CHECK(strstr(log_text(), "沿用缓存")); CHECK(cache_has("github="));
         FILE *fp = fopen(cache, "w"); fputs("github=https://github.com/example/d2r-mobile-plus\nsite=https://a.example:443/\n", fp); fclose(fp);
         restart(); log_reset(); dm_community_load(); CHECK(strstr(log_text(), "社区入口：缓存 ")); CHECK(strstr(log_text(), "官网=无")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB);
@@ -420,8 +420,8 @@ int main(void) {
     }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
-    // 26. 外审 RC2-E-01：加载页（dm_manifest_parse）与游戏内用同一份 site 合同；给了渠道但全不合规时不得清掉有效旧缓存（安卓把加载页留下的清单交给游戏内解析）；community 明确不带渠道、结构坏仍照旧撤下
-    // 26. External review RC2-E-01: the loading page (dm_manifest_parse) and the game share one site contract; channels given but all invalid must not clear a good old cache (Android hands the loading page's manifest to the in-game parser); a community with no channels and a malformed manifest still withdraw it
+    // 27. 外审 RC2-E-01：加载页（dm_manifest_parse）与游戏内用同一份 site 合同；给了渠道但全不合规时不得清掉有效旧缓存（安卓把加载页留下的清单交给游戏内解析）；community 明确不带渠道、结构坏仍照旧撤下
+    // 27. External review RC2-E-01: the loading page (dm_manifest_parse) and the game share one site contract; channels given but all invalid must not clear a good old cache (Android hands the loading page's manifest to the in-game parser); a community with no channels and a malformed manifest still withdraw it
     { static const char *const old_cache = "qq_group=1129913678\n"; dm_manifest pm; char why[160], js[400], l[200];
       #define E01_SEED() do { FILE *fp_ = fopen(cache, "w"); fputs(old_cache, fp_); fclose(fp_); restart(); dm_community_load(); t_group = DM_LG_ZH; CHECK(dm_community_available()); } while (0)
       #define E01_ONE(site_, want_) do { const char *st_ = (site_); int w_ = (want_); snprintf(js, sizeof js, "{\"build\":1,\"note\":\"x\",\"urgent\":false,\"community\":{\"site\":\"%s\"}}", st_); \

@@ -211,8 +211,8 @@ int dm_community_manifest(const char *json, size_t len) {
     if (j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1) { drop_values(); LOG("【红】社区入口：清单格式错（community / qq_group / github / site 重复），入口不显示（缓存已清）"); return 0; }
     int given = j.n_qq || j.n_gh || j.n_site;   // 给了渠道键（值合不合规另算） | channel keys are present (valid or not)
     if (j.bad_type && !given) { drop_values(); LOG("【红】社区入口：清单格式错（community 不是对象），入口不显示（缓存已清）"); return 0; }
-    int bad = 0; if (j.qq[0] && !qq_ok(j.qq)) { bad++; j.qq[0] = 0; } if (j.gh[0] && !gh_ok(j.gh)) { bad++; j.gh[0] = 0; } if (j.site[0] && !dm_site_ok(j.site)) { bad++; j.site[0] = 0; }
-    bad += j.bad_type + j.too_long;
+    if (j.qq[0] && !qq_ok(j.qq)) j.qq[0] = 0; if (j.gh[0] && !gh_ok(j.gh)) j.gh[0] = 0; if (j.site[0] && !dm_site_ok(j.site)) j.site[0] = 0;
+    int bad = (j.n_qq && !j.qq[0]) + (j.n_gh && !j.gh[0]) + (j.n_site && !j.site[0]);   // 给了键但没留下值，空串也算 | a key given with no value left, an empty string included
     if (!j.qq[0] && !j.gh[0] && !j.site[0]) {
         // 唯一的渠道无效不能清掉有效的旧缓存（外审 RC2-E-01）：只有 community 明确不带渠道才算撤下入口 | an invalid sole channel must not clear a good old cache (external review RC2-E-01): only a community with no channels withdraws the entry
         if (given) { LOG("【红】社区入口：清单格式错（%d 项不合规：群号须 5–12 位数字，链接须 https://github.com/ 开头，官网须 https:// + 主机名 + 可选路径、不带端口与 @ ? #、不超过 %d 字符，都不带转义），沿用缓存（群号 %s，链接 %s，官网 %s）", bad, DM_SITE_MAX, qq[0] ? "有" : "无", gh[0] ? "有" : "无", site[0] ? "有" : "无"); return -1; }

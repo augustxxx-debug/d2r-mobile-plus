@@ -77,7 +77,7 @@ static int object(mp_t *j, int depth, int ctx) {   // ctx：0 别处 / 1 根对�
             if (j->p < j->e && *j->p == '{') ok = object(j, depth + 1, 2); else { bad(j, "community 不是对象"); ok = value(j, depth + 1, 0); } }
         else if (ctx == 2 && !strcmp(key, "qq_group")) { j->n_qq++; ok = plain(j, depth + 1, j->m.qq, sizeof j->m.qq, "qq_group 不是不带转义的字符串", "qq_group 超过 12 位"); }
         else if (ctx == 2 && !strcmp(key, "github")) { j->n_gh++; ok = plain(j, depth + 1, j->m.github, sizeof j->m.github, "github 不是不带转义的字符串", "github 超过 160 个字符"); }
-        else if (ctx == 2 && !strcmp(key, "site")) { j->n_site++; ok = plain(j, depth + 1, j->m.site, sizeof j->m.site, "site 不是不带转义的字符串", "site 超过 160 个字符"); }
+        else if (ctx == 2 && !strcmp(key, "site")) { j->n_site++; ok = plain(j, depth + 1, j->m.site, sizeof j->m.site, "site 不是不带转义的字符串", "site 太长（上限见 dm_site.h）"); }
         else ok = value(j, depth + 1, 0);
         if (!ok) return 0;
         ws(j); if (j->p >= j->e) return 0;

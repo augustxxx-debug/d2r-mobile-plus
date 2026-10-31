@@ -225,6 +225,6 @@ t_metalfx_m3: t_metalfx.m ../nvn/nvn_metalfx.m ../nvn/nvn_metalfx.h
 METALFX_CHECKS = $(if $(findstring -DDM_NVN_M3=1,$(CFLAGS)),t_metalfx_m3,t_metalfx t_metalfx_m3)
 .PHONY: check-metalfx
 check-metalfx: $(METALFX_CHECKS)
-# 调试层下 MetalFX 内部崩（信号退出，macOS 26.7 / Xcode 27.1 上基线也是，内审 I-10）：不开调试层再跑一遍，这一遍必须过 | MetalFX crashes inside itself under the debug layer (exit by signal, also on the baseline with macOS 26.7 / Xcode 27.1, internal audit I-10): run once more without the layer, and that run must pass
-	@for test in $(METALFX_CHECKS); do MTL_DEBUG_LAYER=1 ./$$test; status=$$?; if [ $$status -gt 128 ]; then echo "WARN $$test: 调试层下崩溃（$$status），不开调试层重跑"; ./$$test; status=$$?; fi; if [ $$status -eq 77 ]; then echo "SKIP $$test: unsupported GPU/backend"; elif [ $$status -ne 0 ]; then exit $$status; fi; done
+# 调试层下 MetalFX 内部崩（只认这个已知异常：调试层的 MTL4 编码器没有 globalTraceObjectID，macOS 26.7 / Xcode 27.1 上基线也是，内审 I-10 / J-02）：不开调试层再跑一遍，这一遍必须过；其他信号退出照旧失败，校验层报的真错不能被吞 | MetalFX crashes inside itself under the debug layer (exit by signal, also on the baseline with macOS 26.7 / Xcode 27.1, internal audit I-10): run once more without the layer, and that run must pass
+	@for test in $(METALFX_CHECKS); do err=$$(mktemp); MTL_DEBUG_LAYER=1 ./$$test 2> $$err; status=$$?; cat $$err >&2; if [ $$status -gt 128 ] && grep -q "globalTraceObjectID.*unrecognized selector" $$err; then echo "WARN $$test: 调试层下崩溃（$$status，已知异常），不开调试层重跑"; ./$$test; status=$$?; fi; rm -f $$err; if [ $$status -eq 77 ]; then echo "SKIP $$test: unsupported GPU/backend"; elif [ $$status -ne 0 ]; then exit $$status; fi; done
 run: check-metalfx
