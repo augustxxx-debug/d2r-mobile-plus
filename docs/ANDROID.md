@@ -18,11 +18,13 @@ The Android version works like the iOS shell: the release page has an **APK that
 The APK carries the generator. Put your game files on the phone and skip the import pack:
 
 ```
-Download/S2X/D2R Mobile/ExeFS/   the ExeFS folder from your game files (main and sdk at least, about 24 MB)
-Download/S2X/D2R Mobile/data/    the game resources, as in step 2 below
+Download/S2X/D2R Mobile Plus/ExeFS/   the ExeFS folder from your game files (main and sdk at least, about 24 MB)
+Download/S2X/D2R Mobile Plus/data/    the game resources, as in step 2 below
 ```
 
-Open the App. When it finds no import pack it says it is building the shader cache and starts by itself: it makes, on the phone and from your game files, the same content a computer would, byte for byte. It takes about 5–15 minutes, only once; stay on that screen. It needs about 3 GB of free space (the intermediate files are deleted afterwards, leaving about 0.7 GB). If files are missing, space runs out or a step fails, the screen says why, and the log is in `Download/S2X/D2R Mobile/gen_log.txt`. After installing a new APK it builds again by itself.
+If you already have your files in the older `Download/S2X/D2R Mobile/` folder, keep them there: the App uses it when `D2R Mobile Plus` holds nothing.
+
+Open the App. When it finds no import pack it says it is building the shader cache and starts by itself: it makes, on the phone and from your game files, the same content a computer would, byte for byte. It takes about 5–15 minutes, only once; stay on that screen. It needs about 3 GB of free space (the intermediate files are deleted afterwards, leaving about 0.7 GB). If files are missing, space runs out or a step fails, the screen says why, and the log is in `Download/S2X/D2R Mobile Plus/gen_log.txt`. After installing a new APK it builds again by itself.
 
 `ExeFS` and `data` come from the same extraction (see [GAME_FILES.md](GAME_FILES.md)). On-phone generation uses the font bundled in the APK, LXGW WenKai (霞鹜文楷, SIL OFL 1.1), for the Chinese / Japanese glyphs of the UI, the same as the computer route by default; for another UI font, make the import pack on a computer as below.
 
@@ -66,11 +68,11 @@ Steps already done are skipped on the next run. This folder contains game conten
 
 ## Step 2: copy the files to the phone
 
-Connect the phone by USB (choose "File transfer" on the phone) and, in the phone's `Download`, create `S2X/D2R Mobile/` holding two things:
+Connect the phone by USB (choose "File transfer" on the phone) and, in the phone's `Download`, create `S2X/D2R Mobile Plus/` holding two things:
 
 ```
-Download/S2X/D2R Mobile/android/   the android folder from step 1, copied whole
-Download/S2X/D2R Mobile/data/      game resources: the 18 .data archives and .build.config from your game files' RomFS/data
+Download/S2X/D2R Mobile Plus/android/   the android folder from step 1, copied whole
+Download/S2X/D2R Mobile Plus/data/      game resources: the 18 .data archives and .build.config from your game files' RomFS/data
 ```
 
 The 18 archives are listed in [GAME_FILES.md](GAME_FILES.md) in the section The "game resource folder" that goes on the phone; do not forget `.build.config` as well (a hidden file starting with a dot that computers often do not show; `build.config` without the dot is accepted too). Copy any `.data.holes` files along with them if you have them; they are optional.
@@ -105,9 +107,9 @@ The other way round holds too: as long as you upgrade with our released APK, you
 | Message | What to do |
 |---|---|
 | Needs "All files access" | Tap the screen, turn it on in Settings, come back to the App |
-| Game resources were not found | The `data` folder is not at `Download/S2X/D2R Mobile/data`, or has no `.data` archives |
+| Game resources were not found | The `data` folder is not at `Download/S2X/D2R Mobile Plus/data`, or has no `.data` archives |
 | The .build.config file is missing | Copy `.build.config` from your game files' `RomFS/data` into `data` too |
-| Game content has not been imported yet | The `android` folder is not at `Download/S2X/D2R Mobile/android`, or was not copied completely |
+| Game content has not been imported yet | The `android` folder is not at `Download/S2X/D2R Mobile Plus/android`, or was not copied completely |
 | This import pack does not match this version of the app | Redo step 1 with the source of the same release as the APK |
 | The import did not finish | Usually not enough free space; free about 1 GB and open the App again |
 

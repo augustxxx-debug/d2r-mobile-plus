@@ -18,11 +18,13 @@ English: [ANDROID.md](ANDROID.md)
 APK 里带着生成工具。你只要把游戏文件放进手机，不用做导入包：
 
 ```
-Download/S2X/D2R Mobile/ExeFS/   你游戏文件里的 ExeFS 文件夹（至少要有 main 和 sdk，约 24 MB）
-Download/S2X/D2R Mobile/data/    游戏资源，与下面第二步相同
+Download/S2X/D2R Mobile Plus/ExeFS/   你游戏文件里的 ExeFS 文件夹（至少要有 main 和 sdk，约 24 MB）
+Download/S2X/D2R Mobile Plus/data/    游戏资源，与下面第二步相同
 ```
 
-打开 App，它发现还没有导入包，会提示「正在生成着色器缓存」并自己开始：用你的游戏文件在手机上做出与电脑上逐字节相同的内容，约 5–15 分钟，只做一次，期间留在这个页面。生成要约 3 GB 剩余空间（做完删掉中间文件，只留约 0.7 GB）。缺文件、空间不够或某一步失败时，页面会直接说原因，日志放在 `Download/S2X/D2R Mobile/gen_log.txt`。换新版 APK 后会自动重新生成，不用再做什么。
+如果你的文件已经放在旧的 `Download/S2X/D2R Mobile/`，不用搬：`D2R Mobile Plus` 里没东西时，App 会用旧文件夹。
+
+打开 App，它发现还没有导入包，会提示「正在生成着色器缓存」并自己开始：用你的游戏文件在手机上做出与电脑上逐字节相同的内容，约 5–15 分钟，只做一次，期间留在这个页面。生成要约 3 GB 剩余空间（做完删掉中间文件，只留约 0.7 GB）。缺文件、空间不够或某一步失败时，页面会直接说原因，日志放在 `Download/S2X/D2R Mobile Plus/gen_log.txt`。换新版 APK 后会自动重新生成，不用再做什么。
 
 `ExeFS` 与 `data` 来自同一次解包（见 [GAME_FILES.zh-CN.md](GAME_FILES.zh-CN.md)）。手机端生成用 APK 随附的霞鹜文楷（LXGW WenKai，SIL OFL 1.1）替换界面里的中日文字形，与电脑流程的缺省一致；想用其他界面字体，仍按下面的电脑流程做导入包。
 
@@ -66,11 +68,11 @@ android/pack_info.txt 这份导入包是给哪个版本做的
 
 ## 第二步：把文件拷进手机
 
-用 USB 连电脑（手机选「文件传输」），在手机存储的 `Download` 里建 `S2X/D2R Mobile/`，放两样东西：
+用 USB 连电脑（手机选「文件传输」），在手机存储的 `Download` 里建 `S2X/D2R Mobile Plus/`，放两样东西：
 
 ```
-Download/S2X/D2R Mobile/android/   第一步做出来的 android 文件夹，整个拷过去
-Download/S2X/D2R Mobile/data/      游戏资源：你游戏文件 RomFS/data 里的 18 个 .data 档案和 .build.config
+Download/S2X/D2R Mobile Plus/android/   第一步做出来的 android 文件夹，整个拷过去
+Download/S2X/D2R Mobile Plus/data/      游戏资源：你游戏文件 RomFS/data 里的 18 个 .data 档案和 .build.config
 ```
 
 `data` 里要的 18 个档案见 [GAME_FILES.zh-CN.md](GAME_FILES.zh-CN.md) 的「手机上要放的那个游戏资源文件夹」；另外别漏了 `.build.config`（点开头的隐藏文件，电脑上常看不见；存成不带点的 `build.config` 也认）。有 `.data.holes` 文件的话一起拷，不拷也行。
@@ -105,9 +107,9 @@ APK 与导入包不是同一版本时，App 会提示「导入包与这版 App �
 | 提示 | 怎么办 |
 |---|---|
 | 需要「所有文件访问」权限 | 点屏幕进设置打开，再回到 App |
-| 未找到游戏资源 | `data` 文件夹不在 `Download/S2X/D2R Mobile/data`，或里面没有 `.data` 档案 |
+| 未找到游戏资源 | `data` 文件夹不在 `Download/S2X/D2R Mobile Plus/data`，或里面没有 `.data` 档案 |
 | 缺少 .build.config | 把游戏文件 `RomFS/data` 里的 `.build.config` 也拷进 `data` |
-| 还没有导入游戏内容 | `android` 文件夹不在 `Download/S2X/D2R Mobile/android`，或没拷全 |
+| 还没有导入游戏内容 | `android` 文件夹不在 `Download/S2X/D2R Mobile Plus/android`，或没拷全 |
 | 导入包与这版 App 不配套 | 用与 APK 同一版本的源码重做第一步 |
 | 导入没有完成 | 多半是手机空间不够，腾出约 1 GB 再打开 |
 
