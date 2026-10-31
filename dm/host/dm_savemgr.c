@@ -24,6 +24,9 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include <unistd.h>
 
 // dm_community.c 的控件小工具 | widget helpers of dm_community.c
@@ -123,7 +126,16 @@ static void preview_page(void) {
     rows_clear(); for (int i = 0; i < g_view.nchars; i++) { char t[200]; dm_pkg_char *c = &g_view.chars[i]; if (c->status == DM_PKG_BAD && !c->level) snprintf(t, sizeof t, "%s", c->name); else char_row_text(c, t, sizeof t); row_t *r = row_add(t, "", RK_CHAR, i); if (r) preview_tag(r); }
     for (int i = 0; i < g_view.nstash; i++) { char t[200]; stash_label(g_view.stash[i].name, t, sizeof t); row_t *r = row_add(t, "", RK_STASH, i); if (r) preview_tag(r); }
     if (g_view.has_settings) { row_t *r = row_add(S("dmSaveSettingsRow"), "", RK_SETTINGS, 0); if (r) preview_tag(r); }
-    char when[16]; strlcpy(when, g_view.exported_at, 11); char sub[260]; const char *pl = !strcmp(g_view.platform, "ios") ? "iOS" : !strcmp(g_view.platform, "ipados") ? "iPadOS" : !strcmp(g_view.platform, "android") ? "Android" : !strcmp(g_view.platform, "macos") ? "macOS" : g_view.platform; if (!strcmp(g_view.source_format, "d2r-pc")) pl = S("dmSaveFmtPc"); else if (!strcmp(g_view.source_format, "d2lod")) pl = S("dmSaveFmtLod"); else if (strcmp(g_view.source_format, "d2r-switch-plus")) pl = S("dmSaveFmtOther"); snprintf(sub, sizeof sub, S("dmSavePreviewFrom"), pl, g_view.version[0] ? g_view.version : g_view.build, when);
+    char when[16]; strlcpy(when, g_view.exported_at, 11); char sub[260]; const char *pl = !strcmp(g_view.platform, "macos") ? "macOS" : g_view.platform;
+    // 平台词不进另一端的包（CLAUDE.md §2.8，package_audit.py）：包来自那一端时只说「其他设备」| platform names stay out of the other platform's package: a package from there just says "another device"
+#if defined(__ANDROID__)
+    if (!strcmp(g_view.platform, "ios") || !strcmp(g_view.platform, "ipados")) pl = S("dmSaveFromOtherDevice"); else if (!strcmp(g_view.platform, "android")) pl = "Android";
+#elif defined(__APPLE__) && TARGET_OS_IPHONE
+    if (!strcmp(g_view.platform, "android")) pl = S("dmSaveFromOtherDevice"); else if (!strcmp(g_view.platform, "ios")) pl = "iOS"; else if (!strcmp(g_view.platform, "ipados")) pl = "iPadOS";
+#else
+    if (!strcmp(g_view.platform, "ios")) pl = "iOS"; else if (!strcmp(g_view.platform, "ipados")) pl = "iPadOS"; else if (!strcmp(g_view.platform, "android")) pl = "Android";
+#endif
+     if (!strcmp(g_view.source_format, "d2r-pc")) pl = S("dmSaveFmtPc"); else if (!strcmp(g_view.source_format, "d2lod")) pl = S("dmSaveFmtLod"); else if (strcmp(g_view.source_format, "d2r-switch-plus")) pl = S("dmSaveFmtOther"); snprintf(sub, sizeof sub, S("dmSavePreviewFrom"), pl, g_view.version[0] ? g_view.version : g_view.build, when);
     const char *note = NULL;
 #ifndef __ANDROID__
     if (dm_custom_get("icloud") && !getenv("DM_TEST_ICLOUD_OFF")) note = S("dmCloudSaveOn");

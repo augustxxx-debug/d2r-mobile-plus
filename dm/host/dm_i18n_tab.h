@@ -1052,6 +1052,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmSaveFmtPc", "PC 版 D2R", "D2R on PC", "D2R en PC", "D2R en PC", "D2R на ПК", "PC판 D2R" },
     { "dmSaveFmtLod", "暗黑 2 毁灭之王", "Diablo II: LoD", "Diablo II: LoD", "Diablo II: LoD", "Diablo II: LoD", "디아블로 2: 파괴의 군주" },
     { "dmSaveFmtOther", "其他来源", "another source", "otro origen", "otro origen", "другой источник", "다른 출처" },
+    { "dmSaveFromOtherDevice", "其他设备", "another device", "otro dispositivo", "otro dispositivo", "другое устройство", "다른 기기" },
     { "dmSaveErrConvert", "这个存档包需要转换，当前版本还不支持", "This package needs converting, which this version does not support yet", "Este paquete requiere conversión, aún no disponible", "Este paquete requiere conversión, aún no disponible", "Пакет требует преобразования, пока не поддерживается", "이 패키지는 변환이 필요하며 아직 지원되지 않습니다" },
     { "dmSaveErrCoop", "这个存档包含联机角色，不能导入", "This package contains online characters and cannot be imported", "Este paquete contiene personajes en línea y no se puede importar", "Este paquete contiene personajes en línea y no se puede importar", "Пакет содержит сетевых персонажей, импорт невозможен", "이 패키지에는 온라인 캐릭터가 있어 가져올 수 없습니다" },
     { "dmSaveCoopNote", "联机角色不能导出，也不进备份", "Online characters cannot be exported or backed up", "Los personajes en línea no se exportan ni se copian", "Los personajes en línea no se exportan ni se copian", "Сетевые персонажи не экспортируются и не копируются", "온라인 캐릭터는 내보내거나 백업할 수 없습니다" },
