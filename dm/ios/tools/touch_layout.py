@@ -1648,12 +1648,12 @@ def _graphics_page(text):
     # 光追 AO（实验性）：光追阴影下一行，同门槛；文字下方一行副文（CLAUDE.md §2.6：28 号、说明灰、$ReducedSpacing）说明能干啥，阴影没开时宿主换成「需先开启光追阴影」并把勾选框置灰（dm_graphics_ui_pump）
     # Ray-traced AO (experimental): the row below ray-traced shadows, same gate; one subtext line under the caption (CLAUDE.md §2.6: 28 pt, description grey, $ReducedSpacing) says what it does; with shadows off the host swaps it for "turn on ray-traced shadows first" and greys out the checkbox (dm_graphics_ui_pump)
     def ao_note(name, key):
-        n = label(name, key, 0, 116, 1290, 60)
+        n = label(name, key, 0, 88, 1290, 60)   # 文字上移、副文也进手柄选中框（框下沿约在行内 150，放 116 会被框线压住） | caption moved up so the subtext also fits inside the controller frame (its lower edge is near 150 in the row; at 116 the line ran through the text)
         n['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
         return n
     ao_row = {'type': 'Widget', 'name': 'TouchGraphicsRtAoRow', 'fields': {
         'rect': {'x': 0, 'y': 1260, 'width': 1730, 'height': 180}}, 'children': [
-        label('TouchGraphicsRtAoText', 'dmGraphicsRtAo', 0, 0, 1000, 180), ao_note('TouchGraphicsRtAoNote', 'dmGraphicsRtAoNote'),
+        label('TouchGraphicsRtAoText', 'dmGraphicsRtAo', 0, 0, 1000, 140), ao_note('TouchGraphicsRtAoNote', 'dmGraphicsRtAoNote'),
         ao_note('TouchGraphicsRtAoNeedRt', 'dmGraphicsRtAoNeedRt'), toggle('TouchGraphicsRtAo', 0)]}
     # 显示帧数（fps_hud，缺省开；原在自定义页末行，用户 2026-10-28 要求放图形页第二行）：一行勾选框，宿主 dm_graphics_ui_pump 读写 TouchGraphicsFpsHud
     # Show frame rate (fps_hud, on by default; was the last Custom row, moved to Graphics row 2 at the user's request on 2026-10-28): one checkbox row, read and written by the host's dm_graphics_ui_pump via TouchGraphicsFpsHud
