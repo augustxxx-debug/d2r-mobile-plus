@@ -170,6 +170,7 @@ run: \
 	$(PY) notice_queue.py $(B)/main.orig.bin
 	$(PY) gpu_pool_budget.py $(B)/main.orig.bin
 	$(PY) product_lock.py
+	$(PY) product_gate.py
 $(B)/t_i18n: t_i18n.c ../dm_i18n.c ../dm_i18n.h ../dm_i18n_tab.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_i18n.c ../dm_i18n.c
 $(B)/t_mac_overlay: t_mac_overlay.m ../app_mac_overlay.h | $(B)
