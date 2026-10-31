@@ -2,7 +2,7 @@
 # 源文件按通配纳入，口径与宿主 Makefile 的 GFX 一致（hle_nvn.c 由 t_nvn.c 直接 #include，故剔除）；新增源文件无需改这里
 # Unit tests: make compiles and runs them (seconds)
 # Source files are included by wildcard, same convention as GFX in the host Makefile (hle_nvn.c is #included directly by t_nvn.c, so it is excluded); adding new source files needs no change here
-CFLAGS=-O1 -g -Wall -Wno-unused-function -I../nvn/include
+CFLAGS=-O1 -g -Wall -Wno-unused-function -Werror=unused-variable -I../nvn/include
 GFX=$(filter-out ../nvn/hle_nvn.c,$(sort $(wildcard ../nvn/*.c ../nvn/*.m ../nvn/*.S ../tex/*.c ../tex/*.m)))
 GFX_H=$(wildcard ../nvn/*.h ../nvn/*.inc ../nvn/include/*.h ../tex/*.h)
 FW=-framework Metal -weak_framework MetalFX -framework Foundation -framework QuartzCore -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
@@ -96,6 +96,8 @@ t_defer_drain: t_defer_drain.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_defer_drain.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rts_gate: t_rts_gate.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rts_gate.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_rts_point_env: t_rts_point_env.m t_rts_gate.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_rts_point_env.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pso_skey: t_pso_skey.m ../nvn/nvn_pso_skey.h ../nvn/nvn_obj.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_skey.m -framework Foundation
 t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -140,7 +142,7 @@ run: \
 	t_memwarn \
 	t_mp_grid \
 	t_gcap \
-	t_rts_gate \
+	t_rts_gate t_rts_point_env \
 	t_rts_flicker \
 	t_rts_span \
 	t_rts_span_asan \
@@ -198,7 +200,7 @@ run: \
 	./t_memwarn   # 系统内存告警累计不封顶，进每 300 帧内存行 | uncapped system memory-warning total on the every-300-frames memory line
 	@for a in "" --off; do ./t_cmdalloc $$a; s=$$?; if [ $$s = 77 ]; then echo "SKIP t_cmdalloc"; break; elif [ $$s != 0 ]; then exit $$s; fi; done   # 命令分配器超阈值换新；--off 证明分得出；77 = 旧接口版 | command allocators replaced above a threshold; --off proves it discriminates; 77 = older-API build
 	./t_gcap   # GPU 抓帧（DM_GPU_CAPTURE）；测试自己设 METAL_CAPTURE_ENABLED | GPU capture (DM_GPU_CAPTURE); the test sets METAL_CAPTURE_ENABLED itself
-	@for t in t_rts_gate t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rts_upsample t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
+	@for t in t_rts_gate t_rts_point_env t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rts_upsample t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
 	python3 test_tbdr_budget.py
 	./t_mp_grid
 	python3 test_present_line.py   # 上屏行全程带 footprint（真机长测 7500 帧后断） | the present line carries footprint throughout (cut after frame 7500 in the device long test)

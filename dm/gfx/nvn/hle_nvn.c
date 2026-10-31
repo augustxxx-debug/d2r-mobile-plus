@@ -1002,7 +1002,7 @@ static void x_start(void) {
     pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0);
 #endif
     pthread_attr_setstacksize(&at, 8 << 20);
-    pthread_t t; if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
+    if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
     pthread_attr_destroy(&at);
 }
 static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
