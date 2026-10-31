@@ -5241,12 +5241,14 @@ static void mp_check(int i, uint64_t ticket) {
 // 色调映射（片元 a1b1aab66933fa8f）= 把合成后的 HDR ×0.008 做 PQ 编码、再查 32³ 调色表（每帧由计算着色器 552f45c348a61b86 按区域重算，只被色调映射读）。
 // HDR 先乘曝光 k 等价于把表换成 L'(u) = L(PQ(k · PQ⁻¹(u)))：游戏算完表的那次派发之后，拷一份再按此原地重写（32³ 一次小派发）；表每帧重算，不会越乘越亮。
 // 只动 3D 世界：界面、文字、血球在色调映射之后才合；亮部经 PQ 压缩，不会像最后整屏乘系数那样糊成一片白。普通 / 可读 tile 合并 / 冻结各条路径都只是读这张表，一处生效。
-// k 每帧由宿主 dm_bright_k() 给（dm/host/dm_bright.c：局外 1、迷宫类 4、原版画面不随昼夜 4、其余按原版环境亮度推，平滑过渡）；k ≈ 1 时不重写。
+// k 每帧由宿主 dm_bright_k() 给（dm/host/dm_bright.c：局外 1、迷宫类 4、原版画面不随昼夜 4、其余按原版环境亮度推，平滑过渡；缺省上限 2，dm_bright_cap.h）；k ≈ 1 时不重写。
+// 高光保护是单调的（B098）：输出亮度 = max(原版亮度, 肩部(提亮后亮度))，颜色 = 原版与提亮后两色按同一权重混合，达到这个亮度；CPU 同式单测 dm/host/tests/t_bright_lut.c。
 // ---------- 3D picture brightening ----------
 // Tone mapping (fragment a1b1aab66933fa8f) = PQ-encode the composited HDR x0.008, then look up a 32^3 color lookup table (recomputed per region every frame by compute shader 552f45c348a61b86, read only by tone mapping).
 // Multiplying HDR by exposure k first is equivalent to replacing the table with L'(u) = L(PQ(k * PQ^-1(u))): after the dispatch in which the game finishes computing the table, make a copy and rewrite it in place accordingly (one small 32^3 dispatch); the table is recomputed every frame, so it does not get brighter with each multiplication.
 // Only the 3D world is touched: UI, text and the health orbs are composited after tone mapping; highlights are compressed by PQ and do not blur into a sheet of white as a final whole-screen multiply would. The normal / readable tile merge / freeze paths all just read this table, so it takes effect in one place.
-// k is given every frame by the host's dm_bright_k() (dm/host/dm_bright.c: 1 out of game, 4 for maze-type areas, 4 where the original game's picture does not follow day and night, the rest derived from the original game's ambient brightness, with smooth transitions); no rewrite when k ~= 1.
+// k is given every frame by the host's dm_bright_k() (dm/host/dm_bright.c: 1 out of game, 4 for maze-type areas, 4 where the original game's picture does not follow day and night, the rest derived from the original game's ambient brightness, with smooth transitions; default cap 2, dm_bright_cap.h); no rewrite when k ~= 1.
+// The highlight protection is monotonic (B098): output luminance = max(original luminance, shoulder(brightened luminance)), color = the original and brightened colors mixed with one weight to reach it; CPU copy with unit test dm/host/tests/t_bright_lut.c.
 __attribute__((weak)) float dm_bright_k(void) { return 1.0f; }   // 宿主 dm_bright.c 提供强定义；图形单测不链宿主时不加亮 | The host's dm_bright.c provides the strong definition; no brightening when graphics unit tests do not link the host
 static const char k_lut_msl[] =
 "#include <metal_stdlib>\nusing namespace metal;\n"
@@ -5258,8 +5260,10 @@ static const char k_lut_msl[] =
 "  constexpr sampler ls(filter::linear, address::clamp_to_edge, coord::normalized);\n"
 "  float3 u = (float3(g) + 0.5) / float3(n); float3 u2 = clamp(pq(k * pq_inv(u)), 0.0, 1.0);\n"
 "  float4 b = src.sample(ls, u2), o = src.read(g);\n"   // b：按曝光 k 提亮后的输出；o：原版这一格 | b: output after brightening by exposure k; o: this cell in the original game
-"  float s = smoothstep(0.65, 1.0, dot(b.rgb, float3(0.2126, 0.7152, 0.0722)));\n"   // 高光保护：提亮后越接近白，越收回原值（雪、天光不糊成一片白）；暗处 s = 0 照常提亮 | Highlight protection: after brightening, the closer to white, the more it is pulled back to the original value (snow and skylight do not blur into a sheet of white); in dark areas s = 0 and brightening proceeds as usual
-"  dst.write(float4(max(mix(b.rgb, o.rgb, s), o.rgb), b.a), g); }\n";
+"  float3 W = float3(0.2126, 0.7152, 0.0722); float lo = dot(o.rgb, W), lb = dot(b.rgb, W);\n"
+"  float h = lb <= 0.65 ? lb : 0.65 + 0.35 * (1.0 - exp((0.65 - lb) / 0.35));\n"   // 高光肩部：提亮后亮度 0.65 以下不动，以上平滑压向 1（单调递增、0.65 处斜率连续；雪、天光不糊成一片白） | Highlight shoulder: brightened luminance below 0.65 untouched, above it eased toward 1 (monotonically increasing, slope-continuous at 0.65; snow and skylight do not blur into a sheet of white)
+"  float d = lb - lo, w = d > 1e-5 ? clamp((max(lo, h) - lo) / d, 0.0, 1.0) : 0.0;\n"   // 目标亮度 max(原版, 肩部(提亮后))：对原版亮度、提亮后亮度都单调不减，输出不比原版暗（B098：旧式按提亮后亮度往原值收，k = 4 时原版 0.40–0.55 的冰面亮度反转成等高线） | Target luminance max(original, shoulder(brightened)): non-decreasing in both, never darker than the original (B098: the old form pulled back toward the original by the brightened luminance, so at k = 4 the ice at original 0.40–0.55 reversed into contour bands)
+"  dst.write(float4(mix(o.rgb, b.rgb, w), b.a), g); }\n";   // 三通道同一权重，不逐通道 max（旧式逐通道拼色出青 / 橙 / 粉杂色） | One weight for all three channels and no per-channel max (the old per-channel mix spliced colors into cyan / orange / pink speckle)
 static void bright_lut(NvShader *cs) {
     static int failed; static id<MTLComputePipelineState> ps; static id<MTLTexture> tmp; static id<MTLBuffer> kb[3]; static int ki;
 #if !DM_NVN_M3

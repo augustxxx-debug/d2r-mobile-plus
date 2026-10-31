@@ -258,7 +258,8 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
     // Ultra the camp and a 9-minute fight hold 60 fps with 28% more pixels than 0.75 and about 2 C more heat; when heavy scenes or
     // a hot phone drop frames, the dynamic scale steps down 0.05 at a time.
     setenv("DM_3D_SCALE", "1.0", 0);   // 3D 比例缺省 1.0（奥丁 1080p 实测：0.85 战斗 59.6 fps / GPU 13.2 ms，1.0 58.9 fps、最低 53.8 / GPU 14.3 ms；动态控制器掉帧时自动退档）| 3D scale default 1.0 (Thor at 1080p: 0.85 = 59.6 fps / GPU 13.2 ms in combat, 1.0 = 58.9 fps, min 53.8 / GPU 14.3 ms; the dynamic controller steps down on drops)
-    setenv("DM_BRIGHT_MAX", "2", 0);   // 3D 画面加亮上限 2（原规则洞穴类固定 4，奥丁上观感过曝；dm_bright_cap.h）| 3D brightening exposure cap 2 (the original rule pins maze levels at 4, which reads as overexposed on the Thor; dm_bright_cap.h)
+    // 3D 画面加亮上限 2 现在是公共层缺省（dm_bright_cap.h，B098），这里不再单设 DM_BRIGHT_MAX；env 文件设了仍优先。
+    // The 3D brightening cap of 2 is now the shared default (dm_bright_cap.h, B098), so DM_BRIGHT_MAX is no longer set here; an env file setting still wins.
     // Vulkan 适配器先沿用同步提交；上游新增翻译线程需独立验证对象生命周期。
     // Keep synchronous submission until the new upstream translation thread's object lifetimes are verified with Vulkan.
     setenv("DM_NVN_SYNC", "1", 0);

@@ -59,6 +59,7 @@ run: \
 	$(B)/t_res_cap \
 	$(B)/t_update_appear \
 	$(B)/t_bright_cap \
+	$(B)/t_bright_lut \
 	$(B)/t_custom_scroll \
 	$(B)/t_sel_frame \
 	$(B)/t_hud_mask \
@@ -121,6 +122,7 @@ run: \
 	$(B)/t_diffrow
 	$(B)/t_res_cap
 	$(B)/t_bright_cap
+	$(B)/t_bright_lut ../../gfx/nvn/nvn_mtl.m ../../gfx/vulkan/engine/xbg_bright_lut.comp
 	$(B)/t_update_appear
 	$(B)/t_loadpage
 	$(B)/t_manifest
@@ -306,6 +308,8 @@ $(B)/t_update_appear: t_update_appear.c ../dm_update.c | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_update_appear.c
 $(B)/t_bright_cap: t_bright_cap.c ../dm_bright_cap.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_bright_cap.c -lm
+$(B)/t_bright_lut: t_bright_lut.c | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_bright_lut.c -lm
 $(B)/t_loadpage: t_loadpage.c ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.h ../dm_i18n_tab.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -DDM_I18N_ALL -I.. -o $@ t_loadpage.c -lm
 # 加载页出图核对（不在 run 里：写 PNG 到指定目录）：make render-loadpage OUT=<目录> [LANG=zh]
