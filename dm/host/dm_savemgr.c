@@ -142,11 +142,15 @@ static void bklist_page(void) {
 static void bkitem_page(void) { rows_clear(); dm_pkg_backup *b = &g_bk[g_bk_sel]; row_add(S("dmSaveBkRestore"), NULL, RK_PLAIN, 0); row_add(S(b->starred ? "dmSaveBkUnstar" : "dmSaveBkStar"), NULL, RK_PLAIN, 1); row_add(S("dmSaveBkShare"), NULL, RK_PLAIN, 2); row_add(S("dmSaveBkDelete"), NULL, RK_PLAIN, 3); char when[32]; time_t tt = (time_t)b->when; struct tm tm; localtime_r(&tt, &tm); strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tm); set_box(S("dmSaveBackupList"), when, NULL, S("dmSaveBack"), NULL); go(S_BKITEM); }
 static void start_import(int restore, const char *path) { g_restore = restore; if (g_view_ok) { dm_savepkg_view_free(&g_view); g_view_ok = 0; } job_start(J_INSPECT, path); }
 static void request_pick(void) {
-    const char *t = getenv("DM_TEST_SAVEPKG_IN"); if (t) { start_import(0, t); return; }
+#ifdef DM_QA_BUILD
+    { const char *t = getenv("DM_TEST_SAVEPKG_IN"); if (t) { if (!strcmp(t, "cancel")) { LOG("存档管理：测试旁路：取消选文件"); return; } start_import(0, t); return; } }   // 系统选文件驱动不了，QA 构建直接给路径（CLAUDE.md §2.9）| the system picker cannot be driven, QA builds take a path directly
+#endif
     if (!g_pick) { show_fail(DM_PKG_E_IO, S_HOME); return; } atomic_store(&g_pick_wait, 1); LOG("存档管理：打开系统选文件"); g_pick();
 }
 static void share_now(const char *path) {
-    const char *t = getenv("DM_TEST_SAVEPKG_OUT"); if (t) { FILE *a = fopen(path, "rb"), *b = fopen(t, "wb"); int ok = a && b; char buf[65536]; size_t n; while (ok && (n = fread(buf, 1, sizeof buf, a))) ok = fwrite(buf, 1, n, b) == n; if (a) fclose(a); if (b) fclose(b); atomic_store(&g_share_done, ok ? 1 : -1); return; }
+#ifdef DM_QA_BUILD
+    const char *t = getenv("DM_TEST_SAVEPKG_OUT"); if (t && !strcmp(t, "cancel")) { atomic_store(&g_share_done, -1); return; } if (t) { FILE *a = fopen(path, "rb"), *b = fopen(t, "wb"); int ok = a && b; char buf[65536]; size_t n; while (ok && (n = fread(buf, 1, sizeof buf, a))) ok = fwrite(buf, 1, n, b) == n; if (a) fclose(a); if (b) fclose(b); atomic_store(&g_share_done, ok ? 1 : -1); return; }
+#endif
     strlcpy(g_share_path, path, sizeof g_share_path); if (!g_share) { atomic_store(&g_share_done, -1); return; } g_share(path);
 }
 static int name_taken(const char *c, void *ctx) { (void)ctx; char p[1400]; struct stat st; snprintf(p, sizeof p, "%s/%s", save_dir(), c); if (!stat(p, &st)) return 1; for (int i = 0; i < g_view.nchars; i++) if (!strcasecmp(g_view.chars[i].name, c) || !strcasecmp(g_view.chars[i].newname, c)) return 1; return 0; }
@@ -225,12 +229,30 @@ static void entries(uint8_t *b, uint64_t root) {   // 两个入口的显隐：�
         if (t) co_place(t, show && !pad ? 275 : 99999, 1900); if (tp) co_place(tp, show && pad ? 420 : 99999, 1900);   // 手柄版让开中间的键位提示条 | the controller version clears the legend in the middle
         if (show && pad && (dm_padmode_page_keys(DM_BTN_Y) & DM_BTN_Y)) dm_savemgr_open(3); }
 }
+#ifdef DM_QA_BUILD
+// QA 构建的脚本驱动（CLAUDE.md §2.9，玩家包不编译）：DM_TEST_UI=<秒>:<identifier>:tap[,…]。秒从第一次 pump 算；排队执行，前一项做完、控件在屏上才做下一项。identifier 表见设计稿「自动化驱动」
+// Scripted driver for QA builds (CLAUDE.md §2.9, not compiled into player packages): DM_TEST_UI=<seconds>:<identifier>:tap[,...]. Seconds count from the first pump; items run in order, each waits for the previous one and for its control to be on screen. Identifier table: design doc, "Automation"
+static void qa_pump(uint64_t root) {
+    static const char *e; static int init; static uint64_t t0; struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); uint64_t now = (uint64_t)ts.tv_sec;
+    if (!init) { init = 1; e = getenv("DM_TEST_UI"); t0 = now; } if (!e || !*e) return; char id[48]; int sec = 0, n = 0; if (sscanf(e, "%d:%47[^:]:tap%n", &sec, id, &n) != 2 || !n) { LOG("【红】DM_TEST_UI 看不懂：%.40s", e); e = NULL; return; }
+    if (now - t0 < (uint64_t)sec) return; int k = -1, st = atomic_load(&g_st), done = 0;
+    if (!strcmp(id, "TouchSavesOpt") || !strcmp(id, "TouchSavesCc")) { if (st == S_NONE && !dm_uiscreen_ingame() && box_host(root)) { dm_savemgr_open(id[10] == 'O' ? 2 : 3); done = 1; } }
+    else if (atomic_load(&g_shown) == 1 && st != S_WORK) {
+        if (sscanf(id, "TouchSaveRow%d", &k) == 1 && k >= 0 && g_page * PER_PAGE + k < g_nrows) { row_action(&g_rows[g_page * PER_PAGE + k]); done = 1; }
+        else if (sscanf(id, "TouchSaveBtn%d", &k) == 1 && k >= 0 && k < g_nbtn) { btn_action(k); done = 1; } }
+    if (done) { LOG("存档管理：DM_TEST_UI %s", id); e += n; if (*e == ',') e++; }
+}
+#endif
+
 void dm_savemgr_pump(void) {
     uint8_t *b = base_(); if (!b) return; uint64_t root = *(uint64_t *)(b + 0x2f05458); if (!root) return;
     entries(b, root);
     // 启动后第一次到前端：换入结果 | first time at the front end after boot: the apply result
     { static int checked; const char *sv = save_dir(); if (!checked && sv && !dm_uiscreen_ingame() && box_host(root) && !dm_savemgr_modal()) { checked = 1; int ok = 0, ch = 0, code = 0; if (dm_savepkg_result_take(sv, &ok, &ch, &code)) { LOG("存档管理：换入结果 %s（%d 个角色）", ok ? "成功" : "失败", ch); if (ok) { char t[160]; snprintf(t, sizeof t, S("dmSaveResultOk"), ch); show_msg(t, S("dmSaveResultOkSub"), S_NONE); } else { show_msg(S("dmSaveResultFail"), S("dmSaveFailSub"), S_NONE); } } } }
     int st = atomic_load(&g_st);
+#ifdef DM_QA_BUILD
+    qa_pump(root);
+#endif
     // 外壳回调与后台活的结果，都在这里接（游戏主线程）| shell callbacks and job results are taken here (game main thread)
     if (atomic_exchange(&g_picked_new, 0)) { char p[1400]; pthread_mutex_lock(&g_mu); strlcpy(p, g_picked, sizeof p); pthread_mutex_unlock(&g_mu); atomic_store(&g_pick_wait, 0); if (p[0]) start_import(0, p); else { LOG("存档管理：取消选文件"); if (g_home_import) show_home(); else close_box(); } st = atomic_load(&g_st); }
     { int sd = atomic_exchange(&g_share_done, 0); if (sd) { char d[1400]; snprintf(d, sizeof d, "%s.export.tmp", save_dir()); dm_savepkg_rmtree(d); LOG("存档管理：系统面板关闭（%s）", sd > 0 ? "已保存" : "没保存"); if (st == S_WORK) show_msg(S(sd > 0 ? "dmSaveExportDone" : "dmSaveExportCancel"), sd > 0 ? S("dmSaveExportDoneSub") : "", S_HOME); st = atomic_load(&g_st); } }

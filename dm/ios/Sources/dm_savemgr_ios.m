@@ -28,7 +28,7 @@ static void on_pick(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIViewController *vc = top_vc(); if (!vc) { dm_savemgr_picked(NULL); return; }
         UIDocumentPickerViewController *p = [[UIDocumentPickerViewController alloc] initForOpeningContentTypes:@[UTTypeZIP] asCopy:YES];   // asCopy：系统拷到我们的临时目录，不用管安全域访问 | asCopy: the system copies into our temporary directory, no security-scoped access to manage
-        if (!g_pick_delegate) g_pick_delegate = [DmSavePick new]; p.delegate = g_pick_delegate; p.allowsMultipleSelection = NO; [vc presentViewController:p animated:YES completion:nil]; });
+        if (!g_pick_delegate) g_pick_delegate = [DmSavePick new]; p.delegate = g_pick_delegate; p.allowsMultipleSelection = NO; p.view.accessibilityIdentifier = @"dmSavePicker"; [vc presentViewController:p animated:YES completion:nil]; });
 }
 static void on_share(const char *path) {
     NSURL *u = [NSURL fileURLWithPath:@(path)];
@@ -36,7 +36,7 @@ static void on_share(const char *path) {
         UIViewController *vc = top_vc(); if (!vc) { dm_savemgr_share_done(0); return; }
         UIActivityViewController *a = [[UIActivityViewController alloc] initWithActivityItems:@[u] applicationActivities:nil];
         a.completionWithItemsHandler = ^(UIActivityType t, BOOL done, NSArray *items, NSError *e) { (void)t; (void)items; (void)e; dm_savemgr_share_done(done); };
-        UIPopoverPresentationController *pp = a.popoverPresentationController;   // iPad 上是弹出框：锚在画面正中 | a popover on iPad: anchored at the centre
+        a.view.accessibilityIdentifier = @"dmSaveShare"; UIPopoverPresentationController *pp = a.popoverPresentationController;   // iPad 上是弹出框：锚在画面正中 | a popover on iPad: anchored at the centre
         if (pp) { pp.sourceView = vc.view; pp.sourceRect = CGRectMake(CGRectGetMidX(vc.view.bounds), CGRectGetMidY(vc.view.bounds), 1, 1); pp.permittedArrowDirections = 0; }
         [vc presentViewController:a animated:YES completion:nil]; });
 }

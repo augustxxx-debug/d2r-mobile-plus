@@ -50,6 +50,7 @@ if [ "$1" = build ]; then
   python3 tools/gen_build.py ../host Gen > Gen/dm.xcconfig || { t "🔴 gen_build 失败"; exit 1; }
   # 测量包：DM_DIAG_SAMPLING=1 时编入同名宏，main.m 启动即打开逐通道 GPU / 逐线程 CPU / 发热归因采样（写 Documents/diag/）。正式包不要设
   # Measurement build: with DM_DIAG_SAMPLING=1 the macro of the same name is compiled in, and main.m turns on per-pass GPU / per-thread CPU / heat attribution sampling at launch (written to Documents/diag/). Never set for release builds
+  if [ "${DM_QA_BUILD:-0}" = 1 ]; then sed -i '' 's/^OTHER_CFLAGS = /OTHER_CFLAGS = -DDM_QA_BUILD=1 /' Gen/dm.xcconfig; grep -q 'DDM_QA_BUILD' Gen/dm.xcconfig || { t "🔴 QA 开关没写进 xcconfig"; exit 1; }; t "QA 构建：带脚本驱动入口（CLAUDE.md §2.9），不发布"; fi
   if [ "${DM_DIAG_SAMPLING:-0}" = 1 ]; then sed -i '' 's/^OTHER_CFLAGS = /OTHER_CFLAGS = -DDM_DIAG_SAMPLING=1 /' Gen/dm.xcconfig; grep -q 'DDM_DIAG_SAMPLING' Gen/dm.xcconfig || { t "🔴 测量开关没写进 Gen/dm.xcconfig"; exit 1; }; t "测量包：编入 DM_DIAG_SAMPLING（逐通道 GPU / 逐线程 CPU / 发热归因写到 Documents/diag/）"; fi
   # 改写器改了、本机产物还是旧的：别打进包（内审 M-03）。DM_OUT 是手工指定的实验产物，只提醒 | the rewriter changed but the local output is old: keep it out of the package (internal audit M-03). DM_OUT is a hand-picked experimental output, so only a warning
   bash ../tools/product.sh fresh "$OUT" || { [ -n "${DM_OUT:-}" ] && t "⚠️ DM_OUT 产物不是当前改写器出的，按指定继续" || exit 1; }
@@ -70,7 +71,7 @@ if [ "$1" = build ]; then
   # with the capture layer on, resident memory grows every frame (device a8161cb: about 190 MB per 300 frames even with ray tracing off), so dev packages do not carry it by default either; only a "capture package" built with an explicit DM_METAL_CAPTURE=1 does, for DM_GPU_CAPTURE only, never for memory / long tests
   MCAP=NO
   if [ "${DM_METAL_CAPTURE:-}" = 1 ] && [ "${DM_GEN_ONLY:-}" != 1 ]; then MCAP=YES; t "⚠️ 抓帧包（DM_METAL_CAPTURE=1）：Info.plist 带 MetalCaptureEnabled，常驻内存逐帧上涨，只用于 DM_GPU_CAPTURE，不能测内存 / 长测"; fi
-  BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default};capture=${MCAP}"
+  BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};qa=${DM_QA_BUILD:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default};capture=${MCAP}"
   printf 'DM_SOURCE_COMMIT = %s\nDM_SOURCE_DIRTY = %s\nDM_BUILD_INPUTS = %s\n' "$SC" "$SDIRTY" "$BINPUTS" >> Gen/dm.xcconfig
   printf 'DM_METAL_CAPTURE = %s\n' "$MCAP" >> Gen/dm.xcconfig
   t "产物身份：源码 ${SC}，工作区 ${SDIRTY}，构建输入 ${BINPUTS}"

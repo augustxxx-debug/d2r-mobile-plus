@@ -129,6 +129,9 @@ target_compile_definitions(dm_app_main PRIVATE main=dm_main)
 add_library(dm SHARED $<TARGET_OBJECTS:dm_app_main> ${CMAKE_CURRENT_SOURCE_DIR}/jni_android.c ${CMAKE_CURRENT_SOURCE_DIR}/text_input_jni.c ${CMAKE_CURRENT_SOURCE_DIR}/touch_android_jni.c ${CMAKE_CURRENT_SOURCE_DIR}/pad_android.c ${CMAKE_CURRENT_SOURCE_DIR}/overlay_validate.c ${CMAKE_CURRENT_SOURCE_DIR}/sharelog_android.c ${CMAKE_CURRENT_SOURCE_DIR}/perfhint_android.c ${DM_OVERLAY_HEADER})
 target_include_directories(dm PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 target_compile_definitions(dm PRIVATE $<$<CONFIG:Debug>:DM_ANDROID_DEBUG_ENV=1>)
+if(DM_QA_BUILD)
+  add_compile_definitions(DM_QA_BUILD=1)   # 脚本驱动入口（CLAUDE.md §2.9）：-PdmQaBuild=1，正式包不带 | scripted driver entries: -PdmQaBuild=1, not in release packages
+endif()
 target_link_libraries(dm PRIVATE -Wl,--whole-archive dmcore -Wl,--no-whole-archive android)
 target_link_options(dm PRIVATE -Wl,--no-undefined -Wl,-z,nostart-stop-gc -Wl,-Bsymbolic)   # 汇编按页寻址宿主全局（adrp + :lo12:）：库内符号就地绑定，不许被抢占 | assembly addresses host globals by page (adrp + :lo12:): symbols bind locally inside the library and cannot be preempted
 

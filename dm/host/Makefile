@@ -5,6 +5,9 @@ DM_ROOT ?= $(HOME)/dm-work
 # The packaging script (tools/mac_app.sh) takes the same number through print-macos-min, writes it into Info.plist, and checks that the number in the executable equals it
 MACOS_MIN ?= 26.0
 CFLAGS=-O1 -g -Wall -Wno-unused-function -mmacosx-version-min=$(MACOS_MIN)
+ifneq ($(DM_QA_BUILD),)
+CFLAGS += -DDM_QA_BUILD=1   # QA 构建：脚本驱动入口（CLAUDE.md §2.9），玩家包不带 | QA build: scripted driver entries, not in player packages
+endif
 MOVIE_FFMPEG ?= 0
 MOVIE_PREFIX ?=
 ifeq ($(MOVIE_FFMPEG),1)
