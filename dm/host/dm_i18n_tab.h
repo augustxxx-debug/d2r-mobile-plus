@@ -1028,7 +1028,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmSaveBkAuto", "自动", "Auto", "Auto", "Auto", "Авто", "자동" },
     { "dmSaveBkManual", "手动", "Manual", "Manual", "Manual", "Вручную", "수동" },
     { "dmSaveBkRow", "%s · %s", "%s · %s", "%s · %s", "%s · %s", "%s · %s", "%s · %s" },
-    { "dmSaveBkTag", "%d 个角色 · %s", "%d characters · %s", "%d personajes · %s", "%d personajes · %s", "персонажей: %d · %s", "캐릭터 %d명 · %s" },
+    { "dmSaveBkTag", "%d 个角色 · %s", "%d chars · %s", "%d pers. · %s", "%d pers. · %s", "перс.: %d · %s", "캐릭터 %d명 · %s" },
     { "dmSaveBkEmpty", "还没有备份", "No backups yet", "Aún no hay copias", "Aún no hay copias", "Копий пока нет", "백업이 없습니다" },
     { "dmSaveBkKeep", "保留最近 10 份；标星的不会被删除", "The 10 newest are kept; starred ones are never removed", "Se conservan las 10 últimas; las destacadas no se borran", "Se conservan las 10 últimas; las destacadas no se borran", "Хранятся 10 последних; избранные не удаляются", "최근 10개를 유지하며 별표 항목은 삭제되지 않습니다" },
     { "dmSaveBkRestore", "恢复这份备份", "Restore This Backup", "Restaurar esta copia", "Restaurar esta copia", "Восстановить копию", "이 백업 복원" },
