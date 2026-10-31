@@ -38,6 +38,7 @@ with tempfile.TemporaryDirectory() as root:
     r = run(root, ['dm/ios/run.sh', 'build']); check('tampered tree: run.sh refuses', r.returncode == 1 and '代号' in r.stdout + r.stderr, r.stdout + r.stderr)
     r = run(root, ['dm/ios/run.sh', 'build'], DM_OUT=out); check('tampered tree: run.sh refuses with DM_OUT', r.returncode == 1 and '代号' in r.stdout + r.stderr, r.stdout + r.stderr)
     r = run(root, ['dm/tools/mac_app.sh', os.path.join(root, 'mac')]); check('tampered tree: mac_app.sh refuses', r.returncode == 1 and '代号' in r.stdout + r.stderr, r.stdout + r.stderr)
+    gradle = open(os.path.join(DM, 'android/app/build.gradle'), encoding='utf-8').read(); check('android: preBuild depends on productLock', 'dependsOn(productLock,' in gradle and "tasks.register('productLock')" in gradle)   # 真跑 gradle 太重，负控手跑一次，记在交审材料 | running gradle here is too heavy; the negative control is run by hand and kept with the audit material
     r = run(root, ['dm/tools/product.sh', 'rev']); check('second line stays out of the codename', r.returncode == 0 and r.stdout.strip().startswith('r') and '\n' not in r.stdout.strip(), r.stdout)
 with tempfile.TemporaryDirectory() as root:
     tree(root, False)

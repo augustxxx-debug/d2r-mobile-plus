@@ -121,4 +121,15 @@ if (genRuntime) {
     android.sourceSets.main.assets.srcDirs("${genRuntime}/assets", genAssets.get().asFile)
     android.packaging.jniLibs.useLegacyPackaging = true
 }
-tasks.named('preBuild').configure { dependsOn(generateStartupStrings, generateLauncherIcon); if (genRuntime) dependsOn(generateGenAssets) }
+// 改了改写器却没升代号：手机上的生成结果只认代号，不会重新生成，和 iOS / Mac 入口的 product.sh lock 同一条（第八轮内审 P3-05）；这里不靠 bash / shasum，Docker 与 Windows 都能跑
+// Changed the rewriter without bumping the codename: generated content on the phone only follows the codename and would not regenerate. Same rule as product.sh lock on the iOS / Mac entries (round-eight internal audit P3-05); no bash / shasum here, so Docker and Windows run it too
+def productLock = tasks.register('productLock') {
+    def rewriter = file('../../tools/patch_nso.py'), product = file('../../PRODUCT')
+    inputs.files(rewriter, product)
+    doLast {
+        def want = java.security.MessageDigest.getInstance('SHA-256').digest(rewriter.bytes).encodeHex().toString()
+        def have = product.readLines().find { it.startsWith('patch_nso ') }?.substring(10)?.trim()
+        if (have != want) throw new GradleException("patch_nso.py changed (registered ${have ?: 'nothing'}, now ${want}): bump the codename on the first line of dm/PRODUCT if output changes, then run python3 dm/host/tests/product_lock.py")
+    }
+}
+tasks.named('preBuild').configure { dependsOn(productLock, generateStartupStrings, generateLauncherIcon); if (genRuntime) dependsOn(generateGenAssets) }
