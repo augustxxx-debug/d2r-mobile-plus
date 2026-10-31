@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """包内容审计（CLAUDE.md §2.8）：把 IPA / APK / .app 解到最里层（含 zip 内 zip）扫另一端的平台词，并列体积。
 用法：package_audit.py <ios|android> <包或 .app 目录> [--out 报告.md]。有未登记的命中、或 src.zip 里有白名单外的文件，退出码 1。
-命中只有三种能放行，都写在下面的 EXEMPT：第三方运行时与许可证原文（改不得）；手机端生成器源码的注释（不是文案）；iOS 主程序里原版游戏自带的串（不是我们写的）。
+命中只有四种能放行，都写在下面的 EXEMPT：第三方运行时与许可证原文（改不得）；手机端生成器源码的注释（不是文案）；字体与图片的二进制数据（偶然的字节）；iOS 主程序里原版游戏自带的串（不是我们写的）。
 Package content audit: unpacks an IPA / APK / .app down to the innermost level (zips inside zips included), scans for the other platform's words and lists sizes.
 Usage: package_audit.py <ios|android> <package or .app directory> [--out report.md]. Exit 1 on an unregistered hit, or on a file in src.zip outside the whitelist.
-Only three kinds of hit may pass, all listed in EXEMPT: third-party runtimes and licence texts (not ours to change); comments in the on-phone generator's source (not UI text); strings the original game ships inside the iOS main program (not written by us)."""
+Only four kinds of hit may pass, all listed in EXEMPT: third-party runtimes and licence texts (not ours to change); comments in the on-phone generator's source (not UI text); binary data of fonts and images (chance bytes); strings the original game ships inside the iOS main program (not written by us)."""
 import argparse, collections, importlib.util, io, re, sys, zipfile
 from pathlib import Path
 
@@ -16,6 +16,7 @@ EXEMPT = (
     ('android', r'(assets/dmgen/THIRD_PARTY_NOTICES\.txt|assets/.*NOTICE.*|.*LICENSE.*)', None, '第三方许可证原文，必须随包且不得改'),
     ('android', r'lib/arm64-v8a/libdmgen_.*\.so', None, '第三方：Python、SPIRV-Tools、着色器翻译工具'),
     ('android', r'assets/dmgen/src\.zip!(?!dm/i18n/).*', None, '手机端生成器源码里的注释与目标名，不是文案；文件集由白名单管，文案表不放行'),
+    ('android', r'.*\.(ttf|png|jpg|m4a)', None, '字体、图片、音频的二进制数据，偶然的字节不是文字'),
     ('ios', r'(Payload/)?DmIOS\.app/DmIOS|DmIOS', 'Vulkan', '原版游戏自带的串（NVN 调试回调旁），不是我们写的'),
     ('ios', r'(Payload/)?DmIOS\.app/DmIOS|DmIOS', 'Android', '原版游戏自带的串（NVRM / BufferQueue 旁），不是我们写的'),
 )

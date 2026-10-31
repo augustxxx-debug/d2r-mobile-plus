@@ -82,7 +82,7 @@ static void test_on_select(void) { LOG("更新：测试开关的外壳回调—�
 void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Called every frame at the controller poll (game main thread)
     if (g_own < 0) {   // 测试开关 DM_TEST_UPDATE_LABEL=<字串>：没有包信息的宿主（Mac 原生宿主 dmhost）也按这串字写选角页版本标签，用来核两种布局下的位置 | test switch DM_TEST_UPDATE_LABEL=<text>: a host without bundle info (the Mac native host dmhost) also writes the character-select version label with this text, to check its position in both layouts
         static int once; const char *e = once++ ? NULL : getenv("DM_TEST_UPDATE_LABEL"); if (!e || !*e) return;
-        dm_update_init(1, e, test_on_select); LOG("更新：测试开关 DM_TEST_UPDATE_LABEL，版本标签写「%s」（安全区同 iOS 外壳：等选页回调再给）", e); }
+        dm_update_init(1, e, test_on_select); LOG("更新：测试开关 DM_TEST_UPDATE_LABEL，版本标签写「%s」（安全区同真机外壳：等选页回调再给）", e); }
     if (atomic_exchange(&g_fg, 0)) {   // 选角列表面板在且显示着（可见位 +0x50）、构建号控件也在 = 人停在选角页 | Character select list panel present and shown (visible bit +0x50) and the build number widget also present = the user is sitting on the character select page
         uint8_t *fb = tb(); uint64_t fr = fb ? *(uint64_t *)(fb + 0x2f05458) : 0, fm = fr ? find(fr, "MainMenuPanel", 0) : 0, fl = fr ? find(fr, "CharacterSelectPanel", 0) : 0;
         if (fm && find(fm, "TouchBuild", 0) && fl && *(uint8_t *)(fl + 0x50)) { atomic_store(&g_appear, 1); atomic_store(&g_dirty, 30); LOG("更新：回到前台时停在选角页，重查一次新版本"); } }
