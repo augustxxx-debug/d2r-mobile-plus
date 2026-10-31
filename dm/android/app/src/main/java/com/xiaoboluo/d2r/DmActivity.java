@@ -851,7 +851,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     static void savePickFolder() {
         DmActivity a = current.get(); if (a == null) { nativeSavePicked(null); return; }
         a.runOnUiThread(() -> {
-            try { a.startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE), REQ_SAVE_FOLDER); } catch (Exception e) { android.util.Log.w("dm", "save pick folder: " + e); nativeSavePicked(null); }
+            try { a.startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).putExtra(android.provider.DocumentsContract.EXTRA_INITIAL_URI, Uri.parse("content://com.android.externalstorage.documents/document/primary%3ADownload")), REQ_SAVE_FOLDER); }   // 存储根目录系统不让选，从 Download 开始 | the system refuses the storage root, so start in Download
+            catch (Exception e) { android.util.Log.w("dm", "save pick folder: " + e); nativeSavePicked(null); }
         });
     }
     private static void saveDeleteTree(File f) { File[] k = f.listFiles(); if (k != null) for (File c : k) saveDeleteTree(c); f.delete(); }
