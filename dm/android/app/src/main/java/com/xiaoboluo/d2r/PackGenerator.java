@@ -46,6 +46,19 @@ final class PackGenerator {
         return false;
     }
 
+    // 游戏资源（约 9 GB）单独找：base 里没有就退回旧目录、再退回更早的 Download/data，玩家把别的文件放进新目录时也不用搬它 | the game resources (about 9 GB) are looked up on their own: without them in base, the old folder, then the earlier Download/data, so a player who puts other files in the new folder need not move them
+    static File gameData(File base) {
+        File s2x = base.getParentFile(), own = new File(base, "data");
+        for (File d : new File[] {own, new File(s2x, "D2R Mobile/data"), new File(s2x.getParentFile(), "data")}) if (d.isDirectory()) return d;
+        return own;
+    }
+
+    // gen_log.txt 不管用哪个目录都写在新目录：提示文案写的就是这个位置 | gen_log.txt always goes in the new folder, whichever one is in use: that is where the prompts say it is
+    static File genLogFile(File base) {
+        File plus = new File(base.getParentFile(), "D2R Mobile Plus"); plus.mkdirs();
+        return new File(plus, "gen_log.txt");
+    }
+
     // 玩家放游戏文件的地方（gameBase）缺哪几样 | which game files are missing where the player puts them (gameBase)
     static List<String> missingInputs(File base) {
         List<String> missing = new ArrayList<>();

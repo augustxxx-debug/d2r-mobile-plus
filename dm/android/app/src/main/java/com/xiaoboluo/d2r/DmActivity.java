@@ -294,9 +294,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (genFailure != null) { showGenFailure(); return; }
         showLoadPage();   // 阶段状态在原生侧（静态），Activity 重建时只换一个新视图接上 | stage state lives natively (static); a recreated Activity just attaches a new view
         if (generating) { genHandler.post(genPoll); return; }   // Activity 重建：生成线程还在跑，只接回界面 | the Activity was recreated: the generation thread is still running; only reattach the screen
-        // 资源目录与 startHost 同一条规则（缺省 data，没有就沿用早先的 Download/data） | resource directory by the same rule as startHost (data by default, else the earlier Download/data)
-        File data = new File(base, "data"), earlier = new File(base.getParentFile().getParentFile(), "data");
-        if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
+        File data = PackGenerator.gameData(base);   // 资源目录与 startHost 同一条规则 | resource directory by the same rule as startHost
         java.util.List<String> missing = PackGenerator.missingInputs(base);
         if (data != new File(base, "data") && new File(data, "build_manifest.psv").isFile()) missing.remove("data/build_manifest.psv");
         if (!missing.isEmpty()) { failEarly(base, data, getString(R.string.dmAndroidGenFailFiles), getString(R.string.dmAndroidGenNeedFiles, String.join(", ", missing)), "缺 " + String.join("、", missing)); return; }
@@ -350,7 +348,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
                 String text = PackGenerator.scrubLog(PackGenerator.genLog(title, failure, genState.summary, envReport(app, getFilesDirStatic(app), base, genState.product),
                         PackGenerator.listInputs(new File(base, "ExeFS"), dataDir), output), apkDir, appHome, appId);
                 genLogText = text;
-                try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) { o.write(text.getBytes(StandardCharsets.UTF_8)); }   // 脱敏后再写（四审 A4-09）| scrubbed before writing (fourth audit A4-09)
+                try (OutputStream o = new FileOutputStream(PackGenerator.genLogFile(base))) { o.write(text.getBytes(StandardCharsets.UTF_8)); }   // 脱敏后再写（四审 A4-09）| scrubbed before writing (fourth audit A4-09)
                 catch (IOException ignored) {}
             }
             genFailTitle = title;
@@ -394,7 +392,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         String nativeDir = getApplicationInfo().nativeLibraryDir;
         String text = PackGenerator.scrubLog(PackGenerator.genLog(title, reason, genState.summary, envReport(this, getFilesDir(), base, null),
                 PackGenerator.listInputs(new File(base, "ExeFS"), data), "（没有开始生成）\n"), new File(nativeDir).getParentFile().getParent(), getFilesDir().getParent(), getPackageName());
-        try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) { o.write(text.getBytes(StandardCharsets.UTF_8)); } catch (IOException ignored) {}
+        try (OutputStream o = new FileOutputStream(PackGenerator.genLogFile(base))) { o.write(text.getBytes(StandardCharsets.UTF_8)); } catch (IOException ignored) {}
         genFailTitle = title; genFailure = reason; genLogText = text; showGenFailure();
     }
     private static File getFilesDirStatic(Context c) { return c.getFilesDir(); }
@@ -590,9 +588,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // The resource directory defaults to Download/S2X/D2R Mobile Plus/data (old directory: PackGenerator.gameBase); when that directory does not exist but the earlier
         // Download/data does, the earlier one is kept, so existing installs need not move their data. The test is the directory,
         // not .build.config: the imported overlay can provide that file, and then the resource directory has none.
-        File data = new File(gameBase, "data"), earlier = new File(downloads, "data");
-        if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
-        String src = data.getAbsolutePath();
+        String src = PackGenerator.gameData(gameBase).getAbsolutePath();
         { File ext2 = getExternalFilesDir(null), internal2 = new File(getFilesDir(), "dm");   // 与上面 / jni_android.c 同一条运行目录规则 | same runtime-directory rule as above / jni_android.c
           writeExitReasons(new File(internal2, "out/main.patched.bin").canRead() || ext2 == null ? internal2 : new File(ext2, "dm")); }   // 分享诊断日志附系统退出原因 | exit reasons for share diagnostics
         // 本进程里加载页走过（导入 / 手机端生成）就把它的完成 / 失败行交给宿主写进 boot.log（分享诊断日志的「加载页：」摘要） | if the loading page ran in this process
