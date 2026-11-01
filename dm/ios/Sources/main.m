@@ -1185,6 +1185,7 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
     plog("安全区 上 %.1f 左 %.1f 下 %.1f 右 %.1f（点）；视图 %.0fx%.0f；朝向 %ld", i.top, i.left, i.bottom, i.right, z.width, z.height, (long)self.view.window.windowScene.interfaceOrientation);
 }
 @end
+void dm_foldland_scene_update(UIWindowScene *ws);
 @interface SceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property (strong, nonatomic) UIWindow *window;
 @end
@@ -1192,6 +1193,7 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)s options:(UISceneConnectionOptions *)o {
     UIWindowScene *ws = (UIWindowScene *)scene;
     self.window = [[UIWindow alloc] initWithWindowScene:ws]; g_window = self.window;
+    dm_foldland_scene_update(ws);
     UIViewController *vc = [DmGameVC new];
     vc.view.backgroundColor = UIColor.blackColor;
     if ([g_mode isEqualToString:@"boot"] && g_block_title) { vc = [BlockVC new]; vc.view.backgroundColor = UIColor.blackColor; }   // 图形芯片不支持 / 安装包不完整：只弹框 | Graphics chip not supported / install package incomplete: only show the message
@@ -1208,6 +1210,7 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
     g_T[4] = since_start();
     plog("启动计时 T4 willConnect 末 %.1f ms", g_T[4]);
 }
+- (void)windowScene:(UIWindowScene *)ws didUpdateEffectiveGeometry:(UIWindowSceneGeometry *)prev { dm_foldland_scene_update(ws); }   // iPhone Duo 内外屏切换（B115）| iPhone Duo inner / cover screen switch (B115)
 - (void)sceneWillResignActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(0); }
 // 崩溃围栏：进后台清运行标记（后台被系统 / 玩家划掉是 SIGKILL、不走回调，不能算闪退；画面已卡住 5 秒的除外，记卡死），回前台再写回（dm_crashfence.c） | crash fence: clear the running marker on entering the background (being killed there by the system / a swipe is a SIGKILL without callbacks and must not count as a crash), write it again on returning to the foreground
 - (void)sceneDidEnterBackground:(UIScene *)s { if (g_host_up) { front_ios_focus_event(1); void dm_crashfence_background(void); dm_crashfence_background(); } }

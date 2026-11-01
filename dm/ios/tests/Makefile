@@ -11,7 +11,7 @@ HAVE_BINDING_FIXTURES := $(and $(wildcard fixtures/native_binding/mapping.bin),$
 fixture_test = $(if $(HAVE_BINDING_FIXTURES),./$(1) $(BINDING_FIXTURES),@echo "跳过 $(1)：没有夹具 $(BINDING_FIXTURES)（公开仓库不带，要自己从运行中的游戏抓，见 fixtures/native_binding/README）")
 
 .PHONY: all run test clean
-all: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL_CACHE_TARGET)
+all: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_foldland $(METAL_CACHE_TARGET)
 run: test
 $(TARGET): t_touch_controls.c $(wildcard ../Sources/dm_touch_controls.[ch]) ../../host/dm_input.h
 	$(CC) $(CFLAGS) -I../Sources t_touch_controls.c ../Sources/dm_touch_controls.c -lm -o $@
@@ -40,10 +40,13 @@ t_skill_aim: t_skill_aim.c ../Sources/dm_touch_controls.c ../Sources/dm_touch_co
 	$(CC) $(CFLAGS) -I../Sources t_skill_aim.c ../Sources/dm_touch_controls.c -lm -o $@
 t_joy_travel: t_joy_travel.c ../Sources/dm_touch_controls.c ../Sources/dm_touch_controls.h ../../host/dm_input.h
 	$(CC) $(CFLAGS) -I../Sources t_joy_travel.c ../Sources/dm_touch_controls.c -lm -o $@
+t_foldland: t_foldland.c ../Sources/dm_foldland.c ../Sources/dm_foldland.h
+	$(CC) $(CFLAGS) -I../Sources t_foldland.c ../Sources/dm_foldland.c -o $@
 t_metal_cache_guard: t_metal_cache_guard.c ../Sources/dm_metal_cache_guard.c ../Sources/dm_metal_cache_guard.h
 	$(CC) $(CFLAGS) -I../Sources t_metal_cache_guard.c ../Sources/dm_metal_cache_guard.c -o $@
-test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL_CACHE_TARGET)
+test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_foldland $(METAL_CACHE_TARGET)
 	./$(METAL_CACHE_TARGET)
+	./t_foldland
 	./$(TARGET)
 	./t_skill_aim
 	./t_joy_travel
