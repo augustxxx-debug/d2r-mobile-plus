@@ -238,9 +238,12 @@ void dm_crashfence_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *r
 }
 // 框开着时的一次点按（dm_cursor.c 这时不发鼠标消息，抬起那一下经 dm_community_ui_tap 转来）：用控件自己的命中判断（虚表 +0x48）只认「确定」，其余吞掉。x / y = 游戏窗口像素。游戏主线程
 // A tap while the box is up (dm_cursor.c sends no mouse messages then; the lift comes through dm_community_ui_tap): the widget's own hit test (vtable +0x48) for OK only, everything else is swallowed. x / y = game window pixels. Game main thread
+static _Atomic int g_view_h;   // 游戏窗口高（像素），pump 写 | game window height in pixels, written by the pump
 void dm_crashfence_ui_tap(uint64_t root, int x, int y) {
     uint64_t mm = root ? cf_find(root, atomic_load(&g_pad) ? "MainMenuButtonRibbon" : "MainMenuPanel", 0) : 0, ok = mm ? cf_find(mm, "TouchSafeOk", 0) : 0;
-    if (ok && ((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)ok + 0x48))(ok, (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)y << 32) & 1) { atomic_store(&g_ack, 1); return; }
+    // 命中区上下各放宽约 50 个布局单位：真手指常落在小钮上方（同社区框 B058，N12-04）| the hit area grows about 50 layout units up and down: real fingers often land above a small button (as the community box, B058, N12-04)
+    int vh = atomic_load(&g_view_h), sl = vh > 0 ? vh * 50 / 2160 : 0, dy[3] = { 0, sl, -sl };
+    for (int k = 0; ok && k < 3; k++) if (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)ok + 0x48))(ok, (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)(y + dy[k]) << 32) & 1) { atomic_store(&g_ack, 1); return; }
     LOG("崩溃围栏：提示框开着时点按 (%d,%d) → 没点在「确定」上，吞掉", x, y);
 }
 void dm_crashfence_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
@@ -267,6 +270,7 @@ void dm_crashfence_pump(void) {   // 取手柄处每帧调（游戏主线程，h
     // Position in layout units (2160 = screen height). Touch widgets are anchored at the screen center (x relative to it), box at y 640-1260, just above "Play".
     // Controller widgets carry no anchor, so x comes from the screen width: dead center of the screen (both x and y), covering the left button column and the character list (user: "the popup is not centered; it may cover the menu")
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
+    atomic_store(&g_view_h, vh);
     int cx = pad ? xr / 2 : 0, y0 = pad ? (2160 - 620) / 2 : 640;
     cf_text(b, ti, title);
     { const char *m = dm_str(b, g_kind == NOTICE_LOWMEM ? "dmLowMemMsg" : k_cf_msg[g_msg]); for (int k = 0; k < 3; k++) { const char *e = m ? strchr(m, '\n') : NULL; char ln[256];   // 按 \n 拆三行 | split into three lines at \n
@@ -278,5 +282,5 @@ void dm_crashfence_pump(void) {   // 取手柄处每帧调（游戏主线程，h
       for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + g[k][0], y0 + g[k][1] - top, g[k][2], g[k][3] + (k / 3 < 4 ? 2 : 0) }; cf_tile(b, tl[k], r); } }
     cf_place(ti, cx - 850, y0 + 40); cf_place(ok, cx - 235, y0 + 480);
     for (int k = 0; k < 3; k++) cf_place(de[k], cx - 850, y0 + 160 + 66 * k);
-    if (st == 1) { atomic_store(&g_show, 2); LOG("前端：提示已显示：%s（游戏内提示框，%s）", title, pad ? "手柄模式，A 键确定" : "点「确定」按钮"); }
+    if (st == 1 && *(uint8_t *)(mm + 0x50)) { atomic_store(&g_show, 2); LOG("前端：提示已显示：%s（游戏内提示框，%s）", title, pad ? "手柄模式，A 键确定" : "点「确定」按钮"); }
 }
