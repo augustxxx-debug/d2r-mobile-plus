@@ -428,6 +428,8 @@ const char *dm_save_workdir(void) { for (int i = 0; i < g_nmnt; i++) if (g_mnt[i
 // 事务式存档的已提交目录（盘上那份，上次 Commit 的版本）。没挂载存档时返回 NULL
 // The committed directory of the transactional save (the copy on disk, the version from the last Commit). Returns NULL when no save is mounted
 const char *dm_save_commitdir(void) { for (int i = 0; i < g_nmnt; i++) if (g_mnt[i].commit[0]) return g_mnt[i].commit; return NULL; }
+// 已提交目录的快照（存档管理导出 / 手动备份用）：持存档锁克隆，打包时再有提交也不会混入新旧文件。还没挂存档时就是 $DM_SAVE。dst 不得已存在 | Snapshot of the committed directory (save management export / manual backup): cloned under the save lock, so a later commit cannot mix old and new files into the package. Before mount it is $DM_SAVE. dst must not exist
+int dm_save_snapshot(const char *dst) { PATH_LOCK(); pthread_mutex_lock(&g_lock); const char *c = dm_save_commitdir(); if (!c) c = getenv("DM_SAVE"); int rc = c ? clonefile(c, dst, 0) : -1; pthread_mutex_unlock(&g_lock); if (rc) LOG("【红】存档快照失败 errno=%d", errno); return rc; }
 void (*g_dm_mount_seed_hook)(const char *save_dir);   // 挂存档前调（存档目录）：往存档里补宿主要的文件 | called before mounting the save (save dir): adds the files the host needs to the save
 HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv；存档 → 宿主目录（单用户）", Result, h_fs_MountSave, const char *name, const void *uid) {
     (void)uid;

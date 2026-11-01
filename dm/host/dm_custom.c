@@ -242,6 +242,8 @@ static void load_once(void) {
             mem_tier_env() >= 0 ? "DM_MEM_TIER 覆盖" : lim < 0 ? "没量到，按最高档" : "实测", mem_save ? "；套用本档缺省：" : "；", mem_save ? mem_what : "缺省不变");
         if (mem_save) save(); }
 }
+__attribute__((weak)) void dm_savemgr_open(int from) { (void)from; }   // 没有存档管理模块（单测）| no save-management module (unit tests)
+void dm_custom_reload(void) { atomic_store(&g_loaded, 0); load_once(); }   // 存档导入改了设置文件之后（启动期，dm_savemgr_boot）| after a save import changed the settings file (at boot)
 int dm_custom_loaded(void) { load_once(); return atomic_load(&g_loaded); }   // 设置文件读到了没有（iOS 壳在 didFinishLaunching 给目录之前一直是 0）| whether the settings file has been read (0 until the iOS shell gives the directory in didFinishLaunching)
 int dm_custom_get(const char *key) {
     load_once(); int i = key_index(key); if (i < 0) return 1;
@@ -751,11 +753,15 @@ void dm_custom_ui_pump(unsigned long long root) {
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
       indent_rows(find_w(sp, "TouchCustomRows", 0), 0);
       uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64]; int oy = 0, about_bot = -1;   // about_bot：选到「关于」组的社区行时，自动滚动要把整组（含下面的鸣谢子块）滚进框 | about_bot: with the About group's community row selected, auto-scroll brings the whole group (credits sub-block below included) into view. oy：选中行相对 TouchCustomRows 的纵向偏移（「关于」组的社区行套在两层容器里，自己的矩形 y 是 0） | oy: the selected row's vertical offset within TouchCustomRows (the About group's community row sits two containers deep, its own rect y is 0)
-      int nc = custom_rows(), rows = nc + (dm_community_available() ? 1 : 0); if (sel >= rows) sel = rows - 1;   // 末尾「关于」组的社区行（dm_community.c；布局 touch_layout.py _custom_about）：有可显示的值时多一行可选，A = 打开提示框 | the About group's community row at the end (dm_community.c; layout _custom_about): one more selectable row when there is a value, A = open the box
+      int nc = custom_rows(), rows = nc + 1 + (dm_community_available() ? 1 : 0); if (sel >= rows) sel = rows - 1;   // +1：「存档管理」组（dm_savemgr.c），排在「关于」组之前 | +1: the Save Management group, before the About group
+        // 末尾「关于」组的社区行（dm_community.c；布局 touch_layout.py _custom_about）：有可显示的值时多一行可选，A = 打开提示框 | the About group's community row at the end (dm_community.c; layout _custom_about): one more selectable row when there is a value, A = open the box
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
           if (ev & DM_BTN_DOWN) sel = sel + 1 < rows ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
           int ci = sel < nc ? custom_key_at(sel) : -1;
-          if (ci < 0) { tw = find_w(sp, "TouchAboutCommunityText", 0); cw = find_w(sp, "TouchCommunityOpt", 0); uint64_t ar = find_w(sp, "TouchAboutRow", 0), ac = find_w(sp, "TouchAboutCommunityRow", 0);
+          if (ci < 0 && sel == nc) { tw = find_w(sp, "TouchSavesText", 0); cw = find_w(sp, "TouchSavesOpt", 0); uint64_t ar = find_w(sp, "TouchSavesGroup", 0), ac = find_w(sp, "TouchSavesRow", 0);
+              if (cw && ((int32_t *)(cw + 0x70))[0] == 99999) cw = find_w(sp, "TouchSavesHint", 0);   // 局内按钮挪走了，框住副文 | in a run the button is away, frame the subtext
+              oy = (ar ? *(int32_t *)(ar + 0x74) : 0) + (ac ? *(int32_t *)(ac + 0x74) : 0); if (ar) about_bot = *(int32_t *)(ar + 0x74) + *(int32_t *)(ar + 0x7c); if ((ev & DM_BTN_A) && ac) dm_savemgr_open(2); }
+          else if (ci < 0) { tw = find_w(sp, "TouchAboutCommunityText", 0); cw = find_w(sp, "TouchCommunityOpt", 0); uint64_t ar = find_w(sp, "TouchAboutRow", 0), ac = find_w(sp, "TouchAboutCommunityRow", 0);
               oy = (ar ? *(int32_t *)(ar + 0x74) : 0) + (ac ? *(int32_t *)(ac + 0x74) : 0); if (ar) about_bot = *(int32_t *)(ar + 0x74) + *(int32_t *)(ar + 0x7c); if ((ev & DM_BTN_A) && cw && ac) dm_community_open(4); }
           else {
           snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[ci]); cw = find_w(sp, ci == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[ci]); tw = find_w(sp, nm, 0);   // 语言行：框住标签到最右那一格 | Language row: box from the label to the rightmost cell

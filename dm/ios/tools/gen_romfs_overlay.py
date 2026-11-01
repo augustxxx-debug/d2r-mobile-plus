@@ -128,7 +128,7 @@ with tempfile.TemporaryDirectory() as t:
     # the Mac App is the gamepad layout plus a mouse, where clicking the Druid selected the Warlock and all four classes on the right half were off by one
     lp,lt=touch_layout.read_layout(romfs,'controller/console/charactercreatepanelhd.json')
     for nm,x0,x1 in touch_layout.CLASS_STRIPS: lt=touch_layout.set_rect(lt,nm,x0,450,x1-x0,1300)
-    o=os.path.join(tpad,'pad_charcreate.json'); open(o,'w',encoding='utf-8').write(lt); PR[lp.lower()]=o
+    o=os.path.join(tpad,'pad_charcreate.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_charcreate(lt)); PR[lp.lower()]=o
     # 手柄版选角页：列表三行字号同触屏版（touch_layout.CHARSEL_FONTS，原因见那里）；字号档两种模式共用，原版字节下第三行被下一行盖住半截
     # Gamepad-layout character select page: the list's three font sizes as in the touch version (touch_layout.CHARSEL_FONTS, see there); the font profiles are shared by both modes and with the original bytes the third line is half covered by the next row
     lp,lt=touch_layout.read_layout(romfs,'controller/console/characterselectpanelhd.json'); _,base=touch_layout.read_layout(romfs,'characterselectpanelhd.json')

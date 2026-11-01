@@ -152,7 +152,9 @@ INSERT = {
           # 按钮宽 470、间隔 80；隐藏返回时宿主将创建单独居中。
           # 470-wide buttons, 80-unit gap; the host centers Create alone when Back is hidden.
           _btn_big('TouchNext', 40, 1900, '@UICreate', 'ConsoleCharacterCreate:ToConsoleCharacterOptions')
-          + _btn_big('TouchBack', -510, 1900, '@UIBack', 'FrontEndNavigation:ToCharacterSelect')),
+          + _btn_big('TouchBack', -510, 1900, '@UIBack', 'FrontEndNavigation:ToCharacterSelect')
+          # 无角色时的「导入存档」（换机主场景，主会话 D2）：宿主只在没有角色时摆到屏内 | Import when there are no characters (moving devices, the main scenario); the host only brings it on screen then
+          + _btn_big('TouchSavesCc', 99999, 1900, '@dmSaveImport', 'PanelManager:ClosePanel:TouchSavesCc')),
           # 起名页：键盘收起后要有路可走——「创建」「返回」两个按钮（发 PanelManager:ClosePanel:TouchKey<键>，宿主换成原版的 ＋ / B）；「按 Ⓐ 输入名称」那行挪走，点输入框即重新弹键盘
           # Naming page: there must be a way forward after the keyboard is dismissed -- the two buttons 「创建」(Create) and 「返回」(Back) (send PanelManager:ClosePanel:TouchKey<key>, which the host converts to the original game's + / B); the line 「按 Ⓐ 输入名称」(Press Ⓐ to enter a name) is moved away, and tapping the input box brings the keyboard up again
           'controller/console/charactercreatenamepanelhd.json': (r'\{\s*"type"\s*:\s*"ButtonLegendWidget"\s*,\s*"name"\s*:\s*"CharacterNameLegend"',
@@ -360,9 +362,25 @@ def _community():
             + _co_text('TouchCommFoot1', 28, '$FontColorLightGray', 'left', 1480)
             + _btn('TouchCommOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchCommOk', x=99999, anchor=False)
             + ''.join(_co_line('TouchCommFocus%s' % e, 'focus_h' if e in 'TB' else 'focus_v') for e in 'TBLR'))
-_COMM = _community()
-_COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchComm\w+)"', _COMM))
-assert _COMM_STUB.count('\n') == 42   # 边框 15 片、标题、两行渠道（边框 4 + 标签 + 值 + 复制钮 + 钮上的字）× 2、免费声明、分隔线、页脚 3、确定、焦点框 4 | 15 tiles, title, 2 × (4 border + label + value + copy + its text), free, divider, 3 footer, OK, 4 focus
+# 存档管理的通用列表框（dm/host/dm_savemgr.c）：边框 15 片 + 标题 48 + 副文 28 + 6 行（主文 36 / 状态 28）+ 页码 + 备注行 28 + 两颗按钮（字是上面叠的文字框）+ 手柄焦点框 4 条。
+# 跟社区提示框一起挂（同一组面板，直接子控件、画在最上层），全部屏外起步、字空着；建角页单独挂一份（INSERT，无角色时的导入入口）。
+# Save management's generic list box (dm/host/dm_savemgr.c): 15 frame tiles + title 48 + subtitle 28 + 6 rows (text 36 / state 28) + page number + note 28 + two buttons (text in a box on top) + 4 focus lines.
+# Hung with the community box (same panels, direct children, drawn on top), off screen with empty text; the class-select page gets its own copy (INSERT, the import entry when there are no characters).
+def _savebox():
+    return (''.join('        { "type": "ImageWidget", "name": "TouchSaveTile%d%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 52, "height": 24 }, "filename": "Ztouch_comm/tile%d%d" } },\n' % (r, c, r, c) for r in range(5) for c in range(3))
+            + _co_text('TouchSaveTitle', 48, '$FontColorGoldYellow') + _co_text('TouchSaveSub', 28, '$FontColorLightGray')
+            + ''.join(_co_text('TouchSaveRow%d' % k, 36, '$FontColorLightGold', 'left', 1120, 76) + _co_text('TouchSaveTag%d' % k, 28, '$FontColorLightGray', 'right', 500, 76) for k in range(6))
+            + _co_text('TouchSavePage', 28, '$FontColorLightGray') + _co_text('TouchSaveNote', 28, '$FontColorLightGray')
+            + ''.join(_btn('TouchSaveBtn%d' % k, 99999, '', 'PanelManager:ClosePanel:TouchSaveNoop', x=99999, anchor=False) + _co_text('TouchSaveBtnText%d' % k, 36, '$LightButtonTextColor', 'center', 470, 115) for k in range(2))
+            + ''.join(_co_line('TouchSaveFocus%s' % e, 'focus_h' if e in 'TB' else 'focus_v') for e in 'TBLR'))
+_SAVEBOX = _savebox()
+def pad_charcreate(s):   # 手柄版职业选择页走原版布局（gen_romfs_overlay.py）：同样要「导入存档（Y）」和存档框，加在根 children 末尾 | the controller class-select page uses the original layout (gen_romfs_overlay.py): it needs Import Saves (Y) and the save box too, appended at the end of the root children
+    i = s.rstrip().rfind(']'); assert s.rstrip().endswith('}') and i > 0
+    return s[:i].rstrip(' ') + _btn_big('TouchSavesCcPad', 99999, 1900, '@dmSaveImportPad', 'PanelManager:ClosePanel:TouchSavesCc') + _SAVEBOX + '    ' + s[i:]
+INSERT['controller/console/charactercreatepanelhd.json'] = (INSERT['controller/console/charactercreatepanelhd.json'][0], INSERT['controller/console/charactercreatepanelhd.json'][1] + _SAVEBOX)
+_COMM = _community() + _SAVEBOX
+_COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(Touch(?:Comm|Save)\w+)"', _COMM))
+assert _COMM_STUB.count('\n') == 42 + 39   # 边框 15 片、标题、两行渠道（边框 4 + 标签 + 值 + 复制钮 + 钮上的字）× 2、免费声明、分隔线、页脚 3、确定、焦点框 4 | 15 tiles, title, 2 × (4 border + label + value + copy + its text), free, divider, 3 footer, OK, 4 focus
 _COMM_ROW = (('TouchCommunity', '@dmCommunityJoin', 1028),)   # 暂停菜单「加入社区讨论」行（借「保存并退出」按钮的图和字，消息空操作，宿主当信号收）；没有可显示的值时宿主把它挪出屏幕 | the pause menu's "Join the community" row (Save-and-Exit's image and font, a no-op message the host takes as a signal); without a value the host moves it off screen
 _SAFE_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(TouchSafe\w+)"', _SAFE))
 assert _SAFE_STUB.count('\n') == 20   # 边框 15 片、标题、正文三行、确定 | 15 frame tiles, title, three body lines, OK
@@ -1437,8 +1455,19 @@ _CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
 # The group used to carry a "Credits" sub-block (sub-title + maker / special-thanks lines), duplicating the footer of the box the community row opens (version + maker + special thanks);
 # removed in RC1.1 B008 (user feedback on the Duo): credits appear in one place only, the box, assembled by the host's dm_community.c
 _ABOUT_H = 2 * _CUSTOM_LINE_H   # 标题 / 社区行 | title / community row
+_SAVES_H = 2 * _CUSTOM_LINE_H   # 「存档管理」组：标题 / 一行（dm_savemgr.c；局内按钮挪走、显示副文）。独立成组：社区组没值时会整组挪出屏 | the Save Management group: title / one row (in a run the button moves away and a subtext shows). A group of its own: the community group moves off screen when it has no value
+def _custom_saves():
+    return ('        { "type": "Widget", "name": "TouchSavesGroup", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_H, _SAVES_H)
+            + '            { "type": "TextBoxWidget", "name": "TouchSavesTitle", "fields": { "rect": { "x": 0, "y": 0, "width": 1730, "height": %d }, "text": "@dmSaveMgrRow", "style": "$StyleSettingsTitle" }, "children": [\n' % _CUSTOM_LINE_H
+            + '                { "type": "ImageWidget", "name": "TouchSavesDivider", "fields": { "rect": "$OptionsDividerRect", "filename": "PauseMenu\\\\Divider" } },\n            ] },\n'
+            + '            { "type": "Widget", "name": "TouchSavesRow", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_LINE_H, _CUSTOM_LINE_H)
+            + '                { "type": "TextBoxWidget", "name": "TouchSavesText", "fields": { "rect": { "x": 0, "y": 0, "width": 1000, "height": %d }, "text": "@dmSaveMgrRow", "style": "$StyleSettingsText" } },\n' % _CUSTOM_LINE_H
+            + '                { "type": "TextBoxWidget", "name": "TouchSavesHint", "fields": { "rect": { "x": 99999, "y": 0, "width": 700, "height": %d }, "text": "", "style": { "pointSize": 28, "fontColor": "$FontColorLightGray", "alignment": { "h": "right", "v": "center" }, "spacing": "$ReducedSpacing" } } },\n' % _CUSTOM_LINE_H
+            + _btn('TouchSavesOpt', 30, '@dmSaveMgrOpen', 'PanelManager:ClosePanel:TouchSavesOpt', x=1110, anchor=False).replace('\n        ', '\n                ')
+            + '            ] },\n'
+            + '        ] },\n')
 def _custom_about():
-    return ('        { "type": "Widget", "name": "TouchAboutRow", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_H, _ABOUT_H)
+    return ('        { "type": "Widget", "name": "TouchAboutRow", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_H + _SAVES_H, _ABOUT_H)
             + '            { "type": "TextBoxWidget", "name": "TouchAboutTitle", "fields": { "rect": { "x": 0, "y": 0, "width": 1730, "height": %d }, "text": "@dmCommunityAbout", "style": "$StyleSettingsTitle" }, "children": [\n' % _CUSTOM_LINE_H
             + '                { "type": "ImageWidget", "name": "TouchAboutDivider", "fields": { "rect": "$OptionsDividerRect", "filename": "PauseMenu\\\\Divider" } },\n            ] },\n'
             + '            { "type": "Widget", "name": "TouchAboutCommunityRow", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (_CUSTOM_LINE_H, _CUSTOM_LINE_H)
@@ -1517,10 +1546,10 @@ def _custom_page(text):
            '        { "type": "ScrollViewWidget", "name": "ScrollView", "children": [\n'
            '            { "type": "TableWidget", "name": "OptionsTable", "fields": { "columns": [ "$OptionsTableColumn1", "$OptionsTableColumn2" ], "rowHeight": %d }, "children": [\n' % _CUSTOM_TITLE_H
            + title + '            ] },\n'
-           + '            { "type": "Widget", "name": "TouchCustomRows", "fields": { "rect": { "x": 0, "y": 0, "width": 1500, "height": %d } }, "children": [\n' % (_CUSTOM_H + _ABOUT_H)
+           + '            { "type": "Widget", "name": "TouchCustomRows", "fields": { "rect": { "x": 0, "y": 0, "width": 1500, "height": %d } }, "children": [\n' % (_CUSTOM_H + _SAVES_H + _ABOUT_H)
            + _custom_lang_row() + ''.join((_custom_q3d_row(i, k) if k in ('voice', 'q3d', 'touch_swap_above') else _custom_toggle_row(i, k, l)) for i, (k, l) in enumerate(_CUSTOM_ALL) if i) + _CUSTOM_LANG_HINT
            + ''.join('        { "type": "TextBoxWidget", "name": "TouchCustomTest%d_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "@KeyBindingTypeCustom", "style": "$StyleSettingsText" } },\n'
-                     % (n, _CUSTOM_Y[len(_CUSTOM_ALL) + n], _CUSTOM_LINE_H) for n in range(_CUSTOM_TEST_ROWS)) + _custom_about() +
+                     % (n, _CUSTOM_Y[len(_CUSTOM_ALL) + n], _CUSTOM_LINE_H) for n in range(_CUSTOM_TEST_ROWS)) + _custom_saves() + _custom_about() +
            # 手柄模式的选中框（同符文之语清单 TouchRwSel）：框住十字键选中的那一行，宿主摆（dm_custom.c）；触屏模式一直在屏外（只把 x 挪出去、y 留在内容范围内：滚动区按子控件的范围算内容高度，y 放到 99999 会把可滚范围撑到十万）。和各行在同一个容器里，跟着滚
            # Selection frame in controller mode (same as TouchRwSel of the runeword list): frames the row selected with the D-pad, positioned by the host (dm_custom.c); always off-screen in touch mode (only x is moved out while y stays within the content range: the scroll area computes the content height from the extent of its child widgets, and a y of 99999 would stretch the scrollable range to a hundred thousand). It is in the same container as the rows and scrolls with them
            '        { "type": "NineTileImageWidget", "name": "TouchCustomSel", "fields": { "rect": { "x": 99999, "y": 0, "width": 1000, "height": 100 }, "backgroundColor": [ 0, 0, 0, 0 ], '

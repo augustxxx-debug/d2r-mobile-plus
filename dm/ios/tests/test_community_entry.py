@@ -221,7 +221,7 @@ class OptionsPage(unittest.TestCase):
         # 关于组接在最后一行（含测试假行）之后，容器高度把它算进去 | the About group follows the last row (including test dummy rows) and the container height includes it
         h = int(re.search(r'"name": "TouchCustomRows", "fields": \{ "rect": \{ "x": 0, "y": 0, "width": 1500, "height": (\d+)', out).group(1))
         y_about = int(re.search(r'"name": "TouchAboutRow", "fields": \{ "rect": \{ "x": 0, "y": (\d+)', out).group(1))
-        self.assertEqual(y_about, touch_layout._CUSTOM_H); self.assertEqual(h, touch_layout._CUSTOM_H + touch_layout._ABOUT_H)
+        self.assertEqual(y_about, touch_layout._CUSTOM_H + touch_layout._SAVES_H); self.assertEqual(h, touch_layout._CUSTOM_H + touch_layout._SAVES_H + touch_layout._ABOUT_H)
         self.assertEqual(touch_layout.pad_custom_page('"name": "VideoOptionsPanel", "name": "OptionsTable"'), out)
 
 
@@ -280,7 +280,7 @@ class Host(unittest.TestCase):
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss
         self.assertNotIn('co_text(b, de[2], dm_str(b, "dmCommunityAbout"))', c)   # 社区框不再写「关于」子标题 | the community box no longer writes the About sub-title
-        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 42)
+        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 42 + 39)   # 社区框 42 + 存档管理列表框 39 | community box 42 + save-management list box 39
         self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))
@@ -309,6 +309,14 @@ class Host(unittest.TestCase):
             self.assertIn('community', (DM.parent / rel).read_text(encoding='utf-8').lower(), rel)
         sample = (DM.parent / 'docs' / 'community_manifest.sample.json').read_text(encoding='utf-8')
         self.assertIn('"community"', sample); self.assertIn('"qq_group"', sample); self.assertIn('"github"', sample)
+
+
+class SaveEntryPad(unittest.TestCase):
+    def test_pad_class_select_has_entry_and_box(self):   # 手柄版职业选择页是单独一份布局：入口和存档框都要在 | the controller class-select page is its own layout: both the entry and the save box must be there
+        out = touch_layout.pad_charcreate('{\n    "children": [\n        { "name": "x" }\n    ]\n}\n')
+        for nm in ('TouchSavesCcPad', 'TouchSaveTitle', 'TouchSaveBtn0', 'TouchSaveFocusT'): self.assertIn('"name": "%s"' % nm, out)
+        self.assertLess(out.index('"name": "x"'), out.index('TouchSavesCcPad'))
+        self.assertIn('touch_layout.pad_charcreate(lt)', (DM / 'ios' / 'tools' / 'gen_romfs_overlay.py').read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':

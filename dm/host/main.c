@@ -190,7 +190,8 @@ void dm_host_preload_start(int argc, char **argv) {
 int dm_app_bootstrap(int *argc, char ***argv);   // app_mac.m：包成 .app 双击起时备好环境与参数；命令行起原样 | app_mac.m: when packaged as an .app and started by double-click, prepare the environment and arguments; command-line starts are unchanged
 int main(int argc, char **argv) {
 #if TARGET_OS_OSX   // iOS 包也编这个文件（入口由外壳调），那边没有 app_mac.m | The iOS package compiles this file too (the entry is called by the shell); there is no app_mac.m on that side
-    if (dm_app_bootstrap(&argc, &argv)) { void dm_cloud_boot(void); dm_cloud_boot(); }   // App 形态：挂存档之前先做一次 iCloud 同步（同 iOS 壳的启动次序）；取不到容器 / 测试存档时它自己记一行就返回 | App form: do one iCloud sync before mounting the save (same startup order as the iOS shell); when the container cannot be obtained / with a test save it logs one line and returns
+    { int app = dm_app_bootstrap(&argc, &argv); void dm_savemgr_boot(void); dm_savemgr_boot();   // 待应用的存档导入：挂存档与云同步之前换入（dm_savepkg.c）| a pending save import: applied before mount and cloud sync
+      if (app) { void dm_cloud_boot(void); dm_cloud_boot(); } }   // App 形态：挂存档之前先做一次 iCloud 同步（同 iOS 壳的启动次序）；取不到容器 / 测试存档时它自己记一行就返回 | App form: do one iCloud sync before mounting the save (same startup order as the iOS shell); when the container cannot be obtained / with a test save it logs one line and returns
 #endif
     { int dm_crashfence_start(void); dm_crashfence_start(); }
     { void dm_community_load(void); dm_community_load(); }   // 社区入口：读缓存的群号 / 链接（可重入；iOS 外壳也调过；dm_community.c） | community entry: read the cached group number / link (idempotent; the iOS shell calls it too; dm_community.c)   // 崩溃围栏：读残留运行标记、写本局的（iOS 外壳在 boot_prepare 已调过，这里不重复；dm_crashfence.c） | crash fence: read the leftover running marker and write this run's (the iOS shell already called it in boot_prepare; no repeat here)

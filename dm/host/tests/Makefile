@@ -75,6 +75,7 @@ run: \
 	$(B)/t_map_diag \
 	$(B)/t_warp_diag \
 	$(B)/t_romfs_validate \
+	$(B)/t_savepkg \
 	$(B)/t_rwlv \
 	$(B)/t_swkbd \
 	$(B)/t_target_rank \
@@ -164,6 +165,8 @@ run: \
 	$(B)/t_widget
 	$(B)/t_doorspot
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
+	TMPDIR="$(abspath $(B))" $(B)/t_savepkg 2>/dev/null
+	python3 test_savepkg_gates.py
 	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
 	$(PY) movie_cut.py $(B)/main.orig.bin $(B)/subsdk0.orig.bin
 	$(PY) oe_notify.py $(B)/main.orig.bin
@@ -197,6 +200,9 @@ $(B)/t_modetx: t_modetx.c ../dm_modetx.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_modetx.c
 $(B)/t_namegen: t_namegen.c ../dm_namegen.c | $(B)
 	clang -O1 -Wall -Werror -o $@ t_namegen.c ../dm_namegen.c
+$(B)/t_savepkg: t_savepkg.c ../dm_savepkg.c ../dm_savepkg.h ../dm.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-result -Wno-unused-label -I.. -o $@ t_savepkg.c ../dm_savepkg.c ../../third_party/libdeflate/lib/deflate_decompress.c ../../third_party/libdeflate/lib/utils.c ../../third_party/libdeflate/lib/arm/cpu_features.c
+
 $(B)/t_cloudsync: t_cloudsync.c ../dm_cloudsync.c ../dm.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_cloudsync.c ../dm_cloudsync.c
 $(B)/t_touch: t_touch.c ../hle_touch.c ../front.h ../dm.h | $(B)

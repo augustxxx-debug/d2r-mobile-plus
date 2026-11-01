@@ -589,3 +589,87 @@ dmLoadCommCopied	已复制	Copied	Copiado		Скопировано	복사됨	加�
 dmLoadCommCopyFail	复制失败	Copy failed	Error al copiar		Ошибка	복사 실패	加载页复制钮：剪贴板写入失败后 2 秒
 dmLoadCommPrefer	qq	github	github		github	github	不显示：加载页复制钮先复制哪一项（qq = 群号，github = 链接；只有一项时用那一项）
 dmAndGraphicsApplyHint	点“应用”生效，无需重启。\n“默认”全局恢复游戏设定、图形与自定义，保留语言及配音。	Apply without restarting.\nDefaults resets game options, Graphics and Custom; language and voice stay unchanged.	Aplica sin reiniciar.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.	Aplica sin reiniciar.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.	Применяется без перезапуска.\nСброс восстанавливает настройки игры, графику и свои настройки; язык и озвучка сохраняются.	재시작 없이 적용됩니다.\n기본값은 게임, 그래픽과 사용자 설정을 초기화하며 언어와 음성은 유지합니다.	安卓图形页说明，不提另一端专属的超分（另一端用 dmGraphicsApplyHint）| Android Graphics page help: leaves out the upscaling only the other platform has (which uses dmGraphicsApplyHint)
+dmSaveMgrRow	存档管理	Save Management	Gestión de partidas		Управление сохранениями	저장 관리	自定义页「存档管理」组的标题与行名（dm_custom.c、dm_savemgr.c）
+dmSaveMgrOpen	打开	Open	Abrir		Открыть	열기	自定义页「存档管理」行的按钮
+dmSaveInRun	回到主菜单后可用	Available from the main menu	Disponible en el menú principal		Доступно в главном меню	메인 메뉴에서 사용 가능	局内选项页：存档管理灰显时的副文（用户 D3）
+dmSaveMgrSub	备份角色与共享仓库，或在设备之间转移	Back up characters and shared stash, or move them between devices	Copia personajes y alijo compartido, o muévelos entre dispositivos		Резервные копии персонажей и общего тайника, перенос между устройствами	캐릭터와 공유 보관함을 백업하거나 기기 간에 옮깁니다	存档管理首页副文
+dmSaveExport	导出存档	Export Saves	Exportar partidas		Экспорт сохранений	저장 내보내기	存档管理首页 / 导出页标题
+dmSaveImport	导入存档	Import Saves	Importar partidas		Импорт сохранений	저장 가져오기	存档管理首页 / 建角页入口（无角色时，触屏）
+dmSaveImportPad	导入存档（Y）	Import Saves (Y)	Importar partidas (Y)		Импорт сохранений (Y)	저장 가져오기 (Y)	建角页入口（无角色时，手柄：Xbox 键名，§0 手柄规则）
+dmSaveBackupNow	立即备份	Back Up Now	Copiar ahora		Создать копию	지금 백업	存档管理首页
+dmSaveBackupList	备份列表	Backups	Copias de seguridad		Резервные копии	백업 목록	存档管理首页 / 备份列表标题
+dmSaveBack	返回	Back	Atrás		Назад	뒤로	存档管理面板的返回键
+dmSaveOk	确定	OK	Aceptar		ОК	확인	存档管理面板的确定键
+dmSaveExportSub	选择要导出的内容	Choose what to export	Elige qué exportar		Выберите, что экспортировать	내보낼 항목을 선택하세요	导出页副文
+dmSaveExportGo	导出	Export	Exportar		Экспорт	내보내기	导出页主按钮
+dmSaveSelected	已选	Selected	Marcado		Выбрано	선택됨	导出页行尾状态
+dmSaveNotSelected	未选	Not selected	Sin marcar		Не выбрано	선택 안 됨	导出页行尾状态
+dmSaveStashRow	共享仓库 · %s	Shared stash · %s	Alijo compartido · %s		Общий тайник · %s	공유 보관함 · %s	导出 / 预览页的共享仓库行
+dmSaveStashSoft	标准	Standard	Normal		Обычный	일반	共享仓库类别
+dmSaveStashHard	专家	Hardcore	Extremo		Хардкор	하드코어	共享仓库类别、角色行的专家标记
+dmSaveSettingsRow	设置（键位、过滤规则、玩法开关）	Settings (keys, loot filter, gameplay)	Ajustes (teclas, filtro, juego)		Настройки (клавиши, фильтр, игра)	설정 (키, 필터, 플레이)	导出 / 预览页的设置行
+dmSaveWorking	正在处理	Working	Procesando		Выполняется	처리 중	处理中标题
+dmSaveWorkingSub	请稍候，不要切到后台	Please wait and keep the game open	Espera y mantén el juego abierto		Подождите, не сворачивайте игру	잠시 기다리고 게임을 닫지 마세요	处理中副文
+dmSaveExportDone	导出完成	Export Complete	Exportación completa		Экспорт завершён	내보내기 완료	导出完成标题
+dmSaveExportDoneSub	存档包已交给系统保存	The save package was handed to the system	El paquete se entregó al sistema		Пакет передан системе	저장 패키지를 시스템에 전달했습니다	导出完成副文
+dmSaveExportCancel	没有保存存档包	The save package was not saved	No se guardó el paquete		Пакет не сохранён	저장 패키지를 저장하지 않았습니다	系统面板取消 / 失败
+dmSaveBackupDone	备份完成	Backup Complete	Copia completa		Копия создана	백업 완료	立即备份完成标题
+dmSaveFailTitle	操作没有完成	Could Not Finish	No se pudo completar		Не удалось завершить	완료하지 못했습니다	失败框标题
+dmSaveFailSub	存档没有变化	Your saves are unchanged	Tus partidas no cambiaron		Сохранения не изменились	저장 데이터는 변경되지 않았습니다	失败框副文（通用）
+dmSaveErrIo	读写文件失败	A file could not be read or written	No se pudo leer o escribir un archivo		Ошибка чтения или записи файла	파일을 읽거나 쓰지 못했습니다	失败框正文
+dmSaveErrZip	无法读取这个文件，请确认选的是本游戏导出的存档包	This file cannot be read. Choose a package exported by this game	No se puede leer. Elige un paquete exportado por este juego		Файл не читается. Выберите пакет, экспортированный этой игрой	파일을 읽을 수 없습니다. 이 게임에서 내보낸 패키지를 선택하세요	失败框正文
+dmSaveErrCheck	存档包内容与校验信息不一致，请重新导出	The package failed its checks. Export it again	El paquete no superó la verificación. Expórtalo de nuevo		Пакет не прошёл проверку. Экспортируйте заново	패키지 검증에 실패했습니다. 다시 내보내세요	失败框正文
+dmSaveErrNew	这个存档包来自更新的版本，请先更新游戏	This package is from a newer version. Update the game first	Este paquete es de una versión más nueva. Actualiza el juego		Пакет из более новой версии. Обновите игру	최신 버전의 패키지입니다. 먼저 게임을 업데이트하세요	失败框正文
+dmSaveErrBad	存档包不符合要求，已拒绝导入	The package is not valid and was rejected	El paquete no es válido y se rechazó		Пакет недействителен и отклонён	패키지가 올바르지 않아 거부했습니다	失败框正文（超限 / 路径非法）
+dmSaveErrSpace	存储空间不足，清理后重试	Not enough storage. Free up space and try again	Sin espacio suficiente. Libera espacio e inténtalo de nuevo		Недостаточно места. Освободите его и повторите	저장 공간이 부족합니다. 공간을 확보한 뒤 다시 시도하세요	失败框正文
+dmSaveErrStar	标星已达上限，请先取消一个	Too many starred. Unstar one first	Demasiados destacados. Quita uno primero		Слишком много избранных. Снимите одну отметку	별표가 너무 많습니다. 먼저 하나를 해제하세요	失败框正文
+dmSavePreviewFrom	来自 %s · 版本 %s · 导出于 %s	From %s · version %s · exported %s	De %s · versión %s · exportado %s		Из %s · версия %s · экспорт %s	%s · 버전 %s · %s 내보냄	预览页副文（占位符同序）
+dmSavePreviewGo	导入	Import	Importar		Импорт	가져오기	预览页主按钮
+dmSaveRowFmt	%s · %s Lv%d · %s	%s · %s Lv%d · %s	%s · %s Nv%d · %s		%s · %s Ур%d · %s	%s · %s Lv%d · %s	角色行：名字 / 职业 / 等级 / 最后游玩日期
+dmSaveStNew	新角色	New	Nuevo		Новый	새 캐릭터	预览页状态
+dmSaveStSame	相同	Identical	Idéntico		Совпадает	동일	预览页状态
+dmSaveStBad	无法导入	Cannot import	No se puede importar		Нельзя импортировать	가져올 수 없음	预览页状态
+dmSaveStConflict	同名 · 本机 Lv%d	Same name · Lv%d here	Mismo nombre · Nv%d aquí		То же имя · здесь Ур%d	같은 이름 · 이 기기 Lv%d	预览页状态
+dmSaveOverwrite	覆盖	Overwrite	Sobrescribir		Заменить	덮어쓰기	预览页处理方式
+dmSaveKeepBoth	保留两份	Keep Both	Conservar ambos		Оставить оба	둘 다 유지	预览页处理方式（T0 通过才出现）
+dmSaveSkip	跳过	Skip	Omitir		Пропустить	건너뛰기	预览页处理方式
+dmSaveImportOne	导入	Import	Importar		Импорт	가져오기	预览页新角色的处理方式
+dmSaveRestartTitle	导入完成，重新启动游戏后生效	Import Ready. Restart the Game to Apply	Listo. Reinicia el juego para aplicar		Готово. Перезапустите игру	가져오기 완료. 게임을 다시 시작하면 적용됩니다	导入确认后的提示框标题（主会话 D1 定稿）
+dmSaveRestartSub	点击后游戏将关闭	The game closes when you tap OK	El juego se cerrará al aceptar		Игра закроется после нажатия	확인을 누르면 게임이 종료됩니다	同上，副文（手柄按 A 同样关闭）
+dmSaveResultOk	已导入 %d 个角色	Imported %d characters	%d personajes importados		Импортировано персонажей: %d	캐릭터 %d명을 가져왔습니다	启动后的结果框标题
+dmSavePreviewFromNoVer	来自 %s · 导出于 %s	From %s · exported %s	De %s · exportado %s		Из %s · экспорт %s	%s · %s 내보냄	预览页副文：来源端没有版本号时（占位符同序）
+dmSaveRestoreMerge	只恢复这份备份里有的内容，之后新增的角色不会删除	Restores only what this backup contains; characters added later stay	Solo restaura lo que hay en esta copia; los personajes añadidos después se quedan		Восстанавливается только содержимое копии; добавленные позже персонажи останутся	이 백업에 있는 내용만 복원하며, 이후 추가된 캐릭터는 삭제되지 않습니다	恢复备份的预览页副文（恢复是合并式的）
+dmSaveResultOkSub	导入前的存档已自动备份，可在备份列表恢复	Your previous saves were backed up. Restore them from Backups	Se hizo copia de las partidas anteriores. Restáuralas en Copias		Прежние сохранения скопированы. Восстановить можно в копиях	이전 저장을 백업했습니다. 백업 목록에서 복원할 수 있습니다	启动后的结果框副文
+dmSaveResultFail	存档导入未完成	The Import Did Not Finish	La importación no terminó		Импорт не завершён	가져오기가 완료되지 않았습니다	启动后的结果框标题（失败）
+dmSaveBkAuto	自动	Auto	Auto		Авто	자동	备份列表：类别
+dmSaveBkManual	手动	Manual	Manual		Вручную	수동	备份列表：类别
+dmSaveBkRow	%s · %s	%s · %s	%s · %s		%s · %s	%s · %s	备份列表一行主文：时间 / 类别
+dmSaveBkTag	%d 个角色 · %s	%d chars · %s	%d pers. · %s		перс.: %d · %s	캐릭터 %d명 · %s	备份列表一行右侧：角色数 / 大小（窄，放得下俄文）
+dmSaveBkEmpty	还没有备份	No backups yet	Aún no hay copias		Копий пока нет	백업이 없습니다	备份列表空
+dmSaveBkKeep	保留最近 10 份；标星的不会被删除	The 10 newest are kept; starred ones are never removed	Se conservan las 10 últimas; las destacadas no se borran		Хранятся 10 последних; избранные не удаляются	최근 10개를 유지하며 별표 항목은 삭제되지 않습니다	备份列表副文
+dmSaveBkRestore	恢复这份备份	Restore This Backup	Restaurar esta copia		Восстановить копию	이 백업 복원	备份操作
+dmSaveBkStar	标星	Star	Destacar		В избранное	별표	备份操作
+dmSaveBkUnstar	取消标星	Remove Star	Quitar destacado		Убрать из избранного	별표 해제	备份操作
+dmSaveBkShare	导出这份备份	Export This Backup	Exportar esta copia		Экспортировать копию	이 백업 내보내기	备份操作
+dmSaveBkDelete	删除这份备份	Delete This Backup	Eliminar esta copia		Удалить копию	이 백업 삭제	备份操作
+dmSaveBkDeleteAsk	确定删除这份备份？	Delete this backup?	¿Eliminar esta copia?		Удалить эту копию?	이 백업을 삭제할까요?	删除二次确认标题
+dmSaveBkDeleteSub	删除后无法找回	This cannot be undone	No se puede deshacer		Это нельзя отменить	되돌릴 수 없습니다	删除二次确认副文
+dmSaveCls0	亚马逊	Amazon	Amazona		Амазонка	아마존	预览页职业名
+dmSaveCls1	法师	Sorceress	Hechicera		Волшебница	소서리스	预览页职业名
+dmSaveCls2	死灵法师	Necromancer	Nigromante		Некромант	네크로맨서	预览页职业名
+dmSaveCls3	圣骑士	Paladin	Paladín		Паладин	팔라딘	预览页职业名
+dmSaveCls4	野蛮人	Barbarian	Bárbaro		Варвар	바바리안	预览页职业名
+dmSaveCls5	德鲁伊	Druid	Druida		Друид	드루이드	预览页职业名
+dmSaveCls6	刺客	Assassin	Asesina		Ассасин	어쌔신	预览页职业名
+dmSaveCls7	术士	Warlock	Brujo		Чернокнижник	워록	预览页职业名
+dmCloudSaveOn	iCloud 同步开启：导入的内容会传到其他设备	iCloud sync is on: imports reach your other devices	Sincronía iCloud activa: lo importado llega a tus dispositivos		Синхронизация iCloud включена: импорт попадёт на другие устройства	iCloud 동기화 켜짐: 가져온 내용이 다른 기기로 전송됩니다	预览页提示（只 iOS / Mac，§2.8）#ios
+dmAndSaveBackupPath	备份也保存在 Download/S2X/…/SaveBackups	Backups are also in Download/S2X/…/SaveBackups	Copias también en Download/S2X/…/SaveBackups		Копии также в Download/S2X/…/SaveBackups	백업은 Download/S2X/…/SaveBackups 에도 저장됩니다	备份列表提示（只安卓，§2.8）#android
+dmSaveFmtPc	PC 版 D2R	D2R on PC	D2R en PC		D2R на ПК	PC판 D2R	预览页来源（第二期转换的包）
+dmSaveFmtLod	暗黑 2 毁灭之王	Diablo II: LoD	Diablo II: LoD		Diablo II: LoD	디아블로 2: 파괴의 군주	预览页来源（第二期转换的包）
+dmSaveFmtOther	其他来源	another source	otro origen		другой источник	다른 출처	预览页来源（第二期转换的包）
+dmSaveFromOtherDevice	其他设备	another device	otro dispositivo		другое устройство	다른 기기	导入预览的来源：包来自另一端时不写平台名 | import preview source when the package comes from the other platform
+dmSaveErrConvert	这个存档包需要转换，当前版本还不支持	This package needs converting, which this version does not support yet	Este paquete requiere conversión, aún no disponible		Пакет требует преобразования, пока не поддерживается	이 패키지는 변환이 필요하며 아직 지원되지 않습니다	失败框正文
+dmSaveErrDup	包里有重名或写法不受支持的角色名，请先在原设备上改名	A character name is repeated or not supported. Rename it on the original device	Nombre repetido o no admitido. Cámbialo en el dispositivo original		Имя повторяется или не подходит. Смените на исходном устройстве	패키지에 중복되거나 지원되지 않는 캐릭터 이름이 있습니다. 원래 기기에서 이름을 바꾸세요	同包重名或 NFD 名整包拒绝时的提示（dm_savemgr.c）
+dmSaveErrCoop	这个存档包含联机角色，不能导入	This package contains online characters and cannot be imported	Este paquete contiene personajes en línea y no se puede importar		Пакет содержит сетевых персонажей, импорт невозможен	이 패키지에는 온라인 캐릭터가 있어 가져올 수 없습니다	失败框正文（联机存档禁止互通）
+dmSaveCoopRoot	联机存档不能导出、导入或备份	Online saves cannot be exported, imported or backed up	Las partidas en línea no se exportan, importan ni copian		Сетевые сохранения нельзя экспортировать, импортировать или копировать	온라인 저장은 내보내거나 가져오거나 백업할 수 없습니다	联机存档根下打开存档管理时的提示（dm_savemgr.c）
+dmSaveCoopNote	联机角色不能导出，也不进备份	Online characters cannot be exported or backed up	Los personajes en línea no se exportan ni se copian		Сетевые персонажи не экспортируются и не копируются	온라인 캐릭터는 내보내거나 백업할 수 없습니다	导出页 / 备份列表备注（本机有联机角色时）
