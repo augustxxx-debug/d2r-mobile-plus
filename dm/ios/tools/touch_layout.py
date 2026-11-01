@@ -195,6 +195,16 @@ def pad_bliss(s):   # 手柄版建角模式页（原版布局原样）+ 「极�
     # Remove "X Classic" from the button legend (the host also swallows X on this page, see dm_cursor.c): single player only supports
     # Standard / Hardcore expansion characters, same as the touch version.
     s, n = re.subn(r'\{\s*"action"\s*:\s*"option2"\s*,\s*"description"\s*:\s*"@LegacyGameVersionSwitch"\s*\}\s*,?', '', s); assert n == 1, n
+    # 「标准」与「专家」两张牌之间原版夹着中间那面骷髅旗帜（HardcoreCenter，原版天梯 / 经典版三行上下走的交叉点）：专家牌按左先落到旗帜上、选中项还是专家，
+    # 要再按一次左才回到标准（B072：玩家按一次左以为回到了标准，按 A 却弹专家警告、建出专家角色）。只剩这一行之后旗帜不再有交叉的用处：两张牌左右直接互指，
+    # 旗帜只当进页时的落点（宿主替按的「下」从看不见的天梯行落到它上面，dm_cursor.c），从旗帜按左 / 右照旧进标准 / 专家
+    # Between the "Standard" and "Hardcore" plaques the original has the skull banner in the middle (HardcoreCenter, the crossing point of the original ladder / classic
+    # rows): Left on Hardcore first lands on the banner with Hardcore still selected, and a second Left is needed to get back to Standard (B072: one Left looked like
+    # Standard, A then brought up the hardcore warning and created a hardcore character). With only this row left the banner has no crossing to serve: the two plaques
+    # point at each other directly, and the banner is only the landing spot on entry (the host's Down from the invisible ladder row lands there, dm_cursor.c); Left / Right
+    # from the banner still go to Standard / Hardcore
+    for side, frm, to in (('right', 'StandardToggle', 'HardcoreToggle'), ('left', 'HardcoreToggle', 'StandardToggle')):
+        s, n = re.subn(r'("%s"\s*:\s*\{\s*"name"\s*:\s*")HardcoreCenter("\s*\})' % side, r'\g<1>%s\g<2>' % to, s); assert n == 1, (frm, n)
     at, add = INSERT['controller/console/characteroptionspanelhd.json']; ms = list(re.finditer(at, s)); assert len(ms) == 1
     key = '        { "type": "ImageWidget", "name": "TouchBlissKey", "fields": { "rect": { "x": -1665, "y": 1330, "scale": 1.5 }, "filename": "Controller/ControllerButtons/Switch/ButtonLeft" } },\n'
     # 这一张写死了文件名、不走原版换键帽的格式串，接 Xbox / PS 手柄时仍是 Switch 的灰色「Y」，玩家照字面按手柄上印 Y 的上键 = Switch X（这一页收掉）、没反应（缺陷台账 B019）：
@@ -1579,7 +1589,23 @@ def _custom_page(text):
     return out, len(_CUSTOM_ALL) + 3
 PRESENT['controller/console/videooptionspanelhd.json'] = _custom_page
 # Touch and controller expose the same five distinct destinations.
-def pad_settings(s): return _settings_tabs(s)[0]
+# 手柄版选项页底部的提示条（原版「X 默认 / B 返回」，基页 Controller/SettingsPanelHD.json 的 Legend，y 1661、宽 1950，在面板底图之下）：局内正好落在原版手柄底栏的技能格上，
+# 字和技能格图标叠在一起（B067，Duo 真机与 16:9 冒烟同样）。原版手柄界面里有底条的提示条（暂停页组的「关闭菜单」、过场列表的 LegendBackground）都垫一条暗底，
+# 这里照样在提示条下垫一条：挂在面板底图（Anchor 下第一个子控件 Background）的子控件里——先画底图和它的子控件、再画标题和提示条，暗底一定在提示条下面；
+# 横向与提示条同宽（面板宽），纵向盖住提示条一行。颜色用原版建角模式页 BackgroundTint 的 [0,0,0,0.8]。前端选项页没有底栏，暗底落在菜单背景上，同过场列表
+# The legend at the bottom of the controller options page (the original "X Default / B Back", the Legend of the base page Controller/SettingsPanelHD.json, y 1661,
+# width 1950, below the panel image): in a run it lands right on the skill cells of the original controller bottom bar, text and cell icons on top of each other (B067,
+# Duo on device and the 16:9 smoke alike). The original controller UI puts a dark strip under legends that sit over something (the pause page group's "Close menu", the
+# cinematics list's LegendBackground); do the same here: the strip is a child of the panel image (Background, the first child of Anchor) -- the image and its children are
+# drawn before the title and the legend, so the strip is always under the legend; as wide as the legend (the panel width), covering the legend's line. Colour = the
+# [0,0,0,0.8] of the original character-mode page's BackgroundTint. The front-end options page has no bottom bar; there the strip sits on the menu background, like the cinematics list
+PAD_SETTINGS_LEGEND_BAND = '{ "type": "RectangleWidget", "name": "TouchPadLegendBand", "fields": { "rect": { "x": 0, "y": 1640, "width": 1950, "height": 146 }, "color": [0, 0, 0, 0.8] } }'
+def pad_settings(s):
+    s = _settings_tabs(s)[0]
+    if 'TouchPadLegendBand' in s: return s   # 已垫过（变换可重复套） | already added (the transform may be applied twice)
+    m = re.search(r'\{\s*"type"\s*:\s*"ImageWidget"\s*,\s*"name"\s*:\s*"Background"\s*,?\s*\}', s)
+    if not m: return s   # 只有 Console 这份带面板底图的声明（夹具 / 前端基页没有） | only the Console copy declares the panel image (fixtures / the base page do not)
+    return s[:m.start()] + '{ "type": "ImageWidget", "name": "Background", "children": [ ' + PAD_SETTINGS_LEGEND_BAND + ' ] }' + s[m.end():]
 def pad_custom_page(s): return _custom_page(s)[0]
 # 挂进 PRESENT：build_ingame 对同一份文件（往选项页插「应用 / 默认 / 放弃」）会先套这里的变换再插按钮，不会出两份覆盖互相盖掉
 # Hooked into PRESENT: for the same file (inserting 「应用 / 默认 / 放弃」(Apply / Default / Discard) into the options page) build_ingame applies the transform here first and then inserts the buttons, so two overlays that overwrite each other are not produced

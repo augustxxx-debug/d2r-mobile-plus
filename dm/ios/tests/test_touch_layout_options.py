@@ -238,3 +238,14 @@ assert json.loads(re.sub(r',(\s*[}\]])', r'\1', touch_console))['children'][-1][
 front, _ = layout.PRESENT['controller/settingspanelhd.json']('{"children":[{"type": "ButtonLegendWidget", "name": "Legend", "fields": {"rect": {"x": 0, "y": 1661, "width": 1950, "height": 103}}}]}')
 assert legend_of(front)['fields']['rect']['y'] >= 99999   # 前端那份照旧挪走 | the front-end copy is still moved away
 print('PASS options legend: touch in-game and front-end copies move the controller legend off screen; controller copy keeps it')
+# B067：手柄这份在提示条下垫一条暗底（挂在面板底图下，先于标题 / 提示条画），盖住底栏技能格；重复套不再加；没有面板底图声明的夹具不动
+# B067: the controller copy puts a dark strip under the legend (a child of the panel image, drawn before the title / legend) over the bottom-bar skill cells; applying twice adds nothing; fixtures without the panel image declaration are untouched
+pad_console = json.loads(re.sub(r',(\s*[}\]])', r'\1', layout.pad_settings(console_src)))
+anchor = pad_console['children'][1]['children'][0]['children']
+assert [c['name'] for c in anchor] == ['Background', 'Title', 'Legend'], anchor
+band = anchor[0]['children'][0]
+assert band['type'] == 'RectangleWidget' and band['name'] == 'TouchPadLegendBand' and band['fields']['color'] == [0, 0, 0, 0.8], band
+r = band['fields']['rect']; assert r['x'] == 0 and r['width'] == 1950 and r['y'] <= 1661 and r['y'] + r['height'] >= 1661 + 103, r   # 盖住原版提示条（y 1661、高 103、宽 1950） | covers the original legend (y 1661, height 103, width 1950)
+assert layout.pad_settings(layout.pad_settings(console_src)) == layout.pad_settings(console_src)
+assert 'TouchPadLegendBand' not in layout.pad_settings(settings_src) and 'TouchPadLegendBand' not in touch_console
+print('PASS options legend (B067): controller copy puts a dark strip under the legend, once')

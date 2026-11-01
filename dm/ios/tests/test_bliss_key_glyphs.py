@@ -19,6 +19,10 @@ import touch_layout  # noqa: E402
 # 原版手柄版建角模式页的最小骨架：天梯四个控件、提示条（含「X 经典版」那一条） | minimal skeleton of the original controller mode page: the four ladder widgets, the legend (with the "X Classic" entry)
 PAGE = ('{ "children": [\n'
         + ''.join('        { "type": "Widget", "name": "%s", "fields": { "rect": { "x": 0, "y": 0 } } },\n' % n for n in ('LadderFlag', 'LadderToggle', 'NonLadderToggle', 'LadderCenter'))
+        # 标准 / 专家那一行：导航照原版（两张牌都指向中间的骷髅旗帜） | the Standard / Hardcore row: navigation as in the original (both plaques point at the skull banner)
+        + '        { "type": "ToggleButtonWidget", "name": "StandardToggle", "fields": { "navigation": { "right": {"name": "HardcoreCenter"}, "up": {"name": "LadderCenter"}, "down": {"name": "ExpansionCenter"} } } },\n'
+        + '        { "type": "ToggleButtonWidget", "name": "HardcoreToggle", "fields": { "navigation": { "left": {"name": "HardcoreCenter"}, "up": {"name": "LadderCenter"}, "down": {"name": "ExpansionCenter"} } } },\n'
+        + '        { "type": "ButtonWidget", "name": "HardcoreCenter", "fields": { "navigation": { "left": {"name": "StandardToggle"}, "right": {"name": "HardcoreToggle"}, "up": {"name": "LadderCenter"}, "down": {"name": "ExpansionCenter"} } } },\n'
         + '        { "type": "ButtonLegendWidget", "name": "CharacterOptionsLegend", "fields": { "entries": [ { "action": "option2", "description": "@LegacyGameVersionSwitch" }, ] } },\n'
         '] }')
 
@@ -35,6 +39,16 @@ class BlissKeyGlyphs(unittest.TestCase):
         self.assertEqual(k['TouchBlissKeyX'], (99999, 'Ztouch_controller_buttons_ui/switchXButtonLeft'))
         self.assertEqual(k['TouchBlissKeyP'], (99999, 'Ztouch_controller_buttons_ui/switchPButtonLeft'))
         self.assertNotIn('TouchBlissKeyK', k)   # 键盘那张只在 Mac 覆盖层 | the keyboard one only in the Mac overlay
+
+    def test_plaques_point_at_each_other(self):
+        # B072：专家牌按一次左就回到标准（不再先落到中间旗帜、选中项还是专家）；旗帜进页落点与左右照旧 | B072: one Left from Hardcore reaches Standard; the banner keeps its entry landing and Left / Right
+        import json
+        page = json.loads(re.sub(r',(\s*[}\]])', r'\1', touch_layout.pad_bliss(PAGE)))
+        nav = {c['name']: c['fields']['navigation'] for c in page['children'] if c['name'] in ('StandardToggle', 'HardcoreToggle', 'HardcoreCenter')}
+        self.assertEqual(nav['StandardToggle']['right'], {'name': 'HardcoreToggle'})
+        self.assertEqual(nav['HardcoreToggle']['left'], {'name': 'StandardToggle'})
+        self.assertEqual((nav['HardcoreCenter']['left'], nav['HardcoreCenter']['right']), ({'name': 'StandardToggle'}, {'name': 'HardcoreToggle'}))
+        self.assertEqual(nav['StandardToggle']['up'], {'name': 'LadderCenter'})   # 上下不动（宿主在这一页收掉上 / 下） | up / down untouched (the host swallows them on this page)
 
     def test_mac_adds_keyboard(self):
         os.environ['DM_OVERLAY_MAC'] = '1'

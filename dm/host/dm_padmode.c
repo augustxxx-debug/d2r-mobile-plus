@@ -506,7 +506,7 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
     if (!gp || !*(uint8_t *)(uintptr_t)(gp + 0x50)) { g_diff_w.w = 0; g_diff_last = -1; return; }
     uint64_t w = pm_find(gp, "TouchDiffSlider", 0); if (!w || !DM_WIDGET_OK(b, w, DM_VT_SLIDER, "游戏难度行")) return;
     dm_hud_info h; dm_hud_get(&h); int cur = h.valid ? h.players : 0;
-    if (g_diff_pend && g_diff_pend == cur) g_diff_pend = 0;   // 请求已落地 | the request has landed
+    if (g_diff_pend && (g_diff_pend == cur || !h.valid)) g_diff_pend = 0;   // 请求已落地；或已不在局内（退回主菜单时没落地的请求作废，否则局外仍当作局内，B066） | the request has landed; or no longer in a run (a request that never landed is dropped on return to the main menu, else the page would still count as in a run, B066)
     int shown = g_diff_pend ? g_diff_pend : cur, setv = -1;
     int v = *(int32_t *)(uintptr_t)(w + 0x5c4);
     if (dm_wref_get(&g_diff_w) != w) {
@@ -562,7 +562,10 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
           int in_page = fn && pm_find(gp, fn, 0) == F;
           if (g_diff_home && (frame > g_diff_home || !shown || (in_page && !in_first))) g_diff_home = 0;
           if (g_diff_home && in_first) { g_diff_home = 0; snprintf(back_nm, sizeof back_nm, "%s", fn); *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：进页缺省焦点放到难度行（原版给的是 %s）", fn); }
-          else if (in_first && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
+          // 局外这一行不可调（主菜单进的选项页），首行按上也不进它，同上面缺省焦点（B066：427328d 只挡了缺省焦点那条路）；不声明上键，原版照旧（第一行按上不动）
+          // outside a run (options opened from the main menu) the row cannot be changed, so Up on the first row does not enter it either, like the default focus above
+          // (B066: 427328d only blocked the default-focus path); Up is not declared, so the original keeps it (Up on the first row does nothing)
+          else if (shown && in_first && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
               snprintf(back_nm, sizeof back_nm, "%s", fn); *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：手柄焦点上移到难度行（从 %s）", fn); } } }
     if (setv >= 0 && setv != v) ((void (*)(uint64_t, int, int, int))(b + 0xad7028))(w, setv, 0, 0);
     g_diff_last = *(int32_t *)(uintptr_t)(w + 0x5c4);
