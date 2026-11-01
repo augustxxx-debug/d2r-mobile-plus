@@ -125,9 +125,18 @@ int main(void) {
       setenv("DM_WATCH", "90", 1); restart(); CHECK(dm_crashfence_start() == 2); CHECK(marker_streak() == 2);
       CHECK(dm_custom_get("eco_fps") == FPS_120); CHECK(dm_custom_get("rt_shadow") == 1); CHECK(dm_custom_get("upscale") == 1); CHECK(dm_crashfence_notice_take() == 0);
       read_settings(text, sizeof text); CHECK(!strcmp(text, on));
-      f = fopen(marker, "w"); fputs("streak=1\nhist=0\ncause=0:0\n", f); fclose(f);   // 残留来自玩家局：测试局照样加 1，但不关 | leftover from a player run: a test run still adds one, but does not shut off
+      dm_crashfence_clean("优雅退出"); CHECK(marker_streak() == 2); CHECK(g_streak == 2);   // 测试局正常结束：残留不清（N10-01） | a test run ending normally keeps the leftover (N10-01)
+      restart(); CHECK(dm_crashfence_start() == 2); CHECK(marker_streak() == 2);              // 再来一局测试局：仍是 2，不加 | another test run: still 2, no increment
+      f = fopen(marker, "w"); fputs("streak=1\nhist=0\ncause=0:0\n", f); fclose(f);   // 残留来自玩家局：那次异常退出照算，但不关 | leftover from a player run: that exit still counts, but no shutoff
       restart(); CHECK(dm_crashfence_start() == 2); CHECK(dm_custom_get("upscale") == 1); CHECK(dm_crashfence_notice_take() == 0);
       setenv("DM_TEST_CRASH_MARK", "2", 1); restart(); CHECK(dm_crashfence_start() == 2); CHECK(dm_custom_get("upscale") == 0); CHECK(dm_crashfence_notice_take() == 1);   // 测试开关还能验围栏本身 | the test switch can still exercise the fence itself
+      dm_crashfence_clean("优雅退出"); CHECK(marker_streak() < 0);   // 测试开关的局照旧清 | a test-switch run clears as before
+      // DM_TEST_CRASH_MARK=1 的局被杀，盘上留 streak=1、test=1：之后的局不把它当玩家局残留再加 1（rc2-perf，17 Pro 的现场） | a killed DM_TEST_CRASH_MARK=1 run leaves streak=1, test=1: later runs do not count it again as a player leftover
+      setenv("DM_TEST_CRASH_MARK", "1", 1); restart(); CHECK(dm_crashfence_start() == 1); CHECK(marker_streak() == 1);
+      restart(); CHECK(dm_crashfence_start() == 1); CHECK(marker_streak() == 1);   // 又一局：开关只模拟，不累加 | another: the switch only simulates, no growth
+      unsetenv("DM_TEST_CRASH_MARK"); restart(); CHECK(dm_crashfence_start() == 1); dm_crashfence_clean("优雅退出"); CHECK(marker_streak() == 1);   // 只带 DM_WATCH 的测试局：不加、正常结束不清 | DM_WATCH only: no growth, kept on a normal end
+      restart(); CHECK(dm_crashfence_start() == 1); CHECK(marker_streak() == 1); setenv("DM_TEST_CRASH_MARK", "1", 1);
+      restart(); dm_crashfence_start(); dm_crashfence_clean("优雅退出"); CHECK(marker_streak() < 0);   // 开关局正常结束清掉 | a switch run ending normally clears it
       unsetenv("DM_TEST_CRASH_MARK"); unsetenv("DM_WATCH");
       write_settings(on); atomic_store(&g_loaded, 0); f = fopen(marker, "w"); fputs(left, f); fclose(f);
       restart(); CHECK(dm_crashfence_start() == 2); CHECK(dm_custom_get("upscale") == 0); CHECK(dm_crashfence_notice_take() == 1);   // 玩家局：同样的残留照旧关 | player run: the same leftover shuts off as before

@@ -40,7 +40,7 @@ extern char **environ;
 enum { CF_OTHER, CF_CRASH, CF_HANG, CF_MEM };
 static const char *const k_cf_name[4] = { "原因不明", "闪退", "卡死", "内存不足" };
 static const char *const k_cf_msg[4] = { "dmSafeModeMsgOther", "dmSafeModeMsgCrash", "dmSafeModeMsgHang", "dmSafeModeMsgMem" };
-static int g_started, g_streak, g_marked, g_test, g_cause, g_cause_arg, g_msg = CF_OTHER;
+static int g_started, g_streak, g_marked, g_test, g_mark_switch, g_cause, g_cause_arg, g_msg = CF_OTHER;
 static char g_hist[9];   // 这一串里前几次的原因（'0'–'3'） | causes of the earlier exits in this streak ('0'-'3')
 static _Atomic int g_notice;
 static char g_sig_path[1100], g_sig_body[64]; static int g_sig_len;   // 信号处理里用：标记路径与不含 cause 的正文，写标记时备好 | for the signal handler: marker path and the body without cause, prepared when the marker is written
@@ -117,12 +117,12 @@ int dm_crashfence_start(void) {
     if (k >= 0 && was_test) LOG("崩溃围栏：上一局异常退出（测试局，不计；连续 %d 次不变；%s）", g_streak, why);
     else if (g_streak) LOG("崩溃围栏：上一局异常退出（%s）（第 %d 次连续）%s", why, g_streak, test ? "（测试开关 DM_TEST_CRASH_MARK）" : "");
     else LOG("崩溃围栏：上一局正常结束");
-    const char *te = test_env(); g_test = te != NULL;
+    const char *te = test_env(); g_test = te != NULL; g_mark_switch = test;
     if (te) LOG("崩溃围栏：本局是测试局（%s），被强杀不计入连续异常退出", te);
     g_cause = CF_OTHER; g_cause_arg = 0; g_marked = marker_write();
     if (!g_marked) LOG("【红】崩溃围栏：运行标记写不进 %s", p);
     g_crash_note_hook = cf_on_signal;
-    // 测试局不执行关闭（DM_TEST_CRASH_MARK 除外）：残留的连续次数测试局既不加也不清，否则此后每局都被关实验项、写回设置 | a test run does not act (except DM_TEST_CRASH_MARK): test runs neither add to nor clear a leftover streak, so otherwise every later run would lose its experimental features and rewrite the settings
+    // 测试局不执行关闭（DM_TEST_CRASH_MARK 除外）。测试局自己不加也不清：被强杀不计，正常结束时标记留着（dm_crashfence_clean）；开始时看到的玩家局残留仍算一次，那是玩家局的异常退出 | a test run does not act (except DM_TEST_CRASH_MARK). A test run itself neither adds nor clears: being killed does not count and a normal end keeps the marker (dm_crashfence_clean); a player run's leftover seen at its start still counts, because that exit was the player run's
     if (g_streak >= 2 && te && !test) LOG("崩溃围栏：残留连续 %d 次，本局是测试局（%s），不关实验项、不写回设置", g_streak, te);
     else if (g_streak >= 2) {
         size_t n = strlen(g_hist); int a = n >= 1 ? g_hist[n - 1] - '0' : CF_OTHER, b = n >= 2 ? g_hist[n - 2] - '0' : CF_OTHER;
@@ -136,6 +136,7 @@ int dm_crashfence_start(void) {
 void dm_crashfence_clean(const char *why) {
     if (!g_marked) return;
     char p[1100]; if (!marker_path(p, sizeof p)) return;
+    if (g_test && !g_mark_switch && g_streak > 0) { LOG("崩溃围栏：测试局%s，残留连续 %d 次不清", why ? why : "正常结束", g_streak); return; }   // 标记开局时已写好 streak 与 test=1 | the marker already holds the streak and test=1 from the start of the run
     int ok = unlink(p) == 0; g_marked = !ok; if (ok) { g_streak = 0; g_hist[0] = 0; g_cause = CF_OTHER; }
     LOG("崩溃围栏：%s，清除运行标记%s", why ? why : "正常结束", ok ? "" : "【红】失败");
 }
