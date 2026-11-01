@@ -77,6 +77,23 @@ def is_chance_bytes(data, start, end):
     return not _text_byte_before(data, start) and not _text_byte_after(data, end)
 
 
+ELF_BINARY_SECTIONS = {b'.text', b'.eh_frame', b'.eh_frame_hdr', b'.gcc_except_table', b'.debug_info', b'.debug_loc', b'.debug_abbrev', b'.debug_ranges', b'.debug_line', b'.debug_aranges', b'.symtab', b'.rela.dyn', b'.rela.plt', b'.relr.dyn', b'.got', b'.got.plt'}
+
+
+def elf_binary_ranges(data):
+    """ELF64 里存机器码和二进制结构的段（偏移区间）。这些段里的词只是字节，邻字判断在调试信息这种大块数据上会误报（如 .debug_info 的 b'\\0IOS@\\0'）；.rodata、.data、.debug_str、.dynstr 不在内，照旧按文字扫
+    Sections of an ELF64 holding machine code and binary structures (offset ranges). A word there is only bytes, and the neighbour rule misfires on big blocks like debug info; .rodata, .data, .debug_str and .dynstr are not listed and are scanned as text"""
+    if data[:5] != b'\x7fELF\x02' or len(data) < 64: return []
+    try:
+        shoff = struct.unpack_from('<Q', data, 0x28)[0]; shent, shnum, shstr = struct.unpack_from('<HHH', data, 0x3a)
+        sec = [struct.unpack_from('<IIQQQQ', data, shoff + i * shent) for i in range(shnum)]; so = sec[shstr][4]; out = []
+        for n, _t, _f, _a, off, size in sec:
+            e = data.index(b'\0', so + n)
+            if data[so + n:e] in ELF_BINARY_SECTIONS: out.append((off, off + size))
+        return out
+    except (struct.error, IndexError, ValueError): return []
+
+
 RUNTIME_LIBS = {'libdmgen_py.so', 'libdmgen_spvopt.so', 'libdmgen_spvval.so', 'libdmgen_xlate.so'}   # gen_runtime.sh 产出的四个 | the four gen_runtime.sh produces
 ARCHIVE_LIMIT = 1 << 31   # 一个 .data 解开后的总上限 2 GiB，超了算失败而不是少扫 | at most 2 GiB inflated per .data; beyond it the audit fails rather than scanning less
 INCOMPLETE_MIN = 256     # 解到这么多还出错才明说是坏流；更短的留在原样字节里，由「未识别的二进制段」兜住 | an error after this much is named as a damaged stream; shorter ones stay in the plain bytes and fail as an unrecognized binary segment
@@ -236,11 +253,17 @@ def audit(platform, package):
             if name not in allowed: bad.append((path, '白名单外的文件', 0))
         ranges = game_image_ranges(data) if platform == 'ios' else []
         native = path.endswith('.so') or bool(ranges)
+        elf = None
         for w, pat in pats:
             spots = [m.span() for m in pat.finditer(data)]
             mine = [(s, e) for s, e in spots if not any(a <= s < b for a, b in ranges)]
             if len(mine) < len(spots): passed['iOS 主程序内嵌的原版游戏映像（__DMmainW / __DMsdkW），不是我们写的'][w] += len(spots) - len(mine)
             if native:
+                if path.endswith('.so'):
+                    if elf is None: elf = elf_binary_ranges(data)
+                    inbin = [(s, e) for s, e in mine if any(a <= s < b for a, b in elf)]
+                    if inbin: passed['ELF 机器码和调试结构段里的字节，不是文字'][w] += len(inbin)
+                    mine = [x for x in mine if x not in inbin]
                 names = [(s, e) for s, e in mine if is_symbol(data, s, e)]
                 if names: passed['原生库的链接符号、枚举名与设置键，不是文字'][w] += len(names)
                 mine = [x for x in mine if x not in names]

@@ -102,6 +102,16 @@ class PackageAudit(unittest.TestCase):
                 if n != 'assets/dmgen/runtime.txt': b.writestr(n, a.read(n))
         self.assertTrue(self.pa.runtime_problems(g))                                     # 没有清单 | no manifest
 
+    def test_elf_binary_sections(self):   # .debug_info 里的字节不是文字，.rodata 里的是 | bytes in .debug_info are not text, those in .rodata are
+        import struct
+        names = b'\0.debug_info\0.rodata\0.shstrtab\0'; dbg = b'\0IOS@\0'; ro = b'\0Runs on iOS\0'
+        body = dbg + ro + names; head = 64; shoff = head + len(body)
+        sh = lambda n, off, size: struct.pack('<IIQQQQIIQQ', n, 1, 0, 0, off, size, 0, 0, 1, 0)
+        elf = bytearray(b'\x7fELF\x02\x01\x01' + bytes(57)); struct.pack_into('<Q', elf, 0x28, shoff); struct.pack_into('<HHH', elf, 0x3a, 64, 4, 3)
+        data = bytes(elf) + body + sh(0, 0, 0) + sh(1, head, len(dbg)) + sh(13, head + len(dbg), len(ro)) + sh(21, head + len(dbg) + len(ro), len(names))
+        r = self.pa.elf_binary_ranges(data); self.assertEqual(r, [(head, head + len(dbg))])
+        self.assertEqual(self.pa.elf_binary_ranges(b'not elf'), []); self.assertEqual(self.pa.elf_binary_ranges(b'\x7fELF\x02' + bytes(70)), [])
+
     def test_symbol_and_text(self):
         # 只有词两边都不是文字才算偶然（B113，内审 N11-01 的样例 + 长度前缀 + 无 NUL 长块）| chance only when neither side is text (B113)
         for chance in (b'\0\x93\x01IOS\0', b'\x01iOS\x01', b'\xda\x01iOS\xff\0'):
