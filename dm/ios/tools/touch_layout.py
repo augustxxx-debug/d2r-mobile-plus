@@ -193,6 +193,16 @@ def pad_bliss(s):   # 手柄版建角模式页（原版布局原样）+ 「极�
     # Remove "X Classic" from the button legend (the host also swallows X on this page, see dm_cursor.c): single player only supports
     # Standard / Hardcore expansion characters, same as the touch version.
     s, n = re.subn(r'\{\s*"action"\s*:\s*"option2"\s*,\s*"description"\s*:\s*"@LegacyGameVersionSwitch"\s*\}\s*,?', '', s); assert n == 1, n
+    # 「标准」与「专家」两张牌之间原版夹着中间那面骷髅旗帜（HardcoreCenter，原版天梯 / 经典版三行上下走的交叉点）：专家牌按左先落到旗帜上、选中项还是专家，
+    # 要再按一次左才回到标准（B072：玩家按一次左以为回到了标准，按 A 却弹专家警告、建出专家角色）。只剩这一行之后旗帜不再有交叉的用处：两张牌左右直接互指，
+    # 旗帜只当进页时的落点（宿主替按的「下」从看不见的天梯行落到它上面，dm_cursor.c），从旗帜按左 / 右照旧进标准 / 专家
+    # Between the "Standard" and "Hardcore" plaques the original has the skull banner in the middle (HardcoreCenter, the crossing point of the original ladder / classic
+    # rows): Left on Hardcore first lands on the banner with Hardcore still selected, and a second Left is needed to get back to Standard (B072: one Left looked like
+    # Standard, A then brought up the hardcore warning and created a hardcore character). With only this row left the banner has no crossing to serve: the two plaques
+    # point at each other directly, and the banner is only the landing spot on entry (the host's Down from the invisible ladder row lands there, dm_cursor.c); Left / Right
+    # from the banner still go to Standard / Hardcore
+    for side, frm, to in (('right', 'StandardToggle', 'HardcoreToggle'), ('left', 'HardcoreToggle', 'StandardToggle')):
+        s, n = re.subn(r'("%s"\s*:\s*\{\s*"name"\s*:\s*")HardcoreCenter("\s*\})' % side, r'\g<1>%s\g<2>' % to, s); assert n == 1, (frm, n)
     at, add = INSERT['controller/console/characteroptionspanelhd.json']; ms = list(re.finditer(at, s)); assert len(ms) == 1
     key = '        { "type": "ImageWidget", "name": "TouchBlissKey", "fields": { "rect": { "x": -1665, "y": 1330, "scale": 1.5 }, "filename": "Controller/ControllerButtons/Switch/ButtonLeft" } },\n'
     # 这一张写死了文件名、不走原版换键帽的格式串，接 Xbox / PS 手柄时仍是 Switch 的灰色「Y」，玩家照字面按手柄上印 Y 的上键 = Switch X（这一页收掉）、没反应（缺陷台账 B019）：
