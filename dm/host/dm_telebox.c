@@ -22,6 +22,7 @@ int dm_crashfence_busy(void);
 int dm_diagup_own_modal(void);
 
 #define BOX_W 2700
+#define PAD_SHIFT 80   // 手柄版左侧按钮栏的焦点框右缘伸到 632，框右移避开它（窄屏有多少余量移多少） | the controller column's focus frame reaches x 632: the box moves right to clear it (as far as a narrow screen allows)
 #define BOX_H 800
 #define TEXT_W 2580
 #define N_BODY 10
@@ -135,6 +136,7 @@ void dm_telebox_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_
     if (!(ax >= 0 && ax <= 1)) ax = 0; if (!(ay >= 0 && ay <= 1)) ay = 0; if (!(s > 0.05f && s < 10)) s = 1;
     int ox = (int)(ax * xr) + pr[0], oy = (int)(ay * 2160) + pr[1];
     int cx = (int)((xr / 2 - ox) / s), y0 = (int)((1080 - oy) / s) - BOX_H / 2;
+    if (pad) { int room = (int)(xr / s - BOX_W) / 2; cx += room < 0 ? 0 : room < PAD_SHIFT ? room : PAD_SHIFT; }
     { int gm[15][4], h = dm_notice_geometry(BOX_W - 128, BOX_H - 24, BOX_W, gm), top = (244 - h) / 2;
       for (int k = 0; h && k < 15; k++) { int r[4] = { cx - BOX_W / 2 + gm[k][0], y0 + gm[k][1] - top, gm[k][2], gm[k][3] + (k / 3 < 4 ? 2 : 0) }; tb_tile(b, tl[k], r); } }
     tb_place(ti, cx - TEXT_W / 2, y0 + 24);
