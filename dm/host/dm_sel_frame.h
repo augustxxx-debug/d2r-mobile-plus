@@ -20,3 +20,7 @@
 static inline int dm_row_indent_x(int x, int is_leaf) { return is_leaf && x == 0 ? DM_ROW_INDENT : x; }
 // 框左缘：标签左缘 − 留白，且不小于 DM_SEL_FRAME_MIN_X | frame left edge: label left edge minus the margin, never below DM_SEL_FRAME_MIN_X
 static inline int dm_sel_frame_x(int label_x) { int x = label_x - DM_SEL_FRAME_PAD; return x < DM_SEL_FRAME_MIN_X ? DM_SEL_FRAME_MIN_X : x; }
+// 框右缘：勾选框右缘再放 30；这一行勾选框右边还有字（语言行最后一项「한국어」，B087）时取字框右缘与它的较大者。text_right = 0 表示没有
+// frame right edge: the checkbox right edge plus 30; when the row has text right of its checkbox (the language row's last option 「한국어」, B087), the larger of that and the text box right edge. text_right = 0 means none
+#define DM_SEL_FRAME_TAIL 30
+static inline int dm_sel_frame_right(int check_right, int text_right) { int r = check_right + DM_SEL_FRAME_TAIL; return text_right > r ? text_right : r; }
