@@ -280,7 +280,7 @@ class Host(unittest.TestCase):
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss
         self.assertNotIn('co_text(b, de[2], dm_str(b, "dmCommunityAbout"))', c)   # 社区框不再写「关于」子标题 | the community box no longer writes the About sub-title
-        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 42 + 39)   # 社区框 42 + 存档管理列表框 39 | community box 42 + save-management list box 39
+        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 42 + 42)   # 社区框 42 + 存档管理列表框 42 | community box 42 + save-management list box 42
         self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))
