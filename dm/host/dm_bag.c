@@ -1,14 +1,14 @@
-// 大背包物品栏：纵向图标条（背包 / 护身符两页，同一块网格切换显示）。布局和底图见 dm/ios/tools/bag_layout.py、gen_bag_art.py。
+// 大背包物品栏：两枚页签（背包 / 护身符两页，同一块网格切换显示），用户 11-01 定稿方案 ④，坐在腰带行左侧。布局和底图见 dm/ios/tools/bag_layout.py、gen_bag_art.py。
 // 切页：格子控件 grid 的页号 +0x630 每帧写（页 0 背包 / 页 5 护身符），原版按它画格子和物品、算命中。
-// 手柄（用户 10-31 定稿 A5 手柄 v2，探针见设计稿 §4.1）：
-//   图标是布局里的 ButtonWidget，原版光标悬停、按 A 发 onClickMessage（ClosePanel:TouchBagTab0/1），触屏点按走同一条。原版焦点导航不认识它，方向键这里接：
-//   网格第 0 列 ← 进图标条；图标条上 ↑↓ 选项、→ 回网格；← 不接管，光标照常往对面面板走。手上拿着物品时，图标上的 A 宿主吞掉（不切页、不放下）。
+// 手柄（探针见设计稿 §4.1）：
+//   页签是布局里的 ButtonWidget，原版光标悬停、按 A 发 onClickMessage（ClosePanel:TouchBagTab0/1），触屏点按走同一条。原版焦点导航不认识它，方向键这里接：
+//   网格第 0 行前三列 ↑ 进页签；页签上 ←→ 选、↓ 回网格；护身符页签 → 进腰带第 0 格，腰带第 0 格 ← 回护身符页签。手上拿着物品时，页签上的 A 宿主吞掉（不切页、不放下）。
 //   ZL / ZR：对面面板的页签条要用（原版不看光标在哪，见设计稿实测表），所以只有对面没有页签时才归物品栏，键帽也按这个显隐。
-// Large-bag inventory: vertical strip (two pages, bag and charms, shown in the same grid area). Layout and art: dm/ios/tools/bag_layout.py, gen_bag_art.py.
+// Large-bag inventory: two tabs (bag and charms pages, shown in the same grid area), user-approved option 4 (11-01), on the left of the belt row. Layout and art: dm/ios/tools/bag_layout.py, gen_bag_art.py.
 // Page switching: the grid widget's page +0x630 is written every frame (page 0 bag / page 5 charms); the original draws cells and items and hit-tests by it.
-// Controller (user-approved A5 controller v2, 10-31; probes in design doc §4.1):
-//   The icons are ButtonWidgets in the layout: the original cursor hovers them and A sends onClickMessage (ClosePanel:TouchBagTab0/1), touch taps take the same path. The original focus navigation does not know them, so directions are handled here:
-//   Left from grid column 0 enters the strip; on the strip up / down pick an entry and right returns to the grid; left is not taken over, the cursor moves on to the opposite panel as usual. With an item in hand, A on an icon is swallowed (no page change, no drop).
+// Controller (probes in design doc §4.1):
+//   The tabs are ButtonWidgets in the layout: the original cursor hovers them and A sends onClickMessage (ClosePanel:TouchBagTab0/1), touch taps take the same path. The original focus navigation does not know them, so directions are handled here:
+//   Up from the first three columns of grid row 0 enters the tabs; on the tabs left / right pick and down returns to the grid; right from the charm tab enters belt cell 0, left from belt cell 0 returns to the charm tab. With an item in hand, A on a tab is swallowed (no page change, no drop).
 //   ZL / ZR: the opposite panel's tab bar needs them (the original ignores where the cursor is, measured table in the design doc), so they belong to the inventory only when the opposite panel has no tabs, and the keycaps follow.
 #include "dm_bag_layout.h"
 #include "dm_widget.h"
@@ -58,23 +58,27 @@ void dm_bag_on_uimsg(const char *arg) {   // dm_pouch_on_uimsg：ClosePanel:Touc
 static void set_page(int p, const char *why) { if (p != g_page) { g_page = p; LOG("大背包：切到%s页（%s）", p ? "护身符" : "背包", why); } }
 static int tabs_theirs(uint64_t root) { for (unsigned i = 0; i < sizeof k_tab_owner / sizeof k_tab_owner[0]; i++) if (k_tab_owner[i].theirs && up(dm_ui_top(root, k_tab_owner[i].panel))) return 1; return 0; }
 
-// 网格的屏幕矩形：原版命中函数（虚表 +0x48）从光标点往外量 | Screen rect of the grid: measured outward from the cursor with the original hit test (vtable +0x48)
+// 网格左上角：原版命中函数（虚表 +0x48）从光标点往左上量 | Grid top-left: measured up and left from the cursor with the original hit test (vtable +0x48)
 #define HIT(w, px, py) (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)(w) + 0x48))((w), (uint64_t)(uint32_t)(px) | ((uint64_t)(uint32_t)(py) << 32)) & 1)
 static void pad_nav(uint64_t root, uint64_t panel, uint64_t grid, int held) {
     uint64_t fm = *(uint64_t *)(root + 0xd0), hov = fm ? *(uint64_t *)(fm + 0x178) : 0; const char *hn = w_name(hov); if (!hn) return;
     int cx = *(int32_t *)(B + 0x2d128f8), cy = *(int32_t *)(B + 0x2d128fc);
-    double k = *(float *)(panel + 0x80) * *(int32_t *)(B + 0x211da3c) / 2160.0; static int gx0 = -1, gy0 = -1;   // k = 屏幕像素 / 面板单位（命中函数在已有物品的格子上不算，量不出宽度）；gx0 / gy0 = 网格左上角，最近一次在网格上量的 | k = screen pixels per panel unit (the hit test does not span occupied cells, so width cannot be measured); gx0 / gy0 = grid top-left, from the latest measurement on the grid
+    double k = *(float *)(panel + 0x80) * *(int32_t *)(B + 0x211da3c) / 2160.0; static int gx0 = -1, gy0 = -1;   // k = 屏幕像素 / 面板单位；gx0 / gy0 = 网格左上角，最近一次在网格上量的 | k = screen pixels per panel unit; gx0 / gy0 = grid top-left, from the latest measurement on the grid
     const int vert = DM_BAG_TAB_DX == 0; const uint64_t ENTER = vert ? DM_BTN_LEFT : DM_BTN_UP, EXIT = vert ? DM_BTN_RIGHT : DM_BTN_DOWN, PREV = vert ? DM_BTN_UP : DM_BTN_LEFT, NEXT = vert ? DM_BTN_DOWN : DM_BTN_RIGHT;
 #define TAB_SX(t) (gx0 + (int)((DM_BAG_TAB_X + (t) * DM_BAG_TAB_DX + DM_BAG_TAB_W / 2 - DM_BAG_GRID_X) * k))
 #define TAB_SY(t) (gy0 + (int)((DM_BAG_TAB_Y + (t) * DM_BAG_TAB_DY + DM_BAG_TAB_H / 2 - DM_BAG_GRID_Y) * k))
     if (hov == grid && HIT(grid, cx, cy)) {
         int x0 = cx, y0 = cy; while (x0 > 1 && HIT(grid, x0 - 2, cy)) x0 -= 2; while (y0 > 1 && HIT(grid, cx, y0 - 2)) y0 -= 2;
         gx0 = x0; gy0 = y0; double cell = 98 * k;
-        if (vert ? cx < x0 + cell : cy < y0 + cell) { uint64_t ev = dm_padmode_page_keys(ENTER); if (ev & ENTER) dm_ui_hover_now(TAB_SX(g_page), TAB_SY(g_page)); }
+        if (vert ? cx < x0 + cell : cy < y0 + cell && cx < x0 + 3 * cell) { uint64_t ev = dm_padmode_page_keys(ENTER); if (ev & ENTER) dm_ui_hover_now(TAB_SX(g_page), TAB_SY(g_page)); }
         return; }
+#define BELT_SX(u) (gx0 + (int)(((u) - DM_BAG_GRID_X) * k))
+#define BELT_SY (gy0 + (int)((DM_BAG_BELT_Y + 49 - DM_BAG_GRID_Y) * k))
+    if (!vert && gx0 >= 0 && !strcmp(hn, "Belt") && cx < BELT_SX(DM_BAG_BELT_X + DM_BAG_BELT_CELL)) { if (dm_padmode_page_keys(PREV) & PREV) dm_ui_hover_now(TAB_SX(1), TAB_SY(1)); return; }
     int tab = !strcmp(hn, "TouchBagTab0") ? 0 : !strcmp(hn, "TouchBagTab1") ? 1 : -1; if (tab < 0) return;
-    uint64_t ev = dm_padmode_page_keys(PREV | NEXT | EXIT | (held ? DM_BTN_A : 0));
-    if (gx0 >= 0) { if ((ev & PREV) && tab == 1) dm_ui_hover_now(TAB_SX(0), TAB_SY(0)); if ((ev & NEXT) && tab == 0) dm_ui_hover_now(TAB_SX(1), TAB_SY(1)); }
+    // 背包页签 ←、护身符页签之外的方向不接管，光标照常往对面面板、装备带走 | Left on the bag tab and the directions not listed stay with the original, so the cursor still reaches the opposite panel and the equipment band
+    uint64_t ev = dm_padmode_page_keys((tab == 1 || vert ? PREV : 0) | NEXT | EXIT | (held ? DM_BTN_A : 0));
+    if (gx0 >= 0) { if ((ev & PREV) && tab == 1) dm_ui_hover_now(TAB_SX(0), TAB_SY(0)); if ((ev & NEXT) && tab == 0) dm_ui_hover_now(TAB_SX(1), TAB_SY(1)); if ((ev & NEXT) && tab == 1 && !vert) dm_ui_hover_now(BELT_SX(DM_BAG_BELT_X + DM_BAG_BELT_CELL / 2), BELT_SY); }
     if ((ev & EXIT) && gx0 >= 0) { if (vert) dm_ui_hover_now(gx0 + (int)(49 * k), cy); else dm_ui_hover_now(cx, gy0 + (int)(49 * k)); }
     if ((ev & DM_BTN_A) && held) { static int lg; if (lg++ < 20) LOG("大背包：手上有物品（id %d），图标上的 A 不切页不放下", held); }
 }
@@ -92,6 +96,7 @@ static void ui_test(uint64_t panel, uint64_t grid) {
         if (x0 < 0) { LOG("【红】DM_TEST_UI：grid 不在屏幕上"); at[i] = 0; continue; }
         int yy = y0; while (x0 > 0 && HIT(grid, x0 - 1, yy)) x0--; while (y0 > 0 && HIT(grid, x0, y0 - 1)) y0--; double k = *(float *)(panel + 0x80) * vh / 2160.0;
         int u = kind[i] ? a0[i] * 98 + 49 : DM_BAG_TAB_X + a0[i] * DM_BAG_TAB_DX + DM_BAG_TAB_W / 2 - DM_BAG_GRID_X, v = kind[i] ? a1[i] * 98 + 49 : DM_BAG_TAB_Y + a0[i] * DM_BAG_TAB_DY + DM_BAG_TAB_H / 2 - DM_BAG_GRID_Y;
+        { static int once; if (!once++) LOG("DM_TEST_UI：网格左上 %d,%d，比例 %.3f；命中 右上 %d 左下 %d 右下 %d", x0, y0, k, HIT(grid, x0 + (int)(1127 * k), y0 + (int)(49 * k)), HIT(grid, x0 + (int)(49 * k), y0 + (int)(637 * k)), HIT(grid, x0 + (int)(1127 * k), y0 + (int)(637 * k))); }
         int x = x0 + (int)(u * k), y = y0 + (int)(v * k); if (dm_ui_hover_now(x, y)) { LOG("DM_TEST_UI：帧 %d %s → %d,%d", f, kind[i] ? "grid" : "CharmTabs", x, y); at[i] = 0; } }
 }
 // 游戏主线程每帧（dm_pouch.c ui_pump）；box = 物品栏里我们的容器 TouchPouchBox，它的可见位不代表面板开着，面板开着看面板自己的 +0x50 / +0x51。
@@ -102,6 +107,7 @@ void dm_bag_ui(uint8_t *b, uint64_t inv_panel, uint64_t box, uint64_t pl) {
     if (!open && was_up) set_page(0, "closed");
     was_up = open;
     dm_hud_info hi; dm_hud_get(&hi); int held = hi.valid ? hi.holding : 0;
+    { static int lh; if (held != lh) { LOG("大背包：客户端手上 id %d → %d", lh, held); lh = held; } }
     { int t = atomic_exchange(&g_tap, 0); if (t && !held) set_page(t - 1, "tap"); }
     // 自动切页：手上是护身符 → 护身符页，手上是别的 → 背包页；对面面板里指着护身符也切（用户 15:5x）| Automatic page: a charm in hand goes to the charm page, anything else to the bag page; pointing at a charm in the opposite panel also switches (user rule)
     if (open) { int o = dm_bag_opp_of(root); dm_bag_set_opp(o);
@@ -122,13 +128,17 @@ void dm_bag_ui(uint8_t *b, uint64_t inv_panel, uint64_t box, uint64_t pl) {
           if (*(uint32_t *)(it + 0xc) == 0) { int pg = *(uint8_t *)(d + 0x55), gw = 1, gh = 1; if (pg == 0 || pg == CHARM_PAGE) { dm_cursor_item_size(b, it, &gw, &gh); used[pg != 0] += gw * gh; nch += pg != 0; } }
           it = *(uint64_t *)(d + 0xb0); }
       if (last_c >= 0 && nch > last_c && !g_page) dot = 1; if (g_page) dot = 0; last_c = nch;
-      char t[16]; for (int k = 0; k < 2; k++) { snprintf(t, sizeof t, "%d/%d", used[k], CAP); char nm[20]; snprintf(nm, sizeof nm, "TouchBagCount%d", k); w_text(find_w(box, nm, 1), t); }
-      w_move(find_w(box, "TouchBagHi", 1), DM_BAG_TAB_X + g_page * DM_BAG_TAB_DX, DM_BAG_TAB_Y + g_page * DM_BAG_TAB_DY);
+      char t[96]; snprintf(t, sizeof t, "%s %d / %d", dm_str(b, g_page ? "dmBagPageCharm" : "dmBagPageBag"), used[g_page != 0], CAP); w_text(find_w(box, "TouchBagCount0", 1), t);
+      w_move(find_w(box, "TouchBagHi0", 1), g_page ? OFF : DM_BAG_TAB_X, DM_BAG_TAB_Y);
+      w_move(find_w(box, "TouchBagHi1", 1), g_page ? DM_BAG_TAB_X + DM_BAG_TAB_DX : OFF, DM_BAG_TAB_Y + DM_BAG_TAB_DY);
       w_move(find_w(box, "TouchBagDot", 1), dot ? DM_BAG_TAB_X + DM_BAG_TAB_DX + DM_BAG_DOT_DX : OFF, DM_BAG_TAB_Y + DM_BAG_TAB_DY + DM_BAG_DOT_DY); }
     ui_test(inv_panel, grid);
     int pad = dm_padmode_current();
     if (g_page && open && pad) { int o = dm_bag_opp_of(root); dm_cursor_item_info ci; const char *h = o == 1 ? "dmCharmHintStash" : o == 2 ? "dmCharmHintCube" : o == 3 ? "dmCharmHintSell" : NULL; if (h && dm_cursor_item(&ci) && ci.container == DM_ITEM_AT_INVENTORY) { void dm_padmode_legend(int, const char *); dm_padmode_legend(0, dm_str(b, h)); } }
     int mine = open && pad && !tabs_theirs(root) && !dm_ui_modal_active(root);
+    // 手柄焦点框：光标停在页签上时显示（原版 StashTab_Hover）| Controller focus frame: shown while the cursor rests on a tab (the original StashTab_Hover)
+    { uint64_t fm = open && pad ? *(uint64_t *)(root + 0xd0) : 0, hov = fm ? *(uint64_t *)(fm + 0x178) : 0; const char *hn = w_name(hov); int ft = hn && !strcmp(hn, "TouchBagTab0") ? 0 : hn && !strcmp(hn, "TouchBagTab1") ? 1 : -1;
+      w_move(find_w(box, "TouchBagFocus", 1), ft >= 0 ? DM_BAG_TAB_X + ft * DM_BAG_TAB_DX - DM_BAG_FOCUS_PAD : OFF, DM_BAG_TAB_Y + (ft > 0 ? ft : 0) * DM_BAG_TAB_DY - DM_BAG_FOCUS_PAD); }
     w_move(find_w(box, "TouchBagKeyL", 1), mine ? DM_BAG_KEYL_X : OFF, DM_BAG_KEYL_Y);
     w_move(find_w(box, "TouchBagKeyR", 1), mine ? DM_BAG_KEYR_X : OFF, DM_BAG_KEYR_Y);
     if (mine) { uint64_t ev = dm_padmode_page_keys(DM_BTN_ZL | DM_BTN_ZR); if (ev & DM_BTN_ZL) set_page(0, "ZL"); if (ev & DM_BTN_ZR) set_page(1, "ZR"); }
@@ -211,6 +221,7 @@ void dm_bag_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
     if (player != lp) { lp = player; uint64_t pd = *(uint64_t *)(player + 0x10); strlcpy(g_char, pd ? (const char *)pd : "", sizeof g_char); charm_load(b, G, player); g_loaded = 1; }
     charm_snapshot(b, player); pthread_mutex_unlock(&g_cmu);
     uint64_t inv = *(uint64_t *)(player + 0x90), f = 0; if (!inv || *(uint32_t *)inv != 0x01020304) return;
+    { static uint32_t ls; uint64_t i0 = *(uint64_t *)(player + 0x90), c0 = i0 ? *(uint64_t *)(i0 + 0x40) : 0; uint32_t cid = c0 ? *(uint32_t *)(c0 + 8) : 0; if (cid != ls) { LOG("大背包：服务端手上 id %u → %u", ls, cid); ls = cid; } }
     uint32_t selling = atomic_load(&g_selling); if (selling && --g_selling_ticks <= 0) { atomic_store(&g_selling, 0); selling = 0; }
     int (*is)(uint64_t, int) = (int (*)(uint64_t, int))(b + 0x574bc0); uint8_t used[ROWS][COLS]; memset(used, 0, sizeof used);
     for (uint64_t it = *(uint64_t *)(inv + 0x10), n = 0; it && n < 2048; n++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;

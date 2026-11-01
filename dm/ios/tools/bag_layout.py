@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# 大背包物品栏（用户 10-31 定稿 A5）：背包 12×7，纵向图标条（背包 / 护身符）在网格左侧，装备带五列不缩放，腰带栏在其下居中，金币行原位。
+# 大背包物品栏（用户 11-01 定稿方案 ④）：背包 12×7，两枚原版外观页签（背包 / 护身符）坐在腰带行左侧、压网格上框，右侧读数；装备带五列不缩放，腰带栏在其下居中，金币行原位。
 # 全部是面板内单位（1 像素 = 2 单位，1 格 = 98）。底图 gen_bag_art.py 按这里的表拼；控件矩形写进手柄 Switch 版物品栏布局（两种模式都从它出）。
-# 宿主 dm/host/dm_bag.c 管图标条、键帽、计数。
-# Large-bag inventory (user-approved A5, 10-31): bag 12×7, vertical strip (bag / charms) left of the grid, five unscaled equipment columns, belt row centred beneath, gold row unchanged.
+# 宿主 dm/host/dm_bag.c 管页签、键帽、读数。
+# Large-bag inventory (user-approved option 4, 11-01): bag 12×7, two original-style tabs (bag / charms) on the left of the belt row sitting on the grid's top frame, a readout on the right; five unscaled equipment columns, belt row centred beneath, gold row unchanged.
 # All values are panel units (1 pixel = 2 units, 1 cell = 98). gen_bag_art.py assembles the base image from these tables; the widget rects go into the controller Switch inventory layout (both modes derive from it).
-# The host dm/host/dm_bag.c handles the strip, keycaps and counts.
+# The host dm/host/dm_bag.c handles the tabs, keycaps and readout.
 import os, re, shutil
 
 # 页签形态的参数和宿主共用一份（dm/host/dm_bag_layout.h），换方案只改那里 | Tab form parameters are shared with the host (dm/host/dm_bag_layout.h); a new design only changes that file
@@ -18,7 +18,7 @@ BG_SIZE = (644, 712)
 PANEL_C = (704, 743)               # 面板中心（底图 anchor 0.5）| Panel centre (the base image anchors at 0.5)
 # 五列外框的左沿 | Left edge of the five outer frame columns
 C0, C1, C2, C3, C4 = 70, 330, 590, 850, 1110
-BELT_DX, BELT_DY = 43, -263
+BELT_DX, BELT_DY = 0, -263
 # 原图框 (左 上 右 下，像素)、新位置（面板单位）、缩放后尺寸（像素，None = 原样） | Original frame box (pixels), new position (panel units), resized size (pixels, None = unchanged)
 FRAMES = [
     ((6, 66, 119, 272), (C0, 70), None),            # 右手武器 | right weapon
@@ -62,7 +62,7 @@ def rect(x, y, w=None, h=None):
 def rects(s):
     bx, by = BG_U - PANEL_C[0], BG_V - PANEL_C[1]
     s = _fields(s, 'background', '"anchor": { "x": 0.5, "y": 0.5 }, "filename": "Controller/Panel/zsbag/BagBG", ' + rect(bx, by))
-    s = _fields(s, 'grid', rect(*GRID))
+    s = _fields(s, 'grid', '"cellCount": { "x": %d, "y": %d }, ' % (COLS, ROWS) + rect(*GRID))   # 不写 cellCount 的话命中矩形还是原版 10×4，下面三行、右边两列点不到 | Without cellCount the hit rect stays the original 10×4, so the lower three rows and right two columns cannot be reached
     s = _fields(s, 'Belt', rect(452 + BELT_DX, 750 + BELT_DY))
     for n, r in RECTS.items(): s = _fields(s, n, rect(*r))
     for n, x in (('background_right_arm_selected', TAB_L), ('background_right_arm', TAB_L), ('background_left_arm_selected', TAB_R), ('background_left_arm', TAB_R)): s = _fields(s, n, rect(x, TAB_Y))
@@ -79,10 +79,11 @@ def widgets():
     for k in range(2):
         t += ('            { "type": "ButtonWidget", "name": "TouchBagTab%d", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": %d, "scale": 0.5 }, "filename": "Controller/Panel/zsbag/BagTab%d", '
               '"onClickMessage": "PanelManager:ClosePanel:TouchBagTab%d" } },\n') % (k, P['TAB_X'] + k * P['TAB_DX'], P['TAB_Y'] + k * P['TAB_DY'], 2 * TAB_W, 2 * TAB_H, k, k)
-    t += '            { "type": "ImageWidget", "name": "TouchBagHi", "fields": { "rect": { "x": %d, "y": %d, "scale": 0.5 }, "filename": "Controller/Panel/zsbag/BagTabHi" } },\n' % (P['TAB_X'], P['TAB_Y'])
-    for k in range(2):
-        t += ('            { "type": "TextBoxWidget", "name": "TouchBagCount%d", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": 40 }, "text": "", '
-              '"style": { "fontColor": "$FontColorLightGold", "pointSize": 28, "spacing": "$ReducedSpacing", "alignment": { "h": "center", "v": "center" } } } },\n') % (k, P['TAB_X'] + k * P['TAB_DX'] + P['COUNT_DX'], P['TAB_Y'] + k * P['TAB_DY'] + P['COUNT_DY'], P['COUNT_W'])
+    for k in range(2):   # 选中帧盖在未选帧上，宿主只显示当前页那一枚 | The selected frame covers the unselected one; the host shows only the current page's
+        t += '            { "type": "ImageWidget", "name": "TouchBagHi%d", "fields": { "rect": { "x": %d, "y": %d, "scale": 0.5 }, "filename": "Controller/Panel/zsbag/BagTabHi%d" } },\n' % (k, P['TAB_X'] if k == 0 else OFF, P['TAB_Y'], k)
+    t += '            { "type": "ImageWidget", "name": "TouchBagFocus", "fields": { "rect": { "x": %d, "y": 0, "scale": 0.5 }, "filename": "Controller/Panel/zsbag/BagFocus" } },\n' % OFF
+    t += ('            { "type": "TextBoxWidget", "name": "TouchBagCount0", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": 40 }, "text": "", '
+          '"style": { "fontColor": "$FontColorLightGray", "pointSize": %d, "spacing": "$ReducedSpacing", "alignment": { "h": "right", "v": "center" } } } },\n') % (P['COUNT_X'], P['COUNT_Y'], P['COUNT_W'], P['COUNT_PT'])
     t += '            { "type": "ImageWidget", "name": "TouchBagDot", "fields": { "rect": { "x": %d, "y": %d, "scale": 0.5 }, "filename": "Controller/Panel/zsbag/BagDot" } },\n' % (OFF, 0)
     for nm, act in (('TouchBagKeyL', 'tabLeft'), ('TouchBagKeyR', 'tabRight')):
         t += '            { "type": "ButtonLegendWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": 0, "width": 0, "height": 162 }, "text": { "style": "$StyleButtonLegend" }, "presets": [ { "action": "%s" } ] } },\n' % (nm, OFF, act)
@@ -91,6 +92,6 @@ def widgets():
 def art(outdir):
     out = {}
     src = __import__('gen_paths').gen_dir('NativeHUD', 'bag')
-    for n in ('BagBG', 'BagTab0', 'BagTab1', 'BagTabHi', 'BagDot'):
+    for n in ('BagBG', 'BagTab0', 'BagTab1', 'BagTabHi0', 'BagTabHi1', 'BagFocus', 'BagDot'):
         p = os.path.join(outdir, 'bag_' + n + '.sprite'); shutil.copyfile(os.path.join(src, n + '.sprite'), p); out['+data/hd/global/ui/controller/panel/zsbag/%s.sprite' % n.lower()] = p
     return out

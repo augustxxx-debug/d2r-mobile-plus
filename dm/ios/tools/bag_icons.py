@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 物品栏纵向图标条的两个图标（用户定：背包 B1 皮囊、护身符 C2 三枚叠放最终切图）。全部自绘，只有铜框纹理取原版按钮图，运行时传进来，图和框都不进仓库。
+# 物品栏页签的两个图形（用户定：背包 B1 皮囊、护身符 C2 三枚叠放最终切图；11-01 起页签框内只放无框的纯图形，bare()）。全部自绘，只有铜框纹理取原版按钮图，运行时传进来，图和框都不进仓库。
 # The two icons of the inventory's vertical strip (user-chosen: bag B1 pouch, charm C2 three stacked, final cut). All self-drawn; only the copper frame texture comes from an original button image, passed in at run time, so neither goes into the repo.
 from PIL import Image,ImageDraw,ImageFilter,ImageChops,ImageOps
 import math
@@ -62,6 +62,7 @@ def make(kind):
         e.ellipse((c[0]-10,c[1]-10,c[0]+10,c[1]+10),fill=255)
         e.line((c[0],y+8,c[0],c[1]-r),fill=255,width=6)
     ct=Image.composite(cop,im,t); h,l=bevel(t,3); ct=ImageChops.add(ct,Image.merge('RGB',[h]*3)); ct=ImageChops.subtract(ct,Image.merge('RGB',[l]*3)); im=ct
+    if BARE: return cut(im,ImageChops.lighter(m.filter(ImageFilter.MaxFilter(9)),t))
     # 原版铜框压上
     ring=Image.new('L',(SS,SS),255); ImageDraw.Draw(ring).rectangle((54,54,SS-54,SS-54),fill=0); ring=ring.filter(ImageFilter.GaussianBlur(2))
     a=ImageChops.multiply(ring,fr.split()[3]); im=Image.composite(fr.convert('RGB'),im,a)
@@ -105,7 +106,7 @@ def c3():
     return ringframe(im)
 def c2b():
     # 最终切图：仍是三枚，放大、拉开明暗，黑边加粗，只留最大一枚的刻纹
-    im=base(); cx=SS/2
+    im=base(); cx=SS/2; al=Image.new('L',(SS,SS),0)
     L=((cx+74,SS/2+52,88,128,((62,46,28),(136,110,74)),False),(cx-72,SS/2+30,100,176,((76,58,36),(176,148,102)),False),(cx+0,SS/2-6,122,244,((100,80,52),(236,212,164)),True))
     for (x,y,w,h,c,cv) in L:
         m=Image.new('L',(SS,SS),0); tablet(ImageDraw.Draw(m),x,y,w,h)
@@ -113,8 +114,20 @@ def c2b():
         im=lay(im,m,bone(*c),sh=False)
         if cv:
             k=Image.new('L',(SS,SS),0); e=ImageDraw.Draw(k); e.polygon([(x,y-h*.24),(x+w*.3,y),(x,y+h*.24),(x-w*.3,y)],outline=255,width=11); im=carve(im,k)
+        al=ImageChops.lighter(al,o)
+    if BARE: return cut(im,al)
     return ringframe(im)
 
+BARE=False
+def cut(im,alpha):
+    # 只留图形本身（透明底，无底框），裁到外接正方形 | Keep only the graphic (transparent, no backing frame), cropped to its bounding square
+    r=im.convert('RGBA'); r.putalpha(alpha); x0,y0,x1,y1=alpha.getbbox(); n=max(x1-x0,y1-y0); o=Image.new('RGBA',(n,n),(0,0,0,0)); o.paste(r.crop((x0,y0,x1,y1)),((n-(x1-x0))//2,(n-(y1-y0))//2)); return o
+def bare(button):
+    """同 icons()，但返回透明底、无框的纯图形（RGBA）。 | Same as icons() but returns the frameless graphic on a transparent background (RGBA)."""
+    global BARE
+    BARE=True
+    try: return icons(button)
+    finally: BARE=False
 def icons(button):
     """button = 原版 RepairAll_Button 第 0 帧（58×58）；返回 [背包, 护身符]，SS×SS。 | button = frame 0 of the original RepairAll_Button (58×58); returns [bag, charm], SS×SS."""
     global fr

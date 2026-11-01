@@ -19,6 +19,7 @@
 // Into the belt: the original moves the whole stack. Command 0x53 is caught the same way: let the original move the stack to the belt, then set the belt item to 1 bottle and rebuild the rest in the inventory cell it just vacated (always free). Auto-refill (dm_beltauto.c) and long press both use it, so the belt fills one bottle at a time.
 // Cube: recipes count items (qty=3 needs 3 items) and a stack counts as one. Before the transmute command 0x20 stacks in the cube are split into single bottles; a lone stack in the cube = split in half; exactly two stacks of a kind = merge (no transmute in either case).
 // Split UI (the digits on inventory cells and split 1 / half / all): widgets in pouch_layout.py, all named TouchQty*. Opened by a touch long press or holding X on a controller. The server does the work, the UI only sends requests. Split-off items go on a list and are not auto-merged again until the next run.
+#include "dm_bag_layout.h"
 #include "dm_widget.h"
 #include "hle.h"
 #include "dm_i18n.h"
@@ -285,7 +286,7 @@ void dm_stack_ui(uint8_t *b, uint64_t inv_panel, uint64_t pl) {   // 游戏主�
     if (pl) atomic_store(&g_cli_pid, *(uint32_t *)(pl + 8));
     for (uint64_t it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0, k = 0; it && k < 2048 && nd < NDIG; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
         if (!dm_bag_page() && *(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && pp && is_potion(it)) { int q = qty(it);
-            if (q >= 2) { snprintf(nm, sizeof nm, "TouchQtyN%02d", nd++); uint64_t w = find_w(inv_panel, nm, 3); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, 158 + CELL * *(int32_t *)(pp + 0x10), 599 + CELL * *(int32_t *)(pp + 0x14) + 60); } }
+            if (q >= 2) { snprintf(nm, sizeof nm, "TouchQtyN%02d", nd++); uint64_t w = find_w(inv_panel, nm, 3); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, DM_BAG_GRID_X + CELL * *(int32_t *)(pp + 0x10), DM_BAG_GRID_Y + CELL * *(int32_t *)(pp + 0x14) + 60); } }
         it = *(uint64_t *)(d + 0xb0); }
     for (; nd < NDIG; nd++) { snprintf(nm, sizeof nm, "TouchQtyN%02d", nd); w_move(find_w(inv_panel, nm, 3), OFF, 0); }
     stash_badges(b, pl);
