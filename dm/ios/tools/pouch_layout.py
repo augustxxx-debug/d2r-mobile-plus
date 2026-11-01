@@ -37,7 +37,7 @@ def widgets():
     return ('        { "type": "Widget", "name": "TouchPouchBox", "children": [\n'
             '            { "type": "ButtonWidget", "name": "TouchPouch", "fields": { "rect": { "x": 222, "y": 1294, "width": 280, "height": 128 }, "filename": "Controller/Panel/zspouch/PouchBox", '
             '"onClickMessage": "PanelManager:ClosePanel:TouchPouch" } },\n'
-            '            { "type": "ImageWidget", "name": "TouchPouchIcon", "fields": { "rect": { "x": 246, "y": 1310, "scale": 0.95 }, "filename": "Items/misc/rune/el_rune" } },\n'
+            '            { "type": "ImageWidget", "name": "TouchPouchIcon", "fields": { "rect": { "x": 259, "y": 1306, "scale": 0.79 }, "filename": "Items/misc/rune/el_rune" } },\n'
             '            { "type": "TextBoxWidget", "name": "TouchPouchCount", "fields": { "rect": { "x": 350, "y": 1294, "width": 140, "height": 128 }, "text": "0", '
             '"style": { "fontColor": "$FontColorGoldYellow", "pointSize": "$MediumLargeFontSize", "alignment": { "h": "left", "v": "center" } } } },\n'
             '            { "type": "ButtonWidget", "name": "TouchStore", "fields": { "rect": { "x": 916, "y": 1323, "width": 366, "scale": 0.74 }, "filename": "FrontEnd/HD/Final/FrontEnd_ButtonSmall", "hoveredFrame": 1, '

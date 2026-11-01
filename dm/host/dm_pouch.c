@@ -448,7 +448,7 @@ static void ui_pump(void) {
     if (dm_ui_top_chk_on()) { uint64_t old = root ? find_w(root, "TouchPouchBox", 2) : 0; if (old != boxw) { static int k; if (k++ < 20) LOG("【红】百宝囊对拍：TouchPouchBox 新找法 %#llx、旧找法 %#llx", (unsigned long long)boxw, (unsigned long long)old); } }
     if (!boxw) { void dm_stack_panel_closed(void); dm_stack_panel_closed(); return; }
     int gp = dm_custom_get("gem_pick"), sb = dm_custom_get("store_btn");
-    w_move(find_w(boxw, "TouchPouch", 1), gp ? 222 : 99999, 1294); w_move(find_w(boxw, "TouchPouchIcon", 1), gp ? 246 : 99999, 1310); w_move(find_w(boxw, "TouchPouchCount", 1), gp ? 350 : 99999, 1294);
+    w_move(find_w(boxw, "TouchPouch", 1), gp ? 222 : 99999, 1294); w_move(find_w(boxw, "TouchPouchIcon", 1), gp ? 259 : 99999, 1306); w_move(find_w(boxw, "TouchPouchCount", 1), gp ? 350 : 99999, 1294);
     w_move(find_w(boxw, "TouchStore", 1), sb ? 916 : 99999, 1323);
     static int shown = -1; int gen = atomic_load(&g_ugen); if (gen != shown) { char n[16]; snprintf(n, sizeof n, "%d", atomic_load(&g_ucount)); w_text(find_w(boxw, "TouchPouchCount", 1), n); shown = gen; if (g_tip) tip_show(root, 1); }
     if (atomic_exchange(&g_pouch_tap, 0)) tip_show(root, !g_tip);
