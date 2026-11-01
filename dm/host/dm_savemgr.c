@@ -129,7 +129,7 @@ static void preview_page(void) {
     char when[16]; strlcpy(when, g_view.exported_at, 11); char sub[260]; const char *pl = !strcmp(g_view.platform, "macos") ? "macOS" : g_view.platform;
     // 平台词不进另一端的包（CLAUDE.md §2.8，package_audit.py）：包来自那一端时只说「其他设备」| platform names stay out of the other platform's package: a package from there just says "another device"
 #if defined(__ANDROID__)
-    if (!strcmp(g_view.platform, "ios") || !strcmp(g_view.platform, "ipados")) pl = S("dmSaveFromOtherDevice"); else if (!strcmp(g_view.platform, "android")) pl = "Android";
+    if (!strcmp(g_view.platform, "android")) pl = "Android"; else if (strcmp(g_view.platform, "macos")) pl = S("dmSaveFromOtherDevice");   // 不比另一端的平台名，字面量也不进包 | does not compare the other platform's names, so the literals stay out of the package
 #elif defined(__APPLE__) && TARGET_OS_IPHONE
     if (!strcmp(g_view.platform, "android")) pl = S("dmSaveFromOtherDevice"); else if (!strcmp(g_view.platform, "ios")) pl = "iOS"; else if (!strcmp(g_view.platform, "ipados")) pl = "iPadOS";
 #else
