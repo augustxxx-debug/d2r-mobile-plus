@@ -811,16 +811,16 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmGraphicsRtLevelLow", "光追（实验性）：低", "Ray tracing (experimental): Low", "Trazado (experimental): Baja", "Trazado (experimental): Baja", "Трассировка (эксперимент): низк.", "레이 트레이싱 (실험적): 낮음" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmGraphicsRtLevelMid", "光追（实验性）：中", "Ray tracing (experimental): Medium", "Trazado (experimental): Media", "Trazado (experimental): Media", "Трассировка (эксперимент): средн.", "레이 트레이싱 (실험적): 중간" },
+    { "dmGraphicsRtLevelMid", "光追（实验性）：中", "Ray tracing (experimental): Mid", "Trazado (experimental): Media", "Trazado (experimental): Media", "Трассировка (эксперимент): средн.", "레이 트레이싱 (실험적): 중간" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsRtLevelHigh", "光追（实验性）：高", "Ray tracing (experimental): High", "Trazado (experimental): Alta", "Trazado (experimental): Alta", "Трассировка (эксперимент): выс.", "레이 트레이싱 (실험적): 높음" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmGraphicsRtLevelNone", "光追（实验性）：不可用", "Ray tracing (experimental): Unavailable", "Trazado (experimental): No disponible", "Trazado (experimental): No disponible", "Трассировка (эксперимент): нет", "레이 트레이싱 (실험적): 사용 불가" },
+    { "dmGraphicsRtLevelNone", "光追（实验性）：不可用", "Ray tracing (experimental): N/A", "Trazado (experimental): No disponible", "Trazado (experimental): No disponible", "Трассировка (эксперимент): нет", "레이 트레이싱 (실험적): 사용 불가" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmGraphicsRtLevelNote", "档位越高阴影越细、越耗 GPU；性能不足时自动降低", "Higher = finer shadows, more GPU; auto-lowers if slow", "Más alto, más GPU; baja solo si falta rendimiento", "Más alto, más GPU; baja solo si falta rendimiento", "Выше — больше нагрузка; снижается автоматически", "높을수록 GPU 부하 증가, 성능 부족 시 자동으로 낮아짐" },
+    { "dmGraphicsRtLevelNote", "档位越高阴影越细、越耗 GPU；性能不足时自动降低", "Finer shadows, more GPU; lowers itself if slow", "Más alto, más GPU; baja si falta rendimiento", "Más alto, más GPU; baja si falta rendimiento", "Выше — тяжелее; снижается автоматически", "높을수록 GPU 부하 증가, 성능 부족 시 자동으로 낮아짐" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsRtLevelHighNote", "本机内存偏小：最高到中档", "Low memory: Medium is the maximum", "Poca memoria: máximo Media", "Poca memoria: máximo Media", "Мало памяти: максимум средний", "메모리 부족: 중간까지만 가능" },
