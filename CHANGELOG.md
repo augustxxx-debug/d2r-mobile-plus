@@ -29,6 +29,9 @@ RC2 merges the iOS and Android lines: one tree, and both packages come from the 
 - **Experimental** ray-traced shadows: the automatic downgrade now works when ray tracing is turned on in Options (B088). In released builds it only worked when ray tracing was pinned by a test switch, so a phone that could not keep up stayed at the full level. With the same fix, picture hysteresis, the player-light tracking and the cache budget also take effect on the Options path for the first time.
 - **Auto-report crashes (off by default)**: Options → Custom → "Auto-report crashes"; the first enable asks for consent in an in-game box. After an abnormal exit, the next launch uploads a redacted log, the system crash diagnostic, the crash fence state, version, model and GPU in the background; retries are silent and bounded, and the result shows as one line on the character-select page. See [the diagnostics page](docs/DIAGNOSTICS.md) for what is and is not uploaded. In builds with a server, the pause menu's Share Diagnostics gains an Upload option.
 - **Diagnostic box takes all input**: same rule as the community box; while it is up, touch and controller never reach the menu underneath.
+- **Skill counts stay on the icon** (B011, both platforms): in the skill tree's item skills and the skill binding box, a Tome's charges or a throwing potion's count sit at the icon's top left, as on the bottom bar, instead of dropping below the icon onto the button prompt.
+- **Confirmation boxes fit their text** (B070): the Hardcore warning and other confirmation boxes use the same layout in touch and controller mode, in a box one size taller with body text at size 36. In controller mode the text no longer runs onto the buttons.
+- **Controller: the selection frame on the language row covers 한국어** (B087): on Options → Custom the frame used to end just after the last checkbox, leaving the Korean label outside it.
 
 ## [1.0.0-rc1.2] - 2026-10-30
 

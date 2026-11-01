@@ -78,6 +78,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_version.py
 	python3 test_touch_layout_options.py
 	python3 test_options_divider_rows.py
+	python3 test_skill_quantity_rect.py
 	python3 test_touch_layout_language.py
 	python3 test_community_entry.py
 	python3 test_difficulty_row.py
