@@ -1565,14 +1565,34 @@ def _settings_no_legend(s):
 # the hardcore mode warning is four lines, and the last line is covered by 「好 / 取消」(OK / Cancel). Making only the body area taller is not enough (the title is pushed past the top edge of the box and the fourth line is still covered); the original game's larger background image also adds only 62 units.
 # Decision (it deviates from the 'no two sizes on one page' principle and is an exception): this box's body font size 40 → 30 (one line about 65 units, four lines 260),
 # and the body area becomes the whole span from the inner top edge of the box to the top edge of the buttons (y 28, height 264, still vertically centered). Background image and buttons unchanged. The controller-layout confirmation box and the delete-character confirmation box inherit this one; the single-button prompt box is handled the same way.
-def _modal_prompt(old, new):
+def _modal_prompt(old, new, pt=30):
     def fn(s):
         a = '"style": "$StyleModalDialogDescription"'
         if s.count(old) != 1 or s.count(a) != 1: raise SystemExit('touch_layout：确认框正文区 %s 不是原样（原版布局变了？）' % old)
         s = s.replace(old, new)
-        return s.replace(a, '"style": { "fontColor": "$ModalDescriptionTextColor", "alignment": { "h": "center", "v": "center" }, "options": { "lineWrap": true, "newlineHandling": "standard" }, "pointSize": 30, "spacing": "$ReducedSpacing" }'), 2
+        return s.replace(a, '"style": { "fontColor": "$ModalDescriptionTextColor", "alignment": { "h": "center", "v": "center" }, "options": { "lineWrap": true, "newlineHandling": "standard" }, "pointSize": %d, "spacing": "$ReducedSpacing" }' % pt), 2
     return fn
-PRESENT['confirmationmodalhd.json'] = _modal_prompt('"rect": { "x": 78, "y": 85, "width": 1076, "height": 170 },', '"rect": { "x": 78, "y": 28, "width": 1076, "height": 264 },')
+# B070：确认框（专家模式警告等）读不开——手柄模式原先用的是原版正文区（高 170、字号随大字号档到 40），四行字压到按钮上；触屏 30 号放得下但字小。
+#   改成两种模式同一份（gen_romfs_overlay.py 给手柄版根布局套同一个变换）：正文按 §2.6 正文 36 号；框换成原版高一档的 Modal_BG_XL（同宽 1244、高 452 → 514，
+#   三张模态底图在 notification_layout.build_modal_art 里是同一套金框，外观不变），框上移 31 保持居中，两颗按钮随框底下移 62，正文区 y 28–354、左右各让 20。
+#   六语专家模式警告在 36 号下最多四行（中文「警告:」单占一行 + 正文三行），四行行距约 81 单位 = 324，正文区 326 放得下（Mac 宿主六语截图核过）
+# B070: the confirmation box (Hardcore warning and others) could not be read -- controller mode used the stock body area (170 high, size 40 from the large-font profile)
+#   and four lines ran onto the buttons; touch at size 30 fitted but small. Now one layout for both modes (gen_romfs_overlay.py applies the same transform to the
+#   controller root layout): body at the in-game text rule's body size 36; the frame is the stock one size taller, Modal_BG_XL (same width 1244, height 452 -> 514;
+#   the three modal backgrounds are the same gold frame in notification_layout.build_modal_art, so the look is unchanged), moved up 31 to stay centred, the two
+#   buttons move down 62 with the frame's bottom, body area y 28-354 and 20 more on each side. The six languages' Hardcore warning takes at most four lines at 36
+#   (Chinese: "警告:" on a line of its own + three body lines); four lines at about 81 units = 324 fit the 326 area (checked on Mac host captures in six languages)
+_CONFIRM_SWAP = (('"rect": { "x": -627, "y": -270 },', '"rect": { "x": -627, "y": -301 },'),
+                 ('"filename": "Panel\\\\Modals\\\\Modal_No_Title_BG",', '"filename": "Panel\\\\Modals\\\\Modal_BG_XL",'),
+                 ('"rect": { "x": 79, "y": 302 },', '"rect": { "x": 79, "y": 364 },'),
+                 ('"rect": { "x": 625, "y": 302 },', '"rect": { "x": 625, "y": 364 },'))
+def _confirm_box(s):
+    s, n = _modal_prompt('"rect": { "x": 78, "y": 85, "width": 1076, "height": 170 },', '"rect": { "x": 58, "y": 28, "width": 1116, "height": 326 },', pt=36)(s)
+    for a, b in _CONFIRM_SWAP:
+        if s.count(a) != 1: raise SystemExit('touch_layout：确认框 %s 不是原样（原版布局变了？）' % a)
+        s = s.replace(a, b); n += 1
+    return s, n
+PRESENT['confirmationmodalhd.json'] = _confirm_box
 PRESENT['dismissablemodalhd.json'] = _modal_prompt('"rect": { "x": 140, "y": 70, "width": 966, "height": 212 },', '"rect": { "x": 140, "y": 28, "width": 966, "height": 264 },')
 PRESENT['controller/settingspanelhd.json'] = _settings_no_legend
 # 去掉的项：语言只留简中、手柄专用、联网、联机页的离线人数（游戏页那份本版原版自己藏着；「游戏难度」行是我们自己加的：_diff_row）

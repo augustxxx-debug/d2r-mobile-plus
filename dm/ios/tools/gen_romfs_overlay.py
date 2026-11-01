@@ -211,6 +211,10 @@ with tempfile.TemporaryDirectory() as t:
     SHARED_TODO=('chroniclebaselistpanelhd.json','chroniclepanelhd.json','controller/_profileconsolehd.json','controller/_profilehandheldhd.json','dropdownlistcontentshd.json')
     PADROOT=touch_layout.build_pad_root(romfs,tpad)
     PADROOT.update({key:value for key,value in MODAL_LAYERS.items() if key[len(LAY):] in ('confirmationmodalhd.json','dismissablemodalhd.json','youdiedmodalhd.json')})
+    # B070：手柄版确认框（专家模式警告等）正文区与字号同触屏那份（touch_layout.PRESENT 的同一个变换，套在叠层优先级那份上）：原版正文区高 170、大字号档 40 号，长句压到按钮上
+    # B070: the controller confirmation box (Hardcore warning and others) gets the touch copy's body area and size (the same touch_layout.PRESENT transform, on top of the modal-priority copy): the stock area is 170 high at size 40 and long prompts ran onto the buttons
+    _k=LAY+'confirmationmodalhd.json'; _t,_n=touch_layout.PRESENT['confirmationmodalhd.json'](open(PADROOT[_k],encoding='utf-8').read()); assert _n
+    _o=os.path.join(tpad,'padroot_confirmationmodalhd.json'); open(_o,'w',encoding='utf-8').write(_t); PADROOT[_k]=_o
     # 两种模式分别显式复制，宿主保护初始位置；保持根布局隔离检查。
     # Explicit copies for both modes: constructor placement is guarded by the
     # host in either mode. Keep the root-layout isolation checks intact.
