@@ -1541,7 +1541,23 @@ def _custom_page(text):
     return out, len(_CUSTOM_ALL) + 3
 PRESENT['controller/console/videooptionspanelhd.json'] = _custom_page
 # Touch and controller expose the same five distinct destinations.
-def pad_settings(s): return _settings_tabs(s)[0]
+# 手柄版选项页底部的提示条（原版「X 默认 / B 返回」，基页 Controller/SettingsPanelHD.json 的 Legend，y 1661、宽 1950，在面板底图之下）：局内正好落在原版手柄底栏的技能格上，
+# 字和技能格图标叠在一起（B067，Duo 真机与 16:9 冒烟同样）。原版手柄界面里有底条的提示条（暂停页组的「关闭菜单」、过场列表的 LegendBackground）都垫一条暗底，
+# 这里照样在提示条下垫一条：挂在面板底图（Anchor 下第一个子控件 Background）的子控件里——先画底图和它的子控件、再画标题和提示条，暗底一定在提示条下面；
+# 横向与提示条同宽（面板宽），纵向盖住提示条一行。颜色用原版建角模式页 BackgroundTint 的 [0,0,0,0.8]。前端选项页没有底栏，暗底落在菜单背景上，同过场列表
+# The legend at the bottom of the controller options page (the original "X Default / B Back", the Legend of the base page Controller/SettingsPanelHD.json, y 1661,
+# width 1950, below the panel image): in a run it lands right on the skill cells of the original controller bottom bar, text and cell icons on top of each other (B067,
+# Duo on device and the 16:9 smoke alike). The original controller UI puts a dark strip under legends that sit over something (the pause page group's "Close menu", the
+# cinematics list's LegendBackground); do the same here: the strip is a child of the panel image (Background, the first child of Anchor) -- the image and its children are
+# drawn before the title and the legend, so the strip is always under the legend; as wide as the legend (the panel width), covering the legend's line. Colour = the
+# [0,0,0,0.8] of the original character-mode page's BackgroundTint. The front-end options page has no bottom bar; there the strip sits on the menu background, like the cinematics list
+PAD_SETTINGS_LEGEND_BAND = '{ "type": "RectangleWidget", "name": "TouchPadLegendBand", "fields": { "rect": { "x": 0, "y": 1640, "width": 1950, "height": 146 }, "color": [0, 0, 0, 0.8] } }'
+def pad_settings(s):
+    s = _settings_tabs(s)[0]
+    if 'TouchPadLegendBand' in s: return s   # 已垫过（变换可重复套） | already added (the transform may be applied twice)
+    m = re.search(r'\{\s*"type"\s*:\s*"ImageWidget"\s*,\s*"name"\s*:\s*"Background"\s*,?\s*\}', s)
+    if not m: return s   # 只有 Console 这份带面板底图的声明（夹具 / 前端基页没有） | only the Console copy declares the panel image (fixtures / the base page do not)
+    return s[:m.start()] + '{ "type": "ImageWidget", "name": "Background", "children": [ ' + PAD_SETTINGS_LEGEND_BAND + ' ] }' + s[m.end():]
 def pad_custom_page(s): return _custom_page(s)[0]
 # 挂进 PRESENT：build_ingame 对同一份文件（往选项页插「应用 / 默认 / 放弃」）会先套这里的变换再插按钮，不会出两份覆盖互相盖掉
 # Hooked into PRESENT: for the same file (inserting 「应用 / 默认 / 放弃」(Apply / Default / Discard) into the options page) build_ingame applies the transform here first and then inserts the buttons, so two overlays that overwrite each other are not produced
