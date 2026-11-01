@@ -212,6 +212,28 @@ static void du_place(uint64_t w, int x, int y) {   // 只挪自己的控件（�
     const char *nm = w ? *(const char **)(w + 8) : NULL; if (!nm || strncmp(nm, "TouchDiag", 9)) return;
     int32_t *r = (int32_t *)(w + 0x70); if (r[0] == x && r[1] == y) return; r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x10))(w);
 }
+// 框开着时把点开它的「分享诊断日志」行（原版 MessageLog 按钮）挪开，它的高亮框画在框上、压着按钮；关框挪回（同 dm_community.c co_entry_show） | while the box is up, the Share Diagnostics row that opened it (the original MessageLog button) moves away, because its highlight draws over the box and its buttons; it comes back on close (as co_entry_show)
+static int32_t g_row_home = 99999;
+static void du_row_away(uint64_t p, int away) {
+    uint64_t w = p ? du_find(p, "MessageLog", 0) : 0; if (!w) return; int32_t *r = (int32_t *)(w + 0x70);
+    if (away && r[0] != 99999) { g_row_home = r[0]; r[0] = 99999; }
+    else if (!away && r[0] == 99999 && g_row_home != 99999) { r[0] = g_row_home; g_row_home = 99999; }
+}
+static int du_has(uint64_t w, uint64_t want, int dep) {   // 控件还在界面树里 | the widget is still in the UI tree
+    if (!w || dep > 12) return 0; if (w == want) return 1; uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 512) return 0;
+    for (uint64_t i = 0; i < n; i++) if (du_has(*(uint64_t *)(ch + 8 * i), want, dep + 1)) return 1;
+    return 0;
+}
+// 手柄模式同 dm_community.c：开着时清空焦点管理器的焦点控件（[界面根+0xd0]+0x190）并每帧保持，金框不画；关框后原控件还在就交还 | controller mode as dm_community.c: while up, the focus manager's focused widget ([UI root+0xd0]+0x190) stays cleared so no frame is drawn; after close it gets the focus back if still in the tree
+static void du_focus_hold(uint64_t root, int hold) {
+    static uint64_t saved; static char saved_nm[64]; static int held; uint64_t fm = root ? *(uint64_t *)(root + 0xd0) : 0;
+    if (hold && fm) { uint64_t F = *(uint64_t *)(fm + 0x190);
+        if (!held) { held = 1; saved = F; const char *nm = F ? *(const char **)(F + 8) : NULL; snprintf(saved_nm, sizeof saved_nm, "%s", nm ? nm : ""); }
+        if (F) *(uint64_t *)(fm + 0x190) = 0; }
+    else if (held && !hold) { held = 0; const char *nm = saved && du_has(root, saved, 0) ? *(const char **)(saved + 8) : NULL;
+        if (fm && nm && !strcmp(nm, saved_nm)) *(uint64_t *)(fm + 0x190) = saved;
+        saved = 0; }
+}
 static void du_text(uint8_t *b, uint64_t w, const char *s) {
     if (!w || *(uint64_t *)w - (uint64_t)(uintptr_t)b != DM_VT_TEXT) return;
     size_t n = strlen(s); if (*(uint64_t *)(w + 0x90) == n && !memcmp(*(const char **)(w + 0x88), s, n)) return;
@@ -272,6 +294,8 @@ void dm_diagup_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_h
     } }
     dm_diagup_tick(now);
     st = atomic_load(&g_show);
+    if (st || g_row_home != 99999) du_row_away(p, st == 1 || st == 2);
+    du_focus_hold(root, (st == 1 || st == 2) && pad);
     static int wait;
     if (st == 3) { if (p) du_hide_all(b, p); atomic_store(&g_show, 0); return; }   // 收起：挪回屏外 | dismissed: back off screen
     if (!st) return;
