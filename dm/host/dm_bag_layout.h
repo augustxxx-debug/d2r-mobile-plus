@@ -21,7 +21,7 @@
 #define DM_BAG_COUNT_X 965
 #define DM_BAG_COUNT_Y 516
 #define DM_BAG_COUNT_W 325
-#define DM_BAG_COUNT_PT 28
+#define DM_BAG_COUNT_PT 24
 #define DM_BAG_DOT_DX 97
 #define DM_BAG_DOT_DY -10
 #define DM_BAG_BELT_X 452
