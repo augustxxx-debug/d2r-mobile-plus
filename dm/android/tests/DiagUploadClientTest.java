@@ -89,6 +89,15 @@ public class DiagUploadClientTest {
         byte[] mf = DiagUploadClient.fetchManifest(List.of("https://a.invalid/m", "https://b.invalid/m"), u -> { got.add(u); if (u.contains("a.invalid")) throw new IOException("x"); return new CommunityFetch.Response(200, "{}".getBytes(StandardCharsets.UTF_8)); });
         check(mf != null && got.size() == 2, "second source used");
         check(DiagUploadClient.fetchManifest(List.of("https://a.invalid/m"), u -> new CommunityFetch.Response(404, new byte[0])) == null, "404 = not fetched"); check(DiagUploadClient.fetchManifest(new ArrayList<>(), u -> { throw new AssertionError(); }) == null, "no addresses = no request");
+        // 手动上传：第一行不改、回执字段带回；同一任务重试同 ID 同字节不再收集；clear 后是新报告 | manual upload: first line untouched, receipt fields returned; a retry keeps id and bytes and does not collect; a new report after clear
+        wipe(dir); int[] mc = { 0 }; h = new Fake(); h.script.add(challenge()); h.script.add((m, p, b) -> { throw new SocketTimeoutException("t"); }); r = DiagUploadClient.attemptManual(dir, h, seed, meta, () -> { mc[0]++; return "D2R Mobile Diagnostics (Android)\nbody"; });
+        check(r.outcome == DiagUploadClient.UNCONFIRMED && (r.flags & DiagUploadClient.F_MAYBE) != 0, "manual timeout unconfirmed"); String mid = f(h.posts.get(0), "upload_id"), mpl = f(h.posts.get(0), "payload");
+        check(DiagUploadClient.logOf(java.util.Base64.getUrlDecoder().decode(mpl)).startsWith("D2R Mobile Diagnostics (Android)\n"), "manual first line");
+        h = new Fake(); h.script.add(challenge()); h.script.add(receipt(true)); r = DiagUploadClient.attemptManual(dir, h, seed, meta, () -> { mc[0]++; return "changed"; });
+        check(r.outcome == DiagUploadClient.OK && mc[0] == 1 && f(h.posts.get(0), "upload_id").equals(mid) && f(h.posts.get(0), "payload").equals(mpl), "manual retry same report");
+        check(r.expiresAt == 1893456000L && r.retention > 0 && (r.flags & DiagUploadClient.F_DUPLICATE) != 0, "manual receipt fields " + r.retention);
+        DiagUploadClient.clear(dir); check(DiagUploadClient.load(dir) == null, "manual cleared");
+        h = new Fake(); h.script.add(challenge()); h.script.add(receipt(false)); r = DiagUploadClient.attemptManual(dir, h, seed, meta, () -> { mc[0]++; return "next"; }); check(r.outcome == DiagUploadClient.OK && mc[0] == 2 && !f(h.posts.get(0), "upload_id").equals(mid), "new job new report");
         // 上传脱敏 | upload scrub
         String sc = DiagUploadClient.scrubUpload("大厅 https://lobby.example.invalid/x 连 203.0.113.7 与 fe80:0:0:0:1:2:3:4 std::vector\n[coop] device_token=abc123\nticket=T1\n版本 1.0.0+28 2424x1705");
         for (String bad : new String[] { "lobby.example.invalid", "203.0.113.7", "fe80:0", "abc123", "T1" }) check(!sc.contains(bad), "kept " + bad);

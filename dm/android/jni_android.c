@@ -173,6 +173,7 @@ static void android_sharelog(void) {
 // In-game community box (dm_community.c: pause menu / main menu / Custom page "About"):
 // the clipboard callback runs on the game's main thread and JNI stays off guest threads (as dm_android_share_file), so a separate thread hands it to Java; starting that thread counts as success.
 // Manifest: a normal start makes no network access (DmActivity), so this reads files/community_manifest.json written by the loading page's CommunityFetch (valid manifests only); without that file only dm_community's own cache is used
+void dm_android_diag_export(void) { android_sharelog(); }   // 上传提示框的「导出到本地」（crashreport_android.c） | Export locally in the upload box (crashreport_android.c)
 void dm_android_copy_text(const char *text);
 static void *copy_thread(void *arg) { dm_android_copy_text(arg); free(arg); return NULL; }
 static int android_copy(const char *text) {
@@ -181,6 +182,7 @@ static int android_copy(const char *text) {
     if (pthread_create(&th, NULL, copy_thread, t)) { free(t); return 0; }
     pthread_detach(th); return 1;
 }
+int dm_android_diag_copy(const char *text) { return android_copy(text); }   // 上传提示框的「复制编号」 | Copy number in the upload box
 static void community_boot(void) {
     void dm_community_copy_init(int (*)(const char *)), dm_community_load(void); int dm_community_manifest(const char *, size_t);
     dm_community_copy_init(android_copy); dm_community_load();

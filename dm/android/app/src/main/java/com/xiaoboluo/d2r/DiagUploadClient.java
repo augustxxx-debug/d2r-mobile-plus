@@ -44,7 +44,7 @@ final class DiagUploadClient {
     interface Http { Response send(String method, String path, byte[] body) throws IOException; }
     interface Collect { String text() throws IOException; }   // 已脱敏全文（外壳的 C 部分 + scrubUpload） | the whole scrubbed text
     static final class Response { final int code; final byte[] body; final int retryAfter; Response(int code, byte[] body, int retryAfter) { this.code = code; this.body = body; this.retryAfter = retryAfter; } }
-    static final class Result { final int outcome, flags, retryAfter; final String detail; Result(int outcome, String detail, int flags, int retryAfter) { this.outcome = outcome; this.detail = detail; this.flags = flags; this.retryAfter = retryAfter; } }
+    static final class Result { final int outcome, flags, retryAfter, retention; final long expiresAt; final String detail; Result(int outcome, String detail, int flags, int retryAfter) { this(outcome, detail, flags, retryAfter, 0, 0); } Result(int outcome, String detail, int flags, int retryAfter, long expiresAt, int retention) { this.outcome = outcome; this.detail = detail; this.flags = flags; this.retryAfter = retryAfter; this.expiresAt = expiresAt; this.retention = retention; } }
     static final class Report { final String id; final byte[] payload; boolean maybe; Report(String id, byte[] payload, boolean maybe) { this.id = id; this.payload = payload; this.maybe = maybe; } }
 
     // ---- 编码 | encoding ----
@@ -162,6 +162,13 @@ final class DiagUploadClient {
         }
         return send(http, seed, metadata, full, collect, s -> save(dir, s), "full");
     }
+    // 手动上传（暂停菜单「分享诊断日志」，状态机 dm/host/dm_diagup.c）：不分蜂窝、不改第一行；同一任务重试发盘上同一份，新任务先 clear | manual upload (pause menu Share Diagnostics; state machine dm_diagup.c): no metered split, the first line stays; a retry of one job sends the same stored report, a new job clears first
+    static Result attemptManual(File dir, Http http, byte[] seed, Map<String, String> metadata, Collect collect) {
+        try { prepare(dir, metadata, collect); } catch (IOException e) { return fail(PREPARE, "collect", null, 0); }
+        Report r = load(dir); if (r == null) return fail(PREPARE, "collect", null, 0);
+        return send(http, seed, metadata, r, collect, s -> save(dir, s), "manual");
+    }
+    static void clear(File dir) { for (String n : new String[] { "dm_crash_report.payload", "dm_crash_report.id" }) new File(dir, n).delete(); }
     interface Saver { void save(Report r); }
     private static Result send(Http http, byte[] seed, Map<String, String> metadata, Report report, Collect collect, Saver saver, String kind) {
         int budget = PACK_LIMIT, shrinks = 0; boolean refetched = false;
@@ -173,6 +180,7 @@ final class DiagUploadClient {
                 String challenge = field(ch.body, "challenge"), maxS = field(ch.body, "max_payload_bytes");
                 if (challenge == null || !challenge.matches("[A-Za-z0-9_-]{43}") || maxS == null || !maxS.matches("[0-9]{4,9}")) return fail(UNAVAILABLE, "bad_challenge", report, 0);
                 int limit = Math.min(Integer.parseInt(maxS), budget);
+                String keepS = field(ch.body, "retention_days"); int keep = keepS != null && keepS.matches("[0-9]{1,3}") ? Integer.parseInt(keepS) : 0;   // 只用来显示保留天数，缺了就不显示 | shown as the retention days only; absent = not shown
                 if (report == null || report.payload.length > limit) {
                     if (report != null && report.maybe) return fail(TOO_LARGE, "limit_shrank", report, 0);   // 上次可能已送达：不换 ID 另发一份 | maybe delivered: no second copy under a new ID
                     String text = logOf(report.payload);
@@ -190,7 +198,8 @@ final class DiagUploadClient {
                 if (r.code == 200 || r.code == 201) {
                     String id = field(r.body, "report_id"), dup = field(r.body, "duplicate");
                     if (id == null || !id.matches("[0-9a-f]{32}") || dup == null) { report.maybe = true; saver.save(report); return fail(UNCONFIRMED, "bad_receipt", report, 0); }
-                    return new Result(OK, id, "true".equals(dup) ? F_DUPLICATE : 0, 0);
+                    String expS = field(r.body, "expires_at");
+                    return new Result(OK, id, "true".equals(dup) ? F_DUPLICATE : 0, 0, expS != null && expS.matches("[0-9]{1,12}") ? Long.parseLong(expS) : 0, keep);
                 }
                 String c = code(r, "http_" + r.code);
                 if (r.code == 403 && c.equals("challenge_rejected") && !refetched) { refetched = true; continue; }
