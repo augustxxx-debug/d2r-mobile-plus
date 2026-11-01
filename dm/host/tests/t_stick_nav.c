@@ -60,10 +60,15 @@ int main(void) {
       CHECK(dm_stick_nav_as_dpad(&h, 1, DM_BTN_DOWN, &o) == 1 && o == DM_BTN_DOWN);
       CHECK(dm_stick_nav_as_dpad(&h, 1, DM_BTN_LEFT, &o) == 1 && o == 0);                            // 左右：吃掉，光标不动 | left / right: eaten, the cursor stays
       CHECK(dm_stick_nav_as_dpad(&h, 1, 0, &o) == 1 && o == 0 && h == 0);                            // 页在屏上、摇杆回中 | page up, stick centred
-      CHECK(dm_stick_nav_as_dpad(&h, 1, DM_BTN_UP, &o) == 1 && h == 1);
-      CHECK(dm_stick_nav_as_dpad(&h, 0, DM_BTN_UP, &o) == 1 && o == 0 && h == 1);                    // 推着声明结束：松开前仍不交，也不再加方向键 | declaration ends while held: still withheld, no more keys
+      CHECK(dm_stick_nav_as_dpad(&h, 1, DM_BTN_UP, &o) == 1 && (h & 1));
+      CHECK(dm_stick_nav_as_dpad(&h, 0, DM_BTN_UP, &o) == 1 && o == 0 && (h & 1));                    // 推着声明结束：松开前仍不交，也不再加方向键 | declaration ends while held: still withheld, no more keys
       CHECK(dm_stick_nav_as_dpad(&h, 0, 0, &o) == 0 && o == 0 && h == 0);                            // 松开：放 | released: free
-      CHECK(dm_stick_nav_as_dpad(&h, 0, DM_BTN_UP, &o) == 0 && o == 0 && h == 0); }                  // 没声明时新推的：照常交给原版 | a fresh push with no declaration reaches the game
+      CHECK(dm_stick_nav_as_dpad(&h, 0, DM_BTN_UP, &o) == 0 && o == 0 && !(h & 1));                  // 没声明时新推的：照常交给原版 | a fresh push with no declaration reaches the game
+      // 推着摇杆切到菜单（N11-07）：这一推不算方向键，摇杆也不交；松开后再推才算 | pushing while switching to the menu (N11-07): this push is no D-pad press and stays withheld; only a new push counts
+      CHECK(dm_stick_nav_as_dpad(&h, 1, DM_BTN_UP, &o) == 1 && o == 0);
+      CHECK(dm_stick_nav_as_dpad(&h, 1, DM_BTN_UP, &o) == 1 && o == 0);
+      CHECK(dm_stick_nav_as_dpad(&h, 1, 0, &o) == 1 && o == 0 && h == 0);
+      CHECK(dm_stick_nav_as_dpad(&h, 1, DM_BTN_UP, &o) == 1 && o == DM_BTN_UP); }
     printf("t_stick_nav: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }
