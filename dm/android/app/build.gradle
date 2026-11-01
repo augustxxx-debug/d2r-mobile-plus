@@ -73,6 +73,7 @@ android {
         versionCode dmVersion[1]
         versionName dmVersion[0]
         buildConfigField 'String', 'DM_VERSION_LABEL', "\"${dmVersion[2]}\""
+        manifestPlaceholders += [dmSourceCommit: project.findProperty('dmSourceCommit') ?: 'unknown']   // shell_apk.sh 传；直接跑 gradle 没有 | passed by shell_apk.sh; absent when gradle runs directly
         // 更新清单地址（远端 latest.json，加载页页脚的官方免费渠道用，按顺序试：自己的服务器 → GitHub raw，CommunityFetch.java）：不进源码，
         // 出包脚本读 DM_UPDATE_URLS 传 -PdmUpdateUrls（空格分隔）；只许 https:// 地址；没给 = 不联网、页脚不显示
         // Update manifest addresses (remote latest.json, for the official free channels in the loading page footer, tried in order: own server → GitHub raw, CommunityFetch.java):

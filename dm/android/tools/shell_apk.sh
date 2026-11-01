@@ -63,7 +63,7 @@ eval "$(bash "$DM/tools/version.sh")"; [ -z "${DM_VERSION_ERROR:-}" ] || die "ve
 if [ -f "$DM/android/VERSION" ]; then AV=$(tr -d ' \r\n' < "$DM/android/VERSION"); [[ "$AV" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "dm/android/VERSION 不是 x.y.z：$AV"
   star=; case "$DM_VERSION_LABEL" in *\*) star='*';; esac; DM_VERSION=$AV; DM_VERSION_LABEL="$AV · $(git -C "$DM/.." rev-parse --short=7 HEAD)$star"; fi
 t "版本 $DM_VERSION 构建号 $DM_BUILD（$DM_BUILD_SOURCE）显示 $DM_VERSION_LABEL"
-VER=(-PdmVersionName="$DM_VERSION" -PdmBuildNumber="$DM_BUILD" -PdmVersionLabel="$DM_VERSION_LABEL")
+VER=(-PdmVersionName="$DM_VERSION" -PdmBuildNumber="$DM_BUILD" -PdmVersionLabel="$DM_VERSION_LABEL" -PdmSourceCommit="$(git -C "$DM/.." rev-parse HEAD)")   # 40 位提交进清单元数据，与 iOS 的 DMSourceCommit 对齐（包审计用） | the 40-character commit goes into the manifest metadata, matching iOS DMSourceCommit (for package audits)
 # 更新清单地址（加载页页脚的官方免费渠道，按顺序试：自己的服务器 → GitHub raw）：出包时由 DM_UPDATE_URLS 给（空格分隔，只许 https://），不进源码；没给 = 包里不联网
 # Update manifest addresses (official free channels in the loading page footer, tried in order: own server → GitHub raw): given at packaging time by DM_UPDATE_URLS
 # (space separated, https:// only), never in the source; none = the package makes no network access

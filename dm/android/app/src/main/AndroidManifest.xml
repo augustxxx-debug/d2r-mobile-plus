@@ -17,6 +17,7 @@
         android:isGame="true"
         android:allowBackup="false"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <meta-data android:name="DMSourceCommit" android:value="${dmSourceCommit}" />
         <activity
             android:name=".DmActivity"
             android:exported="true"
