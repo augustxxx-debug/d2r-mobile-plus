@@ -32,6 +32,15 @@ public class PackGeneratorTest {
           new File(old, "data").mkdirs(); plus.mkdirs(); equal(old, PackGenerator.gameBase(d));
           new File(plus, "ExeFS").mkdirs(); equal(plus, PackGenerator.gameBase(d));
           for (String n : new String[] {"S2X/D2R Mobile Plus/ExeFS", "S2X/D2R Mobile Plus", "S2X/D2R Mobile/data", "S2X/D2R Mobile", "S2X"}) new File(d, n).delete(); d.delete(); }
+        // 资源单独找（B093）：新目录只放了 ExeFS，旧目录的资源照用；日志总在新目录 | resources on their own: with only ExeFS in the new folder the old folder's resources are used; the log always goes in the new folder
+        { File d = java.nio.file.Files.createTempDirectory("dl").toFile(), plus = new File(d, "S2X/D2R Mobile Plus"), old = new File(d, "S2X/D2R Mobile");
+          new File(plus, "ExeFS").mkdirs(); equal(new File(plus, "data"), PackGenerator.gameData(plus));
+          new File(d, "data").mkdirs(); equal(new File(d, "data"), PackGenerator.gameData(plus));
+          new File(old, "data").mkdirs(); equal(new File(old, "data"), PackGenerator.gameData(plus));
+          new File(plus, "data").mkdirs(); equal(new File(plus, "data"), PackGenerator.gameData(plus));
+          new File(plus, "data").delete(); new File(plus, "ExeFS").delete(); plus.delete();
+          equal(new File(plus, "gen_log.txt"), PackGenerator.genLogFile(old)); if (!plus.isDirectory()) throw new AssertionError("genLogFile 没建新目录");
+          for (String n : new String[] {"S2X/D2R Mobile Plus", "S2X/D2R Mobile/data", "S2X/D2R Mobile", "S2X", "data"}) new File(d, n).delete(); d.delete(); }
         equal("A=1\nPRODUCT=stale-overlay\nB=2\n", PackGenerator.markStale("A=1\nPRODUCT=3.3.94012-r44\nB=2\n"));
         equal("PRODUCT=stale-overlay\nX=1", PackGenerator.markStale("X=1"));
         File base = temp();
