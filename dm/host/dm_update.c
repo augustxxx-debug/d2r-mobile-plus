@@ -59,7 +59,10 @@ void dm_update_safe_left(int units) { atomic_store(&g_safe_l, units < 0 ? 0 : un
 void dm_update_foreground(void) { if (g_own >= 0) atomic_store(&g_fg, 1); }
 // 模式切换事务完成、界面整套重建之后（dm_mode_items.h 登记的「进」）：控件全是新的、字是空的，重写一遍。重建时游戏不发 OpenPanel MainMenuPanel，等不到下面那条消息
 // After the mode switch transaction completes and the whole UI has been rebuilt (the "enter" registered in dm_mode_items.h): the widgets are all new and their text is empty, so write it again. During the rebuild the game does not send OpenPanel MainMenuPanel, so the message below never arrives
-void dm_update_redraw(void) { if (g_own >= 0) atomic_store(&g_dirty, 30); }   // 选角页那行字要重写（自动上报崩溃的结果提示来了 / 到时了） | the select-page line needs rewriting (automatic crash report notice arrived / expired)
+// 安卓没有更新提示，这一行平时不写（dm_update_init 不调）；外壳调了这个，自动上报崩溃有结果要显示时才开，显示版本跟着出现 | Android has no update note and never calls dm_update_init, so this line stays unwritten; once the shell calls this, the line opens only when a crash report result is due, and the display version appears with it
+static _Atomic int g_note_only;
+void dm_update_note_only(void) { atomic_store(&g_note_only, 1); }
+void dm_update_redraw(void) { if (g_own < 0 && atomic_load(&g_note_only)) { g_own = 1; atomic_store(&g_safe_l, 0); } if (g_own >= 0) atomic_store(&g_dirty, 30); }   // 选角页那行字要重写（自动上报崩溃的结果提示来了 / 到时了） | the select-page line needs rewriting (automatic crash report notice arrived / expired)
 void dm_update_mode_enter(void) { if (g_own >= 0) atomic_store(&g_dirty, 30); }
 void dm_update_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c 转来，游戏主线程） | UI message callback (forwarded from diag.c, game main thread)
     if (g_own < 0 || strcmp(cat, "PanelManager")) return;

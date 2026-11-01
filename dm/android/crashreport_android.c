@@ -23,6 +23,7 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_CrashReportBridge_nativeConfigure(
     if ((*env)->GetJavaVM(env, &g_vm) != JNI_OK) return;
     if (!g_bridge) { g_bridge = (*env)->NewGlobalRef(env, cls); g_start = (*env)->GetStaticMethodID(env, cls, "start", "(ILjava/lang/String;Ljava/lang/String;)V"); }
     atomic_store(&g_configured, configured && g_start);
+    void dm_update_note_only(void); dm_update_note_only();   // 结果提示用选角页那一行（dm_update.c） | the result notice uses the select-page line (dm_update.c)
     dm_crashreport_init(&k_shell);
 }
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_CrashReportBridge_nativeResult(JNIEnv *env, jclass cls, jint token, jint outcome, jstring detail, jint flags, jint retry_after) {
