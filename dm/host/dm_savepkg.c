@@ -333,7 +333,10 @@ static uint8_t *zf_read(zf *z, const zr *e, uint32_t cap, int *err) {   // 出�
 static int zip_traverses(const char *n) { if (n[0] == '/') return 1; for (const char *s = n; ; ) { size_t a = strcspn(s, "/\\"); if (a == 2 && !strncmp(s, "..", 2)) return 1; if (!s[a]) return 0; s += a + 1; } }
 static int zip_junk(const char *n) {
     size_t L = strlen(n); if (L && n[L - 1] == '/') return 1; if (!strncmp(n, "__MACOSX/", 9)) return 1; const char *b = strrchr(n, '/'); b = b ? b + 1 : n;
-    if (!strcmp(b, ".DS_Store") || !strcmp(b, "Thumbs.db") || !strcmp(b, "desktop.ini")) return 1; size_t bl = strlen(b); if (b[0] == '.' && bl > 7 && !strcmp(b + bl - 7, ".icloud")) return 1;
+    if (!strcmp(b, ".DS_Store") || !strcmp(b, "Thumbs.db") || !strcmp(b, "desktop.ini")) return 1; size_t bl = strlen(b);
+#if !defined(__ANDROID__)   // 云端占位文件只在苹果端出现，导出时就已跳过；词不进安卓包（§2.8） | cloud placeholders exist only on Apple platforms and are already skipped on export; the word stays out of the Android package
+    if (b[0] == '.' && bl > 7 && !strcmp(b + bl - 7, ".icloud")) return 1;
+#endif
     const char *dot = strrchr(b, '.'); size_t st = dot ? (size_t)(dot - b) : bl; if (st > 2 && b[st - 2] == ' ' && b[st - 1] >= '2' && b[st - 1] <= '9') return 1;   // iCloud 冲突副本「名字 2.xxx」 | iCloud conflict copies "name 2.xxx"
     return 0;
 }
