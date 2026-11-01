@@ -387,7 +387,7 @@ static int foreign_zip(zf *z, const char *tree) {
     if (!have) return DM_PKG_E_NOTOURS;
     size_t pl = strlen(prefix); int cnt = 0; long long total = 0;
     for (int i = 0; i < z->n; i++) { zr *e = &z->e[i]; if (zip_junk(e->name) || strncmp(e->name, prefix, pl)) continue; const char *rem = e->name + pl; char unit[64]; int c = dm_savepkg_path_class(rem, unit, sizeof unit); if (c != PC_CHAR && c != PC_STASH) continue;
-        if (++cnt > MAX_FILES || (total += e->usize) > MAX_TOTAL) return DM_PKG_E_LIMIT; int err = 0; uint8_t *d = zf_read(z, e, MAX_FILE, &err); if (!d) return err ? err : DM_PKG_E_IO; pth t; snprintf(t, sizeof t, "%s/%s", tree, rem); int bad = mkdirs_for(t) || write_new(t, d, e->usize); free(d); if (bad) return DM_PKG_E_IO; }
+        if (++cnt > MAX_FILES || (total += e->usize) > MAX_TOTAL) return DM_PKG_E_LIMIT; int err = 0; uint8_t *d = zf_read(z, e, MAX_FILE, &err); if (!d) return err ? err : DM_PKG_E_IO; pth t; snprintf(t, sizeof t, "%s/%s", tree, rem); struct stat ts; if (!lstat(t, &ts)) { free(d); LOG("存档管理：包里有同名角色，整包拒绝"); return DM_PKG_E_DUP; } int bad = mkdirs_for(t) || write_new(t, d, e->usize); free(d); if (bad) return DM_PKG_E_IO; }
     return cnt ? DM_PKG_OK : DM_PKG_E_NOTOURS;
 }
 int dm_savepkg_wrap_foreign(const char *in, const char *work, char *out, size_t n, int *partial) {

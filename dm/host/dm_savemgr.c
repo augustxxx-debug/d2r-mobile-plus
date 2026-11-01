@@ -72,7 +72,7 @@ void dm_savemgr_set_source(const char *platform, const char *commit, const char 
 static const char *save_dir(void) { return getenv("DM_SAVE"); }
 // 启动期：挂存档与云同步之前（iOS boot_thread、Mac main、安卓 nativeStart）。清上次导出的残留，换入待应用的导入 | at boot, before mount and cloud sync: clear the last export's leftovers and apply a pending import
 void dm_savemgr_boot(void) {
-    const char *sv = save_dir(); if (!sv) return; char d[1400]; snprintf(d, sizeof d, "%s.export.tmp", sv); dm_savepkg_rmtree(d);
+    const char *sv = save_dir(); if (!sv) return; char d[1400]; snprintf(d, sizeof d, "%s.export.tmp", sv); dm_savepkg_rmtree(d); snprintf(d, sizeof d, "%s.foreign.tmp", sv); dm_savepkg_rmtree(d);
     char cd[1100]; const char *custom = dm_custom_dir(cd, sizeof cd) ? cd : NULL; if (dm_savepkg_apply_pending(sv, custom, time(NULL), &g_src) == 1) dm_custom_reload();
 }
 int dm_savemgr_modal(void) { return atomic_load(&g_st) != S_NONE; }

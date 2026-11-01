@@ -18,6 +18,13 @@ static UIViewController *top_vc(void) {   // 同 dm_sharelog.m | as dm_sharelog.
     vc = vc ?: alt ?: any; while (vc.presentedViewController) vc = vc.presentedViewController;
     return vc;
 }
+// 选文件夹要拷到临时目录：先量总量，选错大目录不把盘写满（与原生 zf_open 同一上限）。云端占位是点开头的文件，宿主不收 | a picked folder is copied to a temporary directory: measure first so a wrong pick cannot fill the disk (same limit as the native zf_open). Cloud placeholders are dot files, which the host does not take
+static BOOL pick_too_big(NSURL *u) {
+    NSNumber *sz = nil; const long long cap = 320ll << 20; long long sum = 0; NSNumber *isdir = nil; [u getResourceValue:&isdir forKey:NSURLIsDirectoryKey error:NULL];
+    if (!isdir.boolValue) { [u getResourceValue:&sz forKey:NSURLFileSizeKey error:NULL]; return sz.longLongValue > cap; }
+    for (NSURL *f in [NSFileManager.defaultManager enumeratorAtURL:u includingPropertiesForKeys:@[NSURLFileSizeKey] options:0 errorHandler:nil]) { sz = nil; [f getResourceValue:&sz forKey:NSURLFileSizeKey error:NULL]; if ((sum += sz.longLongValue) > cap) return YES; }
+    return NO;
+}
 @interface DmSavePick : NSObject <UIDocumentPickerDelegate> @end
 @implementation DmSavePick
 - (void)documentPicker:(UIDocumentPickerViewController *)c didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls { (void)c; NSURL *u = urls.firstObject;
@@ -25,7 +32,7 @@ static UIViewController *top_vc(void) {   // 同 dm_sharelog.m | as dm_sharelog.
         BOOL scoped = [u startAccessingSecurityScopedResource]; NSFileManager *fm = NSFileManager.defaultManager; NSString *base = [NSTemporaryDirectory() stringByAppendingPathComponent:@"dm_save_pick"]; [fm removeItemAtPath:base error:NULL]; [fm createDirectoryAtPath:base withIntermediateDirectories:YES attributes:nil error:NULL];
         __block NSString *out = nil; NSError *ce = nil; [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateReadingItemAtURL:u options:NSFileCoordinatorReadingWithoutChanges error:&ce byAccessor:^(NSURL *r) {
             NSURL *from = r; NSURL *sv = [r URLByAppendingPathComponent:@"save" isDirectory:YES]; BOOL dir = NO; if ([fm fileExistsAtPath:sv.path isDirectory:&dir] && dir) from = sv;
-            NSString *to = [base stringByAppendingPathComponent:from.lastPathComponent]; NSError *e = nil; if ([fm copyItemAtURL:from toURL:[NSURL fileURLWithPath:to] error:&e]) out = to; else NSLog(@"save pick copy: %@", e); }];
+            if (pick_too_big(from)) { out = @"!limit"; return; } NSString *to = [base stringByAppendingPathComponent:from.lastPathComponent]; NSError *e = nil; if ([fm copyItemAtURL:from toURL:[NSURL fileURLWithPath:to] error:&e]) out = to; else NSLog(@"save pick copy: %@", e); }];
         if (scoped) [u stopAccessingSecurityScopedResource]; dm_savemgr_picked(out.fileSystemRepresentation); });
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)c { (void)c; dm_savemgr_picked(NULL); }
@@ -55,5 +62,6 @@ static void on_share(const char *path) {
 void dm_savemgr_boot_ios(void) {
     NSDictionary *d = NSBundle.mainBundle.infoDictionary; __block int pad = 0; void (^q)(void) = ^{ pad = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad; }; if (NSThread.isMainThread) q(); else dispatch_sync(dispatch_get_main_queue(), q);
     dm_savemgr_set_source(pad ? "ipados" : "ios", [d[@"DMSourceCommit"] description].UTF8String, [d[@"CFBundleVersion"] description].UTF8String, [d[@"DMVersionLabel"] description].UTF8String);
+    [NSFileManager.defaultManager removeItemAtPath:[NSTemporaryDirectory() stringByAppendingPathComponent:@"dm_save_pick"] error:NULL];   // 上次选的副本 | the copy from the last pick
     dm_savemgr_shell(on_pick, on_share); dm_savemgr_boot();
 }
