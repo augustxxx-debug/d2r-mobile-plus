@@ -358,7 +358,12 @@ static int local_char(const char *save, const char *name, char *guest_out, size_
 }
 // 同包重名：只差 ASCII 大小写，或名字带组合记号 / 组合用谚文（NFD 写法）。NFC / NFD 是否算同一个由文件系统决定，所以带这种写法的一律拒绝，三端结果才相同；解压之前判，什么都不写
 // Same names in one package: differing only in ASCII case, or a name with combining marks / conjoining Hangul (NFD form). Whether NFC and NFD coincide depends on the file system, so such names are refused outright and all platforms agree; judged before extraction, nothing is written
-static int name_nfd(const char *s) { for (const uint8_t *p = (const uint8_t *)s; *p; p++) { if (p[0] >= 0xcc && p[0] <= 0xcd && p[1]) { uint32_t u = (uint32_t)(p[0] & 0x1f) << 6 | (p[1] & 0x3f); if (u >= 0x300 && u <= 0x36f) return 1; } if (p[0] == 0xe1 && p[1] >= 0x84 && p[1] <= 0x87) return 1; } return 0; }
+static int name_nfd(const char *s) {   // 组合记号：拉丁 / 通用段、组合谚文、假名浊点半浊点（N11-02）| combining marks: Latin / general blocks, conjoining Hangul, kana voicing marks
+    for (const uint8_t *p = (const uint8_t *)s; *p; p++) { uint32_t u = 0;
+        if (p[0] >= 0xc0 && p[0] < 0xe0 && p[1]) u = (uint32_t)(p[0] & 0x1f) << 6 | (p[1] & 0x3f);
+        else if (p[0] >= 0xe0 && p[0] < 0xf0 && p[1] && p[2]) u = (uint32_t)(p[0] & 0x0f) << 12 | (uint32_t)(p[1] & 0x3f) << 6 | (p[2] & 0x3f);
+        if ((u >= 0x300 && u <= 0x36f) || (u >= 0x1100 && u <= 0x11ff) || (u >= 0x1ab0 && u <= 0x1aff) || (u >= 0x1dc0 && u <= 0x1dff) || (u >= 0x20d0 && u <= 0x20ff) || u == 0x3099 || u == 0x309a || (u >= 0xfe20 && u <= 0xfe2f)) return 1; }
+    return 0; }
 static int names_clash(const jn *chars) { if (!chars || chars->t != J_ARR) return 0; for (const jn *a = chars->kid; a; a = a->next) { const char *x = jstrv(a, "name"); if (name_nfd(x)) return 1; for (const jn *b = a->next; b; b = b->next) if (ieq_ascii(x, jstrv(b, "name"))) return 1; } return 0; }
 static void stage_paths(const char *save, char *tmp, char *pend) { snprintf(tmp, 1400, "%s.import.tmp", save); snprintf(pend, 1400, "%s.import", save); }
 void dm_savepkg_view_free(dm_pkg_view *v) { free(v->chars); v->chars = NULL; }
