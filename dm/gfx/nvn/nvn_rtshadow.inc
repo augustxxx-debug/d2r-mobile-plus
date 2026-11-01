@@ -14,7 +14,7 @@
 //   7. 无太阳关卡（整帧没有阴影绘制）：遮挡体改从深度预渲染登记，只追点光。软阴影可选（DM_RT_SOFT）：最近命中距离 + 两趟深度感知模糊。
 // 资源（六审 5.1、CLAUDE.md「资源使用与释放审查」）：网格缓存有总字节预算（DM_RT_SHADOW_CACHE_MB，缺省 64，含蒙皮槽），超了按最久没用淘汰；600 帧没用的淘汰；
 //   每帧常量 / 实例 / 选灯 / 副本缓冲放进带 fence 的槽环（≤ 8），GPU 做完那次提交才复用，全忙本帧不追踪；关掉开关 / 模块失败时全部经 defer_obj_release 释放（等在途提交做完），再开重建。
-// 门槛：supportsRaytracing 且 GPU 家族 ≥ Apple9 且机型白名单（Mac 上的 iOS 包按 isiOSAppOnMac 认）；开关：DM_RT_SHADOW=0/1 钉住，否则 dm_rt_shadow_setting()；DM_RT_POINT=0 只关点光。
+// 门槛：supportsRaytracing 且 GPU 家族 ≥ Apple9（有硬件光追）；开关：DM_RT_SHADOW=0/1 钉住，否则 dm_rt_shadow_setting()；DM_RT_POINT=0 只关点光。
 // 计时：光追计算编码器走 pg_compute（DM_NVN_PASSGPU）；只编 Metal 4 路径，DM_NVN_M3 下模块为空。
 // ---------- Ray-traced shadows: per-pixel visibility of the sun and a few point lights via Metal hardware ray tracing, layered over the game's own shadows ----------
 // How it hooks in (translation layer only, the game is untouched):
@@ -32,7 +32,7 @@
 //   7. Levels without a sun (no shadow draw in the frame): occluders come from the depth prepass and only point lights are traced. Optional soft shadows (DM_RT_SOFT): nearest-hit distance + two depth-aware blur passes.
 // Resources (sixth review 5.1, CLAUDE.md "resource use and release review"): the mesh cache has a total byte budget (DM_RT_SHADOW_CACHE_MB, default 64, skinned slots included) evicting least recently used; meshes unused for 600 frames are evicted;
 //   per-frame constant / instance / picking / copy buffers live in a fenced slot ring (≤ 8), reused only after the GPU finished that submission, all busy → no trace this frame; switching off / module failure releases everything through defer_obj_release (after in-flight submissions), rebuilt on the next switch-on.
-// Gate: supportsRaytracing and GPU family ≥ Apple9 and a model allowlist (iOS app on a Mac recognized by isiOSAppOnMac); switch: DM_RT_SHADOW=0/1 pins it, otherwise dm_rt_shadow_setting(); DM_RT_POINT=0 turns off point lights only.
+// Gate: supportsRaytracing and GPU family ≥ Apple9 (hardware ray tracing); switch: DM_RT_SHADOW=0/1 pins it, otherwise dm_rt_shadow_setting(); DM_RT_POINT=0 turns off point lights only.
 // Timing: the ray-tracing compute encoder goes through pg_compute (DM_NVN_PASSGPU); Metal 4 path only, the module is empty under DM_NVN_M3.
 __attribute__((weak)) int dm_rt_level_setting(void) { return 0; }   // 宿主设置页提供强定义（玩家档 0–3，已含机器门槛）；缺省关 | The host settings page provides the strong definition (player level 0–3, machine gate included); off by default
 __attribute__((weak)) float dm_rt_shadow_ambient(void) { return 0.45f; }
@@ -204,20 +204,12 @@ int mtl_rt_shadow_supported(void) {   // 宿主设置页用：这台机器能不
     // 图形层还没初始化时（iOS 前端启动预留那一刻就要问，dm_custom.c dm_render_res_rt_drop）用系统缺省设备——与 mtl_init 建的 g_dev 是同一个；原先 g_dev 为空就把 0 记死
     // Before the graphics layer is initialised (the iOS front end asks at the startup reserve, dm_custom.c dm_render_res_rt_drop) use the system default device - the same one mtl_init makes g_dev from; it used to latch 0 when g_dev was still nil
     id<MTLDevice> dev = g_dev ? g_dev : MTLCreateSystemDefaultDevice(); v = 0; if (!dev) return 0;
+    // 只按运行时硬件能力判，不按机型：supportsRaytracing 在没有硬件光追的 GPU 上也是 1（M2 实测，软件路径上 Metal 4 加速结构描述符进局约 3 秒抛异常，B108），Apple9 家族起才有硬件光追
+    // Decided by runtime hardware capability only, not by model: supportsRaytracing is 1 even on GPUs without hardware ray tracing (measured on M2: on that software path the Metal 4 acceleration structure descriptor throws about 3 s into the game, B108); hardware ray tracing starts at the Apple9 family
     int rt = [dev supportsRaytracing], fam = [dev supportsFamily:MTLGPUFamilyApple9];
-    char hw[64] = "?"; size_t hn = sizeof hw; sysctlbyname("hw.machine", hw, &hn, NULL, 0); int model = 0, major = 0, minor = 0;
-#if TARGET_OS_OSX
-    int on_mac = 1;   // Mac 原生宿主：只看 GPU 家族 | native Mac host: GPU family alone decides
-#else
-    int on_mac = [NSProcessInfo.processInfo isiOSAppOnMac];   // Mac 上的 iOS 包：hw.machine 报的是兼容用的 iPad 型号（实测 iPad8,6），不能按它判 | iOS app on a Mac: hw.machine reports a compatibility iPad model (measured iPad8,6), not usable for the allowlist
-#endif
-    if (on_mac) { model = 1; snprintf(hw, sizeof hw, "Mac"); }
-    else if (sscanf(hw, "iPhone%d,%d", &major, &minor) == 2) model = major >= 17 || (major == 16 && (minor == 1 || minor == 2));   // iPhone 15 Pro / Pro Max 起（A17 Pro） | iPhone 15 Pro / Pro Max and later (A17 Pro)
-    else if (sscanf(hw, "iPad%d,%d", &major, &minor) == 2) model = major >= 16;   // iPad Pro M4 起 | iPad Pro M4 and later
-    else model = 0;   // 其它型号不在白名单 | any other model is not on the allowlist
-    v = rt && fam && model;
-    if (rt && getenv("DM_TEST_RT_GATE")) { v = 1; MLOG("光追阴影：DM_TEST_RT_GATE 放开门控（只给 M 系列 iPad 钉档测试包）"); }
-    MLOG("光追阴影：机器判定 %s（supportsRaytracing %d、GPU 家族 Apple9 %d、机型 %s %s）", v ? "可用" : "不可用", rt, fam, hw, model ? "在白名单" : "不在白名单");
+    char hw[64] = "?"; size_t hn = sizeof hw; sysctlbyname("hw.machine", hw, &hn, NULL, 0);
+    v = rt && fam && !getenv("DM_TEST_RT_NOHW");   // 测试开关：在有硬件的机器上验置灰路径 | test switch: exercises the greyed-out path on a machine with the hardware
+    MLOG("光追阴影：机器判定 %s（supportsRaytracing %d、GPU 家族 Apple9 %d、机型 %s）", v ? "可用" : "不可用", rt, fam, hw);
     return v;
 }
 // 测试翻转 DM_RT_SHADOW_FLIP=<秒>[,<秒>…] 或 f<出图次数>[,…]（造对比素材用；f 与 DM_NVN_SHOT 的帧号同一口径）：到点把开关取反，同一局同一机位拍开 / 关 | test flip DM_RT_SHADOW_FLIP=<s>[,<s>...] or f<present count>[,...] (for comparison material; f uses the same numbering as DM_NVN_SHOT): invert the switch at these points, shooting on / off in one run from one spot

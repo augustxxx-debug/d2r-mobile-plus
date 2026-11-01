@@ -15,7 +15,8 @@ const char *dm_save_commitdir(void) { return NULL; }
 int dm_3d_quality_mode_get(void) { return quality; }
 float dm_3d_scale_cur(void) { return .75f; }
 int dm_display_max_hz(void) { return 120; }
-int mtl_rt_shadow_supported(void) { return 1; }   // 机器过光追门槛 | the machine passes the RT gate
+static int g_rt_hw = 1;
+int mtl_rt_shadow_supported(void) { return g_rt_hw; }   // 缺省机器过光追门槛 | the machine passes the RT gate by default
 static int checks, fails;
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
 int main(void) {
@@ -38,6 +39,12 @@ int main(void) {
     f = fopen(p, "w"); if (!f) return 1; fputs("rt_level=1\nrt_shadow=1\nrt_ao=1\nq3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_level") == 1);
     f = fopen(p, "w"); if (!f) return 1; fputs("rt_level=9\nrt_shadow=1\nq3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_level") == 0);
     f = fopen(p, "w"); if (!f) return 1; fputs("q3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_level") == 0);   // 没键 = 关 | no key = off
+    // B108：没有硬件光追的机器（M2 iPad、安卓）上残留的 rt_level 不生效，并写回关；有硬件的机器不动 | B108: on machines without hardware ray tracing (M2 iPad, Android) a leftover rt_level has no effect and is written back as off; machines with the hardware are untouched
+    f = fopen(p, "w"); if (!f) return 1; fputs("rt_level=3\nrt_shadow=1\nq3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_level") == 3);
+    g_rt_hw = 0; CHECK(dm_rt_level_setting() == 0); CHECK(dm_custom_get("rt_level") == 0);
+    { char line[64]; int lvl0 = 0, shadow0 = 0; f = fopen(p, "r"); if (!f) return 1; while (fgets(line, sizeof line, f)) { if (!strcmp(line, "rt_level=0\n")) lvl0 = 1; if (!strcmp(line, "rt_shadow=0\n")) shadow0 = 1; } fclose(f); CHECK(lvl0 && shadow0); }
+    atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_level") == 0); CHECK(dm_rt_level_setting() == 0);
+    g_rt_hw = 1; f = fopen(p, "w"); if (!f) return 1; fputs("rt_level=2\nq3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_rt_level_setting() == 2); CHECK(dm_custom_get("rt_level") == 2);
     unlink(p); rmdir(dir);
     printf("t_boot_order: %d checks, %d failures\n", checks, fails);
     return fails != 0;

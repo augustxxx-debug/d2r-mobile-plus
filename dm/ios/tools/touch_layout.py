@@ -1654,21 +1654,28 @@ def _graphics_page(text):
             'onUpdateMessage': 'OptionsPanelMessage:SetD2RRenderResolution',
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}}]}
-    # 光追阴影（实验性，dm/gfx/nvn/nvn_rtshadow.inc）：一行勾选框；机器不过门槛时宿主把整行 TouchGraphicsRtRow 藏起来（dm_graphics_ui_pump 按 mtl_rt_shadow_supported）
-    # Ray-traced shadows (experimental, dm/gfx/nvn/nvn_rtshadow.inc): one checkbox row; on machines that fail the gate the host hides the whole TouchGraphicsRtRow (dm_graphics_ui_pump via mtl_rt_shadow_supported)
-    rt_row = {'type': 'Widget', 'name': 'TouchGraphicsRtRow', 'fields': {
-        'rect': {'x': 0, 'y': 1080, 'width': 1730, 'height': 180}}, 'children': [
-        label('TouchGraphicsRtText', 'dmGraphicsRtShadow', 0, 0, 1000, 180), toggle('TouchGraphicsRtShadow', 0)]}
-    # 光追 AO（实验性）：光追阴影下一行，同门槛；文字下方一行副文（CLAUDE.md §2.6：28 号、说明灰、$ReducedSpacing）说明能干啥，阴影没开时宿主换成「需先开启光追阴影」并把勾选框置灰（dm_graphics_ui_pump）
-    # Ray-traced AO (experimental): the row below ray-traced shadows, same gate; one subtext line under the caption (CLAUDE.md §2.6: 28 pt, description grey, $ReducedSpacing) says what it does; with shadows off the host swaps it for "turn on ray-traced shadows first" and greys out the checkbox (dm_graphics_ui_pump)
-    def ao_note(name, key):
-        n = label(name, key, 0, 88, 1290, 60)   # 文字上移、副文也进手柄选中框（框下沿约在行内 150，放 116 会被框线压住） | caption moved up so the subtext also fits inside the controller frame (its lower edge is near 150 in the row; at 116 the line ran through the text)
+    # 光追档位（实验性，键 rt_level，dm/gfx/nvn/nvn_rtshadow.inc）：四档滑块 关 / 低 / 中 / 高，文字下方一行副文（CLAUDE.md §2.6：28 号、说明灰、$ReducedSpacing，也在手柄选中框内）。
+    # 没有硬件光追的机器宿主置灰：滑块藏起来，换灰色文字和「本机没有硬件光追」副文；内存不够开高档时副文换一句。安卓没有 Metal 光追，整行不进布局（§2.8）
+    # Ray-tracing level (experimental, key rt_level, dm/gfx/nvn/nvn_rtshadow.inc): four-position slider Off / Low / Medium / High, one subtext line under the caption (CLAUDE.md §2.6: 28 pt, description grey, $ReducedSpacing, inside the controller frame too).
+    # On machines without hardware ray tracing the host greys it out: slider hidden, grey caption and a "no hardware ray tracing" subtext; when memory rules out High the subtext changes. Android has no Metal ray tracing, so the row is not in its layout at all (§2.8)
+    def rt_note(name, key):
+        n = label(name, key, 0, 88, 1090, 60)
         n['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
         return n
-    ao_row = {'type': 'Widget', 'name': 'TouchGraphicsRtAoRow', 'fields': {
-        'rect': {'x': 0, 'y': 1260, 'width': 1730, 'height': 180}}, 'children': [
-        label('TouchGraphicsRtAoText', 'dmGraphicsRtAo', 0, 0, 1270, 140), ao_note('TouchGraphicsRtAoNote', 'dmGraphicsRtAoNote'),
-        ao_note('TouchGraphicsRtAoNeedRt', 'dmGraphicsRtAoNeedRt'), toggle('TouchGraphicsRtAo', 0)]}
+    rt_off = label('TouchGraphicsRtTextOff', 'dmGraphicsRtLevelNone', 0, 0, 1090, 140)
+    rt_off['fields']['style/fontColor'] = '$FontColorLightGray'
+    rt_row = {'type': 'Widget', 'name': 'TouchGraphicsRtRow', 'fields': {
+        'rect': {'x': 0, 'y': 1080, 'width': 1730, 'height': 180}}, 'children': [
+        label('TouchGraphicsRtText', 'dmGraphicsRtLevelOff', 0, 0, 1090, 140), rt_off,
+        rt_note('TouchGraphicsRtNote', 'dmGraphicsRtLevelNote'), rt_note('TouchGraphicsRtHighNote', 'dmGraphicsRtLevelHighNote'), rt_note('TouchGraphicsRtNoHw', 'dmGraphicsRtLevelNoHw'),
+        {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsRtLevel', 'fields': {
+            'rect': {'x': 1110, 'y': 55, 'width': 480, 'height': 72},
+            'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',
+            'focusIndicatorFilename': '$OptionsSliderFocusIndicatorFilename', 'isHorizontal': True, 'increment': 1,
+            'indicatorFilepath': 'PauseMenu\\HorizontalIndicator', 'background': '$SettingsSliderBackground',
+            'onUpdateMessage': 'OptionsPanelMessage:SetD2RRtLevel',
+            'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
+            'valueText': '$SettingsSliderValueFields'}}]}
     # 显示帧数（fps_hud，缺省开；原在自定义页末行，用户 2026-10-28 要求放图形页第二行）：一行勾选框，宿主 dm_graphics_ui_pump 读写 TouchGraphicsFpsHud
     # Show frame rate (fps_hud, on by default; was the last Custom row, moved to Graphics row 2 at the user's request on 2026-10-28): one checkbox row, read and written by the host's dm_graphics_ui_pump via TouchGraphicsFpsHud
     fpshud_row = {'type': 'Widget', 'name': 'TouchGraphicsFpsHudRow', 'fields': {
@@ -1687,7 +1694,7 @@ def _graphics_page(text):
             'valueText': '$SettingsSliderValueFields'}},
         label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 720, 1000, 180), toggle('TouchGraphicsUpscale', 720),
         # 说明文案按平台分：安卓没有 MetalFX，用中性文案 dmAndGraphicsApplyHint | Hint text per platform: Android has no MetalFX, so it uses the neutral dmAndGraphicsApplyHint
-        profile, rt_row, ao_row, label('TouchGraphicsApplyHint', 'dmAndGraphicsApplyHint' if os.environ.get('DM_TARGET') == 'android' else 'dmGraphicsApplyHint', 0, 1440, 1670, 300),
+        profile] + ([] if os.environ.get('DM_TARGET') == 'android' else [rt_row]) + [label('TouchGraphicsApplyHint', 'dmAndGraphicsApplyHint' if os.environ.get('DM_TARGET') == 'android' else 'dmGraphicsApplyHint', 0, 1260, 1670, 300),
         {'type': 'NineTileImageWidget', 'name': 'TouchGraphicsSel', 'fields': {
             'rect': {'x': 99999, 'y': 0, 'width': 1700, 'height': 180}, 'backgroundColor': [0, 0, 0, 0],
             'filename': 'Controller/PANEL/ControllerSelector/ControllerSelectorBorder', 'tileScale': 0.5}}]}

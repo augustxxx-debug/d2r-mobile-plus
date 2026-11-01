@@ -370,9 +370,9 @@ __attribute__((weak)) int dm_render_res_supported(void) { return 1; }
 #endif
 // 图形页的行（与 touch_layout.py _graphics_page 同序）：可见的紧挨着排，返回可见行数，out 依次是布局行号；选中框按可见序号放、行为按布局行号走（单测 t_graphics_gate）
 // Graphics-tab rows (same order as touch_layout.py _graphics_page): the visible ones are packed, returns the visible count with the layout row ids in out; the selection frame follows the visible index, behaviour follows the layout row (unit test t_graphics_gate)
-enum { ROW_RES, ROW_FPSHUD, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT, ROW_RTAO };   // 显示帧数行第二（用户 2026-10-28）| the Show-frame-rate row is second (user 2026-10-28)
-static int graphics_rows_pack(int res_ok, int up_ok, int prof_on, int rt_ok, int out[7]) {
-    int n = 0; if (res_ok) out[n++] = ROW_RES; out[n++] = ROW_FPSHUD; out[n++] = ROW_FPS; if (up_ok) { out[n++] = ROW_UPSCALE; if (prof_on) out[n++] = ROW_PROFILE; } if (rt_ok) { out[n++] = ROW_RT; out[n++] = ROW_RTAO; } return n;
+enum { ROW_RES, ROW_FPSHUD, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT };   // 显示帧数行第二（用户 2026-10-28）| the Show-frame-rate row is second (user 2026-10-28)
+static int graphics_rows_pack(int res_ok, int up_ok, int prof_on, int rt_row, int out[6]) {
+    int n = 0; if (res_ok) out[n++] = ROW_RES; out[n++] = ROW_FPSHUD; out[n++] = ROW_FPS; if (up_ok) { out[n++] = ROW_UPSCALE; if (prof_on) out[n++] = ROW_PROFILE; } if (rt_row) out[n++] = ROW_RT; return n;
 }
 // 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义）：玩家档 0–3，已含机器门槛和内存封顶；DM_RT_PRESET=0–3 钉住。生效值一变就记一行「光追档位：生效 rt_level=」（分享诊断日志的摘要按这个前缀取最后一行）
 // 内存档位 < 2 时高档不开放（AO、软影多两张贴图，内存紧的机器不值得）：存的还是高，生效值夹到中
@@ -382,6 +382,8 @@ static int rt_level_cap(void) { return dm_mem_tier() < 2 ? 2 : 3; }
 static int rt_level_pin(void) { static int v = -2; if (v == -2) { const char *e = getenv("DM_RT_PRESET"); v = e && *e >= '0' && *e <= '3' && !e[1] ? *e - '0' : -1; if (e && v < 0) LOG("【红】DM_RT_PRESET 非法：%s（要求 0–3），按设置", e); } return v; }
 int dm_rt_level_setting(void) {
     int ok = rt_shadow_ok(), pin = rt_level_pin(), set = pin >= 0 ? pin : dm_custom_get("rt_level"), cap = rt_level_cap(), on = !ok ? 0 : set > cap ? cap : set;
+    // 没有硬件光追的机器（含安卓）：设置里的残留档位不生效，写回关，换设备恢复的设置文件也不会留着（B108）| machines without hardware ray tracing (Android included): a leftover level in the settings has no effect and is written back as off, including from a settings file restored from another device (B108)
+    if (!ok && pin < 0 && set) { atomic_store(&g_val[K_RTLVL], 0); atomic_store(&g_pend[K_RTLVL], -1); save(); LOG("光追档位：本机没有硬件光追，设置里的 rt_level=%d 写回关", set); set = 0; }
     static _Atomic int last = -1; int key = on * 64 + set * 8 + cap * 2 + ok;
     if (atomic_exchange(&last, key) != key) LOG("光追档位：生效 rt_level=%d（%s %d，本机最高 %d，机器%s）", on, pin >= 0 ? "DM_RT_PRESET 钉住" : "设置", set, cap, ok ? "可用" : "不可用");
     return on;
@@ -459,7 +461,7 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     if (!strcmp(act, "AcceptChanges")) { int ch = 0, res_changed = 0;
         // Migrate the former fifth radio option to the independent enable switch.
         if (atomic_load(&g_pend[K_Q3D]) == 4) { atomic_store(&g_pend[K_Q3D], 0); atomic_store(&g_pend[K_UPSCALE], 0); }
-        for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_RES) res_changed = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd == 3); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd == 3 ? "Quality" : "Adaptive", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
+        for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_RES) res_changed = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd == 3); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd == 3 ? "Quality" : "Adaptive", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else if (i == K_RTLVL) LOG("自定义设置：光追档位 → %d（应用）", pd); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
         dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && q3d_for_fps(atomic_load(&g_val[K_Q3D]), dm_fps_setting()) == 3);   // 120 帧下高画质按均衡 | Quality runs as Balanced at 120 fps
         { int had = 0; for (int b = 0; b < 3; b++) had |= atomic_exchange(&g_bak[b], -1) >= 0;   // 应用 = 玩家已经决定：崩溃围栏的备份用完即清 | Apply = the player has decided: the crash-fence backup is cleared
           if (had) { ch = 1; LOG("自定义设置：应用，清掉崩溃围栏的实验项备份"); } }
@@ -535,6 +537,11 @@ static void graphics_select_res(int value) {
     atomic_store(&g_pend[K_RES], value);
     LOG("图形设置：渲染分辨率档位 → %d（点应用生效）", value);
 }
+static void graphics_select_rt(int value, int max) {
+    if (value < 0 || value > max || value == pending_value(K_RTLVL)) return;
+    atomic_store(&g_pend[K_RTLVL], value);
+    LOG("图形设置：光追档位 → %d（点应用生效）", value);
+}
 static void graphics_text(uint64_t w, const char *s) {
     if (!w || !s || !DM_WIDGET_OK(main_base(), w, DM_VT_TEXT, "图形设置文字")) return;
     size_t n = strlen(s); const char *old = *(const char **)(w + 0x88);
@@ -598,10 +605,15 @@ void dm_graphics_ui_pump(unsigned long long root) {
         if (dm_wref_get(&seen[1])!=upscale) { dm_wref_set(&seen[1],upscale); set_toggle(upscale,want); }
         else if (TOGGLED(upscale)!=want) atomic_store(&g_pend[K_UPSCALE],TOGGLED(upscale));
     }
-    // WIP：光追行等第 2 节实测后再做滑块，测试包先藏起来 | WIP: the slider row waits for the measurements; hidden in the test package
-    int rt_ok = 0; uint64_t rtrow = find_w(sp, "TouchGraphicsRtRow", 0); if (rtrow) ui_show_ours(rtrow, 0);
-    uint64_t aorow = find_w(sp, "TouchGraphicsRtAoRow", 0); if (aorow) ui_show_ours(aorow, 0);
-    uint64_t rt = 0;
+    // 光追档位（实验性）：关 / 低 / 中 / 高四档滑块。没有硬件光追的机器置灰：滑块藏起来，文字换灰色那份，副文写明原因；安卓整行不出现（§2.8，布局里也没有这一行）
+    // Ray-tracing level (experimental): four-position slider Off / Low / Medium / High. Machines without hardware ray tracing grey it out: slider hidden, the grey caption shown, the subtext says why; on Android the whole row is absent (§2.8; the layout has no such row either)
+#ifdef __ANDROID__
+    int rt_row = 0;
+#else
+    int rt_row = 1;
+#endif
+    int rt_ok = rt_row && rt_shadow_ok(); uint64_t rtrow = find_w(sp, "TouchGraphicsRtRow", 0); if (rtrow) ui_show_ours(rtrow, rt_row);
+    uint64_t rtl = find_w(sp, "TouchGraphicsRtLevel", 0); if (rtl) ui_show_ours(rtl, rt_ok); if (!rt_ok) rtl = 0;
     // 显示帧数（fps_hud，图形页第二行，缺省开）：勾选框与超分开关同一套处理 | Show frame rate (fps_hud, Graphics row 2, on by default): the checkbox is handled like the upscale switch
     uint64_t fpshud = find_w(sp, "TouchGraphicsFpsHud", 0);
     if (fpshud) {
@@ -618,7 +630,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // 可见行紧挨着排：档位行藏起来时光追行上移一格补位（下面按可见行数挪光追行与说明行），所以选中框按可见序号 selected 放，行为按布局行号 row_id 走
     // Rows (same order as touch_layout.py _graphics_page, user 2026-10-27): 0 render resolution / 1 frame rate / 2 upscale switch / 3 upscale profile (only while the switch is on) / 4 ray-traced shadows (experimental, only on machines that pass the gate).
     // Visible rows are packed: with the profile row hidden, the ray-tracing row moves up one slot (the ray-tracing row and the hint are moved below by the visible row count), so the selection frame follows the visible index selected and behaviour follows the layout row row_id
-    int prof_on = up_ok && pending_value(K_UPSCALE) != 0, vis[7], rows = graphics_rows_pack(res_ok, up_ok, prof_on, rt != 0, vis);
+    int prof_on = up_ok && pending_value(K_UPSCALE) != 0, vis[6], rows = graphics_rows_pack(res_ok, up_ok, prof_on, rt_row, vis);
     if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
     if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
     int row_id = vis[selected];
@@ -639,7 +651,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // 全部可见时各行正好在布局原位（180 / 360 / 540 / 720 / 900），Apple 行为不变
     // Visible rows are packed: visible row i sits at y = 180 x (i + 1) (text / container), sliders and checkboxes at +55 (touch_layout.py's label / toggle placement); the hint follows the last visible row.
     // With every row visible each sits at its layout position (180 / 360 / 540 / 720 / 900): Apple unchanged
-    { int all_vis[7], nv = graphics_rows_pack(res_ok, up_ok, enabled, rt_ok, all_vis);
+    { int all_vis[6], nv = graphics_rows_pack(res_ok, up_ok, enabled, rt_row, all_vis);
       for (int i = 0; i < nv; i++) { int y = 180 * (i + 1);
         switch (all_vis[i]) {
         case ROW_RES: move_ours_y(find_w(sp, "TouchGraphicsResRow", 0), y); break;
@@ -647,8 +659,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
         case ROW_FPS: move_ours_y(find_w(sp, "TouchGraphicsFpsText", 0), y); if (fps) move_ours_y(fps, y + 55); move_ours_y(find_w(sp, "TouchGraphicsFpsNote", 0), y + 116); break;
         case ROW_UPSCALE: move_ours_y(find_w(sp, "TouchGraphicsUpscaleText", 0), y); if (upscale) move_ours_y(upscale, y + 55); break;
         case ROW_PROFILE: if (row) move_ours_y(row, y); break;
-        case ROW_RT: if (rtrow) move_ours_y(rtrow, y); break;
-        case ROW_RTAO: if (aorow) move_ours_y(aorow, y); break; } }
+        case ROW_RT: if (rtrow) move_ours_y(rtrow, y); break; } }
       move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), 180 * (nv + 1)); }
     uint64_t slider = find_w(sp, "TouchGraphicsProfile", 0);
     if (slider && DM_WIDGET_OK(main_base(), slider, DM_VT_SLIDER, "图形设置滑块")) {
@@ -687,6 +698,28 @@ void dm_graphics_ui_pump(unsigned long long root) {
                 ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(res, to, 0, 0); }
         }
     }
+    if (rtl && DM_WIDGET_OK(main_base(), rtl, DM_VT_SLIDER, "图形设置光追档位滑块")) {
+        int mx = rt_level_cap(), lv = pending_value(K_RTLVL) > mx ? mx : pending_value(K_RTLVL);
+        if (dm_wref_get(&seen[4]) != rtl) {
+            *(int32_t *)(rtl + 0x5b0) = 1; *(int32_t *)(rtl + 0x5b8) = mx;
+            *(int32_t *)(rtl + 0x5bc) = 0; *(int32_t *)(rtl + 0x5c0) = mx;
+            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(rtl, lv, 0, 0);
+            dm_wref_set(&seen[4], rtl);
+        } else graphics_select_rt(*(int32_t *)(rtl + 0x5c4), mx);
+        if (row_id == ROW_RT && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
+            int to = lv + ((ev & DM_BTN_RIGHT) ? 1 : -1);
+            if (to >= 0 && to <= mx) { graphics_select_rt(to, mx);
+                ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(rtl, to, 0, 0); }
+        }
+    }
+    if (rt_row) { static const char *const rt_captions[4] = { "dmGraphicsRtLevelOff", "dmGraphicsRtLevelLow", "dmGraphicsRtLevelMid", "dmGraphicsRtLevelHigh" };
+      int mx = rt_level_cap(), lv = pending_value(K_RTLVL) > mx ? mx : pending_value(K_RTLVL), capped = rt_ok && mx < 3; uint64_t w;
+      graphics_text(find_w(sp, "TouchGraphicsRtText", 0), dm_str(main_base(), rt_captions[lv < 0 ? 0 : lv]));
+      if ((w = find_w(sp, "TouchGraphicsRtText", 0))) ui_show_ours(w, rt_ok);
+      if ((w = find_w(sp, "TouchGraphicsRtTextOff", 0))) ui_show_ours(w, !rt_ok);
+      if ((w = find_w(sp, "TouchGraphicsRtNote", 0))) ui_show_ours(w, rt_ok && !capped);
+      if ((w = find_w(sp, "TouchGraphicsRtHighNote", 0))) ui_show_ours(w, capped);
+      if ((w = find_w(sp, "TouchGraphicsRtNoHw", 0))) ui_show_ours(w, !rt_ok); }
     { static const char *const res_captions[DM_RES_LEVELS] = { "dmGraphicsResAuto", "dmGraphicsResEco", "dmGraphicsResBalanced", "dmGraphicsResNative" };
       int lv = pending_value(K_RES); if (lv < 0 || lv >= DM_RES_LEVELS) lv = 0;
       graphics_text(find_w(sp, "TouchGraphicsResText", 0), dm_str(main_base(), res_captions[lv])); }
