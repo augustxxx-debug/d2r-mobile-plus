@@ -248,12 +248,15 @@ static void crash_prepare(const char *fence, const char *dir) {   // 总开关�
 }
 // ---- 设备与使用统计的外壳（策略 dm/host/dm_telemetry.c，网络 dm_diag_upload.swift）：地址同诊断上传（DMDiagnosticUploadOrigin）；设备码 = identifierForVendor，不取 UDID / IDFA、不取设备名 | shell of the device and usage statistics (policy: dm_telemetry.c; network: dm_diag_upload.swift): the same origin as the diagnostic upload; device code = identifierForVendor, never the UDID / IDFA / device name ----
 void dm_telemetry_net_probe(unsigned token, void (*done)(unsigned, int));
-void dm_telemetry_net_send(unsigned token, const char *origin, const char *key_path, const char *body, long n, void (*done)(unsigned, int, const char *, int));
+void dm_telemetry_net_challenge(unsigned token, const char *origin, void (*http)(unsigned, int, const char *, long, int), void (*done)(unsigned, int, const char *, int));
+void dm_telemetry_net_send(unsigned token, const char *origin, const char *key_path, const char *challenge, const char *body, long n, void (*http)(unsigned, int, const char *, long, int), void (*done)(unsigned, int, const char *, int));
 void dm_telemetry_net_cancel(void);
 void dm_telemetry_net_forget(const char *key_path);
 static void tele_done(unsigned token, int outcome, const char *detail, int retry_after) { dm_telemetry_result(token, outcome, detail, retry_after); }
 static void tele_probe(unsigned token) { dm_telemetry_net_probe(token, dm_telemetry_net); }
-static void tele_send(unsigned token, const char *body, size_t n) { NSString *o = diag_origin(); if (!o) { tele_done(token, 10, "origin", 0); return; } dm_telemetry_net_send(token, o.UTF8String, NULL, body, (long)n, tele_done); }
+static void tele_http(unsigned token, int status, const char *body, long n, int retry_after) { dm_telemetry_http(token, status, body, (size_t)n, retry_after); }
+static void tele_challenge(unsigned token) { NSString *o = diag_origin(); if (!o) { tele_done(token, 10, "origin", 0); return; } dm_telemetry_net_challenge(token, o.UTF8String, tele_http, tele_done); }
+static void tele_send(unsigned token, const char *challenge, const char *body, size_t n) { NSString *o = diag_origin(); if (!o) { tele_done(token, 10, "origin", 0); return; } dm_telemetry_net_send(token, o.UTF8String, NULL, challenge, body, (long)n, tele_http, tele_done); }
 static void tele_forget(void) { dm_telemetry_net_forget(NULL); }
 static void tele_device(dm_tele_device_t *d) {
     static char ver[32], build[24], rev[48], chan[24], model[64], os[32], loc[32], code[48]; static int done;
@@ -270,7 +273,7 @@ static void tele_device(dm_tele_device_t *d) {
     static int lxgw = -1; if (lxgw < 0) { NSString *lic = [NSString stringWithContentsOfFile:[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"UIFonts/FONT_LICENSE.txt"] encoding:NSUTF8StringEncoding error:NULL]; lxgw = [lic containsString:@"LXGW WenKai"]; }   // 公开字体的许可证里写着字体名 | the public font's licence file names it
     d->font = lxgw ? "lxgw" : "other";
 }
-static const dm_telemetry_shell_t tele_shell = { diag_configured, tele_device, tele_probe, tele_send, dm_telemetry_net_cancel, tele_forget, 0 };
+static const dm_telemetry_shell_t tele_shell = { diag_configured, tele_device, tele_probe, tele_challenge, tele_send, dm_telemetry_net_cancel, tele_forget, 0 };
 static const dm_crashreport_shell_t crash_shell = { diag_configured, crash_start, dm_crashreport_net_cancel, crash_prepare, 0 };
 static const dm_diagup_shell_t diag_shell = { diag_configured, diag_start, dm_diagup_net_cancel, on_click, diag_copy };   // 「导出到本地」= 原分享面板 | Export locally = the original share sheet
 void dm_sharelog_boot(void) { g_t0 = NSDate.date; dm_sharelog_init(on_click); dm_diagup_init(&diag_shell); dm_crashreport_init(&crash_shell); dm_telemetry_init(&tele_shell); plog("诊断上传：%s", diag_configured() ? "已配置上传地址（分享诊断日志先开上传提示框）" : "未配置上传地址（分享诊断日志直接导出）"); }   // main.m 起宿主前调一次 | main.m calls this once before starting the host

@@ -17,6 +17,7 @@ final class TelemetryBridge {
     static native void nativeDevice(String appVersion, String build, String revision, String channel, String model, String soc, String osVersion, String locale, String deviceCode);
     static native void nativeNet(int token, boolean metered);
     static native void nativeResult(int token, int outcome, String detail, int retryAfter);
+    static native void nativeHttp(int token, int status, byte[] body, int retryAfter);
 
     static void init(Context context) {
         app = context.getApplicationContext();
@@ -33,14 +34,22 @@ final class TelemetryBridge {
         }, "dm-telemetry");
         t.setPriority(Thread.MIN_PRIORITY); t.start();
     }
-    static void send(int token, byte[] body) {
-        Thread t = new Thread(() -> {
-            DiagUploadClient.Result r;
-            try { byte[] seed = DiagUploadClient.loadOrCreateSeed(new File(app.getNoBackupFilesDir(), "tele_identity.key")); r = TelemetryClient.batch(DiagUploadClient.urlConnection(BuildConfig.DM_DIAGNOSTIC_ORIGIN, "D2R-Mobile-Plus-Telemetry/1", "telemetry/v1/"), seed, body); }
-            catch (IOException e) { r = new DiagUploadClient.Result(DiagUploadClient.PREPARE, "identity", 0, 0); }
-            nativeResult(token, r.outcome, r.detail, r.retryAfter);
-        }, "dm-telemetry");
-        t.setPriority(Thread.MIN_PRIORITY); t.start();
+    private static DiagUploadClient.Http http() { return DiagUploadClient.urlConnection(BuildConfig.DM_DIAGNOSTIC_ORIGIN, "D2R-Mobile-Plus-Telemetry/1", "telemetry/v1/"); }
+    private static void bg(Runnable r) { Thread t = new Thread(r, "dm-telemetry"); t.setPriority(Thread.MIN_PRIORITY); t.start(); }
+    static void challenge(int token) {
+        bg(() -> {
+            try { DiagUploadClient.Response r = http().send("GET", "challenge", null); nativeHttp(token, r.code, r.body, r.retryAfter); }
+            catch (IOException e) { nativeResult(token, DiagUploadClient.UNAVAILABLE, "network", 0); }
+        });
+    }
+    static void send(int token, String challenge, byte[] body) {
+        bg(() -> {
+            byte[] seed;
+            try { seed = DiagUploadClient.loadOrCreateSeed(new File(app.getNoBackupFilesDir(), "tele_identity.key")); }
+            catch (IOException e) { nativeResult(token, DiagUploadClient.PREPARE, "identity", 0); return; }
+            try { DiagUploadClient.Response r = http().send("POST", "events", TelemetryClient.envelope(seed, challenge, body)); nativeHttp(token, r.code, r.body, r.retryAfter); }
+            catch (IOException e) { nativeResult(token, DiagUploadClient.UNCONFIRMED, "response_lost", 0); }
+        });
     }
     static void forget() { new File(app.getNoBackupFilesDir(), "tele_identity.key").delete(); }
 }

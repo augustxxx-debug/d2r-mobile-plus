@@ -1,5 +1,5 @@
-// 统计上报的线上字段名与取值：全部集中在这里（看板 PRD §2.1 / §2.1.1；协议定稿后以 docs/TELEMETRY_PROTOCOL.md 为准，改这一个文件）。服务端拒收未知顶层键，所以这里没有的键一律不发。
-// Wire field names and values of the usage statistics, all in one place (dashboard PRD 2.1 / 2.1.1; once final, docs/TELEMETRY_PROTOCOL.md rules: change this one file). The server refuses unknown top-level keys, so nothing outside this file is ever sent.
+// 统计上报的线上字段名与取值：全部集中在这里（看板 PRD §2.1 / §2.1.1；以 docs/TELEMETRY_PROTOCOL.md（P-000）为准，改这一个文件）。服务端拒收未知顶层键，所以这里没有的键一律不发。
+// Wire field names and values of the usage statistics, all in one place (dashboard PRD 2.1 / 2.1.1; docs/TELEMETRY_PROTOCOL.md (P-000) rules: change this one file). The server refuses unknown top-level keys, so nothing outside this file is ever sent.
 #pragma once
 
 #define DM_TELEMETRY_SCHEMA 1
@@ -10,6 +10,21 @@
 #define DM_TF_API_CHALLENGE "challenge"
 #define DM_TF_API_EVENTS "events"
 #define DM_TF_TRANSCRIPT "D2R-TELEMETRY-V1"
+
+// 挑战回话与逐事件回执（P-000 C2 / C3 / C7） | the challenge answer and per-event receipts (P-000 C2 / C3 / C7)
+#define DM_TF_R_CHALLENGE "challenge"
+#define DM_TF_R_CAPABILITIES "capabilities"
+#define DM_TF_R_RESULTS "results"
+#define DM_TF_R_EVENT_INDEX "event_index"
+#define DM_TF_R_STATUS "status"
+#define DM_TF_R_ERROR "error"
+#define DM_TF_ST_ACCEPTED "accepted"
+#define DM_TF_ST_QUARANTINED "quarantined"
+#define DM_TF_ST_DUPLICATE "duplicate"
+#define DM_TF_ST_REJECTED "rejected"
+#define DM_TF_CAP_LAUNCH "telemetry-launch-v1"
+#define DM_TF_CAP_SESSION "telemetry-session-v1"
+#define DM_TF_CAP_PERF "telemetry-perf-v1"
 
 // 事件类型 | event types
 #define DM_TF_TYPE_LAUNCH "launch"
@@ -74,5 +89,5 @@
 #define DM_TF_S_LANG "lang"
 #define DM_TF_S_FONT "font"
 #define DM_TF_S_DIFFICULTY "difficulty_setting"
-// q3d 0–4 → 超分档名：与玩家选的档一一对应（PRD 的 performance 档我们没有，已列进给服务端的问题） | q3d 0–4 → profile names, one to one with what the player picks (the PRD's "performance" does not exist here; raised with the server side)
+// q3d 0–4 → 超分档名：与玩家选的档一一对应；安卓没有超分，固定 off（P-000 C10） | q3d 0–4 → profile names, one to one with what the player picks; Android has no upscaling, fixed off (P-000 C10)
 #define DM_TF_UPSCALE_NAMES { "auto", "eco", "balanced", "quality", "off" }

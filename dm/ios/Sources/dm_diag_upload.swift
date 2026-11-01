@@ -355,40 +355,20 @@ extension DmDiagUploader {
     public static func telemetryTranscript(challenge: String, uploadID: String, payload: Data) -> Data {
         Data("D2R-TELEMETRY-V1\n\(challenge)\n\(uploadID)\n\(hex(SHA256.hash(data: payload)))\n".utf8)
     }
-    /// 回执的归类（PRD §2.6 ⑤）：2xx 与 409 = 已送达；429 / 503 照 Retry-After；408、其他 5xx 可重试；其他 4xx 整批丢弃 | classify the answer: 2xx and 409 delivered; 429 / 503 follow Retry-After; 408 and other 5xx retryable; other 4xx drop the batch
-    static func classifyTelemetry(status: Int, code: String?, retryAfter: Int32) -> DmDiagResult {
-        let after = min(max(retryAfter, 0), 7 * 86400)
-        switch status {
-        case 200...299: return DmDiagResult(outcome: .ok, detail: "ok")
-        case 409: return DmDiagResult(outcome: .conflict, detail: code ?? "duplicate")
-        case 429: return DmDiagResult(outcome: .rateLimited, detail: code ?? "rate_limited", retryAfter: after > 0 ? after : 60)
-        case 503: return DmDiagResult(outcome: .maintenance, detail: code ?? "unavailable", retryAfter: after > 0 ? after : 60)
-        case 408, 500...599: return DmDiagResult(outcome: .unavailable, detail: code ?? "http_\(status)")
-        default: return DmDiagResult(outcome: .rejected, detail: code ?? "http_\(status)")
-        }
+    /// 取挑战：HTTP 回话原样交回，归类都在 dm_telemetry.c（P-000） | fetch a challenge: the HTTP answer goes back as it is, all classification is in dm_telemetry.c
+    func telemetryChallenge() async -> (reply: Reply?, failure: DmDiagResult?) {
+        do { return (try await send("GET", "challenge", body: nil), nil) }
+        catch { return (nil, Self.isCancel(error) ? DmDiagResult(outcome: .cancelled, detail: "cancelled") : DmDiagResult(outcome: .unavailable, detail: Self.notSentReason(error) ?? "network")) }
     }
-    /// 取挑战 → 签名 → 提交一批。挑战在签名后失效（challenge_rejected）重取一次；其余交回 dm_telemetry.c | challenge → sign → submit one batch; one fresh challenge after challenge_rejected; everything else goes back to dm_telemetry.c
-    public func telemetryBatch(payload: Data, key: Curve25519.Signing.PrivateKey) async -> DmDiagResult {
-        let uploadID = Self.newUploadID()
-        for _ in 0..<2 {
-            let got: Reply
-            do { got = try await send("GET", "challenge", body: nil) }
-            catch { return Self.isCancel(error) ? DmDiagResult(outcome: .cancelled, detail: "cancelled") : DmDiagResult(outcome: .unavailable, detail: Self.notSentReason(error) ?? "network") }
-            guard got.status == 200 else { return Self.classifyTelemetry(status: got.status, code: Self.errorCode(got.body), retryAfter: got.retryAfter) }
-            guard let c = Self.object(got.body)?["challenge"] as? String, let raw = Self.decodeBase64URL(c), raw.count == 32 else { return DmDiagResult(outcome: .unavailable, detail: "bad_challenge") }
-            let body: Data
-            do {
-                let sig = try key.signature(for: Self.telemetryTranscript(challenge: c, uploadID: uploadID, payload: payload))
-                body = try JSONSerialization.data(withJSONObject: ["public_key": Self.base64URL(key.publicKey.rawRepresentation), "challenge": c, "upload_id": uploadID, "payload": Self.base64URL(payload), "signature": Self.base64URL(sig)])
-            } catch { return DmDiagResult(outcome: .prepare, detail: "sign") }
-            let reply: Reply
-            do { reply = try await send("POST", "events", body: body) }
-            catch { return Self.isCancel(error) ? DmDiagResult(outcome: .cancelled, detail: "cancelled") : DmDiagResult(outcome: .unconfirmed, detail: Self.notSentReason(error) ?? "response_lost") }
-            let code = Self.errorCode(reply.body)
-            if reply.status == 403 && code == "challenge_rejected" { continue }
-            return Self.classifyTelemetry(status: reply.status, code: code, retryAfter: reply.retryAfter)
-        }
-        return DmDiagResult(outcome: .rejected, detail: "challenge_rejected")
+    /// 签名提交一批，每次新 upload_id（response_lost 后事件 ID 不变，服务端按重复回） | sign and submit one batch, a new upload_id each time (after response_lost the event IDs stay, the server answers duplicate)
+    func telemetrySubmit(challenge: String, payload: Data, key: Curve25519.Signing.PrivateKey) async -> (reply: Reply?, failure: DmDiagResult?) {
+        let uploadID = Self.newUploadID(); let body: Data
+        do {
+            let sig = try key.signature(for: Self.telemetryTranscript(challenge: challenge, uploadID: uploadID, payload: payload))
+            body = try JSONSerialization.data(withJSONObject: ["public_key": Self.base64URL(key.publicKey.rawRepresentation), "challenge": challenge, "upload_id": uploadID, "payload": Self.base64URL(payload), "signature": Self.base64URL(sig)])
+        } catch { return (nil, DmDiagResult(outcome: .prepare, detail: "sign")) }
+        do { return (try await send("POST", "events", body: body), nil) }
+        catch { return (nil, Self.isCancel(error) ? DmDiagResult(outcome: .cancelled, detail: "cancelled") : DmDiagResult(outcome: .unconfirmed, detail: Self.notSentReason(error) ?? "response_lost")) }
     }
 }
 private func dmTelemetryStore(_ keyFile: String?) -> DmDiagKeyStore { keyFile.map { DmDiagFileKeyStore(path: $0) as DmDiagKeyStore } ?? DmDiagKeychainStore.telemetry }
@@ -396,23 +376,35 @@ private final class DmTelemetryJob: @unchecked Sendable { let lock = NSLock(); v
 private let dmTelemetryJob = DmTelemetryJob()
 public typealias DmTelemetryNetFn = @convention(c) (UInt32, Int32) -> Void
 public typealias DmTelemetryDoneFn = @convention(c) (UInt32, Int32, UnsafePointer<CChar>?, Int32) -> Void
-private struct DmTelemetryFn: @unchecked Sendable { let net: DmTelemetryNetFn?; let send: DmTelemetryDoneFn? }   // C 回调随任务进后台线程 | the C callbacks travel with the task to its background thread
+public typealias DmTelemetryHttpFn = @convention(c) (UInt32, Int32, UnsafePointer<CChar>?, Int, Int32) -> Void
+private struct DmTelemetryFn: @unchecked Sendable { let net: DmTelemetryNetFn?; let done: DmTelemetryDoneFn?; let http: DmTelemetryHttpFn? }   // C 回调随任务进后台线程 | the C callbacks travel with the task to its background thread
 @_cdecl("dm_telemetry_net_probe")
 public func dmTelemetryNetProbe(_ token: UInt32, _ done: DmTelemetryNetFn) {
-    let box = DmTelemetryFn(net: done, send: nil)
+    let box = DmTelemetryFn(net: done, done: nil, http: nil)
     Task.detached(priority: .utility) { box.net?(token, await DmCrashReportStore.isMetered() ? 1 : 0) }
 }
-@_cdecl("dm_telemetry_net_send")
-public func dmTelemetryNetSend(_ token: UInt32, _ origin: UnsafePointer<CChar>?, _ keyPath: UnsafePointer<CChar>?, _ body: UnsafePointer<CChar>?, _ n: Int, _ done: DmTelemetryDoneFn) {
-    let originText = dmDiagCString(origin) ?? "", keyFile = dmDiagCString(keyPath), payload = body.map { Data(bytes: $0, count: n) } ?? Data()
+private func dmTelemetryFinish(_ token: UInt32, _ box: DmTelemetryFn, _ r: (reply: DmDiagUploader.Reply?, failure: DmDiagResult?)) {
+    if let reply = r.reply { reply.body.withUnsafeBytes { box.http?(token, Int32(reply.status), $0.bindMemory(to: CChar.self).baseAddress, reply.body.count, reply.retryAfter) } }
+    else if let f = r.failure { f.detail.withCString { box.done?(token, f.outcome.rawValue, $0, f.retryAfter) } }
+}
+@_cdecl("dm_telemetry_net_challenge")
+public func dmTelemetryNetChallenge(_ token: UInt32, _ origin: UnsafePointer<CChar>?, _ http: DmTelemetryHttpFn, _ done: DmTelemetryDoneFn) {
+    let originText = dmDiagCString(origin) ?? "", box = DmTelemetryFn(net: nil, done: done, http: http)
     dmTelemetryJob.lock.lock(); defer { dmTelemetryJob.lock.unlock() }
-    let box = DmTelemetryFn(net: nil, send: done)
     dmTelemetryJob.task = Task.detached(priority: .utility) {
-        func finish(_ r: DmDiagResult) { r.detail.withCString { box.send?(token, r.outcome.rawValue, $0, r.retryAfter) } }
-        guard let up = DmDiagUploader(origin: originText, apiBase: "telemetry/v1/") else { finish(DmDiagResult(outcome: .configuration, detail: "origin")); return }
+        guard let up = DmDiagUploader(origin: originText, apiBase: "telemetry/v1/") else { dmTelemetryFinish(token, box, (nil, DmDiagResult(outcome: .configuration, detail: "origin"))); return }
+        dmTelemetryFinish(token, box, await up.telemetryChallenge())
+    }
+}
+@_cdecl("dm_telemetry_net_send")
+public func dmTelemetryNetSend(_ token: UInt32, _ origin: UnsafePointer<CChar>?, _ keyPath: UnsafePointer<CChar>?, _ challenge: UnsafePointer<CChar>?, _ body: UnsafePointer<CChar>?, _ n: Int, _ http: DmTelemetryHttpFn, _ done: DmTelemetryDoneFn) {
+    let originText = dmDiagCString(origin) ?? "", keyFile = dmDiagCString(keyPath), challengeText = dmDiagCString(challenge) ?? "", payload = body.map { Data(bytes: $0, count: n) } ?? Data(), box = DmTelemetryFn(net: nil, done: done, http: http)
+    dmTelemetryJob.lock.lock(); defer { dmTelemetryJob.lock.unlock() }
+    dmTelemetryJob.task = Task.detached(priority: .utility) {
+        guard let up = DmDiagUploader(origin: originText, apiBase: "telemetry/v1/") else { dmTelemetryFinish(token, box, (nil, DmDiagResult(outcome: .configuration, detail: "origin"))); return }
         let key: Curve25519.Signing.PrivateKey
-        do { key = try dmTelemetryStore(keyFile).loadOrCreate() } catch { finish(DmDiagResult(outcome: .prepare, detail: "identity")); return }
-        finish(await up.telemetryBatch(payload: payload, key: key))
+        do { key = try dmTelemetryStore(keyFile).loadOrCreate() } catch { dmTelemetryFinish(token, box, (nil, DmDiagResult(outcome: .prepare, detail: "identity"))); return }
+        dmTelemetryFinish(token, box, await up.telemetrySubmit(challenge: challengeText, payload: payload, key: key))
     }
 }
 @_cdecl("dm_telemetry_net_cancel")

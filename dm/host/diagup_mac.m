@@ -133,13 +133,16 @@ static const dm_diagup_shell_t mac_shell = { mac_configured, mac_start, dm_diagu
 #include "dm_telemetry.h"
 #include "dm_custom.h"
 void dm_telemetry_net_probe(unsigned token, void (*done)(unsigned, int));
-void dm_telemetry_net_send(unsigned token, const char *origin, const char *key_path, const char *body, long n, void (*done)(unsigned, int, const char *, int));
+void dm_telemetry_net_challenge(unsigned token, const char *origin, void (*http)(unsigned, int, const char *, long, int), void (*done)(unsigned, int, const char *, int));
+void dm_telemetry_net_send(unsigned token, const char *origin, const char *key_path, const char *challenge, const char *body, long n, void (*http)(unsigned, int, const char *, long, int), void (*done)(unsigned, int, const char *, int));
 void dm_telemetry_net_cancel(void);
 void dm_telemetry_net_forget(const char *key_path);
 static const char *mac_tele_key(void) { const char *k = getenv("DM_TELE_KEY_FILE"); if (k && *k) return k; static char p[1100]; char d[1024]; if (!dm_custom_dir(d, sizeof d)) return NULL; snprintf(p, sizeof p, "%s/dm_tele_identity.key", d); return p; }
 static void mac_tele_probe(unsigned token) { dm_telemetry_net_probe(token, dm_telemetry_net); }
 static void mac_tele_done(unsigned token, int outcome, const char *detail, int retry_after) { dm_telemetry_result(token, outcome, detail, retry_after); }
-static void mac_tele_send(unsigned token, const char *body, size_t n) { const char *o = mac_origin(), *k = mac_tele_key(); if (!o || !k) { mac_tele_done(token, DM_DIAGUP_CONFIG, "origin", 0); return; } dm_telemetry_net_send(token, o, k, body, (long)n, mac_tele_done); }
+static void mac_tele_http(unsigned token, int status, const char *body, long n, int retry_after) { dm_telemetry_http(token, status, body, (size_t)n, retry_after); }
+static void mac_tele_challenge(unsigned token) { const char *o = mac_origin(); if (!o) { mac_tele_done(token, DM_DIAGUP_CONFIG, "origin", 0); return; } dm_telemetry_net_challenge(token, o, mac_tele_http, mac_tele_done); }
+static void mac_tele_send(unsigned token, const char *challenge, const char *body, size_t n) { const char *o = mac_origin(), *k = mac_tele_key(); if (!o || !k) { mac_tele_done(token, DM_DIAGUP_CONFIG, "origin", 0); return; } dm_telemetry_net_send(token, o, k, challenge, body, (long)n, mac_tele_http, mac_tele_done); }
 static void mac_tele_forget(void) { const char *k = mac_tele_key(); if (k) dm_telemetry_net_forget(k); char d[1024], p[1100]; if (dm_custom_dir(d, sizeof d)) { snprintf(p, sizeof p, "%s/dm_tele_device.txt", d); unlink(p); } }
 static void mac_tele_device(dm_tele_device_t *t) {
     static char model[64] = "unknown", os[32], code[48], rev[48]; char d[1024], p[1100];
@@ -149,5 +152,5 @@ static void mac_tele_device(dm_tele_device_t *t) {
         if (!code[0]) { snprintf(code, sizeof code, "%s", NSUUID.UUID.UUIDString.UTF8String); int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC, 0600); if (fd >= 0) { (void)!write(fd, code, strlen(code)); close(fd); } } }
     t->platform = "mac"; t->app_version = "0.0"; t->build = "0"; t->source_revision = rev; t->channel = "mac"; t->model = model; t->os_version = os; t->locale = NSLocale.currentLocale.localeIdentifier.UTF8String; t->device_code = code; t->font = "other";
 }
-static const dm_telemetry_shell_t mac_tele_shell = { mac_configured, mac_tele_device, mac_tele_probe, mac_tele_send, dm_telemetry_net_cancel, mac_tele_forget, 0 };
+static const dm_telemetry_shell_t mac_tele_shell = { mac_configured, mac_tele_device, mac_tele_probe, mac_tele_challenge, mac_tele_send, dm_telemetry_net_cancel, mac_tele_forget, 0 };
 __attribute__((constructor)) static void diagup_mac_register(void) { dm_diagup_init(&mac_shell); dm_crashreport_init(&mac_crash_shell); dm_telemetry_init(&mac_tele_shell); }   // 只在 dmhost_diag 里链进来：一启动就登记 | linked only into dmhost_diag: registered at launch
