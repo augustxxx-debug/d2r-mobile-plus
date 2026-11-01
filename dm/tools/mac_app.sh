@@ -41,7 +41,7 @@ if [ -n "$ICLOUD" ]; then
   echo "签名用 profile：$(basename "$PF")（包标识 ${BID}，到期 ${EXP}）"
 fi
 make -C "$DM/host" ${M3:+dmhost_m3} > /dev/null
-QAHITS=$(strings "$DM/host/dmhost${M3:+_m3}" | grep -E '^DM_TEST_(UI|SAVEPKG_IN|SAVEPKG_OUT|SHARE_CLOSE)$' || true)   # 玩家包不带 QA 入口（CLAUDE.md §2.9）| player packages carry no QA entries
+QAHITS=$(strings "$DM/host/dmhost${M3:+_m3}" | grep -E '^DM_TEST_(UI|SAVEPKG_IN|SAVEPKG_OUT|SHARE_CLOSE|SAVE_SLOW)$' || true)   # 玩家包不带 QA 入口（CLAUDE.md §2.9）| player packages carry no QA entries
 [ -z "$QAHITS" ] || { echo "🔴 程序里有 QA 入口（$(echo $QAHITS)）：这是 QA 构建，不能出玩家包"; exit 3; }
 MIN=$(make -s -C "$DM/host" print-macos-min${M3:+-m3})   # 最低系统版本：与编译宿主用的是同一个数（host/Makefile 的 MACOS_MIN / MACOS_MIN_M3） | minimum system version: the same number the host is compiled with (MACOS_MIN / MACOS_MIN_M3 in host/Makefile)
 APP="$OUT/$NAME.app"; rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

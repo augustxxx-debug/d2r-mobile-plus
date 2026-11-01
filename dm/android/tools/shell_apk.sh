@@ -111,7 +111,7 @@ cp "$OUT" "$O/D2RMobile-android.apk" || die "没找到构建出的 APK"
 # Check: no game content in the APK -- strings from the real tables (the chronicle vault's item keys and icon paths, only those not already in the source: the string table and others carry item names) must not appear in the native library,
 #   and no game program / shader bundles / overlay may be packed
 A=$O/D2RMobile-android.apk; L=$O/libdm.so; unzip -p "$A" lib/arm64-v8a/libdm.so > "$L" || die "APK 里没有 lib/arm64-v8a/libdm.so"
-case " $* " in *" -PdmQaBuild=1 "*) ;; *) QAHITS=$(strings "$L" | grep -E '^DM_TEST_(UI|SAVEPKG_IN|SAVEPKG_OUT)$' || true); [ -z "$QAHITS" ] || die "libdm.so 里有 QA 入口（$(echo $QAHITS)）：玩家包不带（CLAUDE.md §2.9）";; esac
+case " $* " in *" -PdmQaBuild=1 "*) ;; *) QAHITS=$(strings "$L" | grep -E '^DM_TEST_(UI|SAVEPKG_IN|SAVEPKG_OUT|SAVE_SLOW)$' || true); [ -z "$QAHITS" ] || die "libdm.so 里有 QA 入口（$(echo $QAHITS)）：玩家包不带（CLAUDE.md §2.9）";; esac
 n=0; hit=0
 while IFS= read -r k; do [ ${#k} -ge 6 ] || continue; git -C "$DM" grep -qF -- "$k" -- . && continue
   n=$((n + 1)); LC_ALL=C grep -qaF -- "$k" "$L" && { hit=$((hit + 1)); echo "  原生库里有：$k"; }

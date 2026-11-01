@@ -21,6 +21,7 @@
 #include "../third_party/libdeflate/libdeflate.h"
 #include <CommonCrypto/CommonDigest.h>
 #include <dirent.h>
+#include <stdatomic.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -203,6 +204,15 @@ static int walk(const char *root, pfl *l) {
         closedir(d2); }
     closedir(d); if (!rc) qsort(l->v, (size_t)l->n, sizeof *l->v, cmp_pf); return rc;
 }
+// 进度（文件数）：导出、校验在工作线程写，面板读。QA 构建可放慢，真存档太小，看不到进度条（§2.9）| progress (files): written by the worker in export and inspect, read by the panel. QA builds can slow it down: real saves are too small to see the bar
+static _Atomic int g_prog_done, g_prog_total;
+void dm_savepkg_progress_read(int *done, int *total) { *done = atomic_load(&g_prog_done); *total = atomic_load(&g_prog_total); }
+static void prog(int done, int total) {
+    atomic_store(&g_prog_total, total); atomic_store(&g_prog_done, done);
+#ifdef DM_QA_BUILD
+    { const char *slow = getenv("DM_TEST_SAVE_SLOW"); if (slow) usleep((useconds_t)atoi(slow) * 1000); }
+#endif
+}
 static int hash_file(pf *x) { size_t n = 0; uint8_t *b = read_all(x->phys, MAX_FILE, &n); if (!b) return -1; x->size = (long long)n; sha_hex(b, n, x->sha); free(b); return 0; }
 // 单位摘要：跨端稳定（路径按字节序 + 每个文件的 SHA-256）| unit digest, stable across platforms (paths in byte order + each file's SHA-256)
 static void unit_sha(const pfl *l, const char *unit, char o[65]) { CC_SHA256_CTX c; CC_SHA256_Init(&c); for (int i = 0; i < l->n; i++) if (!strcmp(l->v[i].unit, unit)) { CC_SHA256_Update(&c, l->v[i].rel, (CC_LONG)strlen(l->v[i].rel) + 1); CC_SHA256_Update(&c, l->v[i].sha, 64); } uint8_t h[CC_SHA256_DIGEST_LENGTH]; CC_SHA256_Final(h, &c); hex(h, sizeof h, o); }
@@ -290,7 +300,7 @@ int dm_savepkg_export(const char *tree, const char *out_zip, const dm_pkg_export
     fprintf(m, "},\n\"files\":["); for (int i = 0; i < all.n; i++) { pf *x = &all.v[i]; fprintf(m, "%s\n{\"path\":", i ? "," : ""); jput(m, x->rel); fprintf(m, ",\"unit\":"); jput(m, x->unit); fprintf(m, ",\"size\":%lld,\"mtime_ms\":%lld,\"sha256\":\"%s\"}", x->size, (long long)x->mt, x->sha); } fprintf(m, "]\n}\n"); fclose(m);
     pth tmp; snprintf(tmp, sizeof tmp, "%s.tmp", out_zip); unlink(tmp); FILE *f = fopen(tmp, "wb"); ze *z = calloc((size_t)all.n + 1, sizeof *z);
     if (f && z && !test_fail("export_write") && !zip_put(f, &z[0], "manifest.json", (const uint8_t *)mj, mjn)) { rc = DM_PKG_OK;
-        for (int i = 0; i < all.n && !rc; i++) { size_t bn = 0; uint8_t *b = read_all(all.v[i].phys, MAX_FILE, &bn); if (!b || zip_put(f, &z[i + 1], all.v[i].rel, b, bn)) rc = DM_PKG_E_IO; free(b); if (!rc && o->progress && o->progress(i + 1, all.n)) rc = DM_PKG_E_IO; }
+        for (int i = 0; i < all.n && !rc; i++) { size_t bn = 0; uint8_t *b = read_all(all.v[i].phys, MAX_FILE, &bn); if (!b || zip_put(f, &z[i + 1], all.v[i].rel, b, bn)) rc = DM_PKG_E_IO; free(b); prog(i + 1, all.n); if (!rc && o->progress && o->progress(i + 1, all.n)) rc = DM_PKG_E_IO; }
         if (!rc && zip_end(f, z, all.n + 1)) rc = DM_PKG_E_IO; }
     if (f && fflush(f)) rc = DM_PKG_E_IO; if (f && !rc && fsync(fileno(f))) rc = DM_PKG_E_IO; if (f) fclose(f); if (!rc && rename(tmp, out_zip)) rc = DM_PKG_E_IO; if (rc) unlink(tmp);
     LOG("存档管理：导出 %s（%d 个文件，跳过 %d 个不属于存档的文件、%d 个联机角色）", rc ? "失败" : "完成", all.n, all.skipped, all.coop);
@@ -421,7 +431,8 @@ int dm_savepkg_inspect(const char *zip, const char *save, int restore, dm_pkg_vi
     long long fr = dm_savepkg_free_bytes(save); pth parent; strlcpy(parent, save, sizeof parent); if (fr < 0) { char *sl = strrchr(parent, '/'); if (sl) *sl = 0; fr = dm_savepkg_free_bytes(parent); } if (fr >= 0 && fr < 2 * total + (32ll << 20)) { rc = DM_PKG_E_SPACE; goto done; } if (test_fail("space")) { rc = DM_PKG_E_SPACE; goto done; }
     // 解到临时目录，逐文件 SHA-256 | extract into the temporary directory, SHA-256 per file
     if (mkdirs_for(tmp) || mkdir(tmp, 0755)) { rc = DM_PKG_E_IO; goto done; } pth fd; snprintf(fd, sizeof fd, "%s/files", tmp); if (mkdir(fd, 0755)) { rc = DM_PKG_E_IO; goto done; }
-    for (jn *f = files->kid; f; f = f->next) { const char *p = jstrv(f, "path"); char unit[64] = ""; int c = dm_savepkg_path_class(p, unit, sizeof unit); if (c == PC_UNKNOWN) { v->skipped_unknown++; continue; } const zr *e = zf_find(&z, p); uint8_t *b = zf_read(&z, e, MAX_FILE, &zerr); if (!b) { rc = zerr; goto done; } char h[65]; sha_hex(b, e->usize, h); if (strcmp(h, jstrv(f, "sha256"))) { free(b); rc = DM_PKG_E_CHECK; goto done; }
+    int pn = 0, pi = 0; for (jn *f = files->kid; f; f = f->next) pn++;
+    for (jn *f = files->kid; f; f = f->next) { prog(++pi, pn); const char *p = jstrv(f, "path"); char unit[64] = ""; int c = dm_savepkg_path_class(p, unit, sizeof unit); if (c == PC_UNKNOWN) { v->skipped_unknown++; continue; } const zr *e = zf_find(&z, p); uint8_t *b = zf_read(&z, e, MAX_FILE, &zerr); if (!b) { rc = zerr; goto done; } char h[65]; sha_hex(b, e->usize, h); if (strcmp(h, jstrv(f, "sha256"))) { free(b); rc = DM_PKG_E_CHECK; goto done; }
         pth dst; snprintf(dst, sizeof dst, "%s/%s", fd, p); int wr = mkdirs_for(dst); if (!wr) wr = write_new(dst, b, e->usize); int wer = errno; free(b); if (wr) { rc = wer == EEXIST ? DM_PKG_E_DUP : DM_PKG_E_IO; goto done; } v->nfiles++; v->total_bytes += e->usize; if (c == PC_SETTINGS) v->has_settings = 1; }   // EEXIST：同一个包里两个名字落到同一个文件（大小写、NFC / NFD）| EEXIST: two names in one package land on the same file (case, NFC / NFD)
     rc = convert_step(fd, v); if (rc) goto done;
     pfl l = {0}; if (walk(fd, &l)) { free(l.v); rc = DM_PKG_E_IO; goto done; } for (int i = 0; i < l.n; i++) if (hash_file(&l.v[i])) { free(l.v); rc = DM_PKG_E_IO; goto done; }
