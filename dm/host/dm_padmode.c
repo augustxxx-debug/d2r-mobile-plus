@@ -221,6 +221,10 @@ void dm_padmode_page_pulse(uint64_t mask) { atomic_store(&g_pg_pulse, mask); ato
 // a page that declared up (down) gets the stick's upward (downward) push zeroed, likewise left / right (the original game no longer sees it; an undeclared direction still reaches it, audit P1-1), and a push past half (hysteresis: resets inside a quarter;
 // the dominant axis only) becomes that direction key "held", from which the filter below derives press edges exactly as for real keys -- on our pages the stick behaves like the D-pad. Called before the filter
 static _Atomic uint64_t g_pg_stick;   // 左摇杆折算出的方向键位 | direction bits derived from the left stick
+// 原版菜单把左摇杆当方向键（B071，dm_stick_nav.h）：菜单在屏上时每帧声明（游戏主线程），3 帧不声明就失效。和上面的页接管不同：方向键照常归原版（按住连发也是原版的），不进页的按下沿
+// The left stick as D-pad for an original menu (B071, dm_stick_nav.h): declared every frame while the menu is up (game main thread), lapses after 3 frames. Unlike the page takeover above, the D-pad stays the game's (including its own hold-repeat) and nothing goes to a page's press edges
+static _Atomic uint64_t g_nav_frame = UINT64_MAX, g_nav_keys;
+void dm_padmode_stick_as_dpad(void) { atomic_store(&g_nav_frame, dm_guest_frame()); }
 void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
     static dm_stick_nav nav; const uint64_t V = DM_BTN_UP | DM_BTN_DOWN, H = DM_BTN_LEFT | DM_BTN_RIGHT;
     uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
@@ -228,9 +232,13 @@ void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
     // In controller mode convert on every sample, not reset by the declaration (P1-1 follow-up): the direction bits are not masked, so the filter derives edges continuously -- a push held across a
     // declaration change (the game has just moved the focus to the table's first row and only now does the page declare Up) is not a new press
     static uint64_t eat;
-    if (!g_cur || !lx || !ly) { dm_stick_nav_reset(&nav); eat = 0; atomic_store(&g_pg_stick, 0); return; }
+    static uint64_t nav_hold;
+    if (!g_cur || !lx || !ly) { dm_stick_nav_reset(&nav); eat = 0; nav_hold = 0; atomic_store(&g_nav_keys, 0); atomic_store(&g_pg_stick, 0); return; }
     uint64_t d = dm_stick_nav_dirs(&nav, *lx, *ly);   // 公共折算（dm_stick_nav.h） | shared conversion
     atomic_store(&g_pg_stick, d);
+    { uint64_t nf = atomic_load(&g_nav_frame), out = 0; int want = nf != UINT64_MAX && dm_guest_frame() - nf <= 3 && !m;   // 页接管时归页 | a page's takeover wins
+      if (dm_stick_nav_as_dpad(&nav_hold, want, d, &out)) { atomic_store(&g_nav_keys, out); *lx = *ly = 0; return; }
+      atomic_store(&g_nav_keys, 0); }
     dm_stick_nav_withhold(dm_stick_nav_take(&eat, d, m & (V | H)), lx, ly);   // 只扣声明了的方向（审计 P1-1）与推着期间页收过的方向（P1-1 补） | withhold the declared directions (audit P1-1) and those the page took while held (follow-up)
 }
 uint64_t dm_padmode_page_filter(uint64_t bt) {
@@ -239,7 +247,7 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
     uint64_t pulse = 0; { int n = atomic_load(&g_pg_pulse_n); if (n > 0) { atomic_store(&g_pg_pulse_n, n - 1); pulse = atomic_load(&g_pg_pulse); } }
     eat &= bt;   // 声明换了键（如难度行按下 = 焦点交回原版表格、只剩「上」）时，前一份声明里还按着的键同样松开前不交原版（否则这一下下键又让原版焦点再走一格，B015） | keys still held from a previous, different declaration are withheld until released too (B015)
     if (m) { atomic_fetch_or(&g_pg_ev, down & m); atomic_store(&g_pg_held, vb & m); eat |= bt & m; return (bt & ~eat) | pulse; }
-    atomic_store(&g_pg_ev, 0); atomic_store(&g_pg_held, 0); return (bt & ~eat) | pulse;
+    atomic_store(&g_pg_ev, 0); atomic_store(&g_pg_held, 0); return (bt & ~eat) | pulse | atomic_load(&g_nav_keys);
 }
 // 编年史仓库页开着时（手柄模式）把原版「按住 Y」那半句提示的字换成我们实际做的事：原版在储藏箱各页对背包物品的提示是「丢弃（按住移动到私人储藏箱）」，
 // 第六页上按住 Y 被我们接管成存入编年史仓库（dm_vault_ui.c）。这半句只写「存入」：原版那条本来就超宽、在限宽里滚动（截图对照），写短到不滚，人就在编年史页上。换法同上面的手柄 / 触屏说法：只换当前语言串表里这个键的串指针，离开那一页换回

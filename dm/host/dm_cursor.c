@@ -2850,6 +2850,13 @@ static uint64_t ui_panel(uint64_t root, const char *name) {
 }
 static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 | game main thread, every frame
     void uimsg_emit(const char *, const char *, const char *);
+    // 手柄暂停菜单左摇杆移焦点（B071）：只在暂停菜单是最上面一页时。选项页 / 编年史 / 消息记录盖在它上面时它还算开着，确认框等模态框的输入归框
+    // Left stick moves the focus on the controller pause menu (B071): only while the pause menu is the top page. It still counts as open under the options pages / Chronicle / message log, and a modal keeps its own input
+    if (root_panel_shown(root, "PauseLayoutGarden") || root_panel_shown(root, "PauseLayout")) {
+        static const char *const over[] = { "SettingsPanel", "SoundOptionsPanel", "3PlusGraphicsOptionsPanel", "GameplayOptionsPanel", "OnlineGameOptionsPanel", "VideoOptionsPanel", "ChroniclePanel", "MessageLogPanel" };
+        int top = !modal_any(root, 1, NULL); for (unsigned i = 0; top && i < sizeof over / sizeof over[0]; i++) top = !root_panel_shown(root, over[i]);
+        void dm_padmode_stick_as_dpad(void); if (top) dm_padmode_stick_as_dpad();
+    }
     int st = (root_panel_shown(root, "BankExpansionLayout") ? DM_PS_BANK : 0) | (dm_shop_open() ? DM_PS_VENDOR : 0)   // 商人页：游戏自己的商店状态（dm_actions.c 每帧读） | vendor page: the game's own shop state (read every frame by dm_actions.c)
            | (root_panel_shown(root, "YouDiedModal") ? DM_PS_DEAD : 0) | (root_panel_shown(root, "ImbueItemsPanel") ? DM_PS_IMBUE : 0) | (root_panel_shown(root, "HoradricCubeLayout") ? DM_PS_CUBE : 0);
     if (st & DM_PS_BANK) { uint64_t bk = ui_panel(root, "BankExpansionLayout"), tabs = bk ? ui_find(bk, "BankTabs", 0) : 0; if (tabs && TAB_SEL(tabs) == 5) st |= DM_PS_VAULT; }   // 第六页「编年史」：双击存入走 ui_use_pump，不发原版「按住 Y」（那一页游戏当魔盒页，会送进魔盒） | the sixth page 「编年史」(Chronicle): double-tap deposit goes through ui_use_pump and does not send the original 「按住 Y」(Hold Y) (the game treats that page as the cube page and would send the item into the cube)

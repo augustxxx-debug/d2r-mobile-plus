@@ -44,3 +44,13 @@ static inline uint64_t dm_stick_nav_take(uint64_t *eat, uint64_t dirs, uint64_t 
     *eat = (*eat & dirs) | (dirs & declared);
     return declared | *eat;
 }
+// 原版菜单把左摇杆当方向键（B071，手柄暂停菜单：原版把摇杆当自由光标，推出七行之外金框就消失）：页声明了 want 时只把上下交给原版当方向键按着，摇杆本身一律不交。
+// 推着跨过声明结束（如按 A 进了选项页）：松开前摇杆仍不交，否则还推着的这一下把下一页的光标推走。*out 是这一拍要加给原版的方向键，返回 1 = 把摇杆清零。
+// The left stick as D-pad for an original menu (B071, controller pause menu: the game treats the stick as a free cursor and the focus frame vanishes once it leaves the rows): while declared, only up / down reach the game, as held D-pad keys, and the stick itself never does.
+// Held across the end of the declaration (e.g. A opened the options page): the stick stays withheld until released, or that push would move the next page's cursor. *out = direction keys to add for the game this sample; returns 1 = zero the stick.
+static inline int dm_stick_nav_as_dpad(uint64_t *hold, int want, uint64_t dirs, uint64_t *out) {
+    uint64_t v = dirs & (DM_BTN_UP | DM_BTN_DOWN);
+    *hold = dirs && (want || *hold);
+    *out = want ? v : 0;
+    return want || *hold;
+}
