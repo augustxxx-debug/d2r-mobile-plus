@@ -59,3 +59,29 @@ static NSData *dm_diagnostic_scrub_names(NSData *data, NSString *home, NSString 
 static inline NSData *dm_diagnostic_scrub(NSData *data, NSString *home, NSString *bundle) {
     return dm_diagnostic_scrub_names(data,home,bundle,nil);
 }
+
+// 自动 / 手动上传再抹一遍本机专有的字面值（设备名、Mac 用户名）：只抹整词；iOS 上没权益时系统给的设备名就是「iPhone」，这种通用词外壳不传进来 | blank machine-specific literals (device name, Mac user name) for uploads: whole words only; the shells do not pass generic names such as a bare "iPhone"
+static NSData *dm_diagnostic_scrub_literals(NSData *data, NSArray<NSString *> *literals) {
+    NSString *text = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil; if (!text) return data;
+    for (NSString *lit in literals) { if (lit.length < 2) continue;
+        NSRegularExpression *r = [NSRegularExpression regularExpressionWithPattern:[NSString stringWithFormat:@"(?<![\\p{L}\\p{N}_])%@(?![\\p{L}\\p{N}_])", [NSRegularExpression escapedPatternForString:lit]] options:0 error:nil];
+        text = [r stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0, text.length) withTemplate:@"<device>"]; }
+    return [text dataUsingEncoding:NSUTF8StringEncoding];
+}
+// 上传专用的再一道（上传诊断报告，dm_sharelog.m / host/diagup_mac.m）：在上面整份脱敏之后，再抹网址、IP 地址、带令牌 / 票据 / 口令 / 私钥字样的整行。
+// 本地导出不走这一道（玩家自己发给谁由他定，原导出内容不变）；上传不靠服务端再脱敏。
+// Upload-only extra pass (diagnostic upload, dm_sharelog.m / host/diagup_mac.m): after the full scrub above, also blank URLs, IP addresses and whole lines mentioning tokens / tickets / passwords / private keys.
+// The local export does not take this pass (the player decides where it goes; its content is unchanged); the upload does not rely on the server scrubbing again.
+static NSData *dm_diagnostic_scrub_upload(NSData *data) {
+    NSString *text = data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil; if (!text) return data;
+    NSRegularExpression *line = [NSRegularExpression regularExpressionWithPattern:@"^.*(?:authorization|bearer\\s|cookie|private[ _-]?key|passw(?:or)?d|secret|(?:device|host|reader|operator|access|refresh)[ _-]?token|ticket\\s*[:=]|-----BEGIN ).*$"
+                                                                        options:NSRegularExpressionCaseInsensitive | NSRegularExpressionAnchorsMatchLines error:nil];
+    text = [line stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0, text.length) withTemplate:@"<sensitive-line-redacted>"];
+    NSArray<NSArray<NSString *> *> *rules = @[ @[ @"[a-z][a-z0-9+.-]*://[^\\s<>\"']+", @"<url>" ], @[ @"(?<![0-9.])(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?![0-9.])", @"<ip>" ],
+                                              @[ @"(?<![0-9A-Za-z:])(?:(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?::[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*|[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*::)(?![0-9A-Za-z:])", @"<ip>" ] ];   // IPv6：完整至少四组，或带 :: 的缩写；两个冒号的时间戳不算 | IPv6: four or more full groups, or a :: form; two-colon timestamps are not
+    for (NSArray<NSString *> *r in rules) {
+        NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:r[0] options:NSRegularExpressionCaseInsensitive error:nil];
+        text = [re stringByReplacingMatchesInString:text options:0 range:NSMakeRange(0, text.length) withTemplate:r[1]];
+    }
+    return [text dataUsingEncoding:NSUTF8StringEncoding];
+}

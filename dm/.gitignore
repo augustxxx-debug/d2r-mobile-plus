@@ -9,3 +9,7 @@ gfx/tools/dmsh_xlate/obj/
 gfx/tools/dmsh_xlate/bin/
 third_party/ryujinx/**/obj/
 third_party/ryujinx/**/bin/
+
+# 上传诊断报告的 Mac 验收宿主产物 | diagnostic upload Mac acceptance host products
+host/dmhost_diag
+host/dm_diag_upload.dylib

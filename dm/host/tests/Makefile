@@ -32,6 +32,8 @@ run: \
 	$(B)/t_custom_readlog \
 	$(B)/t_community \
 	$(B)/t_stick_nav \
+	$(B)/t_diagup \
+	$(B)/t_crashreport \
 	$(B)/t_crashfence \
 	$(B)/t_diffrow \
 	$(B)/t_doorspot \
@@ -120,6 +122,8 @@ run: \
 	$(B)/t_crashfence 2>/dev/null
 	$(B)/t_community 2>/dev/null
 	$(B)/t_stick_nav
+	$(B)/t_diagup 2>/dev/null
+	$(B)/t_crashreport 2>/dev/null
 	$(B)/t_diffrow
 	$(B)/t_res_cap
 	$(B)/t_bright_cap
@@ -303,6 +307,12 @@ $(B)/t_diffrow: t_diffrow.c ../dm_hud.c ../dm_hud.h | $(B)
 
 $(B)/t_stick_nav: t_stick_nav.c ../dm_stick_nav.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_stick_nav.c
+$(B)/t_crashreport: t_crashreport.c ../dm_crashreport.c ../dm_crashreport.h ../dm_diagup.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_crashreport.c
+
+$(B)/t_diagup: t_diagup.c ../dm_diagup.c ../dm_diagup.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_diagup.c
+
 $(B)/t_community: t_community.c site_contract_cases.h ../dm_site.h ../dm_manifest.c ../dm_manifest.h ../dm_community.c ../dm_community.h ../dm_custom.c ../dm_custom.h ../../ios/Sources/dm_touch_controls.c ../../ios/Sources/dm_touch_controls.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -I../../ios/Sources -o $@ t_community.c ../dm_manifest.c ../../ios/Sources/dm_touch_controls.c -lm
 

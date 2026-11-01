@@ -62,6 +62,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	@if [ "$$(uname -s)" = Darwin ]; then \
 	  clang -fobjc-arc -framework Foundation t_diagnostic_scrub.m -o /tmp/dm-test-diagnostic-scrub && /tmp/dm-test-diagnostic-scrub; \
 	  clang -fobjc-arc -framework Foundation t_crashlog.m -o /tmp/dm-test-crashlog && /tmp/dm-test-crashlog; \
+	  xcrun swiftc -swift-version 6 -parse-as-library ../Sources/dm_diag_upload.swift t_diag_upload.swift -o /tmp/dm-test-diag-upload && /tmp/dm-test-diag-upload; \
 	else echo "Skip diagnostic export redaction test: requires Apple Foundation"; fi
 	python3 test_casc_add_paths.py
 	python3 test_bench_device.py
@@ -81,6 +82,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_community_entry.py
 	python3 test_difficulty_row.py
 	python3 test_padmode_compare_hint.py   # B014：手柄提示条「比较（按住）」 | B014: controller legend "Compare (hold)"
+	python3 test_diag_upload_layout.py   # 上传诊断报告提示框：布局控件、文案键、宿主接线（dm_diagup.c） | diagnostic upload box: widgets, text keys, host wiring
 	$(call fixture_test,t_native_binding)
 	$(call fixture_test,t_game_bridge)
 	./t_binding_freshness

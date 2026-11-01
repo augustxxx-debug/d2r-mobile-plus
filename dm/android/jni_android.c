@@ -129,19 +129,29 @@ static int link_romfs(const char *romfs) {
 // Test switch DM_TEST_SHARELOG_CLOSE=<seconds> (same name as iOS): no sheet; the export is also copied to files/sharelog_test.txt for regression checks. One export at a time.
 void dm_android_share_file(const char *path, const char *title);
 static _Atomic int g_share_busy;
+static void device_line(char *dev, size_t n) {
+    char model[PROP_VALUE_MAX] = "", maker[PROP_VALUE_MAX] = "", rel[PROP_VALUE_MAX] = "", soc[PROP_VALUE_MAX] = "";
+    __system_property_get("ro.product.model", model); __system_property_get("ro.product.manufacturer", maker); __system_property_get("ro.build.version.release", rel); __system_property_get("ro.soc.model", soc);
+    snprintf(dev, n, "%s %s / Android %s / SoC %s（GPU 与驱动见日志里的 NVN caps 行）", maker, model, rel, soc);
+}
+static void app_id_of(char *app_id, size_t n) {   // 包名从内部目录取（/data/user/<n>/<包名>/files）：包名换过，-PdmAppId 也会换，不写死 | the package name comes from the internal directory: it changed once and -PdmAppId changes it too, so it is not hard-coded
+    char t[1024]; app_id[0] = 0; snprintf(t, sizeof t, "%s", g_files); char *e = strrchr(t, '/'); if (e && !strcmp(e, "/files")) { *e = 0; e = strrchr(t, '/'); if (e && e[1]) snprintf(app_id, n, "%s", e + 1); }
+}
+// 自动上报崩溃的打包（crashreport_android.c，Java 工作线程调）：与分享诊断日志同一份组装与脱敏 | packing for automatic crash reports: the same assembly and scrub as Share Diagnostics
+int dm_android_build_report(const char *out_path) {
+    char dev[600], app_id[256]; device_line(dev, sizeof dev); app_id_of(app_id, sizeof app_id);
+    return dm_sharelog_build(g_runtime, g_files, out_path, getenv("DM_VERSION_LABEL"), dev, app_id[0] ? app_id : "com.augustusplay.d2rmobileplus") >= 0;
+}
 static void *sharelog_worker(void *arg) {
     (void)arg;
-    char dir[1200], out[1300], model[PROP_VALUE_MAX] = "", maker[PROP_VALUE_MAX] = "", rel[PROP_VALUE_MAX] = "", soc[PROP_VALUE_MAX] = "", dev[600];
-    __system_property_get("ro.product.model", model); __system_property_get("ro.product.manufacturer", maker); __system_property_get("ro.build.version.release", rel); __system_property_get("ro.soc.model", soc);
-    snprintf(dev, sizeof dev, "%s %s / Android %s / SoC %s（GPU 与驱动见日志里的 NVN caps 行）", maker, model, rel, soc);
+    char dir[1200], out[1300], dev[600];
+    device_line(dev, sizeof dev);
     snprintf(dir, sizeof dir, "%s/share", g_files); mkdir(dir, 0700);
     { DIR *d = opendir(dir); struct dirent *e; if (d) { while ((e = readdir(d))) if (e->d_name[0] != '.') { char old[2500]; snprintf(old, sizeof old, "%s/%s", dir, e->d_name); unlink(old); } closedir(d); } }   // 上次导出的删掉 | previous exports removed
     const char *ver = getenv("DM_VERSION_LABEL"); char vs[64] = "", tsb[32]; { const char *v = ver ? ver : ""; size_t n = 0; for (; *v && n < sizeof vs - 1; v++) { if ((*v >= '0' && *v <= '9') || (*v >= 'a' && *v <= 'z') || (*v >= 'A' && *v <= 'Z') || *v == '.' || *v == '+') vs[n++] = *v; else if (n && vs[n - 1] != '_') vs[n++] = '_'; } while (n && vs[n - 1] == '_') n--; vs[n] = 0; }   // 「1.0.2 · 975d53d」→ 1.0.2_975d53d：分隔不能丢，否则版本和提交黏在一起（B091） | the separator stays, or the version and commit run together (B091)
     time_t now = time(NULL); strftime(tsb, sizeof tsb, "%Y%m%d_%H%M%S", localtime(&now));
     snprintf(out, sizeof out, "%s/D2RMobile_diagnostics_%s_%s.txt", dir, vs[0] ? vs : "dev", tsb);
-    // 包名从内部目录取（/data/user/<n>/<包名>/files）：包名换过（com.xiaoboluo.d2r → com.augustusplay.d2rmobileplus），-PdmAppId 也会换，不写死
-    // the package name comes from the internal directory (/data/user/<n>/<package>/files): it changed once (com.xiaoboluo.d2r → com.augustusplay.d2rmobileplus) and -PdmAppId changes it too, so it is not hard-coded
-    char app_id[256] = ""; { char t[1024]; snprintf(t, sizeof t, "%s", g_files); char *e = strrchr(t, '/'); if (e && !strcmp(e, "/files")) { *e = 0; e = strrchr(t, '/'); if (e && e[1]) snprintf(app_id, sizeof app_id, "%s", e + 1); } }
+    char app_id[256]; app_id_of(app_id, sizeof app_id);
     long n = dm_sharelog_build(g_runtime, g_files, out, ver, dev, app_id[0] ? app_id : "com.augustusplay.d2rmobileplus");
     if (n < 0) { LOG("【红】诊断日志：打包失败"); atomic_store(&g_share_busy, 0); return NULL; }
     LOG("诊断日志：已打包 %s（%ld 字节）", strrchr(out, '/') + 1, n);
@@ -164,6 +174,7 @@ static void android_sharelog(void) {
 // In-game community box (dm_community.c: pause menu / main menu / Custom page "About"):
 // the clipboard callback runs on the game's main thread and JNI stays off guest threads (as dm_android_share_file), so a separate thread hands it to Java; starting that thread counts as success.
 // Manifest: a normal start makes no network access (DmActivity), so this reads files/community_manifest.json written by the loading page's CommunityFetch (valid manifests only); without that file only dm_community's own cache is used
+void dm_android_diag_export(void) { android_sharelog(); }   // 上传提示框的「导出到本地」（crashreport_android.c） | Export locally in the upload box (crashreport_android.c)
 void dm_android_copy_text(const char *text);
 static void *copy_thread(void *arg) { dm_android_copy_text(arg); free(arg); return NULL; }
 static int android_copy(const char *text) {
@@ -172,6 +183,7 @@ static int android_copy(const char *text) {
     if (pthread_create(&th, NULL, copy_thread, t)) { free(t); return 0; }
     pthread_detach(th); return 1;
 }
+int dm_android_diag_copy(const char *text) { return android_copy(text); }   // 上传提示框的「复制编号」 | Copy number in the upload box
 static void community_boot(void) {
     void dm_community_copy_init(int (*)(const char *)), dm_community_load(void); int dm_community_manifest(const char *, size_t);
     dm_community_copy_init(android_copy); dm_community_load();

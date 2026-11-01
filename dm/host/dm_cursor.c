@@ -548,7 +548,7 @@ int dm_ui_touch_active(void) { return atomic_load(&g_ut_phase) != 0; }
 // Whether a vertical drag in the front end can count as a scroll: not while the delete-character confirmation box (long-press 「是」(Yes); the long-press is voided as soon as the finger drifts), the mode page (outside the plaques = back), the naming page, or a confirmation box is open; those stay taps as before
 // 社区 / 关于弹窗开着也不当（RC1.1 真机 B058：真手指点「复制」有几像素纵向抖动，前端判成「纵向拖 → 滚动」、这一下不点，框根本收不到；框里没有可滚的东西，抖动一律按点按交给框）
 // nor while the community / About box is up (RC1.1 on-device B058: a real finger tapping Copy drifted a few pixels vertically, the front end took it for "vertical drag -> scroll" and dropped the tap; nothing in the box scrolls, so a drift is always a tap for the box)
-int dm_ui_fe_drag_ok(void) { int dm_community_modal(void); return !atomic_load(&g_fe_del_open) && !atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_name_open) && !atomic_load(&g_fe_confirm_open) && !dm_community_modal(); }
+int dm_ui_fe_drag_ok(void) { int dm_community_modal(void), dm_diagup_modal(void); return !atomic_load(&g_fe_del_open) && !atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_name_open) && !atomic_load(&g_fe_confirm_open) && !dm_community_modal() && !dm_diagup_modal(); }
 static uint64_t ui_hash(const char *s) { uint64_t h = 0xcbf29ce484222325ull; for (; *s; s++) h = (h ^ (uint8_t)*s) * 0x100000001b3ull; return h; }
 static void ui_send_mouse_arg(module_t *m, uint64_t root, uint64_t act, int x, int y, int arg) {   // 负载 +4 / +8 = 光标，+0x10 = 滚轮量（120 一格）/ 键码（VK） | Payload +4 / +8 = cursor, +0x10 = wheel amount (120 per notch) / key code (VK)
     static uint64_t payload[16], msg[8];
@@ -1241,7 +1241,7 @@ static int ui_classify0(module_t *m, uint64_t root, int x, int y, char *hit, siz
     return 3;   // 面板外（不发鼠标点击） | Outside the panel (no mouse click sent)
 }
 void dm_ui_tab_go(void) {   // 前端在「点按落在页签上」（最近一次命中结果 = 2）时调：按 |差| 次 ZR / ZL（顶部五页签 R / L） | Called by the front end when "the tap landed on a tab" (most recent hit result = 2): press ZR / ZL |delta| times (R / L for the five top tabs)
-    { int dm_community_modal(void); if (dm_community_modal()) { LOG("界面页签：社区 / 关于弹窗开着，不切页签"); return; } }   // 兜底（审计 P2-2）：弹窗开着时不切 | backstop (audit P2-2): no switch while the box is up
+    { int dm_community_modal(void), dm_diagup_modal(void); if (dm_community_modal() || dm_diagup_modal()) { LOG("界面页签：社区 / 关于 / 诊断弹窗开着，不切页签"); return; } }   // 兜底（审计 P2-2）：弹窗开着时不切 | backstop (audit P2-2): no switch while the box is up
     DM_LAT("tab_go");
     int d = atomic_load(&g_tab_delta), top = atomic_load(&g_tab_top);
     if (top == 4) { atomic_store(&g_set_back_at, dm_guest_frame() + 2); LOG("界面对话菜单：商人页结果提示 → 按返回键收掉"); return; }
@@ -1272,8 +1272,9 @@ static int imbue_locked(module_t *m, uint64_t root) {
 // (dm_touch_controls.c) turn 0 into a UI mouse click, and the mouse pump hands the lift to dm_community_ui_tap while the box is up (only the two Copy buttons and OK, the rest swallowed),
 // so a tab is never classified as "tab" either. 9943fd2 answered 6 "no click": the gesture layer then neither clicks nor sends a key, so on iOS in panel mode the box's buttons could not be
 // tapped and it could not be closed. The async query (ui_item_pump, iOS) and the sync query (dm_ui_item_at_now, Mac) share this one place. Returns -1 when no box is up
+__attribute__((weak)) int dm_diagup_hit_answer(void) { return -1; }   // 诊断上传 / 自动上报确认框（dm_diagup.c），同社区弹窗 | diagnostic upload / crash report consent box, as the community box
 __attribute__((weak)) int dm_community_hit_answer(void) { return -1; }   // 没有社区模块（单测）：不接管 | no community module (unit tests): no takeover
-static int ui_modal_answer(void) { return dm_community_hit_answer(); }   // 答案本身在 dm_community.c（单测 t_community 第 25 项把它接上手势层验整条链） | the answer itself lives in dm_community.c (t_community case 25 wires it to the gesture layer)
+static int ui_modal_answer(void) { int d = dm_diagup_hit_answer(); return d >= 0 ? d : dm_community_hit_answer(); }   // 答案本身在 dm_community.c（单测 t_community 第 25 项把它接上手势层验整条链） | the answer itself lives in dm_community.c (t_community case 25 wires it to the gesture layer)
 int dm_ui_item_at_now(float nx, float ny) {   // 只许游戏主线程调（Mac 宿主触点脚本在取手柄处跑） | Callable only from the game main thread (the Mac host touch point script runs where the controller is polled)
     { int r0 = ui_modal_answer(); if (r0 >= 0) return r0; }   // 同 ui_item_pump：弹窗开着答面板内控件（复核 P1-2） | as ui_item_pump: answer "control in a panel" while the box is up (recheck P1-2)
     module_t *m = main_module(); if (!m) return 0; uint64_t root = 0; memcpy(&root, m->base + 0x2f05458, 8);
@@ -1677,9 +1678,11 @@ static uint64_t dg_pack(float nx, float ny) { nx = nx < 0 ? 0 : nx > 1 ? 1 : nx;
 // 社区 / 关于弹窗（dm_community.c）的吞输入接口：弱定义的缺省 = 没有弹窗；产品里由 dm_community.c 的强定义替换（不带社区模块的单测用这份）
 // modal-input hooks of the community / About box (dm_community.c): weak defaults = no box; the product's strong definitions in dm_community.c replace them (unit tests without the module use these)
 __attribute__((weak)) int dm_community_modal(void) { return 0; }
+__attribute__((weak)) int dm_diagup_modal(void) { return 0; }
+__attribute__((weak)) void dm_diagup_ui_tap(uint64_t root, int x, int y) { (void)root; (void)x; (void)y; }
 __attribute__((weak)) void dm_community_ui_tap(uint64_t root, int x, int y) { (void)root; (void)x; (void)y; }
 void dm_ui_drag_begin(int kind, float ox, float oy, float tol_ny) {
-    { int dm_community_modal(void); if (dm_community_modal()) return; }   // 社区 / 关于弹窗开着：不起拖动 / 滚动（RC1.1，触点全归弹窗） | community / About box up: no drag / scroll (RC1.1, every touch belongs to the box)
+    { int dm_community_modal(void), dm_diagup_modal(void); if (dm_community_modal() || dm_diagup_modal()) return; }   // 社区 / 关于弹窗开着：不起拖动 / 滚动（RC1.1，触点全归弹窗） | community / About box up: no drag / scroll (RC1.1, every touch belongs to the box)
     uint64_t o = dg_pack(ox, oy); atomic_store(&g_dg_o, o); atomic_store(&g_dg_c, o); atomic_store(&g_dg_tol, (uint32_t)((tol_ny < 0 ? 0 : tol_ny > 0.5f ? 0.5f : tol_ny) * 65535));
     atomic_store(&g_dg_kind, kind == 2 ? 2 : 1); atomic_fetch_add(&g_dg_seq, 1);
 }
@@ -3044,6 +3047,8 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
     // the lift goes to the box's own hit test (dm_community_ui_tap), anything that misses is swallowed
     { int dm_community_modal(void); void dm_community_ui_tap(uint64_t, int, int);
       if (dm_community_modal()) { if (ph == 2) { atomic_store(&g_ut_phase, 0); dm_community_ui_tap(root, x, y); } return; } }
+    { int dm_diagup_modal(void); void dm_diagup_ui_tap(uint64_t, int, int);
+      if (dm_diagup_modal()) { if (ph == 2) { atomic_store(&g_ut_phase, 0); dm_diagup_ui_tap(root, x, y); } return; } }
     int fe_extended = !dm_uiscreen_ingame() && atomic_load(&g_fe_touch_extended);
     if (fe_extended) y = (int)(dm_ui_point_y(atomic_load(&g_fe_touch_point)) * height);
     int class_scene = atomic_load(&g_cc_open) && !atomic_load(&g_fe_opt_open) && !atomic_load(&g_fe_name_open) && !atomic_load(&g_fe_confirm_open)

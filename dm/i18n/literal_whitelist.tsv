@@ -148,3 +148,13 @@ host/dm_loadpage.c	=校验	阶段名的日志用中文表 k_kind_zh（只进「�
 host/dm_loadpage.c	@snprintf	dm_loadpage_summary 拼「加载页：」汇总日志行（分享诊断日志摘要取它），不上屏
 host/dm_loadpage.c	=准备	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行）
 host/dm_manifest.c	*	远端清单校验的不合规原因，只进日志（社区信息 / 更新检查的诊断行），不上屏
+host/diagup_mac.m	*	Mac 开发验收宿主（dmhost_diag），不进 iOS 产品；诊断内容是给开发看的
+host/dm_crashreport.c	放弃上一份报告（到了重试上限或存放期限）	只进日志（自动上报：）
+host/dm_crashreport.c	重试到上限，放弃	只进日志（自动上报：）
+host/dm_crashreport.c	上传成功	只进日志（自动上报：）
+host/dm_crashreport.c	不再重试	只进日志（自动上报：）
+host/dm_diagup.c	*	结果名与状态只进日志（诊断上传：）；上屏文案都走 ui_text.tsv 的键
+host/dm_crashreport.c	放弃完整版（摘要已送达）	只进日志（自动上报：）
+host/dm_crashreport.c	等 Wi-Fi 发完整版	只进日志（自动上报：）
+host/dm_crashreport.c	等 Wi-Fi	只进日志（自动上报：）
+host/dm_crashreport.c	服务端暂停（%s）	只进日志（自动上报：）

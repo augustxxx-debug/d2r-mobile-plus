@@ -3,6 +3,7 @@
 // Community entry (dm_community.c): parsing of the remote manifest's community field (present / absent / malformed), cache file write / delete / fallback, value by language group (Chinese = QQ group number / others = link),
 // the two entry messages, copy callback count and log lines, the failure branch without a clipboard callback. Temporary directories only, never real saves; "restart" = reset the static state and call dm_community_load again
 #include "../dm_custom.c"
+#define DM_TEL_EXTERNAL
 #include "../dm_community.c"
 #include "../dm_manifest.h"
 #include "site_contract_cases.h"
@@ -49,6 +50,9 @@ static int cache_has(const char *s) { FILE *f = fopen(cache, "r"); char t[512] =
 #define M_STR  "{\"build\": 1, \"community\": \"1129913678\" }"
 #define M_QQ   "{\"build\": 1, \"community\": { \"qq_group\": \"1129913678\" } }"
 #define M_GH   "{\"build\": 1, \"community\": { \"github\": \"https://github.com/example/d2r-mobile-plus\" }, \"note\": \"after\" }"
+static int tel_calls, tel_present, tel_enabled, tel_nofetch; static long long tel_until; static char tel_reason[40];
+void dm_crashreport_switch(int present, int enabled, long long until, const char *reason) { tel_calls++; tel_present = present; tel_enabled = enabled; tel_until = until; snprintf(tel_reason, sizeof tel_reason, "%s", reason ? reason : ""); }
+void dm_crashreport_switch_no_fetch(void) { tel_nofetch++; }
 int main(void) {
     snprintf(dir, sizeof dir, "/tmp/d2r-community-XXXXXX"); if (!mkdtemp(dir)) return 1;
     snprintf(cache, sizeof cache, "%s/community.txt", dir); snprintf(logp, sizeof logp, "%s/log.txt", dir);
@@ -67,6 +71,16 @@ int main(void) {
     // 3. 重启：从缓存读回 | 3. Restart: read back from the cache
     restart(); dm_community_load(); CHECK(dm_community_available()); k = dm_community_value(DM_LG_ZH, v, sizeof v); CHECK(k == 1 && !strcmp(v, "1129913678"));
     // 4. 这次没拉到：沿用缓存（内存值不动、文件不动） | 4. Fetch failed this time: keep the cache (memory and file untouched)
+    // 清单里的服务端总开关（dm_crashreport_switch）：只认合法清单；类型不对不动缓存；旧字段照常 | the server switch in the manifest: valid manifests only; a wrong type leaves the cache; other fields unaffected
+    { const char *on = "{\"build\":1,\"telemetry\":{\"enabled\":true},\"community\":{\"qq_group\":\"1129913678\"}}", *off = "{\"build\":1,\"telemetry\":{\"enabled\":false,\"pause_until\":1893456000,\"reason\":\"maint_1\"},\"community\":{\"qq_group\":\"1129913678\"}}", *bad = "{\"telemetry\":{\"enabled\":\"no\"}}", *badtop = "{\"telemetry\":false}", *none = "{\"build\":1}";
+      tel_calls = 0; CHECK(dm_community_manifest(off, strlen(off)) == 1); CHECK(tel_calls == 1 && tel_present == 1 && tel_enabled == 0 && tel_until == 1893456000LL && !strcmp(tel_reason, "maint_1")); CHECK(dm_community_available());
+      CHECK(dm_community_manifest(on, strlen(on)) == 1); CHECK(tel_calls == 2 && tel_present == 1 && tel_enabled == 1);
+      CHECK(dm_community_telemetry_only(bad, strlen(bad)) == 1 && tel_calls == 2); CHECK(dm_community_telemetry_only(badtop, strlen(badtop)) == 1 && tel_calls == 2);
+      CHECK(dm_community_telemetry_only(none, strlen(none)) == 1 && tel_calls == 3 && tel_present == 0);
+      { const char *noen = "{\"telemetry\":{\"reason\":\"maintenance\"}}"; CHECK(dm_community_telemetry_only(noen, strlen(noen)) == 1 && tel_calls == 3); }   // 对象里缺 enabled：坏字段，不动缓存，不能当「开」 | enabled missing from the object: a bad field, the cache stays, never "on"
+      { const char *iso = "{\"telemetry\":{\"enabled\":false,\"pause_until\":\"2026-11-02T00:00:00+08:00\",\"reason\":\"maintenance\"}}", *isoz = "{\"telemetry\":{\"enabled\":false,\"pause_until\":\"2026-11-01T16:00:00Z\"}}", *isobad = "{\"telemetry\":{\"enabled\":true,\"pause_until\":\"tomorrow\"}}", *nul = "{\"telemetry\":{\"enabled\":false,\"pause_until\":null}}"; int c0;
+        CHECK(dm_community_telemetry_only(iso, strlen(iso)) == 1 && tel_until == 1793548800LL && !tel_enabled); CHECK(dm_community_telemetry_only(isoz, strlen(isoz)) == 1 && tel_until == 1793548800LL); c0 = tel_calls; CHECK(dm_community_telemetry_only(isobad, strlen(isobad)) == 1 && tel_calls == c0); CHECK(dm_community_telemetry_only(nul, strlen(nul)) == 1 && tel_until == 0 && !tel_enabled); tel_calls -= tel_calls - 3; }
+      tel_nofetch = 0; CHECK(dm_community_telemetry_only("{\"x", 3) == 0 && tel_calls == 3 && tel_nofetch == 1); CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1); }
     log_reset(); CHECK(dm_community_manifest(NULL, 0) == -1); CHECK(dm_community_available()); CHECK(cache_has("qq_group=")); CHECK(strstr(log_text(), "社区入口：清单拉取失败，沿用缓存"));
     // 5. 清单不是合法 JSON（截断）：十一审 Q11-01 起当格式错 = 无字段（入口不显示、缓存清掉），记「社区入口：清单格式错」 | 5. Manifest is not valid JSON (truncated): since Q11-01 a format error = no field (entry hidden, cache cleared), logged as "manifest malformed"
     log_reset(); CHECK(dm_community_manifest("{\"build\": 1, \"community\": { \"qq_group\": \"11", 42) == 0); CHECK(!dm_community_available()); CHECK(access(cache, F_OK) != 0); CHECK(strstr(log_text(), "社区入口：清单格式错"));

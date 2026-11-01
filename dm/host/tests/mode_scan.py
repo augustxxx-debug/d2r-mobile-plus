@@ -45,7 +45,8 @@ else:
 # Crash fence notice box (dm_crashfence.c, 1): picks the panel by mode and takes over A in controller mode; it looks widgets up by name every frame and caches no address, so after a switch rebuild the new widgets get text and placement as usual, no enter / leave hook needed
 # 社区入口提示框（dm_community.c 1 处）：同崩溃围栏提示框——按名字现找控件、手柄模式接管 A 复制 / B 收起，不缓存地址，不用进 / 出钩子 | community entry box (dm_community.c, 1): as the crash-fence box - widgets found by name every frame, controller A copies / B dismisses, no cached address, no enter / leave hook
 # 存档管理面板（dm_savemgr.c 2 处）：同社区框——每帧按当前模式摆入口和焦点框，弹窗开着时手柄键由闸门截给面板；来回切模式只换焦点框显隐，没有要清理的状态，不用进 / 出钩子 | save-management panel (2 places): as the community box -- entries and the focus frame follow the current mode each frame; a switch only shows or hides the focus frame, nothing to clean up, no enter / leave hooks
-PADMODE = {'host/dm_savemgr.c': 2, 'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_cursor.c': 9, 'host/dm_custom.c': 3, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
+# 上传诊断报告提示框（dm_diagup.c 1 处）：同社区入口提示框——每帧按名字现找控件、不缓存地址；手柄模式接管 A 主操作 / X 导出 / B 关闭、副文换成按键说明，状态机本身与模式无关 | diagnostic upload box (dm_diagup.c, 1): as the community box - widgets looked up by name every frame, no cached address; controller mode takes over A / X / B and swaps the secondary line for the key legend; the state machine itself is mode-independent
+PADMODE = {'host/dm_savemgr.c': 2, 'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_diagup.c': 1, 'host/dm_cursor.c': 9, 'host/dm_custom.c': 3, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
 AUTOKEY = {'host/dm_cursor.c': 39, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
 def count(pat, skip_defs):
     out = {}
