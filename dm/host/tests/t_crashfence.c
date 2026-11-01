@@ -24,6 +24,11 @@ static char dir[64], marker[128], settings[128];
 static void restart(void) { g_started = g_marked = g_streak = g_test = g_cause = g_cause_arg = 0; g_msg = CF_OTHER; g_hist[0] = 0; g_crash_note_hook = NULL; atomic_store(&g_notice, 0); atomic_store(&g_show, 0); atomic_store(&g_loaded, 0); }
 static int marker_streak(void) { FILE *f = fopen(marker, "r"); if (!f) return -1; int k = -2; if (fscanf(f, "streak=%d", &k) != 1) k = -2; fclose(f); return k; }
 static void read_settings(char *out, size_t n) { FILE *f = fopen(settings, "r"); size_t r = f ? fread(out, 1, n - 1, f) : 0; out[r] = 0; if (f) fclose(f); }
+// 假控件（名字 +8、子控件数组 +0x58、个数 +0x60、虚表 +0x48 = 命中判断）：命中 = x 恰好是 7 | fake widget (name +8, children +0x58, count +0x60, vtable +0x48 = hit test): hit = x is exactly 7
+typedef struct { uint64_t vt; const char *name; uint8_t pad[0x48]; uint64_t *kids; uint64_t nkids; } t_widget;
+static int t_hit(uint64_t w, uint64_t xy) { (void)w; return (uint32_t)xy == 7; }
+static uint64_t t_vt[10];
+static void t_gate(uint64_t bt, int32_t lx, uint64_t *o_bt, int32_t *o_lx) { int32_t ly = 0, rx = 0, ry = 0; dm_crashfence_input_gate(&bt, &lx, &ly, &rx, &ry); *o_bt = bt; *o_lx = lx; CHECK(!ly && !rx && !ry); }
 static void write_settings(const char *s) { FILE *f = fopen(settings, "w"); fputs(s, f); fclose(f); }
 int main(void) {
     snprintf(dir, sizeof dir, "/tmp/d2r-crashfence-XXXXXX"); if (!mkdtemp(dir)) return 1;
@@ -141,6 +146,31 @@ int main(void) {
       write_settings(on); atomic_store(&g_loaded, 0); f = fopen(marker, "w"); fputs(left, f); fclose(f);
       restart(); CHECK(dm_crashfence_start() == 2); CHECK(dm_custom_get("upscale") == 0); CHECK(dm_crashfence_notice_take() == 1);   // 玩家局：同样的残留照旧关 | player run: the same leftover shuts off as before
       read_settings(text, sizeof text); CHECK(strstr(text, "upscale=0\n")); dm_crashfence_clean("优雅退出"); }
+    // 16. 提示框开着输入全归它，关框后恢复（B083）| 16. The notice box takes all input while up, input returns after it closes (B083)
+    { uint64_t o; int32_t ox; atomic_store(&g_ack, 0);
+      t_gate(DM_BTN_B, 20000, &o, &ox); CHECK(o == DM_BTN_B); CHECK(ox == 20000);                   // 没开：原样放过 | not up: passes through
+      t_gate(0, 0, &o, &ox); atomic_store(&g_modal, 1); CHECK(dm_crashfence_modal());
+      atomic_store(&g_pad, 0); t_gate(DM_BTN_A | DM_BTN_DOWN, 30000, &o, &ox); CHECK(o == 0); CHECK(ox == 0); CHECK(!atomic_load(&g_ack));   // 触屏模式：全吞，A 不当确定 | touch mode: all swallowed, A is not OK
+      t_gate(0, 0, &o, &ox); atomic_store(&g_pad, 1); t_gate(DM_BTN_B | DM_BTN_PLUS, -30000, &o, &ox); CHECK(o == 0); CHECK(ox == 0); CHECK(!atomic_load(&g_ack));   // 手柄模式：别的键也吞 | controller mode: other keys swallowed too
+      t_gate(DM_BTN_A, 0, &o, &ox); CHECK(o == 0); CHECK(atomic_exchange(&g_ack, 0) == 1);          // A 按下沿 = 确定，游戏收不到 | A's edge = OK, the game does not get it
+      t_gate(DM_BTN_A, 0, &o, &ox); CHECK(!atomic_load(&g_ack));                                    // 按住不重复 | holding does not repeat
+      atomic_store(&g_modal, 0); CHECK(!dm_crashfence_modal());
+      t_gate(DM_BTN_A, 0, &o, &ox); CHECK(o == 0);                                                  // 关框时还按着：继续压住 | still held at close: withheld
+      t_gate(DM_BTN_A | DM_BTN_B, 0, &o, &ox); CHECK(o == 0 || o == DM_BTN_B);
+      t_gate(0, 0, &o, &ox); t_gate(DM_BTN_B, 0, &o, &ox); CHECK(o == DM_BTN_B);                    // 松开后恢复 | restored after release
+      atomic_store(&g_modal, 1); t_gate(0, 30000, &o, &ox); CHECK(ox == 0); atomic_store(&g_modal, 0);
+      t_gate(0, 30000, &o, &ox); CHECK(ox == 0); t_gate(0, 0, &o, &ox); t_gate(0, 30000, &o, &ox); CHECK(ox == 30000);   // 摇杆同样压到回中 | a stick is withheld until centred too
+      t_gate(0, 0, &o, &ox);
+      // 点按：只认「确定」，别处吞掉；按当前模式找面板 | taps: OK only, anything else swallowed; the panel follows the current mode
+      t_vt[9] = (uint64_t)t_hit; uint64_t okp = 0, mmp = 0;
+      t_widget ok = { (uint64_t)t_vt, "TouchSafeOk", {0}, NULL, 0 }; okp = (uint64_t)&ok;
+      t_widget mm = { (uint64_t)t_vt, "MainMenuPanel", {0}, &okp, 1 }; mmp = (uint64_t)&mm;
+      t_widget root = { (uint64_t)t_vt, "root", {0}, &mmp, 1 };
+      atomic_store(&g_pad, 0); dm_crashfence_ui_tap((uint64_t)&root, 3, 3); CHECK(!atomic_load(&g_ack));
+      dm_crashfence_ui_tap((uint64_t)&root, 7, 3); CHECK(atomic_exchange(&g_ack, 0) == 1);
+      atomic_store(&g_pad, 1); dm_crashfence_ui_tap((uint64_t)&root, 7, 3); CHECK(!atomic_load(&g_ack));      // 手柄版面板不在树里：不确认 | the controller panel is not in the tree: no OK
+      mm.name = "MainMenuButtonRibbon"; dm_crashfence_ui_tap((uint64_t)&root, 7, 3); CHECK(atomic_exchange(&g_ack, 0) == 1);
+      dm_crashfence_ui_tap(0, 7, 3); CHECK(!atomic_load(&g_ack)); atomic_store(&g_pad, 0); }
     // 10. 没有设置目录：不写标记、不崩 | 10. No settings directory: no marker, no crash
     g_dir[0] = 0; restart(); CHECK(dm_crashfence_start() == 0); CHECK(g_marked == 0);
     printf("t_crashfence: %d checks, %d failed\n", checks, fails);

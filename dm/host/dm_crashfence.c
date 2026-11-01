@@ -170,6 +170,15 @@ int dm_crashfence_notice_take(void) { return atomic_exchange(&g_notice, 0); }
 // "OK" sends PanelManager:ClosePanel:TouchSafeOk (a no-op the host takes as a signal), and controller mode takes over A as OK. Once confirmed they go back off screen and do not return during this launch.
 // Without these widgets (original layout): after 600 frames without finding them only one log line is written. The "shown" / "player tapped OK" lines are kept (share diagnostics read them)
 static _Atomic int g_show, g_ack;   // g_show：0 不提示 / 1 要提示 / 2 显示着 | g_show: 0 none / 1 pending / 2 shown
+// 提示框吞输入（B083，同社区弹窗 RC1.1 的口径）：框真的显示在屏幕上时（g_modal）输入全归它，dm_community.c 把弹窗的模态查询 / 命中答案 / 点按 / 手柄闸门转到这里，dm_cursor.c、hle_hid.c 不用改。
+// 将要显示（g_show = 1）和所在面板不可见时不算：控件找不到时不能把整只手柄和触屏扣住
+// The notice box takes all input (B083, same rule as the community box in RC1.1): while the box is really on screen (g_modal) input belongs to it; dm_community.c forwards the modal query / hit answer / tap / controller gate here, so dm_cursor.c and hle_hid.c stay as they are.
+// Pending (g_show = 1) and a hidden host panel do not count: missing widgets must not hold the whole controller and touchscreen
+static _Atomic int g_modal, g_after, g_pad;   // g_pad：泵记下的当前模式，闸门与点按都用它 | g_pad: the mode as the pump saw it, used by the gate and the tap
+int dm_crashfence_modal(void) { return atomic_load(&g_modal); }
+// 手柄模式焦点放在「确定」上（金框画在唯一能按的按钮上）：dm_community_pump 藏底下菜单的焦点时用它 | in controller mode focus sits on OK (the gold frame on the only button that can be pressed): used by dm_community_pump when it hides the menu's focus
+static _Atomic uint64_t g_focus;
+uint64_t dm_crashfence_focus(void) { return atomic_load(&g_focus); }
 // 同一个提示框还给内存 0 档的一次性提示用（dm_custom.c 内存档位，用户 2026-10-29）：崩溃围栏的优先，内存提示留到下次启动 | the same box also carries the memory-tier-0 one-time notice (dm_custom.c memory tier, user 2026-10-29): the crash fence wins, the memory notice waits for the next launch
 enum { NOTICE_CRASH, NOTICE_LOWMEM };
 static int g_kind;
@@ -213,24 +222,45 @@ static void cf_text(uint8_t *b, uint64_t w, const char *s) {   // 文字框设�
     size_t n = strlen(s); if (*(uint64_t *)(w + 0x90) == n && !memcmp(*(const char **)(w + 0x88), s, n)) return;
     ((void *(*)(uint64_t, const char *, uint64_t))(b + 0x136e5c))(w + 0x88, s, n); ((void (*)(uint64_t))(b + 0xadc434))(w);
 }
+static int cf_stick_off(int32_t v) { return v > -8000 && v < 8000; }
+// 取手柄处最后调（经 dm_community_input_gate）：框开着时键与两根摇杆全清零，手柄模式的 A 按下沿当确定；关框后按着的键 / 推着的摇杆松开前也不交给游戏（确定那一下不漏到菜单）
+// Called last at the controller read (through dm_community_input_gate): while the box is up every key and both sticks are zeroed and A's press edge is OK in controller mode; after it closes whatever is still held stays withheld until released (the OK press does not reach the menu)
+void dm_crashfence_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
+    static uint64_t prev, held; static int stick;
+    if (!bt || !lx || !ly || !rx || !ry) return;
+    if (!atomic_load(&g_modal)) {
+        if (atomic_load(&g_after)) { held &= *bt; if (cf_stick_off(*lx) && cf_stick_off(*ly) && cf_stick_off(*rx) && cf_stick_off(*ry)) stick = 0;
+            if (held || stick) { *bt = 0; *lx = *ly = *rx = *ry = 0; } else atomic_store(&g_after, 0); }
+        prev = *bt; return; }
+    held = *bt; stick = !(cf_stick_off(*lx) && cf_stick_off(*ly) && cf_stick_off(*rx) && cf_stick_off(*ry)); atomic_store(&g_after, 1);
+    if ((*bt & ~prev & DM_BTN_A) && atomic_load(&g_pad)) atomic_store(&g_ack, 1);
+    prev = *bt; *bt = 0; *lx = *ly = *rx = *ry = 0;
+}
+// 框开着时的一次点按（dm_cursor.c 这时不发鼠标消息，抬起那一下经 dm_community_ui_tap 转来）：用控件自己的命中判断（虚表 +0x48）只认「确定」，其余吞掉。x / y = 游戏窗口像素。游戏主线程
+// A tap while the box is up (dm_cursor.c sends no mouse messages then; the lift comes through dm_community_ui_tap): the widget's own hit test (vtable +0x48) for OK only, everything else is swallowed. x / y = game window pixels. Game main thread
+void dm_crashfence_ui_tap(uint64_t root, int x, int y) {
+    uint64_t mm = root ? cf_find(root, atomic_load(&g_pad) ? "MainMenuButtonRibbon" : "MainMenuPanel", 0) : 0, ok = mm ? cf_find(mm, "TouchSafeOk", 0) : 0;
+    if (ok && ((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)ok + 0x48))(ok, (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)y << 32) & 1) { atomic_store(&g_ack, 1); return; }
+    LOG("崩溃围栏：提示框开着时点按 (%d,%d) → 没点在「确定」上，吞掉", x, y);
+}
 void dm_crashfence_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
-    int st = atomic_load(&g_show); if (!st) return;
+    int st = atomic_load(&g_show); if (!st) { atomic_store(&g_modal, 0); atomic_store(&g_focus, 0); return; }
     // 控件挂在哪：触屏版在主菜单面板下；手柄版在左侧按钮栏面板 MainMenuButtonRibbon 下（它画在主菜单之上，提示框才能盖住按钮栏、整屏居中：touch_layout._safe_into）
     // Where the widgets hang: touch under the main menu panel; controller under the left button-column panel MainMenuButtonRibbon (it draws above the main menu, so the box can cover the column and center on the screen: touch_layout._safe_into)
-    int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current();
+    int dm_padmode_current(void); int pad = dm_padmode_current();
+    atomic_store(&g_pad, pad);
     static int wait; uint8_t *b = cf_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, mm = root ? cf_find(root, pad ? "MainMenuButtonRibbon" : "MainMenuPanel", 0) : 0;
     uint64_t ti = mm ? cf_find(mm, "TouchSafeTitle", 0) : 0, ok = mm ? cf_find(mm, "TouchSafeOk", 0) : 0, de[3], tl[15]; int tiles = 1;
     for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchSafeTile%d%d", k / 3, k % 3); tl[k] = mm ? cf_find(mm, nm, 0) : 0; tiles &= tl[k] != 0; }
     for (int k = 0; k < 3; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchSafeDesc%d", k); de[k] = mm ? cf_find(mm, nm, 0) : 0; }   // 正文三行各一个文字框（游戏文字框不认换行） | one text box per body line (the game's text box ignores newlines)
-    if (!tiles || !ti || !de[0] || !de[1] || !de[2] || !ok) { if (st == 1 && ++wait == 600) { atomic_store(&g_show, 0); LOG("【红】崩溃围栏：主菜单面板里没有提示框控件（原版布局？），只记日志不显示"); } return; }
-    int vis = *(uint8_t *)(mm + 0x50);
-    if (pad && vis && st == 2 && (dm_padmode_page_keys(DM_BTN_A) & DM_BTN_A)) atomic_store(&g_ack, 1);   // 手柄：显示着时接管 A 当确定（游戏收不到这一下） | controller: while shown, take over A as OK (the game does not get this press)
+    if (!tiles || !ti || !de[0] || !de[1] || !de[2] || !ok) { if (st == 1 && ++wait == 600) { atomic_store(&g_show, 0); LOG("【红】崩溃围栏：主菜单面板里没有提示框控件（原版布局？），只记日志不显示"); } atomic_store(&g_modal, 0); atomic_store(&g_focus, 0); return; }
+    atomic_store(&g_modal, st == 2 && *(uint8_t *)(mm + 0x50)); atomic_store(&g_focus, st == 2 && pad && *(uint8_t *)(mm + 0x50) ? ok : 0);
     const char *title = dm_str(b, g_kind == NOTICE_LOWMEM ? "dmLowMemTitle" : "dmSafeModeTitle");   // 正文按原因选（k_cf_msg[g_msg]）；内存提示用自己的两条 | the body is picked by cause (k_cf_msg[g_msg])
     if (atomic_exchange(&g_ack, 0)) {
         for (int k = 0; k < 15; k++) { int32_t *r = (int32_t *)(tl[k] + 0x70); r[0] = r[1] = 99999; }   // 边框片挪出屏幕（尺寸不动） | frame tiles off screen (size unchanged)
         cf_place(ti, 99999, 99999); cf_place(ok, 99999, 99999); cf_text(b, ti, "");
         for (int k = 0; k < 3; k++) { cf_place(de[k], 99999, 99999); cf_text(b, de[k], ""); }
-        atomic_store(&g_show, 0); LOG("前端：提示「%s」玩家点了确定（%s，游戏内提示框收起）", title, pad ? "手柄 A" : "点按钮"); notice_dismissed(); return;
+        atomic_store(&g_show, 0); atomic_store(&g_modal, 0); atomic_store(&g_focus, 0); LOG("前端：提示「%s」玩家点了确定（%s，游戏内提示框收起）", title, pad ? "手柄 A" : "点按钮"); notice_dismissed(); return;
     }
     // 位置（布局单位，2160 = 屏高）。触屏版跟主菜单面板锚在屏幕中心（x 相对中心），框在 y 640–1260，正好在「进入游戏」上方。
     // 手柄版控件不带锚点，x 按屏宽算：整屏正中（x、y 都居中），盖住左侧按钮栏与右上角色列表（用户：「弹窗没居中，可以遮挡菜单」）

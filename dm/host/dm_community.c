@@ -57,13 +57,17 @@ static _Atomic unsigned g_sw_touch, g_sw_key, g_sw_stick, g_leak;
 __attribute__((weak)) int dm_savemgr_modal(void) { return 0; }   // 存档管理面板也用这一套弹窗机制（dm_savemgr.c）| save management uses the same modal mechanism
 __attribute__((weak)) void dm_savemgr_ui_tap(uint64_t root, int x, int y) { (void)root; (void)x; (void)y; }
 __attribute__((weak)) void dm_savemgr_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) { (void)bt; (void)lx; (void)ly; (void)rx; (void)ry; }
-int dm_community_modal(void) { return atomic_load(&g_show) != 0 || dm_savemgr_modal(); }
+__attribute__((weak)) int dm_crashfence_modal(void) { return 0; }   // 崩溃围栏提示框也用这一套（B083，dm_crashfence.c）| the crash fence notice box uses it too
+__attribute__((weak)) uint64_t dm_crashfence_focus(void) { return 0; }
+__attribute__((weak)) void dm_crashfence_ui_tap(uint64_t root, int x, int y) { (void)root; (void)x; (void)y; }
+__attribute__((weak)) void dm_crashfence_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) { (void)bt; (void)lx; (void)ly; (void)rx; (void)ry; }
+int dm_community_modal(void) { return atomic_load(&g_show) != 0 || dm_savemgr_modal() || dm_crashfence_modal(); }
 // 弹窗开着时宿主对触屏命中查询的答案（RC1.1 复核 P1-2；dm_cursor.c 的异步 / 同步两种查询都取这里）：0「面板内控件」——两端手势层对 0 走界面鼠标点击，
 // 鼠标泵把抬起交给 dm_community_ui_tap；不能答 6「不点」（9943fd2：手势层不点也不发键，iOS 局内面板态弹窗里的按钮全点不动）。没开弹窗返回 -1（照常判类）
 // The host's answer to a touch hit query while the box is up (RC1.1 recheck P1-2; both of dm_cursor.c's async / sync queries take it from here): 0 "control inside a panel" -- both ends'
 // gesture layer turn 0 into a UI mouse click and the mouse pump hands the lift to dm_community_ui_tap; it must not be 6 "no click" (9943fd2: the gesture layer neither clicked nor sent a key,
 // so on iOS in panel mode the box's buttons could not be tapped). -1 when no box is up (classify as usual)
-int dm_community_hit_answer(void) { return atomic_load(&g_show) || dm_savemgr_modal() ? 0 : -1; }
+int dm_community_hit_answer(void) { return atomic_load(&g_show) || dm_savemgr_modal() || dm_crashfence_modal() ? 0 : -1; }
 // 关框后的压住窗口（RC1.1 终版审计 P2-1）：手柄 A / B 关框时，泵在取手柄处开头就把 g_show 置 0，同一拍末尾的闸门以为弹窗已关、把还按着的那一下交给了底层菜单。
 // 现在弹窗开着时记下按着的键与摇杆；关掉后，这些键全松开、两根摇杆都回到 1/4 以内之前，整只手柄都不交给游戏（压住的拍数在清零之前计数），窗口结束记一行。
 // 漏口计数（dm_community_input_leak）也覆盖这个窗口：原先只在 g_show 时计、又在闸门清零之后查，恒为 0、测不到这类漏口
@@ -74,7 +78,7 @@ int dm_community_hit_answer(void) { return atomic_load(&g_show) || dm_savemgr_mo
 static _Atomic int g_after; static _Atomic unsigned g_after_n;
 static int stick_off(int32_t v) { return v > -8000 && v < 8000; }
 void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
-    dm_savemgr_input_gate(bt, lx, ly, rx, ry);
+    dm_savemgr_input_gate(bt, lx, ly, rx, ry); dm_crashfence_input_gate(bt, lx, ly, rx, ry);
     static uint64_t prev, pdir, held; static int stick; static dm_stick_nav nav;
     if (!atomic_load(&g_show)) {
         if (atomic_load(&g_after) && bt && lx && ly && rx && ry) {
@@ -517,6 +521,7 @@ static int co_tap_zone(const co_tapgeo_t *g, int x, int y) {   // 返回 0 / 1 =
 // A tap while the box is up (dm_cursor.c sends no mouse messages then and hands the lift here): the widgets' own hit test (vtable +0x48, as the delete-character Yes in dm_cursor.c) for the two Copy buttons and OK only;
 // x / y = game window pixels (the coordinates dm_cursor.c sends mouse messages in). Anything else is swallowed. Game main thread
 void dm_community_ui_tap(uint64_t root, int x, int y) {
+    if (dm_crashfence_modal()) { dm_crashfence_ui_tap(root, x, y); return; }
     if (dm_savemgr_modal()) { dm_savemgr_ui_tap(root, x, y); return; }
     atomic_fetch_add(&g_sw_touch, 1);
     int which = 0; uint64_t p = root ? co_host(root, &which) : 0; if (!p || atomic_load(&g_show) != 2) return;
@@ -551,11 +556,12 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     // (the row has been moved back above), returning the player to the row that opened it
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); int pad = dm_padmode_current(), mode = atomic_load(&g_mode);
     { static uint64_t saved; static char saved_nm[64]; static int held; uint64_t fm = *(uint64_t *)(root + 0xd0);
-      if (atomic_load(&g_show) && fm && pad) {
+      int up = atomic_load(&g_show) || dm_crashfence_modal();   // 崩溃围栏提示框同样藏（B083，它的泵排在本泵之前） | the crash fence box hides it too (B083, its pump runs before this one)
+      if (up && fm && pad) {
           uint64_t F = *(uint64_t *)(fm + 0x190);
           if (!held) { held = 1; saved = F; const char *nm = F ? *(const char **)(F + 8) : NULL; snprintf(saved_nm, sizeof saved_nm, "%s", nm ? nm : ""); if (F) LOG("社区入口：开框时藏起底下菜单的焦点（原在 %s）", saved_nm); }
-          if (F) *(uint64_t *)(fm + 0x190) = 0; }
-      else if (held && !atomic_load(&g_show)) { held = 0;
+          uint64_t want = dm_crashfence_focus(); if (F != want) *(uint64_t *)(fm + 0x190) = want; }
+      else if (held && !up) { held = 0;
           // 按指针确认原控件还在界面树里、名字也没变（复核 P2-5：原先按名字从根找第一个同名控件、深度 6 层——TouchCommunity / TouchCommunityFe 手柄版与触屏版布局都有，两份同在树里时找不回）
           // confirm by pointer that the original widget is still in the UI tree with the same name (recheck P2-5: the first same-named widget within 6 levels of the root used to be taken --
           // TouchCommunity / TouchCommunityFe exist in both the controller and the touch layouts, so with both in the tree it was not found)
