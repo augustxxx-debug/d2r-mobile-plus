@@ -358,11 +358,15 @@ static int local_char(const char *save, const char *name, char *guest_out, size_
 }
 // 同包重名：只差 ASCII 大小写，或名字带组合记号 / 组合用谚文（NFD 写法）。NFC / NFD 是否算同一个由文件系统决定，所以带这种写法的一律拒绝，三端结果才相同；解压之前判，什么都不写
 // Same names in one package: differing only in ASCII case, or a name with combining marks / conjoining Hangul (NFD form). Whether NFC and NFD coincide depends on the file system, so such names are refused outright and all platforms agree; judged before extraction, nothing is written
-static int name_nfd(const char *s) {   // 组合记号：拉丁 / 通用段、组合谚文、假名浊点半浊点（N11-02）| combining marks: Latin / general blocks, conjoining Hangul, kana voicing marks
+// 组合写法的名字拒绝，三端结果才相同。这里列六语和常见文字的组合记号、NFC 下会变样的单字符，不是完整的 Unicode 表 | decomposed names are refused so all platforms agree. The list covers combining marks of the six languages and common scripts plus singletons NFC would change; it is not the full Unicode table
+static int name_nfd(const char *s) {
+    static const uint32_t k[][2] = { {0x300,0x36f},{0x483,0x489},{0x591,0x5bd},{0x5bf,0x5bf},{0x5c1,0x5c2},{0x5c4,0x5c5},{0x5c7,0x5c7},{0x610,0x61a},{0x64b,0x65f},{0x670,0x670},{0x6d6,0x6dc},{0x93c,0x93c},{0x94d,0x94d},{0xf71,0xf84},
+        {0x1100,0x11ff},{0x1ab0,0x1aff},{0x1dc0,0x1dff},{0x20d0,0x20ff},{0x212a,0x212b},{0x3099,0x309a},{0xf900,0xfaff},{0xfe20,0xfe2f},{0x1d165,0x1d169},{0x1d16d,0x1d172},{0x1d17b,0x1d182},{0x1d185,0x1d18b},{0x1d1aa,0x1d1ad},{0x2f800,0x2fa1d} };
     for (const uint8_t *p = (const uint8_t *)s; *p; p++) { uint32_t u = 0;
         if (p[0] >= 0xc0 && p[0] < 0xe0 && p[1]) u = (uint32_t)(p[0] & 0x1f) << 6 | (p[1] & 0x3f);
         else if (p[0] >= 0xe0 && p[0] < 0xf0 && p[1] && p[2]) u = (uint32_t)(p[0] & 0x0f) << 12 | (uint32_t)(p[1] & 0x3f) << 6 | (p[2] & 0x3f);
-        if ((u >= 0x300 && u <= 0x36f) || (u >= 0x1100 && u <= 0x11ff) || (u >= 0x1ab0 && u <= 0x1aff) || (u >= 0x1dc0 && u <= 0x1dff) || (u >= 0x20d0 && u <= 0x20ff) || u == 0x3099 || u == 0x309a || (u >= 0xfe20 && u <= 0xfe2f)) return 1; }
+        else if (p[0] >= 0xf0 && p[1] && p[2] && p[3]) u = (uint32_t)(p[0] & 0x07) << 18 | (uint32_t)(p[1] & 0x3f) << 12 | (uint32_t)(p[2] & 0x3f) << 6 | (p[3] & 0x3f);
+        for (size_t i = 0; u && i < sizeof k / sizeof *k; i++) if (u >= k[i][0] && u <= k[i][1]) return 1; }
     return 0; }
 static int names_clash(const jn *chars) { if (!chars || chars->t != J_ARR) return 0; for (const jn *a = chars->kid; a; a = a->next) { const char *x = jstrv(a, "name"); if (name_nfd(x)) return 1; for (const jn *b = a->next; b; b = b->next) if (ieq_ascii(x, jstrv(b, "name"))) return 1; } return 0; }
 static void stage_paths(const char *save, char *tmp, char *pend) { snprintf(tmp, 1400, "%s.import.tmp", save); snprintf(pend, 1400, "%s.import", save); }
@@ -494,10 +498,12 @@ fail:
 static char g_mirror[1024], g_mirror_old[1024];   // g_mirror 写和读；g_mirror_old 只读（另一个目录名下早先的备份）| g_mirror is written and read; g_mirror_old is read only (earlier backups under the other folder name)
 void dm_savepkg_set_mirror(const char *dir) { strlcpy(g_mirror, dir ? dir : "", sizeof g_mirror); g_mirror_old[0] = 0; }
 // 安卓备份另存位置（设计稿 §2.1「两个目录名」）：<Download>/S2X/ 下 D2R Mobile Plus 在就用它，否则 D2R Mobile 在就用它，都没有就建 Plus；另一个目录里已有的备份照样列出 | Android's second backup location: D2R Mobile Plus under <Download>/S2X/ if present, else D2R Mobile if present, else create Plus; backups already in the other folder are still listed
-int dm_savepkg_mirror_from_downloads(const char *downloads) {
+// test：测试局（B116）另存到 SaveBackups.test，不写、不清、不列玩家的 SaveBackups | test run (B116): keeps its copies in SaveBackups.test and neither writes, prunes nor lists the player's SaveBackups
+int dm_savepkg_mirror_from_downloads(const char *downloads, int test) {
+    const char *sub = test ? "SaveBackups.test" : "SaveBackups";
     g_mirror[0] = g_mirror_old[0] = 0; if (!downloads || !downloads[0]) return -1; pth plus, old, p; struct stat st; snprintf(plus, sizeof plus, "%s/S2X/D2R Mobile Plus", downloads); snprintf(old, sizeof old, "%s/S2X/D2R Mobile", downloads);
-    int hp = !stat(plus, &st) && S_ISDIR(st.st_mode), ho = !stat(old, &st) && S_ISDIR(st.st_mode); snprintf(p, sizeof p, "%s/SaveBackups/x", hp || !ho ? plus : old); if (mkdirs_for(p)) return -1;
-    p[strlen(p) - 2] = 0; strlcpy(g_mirror, p, sizeof g_mirror); snprintf(p, sizeof p, "%s/SaveBackups", hp || !ho ? old : plus); if (!stat(p, &st) && S_ISDIR(st.st_mode)) strlcpy(g_mirror_old, p, sizeof g_mirror_old); return 0;
+    int hp = !stat(plus, &st) && S_ISDIR(st.st_mode), ho = !stat(old, &st) && S_ISDIR(st.st_mode); snprintf(p, sizeof p, "%s/%s/x", hp || !ho ? plus : old, sub); if (mkdirs_for(p)) return -1;
+    p[strlen(p) - 2] = 0; strlcpy(g_mirror, p, sizeof g_mirror); snprintf(p, sizeof p, "%s/%s", hp || !ho ? old : plus, sub); if (!stat(p, &st) && S_ISDIR(st.st_mode)) strlcpy(g_mirror_old, p, sizeof g_mirror_old); return 0;
 }
 static void backups_dir(const char *save, char *o) { snprintf(o, 1400, "%s.backups", save); }
 static int copy_plain(const char *a, const char *b) { size_t n = 0; uint8_t *d = read_all(a, (size_t)MAX_TOTAL * 2, &n); if (!d) return -1; int rc = mkdirs_for(b) ? -1 : write_replace(b, d, n); free(d); return rc; }
