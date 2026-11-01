@@ -74,9 +74,15 @@ class PackageAudit(unittest.TestCase):
         for word, text in (('Metal', b'Metallic'), ('Metal', b'metal_roughness'), ('iOS', b'BIOS'), ('iOS', b'ios_base'), ('Android', b'android::String8'), ('Apple', b'apple_lod3'), ('iPad', b'IPAddressText')): self.assertFalse(hit(word, text), text)
 
     def test_symbol_and_text(self):
-        chance = b'\0\x93\x01IOS\0'; self.assertTrue(self.pa.is_chance_bytes(chance, 3, 6))   # 二进制段里偶然的字节放行（iOS 主程序 / libdm 调试信息里见过） | chance bytes in a binary section pass
-        for text in ('\0支持 iOS 的说明\0'.encode(), b'\0log iOS\n\0', b'\0iOS\0'):   # 真文本不放行，含日志的换行 | real text never passes, newlines in logs included
-            at = text.find(b'iOS'); self.assertFalse(self.pa.is_chance_bytes(text, at, at + 3), text)
+        # 只有词两边都不是文字才算偶然（B113，内审 N11-01 的样例 + 长度前缀 + 无 NUL 长块）| chance only when neither side is text (B113)
+        for chance in (b'\0\x93\x01IOS\0', b'\x01iOS\x01', b'\xda\x01iOS\xff\0'):
+            at = chance.lower().find(b'ios'); self.assertTrue(self.pa.is_chance_bytes(chance, at, at + 3), chance)
+        for text in (b'\0Runs on iOS only\0', b'\0log iOS\n\0', b'\0key\tRuns on iOS\tzh\n\0', b'\0a\r\nRuns on iOS\r\n\0', b'\0\x1b[31mRuns on iOS\x1b[0m\0',
+                     b'\0\x0fRuns on iOS now\0', b'\0\x93\x01Runs on iOS only\0', b'\x7fELF\x02\x01\0\x03' + b'A' * 5000 + b' Runs on iOS only\0', b'\0Runs on iOS only' + b'B' * 5000,
+                     b'Runs on iOS only\0', b'\x7fELF\x02\x01Runs on iOS\0', b'\0\x01\0' + ('\u652f\u6301\u6587\u672c' * 1500).encode() + ' iOS \u4e13\u5c5e \n'.encode() + b'\0',
+                     b'\x01\0' + ('\u4e2d' * 2000).encode() + b'\xe4\xb8 iOS\0', b'\0caf\xe9 iOS\0', b'\0\xe2\x80\x8bRuns on iOS\0', b'\0\x7fRuns on iOS\0',
+                     b'\0iOS\0', b'iOS\0', b'\0\x03iOS\0', b'\xda\x03iOS\xff', b'\x01\xe4\xb8\xadiOS\0', b'\x01iOS\xe4\xb8\xad\0', b'\x01iOS 17\0'):
+            at = text.find(b'iOS'); self.assertFalse(self.pa.is_chance_bytes(text, at, at + 3), text[:40])
         one = b'\0MetalFX\0'; self.assertFalse(self.pa.is_symbol(one, 1, 8))   # 单词文字不算（内审 L-01） | a single-word text is no symbol
         data = b'\0dm_icloud_supported\0iCloud sync failed\0'
         spots = [m.span() for m in self.w.pattern('iCloud').finditer(data)]

@@ -44,12 +44,36 @@ def is_symbol(data, start, end):
     return SYMBOLS.fullmatch(data[s:e if e >= 0 else end + 4096]) is not None
 
 
+def _text_byte_before(data, at):
+    """at 前面紧邻的是文字：可打印 ASCII、空白，或正好在这里结束的 UTF-8 字符 | what sits right before at is text: printable ASCII, whitespace, or a UTF-8 character ending here"""
+    if at <= 0: return True   # 文件头：没有证据说它不是文字 | start of file: no evidence it is not text
+    c = data[at - 1]
+    if c < 0x80: return c in b'\t\n\r' or 0x20 <= c < 0x7f
+    for n in (2, 3, 4):
+        if at >= n:
+            try:
+                if len(data[at - n:at].decode('utf-8')) == 1: return True
+            except UnicodeDecodeError: pass
+    return False
+
+
+def _text_byte_after(data, at):
+    """at 处开始的是文字（NUL 不算：它是串尾）| what starts at at is text (NUL is not: it ends a string)"""
+    if at >= len(data): return True
+    c = data[at]
+    if c < 0x80: return c in b'\t\n\r' or 0x20 <= c < 0x7f
+    for n in (2, 3, 4):
+        try:
+            if len(data[at:at + n].decode('utf-8')) == 1: return True
+        except UnicodeDecodeError: pass
+    return False
+
+
 def is_chance_bytes(data, start, end):
-    """原生库里这个词所在那一串不是文本（有控制字符或不是 UTF-8）：调试信息等二进制段里偶然的字节，如 b'\\x93\\x01IOS\\0'，文案和日志都不会这样 | in a native library, the run holding the word is not text (control characters or invalid UTF-8): chance bytes in debug info and other binary sections, which UI text and logs never look like"""
-    s = data.rfind(b'\0', max(0, start - 4096), start) + 1; e = data.find(b'\0', end, end + 4096); run = data[s:e if e >= 0 else end]
-    if BINARY.search(run): return True
-    try: run.decode('utf-8'); return False
-    except UnicodeDecodeError: return True
+    """原生库里这个词是调试信息等二进制段里偶然的字节，如 b'\\x93\\x01IOS\\0'（B113）。只看词紧邻的两边，不看整串：两边都不是文字、前面不是串头（NUL）、也不是长度前缀，才算偶然。
+    In a native library, the word is chance bytes in debug info or another binary section (B113). Only the bytes right next to the word count, not the whole run: chance needs no text on either side, and the byte before must be neither a string start (NUL) nor a length prefix."""
+    if start <= 0 or data[start - 1] == 0 or data[start - 1] == end - start: return False
+    return not _text_byte_before(data, start) and not _text_byte_after(data, end)
 
 
 ARCHIVE_LIMIT = 1 << 31   # 一个 .data 解开后的总上限 2 GiB，超了算失败而不是少扫 | at most 2 GiB inflated per .data; beyond it the audit fails rather than scanning less
