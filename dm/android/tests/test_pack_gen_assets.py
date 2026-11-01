@@ -73,6 +73,35 @@ class PackageAudit(unittest.TestCase):
         self.assertTrue(hit('Xcode', b'docs/NO_XCODE')); self.assertTrue(hit('iPhone', b'IPHONE')); self.assertTrue(hit('iOS', b'on iOS')); self.assertTrue(hit('iOS', b'NO_IOS'))
         for word, text in (('Metal', b'Metallic'), ('Metal', b'metal_roughness'), ('iOS', b'BIOS'), ('iOS', b'ios_base'), ('Android', b'android::String8'), ('Apple', b'apple_lod3'), ('iPad', b'IPAddressText')): self.assertFalse(hit(word, text), text)
 
+    def test_runtime_matches_its_manifest(self):   # B117：Kimi 的注入反例转红 | B117: the external audit's injection case fails
+        import hashlib, io, os, tempfile, zipfile
+        def rt(extra=None):
+            b = io.BytesIO()
+            with zipfile.ZipFile(b, 'w') as z:
+                z.writestr('py/lib/os.py', 'x = 1'); z.writestr('lib/a.so', b'\0')
+                for n, d in (extra or {}).items(): z.writestr(n, d)
+            return b.getvalue()
+        def apk(rtz, txt_of=None, libs=('py', 'xlate')):
+            f = tempfile.NamedTemporaryFile(suffix='.apk', delete=False); self.addCleanup(os.unlink, f.name)
+            lines = ['python=3.13', hashlib.sha256(txt_of if txt_of is not None else rtz).hexdigest() + '  assets/dmgen/runtime.zip']
+            with zipfile.ZipFile(f, 'w') as z:
+                z.writestr('assets/dmgen/runtime.zip', rtz)
+                for l in libs:
+                    d = ('code ' + l).encode(); z.writestr('lib/arm64-v8a/libdmgen_%s.so' % l, d)
+                    if l != 'evil': lines.append(hashlib.sha256(d).hexdigest() + '  jniLibs/arm64-v8a/libdmgen_%s.so' % l)
+                z.writestr('assets/dmgen/runtime.txt', '\n'.join(lines) + '\n')
+            return f.name
+        good = rt(); self.assertEqual(self.pa.runtime_problems(apk(good)), [])
+        injected = rt({'py/audit-injected.txt': 'Runs on iOS only / MetalFX / iCloud / Apple / iPad'})
+        self.assertTrue(self.pa.runtime_problems(apk(injected, txt_of=good)))           # 注入后哈希不符 | hash mismatch after injection
+        self.assertTrue(self.pa.runtime_problems(apk(rt({'audit-injected.txt': 'x'}))))  # 就算清单跟着改，lib/ py/ 外也不行 | outside lib/ py/ fails even with a matching manifest
+        self.assertTrue(self.pa.runtime_problems(apk(good, libs=('py', 'evil'))))        # 未登记的 libdmgen | unregistered libdmgen
+        f = apk(good); import shutil; g = f + '.x'; self.addCleanup(lambda: os.path.exists(g) and os.unlink(g))
+        with zipfile.ZipFile(f) as a, zipfile.ZipFile(g, 'w') as b:
+            for n in a.namelist():
+                if n != 'assets/dmgen/runtime.txt': b.writestr(n, a.read(n))
+        self.assertTrue(self.pa.runtime_problems(g))                                     # 没有清单 | no manifest
+
     def test_symbol_and_text(self):
         # 只有词两边都不是文字才算偶然（B113，内审 N11-01 的样例 + 长度前缀 + 无 NUL 长块）| chance only when neither side is text (B113)
         for chance in (b'\0\x93\x01IOS\0', b'\x01iOS\x01', b'\xda\x01iOS\xff\0'):

@@ -7,16 +7,17 @@ Package content audit: unpacks an IPA / APK / .app down to the innermost level (
 Usage: package_audit.py <ios|android> <package or .app directory> [--out report.md]. Exit 1 on an unregistered hit, or on a file in src.zip outside the whitelist.
 Any case. Text stored compressed in CASC .data (the overlay: zlib, BLTE N / Z chunks) is decoded and scanned too, and a stream that cannot be decoded or an unknown encoding fails the audit; a directory works as well, such as an overlay made on the phone.
 Only these may pass: in EXEMPT, third-party runtimes and licence texts (not ours to change), the on-phone generator's source (not UI text), binary data of fonts and images (chance bytes); strings in native libraries that are registered identifiers as a whole (SYMBOLS); the original game image segments embedded in the iOS main program."""
-import argparse, collections, hashlib, importlib.util, io, re, struct, sys, zipfile, zlib
+import argparse, collections, hashlib, importlib.util, io, os, re, struct, sys, zipfile, zlib
 from pathlib import Path
 
 DM = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DM / 'ios/tools')); import platform_words
 # (平台, 路径正则, 词, 理由)；词为 None = 该路径任何词都放行 | (platform, path pattern, word, reason); word None = any word passes for that path
 EXEMPT = (
-    ('android', r'assets/dmgen/runtime\.zip!.*', None, '第三方：Python 标准库与依赖，手机端生成器的运行时'),
+    ('android', r'assets/dmgen/runtime\.zip!(lib|py)/.*', None, '第三方：Python 标准库与依赖，手机端生成器的运行时（整包哈希核过 runtime.txt）'),
     ('android', r'(assets/dmgen/THIRD_PARTY_NOTICES\.txt|assets/.*NOTICE.*|.*LICENSE.*)', None, '第三方许可证原文，必须随包且不得改'),
-    ('android', r'lib/arm64-v8a/libdmgen_.*\.so', None, '第三方：Python、SPIRV-Tools、着色器翻译工具'),
+    ('android', r'lib/arm64-v8a/libdmgen_(py|spvopt|spvval)\.so', None, '第三方：Python 启动器、SPIRV-Tools（文件哈希核过 runtime.txt）'),
+    ('android', r'lib/arm64-v8a/libdmgen_xlate\.so', None, '本仓代码：手机端生成器的着色器翻译工具 dmsh_xlate，不是文案（文件哈希核过 runtime.txt）'),
     ('android', r'assets/dmgen/src\.zip!(?!dm/i18n/).*', None, '手机端生成器源码，不是文案；文件集由白名单管，文案表不放行，生成出来的覆盖层另扫'),
     ('android', r'.*\.(ttf|png|jpg|m4a)', None, '字体、图片、音频的二进制数据，偶然的字节不是文字'),
 )
@@ -76,6 +77,7 @@ def is_chance_bytes(data, start, end):
     return not _text_byte_before(data, start) and not _text_byte_after(data, end)
 
 
+RUNTIME_LIBS = {'libdmgen_py.so', 'libdmgen_spvopt.so', 'libdmgen_spvval.so', 'libdmgen_xlate.so'}   # gen_runtime.sh 产出的四个 | the four gen_runtime.sh produces
 ARCHIVE_LIMIT = 1 << 31   # 一个 .data 解开后的总上限 2 GiB，超了算失败而不是少扫 | at most 2 GiB inflated per .data; beyond it the audit fails rather than scanning less
 INCOMPLETE_MIN = 256     # 解到这么多还出错才明说是坏流；更短的留在原样字节里，由「未识别的二进制段」兜住 | an error after this much is named as a damaged stream; shorter ones stay in the plain bytes and fail as an unrecognized binary segment
 FEED = 256
@@ -159,6 +161,27 @@ def split_archive(data, limit=ARCHIVE_LIMIT):
     return b'\0'.join(out), b'\0'.join(plain), notes
 
 
+def runtime_problems(package):
+    """手机端生成器的运行时：runtime.zip 与 libdmgen_*.so 必须和生成时写的 runtime.txt 一字不差，libdmgen 只认登记的四个（B117）。返回未登记项
+    The on-phone generator's runtime: runtime.zip and libdmgen_*.so must match the runtime.txt written at generation, and only the four registered libdmgen exist (B117). Returns unregistered items"""
+    p = Path(package)
+    if p.is_dir() or not zipfile.is_zipfile(p): return []
+    z = zipfile.ZipFile(p); names = set(z.namelist()); bad = []
+    libs = {n for n in names if re.fullmatch(r'lib/arm64-v8a/libdmgen_[^/]*\.so', n)}; has = 'assets/dmgen/runtime.zip' in names
+    for n in sorted(libs):
+        if os.path.basename(n) not in RUNTIME_LIBS: bad.append((n, '未登记的 libdmgen 文件', 0))
+    if not has and not libs: return bad
+    if 'assets/dmgen/runtime.txt' not in names: return bad + [('assets/dmgen/runtime.txt', '没有生成时的清单', 0)]
+    want = dict(reversed(ln.split(None, 1)) for ln in z.read('assets/dmgen/runtime.txt').decode('utf-8', 'replace').splitlines() if re.match(r'[0-9a-f]{64}\s', ln))
+    if has:
+        if hashlib.sha256(z.read('assets/dmgen/runtime.zip')).hexdigest() != want.get('assets/dmgen/runtime.zip'): bad.append(('assets/dmgen/runtime.zip', '和 runtime.txt 的哈希不符', 0))
+        for n in zipfile.ZipFile(io.BytesIO(z.read('assets/dmgen/runtime.zip'))).namelist():
+            if not n.endswith('/') and not n.startswith(('lib/', 'py/')): bad.append(('assets/dmgen/runtime.zip!' + n, 'lib/ py/ 之外的文件', 0))
+    for n in sorted(libs):
+        if os.path.basename(n) in RUNTIME_LIBS and hashlib.sha256(z.read(n)).hexdigest() != want.get('jniLibs/arm64-v8a/' + os.path.basename(n)): bad.append((n, '和 runtime.txt 的哈希不符', 0))
+    return bad
+
+
 INCOMPLETE = []   # walk 里解不完的 .data，audit 收尾时算进未登记 | .data files walk could not inflate; audit counts them as unregistered
 
 
@@ -232,6 +255,7 @@ def audit(platform, package):
                 if '/src.zip!' in path: by_file[path.split('src.zip!', 1)[1]][w] += n
             else: bad.append((path, w, n))
     bad += INCOMPLETE; INCOMPLETE.clear()
+    if platform == 'android': bad += runtime_problems(package)
     return bad, passed, sizes, inner, by_file
 
 
