@@ -14,6 +14,7 @@
 //   <internal dir>/save, temp        saves and temporary files
 #include "../host/dm.h"
 #include "../host/front.h"
+#include "save_root_android.h"
 #include "../host/hle.h"
 #include <android/log.h>
 #include <android/native_window_jni.h>
@@ -236,11 +237,13 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeStart(JNIEnv *env
     load_env_file(g_runtime);
     LOG("boot: 内部目录 %s，外部目录 %s，资源 %s，系统语言 %s", g_files, g_ext, g_src, lg);
     char romfs[1100], save[1100], temp[1100];
-    snprintf(romfs, sizeof romfs, "%s/romfs", g_files); snprintf(save, sizeof save, "%s/save", g_files); snprintf(temp, sizeof temp, "%s/temp", g_files);
+    int test_save = dm_android_save_root(save, sizeof save, g_files);
+    snprintf(romfs, sizeof romfs, "%s/romfs", g_files); snprintf(temp, sizeof temp, "%s/temp", g_files);
     mkdirs(save); mkdirs(temp);
+    if (test_save) LOG("boot: 本局用测试存档 files/save.test（files/save 未动）");
     int n = link_romfs(romfs);
     LOG("boot: 资源链接 %d 个文件", n);
-    setenv("DM_ROMFS", romfs, 0); setenv("DM_SAVE", save, 0); setenv("DM_TEMP", temp, 0);
+    setenv("DM_ROMFS", romfs, 0); setenv("DM_SAVE", save, test_save); setenv("DM_TEMP", temp, 0);
 #ifdef DM_ANDROID_DEBUG_ENV
     debug_environment();
 #endif
