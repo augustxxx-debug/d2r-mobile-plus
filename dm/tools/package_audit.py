@@ -44,6 +44,14 @@ def is_symbol(data, start, end):
     return SYMBOLS.fullmatch(data[s:e if e >= 0 else end + 4096]) is not None
 
 
+def is_chance_bytes(data, start, end):
+    """原生库里这个词所在那一串不是文本（有控制字符或不是 UTF-8）：调试信息等二进制段里偶然的字节，如 b'\\x93\\x01IOS\\0'，文案和日志都不会这样 | in a native library, the run holding the word is not text (control characters or invalid UTF-8): chance bytes in debug info and other binary sections, which UI text and logs never look like"""
+    s = data.rfind(b'\0', max(0, start - 4096), start) + 1; e = data.find(b'\0', end, end + 4096); run = data[s:e if e >= 0 else end]
+    if BINARY.search(run): return True
+    try: run.decode('utf-8'); return False
+    except UnicodeDecodeError: return True
+
+
 ARCHIVE_LIMIT = 1 << 31   # 一个 .data 解开后的总上限 2 GiB，超了算失败而不是少扫 | at most 2 GiB inflated per .data; beyond it the audit fails rather than scanning less
 INCOMPLETE_MIN = 256     # 解到这么多还出错才明说是坏流；更短的留在原样字节里，由「未识别的二进制段」兜住 | an error after this much is named as a damaged stream; shorter ones stay in the plain bytes and fail as an unrecognized binary segment
 FEED = 256
@@ -189,6 +197,9 @@ def audit(platform, package):
                 names = [(s, e) for s, e in mine if is_symbol(data, s, e)]
                 if names: passed['原生库的链接符号、枚举名与设置键，不是文字'][w] += len(names)
                 mine = [x for x in mine if x not in names]
+                chance = [(s, e) for s, e in mine if is_chance_bytes(data, s, e)]
+                if chance: passed['原生库二进制段里偶然的字节，不是文字'][w] += len(chance)
+                mine = [x for x in mine if x not in chance]
             n = len(mine)
             if not n: continue
             why = exempt(platform, path, w)

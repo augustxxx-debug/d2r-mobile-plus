@@ -74,6 +74,9 @@ class PackageAudit(unittest.TestCase):
         for word, text in (('Metal', b'Metallic'), ('Metal', b'metal_roughness'), ('iOS', b'BIOS'), ('iOS', b'ios_base'), ('Android', b'android::String8'), ('Apple', b'apple_lod3'), ('iPad', b'IPAddressText')): self.assertFalse(hit(word, text), text)
 
     def test_symbol_and_text(self):
+        chance = b'\0\x93\x01IOS\0'; self.assertTrue(self.pa.is_chance_bytes(chance, 3, 6))   # 二进制段里偶然的字节放行（iOS 主程序 / libdm 调试信息里见过） | chance bytes in a binary section pass
+        for text in ('\0支持 iOS 的说明\0'.encode(), b'\0log iOS\n\0', b'\0iOS\0'):   # 真文本不放行，含日志的换行 | real text never passes, newlines in logs included
+            at = text.find(b'iOS'); self.assertFalse(self.pa.is_chance_bytes(text, at, at + 3), text)
         one = b'\0MetalFX\0'; self.assertFalse(self.pa.is_symbol(one, 1, 8))   # 单词文字不算（内审 L-01） | a single-word text is no symbol
         data = b'\0dm_icloud_supported\0iCloud sync failed\0'
         spots = [m.span() for m in self.w.pattern('iCloud').finditer(data)]
