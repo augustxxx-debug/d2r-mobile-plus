@@ -505,8 +505,8 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
     uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), gp = root ? dm_ui_top(root, "GameplayOptionsPanel") : 0;
     if (!gp || !*(uint8_t *)(uintptr_t)(gp + 0x50)) { g_diff_w.w = 0; g_diff_last = -1; return; }
     uint64_t w = pm_find(gp, "TouchDiffSlider", 0); if (!w || !DM_WIDGET_OK(b, w, DM_VT_SLIDER, "游戏难度行")) return;
-    dm_hud_info h; dm_hud_get(&h); int cur = h.valid ? h.players : 0;
-    if (g_diff_pend && (g_diff_pend == cur || !h.valid)) g_diff_pend = 0;   // 请求已落地；或已不在局内（退回主菜单时没落地的请求作废，否则局外仍当作局内，B066） | the request has landed; or no longer in a run (a request that never landed is dropped on return to the main menu, else the page would still count as in a run, B066)
+    dm_hud_info h; dm_hud_get(&h); int dm_ingame_now(void), live = dm_ingame_now(), cur = live ? h.players : 0;   // 快照 valid 离局后不清（B066、N13 R13-03）| the snapshot's valid is not cleared after leaving a run
+    if (g_diff_pend && (g_diff_pend == cur || !live)) g_diff_pend = 0;   // 请求已落地；或已不在局内（退回主菜单时没落地的请求作废，否则局外仍当作局内，B066） | the request has landed; or no longer in a run (a request that never landed is dropped on return to the main menu, else the page would still count as in a run, B066)
     int shown = g_diff_pend ? g_diff_pend : cur, setv = -1;
     int v = *(int32_t *)(uintptr_t)(w + 0x5c4);
     if (dm_wref_get(&g_diff_w) != w) {
