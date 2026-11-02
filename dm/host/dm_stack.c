@@ -3,14 +3,14 @@
 // 喝药：原版使用物品（命令 0x26，0x6d3xxx）摘下并释放整件，只改表喝一口整叠就没了。背包、腰带键、自动喝药、佣兵喂药都走这一个命令，所以在命令分派入口（diag.c c2s_obs）接住：
 //   数量 ≥ 2 → 留一份位流 → 让原版处理这条包（能不能喝、药效、列内补位都是原版的）→ 物品没了就在原位建回数量少 1 的一叠。外层那条包换成原版会忽略的（目标类型非法，0x6d30a0 直接返回）。
 //   没喝成（原版拒了）物品还在，什么都不做。
-// 散瓶：商人和怪物给的是单瓶，旧存档读进来数量是 0。服务端拍里把背包同种散瓶并进一叠，封顶 99（DM_STACK_MAX）。
+// 散瓶：商人和怪物给的是单瓶，旧存档读进来数量是 0。服务端拍里把背包同种散瓶并进一叠，封顶 99（DMSTK_CAP）。
 // 紫药：rvs / rvl 表里开着 AdvancedStashStackable（可进材料页），写档走 8 位那个字段（物品数据 +0x9c，dm_pouch.c），属性 70 不落盘。所以背包和腰带里的紫药把数量同步到 +0x9c，读档后再抄回属性。
 // True potion stacking (tables in dm/ios/tools/stack_potions.py): the host side, all on the server, calling only original functions and sending only original packets.
 // The count is item stat 70 (0x46, same as tomes and keys): read main+0x5b9290(item, 0x46, 0), adjust main+0x5bc5a0(item, 0x46, delta, 0), notify the client main+0x63cc80(client, item, 1, 0x46, value, 0) (same as the original 0x64f188–0x64f1bc).
 // Drinking: the original use-item (command 0x26, 0x6d3xxx) detaches and frees the whole item, so with the tables alone one sip removes the stack. Inventory, belt keys, auto-drink and feeding the merc all go through this one command, so it is caught at the command dispatch entry (c2s_obs in diag.c):
 //   count >= 2 -> keep a bitstream copy -> let the original handle this packet (whether it can be drunk, the effect and the column shift are all original) -> if the item is gone, rebuild a stack one smaller in place. The outer packet is replaced with one the original ignores (illegal target type, 0x6d30a0 returns at once).
 //   If not drunk (rejected by the original) the item is still there and nothing is done.
-// Loose bottles: vendors and monsters give single bottles and old saves load with count 0. In the server tick, loose bottles of a kind in the inventory merge into one stack, capped at 99 (DM_STACK_MAX).
+// Loose bottles: vendors and monsters give single bottles and old saves load with count 0. In the server tick, loose bottles of a kind in the inventory merge into one stack, capped at 99 (DMSTK_CAP).
 // Rejuvenation: rvs / rvl have AdvancedStashStackable on in the table (they can go to the materials page), so saving uses that 8-bit field (item data +0x9c, dm_pouch.c) and stat 70 is not saved. So rejuvenation potions in the inventory and belt mirror the count to +0x9c, and it is copied back to the stat after loading.
 // 进腰带：原版整叠搬走。命令 0x53 同样接住：让原版把这一叠移进腰带，再把腰带里那件改成 1 瓶、背包原格建回其余的（背包格刚腾出来，一定放得下）。自动补腰带（dm_beltauto.c）和长按进腰带都走它，所以都是一瓶一瓶补。
 // 方块：配方按件数算（qty=3 要 3 件），叠算一件。合成命令 0x20 之前把方块里的叠拆成单瓶；方块里只有一叠 = 拆半；只有同种两叠 = 合并（都不合成）。
@@ -20,6 +20,7 @@
 // Cube: recipes count items (qty=3 needs 3 items) and a stack counts as one. Before the transmute command 0x20 stacks in the cube are split into single bottles; a lone stack in the cube = split in half; exactly two stacks of a kind = merge (no transmute in either case).
 // Split UI (the digits on inventory cells and split 1 / half / all): widgets in pouch_layout.py, all named TouchQty*. Opened by a touch long press or holding X on a controller. The server does the work, the UI only sends requests. Split-off items go on a list and are not auto-merged again until the next run.
 #include "dm_bag_layout.h"
+#include "dm_stack_rule.h"
 #include "dm_widget.h"
 #include "hle.h"
 #include "dm_i18n.h"
@@ -31,7 +32,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DM_STACK_MAX 99
 #define COMPACT 0x200000u   // 物品数据 +0x18 的简单物品位：写档看物品自己这一位，旧档读进来的药水要清掉，否则数量不落盘 | Simple-item bit in item data +0x18: saving looks at the item's own bit, so potions from old saves must clear it or the count is not saved
 int dm_item_write(uint8_t *b, uint64_t it, uint8_t *buf); uint64_t dm_item_make(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out); uint64_t dm_diag_srv_item(uint32_t id);
 static uint8_t *B;
@@ -93,8 +93,8 @@ static int cube_gate(uint64_t G, uint64_t player) {
         if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 3) { if (is_potion(it) && nl < 12) list[nl++] = it; else others++; }
         it = *(uint64_t *)(d + 0xb0); }
     if (!nl) return 0;
-    if (!others && nl == 1 && qty(list[0]) >= 2 && !(qty(list[0]) == 3 && is_rejuv(list[0]) && ((const char *)&(uint32_t){ code_of(list[0]) })[2] == 's')) {   /* 3 瓶小紫留给配方 3 小紫 → 大紫 | 3 small rejuvs are left to the recipe 3 rvs -> rvl */ int n = qty(list[0]); uint32_t c = code_of(list[0]); split_off(G, player, list[0], n / 2, 3); LOG("堆叠：方块里只有一叠 %.3s×%d → 拆半", (const char *)&c, n); return 1; }
-    if (!others && nl == 2 && code_of(list[0]) == code_of(list[1]) && qty(list[0]) + qty(list[1]) <= DM_STACK_MAX && qty(list[0]) >= 2 && qty(list[1]) >= 2) {
+    if (!others && nl == 1 && dmstk_cube_lone_split(qty(list[0]), is_rejuv(list[0]) && ((const char *)&(uint32_t){ code_of(list[0]) })[2] == 's')) {   /* 3 瓶小紫留给配方 3 小紫 → 大紫 | 3 small rejuvs are left to the recipe 3 rvs -> rvl */ int n = qty(list[0]); uint32_t c = code_of(list[0]); split_off(G, player, list[0], dmstk_split_amount(n, 2), 3); LOG("堆叠：方块里只有一叠 %.3s×%d → 拆半", (const char *)&c, n); return 1; }
+    if (!others && nl == 2 && code_of(list[0]) == code_of(list[1]) && dmstk_merge_fits(qty(list[0]), qty(list[1])) && qty(list[0]) >= 2 && qty(list[1]) >= 2) {
         int t = qty(list[0]) + qty(list[1]); uint32_t c = code_of(list[0]); uint64_t pp = *(uint64_t *)(list[1] + 0x38); if (pp) { set_qty(player, list[0], t); remove_item(G, player, list[1], *(int32_t *)(pp + 0x10), *(int32_t *)(pp + 0x14)); LOG("堆叠：方块里两叠 %.3s → 合并成 %d", (const char *)&c, t); return 1; } }
     int split = 0; for (int i = 0; i < nl; i++) while (qty(list[i]) >= 2) { if (!split_off(G, player, list[i], 1, 3)) { LOG("堆叠：方块放不下，%.3s 留 %d 瓶一叠", (const char *)&(uint32_t){ code_of(list[i]) }, qty(list[i])); break; } split = 1; }
     return split ? 2 : 0;
@@ -140,10 +140,10 @@ void dm_stack_c2s(uint64_t *regs) {
     uint64_t still = dm_diag_srv_item(id); uint32_t nid = 0;
     if (op == 0x53) {
         if (!still || *(uint32_t *)(still + 0xc) != 2) LOG("堆叠：%.3s×%d（id %u）原版没进腰带，不动", (const char *)&code, n, id);
-        else { set_qty(player, still, 1); nid = put_back(G, player, buf, bl, n - 1, mode, page, x, y); if (nid && ex) exempt_add(nid); if (!nid) LOG("【红】堆叠：%.3s 进腰带后放不回背包（格 %d,%d），丢了 %d 瓶", (const char *)&code, x, y, n - 1); }
+        else { set_qty(player, still, dmstk_belt_keep()); nid = put_back(G, player, buf, bl, dmstk_belt_back(n), mode, page, x, y); if (nid && ex) exempt_add(nid); if (!nid) LOG("【红】堆叠：%.3s 进腰带后放不回背包（格 %d,%d），丢了 %d 瓶", (const char *)&code, x, y, dmstk_belt_back(n)); }
     }
     else if (still && *(uint64_t *)(still + 0x10)) LOG("堆叠：%.3s×%d（id %u）原版没喝成，不动", (const char *)&code, n, id);
-    else { nid = put_back(G, player, buf, bl, n - 1, mode, page, x, y); if (nid && ex) exempt_add(nid); if (!nid) LOG("【红】堆叠：%.3s 放不回去（方式 %u，格 %d,%d），丢了 %d 瓶", (const char *)&code, mode, x, y, n - 1); }
+    else { nid = put_back(G, player, buf, bl, dmstk_rest_after_one(n), mode, page, x, y); if (nid && ex) exempt_add(nid); if (!nid) LOG("【红】堆叠：%.3s 放不回去（方式 %u，格 %d,%d），丢了 %d 瓶", (const char *)&code, mode, x, y, dmstk_rest_after_one(n)); }
     memset(noop, 0, sizeof noop); noop[0] = 0x26; noop[6] = 0xff; regs[2] = (uint64_t)(uintptr_t)noop; regs[3] = sizeof noop;
 }
 
@@ -162,9 +162,9 @@ static void normalize(uint64_t G, uint64_t player) {
             if (is_rejuv(it) && q >= 2 && *(uint8_t *)(d + 0x9c) != q) *(uint8_t *)(d + 0x9c) = (uint8_t)q;   // 原版并叠只改属性 | Native merging only changes the stat
             if (is_rejuv(it) && q < 2 && *(uint8_t *)(d + 0x9c) >= 2) { q = *(uint8_t *)(d + 0x9c); set_qty(player, it, q); LOG("堆叠：读档后紫药 %.3s 数量抄回 %d", (const char *)&(uint32_t){ code_of(it) }, q); }
             else if (q < 1) { q = 1; set_qty(player, it, 1); }
-            if (mode == 0 && *(uint8_t *)(d + 0x55) == 0 && !merged && q < DM_STACK_MAX && !exempt(*(uint32_t *)(it + 8))) { uint32_t c = code_of(it); int h = -1; for (int i = 0; i < nh && h < 0; i++) if (code_of(head[i]) == c && hq[i] < DM_STACK_MAX) h = i;
+            if (mode == 0 && *(uint8_t *)(d + 0x55) == 0 && !merged && dmstk_merge_room(q) > 0 && !exempt(*(uint32_t *)(it + 8))) { uint32_t c = code_of(it); int h = -1; for (int i = 0; i < nh && h < 0; i++) if (code_of(head[i]) == c && dmstk_merge_room(hq[i]) > 0) h = i;
                 if (h < 0) { if (nh < 16) { head[nh] = it; hq[nh++] = q; } }
-                else { uint64_t pp = *(uint64_t *)(it + 0x38); int take = q; if (hq[h] + take > DM_STACK_MAX) take = DM_STACK_MAX - hq[h];
+                else { uint64_t pp = *(uint64_t *)(it + 0x38); int take = dmstk_merge_take(hq[h], q);
                     hq[h] += take; set_qty(player, head[h], hq[h]); if (take == q && pp) remove_item(G, player, it, *(int32_t *)(pp + 0x10), *(int32_t *)(pp + 0x14)); else set_qty(player, it, q - take);
                     LOG("堆叠：并进 %.3s，那一叠现在 %d", (const char *)&c, hq[h]); merged = 1; } } }   // 链表被动过，这一拍到此为止 | The list was changed, stop for this tick
         if (merged) break; it = nx; }
@@ -177,12 +177,15 @@ void dm_stack_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
     { uint64_t r = atomic_exchange(&g_split_req, 0); if (r) { uint32_t id = (uint32_t)(r >> 8); int m = (int)(r & 0xff); uint64_t it = dm_diag_srv_item(id), d = it ? *(uint64_t *)(it + 0x10) : 0;
         if (d && *(uint32_t *)(it + 0xc) == 0 && qty(it) >= 2) { int page = *(uint8_t *)(d + 0x55), n = qty(it), done = 0; uint32_t c = code_of(it);
             if (m == 3) { while (qty(it) >= 2 && split_off(G, player, it, 1, page)) done++; }
-            else done = split_off(G, player, it, m == 2 ? n / 2 : 1, page) ? 1 : 0;
+            else { int k = dmstk_split_amount(n, m); if (k < 1) k = 1;   // 档位认不出照老做法拆 1 | an unknown mode splits 1 as before
+                done = split_off(G, player, it, k, page) ? 1 : 0; }
             LOG("堆叠：拆分 %.3s×%d（档 %d，页 %d）→ 拆出 %d 次，原叠剩 %d", (const char *)&c, n, m, page, done, qty(it));
             if (!done) atomic_store(&g_notice_full, 1); else { int dm_request_save(void); dm_request_save(); } }
         else LOG("堆叠：拆分请求 id %u 已不是一叠，不做", id); } }
     { uint64_t r = atomic_exchange(&g_sell_req, 0); if (r) { uint32_t id = (uint32_t)(r >> 8); uint64_t it = dm_diag_srv_item(id), d = it ? *(uint64_t *)(it + 0x10) : 0;
-        if (d && qty(it) >= 2) { int n = qty(it), page = *(uint8_t *)(d + 0x55) > 4 ? 0 : *(uint8_t *)(d + 0x55); uint32_t nid = split_off(G, player, it, (r & 0xff) == 2 ? n / 2 : 1, page); LOG("堆叠：卖出先拆：%d 瓶 → 拆出 id %u，原叠剩 %d", n, nid, qty(it)); if (nid) atomic_store(&g_sell_go, nid); else atomic_store(&g_notice_full, 1); } } }
+        if (d && qty(it) >= 2) { int n = qty(it), m = (int)(r & 0xff), k = dmstk_sell_amount(n, m), page = *(uint8_t *)(d + 0x55) > 4 ? 0 : *(uint8_t *)(d + 0x55); if (k < 1) k = 1;   // 卖全部不拆、整叠那件直接卖；档位认不出照老做法拆 1 | sell all does not split (that whole item is sold); an unknown mode splits 1 as before
+            if (k >= n) { LOG("堆叠：卖出整叠 %d 瓶（id %u）", n, id); atomic_store(&g_sell_go, id); }
+            else { uint32_t nid = split_off(G, player, it, k, page); LOG("堆叠：卖出先拆：%d 瓶 → 拆出 id %u，原叠剩 %d", n, nid, qty(it)); if (nid) atomic_store(&g_sell_go, nid); else atomic_store(&g_notice_full, 1); } } } }
     if (atomic_exchange(&g_notice_full, 0)) { void dm_game_notice(uint8_t *, const char *); dm_game_notice(b, dm_str(b, "dmStackNoRoom")); }
     uint32_t tq = *(uint32_t *)(G + 0x170); if (!(tq % 5)) normalize(G, player);
     static int per = -1; if (per < 0) { const char *e = getenv("DM_TEST_STACK_LOG"); per = e ? atoi(e) : 0; }
@@ -238,7 +241,7 @@ static void w_text(uint64_t w, const char *t) {   // 同 dm_pouch.c w_text | Sam
 static uint64_t cli_item(uint32_t id) { return ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(B + 0x45f5f0))((uint64_t)(uintptr_t)(B + 0x2d603a0 + 4 * 0x400), id & 0x7f, id, 4); }
 int dm_stack_box_open(void) { return atomic_load(&g_box_id) != 0; }
 static void box_close(void) { if (atomic_exchange(&g_box_id, 0)) LOG("堆叠：拆分框收起"); }
-static void box_choose(int m) { uint32_t id = atomic_load(&g_box_id); if (!id) return; if (!atomic_load(&g_box_sell)) atomic_store(&g_split_req, (uint64_t)id << 8 | (uint64_t)m); else if (m == 3) atomic_store(&g_sell_go, id); else atomic_store(&g_sell_req, (uint64_t)id << 8 | (uint64_t)m); box_close(); }
+static void box_choose(int m) { uint32_t id = atomic_load(&g_box_id); if (!id) return; int sl = atomic_load(&g_box_sell) != 0; LOG("堆叠：数量框选 %d（%s，id %u）", m, sl ? "卖出" : "拆分", id); if (!sl) atomic_store(&g_split_req, (uint64_t)id << 8 | (uint64_t)m); else if (m == 3) atomic_store(&g_sell_go, id); else atomic_store(&g_sell_req, (uint64_t)id << 8 | (uint64_t)m); box_close(); }
 // 打开拆分框：背包或个人页里叠数 ≥ 2 的药水（ci 取自手柄光标 / 按下点）。返回 1 = 开了
 // Open the split box: a potion stack of 2 or more in the inventory or a personal page (ci from the controller cursor / press point). Returns 1 = opened
 int dm_stack_open(const dm_cursor_item_info *ci) {
@@ -258,14 +261,13 @@ void dm_stack_pad(uint64_t *buttons, uint64_t now_ns) {
 // 按下点在框开着时：点中按钮就在这里选（命中用控件自己的判断）；点外面只收框（同百宝囊清单）。这一下都不再交给游戏
 // A press while the box is open: a hit on a button chooses here (with the widget's own hit test); anywhere else only closes the box (same as the pouch list). Either way the press does not reach the game
 int dm_stack_box_gate(int x, int y) {
-    if (!dm_stack_box_open() || !B) return 0; uint64_t root = *(uint64_t *)(B + 0x2f05458);
-    static const char *const bt[2][3] = { { "TouchQtyOne", "TouchQtyHalf", "TouchQtyAll" }, { "TouchQtySellOne", "TouchQtySellHalf", "TouchQtySellAll" } }; int sl = atomic_load(&g_box_sell) != 0;
-    for (int i = 0; i < 3; i++) { uint64_t w = find_w(root, bt[sl][i], 1); if (w && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32)) & 1)) { box_choose(i + 1); return 1; } }
+    if (!dm_stack_box_open() || !B) return 0; uint64_t root = *(uint64_t *)(B + 0x2f05458); int sl = atomic_load(&g_box_sell) != 0;
+    for (int i = 1; i <= 3; i++) { uint64_t w = find_w(root, dmstk_box_name(sl, i), 1); if (w && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32)) & 1)) { box_choose(i); return 1; } }
     box_close(); return 1;
 }
 void dm_stack_on_uimsg(const char *cat, const char *act, const char *arg) {
     if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return;
-    if (!strcmp(arg, "TouchQtyOne")) box_choose(1); else if (!strcmp(arg, "TouchQtyHalf")) box_choose(2); else if (!strcmp(arg, "TouchQtyAll")) box_choose(3); else if (!strcmp(arg, "TouchQtySellOne")) box_choose(1); else if (!strcmp(arg, "TouchQtySellHalf")) box_choose(2); else if (!strcmp(arg, "TouchQtySellAll")) box_choose(3);
+    int m = dmstk_box_choice(arg); if (m) box_choose(m);   // 六个按钮名 → 档位；别的面板消息不是我们的 | the six button names -> mode; other panel messages are not ours
 }
 // 个人仓库页的叠数角标：物品在玩家物品栏页 4（别的页签不是这批物品，角标收起）
 // Count badges on the personal stash page: the items are on page 4 of the player's container (the other tabs show other items, so the badges are put away)
@@ -273,26 +275,29 @@ static void stash_badges(uint8_t *b, uint64_t pl) {
     static uint64_t last; uint64_t root = *(uint64_t *)(b + 0x2f05458), bk = root ? find_w(root, "BankExpansionLayout", 12) : 0, pool = bk ? find_w(bk, "TouchQtyStash", 2) : 0; if (!pool) return;
     uint64_t tabs = find_w(bk, "BankTabs", 3), g = find_w(bk, "grid", 3); int show = *(uint8_t *)(bk + 0x50) && tabs && g && *(int32_t *)(tabs + 0xdc4) == 0 && *(uint8_t *)(g + 0x50);
     if (!show && last == pool) return;   // 收过了：不再每帧扫 | Already put away: no need to scan every frame
-    last = show ? 0 : pool; char nm[20]; int nd = 0; uint64_t inv = pl ? *(uint64_t *)(pl + 0x90) : 0;
+    last = show ? 0 : pool; char nm[20]; int nd = 0; uint64_t inv = pl ? *(uint64_t *)(pl + 0x90) : 0; char sum[80]; int sk = 0; sum[0] = 0;
     if (show) for (uint64_t it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0, k = 0; it && k < 2048 && nd < NDIG; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
-        if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 4 && pp && is_potion(it)) { int q = qty(it);
-            if (q >= 2) { snprintf(nm, sizeof nm, "TouchQtyS%02d", nd++); uint64_t w = find_w(pool, nm, 1); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, *(int32_t *)(g + 0x70) + CELL * *(int32_t *)(pp + 0x10), *(int32_t *)(g + 0x74) + CELL * *(int32_t *)(pp + 0x14) + 60); } }
+        if (*(uint32_t *)(it + 0xc) == 0 && dmstk_badges_on(DMSTK_PANEL_STASH, *(uint8_t *)(d + 0x55)) && pp && is_potion(it)) { int q = qty(it);
+            if (q >= 2) { if (sk < (int)sizeof sum - 8) sk += snprintf(sum + sk, sizeof sum - sk, " %d", q); snprintf(nm, sizeof nm, "TouchQtyS%02d", nd++); uint64_t w = find_w(pool, nm, 1); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, *(int32_t *)(g + 0x70) + CELL * *(int32_t *)(pp + 0x10), *(int32_t *)(g + 0x74) + CELL * *(int32_t *)(pp + 0x14) + 60); } }
         it = *(uint64_t *)(d + 0xb0); }
     for (; nd < NDIG; nd++) { snprintf(nm, sizeof nm, "TouchQtyS%02d", nd); w_move(find_w(pool, nm, 1), OFF, 0); }
+    // 角标一行汇总（只在显示内容变了时记一条，不刷屏）：回归脚本按这一行断言摆了几格、每格几个数
+    // One summary line per change of what is shown (no spam): the regression script asserts on this line how many cells were placed and with what counts
+    { static char lastsum[80]; if (strcmp(sum, lastsum)) { strlcpy(lastsum, sum, sizeof lastsum); LOG("堆叠：仓库角标 %d 格%s", nd, sum); } }
 }
 int dm_bag_page(void);
 void dm_stack_ui(uint8_t *b, uint64_t inv_panel, uint64_t pl) {   // 游戏主线程每帧（dm_pouch.c ui_pump；物品栏面板开着才来） | Game main thread every frame (ui_pump in dm_pouch.c; only while the inventory panel is open)
     B = b; char nm[20]; int nd = 0; uint64_t inv = pl ? *(uint64_t *)(pl + 0x90) : 0;
     if (pl) atomic_store(&g_cli_pid, *(uint32_t *)(pl + 8));
     for (uint64_t it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0, k = 0; it && k < 2048 && nd < NDIG; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
-        if (!dm_bag_page() && *(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && pp && is_potion(it)) { int q = qty(it);
+        if (!dm_bag_page() && *(uint32_t *)(it + 0xc) == 0 && dmstk_badges_on(DMSTK_PANEL_INVENTORY, *(uint8_t *)(d + 0x55)) && pp && is_potion(it)) { int q = qty(it);
             if (q >= 2) { snprintf(nm, sizeof nm, "TouchQtyN%02d", nd++); uint64_t w = find_w(inv_panel, nm, 3); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, DM_BAG_GRID_X + CELL * *(int32_t *)(pp + 0x10), DM_BAG_GRID_Y + CELL * *(int32_t *)(pp + 0x14) + 60); } }
         it = *(uint64_t *)(d + 0xb0); }
     for (; nd < NDIG; nd++) { snprintf(nm, sizeof nm, "TouchQtyN%02d", nd); w_move(find_w(inv_panel, nm, 3), OFF, 0); }
     stash_badges(b, pl);
-    { uint32_t id = atomic_load(&g_sell_go); static int tries; if (id) { uint64_t root = *(uint64_t *)(b + 0x2f05458), vp = root ? find_w(root, "VendorPanelLayout", 12) : 0, ci = cli_item(id); int r = 0;
+    { uint32_t id = atomic_load(&g_sell_go); static int tries; if (id) { uint64_t root = *(uint64_t *)(b + 0x2f05458), vp = root ? find_w(root, "VendorPanelLayout", 12) : 0, ci = cli_item(id); int r = 0, gold0 = pl ? ((int (*)(uint64_t, int, int))(b + 0x5b9290))(pl, 14, 0) : 0;
         if (vp && *(uint8_t *)(vp + 0x50) && ci) { atomic_store(&g_sell_pass, id); r = ((int (*)(uint64_t, uint64_t, int, int, int, int))(b + 0x433e50))(pl, ci, 1, 0, 1, 0); if (!r) atomic_store(&g_sell_pass, 0); }   // 距上次交易不足 500 ms 时它会拒，下一帧再试 | it refuses within 500 ms of the last trade, so try again next frame
-        if (r || ++tries > 180 || !(vp && *(uint8_t *)(vp + 0x50))) { LOG("堆叠：卖出 id %u → %d（试了 %d 帧）", id, r, tries); tries = 0; atomic_store(&g_sell_go, 0); } } }
+        if (r || ++tries > 180 || !(vp && *(uint8_t *)(vp + 0x50))) { LOG("堆叠：卖出 id %u → %d（试了 %d 帧），金币 %d → %d", id, r, tries, gold0, pl ? ((int (*)(uint64_t, int, int))(b + 0x5b9290))(pl, 14, 0) : 0); tries = 0; atomic_store(&g_sell_go, 0); } } }   // 金币前后一起记：卖成没成、按几瓶计价都看这一行 | gold before and after: this line tells whether the sale went through and how many bottles it was priced for
     int open = dm_stack_box_open(), bx = open ? 420 : OFF;
     w_move(find_w(inv_panel, "TouchQtyBg", 3), bx, 900);
     w_move(find_w(inv_panel, "TouchQtyTitle", 3), bx + 20, 920);

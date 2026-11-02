@@ -77,13 +77,15 @@ run: \
 	$(B)/t_touch_mac \
 	$(B)/t_unit_level \
 	$(B)/t_widestash_restore \
-	$(B)/t_widget
+	$(B)/t_widget \
+	$(B)/t_stack_rule
 	python3 native_write_scan.py --selftest ..
 	python3 widget_cache_scan.py --selftest ..
 	python3 mode_scan.py ../..
 	python3 ../../ios/tools/dm_i18n.py --check
 	python3 test_literal_scan.py
 	python3 ../../i18n/scan_literals.py
+	python3 t_stack_table.py
 	$(B)/t_thread_leak
 	$(B)/t_loader_weak
 	$(B)/t_mac_overlay
@@ -149,6 +151,7 @@ run: \
 	$(B)/t_padmap
 	$(B)/t_unit_level
 	$(B)/t_widget
+	$(B)/t_stack_rule
 	$(B)/t_doorspot
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
 	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
@@ -169,6 +172,8 @@ $(B)/t_doorspot: t_doorspot.c ../dm_doorspot.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_doorspot.c
 $(B)/t_widget: t_widget.c ../dm_widget.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_widget.c
+$(B)/t_stack_rule: t_stack_rule.c ../dm_stack_rule.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_stack_rule.c
 $(B)/t_unit_level: t_unit_level.c ../dm_unit.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_unit_level.c
 $(B)/t_padmap: t_padmap.c ../dm_padmap.h ../dm_input.h | $(B)

@@ -1,0 +1,83 @@
+// 药水堆叠的数目规则：上限、喝 / 喂佣兵 / 进腰带各剩几瓶、拆分与卖出的三档、并叠封顶、数量框控件名、叠数角标在哪个容器哪一页。
+// 全是纯函数，不碰游戏内存、不发包；dm_stack.c 只调这里，单测 dm/host/tests/t_stack_rule.c 测的也是这里，所以改规则只改这一份。
+// 上限 99 与数据表工具 dm/ios/tools/stack_potions.py 的 MAX_STACK 必须一致（表改了这里也要改，单测会盯住 99）。
+// Potion stack arithmetic: the cap, how many bottles are left after a sip / a mercenary feed / moving a stack into the belt,
+// the three split and sell modes, the merge ceiling, the quantity-box widget names, and which container page shows count badges.
+// All pure functions: no game memory, no packets. dm_stack.c calls only these, and dm/host/tests/t_stack_rule.c tests the same
+// functions, so a rule is changed in one place. The 99 cap must match MAX_STACK in the table tool dm/ios/tools/stack_potions.py.
+#pragma once
+
+// 一叠最多几瓶 | how many bottles a stack holds
+#ifndef DMSTK_CAP
+#define DMSTK_CAP 99
+#endif
+static inline int dmstk_cap(void) { return DMSTK_CAP; }
+
+// 原版用掉一瓶（喝、喂佣兵、腰带键）后，原位那一叠剩几瓶：数量 ≥2 才有这一套，剩 n−1；单瓶返回 0 = 不放回
+// After the original game uses one bottle (a sip, a mercenary feed, a belt key) how many bottles are left in place: only for 2+
+// (n−1); a single bottle returns 0 = nothing to put back
+static inline int dmstk_rest_after_one(int n) { return n >= 2 ? n - 1 : 0; }
+
+// 整叠进腰带：腰带那一格留 1 瓶（一瓶一瓶补），其余回背包
+// A whole stack into the belt: the belt cell keeps one bottle (the belt fills one at a time) and the rest goes back
+static inline int dmstk_belt_keep(void) { return 1; }
+static inline int dmstk_belt_back(int n) { return n >= 2 ? n - 1 : 0; }
+
+// 拆分框三档（1 拆 1、2 拆半、3 全部）：返回这一次要拆出几瓶。全部由调用方反复拆 1，这里返回 0；拆半向下取整、至少 1
+// Split box, three modes (1 = one, 2 = half, 3 = all): how many bottles this step splits off. All is split one at a time by the
+// caller, so 0 here; half rounds down and is at least 1
+static inline int dmstk_split_amount(int n, int mode) {
+    if (n < 2) return 0;
+    if (mode == 1) return 1;
+    if (mode == 2) return n / 2 > 1 ? n / 2 : 1;
+    return 0;
+}
+
+// 卖出三档（1 卖 1、2 卖半、3 卖全部）：返回先拆出几瓶再卖那件。卖全部 = 整叠卖 n 瓶、不拆（拆了会多出一件空叠）
+// Sell, three modes (1 = one, 2 = half, 3 = all): how many bottles to split off and sell as their own item. All = sell the whole
+// stack of n with no split (splitting would leave a remainder item behind)
+static inline int dmstk_sell_amount(int n, int mode) {
+    if (n < 1) return 0;
+    if (mode == 1) return n >= 2 ? 1 : 0;
+    if (mode == 2) return n >= 2 ? (n / 2 > 1 ? n / 2 : 1) : 0;
+    if (mode == 3) return n;
+    return 0;
+}
+
+// 并叠：这一叠还能吃几瓶、这一拍实际并进去几瓶（封顶 99，多的留原叠）
+// Merging: how many bottles this stack still takes, and how many actually go in this pass (capped at 99, the rest stays put)
+static inline int dmstk_merge_room(int held) { return held >= DMSTK_CAP ? 0 : DMSTK_CAP - held; }
+static inline int dmstk_merge_take(int held, int add) { int room = dmstk_merge_room(held); return add < room ? add : room; }
+static inline int dmstk_merge_fits(int a, int b) { return a + b <= DMSTK_CAP; }
+
+// 方块里只有一叠：3 瓶小紫留给「3 小紫 → 大紫」的配方不拆，其余 ≥2 瓶拆半。返回 1 = 拆
+// A lone stack in the cube: 3 small rejuvenation potions are left for the 3 rvs -> rvl recipe, anything else of 2+ splits in
+// half. Returns 1 = split
+static inline int dmstk_cube_lone_split(int qty, int small_rejuv) { return qty >= 2 && !(qty == 3 && small_rejuv); }
+
+// 数量框的六个按钮：返回档位（1 一、2 半、3 全部），不是按钮返回 0；dmstk_box_name 反过来给出控件名
+// （布局 pouch_layout.py 里就是这六个名字；界面按名字找控件，写错一个字就点不到）
+// The six quantity-box buttons: the mode (1 one, 2 half, 3 all), 0 when it is not a button; dmstk_box_name gives the widget name
+// back (these six names are in the layout pouch_layout.py; the UI finds widgets by name, so one wrong letter and the tap misses)
+static inline int dmstk_box_choice(const char *name) {
+    if (!name) return 0;
+    if (!__builtin_strcmp(name, "TouchQtyOne") || !__builtin_strcmp(name, "TouchQtySellOne")) return 1;
+    if (!__builtin_strcmp(name, "TouchQtyHalf") || !__builtin_strcmp(name, "TouchQtySellHalf")) return 2;
+    if (!__builtin_strcmp(name, "TouchQtyAll") || !__builtin_strcmp(name, "TouchQtySellAll")) return 3;
+    return 0;
+}
+static inline const char *dmstk_box_name(int sell_set, int mode) {
+    if (sell_set) return mode == 1 ? "TouchQtySellOne" : mode == 2 ? "TouchQtySellHalf" : mode == 3 ? "TouchQtySellAll" : 0;
+    return mode == 1 ? "TouchQtyOne" : mode == 2 ? "TouchQtyHalf" : mode == 3 ? "TouchQtyAll" : 0;
+}
+
+// 叠数角标画在哪个容器：物品栏 = 页 0，个人仓库 = 页 4（存档里个人仓库的当前页就放在页 4），别的容器不画
+// Which container gets count badges: the inventory = page 0, the personal stash = page 4 (the stash's current page lives on page 4
+// in the save); no other container
+enum { DMSTK_PANEL_INVENTORY, DMSTK_PANEL_STASH, DMSTK_PANEL_OTHER };
+enum { DMSTK_PAGE_INVENTORY = 0, DMSTK_PAGE_STASH = 4 };
+static inline int dmstk_badge_page(int panel) {
+    return panel == DMSTK_PANEL_INVENTORY ? DMSTK_PAGE_INVENTORY : panel == DMSTK_PANEL_STASH ? DMSTK_PAGE_STASH : -1;
+}
+// 这一格要不要画角标：容器页对上、且是方式 0（背包 / 仓库里的物品，不是腰带 / 装备位） | whether this cell gets a badge
+static inline int dmstk_badges_on(int panel, int page) { int p = dmstk_badge_page(panel); return p >= 0 && page == p; }
