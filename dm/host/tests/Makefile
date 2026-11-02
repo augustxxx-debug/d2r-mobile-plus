@@ -37,6 +37,7 @@ run: \
 	$(B)/t_crashfence \
 	$(B)/t_diffrow \
 	$(B)/t_crash_hang \
+	$(B)/t_crash_order \
 	$(B)/t_doorspot \
 	$(B)/t_fs \
 	$(B)/t_fs_case \
@@ -155,6 +156,7 @@ run: \
 	$(B)/t_swkbd
 	$(B)/t_altstack
 	$(B)/t_crash_hang
+	$(B)/t_crash_order
 	$(B)/t_movie
 	$(B)/t_condvar
 	$(B)/t_condvar_old
@@ -238,6 +240,8 @@ $(B)/t_altstack: t_altstack.c t_altstack_stub.c ../crash.c ../dm.h | $(B)
 # (-DDM_STATIC_TEST) and runs on a PC through qemu
 $(B)/t_crash_hang: t_crash_hang.c t_altstack_stub.c ../crash.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_crash_hang.c t_altstack_stub.c ../crash.c
+$(B)/t_crash_order: t_crash_order.c t_altstack_stub.c ../crash.c ../dm.h | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_crash_order.c t_altstack_stub.c ../crash.c
 $(B)/%.orig.bin: $(EXEFS)/% | $(B)
 	$(PY) ../../tools/nso.py $< $@ > /dev/null
 $(B):

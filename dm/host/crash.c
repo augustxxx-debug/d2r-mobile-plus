@@ -241,6 +241,12 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
         int is_write = (int)((UC_ESR(uc) >> 6) & 1);   // ESR 的 WnR 位 | The WnR bit of ESR
         for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
     }
+    // 先上 3 秒闹钟、记围栏（B122）：下面读帧指针可能再次缺页，这时 SIGSEGV 被屏蔽，XNU 上进程空转不退；导出也可能卡住。SIGALRM 走进来时自己被屏蔽，要解开兜底才响
+    // Arm the 3-second alarm and note the fence first (B122): reading the frame pointer below can fault again with SIGSEGV blocked, which spins on XNU, and the dump can hang. SIGALRM entering here is blocked itself and must be unblocked for the alarm to fire
+    g_crash_sig = sig;
+    struct sigaction da = {.sa_handler = crash_deadman}; sigemptyset(&da.sa_mask); sigaction(SIGALRM, &da, 0); alarm(3);
+    { sigset_t u; sigemptyset(&u); sigaddset(&u, SIGALRM); pthread_sigmask(SIG_UNBLOCK, &u, 0); }
+    if (g_crash_note_hook) g_crash_note_hook(sig);   // 崩溃围栏：标记里记「闪退」 | crash fence: record "crash" in the marker
     // 第一段：信号安全（见文件开头 cw_*），一定落得进日志
     // First part: signal-safe (see cw_* at the top of the file), it always reaches the log
     { cw_t w; w.n = 0;
@@ -261,15 +267,12 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
           fp = nfp;
       }
       cw_s(&w, "\n"); cw_flush(&w); }
-    // 第二段：dladdr 符号名与各线程现场，3 秒闹钟看着（crash_deadman）
-    // Second part: dladdr symbol names and every thread's state, watched by a 3-second alarm (crash_deadman)
-    g_crash_sig = sig;
-    struct sigaction da = {.sa_handler = crash_deadman}; sigemptyset(&da.sa_mask); sigaction(SIGALRM, &da, 0); alarm(3);
+    // 第二段：dladdr 符号名与各线程现场，上面的 3 秒闹钟看着（crash_deadman）
+    // Second part: dladdr symbol names and every thread's state, watched by the 3-second alarm above (crash_deadman)
     fprintf(stderr, "[dm] CRASH 符号 | symbols:");
     off("addr", (uint64_t)si->si_addr); off("pc", UC_PC(uc)); off("lr", UC_LR(uc));
     fprintf(stderr, "\n");
     dm_backtrace(UC_FP(uc));
-    if (g_crash_note_hook) g_crash_note_hook(sig);   // 崩溃围栏：标记里记「闪退」（先于现场导出，导出里万一再出错也记上了） | crash fence: record "crash" in the marker (before the state dump, so it is recorded even if the dump fails)
     if (g_dump_hook) g_dump_hook();
     _exit(128 + sig);
 }
