@@ -40,7 +40,7 @@ Scrubbing is rule-based and cannot guarantee it removes every piece of personal 
 
 - Each installation creates an Ed25519 key used only for diagnostics, separate from any co-op identity. iOS keeps it in the Keychain (this device only, not synchronized); Android keeps it in the no-backup private directory. The server can tell that two reports came from one installation, but the key is not tied to an account.
 - At most 3 attempts per launch (starting at least 20 s after launch, after 5 s on the menu and up to 60 s waiting for this launch's update manifest, then 60 s and 300 s later, or longer if the server asks), 3 launches, 6 attempts overall and 7 days of storage; then the report is deleted with one notice. An explicit refusal is not retried.
-- On iOS, automatic uploads do not use Low Data Mode networks. Manual uploads are not limited this way.
+- On iOS, in Low Data Mode automatic reports send only the scrubbed summary (at most 16 KiB), not the full report. Manual uploads are not limited this way.
 - Turning the switch off and pressing Apply cancels a running upload and deletes the pending report.
 - The server states its retention before each upload, currently 7 days; only authorized maintainers can read reports.
 
