@@ -134,6 +134,7 @@ static struct {
     int on, gate, dbg, failed, was_on; uint64_t frame;
     nvn_hmap meshes; int nmesh; uint64_t cache_bytes, budget;   // 网格缓存与总字节预算 | mesh cache and its total byte budget
     MTLIndirectAccelerationStructureInstanceDescriptor inst[RTS_MAX_INST]; uint64_t inst_tag[RTS_MAX_INST]; rts_mesh *inst_mesh[RTS_MAX_INST]; int ninst, ndup, nskip_fmt, nskip_prim, nskin, nskin_pose, nalpha;
+    rts_tagset tags;   // 本帧实例去重集合（见 nvn_rtshadow_util.h）：原先每次绘制扫一遍本帧实例表，怪群时每帧上百万次比较 | per-frame instance de-duplication set (see nvn_rtshadow_util.h): it used to scan this frame's instance table per draw, over a million comparisons per frame in a swarm
     rts_mesh *pending[RTS_BUILDS_PER_FRAME]; struct { uint64_t gpu; uint32_t n, stride, fmt, base; } pend_src[RTS_BUILDS_PER_FRAME]; int npend; uint64_t pend_tris;   // 源地址只在当帧有效：帧开始时作废 | source addresses are valid for the current frame only: dropped at frame start
     rts_mesh *submitted[RTS_BUILDS_PER_FRAME]; int nsub;   // 本帧编进构建的网格：下一帧开始时转可用 | meshes whose build was encoded this frame: usable from the next frame start
     int rt_frame, backoff; uint64_t retry_at, n_rt_frames, n_fail_frames, n_orig_draws, n_partial_frames;   // 就绪闸门与统计 | readiness gate and counters
@@ -530,7 +531,7 @@ static void rts_release_all(const char *why) {
     g_rts.tlas = nil; g_rts.scratch = nil; g_rts.mask_lit = nil; g_rts.lit_retry_at = 0; g_rts.lit_logged = g_rts.mask_small_log = 0;   // 再开时日志名额、重试等待从头算（累计数不清，八审观察 2） | log quotas and the retry wait start over on the next switch-on (cumulative counts kept, eighth review observation 2)
     g_rts.mask = g_rts.mask_raw = g_rts.mask_tmp = g_rts.pmask = g_rts.pmaskf = g_rts.mask_half = nil; g_rts.prev = g_rts.lseen = g_rts.llist = nil; g_rts.ps_overlay = nil;
     g_rts.at_decode = g_rts.at_trace = g_rts.at_overlay = g_rts.at_blur = g_rts.at_pick = nil; g_rts.scratch_len = 0; g_rts.nslot = 0; g_rts.cur = -1; g_rts.slot_frame = 0;
-    g_rts.npend = g_rts.nsub = g_rts.ninst = g_rts.nexp = 0; g_rts.nkeep = 0; g_rts.pause_until = 0; g_rts.cur_pos4 = nil; g_rts.cache_bytes = 0; g_rts.rt_frame = g_rts.backoff = 0; g_rts.retry_at = 0; g_rts.show = g_rts.held = g_rts.streak = g_rts.last_shown = g_rts.shown_run = 0; g_rts.need = 1;
+    g_rts.npend = g_rts.nsub = g_rts.ninst = g_rts.nexp = 0; g_rts.nkeep = 0; g_rts.pause_until = 0; memset(&g_rts.tags, 0, sizeof g_rts.tags); g_rts.cur_pos4 = nil; g_rts.cache_bytes = 0; g_rts.rt_frame = g_rts.backoff = 0; g_rts.retry_at = 0; g_rts.show = g_rts.held = g_rts.streak = g_rts.last_shown = g_rts.shown_run = 0; g_rts.need = 1;
     g_rts.skip_on = g_rts.f_skip = g_rts.f_resid = g_rts.last_skip = 0; g_rts.sun_w = g_rts.sun_w_now = g_rts.sun_from_w = 0;
     g_rts.mask_done = g_rts.overlay_done = g_rts.map_cleared = g_rts.clear_tried = g_rts.pl_done = g_rts.lc_done = 0; g_rts.trace_pending = 0; g_rts.trace_depth = nil;
     for (int i = 0; i < g_rts.nsmap; i++) g_rts.smap[i].t = nil;
@@ -751,7 +752,7 @@ static void rts_frame_begin(uint64_t f) {
     if (carry) { cs = g_rts.smap[g_rts.cur_smap]; cs.used = 0; cs.has_l = 0; cs.cleared = g_rts.cur_pass_clear; cs.cd = g_rts.cur_pass_cd; }   // 清没清按这个通道自己的读入方式 | cleared or not by this pass's own load action
     for (int i = 0; i < g_rts.nsmap; i++) g_rts.smap[i].t = nil;
     g_rts.nsmap = 0; g_rts.cur_smap = -1; if (carry) { g_rts.smap[0] = cs; g_rts.nsmap = 1; g_rts.cur_smap = 0; if (++g_rts.n_carry <= 3) MLOG("光追阴影：帧号在阴影通道开着时前进（帧 %llu，%lux%lu 第 %lu 层），这张图带进新帧（第 %llu 次）", (unsigned long long)f, (unsigned long)cs.t.width, (unsigned long)cs.t.height, (unsigned long)cs.slice, (unsigned long long)g_rts.n_carry); } cs.t = nil; g_rts.nuncov = g_rts.f_skip = g_rts.f_resid = 0; g_rts.clear_tried = g_rts.map_cleared = 0; if (g_rts.sun_w_now) g_rts.sun_w = g_rts.sun_w_now; g_rts.sun_w_now = g_rts.sun_from_w = 0; g_rts.main_hdr = nil; g_rts.why[0] = 0; memset(g_rts.f_unc, 0, sizeof g_rts.f_unc); g_rts.pass_why = RM_PASS;
-    g_rts.frame = f; g_rts.n_frames++; g_rts.ninst = g_rts.ndup = g_rts.nskin = g_rts.nskin_pose = g_rts.nskip_fmt = g_rts.nskip_prim = g_rts.nalpha = 0; g_rts.have_cam = g_rts.have_sun = 0; g_rts.main_seen = g_rts.mask_done = g_rts.overlay_done = 0;
+    g_rts.frame = f; g_rts.n_frames++; g_rts.ninst = g_rts.ndup = g_rts.nskin = g_rts.nskin_pose = g_rts.nskip_fmt = g_rts.nskip_prim = g_rts.nalpha = 0; rts_tagset_frame(&g_rts.tags); g_rts.have_cam = g_rts.have_sun = 0; g_rts.main_seen = g_rts.mask_done = g_rts.overlay_done = 0;
     for (int i = 0; i < g_rts.nexp; i++) g_rts.exp_mesh[i]->used = 0;   // 上一帧的蒙皮槽放回 | release the previous frame's skinned slots
     g_rts.nexp = 0; g_rts.cur_pos4 = nil; g_rts.pl_done = g_rts.lc_done = 0; g_rts.trace_pending = 0; g_rts.trace_depth = nil;
     g_rts.nai = 0; g_rts.ai_cap = -1; g_rts.nalpha_rt = 0;
@@ -1020,7 +1021,14 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
     // 实例标签 = 网格键 ^ 整个模型矩阵（64 字节，含第 4 行平移）：同网格、同朝向、只是位置不同的两个单位（同种怪、同款装饰）不能当成重复（原先只哈希前 48 字节，第二个丢影；t_rts_state 第 9 节）
     // instance tag = mesh key ^ the whole model matrix (64 bytes, including the 4th row = translation): two units of the same mesh and orientation at different positions (same monster type, same decoration) must not count as duplicates (only the first 48 bytes were hashed, and the second lost its shadow; t_rts_state section 9)
     const float *M = (const float *)m0; uint64_t tag = key ^ rts_fnv(1469598103934665603ull, m0, 64);
-    for (int i = 0; i < g_rts.ninst; i++) if (g_rts.inst_tag[i] == tag) { g_rts.ndup++; if (shadow) g_rts.n_skipped_draws++; return shadow && rts_skip_ok(mi) ? (g_rts.f_skip++, g_rts.n_skip_draws++, g_rts.last_skip = 1) : 0; }   // 两级级联画同一实例：只进一次（局部回退时第二层也省画） | both cascades draw the same instance: enter once (with partial fallback the second layer is skipped too)
+    // 本帧去重：集合按帧号惰性清空，O(1) 探测。原先每次绘制都扫一遍本帧实例表（怪群 1070 个实例 × 每帧约 2600 次登记 = 每帧 140 万次比较，
+    // 17 Pro 血沼怪群实测的绘制量，单测 t_rts_tags 的量法 0.4 ms/帧）；集合满 / 探测链过长时回退到同一张实例表，判定不变
+    // Per-frame de-duplication: the set is cleared lazily by frame number, O(1) probing. It used to scan this frame's instance table on every
+    // draw (1070 instances x about 2600 registrations per frame = 1.4 million comparisons per frame at the 17 Pro blood-moor swarm draw counts,
+    // 0.4 ms/frame measured by t_rts_tags); when the set is full or a probe chain runs long it falls back to the same instance table, decisions unchanged
+    int dup = rts_tagset_has(&g_rts.tags, tag);
+    if (dup < 0) { dup = 0; for (int i = 0; i < g_rts.ninst; i++) if (g_rts.inst_tag[i] == tag) { dup = 1; break; } }
+    if (dup) { g_rts.ndup++; if (shadow) g_rts.n_skipped_draws++; return shadow && rts_skip_ok(mi) ? (g_rts.f_skip++, g_rts.n_skip_draws++, g_rts.last_skip = 1) : 0; }   // 两级级联画同一实例：只进一次（局部回退时第二层也省画） | both cascades draw the same instance: enter once (with partial fallback the second layer is skipped too)
     MTLIndirectAccelerationStructureInstanceDescriptor *d = &g_rts.inst[g_rts.ninst]; memset(d, 0, sizeof *d); g_rts.inst_exp[g_rts.ninst] = -1;
     d->options = MTLAccelerationStructureInstanceOptionOpaque; d->mask = 0xff; d->accelerationStructureID = m->as.gpuResourceID;
     int r = 0;
@@ -1058,7 +1066,7 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
         else { g_rts.nskin_pose++; if (shadow) { g_rts.nuncov++; g_rts.miss[RM_POSE]++; if (g_rts.rt_frame) { g_rts.n_unc[RM_POSE]++; g_rts.f_unc[RM_POSE]++; } } }
     }
     if (r != 2) for (int c = 0; c < 4; c++) { d->transformationMatrix.columns[c].x = M[c * 4 + 0]; d->transformationMatrix.columns[c].y = M[c * 4 + 1]; d->transformationMatrix.columns[c].z = M[c * 4 + 2]; }   // 行向量 3x4 的第 c 行 = 列主序的第 c 列 | row c of the row-vector 3x4 = column c in column-major
-    g_rts.inst_tag[g_rts.ninst] = tag; g_rts.inst_mesh[g_rts.ninst] = m; g_rts.ninst++;
+    g_rts.inst_tag[g_rts.ninst] = tag; g_rts.inst_mesh[g_rts.ninst] = m; g_rts.ninst++; rts_tagset_add(&g_rts.tags, tag);   // 实例真进了表才登记进去重集合 | only an instance that really entered the table goes into the de-duplication set
     if (prepass && r != 2) {   // 无太阳关卡的静态遮挡体：记进保留表（满了顶掉最久没见的） | static occluder in a level without a sun: record in the keep table (when full, replace the one unseen longest)
         int k = 0; for (; k < g_rts.nkeep; k++) if (g_rts.keep[k].tag == tag) break;
         if (k == g_rts.nkeep) { if (g_rts.nkeep < RTS_KEEP) g_rts.nkeep++; else { k = 0; for (int j = 1; j < RTS_KEEP; j++) if (g_rts.keep[j].last < g_rts.keep[k].last) k = j; } }

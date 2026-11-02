@@ -2,6 +2,7 @@
 // Pure computations of the ray-traced shadows (no Metal objects), shared by nvn_rtshadow.inc and the unit test dm/gfx/tests/t_rtshadow.m: 4×4 inverse, strip expansion, point-light picking
 #pragma once
 #include <stdint.h>
+#include <string.h>
 #include <math.h>
 // 4×4 求逆（伴随矩阵法，双精度；列主序 / 行主序都一样，逆的布局跟输入一致） | 4×4 inverse (adjugate, double precision; layout-agnostic: the inverse has the input's layout)
 static inline void rts_inv4(const double *m, double *o) {
@@ -224,3 +225,41 @@ static inline int rts_memw_tick(rts_memw *m, double now) {   // 放宽了一档�
     m->floor--; m->t_step = now; if (!m->floor) { m->ao_off = 0; m->mesh_half = 0; m->streak = 0; }
     return 1;
 }
+
+// ---- 本帧实例去重 | per-frame instance de-duplication ----
+// 阴影绘制同一实例会被两级级联 / 预渲染重复登记，只许进 TLAS 一次（t_rts_state 第 9 节）。集合按帧号惰性清空（gen 不等于本帧号即空位，可以直接占），
+// 键是实例标签（网格键 ^ 整个模型矩阵），按 uint64 精确比较。
+// The same instance is registered again by the other cascade / the prepass, and may enter the TLAS only once (t_rts_state section 9). The set
+// is cleared lazily by frame number (an entry whose gen is not this frame's is a free slot and may be claimed); the key is the instance tag
+// (mesh key ^ the whole model matrix), compared exactly as a uint64.
+#define RTS_TAGSET_CAP 8192        // 2 的幂，≥ 2 × RTS_MAX_INST（4096），载入率 ≤ 1/2 | power of two, >= 2 x RTS_MAX_INST (4096), load <= 1/2
+#define RTS_TAGSET_PROBE_MAX 32    // 单次查找的探测上限，超了返回 −1 让调用方回退 | probe limit per lookup; -1 tells the caller to fall back
+typedef struct { uint64_t tag[RTS_TAGSET_CAP]; uint32_t gen[RTS_TAGSET_CAP]; uint32_t cur, n; uint64_t probes; } rts_tagset;
+static inline void rts_tagset_frame(rts_tagset *t) {   // 新的一帧 | a new frame
+    if (++t->cur == 0) { memset(t->gen, 0, sizeof t->gen); t->cur = 1; }   // 帧号回绕：整表作废 | frame number wrapped: the whole table is void
+    t->n = 0;
+}
+// 只在「实例真的进了本帧实例表」之后才 add：缓存未就绪 / 槽满 / 上限满的绘制没有登记实例，它的标签不能留在集合里，
+// 否则两级级联的第二次绘制会被当成重复、这个单位就一个影子都没有
+// add only once the instance really entered this frame's instance table: a draw that bailed out (mesh not ready / no slot / over the cap)
+// registered no instance, so its tag must not stay in the set - otherwise the second cascade's draw counts as a duplicate and the unit casts no shadow at all
+static inline int rts_tagset_has(rts_tagset *t, uint64_t tag) {   // 1 = 本帧已有、0 = 没有、−1 = 集合不可用（调用方回退线性扫描）；t->probes 只给单测看工作量 | 1 = already this frame, 0 = not, -1 = set unusable (the caller falls back to a linear scan); t->probes is the work counter the unit test reads
+    if (t->n >= RTS_TAGSET_CAP * 3 / 4) { t->probes++; return -1; }
+    uint32_t mask = RTS_TAGSET_CAP - 1;   // 标签本身已经是 FNV 过的，再乘一次常数取高位，免得低位规律（同款怪的键 + 位置）聚成一串 | the tag is already FNV-hashed; one more multiply and the high bits keep regular low bits (one model's key + positions) from clustering
+    uint32_t i = (uint32_t)((tag * 0x9E3779B97F4A7C15ull) >> 40) & mask, p = 0;
+    for (;; i = (i + 1) & mask) {
+        if (t->gen[i] != t->cur) { t->probes += p + 1; return 0; }   // 空位（上一帧的残留也算空位）| free slot (a leftover from an earlier frame counts as free)
+        if (t->tag[i] == tag) { t->probes += p + 1; return 1; }
+        if (++p >= RTS_TAGSET_PROBE_MAX) return -1;   // 探测链过长（异常输入）：回退，不在这里死循环 | probe chain too long (unexpected input): fall back instead of looping
+    }
+}
+static inline void rts_tagset_add(rts_tagset *t, uint64_t tag) {   // 登记进集合（满了就什么也不做：查找那边同样会回退） | record in the set (when full, nothing happens: lookups fall back too)
+    if (t->n >= RTS_TAGSET_CAP * 3 / 4) return;
+    uint32_t mask = RTS_TAGSET_CAP - 1, i = (uint32_t)((tag * 0x9E3779B97F4A7C15ull) >> 40) & mask, p = 0;
+    for (;; i = (i + 1) & mask) {
+        if (t->gen[i] != t->cur) { t->gen[i] = t->cur; t->tag[i] = tag; t->n++; return; }
+        if (t->tag[i] == tag) return;
+        if (++p >= RTS_TAGSET_PROBE_MAX) return;
+    }
+}
+

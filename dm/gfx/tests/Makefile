@@ -26,6 +26,9 @@ t_refl: t_refl.m ../nvn/nvn_refl.m ../nvn/nvn_refl.h ../nvn/dmsh_chain.h
 	clang -O1 -g -Wall -fobjc-arc -o $@ t_refl.m ../nvn/nvn_refl.m -framework Metal -weak_framework MetalFX -framework Foundation
 t_hmap: t_hmap.c ../nvn/nvn_hmap.h
 	clang -O1 -Wall -o $@ t_hmap.c
+# 光追本帧实例去重：判定与朴素扫描一致、每次登记的工作量有上限（怪群场景）| ray-tracing per-frame instance dedupe: decisions match the naive scan and the work per registration is bounded (swarm scene)
+t_rts_tags: t_rts_tags.c ../nvn/nvn_rtshadow_util.h
+	clang -O1 -Wall -o $@ t_rts_tags.c
 t_cover: t_cover.c ../nvn/nvn_cover.h
 	clang -O1 -Wall -o $@ t_cover.c
 t_pace: t_pace.c ../nvn/nvn_pace.h
