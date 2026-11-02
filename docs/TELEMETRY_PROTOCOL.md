@@ -36,7 +36,7 @@ A submit answer carries `results`, one item per event: `event_index`, `event_id`
 | 2xx with complete `results` | Each event leaves the queue; `rejected` are dropped and counted; the rest are counted by status |
 | 2xx with missing or unverifiable `results` (index out of range, wrong ID, unknown status) | The batch stays; network backoff |
 | 400 with complete `results` | As the first row |
-| 400 without verifiable `results`, 411, 413, 415, other 4xx | The batch stays, nothing more this launch, one more try next launch; the same status twice on one build stops sending until events expire or the build changes |
+| 400 without verifiable `results`, 411, 413, 415, other 4xx | The batch stays, nothing more this launch, one more try next launch; the same status twice on one build stops the whole channel until those events expire (7 days) or the build changes, then it may try again |
 | 403 | The batch stays; network backoff; a new challenge on the next try, never in place |
 | 408, other 5xx, network errors | The batch stays; network backoff |
 | 409 | The batch is dropped and counted; no retry and no splitting |

@@ -4,7 +4,7 @@
 //   时机：局内零请求、零压缩；只在主菜单 / 选人页连续 5 秒后发；请求飞着时进局就取消。M0 只有前台闲时通道（一批 ≤ 8 KiB），后台通道留后续。
 //   网络：蜂窝 / 低数据模式 / 计量只发启动事件与会话摘要，当日 ≤ 16 KiB；性能窗口等 Wi-Fi。每安装每日 ≤ 8 次请求 / 64 KiB（UTC+8 日界）。
 //   回话（P-000，docs/TELEMETRY_PROTOCOL.md）：先取挑战看 capabilities 再组批；2xx 与带完整 results 的 400 逐事件出队（rejected 丢弃计数），回执无效按网络失败；409 整批丢弃计数。
-//   失败：网络、408、403、5xx 按 1 分 / 5 分 / 30 分 / 2 时 / 12 时退避（±20%），一次启动内最多 6 次；429 / 503 照 Retry-After（> 10 分钟等下次启动）；其余 4xx 留队、这次启动不再发，下次启动再试一次，连续两次同类就停到过期或换构建。
+//   失败：网络、408、403、5xx 按 1 分 / 5 分 / 30 分 / 2 时 / 12 时退避（±20%），一次启动内最多 6 次；429 / 503 照 Retry-After（> 10 分钟等下次启动）；其余 4xx 留队、这次启动不再发，下次启动再试一次，连续两次同类就停发整条通道，满 7 天或换构建再试。
 //   总开关：与崩溃上报共用（dm_crashreport_switch_*，清单 telemetry 字段 + 缓存）；暂停时事件照常入队、零上传、不提示，恢复后补发。只能少发不能多发。
 //   关闭：清队列、状态与本机上报身份，seq 重开从 1 起。日志前缀「统计上报：」，不写地址、设备码与签名材料。
 // Device and usage statistics (RC2 M0, dashboard PRD 2.0-2.7, off by default): recorded only after the player agrees in the notice (dm_telebox.c) or turns it on later under Options → Custom; declined / off = nothing collected, zero requests.
@@ -13,7 +13,7 @@
 //   Timing: zero requests and no compression in a game; only after 5 s on the main menu / character select; a request in flight is cancelled on entering a game. M0 has only the foreground idle channel (a batch ≤ 8 KiB); the background channel comes later.
 //   Network: cellular / Low Data Mode / metered only sends launch and session-end events, ≤ 16 KiB a day; perf windows wait for Wi-Fi. Per install ≤ 8 requests / 64 KiB a day (UTC+8 day boundary).
 //   Answers (P-000, docs/TELEMETRY_PROTOCOL.md): challenge first, capabilities decide the batch; 2xx and a 400 with complete results leave the queue event by event (rejected are dropped and counted), an invalid receipt counts as a network failure; 409 drops the batch and counts it.
-//   Failures: network, 408, 403, 5xx back off 1 min / 5 min / 30 min / 2 h / 12 h (±20%), at most 6 per launch; 429 / 503 follow Retry-After (> 10 min waits for the next launch); other 4xx stay queued, no more this launch, one more try next launch, twice the same stops until expiry or a new build.
+//   Failures: network, 408, 403, 5xx back off 1 min / 5 min / 30 min / 2 h / 12 h (±20%), at most 6 per launch; 429 / 503 follow Retry-After (> 10 min waits for the next launch); other 4xx stay queued, no more this launch, one more try next launch, twice the same stops the whole channel for 7 days or until a new build.
 //   Server switch: shared with crash reports (dm_crashreport_switch_*, manifest telemetry field + cache); while paused events still queue, nothing is uploaded, no notice; resumes afterwards. It can only reduce sending.
 //   Off: clears the queue, the state and the local reporting identity; seq restarts from 1. Log prefix "统计上报："; never the origin, the device code or signing material.
 #pragma once

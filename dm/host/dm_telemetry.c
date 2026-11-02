@@ -54,7 +54,7 @@ static struct {   // 只在游戏主线程读写 | game main thread only
     int dropped[DM_TELE_KINDS], seq;
     long long day; int day_reqs, day_bytes, day_metered, sending_metered;
     int acked[4], conflicts;          // 累计 接受 / 隔离 / 重复 / 拒收 / 冲突：只记本机与日志 | running accepted / quarantined / duplicate / rejected / conflict counts: local state and log only
-    int err_status, err_streak, halt; char err_build[24];
+    int err_status, err_streak, halt; long long halt_at; char err_build[24];
     char session[33], prev_session[33];
     qent q[Q_MAX_N]; int qn; size_t qbytes;
 } S;
@@ -73,7 +73,7 @@ static int path(char *p, size_t n, const char *name) { char d[1024]; if (!dm_cus
 // ---- 状态文件（seq、丢弃计数、当日用量、下次可发时间） | the state file ----
 static void state_write(void) {
     char p[1100], t[1120]; if (!path(p, sizeof p, "dm_tele_state.txt")) return; snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); if (!f) { LOG("【红】统计上报：状态文件写不进"); return; }
-    int ok = fprintf(f, "seq=%d\nd0=%d\nd1=%d\nd2=%d\nnext=%lld\nattempts=%d\nday=%lld\nreqs=%d\nbytes=%d\nmetered=%d\nsession=%s\nok=%d\nquar=%d\ndup=%d\nrej=%d\nconf=%d\nerrst=%d\nerrn=%d\nerrb=%s\n", S.seq, S.dropped[0], S.dropped[1], S.dropped[2], S.next_wall, S.attempts, S.day, S.day_reqs, S.day_bytes, S.day_metered, S.session, S.acked[0], S.acked[1], S.acked[2], S.acked[3], S.conflicts, S.err_status, S.err_streak, S.err_build) > 0;
+    int ok = fprintf(f, "seq=%d\nd0=%d\nd1=%d\nd2=%d\nnext=%lld\nattempts=%d\nday=%lld\nreqs=%d\nbytes=%d\nmetered=%d\nsession=%s\nok=%d\nquar=%d\ndup=%d\nrej=%d\nconf=%d\nerrst=%d\nerrn=%d\nerrb=%s\nhaltat=%lld\n", S.seq, S.dropped[0], S.dropped[1], S.dropped[2], S.next_wall, S.attempts, S.day, S.day_reqs, S.day_bytes, S.day_metered, S.session, S.acked[0], S.acked[1], S.acked[2], S.acked[3], S.conflicts, S.err_status, S.err_streak, S.err_build, S.halt_at) > 0;
     ok = fclose(f) == 0 && ok; if (ok) rename(t, p); else unlink(t);
 }
 static int hex32(const char *s) { if (strlen(s) != 32) return 0; for (; *s; s++) if (!isxdigit((unsigned char)*s)) return 0; return 1; }
@@ -84,7 +84,7 @@ static void state_read(void) {
         else if (!strcmp(ln, "next")) S.next_wall = atoll(v); else if (!strcmp(ln, "attempts")) S.attempts = atoi(v); else if (!strcmp(ln, "day")) S.day = atoll(v); else if (!strcmp(ln, "reqs")) S.day_reqs = atoi(v);
         else if (!strcmp(ln, "bytes")) S.day_bytes = atoi(v); else if (!strcmp(ln, "metered")) S.day_metered = atoi(v); else if (!strcmp(ln, "session") && hex32(v)) snprintf(S.prev_session, sizeof S.prev_session, "%s", v);
         else if (!strcmp(ln, "ok")) S.acked[0] = atoi(v); else if (!strcmp(ln, "quar")) S.acked[1] = atoi(v); else if (!strcmp(ln, "dup")) S.acked[2] = atoi(v); else if (!strcmp(ln, "rej")) S.acked[3] = atoi(v); else if (!strcmp(ln, "conf")) S.conflicts = atoi(v);
-        else if (!strcmp(ln, "errst")) S.err_status = atoi(v); else if (!strcmp(ln, "errn")) S.err_streak = atoi(v); else if (!strcmp(ln, "errb")) snprintf(S.err_build, sizeof S.err_build, "%s", v); }
+        else if (!strcmp(ln, "errst")) S.err_status = atoi(v); else if (!strcmp(ln, "errn")) S.err_streak = atoi(v); else if (!strcmp(ln, "errb")) snprintf(S.err_build, sizeof S.err_build, "%s", v); else if (!strcmp(ln, "haltat")) S.halt_at = atoll(v); }
     fclose(f); if (S.seq < 0) S.seq = 0;
     for (int k = 0; k < DM_TELE_KINDS; k++) if (S.dropped[k] < 0) S.dropped[k] = 0;
 }
@@ -351,12 +351,13 @@ static void apply_receipt(double now, const int st[BATCH_MAX_N]) {
     next_or_idle(now);
 }
 static void build_now(char b[24]) { dm_tele_device_t d; memset(&d, 0, sizeof d); if (g_shell && g_shell->device) g_shell->device(&d); snprintf(b, 24, "%s", d.build ? d.build : ""); }
-// 确定性的实现错误（P-000 C4）：事件留队，这次启动不再发；下次启动再试一次，连续两次同类就停到过期或换构建 | a deterministic implementation error: events stay queued, no more this launch; one more try next launch, twice the same stops until expiry or a new build
-static void impl_error(int status, const char *code) {
+// 确定性的实现错误（P-000 C4）：事件留队，这次启动不再发；下次启动再试一次，连续两次同类就停发整条通道，到 7 天满或换构建才重新允许 | a deterministic implementation error: events stay queued, no more this launch; one more try next launch, twice the same stops the whole channel until 7 days have passed or a new build
+static void impl_error(int status, const char *code, long long wall) {
     char b[24]; build_now(b);
     if (S.err_status == status && !strcmp(S.err_build, b)) S.err_streak++; else { S.err_status = status; S.err_streak = 1; snprintf(S.err_build, sizeof S.err_build, "%s", b); }
+    if (S.err_streak >= IMPL_ERR_MAX) S.halt_at = wall;   // 从这一刻起算 7 天 | the 7 days count from here
     S.batch_n = 0; S.attempts = 0; S.halt = 1; S.st = DM_TE_IDLE; state_write();
-    LOG("【红】统计上报：实现错误（HTTP %d，%s），事件留在队列，%s", status, code[0] ? code : "无错误码", S.err_streak >= IMPL_ERR_MAX ? "连续两次，停发到过期或换构建" : "这次启动不再发");
+    LOG("【红】统计上报：实现错误（HTTP %d，%s），事件留在队列，%s", status, code[0] ? code : "无错误码", S.err_streak >= IMPL_ERR_MAX ? "连续两次，停发满 7 天或换构建" : "这次启动不再发");
 }
 static void on_result(double now, long long wall, int o, const char *detail) {   // 没有 HTTP 回话 | no HTTP answer
     S.batch_n = 0;
@@ -376,7 +377,7 @@ static void on_status(double now, long long wall, int status, const char *body, 
     if (status == 429 || status == 503) { S.batch_n = 0; if (S.attempts > 0) S.attempts--; after_retry(now, wall, retry_after > 0 ? retry_after : 60, what); return; }
     if (status == 409 && submitted) { int c = S.batch_n; batch_discard(); S.conflicts += c; S.attempts = 0; q_write(); state_write(); LOG("【红】统计上报：身份冲突（%s），丢弃这一批 %d 条，累计冲突 %d", code, c, S.conflicts); next_or_idle(now); return; }
     if (status == 403 || status == 408 || status >= 500 || status < 400) { S.batch_n = 0; after_retry(now, wall, 0, what); return; }
-    impl_error(status, code);
+    impl_error(status, code, wall);
 }
 static void on_challenge(double now, long long wall, int status, const char *body, size_t n, int retry_after) {
     if (status != 200) { on_status(now, wall, status, body, n, retry_after, 0); return; }
@@ -403,12 +404,18 @@ void dm_telemetry_boot(double now, long long wall) {
     const char *te = test_block(); if (te) { LOG("统计上报：开，但本局是测试局（%s），不收集、不联网", te); return; }
     if (!dm_telemetry_configured()) { LOG("统计上报：开，但这个构建没配服务地址，不收集、不联网"); return; }
     state_read(); q_read(); q_enforce(wall); S.st = DM_TE_WAIT; S.next_mono = now; S.attempts = 0; S.halt = 0;
-    if (S.err_streak) { char b[24]; build_now(b); if (strcmp(S.err_build, b)) { S.err_status = S.err_streak = 0; LOG("统计上报：换了构建，之前的实现错误不再算"); } else if (S.err_streak >= IMPL_ERR_MAX) { S.halt = 1; LOG("统计上报：同一构建连续两次实现错误（HTTP %d），停发，事件留到过期或换构建", S.err_status); } }
+    if (S.err_streak) { char b[24]; build_now(b);
+        if (strcmp(S.err_build, b)) { S.err_status = S.err_streak = 0; S.halt_at = 0; LOG("统计上报：换了构建，之前的实现错误不再算"); }
+        else if (S.err_streak >= IMPL_ERR_MAX) {
+            if (S.halt_at > 0 && wall - S.halt_at >= Q_MAX_AGE_S) { S.err_status = S.err_streak = 0; S.halt_at = 0; LOG("统计上报：停发已满 7 天，相关事件都已过期，重新允许尝试"); state_write(); }
+            else { S.halt = 1; if (!S.halt_at) { S.halt_at = wall; state_write(); }   // 老状态文件没有停发时刻：从这次启动算起 | an old state file has no stop time: count from this launch
+                   LOG("统计上报：同一构建连续两次实现错误（HTTP %d），停发整条通道，满 7 天或换构建再试", S.err_status); } }
+    }
     LOG("统计上报：开，队列里有 %d 条（%zu 字节），seq %d", S.qn, S.qbytes, S.seq);
 }
 void dm_telemetry_setting_changed(int on) {
     if (!S.booted) return;
-    if (!on) { if (S.st == DM_TE_OFF) return; cancel_running("玩家关了统计"); q_clear(); files_drop(); S.seq = 0; S.next_wall = 0; S.attempts = 0; S.launch_done = 0; S.session[0] = S.prev_session[0] = 0; memset(S.dropped, 0, sizeof S.dropped); memset(S.acked, 0, sizeof S.acked); S.conflicts = S.err_status = S.err_streak = S.halt = 0; S.day_reqs = S.day_bytes = S.day_metered = 0; S.st = DM_TE_OFF;
+    if (!on) { if (S.st == DM_TE_OFF) return; cancel_running("玩家关了统计"); q_clear(); files_drop(); S.seq = 0; S.next_wall = 0; S.attempts = 0; S.launch_done = 0; S.session[0] = S.prev_session[0] = 0; memset(S.dropped, 0, sizeof S.dropped); memset(S.acked, 0, sizeof S.acked); S.conflicts = S.err_status = S.err_streak = S.halt = 0; S.halt_at = 0; S.day_reqs = S.day_bytes = S.day_metered = 0; S.st = DM_TE_OFF;
         if (g_shell && g_shell->forget_identity) g_shell->forget_identity(); LOG("统计上报：已关，本机队列、状态与上报身份已清"); return; }
     if (S.st != DM_TE_OFF) return;
     dm_telemetry_boot(now_s(), (long long)time(NULL));   // 这次启动里打开：进主菜单就记这一条启动 | turned on during this launch: this launch is recorded on the menu
@@ -422,6 +429,9 @@ void dm_telemetry_http(unsigned token, int status, const char *body, size_t n, i
 }
 void dm_telemetry_tick(double now, long long wall, int on_menu) {
     if (S.st == DM_TE_OFF) return;
+    if (S.halt && S.halt_at > 0 && wall - S.halt_at >= Q_MAX_AGE_S) {   // 停发满 7 天：通道重新允许（长时间挂起后回前台也走这里） | 7 days of the stop are over: the channel may try again (also after a long suspension)
+        S.halt = 0; S.err_status = S.err_streak = 0; S.halt_at = 0; state_write(); LOG("统计上报：停发已满 7 天，重新允许尝试");
+    }
     if (!on_menu) {   // 局内 / 读取 / 选项页：零请求；飞着的取消 | in a game / loading / options: zero requests; what is in flight is cancelled
         if (S.st == DM_TE_PROBE || S.st == DM_TE_CHAL || S.st == DM_TE_SEND) { if (S.st != DM_TE_PROBE && S.attempts > 0) S.attempts--; cancel_running("离开菜单"); S.st = DM_TE_WAIT; }   // 这次不占重试次数 | this one uses no retry budget
         S.menu_since = 0; return; }

@@ -69,7 +69,7 @@ static double go_send(double now, long long wall, int metered) {
 static const char *ALLOWED_TOP[] = { DM_TF_SCHEMA, DM_TF_EVENT_ID, DM_TF_TYPE, DM_TF_CLIENT_TS, DM_TF_SESSION_ID, DM_TF_SEQ, DM_TF_MONO_S, DM_TF_PLATFORM, DM_TF_APP_VERSION, DM_TF_BUILD, DM_TF_SOURCE_REVISION, DM_TF_CHANNEL, DM_TF_PACK_SOURCE, DM_TF_MODEL, DM_TF_SOC, DM_TF_GPU_DRIVER, DM_TF_OS_VERSION, DM_TF_MEM_TIER, DM_TF_MEM_LIMIT_MIB, DM_TF_DEVICE_CODE, DM_TF_CONSENT_VERSION, DM_TF_LOCALE, DM_TF_PREV_SESSION_ID, DM_TF_PREV_EXIT, DM_TF_PREV_EXIT_ARG, DM_TF_AUTO_CRASH, DM_TF_QUEUE_DROPPED, DM_TF_SETTINGS };
 static int has(const char *j, const char *k) { char q[64]; snprintf(q, sizeof q, "\"%s\":", k); return strstr(j, q) != NULL; }
 int main(void) {
-    snprintf(g_dir, sizeof g_dir, "/tmp/t_telemetry.%d", getpid()); mkdir(g_dir, 0700); unsetenv("DM_TEST_TELEMETRY"); unsetenv("DM_TEST_TELEMETRY_NOTICE");
+    const char *td = getenv("TMPDIR"); snprintf(g_dir, sizeof g_dir, "%s/t_telemetry.%d", td && *td ? td : "/tmp", getpid()); mkdir(g_dir, 0700); unsetenv("DM_TEST_TELEMETRY"); unsetenv("DM_TEST_TELEMETRY_NOTICE");
     f_dev = (dm_tele_device_t){ .platform = "ios", .app_version = "1.0.0", .build = "28", .source_revision = "0123456789abcdef0123456789abcdef01234567", .channel = "ios_ipa", .model = "iPhone18,3", .os_version = "27.1.2", .locale = "zh_CN", .device_code = "01234567-89AB-CDEF-0123-456789ABCDEF", .font = "lxgw" };
     dm_telemetry_init(&shell); char j[4096]; int q = 0; size_t by = 0; int at = 0;
 
@@ -200,7 +200,16 @@ int main(void) {
       // C4：下次启动再试一次；同类第二次就停，新事件照入队不发；换构建重开；成功清零 | one more try next launch; the second time stops, new events queue unsent; a new build reopens; success clears
       wipe(); launch(0, 1000); go_send(1, 1001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 1010, 1); launch(0, 2000); CHECK(!S.halt && S.err_streak == 1); reset_counts(); S.launch_done = 1; go_send(1, 2001, 0); CHECK(f_sends == 1); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 2010, 1); CHECK(S.err_streak == 2);
       launch(0, 3000); CHECK(S.halt); reset_counts(); dm_telemetry_tick(1, 3001, 1); dm_telemetry_state(&q, 0, 0); CHECK(q == 2); dm_telemetry_tick(8, 3008, 1); dm_telemetry_tick(16, 3016, 1); CHECK(f_probes == 0 && f_sends == 0);
-      launch(0, 3100 + Q_MAX_AGE_S); dm_telemetry_state(&q, 0, 0); CHECK(q == 0 && S.halt);   // 7 天过期 | 7 days expire
+      launch(0, 3100 + Q_MAX_AGE_S); dm_telemetry_state(&q, 0, 0); CHECK(q == 0);   // 7 天：队列里的事件都过期 | 7 days: every queued event has expired
+      // 停发满 7 天：整条通道重新允许尝试，连续计数清零；新事件照常发得出去 | the stop has lasted 7 days: the channel may try again, the streak restarts, new events go out
+      CHECK(!S.halt && S.err_streak == 0);
+      reset_counts(); go_send(1, 3100 + Q_MAX_AGE_S + 1, 0); CHECK(f_probes == 1 && f_sends == 1);
+      ok_reply(f_tok); dm_telemetry_tick(10, 3100 + Q_MAX_AGE_S + 10, 1); dm_telemetry_state(&q, 0, 0); CHECK(q == 0 && S.err_streak == 0 && !S.halt);
+      // 同一进程里跨过 7 天（长时间挂起后回前台）：也一样重新允许 | 7 days passing inside one process (back from a long suspension) reopens too
+      wipe(); launch(0, 4000); go_send(1, 4001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 4010, 1);
+      launch(0, 5000); S.launch_done = 1; go_send(1, 5001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 5010, 1); CHECK(S.halt);
+      reset_counts(); dm_telemetry_tick(20, 5010 + Q_MAX_AGE_S, 1); CHECK(!S.halt && S.err_streak == 0);
+      dm_telemetry_enqueue(DM_TELE_SESSION_END, 5010 + Q_MAX_AGE_S, E_("s")); go_send(21, 5010 + Q_MAX_AGE_S + 1, 0); CHECK(f_probes == 1 && f_sends == 1);
       wipe(); launch(0, 1000); go_send(1, 1001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 1010, 1); launch(0, 2000); S.launch_done = 1; go_send(1, 2001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 2010, 1); { const char *keep = f_dev.build; f_dev.build = "29"; launch(0, 3000); CHECK(!S.halt && S.err_streak == 0); reset_counts(); S.launch_done = 1; go_send(1, 3001, 0); CHECK(f_sends == 1); ok_reply(f_tok); dm_telemetry_tick(10, 3010, 1); CHECK(S.qn == 0); f_dev.build = keep; }
       wipe(); launch(0, 1000); go_send(1, 1001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 1010, 1); launch(0, 2000); S.launch_done = 1; go_send(1, 2001, 0); ok_reply(f_tok); dm_telemetry_tick(10, 2010, 1); CHECK(S.err_streak == 0 && S.err_status == 0);
       // C5：403（任何错误码）：留队，按网络失败退避，不原地重取挑战；下一次重新取 | 403: stays, network backoff, no fresh challenge in place; the next try fetches one
