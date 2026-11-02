@@ -77,21 +77,40 @@ def is_chance_bytes(data, start, end):
     return not _text_byte_before(data, start) and not _text_byte_after(data, end)
 
 
-ELF_BINARY_SECTIONS = {b'.text', b'.eh_frame', b'.eh_frame_hdr', b'.gcc_except_table', b'.debug_info', b'.debug_loc', b'.debug_abbrev', b'.debug_ranges', b'.debug_line', b'.debug_aranges', b'.symtab', b'.rela.dyn', b'.rela.plt', b'.relr.dyn', b'.got', b'.got.plt'}
+ELF_CODE_SECTIONS = {b'.text'}
+ELF_DATA_SECTIONS = {b'.eh_frame', b'.eh_frame_hdr', b'.gcc_except_table', b'.rela.dyn', b'.rela.plt', b'.relr.dyn', b'.got', b'.got.plt'}
+ELF_DEBUG_SECTIONS = {b'.debug_info', b'.debug_loc', b'.debug_abbrev', b'.debug_ranges', b'.debug_line', b'.debug_aranges', b'.symtab'}
+SHF_ALLOC, SHF_EXECINSTR = 2, 4
 
 
 def elf_binary_ranges(data):
-    """ELF64 里存机器码和二进制结构的段（偏移区间）。这些段里的词只是字节，邻字判断在调试信息这种大块数据上会误报（如 .debug_info 的 b'\\0IOS@\\0'）；.rodata、.data、.debug_str、.dynstr 不在内，照旧按文字扫
-    Sections of an ELF64 holding machine code and binary structures (offset ranges). A word there is only bytes, and the neighbour rule misfires on big blocks like debug info; .rodata, .data, .debug_str and .dynstr are not listed and are scanned as text"""
+    """ELF64 里存机器码和二进制结构的段（偏移区间）。这些段里的词只是字节，邻字判断在调试信息这种大块数据上会误报（如 .debug_info 的 b'\\0IOS@\\0'）；.rodata、.data、.debug_str、.dynstr 不在内，照旧按文字扫。
+    不只认段名（B123）：.text 要有可执行标志，其他数据段要可加载且不可执行，调试段不可加载（玩家看不到）。任何段和别的段重叠就整体不放行。
+    Sections of an ELF64 holding machine code and binary structures (offset ranges). A word there is only bytes; .rodata, .data, .debug_str and .dynstr are not listed and are scanned as text.
+    Not by name alone (B123): .text must be executable, the other data sections loadable and not executable, debug sections not loadable (players cannot see them). Any overlap between sections excuses nothing."""
     if data[:5] != b'\x7fELF\x02' or len(data) < 64: return []
     try:
         shoff = struct.unpack_from('<Q', data, 0x28)[0]; shent, shnum, shstr = struct.unpack_from('<HHH', data, 0x3a)
-        sec = [struct.unpack_from('<IIQQQQ', data, shoff + i * shent) for i in range(shnum)]; so = sec[shstr][4]; out = []
-        for n, _t, _f, _a, off, size in sec:
-            e = data.index(b'\0', so + n)
-            if data[so + n:e] in ELF_BINARY_SECTIONS: out.append((off, off + size))
+        sec = [struct.unpack_from('<IIQQQQ', data, shoff + i * shent) for i in range(shnum)]; so = sec[shstr][4]; out = []; spans = []
+        for n, t, fl, _a, off, size in sec:
+            if t == 8 or not size: continue   # SHT_NOBITS 不占文件 | NOBITS takes no file space
+            if off + size > len(data): return []
+            spans.append((off, off + size))
+            nm = data[so + n:data.index(b'\0', so + n)]
+            ok = (nm in ELF_CODE_SECTIONS and fl & SHF_EXECINSTR and fl & SHF_ALLOC) or (nm in ELF_DATA_SECTIONS and fl & SHF_ALLOC and not fl & SHF_EXECINSTR) or (nm in ELF_DEBUG_SECTIONS and not fl & SHF_ALLOC)
+            if ok: out.append((off, off + size))
+        spans.sort()
+        if any(a[1] > b[0] for a, b in zip(spans, spans[1:])): return []
         return out
     except (struct.error, IndexError, ValueError): return []
+
+
+def short_run(data, start, end):
+    """词前后连着的可打印 ASCII 不到 8 个字节：是字节碰巧，不是一句话。段名、标志都对也放不过一整句（B123，改段名把文案藏进调试段）| fewer than 8 printable ASCII bytes around the word: chance, not a sentence. Correct name and flags still do not excuse a sentence (B123)"""
+    a, b = start, end
+    while a > 0 and 0x20 <= data[a - 1] < 0x7f and end - a < 8: a -= 1
+    while b < len(data) and 0x20 <= data[b] < 0x7f and b - a < 8: b += 1
+    return b - a < 8
 
 
 RUNTIME_LIBS = {'libdmgen_py.so', 'libdmgen_spvopt.so', 'libdmgen_spvval.so', 'libdmgen_xlate.so'}   # gen_runtime.sh 产出的四个 | the four gen_runtime.sh produces
@@ -182,20 +201,24 @@ def runtime_problems(package):
     """手机端生成器的运行时：runtime.zip 与 libdmgen_*.so 必须和生成时写的 runtime.txt 一字不差，libdmgen 只认登记的四个（B117）。返回未登记项
     The on-phone generator's runtime: runtime.zip and libdmgen_*.so must match the runtime.txt written at generation, and only the four registered libdmgen exist (B117). Returns unregistered items"""
     p = Path(package)
-    if p.is_dir() or not zipfile.is_zipfile(p): return []
-    z = zipfile.ZipFile(p); names = set(z.namelist()); bad = []
+    if p.is_dir():   # 目录模式（解开的包、生成目录）同样查（R13-03）| directory mode (an unpacked package or generated tree) is checked too (R13-03)
+        names = {str(f.relative_to(p)) for f in p.rglob('*') if f.is_file()}; read = lambda n: (p / n).read_bytes()
+    elif zipfile.is_zipfile(p):
+        z = zipfile.ZipFile(p); names = set(z.namelist()); read = z.read
+    else: return []
+    bad = []
     libs = {n for n in names if re.fullmatch(r'lib/arm64-v8a/libdmgen_[^/]*\.so', n)}; has = 'assets/dmgen/runtime.zip' in names
     for n in sorted(libs):
         if os.path.basename(n) not in RUNTIME_LIBS: bad.append((n, '未登记的 libdmgen 文件', 0))
     if not has and not libs: return bad
     if 'assets/dmgen/runtime.txt' not in names: return bad + [('assets/dmgen/runtime.txt', '没有生成时的清单', 0)]
-    want = dict(reversed(ln.split(None, 1)) for ln in z.read('assets/dmgen/runtime.txt').decode('utf-8', 'replace').splitlines() if re.match(r'[0-9a-f]{64}\s', ln))
+    want = dict(reversed(ln.split(None, 1)) for ln in read('assets/dmgen/runtime.txt').decode('utf-8', 'replace').splitlines() if re.match(r'[0-9a-f]{64}\s', ln))
     if has:
-        if hashlib.sha256(z.read('assets/dmgen/runtime.zip')).hexdigest() != want.get('assets/dmgen/runtime.zip'): bad.append(('assets/dmgen/runtime.zip', '和 runtime.txt 的哈希不符', 0))
-        for n in zipfile.ZipFile(io.BytesIO(z.read('assets/dmgen/runtime.zip'))).namelist():
+        if hashlib.sha256(read('assets/dmgen/runtime.zip')).hexdigest() != want.get('assets/dmgen/runtime.zip'): bad.append(('assets/dmgen/runtime.zip', '和 runtime.txt 的哈希不符', 0))
+        for n in zipfile.ZipFile(io.BytesIO(read('assets/dmgen/runtime.zip'))).namelist():
             if not n.endswith('/') and not n.startswith(('lib/', 'py/')): bad.append(('assets/dmgen/runtime.zip!' + n, 'lib/ py/ 之外的文件', 0))
     for n in sorted(libs):
-        if os.path.basename(n) in RUNTIME_LIBS and hashlib.sha256(z.read(n)).hexdigest() != want.get('jniLibs/arm64-v8a/' + os.path.basename(n)): bad.append((n, '和 runtime.txt 的哈希不符', 0))
+        if os.path.basename(n) in RUNTIME_LIBS and hashlib.sha256(read(n)).hexdigest() != want.get('jniLibs/arm64-v8a/' + os.path.basename(n)): bad.append((n, '和 runtime.txt 的哈希不符', 0))
     return bad
 
 
@@ -261,7 +284,7 @@ def audit(platform, package):
             if native:
                 if path.endswith('.so'):
                     if elf is None: elf = elf_binary_ranges(data)
-                    inbin = [(s, e) for s, e in mine if any(a <= s < b for a, b in elf)]
+                    inbin = [(s, e) for s, e in mine if any(a <= s < b for a, b in elf) and short_run(data, s, e)]
                     if inbin: passed['ELF 机器码和调试结构段里的字节，不是文字'][w] += len(inbin)
                     mine = [x for x in mine if x not in inbin]
                 names = [(s, e) for s, e in mine if is_symbol(data, s, e)]

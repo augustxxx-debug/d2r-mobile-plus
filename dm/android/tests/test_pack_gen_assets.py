@@ -102,15 +102,40 @@ class PackageAudit(unittest.TestCase):
                 if n != 'assets/dmgen/runtime.txt': b.writestr(n, a.read(n))
         self.assertTrue(self.pa.runtime_problems(g))                                     # 没有清单 | no manifest
 
-    def test_elf_binary_sections(self):   # .debug_info 里的字节不是文字，.rodata 里的是 | bytes in .debug_info are not text, those in .rodata are
+    def test_elf_binary_sections(self):   # B123：只认段名不够，标志和重叠都要对 | B123: the name alone is not enough, flags and overlaps count
         import struct
-        names = b'\0.debug_info\0.rodata\0.shstrtab\0'; dbg = b'\0IOS@\0'; ro = b'\0Runs on iOS\0'
-        body = dbg + ro + names; head = 64; shoff = head + len(body)
-        sh = lambda n, off, size: struct.pack('<IIQQQQIIQQ', n, 1, 0, 0, off, size, 0, 0, 1, 0)
-        elf = bytearray(b'\x7fELF\x02\x01\x01' + bytes(57)); struct.pack_into('<Q', elf, 0x28, shoff); struct.pack_into('<HHH', elf, 0x3a, 64, 4, 3)
-        data = bytes(elf) + body + sh(0, 0, 0) + sh(1, head, len(dbg)) + sh(13, head + len(dbg), len(ro)) + sh(21, head + len(dbg) + len(ro), len(names))
-        r = self.pa.elf_binary_ranges(data); self.assertEqual(r, [(head, head + len(dbg))])
+        def elf(secs, blob):   # secs = (名字, 标志, 在 blob 里的偏移, 长度) | (name, flags, offset in blob, size)
+            names = b'\0'; head = 64; rec = []
+            for n, fl, off, size in secs: rec.append((len(names), fl, head + off, size)); names += n + b'\0'
+            sn = len(names); names += b'.shstrtab\0'; body = blob + names; shoff = head + len(body)
+            e = bytearray(b'\x7fELF\x02\x01\x01' + bytes(57)); struct.pack_into('<Q', e, 0x28, shoff); struct.pack_into('<HHH', e, 0x3a, 64, len(rec) + 1, len(rec))
+            sh = b''.join(struct.pack('<IIQQQQIIQQ', n, 1, fl, 0, off, size, 0, 0, 1, 0) for n, fl, off, size in rec) + struct.pack('<IIQQQQIIQQ', sn, 3, 0, 0, head + len(blob), len(names), 0, 0, 1, 0)
+            return bytes(e) + body + sh
+        d = b'\0IOS@\0\0\0'; ro = b'\0Runs on iOS\0'; b = d + ro; h = 64
+        self.assertEqual(self.pa.elf_binary_ranges(elf([(b'.debug_info', 0, 0, len(d)), (b'.rodata', 2, len(d), len(ro))], b)), [(h, h + len(d))])
+        self.assertEqual(self.pa.elf_binary_ranges(elf([(b'.text', 6, 0, len(d))], b)), [(h, h + len(d))])
+        for bad in ([(b'.text', 2, 0, len(d))],                    # .text 不可执行 | not executable
+                    [(b'.debug_info', 2, 0, len(d))],              # 调试段可加载：改名的 .rodata | a loadable "debug" section: a renamed .rodata
+                    [(b'.got', 6, 0, len(d))],                     # 数据段可执行 | an executable data section
+                    [(b'.rodata', 2, 0, len(b))]):                 # 不在名单 | not listed
+            self.assertEqual(self.pa.elf_binary_ranges(elf(bad, b)), [], bad)
+        self.assertEqual(self.pa.elf_binary_ranges(elf([(b'.debug_info', 0, 0, len(b)), (b'.rodata', 2, len(d), len(ro))], b)), [])   # 重叠 | overlap
         self.assertEqual(self.pa.elf_binary_ranges(b'not elf'), []); self.assertEqual(self.pa.elf_binary_ranges(b'\x7fELF\x02' + bytes(70)), [])
+
+    def test_short_run(self):
+        self.assertTrue(self.pa.short_run(b'\0IOS@\0', 1, 4)); self.assertTrue(self.pa.short_run(b'\x93\x01IOS\0', 2, 5))
+        d = b'\0Runs on iOS\0'; at = d.find(b'iOS'); self.assertFalse(self.pa.short_run(d, at, at + 3))
+        d = b'\0iOS only here\0'; at = d.find(b'iOS'); self.assertFalse(self.pa.short_run(d, at, at + 3))
+
+    def test_runtime_checked_in_directory_mode(self):   # R13-03
+        import hashlib, tempfile, zipfile, io
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / 'assets/dmgen'; d.mkdir(parents=True); b = io.BytesIO()
+            with zipfile.ZipFile(b, 'w') as z: z.writestr('py/a.py', 'x')
+            (d / 'runtime.zip').write_bytes(b.getvalue()); (d / 'runtime.txt').write_text(hashlib.sha256(b.getvalue()).hexdigest() + '  assets/dmgen/runtime.zip\n')
+            self.assertEqual(self.pa.runtime_problems(td), [])
+            (d / 'runtime.zip').write_bytes(b.getvalue() + b'x'); self.assertTrue(self.pa.runtime_problems(td))
 
     def test_symbol_and_text(self):
         # 只有词两边都不是文字才算偶然（B113，内审 N11-01 的样例 + 长度前缀 + 无 NUL 长块）| chance only when neither side is text (B113)
