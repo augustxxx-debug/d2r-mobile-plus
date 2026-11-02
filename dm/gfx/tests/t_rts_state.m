@@ -139,6 +139,23 @@ int main(void) { @autoreleasepool {
     // the export draw's vertex argument block (measured on the Mac in phase 4): the original re-encode marks the vertex stage clean, and with the same variant and unchanged bindings in one pass the previous block is reused → every part writes into the first part's slot; switching to the export state must mark it dirty again
     { NvShader *keep = g_pr->vs_base; if (!g_pr->vs_base) g_pr->vs_base = g_pr->sh[0]; g_args_dirty[0] = 0; rts_export_state(g_pr, 1); EXPECT("切到导出状态时顶点参数块标脏", 1, g_args_dirty[0]); rts_export_state(g_pr, 0); g_pr->vs_base = keep; }
 #endif
+    // 11. 同帧释放后再启用（外审 P2-1）：rts_release_all 之后去重集合必须是合法空表。旧的 memset 全零留下 cur == 0、gen 全 0，
+    //     「本帧已有」与「空位」分不开：标签 0 被当成重复（丢影），别的标签每次要探 32 次才回退（白扫）。正常下一帧会走
+    //     rts_tagset_frame 把问题盖住，但同帧释放后再启用（关闭 / 抓帧释放后帧号没变、rts_draw_inner 不再进帧头）不会。
+    // 11. release then re-enable in the same frame (external review P2-1): after rts_release_all the de-duplication set must be a valid
+    //     empty table. The old memset left cur == 0 with gen all 0, so "already this frame" and "free slot" were indistinguishable: tag 0
+    //     counted as a duplicate (lost shadow) and every other tag burned 32 probes before falling back. A normal next frame masks this
+    //     through rts_tagset_frame, but re-enabling in the same frame (released on switch-off / capture, frame number unchanged, so
+    //     rts_draw_inner does not enter the frame head again) does not.
+    { frame_open(); prepass(); sh(0); sh(0); main_pass(); hdr_again(); ok = frame_close();
+      EXPECT("释放前：本帧实例表非空（第 11 节的前提）", 1, g_rts.ninst > 0);
+      rts_release_all("单测：同帧释放后再启用");
+      EXPECT("同帧释放：实例表清空", 0, g_rts.ninst);
+      EXPECT("同帧释放：集合没有残留项", 0, g_rts.tags.n);
+      EXPECT("同帧释放：标签 0 不算「本帧已有」（空表不变式）", 0, rts_tagset_has(&g_rts.tags, 0));
+      EXPECT("同帧释放：16 字节标签也不算「本帧已有」", 0, rts_tagset_has(&g_rts.tags, 0x9e3779b97f4a7c15ull));
+      EXPECT("同帧释放：之后第一次查找不必回退（探测 1 次即空位）", 0, rts_tagset_has(&g_rts.tags, 0x5a5a5a5aull) < 0);
+    }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

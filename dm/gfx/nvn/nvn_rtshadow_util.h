@@ -262,4 +262,22 @@ static inline void rts_tagset_add(rts_tagset *t, uint64_t tag) {   // 登记进�
         if (++p >= RTS_TAGSET_PROBE_MAX) return;
     }
 }
-
+// 整体释放（关开关 / 抓帧 / 模块失败）之后：必须是合法空表。不能 memset(0) 了事 —— 那样 cur == 0 而 gen 全 0，
+// 「本帧已有」与「空位」分不开：标签 0 被当成重复（该单位丢影），别的标签每次探 32 次才回退（白扫）。
+// gen 清零 + cur 置非零 = 每个槽都是空位，同帧号直接再画也对（rts_draw_inner 帧号没变、不会重新进帧头）。
+// After a full release (switched off / capture / module failure) this must be a valid empty table. A plain memset(0) is not: cur == 0
+// with gen all 0 makes "already this frame" and "free slot" indistinguishable - tag 0 counts as a duplicate (that unit loses its shadow)
+// and every other tag burns 32 probes before falling back. Clearing gen and setting a non-zero cur makes every slot free, so drawing
+// again under the same frame number is still correct (rts_draw_inner does not re-enter the frame head when the number has not changed).
+static inline void rts_tagset_reset(rts_tagset *t) { memset(t->gen, 0, sizeof t->gen); t->cur = 1; t->n = 0; t->probes = 0; }
+// 生产判定（rts_draw_inner 的唯一入口）：集合说「有」= 本帧已登记；集合不可用（−1：满载 / 探测链过长）时回退扫本帧实例表，
+// 与旧实现逐项扫描的判定完全相同。单测 t_rts_tags 直接调它，测的就是生产这一步，不再各写一份。
+// The production decision (rts_draw_inner's only entry): "yes" from the set = already registered this frame; when the set is unusable
+// (-1: full / probe chain too long) fall back to a scan of this frame's instance table, item for item what the old scan did. The unit test
+// t_rts_tags calls this directly, so it tests the production step itself instead of a copy of it.
+static inline int rts_tagset_dup(rts_tagset *t, uint64_t tag, const uint64_t *inst_tag, int ninst) {
+    int h = rts_tagset_has(t, tag);
+    if (h >= 0) return h;
+    for (int i = 0; i < ninst; i++) if (inst_tag[i] == tag) return 1;
+    return 0;
+}

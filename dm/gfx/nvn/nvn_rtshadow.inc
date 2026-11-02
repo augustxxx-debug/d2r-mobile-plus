@@ -531,7 +531,7 @@ static void rts_release_all(const char *why) {
     g_rts.tlas = nil; g_rts.scratch = nil; g_rts.mask_lit = nil; g_rts.lit_retry_at = 0; g_rts.lit_logged = g_rts.mask_small_log = 0;   // 再开时日志名额、重试等待从头算（累计数不清，八审观察 2） | log quotas and the retry wait start over on the next switch-on (cumulative counts kept, eighth review observation 2)
     g_rts.mask = g_rts.mask_raw = g_rts.mask_tmp = g_rts.pmask = g_rts.pmaskf = g_rts.mask_half = nil; g_rts.prev = g_rts.lseen = g_rts.llist = nil; g_rts.ps_overlay = nil;
     g_rts.at_decode = g_rts.at_trace = g_rts.at_overlay = g_rts.at_blur = g_rts.at_pick = nil; g_rts.scratch_len = 0; g_rts.nslot = 0; g_rts.cur = -1; g_rts.slot_frame = 0;
-    g_rts.npend = g_rts.nsub = g_rts.ninst = g_rts.nexp = 0; g_rts.nkeep = 0; g_rts.pause_until = 0; memset(&g_rts.tags, 0, sizeof g_rts.tags); g_rts.cur_pos4 = nil; g_rts.cache_bytes = 0; g_rts.rt_frame = g_rts.backoff = 0; g_rts.retry_at = 0; g_rts.show = g_rts.held = g_rts.streak = g_rts.last_shown = g_rts.shown_run = 0; g_rts.need = 1;
+    g_rts.npend = g_rts.nsub = g_rts.ninst = g_rts.nexp = 0; g_rts.nkeep = 0; g_rts.pause_until = 0; rts_tagset_reset(&g_rts.tags); g_rts.cur_pos4 = nil; g_rts.cache_bytes = 0; g_rts.rt_frame = g_rts.backoff = 0; g_rts.retry_at = 0; g_rts.show = g_rts.held = g_rts.streak = g_rts.last_shown = g_rts.shown_run = 0; g_rts.need = 1;
     g_rts.skip_on = g_rts.f_skip = g_rts.f_resid = g_rts.last_skip = 0; g_rts.sun_w = g_rts.sun_w_now = g_rts.sun_from_w = 0;
     g_rts.mask_done = g_rts.overlay_done = g_rts.map_cleared = g_rts.clear_tried = g_rts.pl_done = g_rts.lc_done = 0; g_rts.trace_pending = 0; g_rts.trace_depth = nil;
     for (int i = 0; i < g_rts.nsmap; i++) g_rts.smap[i].t = nil;
@@ -1022,12 +1022,14 @@ static int rts_draw_inner(NvProg *pr, const p_draw *dw, const p_draw_idx *di, in
     // instance tag = mesh key ^ the whole model matrix (64 bytes, including the 4th row = translation): two units of the same mesh and orientation at different positions (same monster type, same decoration) must not count as duplicates (only the first 48 bytes were hashed, and the second lost its shadow; t_rts_state section 9)
     const float *M = (const float *)m0; uint64_t tag = key ^ rts_fnv(1469598103934665603ull, m0, 64);
     // 本帧去重：集合按帧号惰性清空，O(1) 探测。原先每次绘制都扫一遍本帧实例表（怪群 1070 个实例 × 每帧约 2600 次登记 = 每帧 140 万次比较，
-    // 17 Pro 血沼怪群实测的绘制量，单测 t_rts_tags 的量法 0.4 ms/帧）；集合满 / 探测链过长时回退到同一张实例表，判定不变
+    // 17 Pro 血沼怪群实测的绘制量，单测 t_rts_tags 的量法 0.4 ms/帧）；集合满 / 探测链过长时回退到同一张实例表，判定不变。
+    // 判定本身在 nvn_rtshadow_util.h 的 rts_tagset_dup 里：集合不可用（−1）时按生产语义扫 inst_tag 表 —— 单测 t_rts_tags 直接测这个函数
     // Per-frame de-duplication: the set is cleared lazily by frame number, O(1) probing. It used to scan this frame's instance table on every
     // draw (1070 instances x about 2600 registrations per frame = 1.4 million comparisons per frame at the 17 Pro blood-moor swarm draw counts,
-    // 0.4 ms/frame measured by t_rts_tags); when the set is full or a probe chain runs long it falls back to the same instance table, decisions unchanged
-    int dup = rts_tagset_has(&g_rts.tags, tag);
-    if (dup < 0) { dup = 0; for (int i = 0; i < g_rts.ninst; i++) if (g_rts.inst_tag[i] == tag) { dup = 1; break; } }
+    // 0.4 ms/frame measured by t_rts_tags); when the set is full or a probe chain runs long it falls back to the same instance table, decisions unchanged.
+    // The decision itself lives in rts_tagset_dup (nvn_rtshadow_util.h): when the set is unusable (-1) it scans the inst_tag table exactly as
+    // production must, and the unit test t_rts_tags tests that same function
+    int dup = rts_tagset_dup(&g_rts.tags, tag, g_rts.inst_tag, g_rts.ninst);
     if (dup) { g_rts.ndup++; if (shadow) g_rts.n_skipped_draws++; return shadow && rts_skip_ok(mi) ? (g_rts.f_skip++, g_rts.n_skip_draws++, g_rts.last_skip = 1) : 0; }   // 两级级联画同一实例：只进一次（局部回退时第二层也省画） | both cascades draw the same instance: enter once (with partial fallback the second layer is skipped too)
     MTLIndirectAccelerationStructureInstanceDescriptor *d = &g_rts.inst[g_rts.ninst]; memset(d, 0, sizeof *d); g_rts.inst_exp[g_rts.ninst] = -1;
     d->options = MTLAccelerationStructureInstanceOptionOpaque; d->mask = 0xff; d->accelerationStructureID = m->as.gpuResourceID;
