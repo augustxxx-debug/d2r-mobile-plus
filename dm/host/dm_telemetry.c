@@ -407,8 +407,9 @@ void dm_telemetry_boot(double now, long long wall) {
     if (S.err_streak) { char b[24]; build_now(b);
         if (strcmp(S.err_build, b)) { S.err_status = S.err_streak = 0; S.halt_at = 0; LOG("统计上报：换了构建，之前的实现错误不再算"); }
         else if (S.err_streak >= IMPL_ERR_MAX) {
-            if (S.halt_at > 0 && wall - S.halt_at >= Q_MAX_AGE_S) { S.err_status = S.err_streak = 0; S.halt_at = 0; LOG("统计上报：停发已满 7 天，相关事件都已过期，重新允许尝试"); state_write(); }
-            else { S.halt = 1; if (!S.halt_at) { S.halt_at = wall; state_write(); }   // 老状态文件没有停发时刻：从这次启动算起 | an old state file has no stop time: count from this launch
+            if (S.halt_at > 0 && wall - S.halt_at > Q_MAX_AGE_S) { S.err_status = S.err_streak = 0; S.halt_at = 0; LOG("统计上报：停发已满 7 天，重新允许尝试（队列 %d 条）", S.qn); state_write(); }   // 与队列过期同一个 > | the same > as the queue expiry
+            else if (!S.halt_at && !S.qn) { S.err_status = S.err_streak = 0; LOG("统计上报：老状态没有停发时刻，相关事件都已过期，不再停发"); state_write(); }   // 老状态文件里没有停发时刻，要保护的事件又都过期了：没有理由再停 | an old state file has no stop time and the events it protected have all expired: nothing left to stop for
+            else { S.halt = 1; if (!S.halt_at) { S.halt_at = wall; state_write(); LOG("统计上报：老状态没有停发时刻，从这次启动起算 7 天（保守：宁可少发）"); }   // 原停发时刻无从得知，按最保守的上界算 | the original stop time is unknown: take the most conservative upper bound
                    LOG("统计上报：同一构建连续两次实现错误（HTTP %d），停发整条通道，满 7 天或换构建再试", S.err_status); } }
     }
     LOG("统计上报：开，队列里有 %d 条（%zu 字节），seq %d", S.qn, S.qbytes, S.seq);
@@ -429,8 +430,10 @@ void dm_telemetry_http(unsigned token, int status, const char *body, size_t n, i
 }
 void dm_telemetry_tick(double now, long long wall, int on_menu) {
     if (S.st == DM_TE_OFF) return;
-    if (S.halt && S.halt_at > 0 && wall - S.halt_at >= Q_MAX_AGE_S) {   // 停发满 7 天：通道重新允许（长时间挂起后回前台也走这里） | 7 days of the stop are over: the channel may try again (also after a long suspension)
-        S.halt = 0; S.err_status = S.err_streak = 0; S.halt_at = 0; state_write(); LOG("统计上报：停发已满 7 天，重新允许尝试");
+    if (S.halt && S.halt_at > 0 && wall - S.halt_at > Q_MAX_AGE_S) {   // 停发满 7 天：通道重新允许（长时间挂起后回前台也走这里）。到期口径与队列过期的 > 一致：恰好 604800 秒时事件还在队里，停发也就不解 | seven days of the stop are over: the channel may try again (also after a long suspension). The same > as the queue expiry: at exactly 604800 s the events are still queued, so the stop holds
+        S.halt = 0; S.err_status = S.err_streak = 0; S.halt_at = 0; state_write();
+        if (S.st == DM_TE_IDLE) { S.st = DM_TE_WAIT; S.next_mono = now; S.menu_since = 0; }   // 停发期间入队的事件还在等：不必再有人入队（再等一次 5 秒闲时） | events queued during the stop are still waiting: no further enqueue needed (the idle window starts again)
+        LOG("统计上报：停发已满 7 天，重新允许尝试（队列 %d 条）", S.qn);
     }
     if (!on_menu) {   // 局内 / 读取 / 选项页：零请求；飞着的取消 | in a game / loading / options: zero requests; what is in flight is cancelled
         if (S.st == DM_TE_PROBE || S.st == DM_TE_CHAL || S.st == DM_TE_SEND) { if (S.st != DM_TE_PROBE && S.attempts > 0) S.attempts--; cancel_running("离开菜单"); S.st = DM_TE_WAIT; }   // 这次不占重试次数 | this one uses no retry budget

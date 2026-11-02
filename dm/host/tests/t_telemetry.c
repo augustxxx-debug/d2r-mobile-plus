@@ -208,8 +208,36 @@ int main(void) {
       // 同一进程里跨过 7 天（长时间挂起后回前台）：也一样重新允许 | 7 days passing inside one process (back from a long suspension) reopens too
       wipe(); launch(0, 4000); go_send(1, 4001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 4010, 1);
       launch(0, 5000); S.launch_done = 1; go_send(1, 5001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 5010, 1); CHECK(S.halt);
-      reset_counts(); dm_telemetry_tick(20, 5010 + Q_MAX_AGE_S, 1); CHECK(!S.halt && S.err_streak == 0);
-      dm_telemetry_enqueue(DM_TELE_SESSION_END, 5010 + Q_MAX_AGE_S, E_("s")); go_send(21, 5010 + Q_MAX_AGE_S + 1, 0); CHECK(f_probes == 1 && f_sends == 1);
+      reset_counts(); dm_telemetry_tick(20, 5010 + Q_MAX_AGE_S + 1, 1); CHECK(!S.halt && S.err_streak == 0);
+      dm_telemetry_enqueue(DM_TELE_SESSION_END, 5010 + Q_MAX_AGE_S, E_("s")); go_send(21, 5010 + Q_MAX_AGE_S + 2, 0); CHECK(f_probes == 1 && f_sends == 1);
+      // C4 P1：停发期间已入队、恢复后不再入队：同进程恢复也要把队里的事件发出去，不能靠新入队把 IDLE 拉回 WAIT | queued during the stop and nothing enqueued after it ends: the same process must send what is queued; no further enqueue may be what brings IDLE back to WAIT
+      wipe(); launch(0, 1000); go_send(1, 1001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 1010, 1);
+      launch(0, 2000); go_send(1, 2001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 2010, 1); CHECK(S.halt && S.err_streak == 2 && S.halt_at == 2010);
+      reset_counts(); CHECK(dm_telemetry_enqueue(DM_TELE_SESSION_END, 500000, E_("s")));   // 停发期间照入队 | still queues while stopped
+      dm_telemetry_tick(20, 500100, 1); dm_telemetry_state(&q, 0, 0); CHECK(f_probes == 0 && f_sends == 0 && q == 3);   // 停发期间零请求，事件留着 | no request while stopped, the events wait
+      dm_telemetry_tick(30, 2010 + Q_MAX_AGE_S, 1); CHECK(S.halt && f_probes == 0);   // 恰好处仍在停发：和队列到期同一个 > | still stopped at exactly seven days, the same > the queue expiry uses
+      dm_telemetry_tick(40, 2010 + Q_MAX_AGE_S + 1, 1); dm_telemetry_state(&q, 0, 0); CHECK(!S.halt && S.err_streak == 0 && q == 3 && dm_telemetry_state(0, 0, 0) == DM_TE_WAIT);   // 恢复即回到可发，不等入队 | sendable again on resume, no enqueue needed
+      dm_telemetry_tick(46, 2010 + Q_MAX_AGE_S + 7, 1); dm_telemetry_state(&q, 0, 0); CHECK(f_probes == 1 && q == 1);   // 两条旧事件已过期，停发期间那条还在 | the two old events have expired, the one queued during the stop has not
+      dm_telemetry_net(f_tok, 0); dm_telemetry_tick(46.1, 2010 + Q_MAX_AGE_S + 7, 1); CHECK(f_sends == 1 && S.batch_n == 1 && strstr(f_body, "\"s\""));
+      ok_reply(f_tok); dm_telemetry_tick(47, 2010 + Q_MAX_AGE_S + 8, 1); dm_telemetry_state(&q, 0, 0); CHECK(q == 0);
+      // C4 P2-1：队列到期用 >，通道恢复也用 >：恰好 604800 秒时事件还在队里，停发也就不解；多一秒两边一起过去 | the queue expires on >, so does the stop: at exactly 604800 s the event is still queued and the stop holds; one second later both are gone
+      wipe(); launch(0, 1000); go_send(1, 1001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 1010, 1);
+      launch(0, 2000); go_send(1, 2001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 2010, 1); CHECK(S.halt && S.halt_at == 2010);
+      dm_telemetry_enqueue(DM_TELE_SESSION_END, 2010, E_("s"));   // 与停发同一秒入队 | queued in the same second as the stop
+      launch(0, 2010 + Q_MAX_AGE_S); dm_telemetry_state(&q, 0, 0); CHECK(S.halt && S.err_streak == 2 && q == 1);
+      S.launch_done = 1; reset_counts(); dm_telemetry_tick(6, 2010 + Q_MAX_AGE_S + 6, 1); CHECK(f_probes == 0 && f_sends == 0);   // 不造新启动事件，下一行按原来的墙钟重开 | no new launch event here, so the next line reopens at the wall it says
+      launch(0, 2010 + Q_MAX_AGE_S + 1); dm_telemetry_state(&q, 0, 0); CHECK(!S.halt && S.err_streak == 0 && q == 0);
+      // C4 P2-2：老状态没有 haltat，相关事件又都已过期：不再额外停发七天，直接允许重试 | an old state file without haltat, its events all expired: no extra seven days, a retry is allowed
+      wipe(); { char p[1100]; snprintf(p, sizeof p, "%s/dm_tele_queue.tsv", g_dir); FILE *fq = fopen(p, "w"); fprintf(fq, "1\t1000\t0\t0\t0\t%s\n", E_("s")); fclose(fq);
+        snprintf(p, sizeof p, "%s/dm_tele_state.txt", g_dir); FILE *fs = fopen(p, "w"); fprintf(fs, "seq=4\nerrst=400\nerrn=2\nerrb=28\n"); fclose(fs); }
+      launch(0, 1000 + Q_MAX_AGE_S + 1); dm_telemetry_state(&q, 0, 0); CHECK(!S.halt && S.err_streak == 0 && S.halt_at == 0 && q == 0);
+      reset_counts(); go_send(1, 1000 + Q_MAX_AGE_S + 1, 0); CHECK(f_probes == 1 && f_sends == 1); ok_reply(f_tok); dm_telemetry_tick(10, 1000 + Q_MAX_AGE_S + 11, 1); CHECK(S.qn == 0);
+      // 老状态 + 队里还有事件：原停发时刻无从得知，从这次启动起算七天（保守：宁可少发）；停发时刻要落盘，下次启动不重算 | an old state file with events still queued: the original stop time is unknowable, so it counts from this launch (conservative: send less, never more), and it is persisted so the next launch does not restart it
+      wipe(); { char p[1100]; snprintf(p, sizeof p, "%s/dm_tele_queue.tsv", g_dir); FILE *fq = fopen(p, "w"); fprintf(fq, "1\t900000\t0\t0\t0\t%s\n", E_("s")); fclose(fq);
+        snprintf(p, sizeof p, "%s/dm_tele_state.txt", g_dir); FILE *fs = fopen(p, "w"); fprintf(fs, "seq=4\nerrst=400\nerrn=2\nerrb=28\n"); fclose(fs); }
+      launch(0, 900100); dm_telemetry_state(&q, 0, 0); CHECK(S.halt && S.halt_at == 900100 && S.err_streak == 2 && q == 1);
+      reset_counts(); dm_telemetry_tick(6, 900106, 1); dm_telemetry_tick(12, 900112, 1); CHECK(f_probes == 0 && f_sends == 0);
+      launch(0, 900200); CHECK(S.halt && S.halt_at == 900100 && S.err_streak == 2);
       wipe(); launch(0, 1000); go_send(1, 1001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 1010, 1); launch(0, 2000); S.launch_done = 1; go_send(1, 2001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 2010, 1); { const char *keep = f_dev.build; f_dev.build = "29"; launch(0, 3000); CHECK(!S.halt && S.err_streak == 0); reset_counts(); S.launch_done = 1; go_send(1, 3001, 0); CHECK(f_sends == 1); ok_reply(f_tok); dm_telemetry_tick(10, 3010, 1); CHECK(S.qn == 0); f_dev.build = keep; }
       wipe(); launch(0, 1000); go_send(1, 1001, 0); http(f_tok, 400, "{}", 0); dm_telemetry_tick(10, 1010, 1); launch(0, 2000); S.launch_done = 1; go_send(1, 2001, 0); ok_reply(f_tok); dm_telemetry_tick(10, 2010, 1); CHECK(S.err_streak == 0 && S.err_status == 0);
       // C5：403（任何错误码）：留队，按网络失败退避，不原地重取挑战；下一次重新取 | 403: stays, network backoff, no fresh challenge in place; the next try fetches one

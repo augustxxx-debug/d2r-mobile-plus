@@ -36,7 +36,7 @@ A submit answer carries `results`, one item per event: `event_index`, `event_id`
 | 2xx with complete `results` | Each event leaves the queue; `rejected` are dropped and counted; the rest are counted by status |
 | 2xx with missing or unverifiable `results` (index out of range, wrong ID, unknown status) | The batch stays; network backoff |
 | 400 with complete `results` | As the first row |
-| 400 without verifiable `results`, 411, 413, 415, other 4xx | The batch stays, nothing more this launch, one more try next launch; the same status twice on one build stops the whole channel until those events expire (7 days) or the build changes, then it may try again |
+| 400 without verifiable `results`, 411, 413, 415, other 4xx | The batch stays, nothing more this launch, one more try next launch; the same status twice on one build stops the whole channel until those events expire (7 days) or the build changes, then it may try again. An event counts as expired only strictly after seven days, so at exactly seven days the stop still holds; once it lifts, events queued during the stop go out by themselves |
 | 403 | The batch stays; network backoff; a new challenge on the next try, never in place |
 | 408, other 5xx, network errors | The batch stays; network backoff |
 | 409 | The batch is dropped and counted; no retry and no splitting |
@@ -46,7 +46,7 @@ Network backoff is 1 min, 5 min, 30 min, 2 h, 12 h with ±20% jitter, at most 6 
 
 ## Timing and limits
 
-Zero requests, signing or compression in a playable world. Sending happens after 5 seconds on the main menu or character select. The local queue holds 64 events, 128 KiB, 7 days; over the limit the oldest go in the order `perf_window`, `session_end`, `launch`. Per install and UTC+8 day: 8 requests (a challenge and a submit are one each), 64 KiB, and 16 KiB on metered networks, where `perf_window` waits for Wi-Fi.
+Zero requests, signing or compression in a playable world. Sending happens after 5 seconds on the main menu or character select. The local queue holds 64 events, 128 KiB, 7 days (an event exactly seven days old is not yet expired); over the limit the oldest go in the order `perf_window`, `session_end`, `launch`. Per install and UTC+8 day: 8 requests (a challenge and a submit are one each), 64 KiB, and 16 KiB on metered networks, where `perf_window` waits for Wi-Fi.
 
 ## Server switch
 
