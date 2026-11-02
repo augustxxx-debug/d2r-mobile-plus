@@ -102,7 +102,7 @@ void dm_crashreport_net_cancel(void);
 void dm_crashreport_net_prepare(const char *meta, const char *dir, char *(*collect)(long, void *), void *ctx);
 static char *mac_crash_collect(long limit, void *ctx) {
     @autoreleasepool {
-        NSUInteger lim = limit > 0 ? MIN((NSUInteger)limit, (NSUInteger)128 * 1024) : 0; 
+        NSUInteger lim = limit > 0 ? MIN((NSUInteger)limit, (NSUInteger)128 * 1024) : 0;
         NSData *body = mac_build(lim); NSMutableData *all = [[[NSString stringWithFormat:@"D2R Mobile Plus crash report (automatic)\n%s\n\n", (const char *)ctx] dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
         if (body) [all appendData:body];
         const char *cj = getenv("DM_TEST_CRASH_JSON"); if (cj) { NSString *sum = nil; [all appendData:dm_crashlog_section(@(cj), lim, &sum)]; }

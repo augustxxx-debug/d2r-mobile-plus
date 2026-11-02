@@ -144,4 +144,3 @@ $(DIAG_UPLOAD_LIB): ../ios/Sources/dm_diag_upload.swift
 	swiftc -emit-library -O -swift-version 6 -module-name DmDiagUpload -Xlinker -install_name -Xlinker @rpath/dm_diag_upload.dylib $< -o $@
 dmhost_diag: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH) diagup_mac.m dm_diagup.h $(DIAG_UPLOAD_LIB)
 	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) diagup_mac.m $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) ./$(DIAG_UPLOAD_LIB) -Wl,-rpath,@loader_path -framework Cocoa -framework QuartzCore -framework Metal -weak_framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
-

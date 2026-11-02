@@ -251,7 +251,7 @@ func collector(_ text: String) -> (Int) -> String? { { limit in text.count <= li
         check(r1.outcome == .waitWifi && FakeServer.shared.seen.isEmpty, "maybe delivered: wait for Wi-Fi")
         FakeServer.shared.reset([FakeServer.shared.challenge(), receipt("0123456789abcdef0123456789abcdef", dup: true)])
         r1 = await DmCrashReportStore.attempt(dir: crDir, limit: 256 * 1024, uploader: crUp, key: crKey, metadata: crMeta) { _ in "x" }
-        check(r1.outcome == .ok && (FakeServer.shared.seen.last.map { json($0.body) }?["upload_id"] as? String) == held?.uploadID, "same id"); 
+        check(r1.outcome == .ok && (FakeServer.shared.seen.last.map { json($0.body) }?["upload_id"] as? String) == held?.uploadID, "same id");
         // 4xx / 5xx / 限流：归类交回策略层，报告留着由策略层决定 | 4xx / 5xx / rate limit classified and handed back
         for (status, code, want, after) in [(429, "rate_limited", DmDiagOutcome.rateLimited, "120"), (503, "diagnostic_maintenance", .maintenance, "90"), (400, "invalid_metadata", .rejected, nil), (409, "upload_conflict", .conflict, nil), (500, "request_failed", .unconfirmed, nil)] as [(Int, String, DmDiagOutcome, String?)] {
             try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report.payload"); try? FileManager.default.removeItem(atPath: crDir + "/dm_crash_report.id")
