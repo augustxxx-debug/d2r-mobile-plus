@@ -1497,11 +1497,11 @@ bool compare_mirror_create(Image &im){
     auto fail=[&](const char *reason){im.mirror_fail=1;++r16_mirror_failed;
         xbg_logf("NVN r16 compare mirror unavailable serial=%llu %ux%u levels=%u layers=%u reason=%s",
             (unsigned long long)im.source.serial,im.width,im.height,im.levels,im.layers,reason);return false;};
-    // 视图类型与源图同型：立方体是 CUBE（6 层）/CUBE_ARRAY（6 的倍数），不是 2D 单层；没有合法视图就不做副本。
-    // The view type matches the source: a cube is CUBE (six layers) or CUBE_ARRAY (a multiple of six), never a single
-    // 2D layer; with no legal view there is no copy.
-    const bool cube=xbg_compare_cube_target(im.source.d.target);
-    const xbg_mirror_view_kind kind=xbg_compare_mirror_view_kind(cube,im.layers);
+    // 视图类型与源图同型：target 8 是 CUBE（正好 6 层），target 9 是 CUBE_ARRAY（6 的倍数，含 6 层），
+    // 不是 2D 单层；没有合法视图就不做副本。
+    // The view type matches the source: target 8 is CUBE (exactly six layers), target 9 is CUBE_ARRAY (a multiple of
+    // six, six included), never a single 2D layer; with no legal view there is no copy.
+    const xbg_mirror_view_kind kind=xbg_compare_mirror_view_kind(im.source.d.target,im.layers);
     if(kind==XBG_MIRROR_VIEW_NONE)return fail("no-legal-view");
     const VkImageViewType type=kind==XBG_MIRROR_VIEW_CUBE?VK_IMAGE_VIEW_TYPE_CUBE:kind==XBG_MIRROR_VIEW_CUBE_ARRAY?VK_IMAGE_VIEW_TYPE_CUBE_ARRAY:kind==XBG_MIRROR_VIEW_2D_ARRAY?VK_IMAGE_VIEW_TYPE_2D_ARRAY:VK_IMAGE_VIEW_TYPE_2D;
     auto m=std::make_unique<Image::Mirror>();
@@ -1534,29 +1534,37 @@ VkImageView compare_mirror_sync(Image &im,VkCommandBuffer cmd){
     if(!xbg_mirror_refresh_needed(stats.submissions,im.last_write,im.mirror->stamp))return im.mirror->view;
     prepare_read(im,cmd);
     end_open_pass();   // the copy is a transfer op: never inside a render pass
-    std::vector<VkBufferImageCopy> regions;regions.reserve(xbg_compare_mirror_regions(im.levels,im.layers));
-    VkDeviceSize offsets=0;
-    for(uint32_t l=0;l<im.levels;l++){uint32_t w=std::max(1u,im.width>>l),h=std::max(1u,im.height>>l);
-        for(uint32_t y=0;y<im.layers;y++){VkBufferImageCopy rc{};rc.bufferOffset=offsets;rc.imageSubresource={im.aspects,l,y,1};rc.imageExtent={w,h,1};regions.push_back(rc);offsets+=VkDeviceSize(w)*h*2;}}
-    if(!offsets){return VK_NULL_HANDLE;}
-    // 拷贝必须覆盖每一层：区域数与字节数都要和策略层算出的副本大小一致。少了就是只拷了部分层（立方体 6 张面各一层），
-    // 那样比较采样会读到别的面——宁可这次不走副本，也不读错层。
+    const uint32_t want=xbg_compare_mirror_regions(im.levels,im.layers);
+    const uint64_t bytes=xbg_compare_mirror_bytes(im.width,im.height,im.levels,im.layers);
+    if(!want || !bytes)return VK_NULL_HANDLE;
+    // 中转是 arena 的子分配：Buffer.offset 是它在块内的起点，vkCmdCopy* 按 bufferOffset 的绝对值取地址，
+    // 不会替你加上这一段，所以区域一律以 mid.offset 为基址（屏障覆盖的也是同一段，见 xbg_compare_view.h）。
+    // The staging buffer is an arena sub-allocation: Buffer.offset is its start inside the chunk, and vkCmdCopy*
+    // reads bufferOffset as an absolute address, so every region is based on mid.offset (the barrier covers the
+    // same range; see xbg_compare_view.h).
+    Buffer mid=stream_buffer(size_t(bytes));
+    if(mid.offset>~uint64_t(0)-bytes)return VK_NULL_HANDLE;   // 地址回绕就不拷 | no copy if the address wraps
+    std::vector<xbg_mirror_region> plan(want);
+    uint64_t relative=0;
+    const uint32_t got=xbg_compare_mirror_regions_fill(mid.offset,im.width,im.height,im.levels,im.layers,plan.data(),want,&relative);
+    // 拷贝必须覆盖每一层：区域数与相对字节数都要和策略层算出的副本大小一致。少了就是只拷了部分层（立方体 6 张面各一层），
+    // 那样比较采样会读到别的面——宁可这次不走副本，也不读错层。检查在任何拷贝命令之前，不会留下半个副本。
     // The copy must cover every layer: region count and byte count must match what the policy computed. Anything short
     // means only some layers were copied (each of a cube's six faces is a layer), and compare sampling would then read
-    // another face; better to skip the copy for this binding than to read the wrong layer.
-    if(regions.size()!=size_t(xbg_compare_mirror_regions(im.levels,im.layers)) ||
-       uint64_t(offsets)!=xbg_compare_mirror_bytes(im.width,im.height,im.levels,im.layers)){
-        static unsigned short_copies=0;if(short_copies++<4)xbg_logf("NVN r16 compare mirror copy short serial=%llu regions=%zu/%u bytes=%llu/%llu layers=%u levels=%u",
-            (unsigned long long)im.source.serial,regions.size(),xbg_compare_mirror_regions(im.levels,im.layers),
-            (unsigned long long)offsets,(unsigned long long)xbg_compare_mirror_bytes(im.width,im.height,im.levels,im.layers),im.layers,im.levels);
+    // another face; better to skip the copy for this binding than to read the wrong layer. The check runs before any
+    // copy command, so a short copy never leaves a half-filled mirror behind.
+    if(got!=want || relative!=bytes){
+        static unsigned short_copies=0;if(short_copies++<4)xbg_logf("NVN r16 compare mirror copy short serial=%llu regions=%u/%u bytes=%llu/%llu layers=%u levels=%u",
+            (unsigned long long)im.source.serial,got,want,(unsigned long long)relative,(unsigned long long)bytes,im.layers,im.levels);
         return VK_NULL_HANDLE;
     }
-    Buffer mid=stream_buffer(size_t(offsets));
+    std::vector<VkBufferImageCopy> regions;regions.reserve(want);
+    for(const xbg_mirror_region &p:plan){VkBufferImageCopy rc{};rc.bufferOffset=VkDeviceSize(p.buffer_offset);rc.imageSubresource={im.aspects,p.level,p.layer,1};rc.imageExtent={p.width,p.height,1};regions.push_back(rc);}
     VkMemoryBarrier pre{VK_STRUCTURE_TYPE_MEMORY_BARRIER};pre.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT;pre.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&pre,0,nullptr,0,nullptr);
     vkCmdCopyImageToBuffer(cmd,im.image,VK_IMAGE_LAYOUT_GENERAL,mid.buffer,uint32_t(regions.size()),regions.data());
     VkBufferMemoryBarrier bb{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};bb.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;bb.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
-    bb.srcQueueFamilyIndex=bb.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;bb.buffer=mid.buffer;bb.offset=mid.offset;bb.size=offsets;
+    bb.srcQueueFamilyIndex=bb.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;bb.buffer=mid.buffer;bb.offset=mid.offset;bb.size=bytes;
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,1,&bb,0,nullptr);
     VkImageMemoryBarrier ib{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     ib.oldLayout=xbg_mirror_never_filled(im.mirror->stamp)?VK_IMAGE_LAYOUT_UNDEFINED:VK_IMAGE_LAYOUT_GENERAL;ib.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -1576,8 +1584,8 @@ VkImageView compare_mirror_sync(Image &im,VkCommandBuffer cmd){
     // vertex/tessellation/geometry sampling need the same transfer-write -> shader-read dependency, so take
     // ALL_COMMANDS (xbg_compare_view.h).
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,xbg_compare_mirror_dst_stage(false),0,0,nullptr,0,nullptr,1,&ib);
-    if(xbg_mirror_never_filled(im.mirror->stamp))xbg_logf("NVN r16 compare mirror first fill serial=%llu bytes=%llu regions=%zu",(unsigned long long)im.source.serial,(unsigned long long)offsets,regions.size());
-    im.mirror->bytes=offsets;xbg_mirror_stamp_filled(stats.submissions,im.last_write,im.mirror->stamp);++r16_mirror_refreshes;
+    if(xbg_mirror_never_filled(im.mirror->stamp))xbg_logf("NVN r16 compare mirror first fill serial=%llu bytes=%llu regions=%zu",(unsigned long long)im.source.serial,(unsigned long long)bytes,regions.size());
+    im.mirror->bytes=bytes;xbg_mirror_stamp_filled(stats.submissions,im.last_write,im.mirror->stamp);++r16_mirror_refreshes;
     return im.mirror->view;
 }
 void provenance_image(const char *event,const tex_t *t,const Image &im,const view_t *v=nullptr){
@@ -3191,8 +3199,7 @@ void descriptors_build(Descriptors &out,Commands &commands,bool compute){CPU_SCO
                         xbg_compare_view_input cv{};
                         cv.nvn_format=im.source.d.format;cv.color_aspect=im.aspects==VK_IMAGE_ASPECT_COLOR_BIT;
                         cv.data_bytes=xbg_compare_mirror_bytes(im.width,im.height,im.levels,im.layers);   // 副本的字节数（含层）| the copy's size, layers included
-                        cv.two_dimensional=xbg_compare_2d_target(im.source.d.target);
-                        cv.cube=xbg_compare_cube_target(im.source.d.target);cv.layers=im.layers;
+                        cv.target=im.source.d.target;cv.layers=im.layers;
                         cv.multisampled=im.samples!=VK_SAMPLE_COUNT_1_BIT;cv.compare=true;
                         cv.subresource_view=registered.has_view;   // 子视图只取部分层/级别，副本代表不了 | a sub-view covers part of the image only
                         cv.linear=((parameters.minf&1)!=0) || parameters.magf!=0;   // xbg_sampler.cpp 的映射 | the mapping in xbg_sampler.cpp
