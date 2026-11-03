@@ -284,14 +284,14 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
     // 目标矩形与触控换算同出一处（viewport.h）：显示与触摸不再各算一套尺寸。
     // The destination rectangle comes from the same place as the touch conversion (viewport.h): display and touch no longer compute separate sizes.
     dm_vp_rect vp=dm_vp_fit(int(extent.width),int(extent.height),w,h);int dw=vp.w,dh=vp.h,dx=vp.x,dy=vp.y;
-    // 交给触控层的同一份数据：内容尺寸，以及「这一帧是不是被显示硬件铺满窗口」。后者按交换链实际尺寸判（比例与内容
-    // 相同 = 缓冲就是内容、合成器把它拉满窗口；比例与窗口相同 = 上面按画面矩形 blit、四周留黑边），不看意图，
-    // 于是 setBuffersGeometry 被拒这类情况也仍然与屏幕上真实所见一致。
+    // 交给触控层的同一份数据：内容尺寸，以及「这一帧是不是被显示硬件铺满窗口」。后者要两个比例都对得上
+    // （窗口与内容相同 = present_native 铺满；交换链实际尺寸也与内容相同 = 缓冲确实是内容），
+    // 于是几何被驱动拒绝、或比例不同而仍被拉满这类情况都不会让触控用错矩形，与屏幕上真实所见一致。
     // The same data for the touch layer: the content size, and whether the display hardware fills the window this
-    // frame. The latter is judged from the swapchain's actual size (aspect equal to the content's = the buffer is the
-    // content and the compositor fills the window; equal to the window's = blitted into the picture rectangle with
-    // bars), not from intent, so a refused setBuffersGeometry still matches what is really on screen.
-    frame_w.store(w);frame_h.store(h);fill_window.store(dm_vp_same_aspect(int(extent.width),int(extent.height),w,h) ? 1 : 0);
+    // frame. Both aspects must match (the window's = present_native fills; the swapchain's actual size too = the
+    // buffer really is the content), so a driver refusing the geometry, or a mismatched buffer being stretched,
+    // cannot make touch use the wrong rectangle; it stays with what is really on screen.
+    frame_w.store(w);frame_h.store(h);fill_window.store(dm_vp_same_aspect(int(extent.width),int(extent.height),w,h) && dm_vp_same_aspect(window_w.load(std::memory_order_relaxed),window_h.load(std::memory_order_relaxed),w,h) ? 1 : 0);
     if(dx || dy || dw!=int(extent.width) || dh!=int(extent.height)){   // letterbox bars only where the blit leaves part of the image
         VkClearColorValue black{};vkCmdClearColorImage(cmd,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&black,1,&barrier.subresourceRange);
         barrier.oldLayout=barrier.newLayout;barrier.srcAccessMask=barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);}
