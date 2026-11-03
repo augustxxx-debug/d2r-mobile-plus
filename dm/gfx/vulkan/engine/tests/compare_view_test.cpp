@@ -16,6 +16,7 @@ static xbg_compare_view_input r16(bool compare, bool linear) {
     in.data_bytes = 128 * 128 * 2;   // B078 那张 128x128 R16
     in.color_aspect = true;
     in.two_dimensional = true;
+    in.layers = 1;
     in.multisampled = false;
     in.compare = compare;
     in.linear = linear;
@@ -24,6 +25,18 @@ static xbg_compare_view_input r16(bool compare, bool linear) {
     in.d16_linear = true;
     return in;
 }
+
+// Fold8 上的唯一 R16 比较用例：serial 44，NVN target 8（立方体），128x128，6 层，共 6 张面。
+// The only R16 compare case on Fold8: serial 44, NVN target 8 (cube), 128x128, 6 layers, six faces.
+static xbg_compare_view_input cube_r16(uint32_t layers, uint32_t target = 8) {
+    xbg_compare_view_input in = r16(true, false);
+    in.two_dimensional = xbg_compare_2d_target(target);
+    in.cube = xbg_compare_cube_target(target);
+    in.layers = layers;
+    in.data_bytes = xbg_compare_mirror_bytes(128, 128, 1, layers);
+    return in;
+}
+
 
 int main(void) {
     // 没开比较采样：任何格式都保持原视图，这条路径一个字都不许改（B078 里同一张贴图也有非比较用法）。
@@ -83,12 +96,94 @@ int main(void) {
         CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_UNAVAILABLE);
         CHECK(!__builtin_strcmp(xbg_compare_view_unavailable_reason(in), "multisampled")); }
 
-    // 体纹理/立方体纹理的视图类型与 2D 不同：副本不做，记原因（免得换成一个驱动不认的视图）。
-    // Volume and cube textures need other view types: no copy, record why (rather than build a view the driver
-    // will reject).
+    // 体纹理/1D 纹理：副本的视图类型与采样不符，不做，记原因。
+    // Volume and 1D textures: the copy's view type would not match the sampling, so no copy; record why.
     {   xbg_compare_view_input in = r16(true, false); in.two_dimensional = false;
         CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_UNAVAILABLE);
         CHECK(!__builtin_strcmp(xbg_compare_view_unavailable_reason(in), "not-2d")); }
+    // NVN target 2（3D）/ 0（1D）/ 0xA（buffer）都不是 2D 形状 | NVN targets 2 (3D), 0 (1D) and 0xA (buffer) are not 2D-shaped
+    CHECK(!xbg_compare_2d_target(2));
+    CHECK(!xbg_compare_2d_target(0));
+    CHECK(!xbg_compare_2d_target(0xA));
+    CHECK(xbg_compare_2d_target(1));
+    CHECK(xbg_compare_2d_target(4));
+    CHECK(xbg_compare_cube_target(8));
+    CHECK(xbg_compare_cube_target(9));
+    CHECK(!xbg_compare_cube_target(4));
+
+    // Fold8 的现场：6 层立方体的 R16_UNORM 比较采样。它和 2D 是同一个规范违例（R16_UNORM 不支持
+    // SAMPLED_IMAGE_DEPTH_COMPARISON），尺寸只有 32 KB，D16 采样/比较/线性都可用，所以必须做副本——
+    // 立方体就是 6 层的 2D 数组，视图类型按 CUBE 建，6 层全拷。
+    // The Fold8 case: R16_UNORM compare sampling of a 6-layer cube. It is the same spec violation as the 2D case
+    // (R16_UNORM lacks SAMPLED_IMAGE_DEPTH_COMPARISON), it is only 32 KB, and D16 sampled/compare/linear all work,
+    // so it must be mirrored: a cube is a 6-layer 2D array, the copy gets a CUBE view and all six layers.
+    {   xbg_compare_view_input in = cube_r16(6);
+        CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_DEPTH_MIRROR);
+        CHECK(xbg_compare_mirror_view_kind(true, 6) == XBG_MIRROR_VIEW_CUBE); }
+    // 立方体数组（每 6 层一个立方体）：CUBE_ARRAY 视图，层数必须是 6 的倍数；不是倍数就没有合法视图，保持旧路径。
+    // A cube array (six layers per cube): a CUBE_ARRAY view, and the layer count must be a multiple of six; if it is
+    // not there is no legal view, so keep the old path.
+    {   xbg_compare_view_input in = cube_r16(12);
+        CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_DEPTH_MIRROR);
+        CHECK(xbg_compare_mirror_view_kind(true, 12) == XBG_MIRROR_VIEW_CUBE_ARRAY); }
+    {   xbg_compare_view_input in = cube_r16(7);
+        CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_UNAVAILABLE);
+        CHECK(!__builtin_strcmp(xbg_compare_view_unavailable_reason(in), "cube-layers"));
+        CHECK(xbg_compare_mirror_view_kind(true, 7) == XBG_MIRROR_VIEW_NONE); }
+    {   xbg_compare_view_input in = cube_r16(0);
+        CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_UNAVAILABLE);
+        CHECK(!__builtin_strcmp(xbg_compare_view_unavailable_reason(in), "cube-layers")); }
+    // 2D 数组的层数不受立方体的倍数限制 | a 2D array has no multiple-of-six rule
+    CHECK(xbg_compare_mirror_view_kind(false, 6) == XBG_MIRROR_VIEW_2D_ARRAY);
+    CHECK(xbg_compare_mirror_view_kind(false, 1) == XBG_MIRROR_VIEW_2D);
+    CHECK(xbg_compare_mirror_view_kind(false, 0) == XBG_MIRROR_VIEW_NONE);
+
+    // 副本的字节数与拷贝区域都按「层」算：6 层立方体是 6 份，不是一份（把它当 2D 单层就是读错层的根源）。
+    // The copy's bytes and regions count layers: a 6-layer cube is six of them, not one (treating it as a single 2D
+    // layer is how the wrong layer gets read).
+    CHECK(xbg_compare_mirror_bytes(128, 128, 1, 6) == 128u * 128u * 2u * 6u);
+    CHECK(xbg_compare_mirror_bytes(128, 128, 1, 1) == 128u * 128u * 2u);
+    CHECK(xbg_compare_mirror_bytes(128, 128, 2, 6) == (128u * 128u + 64u * 64u) * 2u * 6u);
+    CHECK(xbg_compare_mirror_bytes(1, 1, 3, 6) == (1u + 1u + 1u) * 2u * 6u);   // 级别小于 1 时按 1 像素 | clamps at 1
+    CHECK(xbg_compare_mirror_regions(1, 6) == 6);
+    CHECK(xbg_compare_mirror_regions(2, 6) == 12);
+    CHECK(xbg_compare_mirror_regions(1, 1) == 1);
+
+    // 上限按整张副本算：6 层立方体只有单层四分之一大小时也已经超了上限，不能因为只看了一层就放行。
+    // The cap counts the whole copy: a 6-layer cube that is a quarter of the cap per layer is already over it, and
+    // must not pass just because one layer would fit.
+    {   xbg_compare_view_input in = cube_r16(6);
+        in.data_bytes = 1024u * 1024u * 2u * 6u;   // 12 MiB
+        CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_UNAVAILABLE);
+        CHECK(!__builtin_strcmp(xbg_compare_view_unavailable_reason(in), "too-large")); }
+    {   xbg_compare_view_input in = cube_r16(6);
+        in.data_bytes = xbg_compare_mirror_bytes(512, 512, 1, 6);   // 3 MiB，仍在 4 MiB 以内 | under 4 MiB
+        CHECK(in.data_bytes < XBG_COMPARE_MIRROR_MAX_BYTES);
+        CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_DEPTH_MIRROR); }
+
+    // 立方体上的同一套否定条件（设备不符/多采样/子视图）与 2D 一致 | the same refusals hold for cubes as for 2D
+    {   xbg_compare_view_input in = cube_r16(6); in.d16_compare = false;
+        CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_UNAVAILABLE);
+        CHECK(!__builtin_strcmp(xbg_compare_view_unavailable_reason(in), "d16-no-depth-compare")); }
+    {   xbg_compare_view_input in = cube_r16(6); in.subresource_view = true;
+        CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_UNAVAILABLE);
+        CHECK(!__builtin_strcmp(xbg_compare_view_unavailable_reason(in), "subresource-view")); }
+
+    // 立方体副本的刷新与同步判据和 2D 完全共用（每提交一次、写戳变就重拷、mutable 重建作废），多帧连续提交必须每帧重拷。
+    // The cube copy shares the 2D refresh/sync rules (once per submission, refill when the write stamp moves, invalidate
+    // on a mutable rebuild), and consecutive frames must each refill it.
+    {   xbg_mirror_stamp s; xbg_mirror_stamp_clear(s);
+        const uint64_t bytes = xbg_compare_mirror_bytes(128, 128, 1, 6);
+        CHECK(bytes == 196608u);
+        for(uint64_t frame = 1; frame <= 3; ++frame) {
+            CHECK(xbg_mirror_refresh_needed(frame, 7, s));   // 每一帧都要刷 | every frame refills
+            xbg_mirror_stamp_filled(frame, 7, s);
+            CHECK(!xbg_mirror_refresh_needed(frame, 7, s));  // 同帧第二个绑定不重复拷 | no second copy in one frame
+        }
+        CHECK(xbg_mirror_refresh_needed(3, 8, s));           // 源写戳前进 -> 重拷 | source write -> refill
+        xbg_mirror_stamp_filled(3, 8, s);
+        xbg_mirror_stamp_clear(s);                           // mutable 重建 -> 作废 | rebuild -> invalidate
+        CHECK(xbg_mirror_refresh_needed(3, 8, s)); }
 
     // 绑定的是子视图（只取部分层/级别）时不能替：副本覆盖整张图，换上去会读到别的层。
     // A subresource view (a layer/level subrange) cannot be substituted: the copy covers the whole image, so

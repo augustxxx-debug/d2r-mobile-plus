@@ -1,8 +1,10 @@
 # R16 比较采样修复的接线检查：判断函数在描述符绑定里被调用、非比较路径保留彩色视图、D16 副本随 Image 生命周期释放、
-# A/B 开关能强制旧路径。没有设备也能跑，防止后来的重构把这段悄悄拆掉。
+# A/B 开关能强制旧路径；以及立方体（Fold8 的 serial 44）按同型视图建副本、每一层都拷。
+# 没有设备也能跑，防止后来的重构把这段悄悄拆掉。
 # Wiring checks for the R16 compare-sampling fix: the decision function is called from descriptor binding, the
 # non-comparison path keeps the colour view, the D16 copy dies with its Image, and the A/B switch can force the old
-# path. Runs without a device, so later refactors cannot quietly unwire it.
+# path. Plus the cube case (Fold8's serial 44): the copy gets the matching view type and every layer is copied.
+# Runs without a device, so later refactors cannot quietly unwire it.
 from pathlib import Path
 import sys
 
@@ -48,5 +50,37 @@ assert 'DM_GFX_R16_COMPARE_MIRROR' in source, 'A/B environment variable for the 
 # 6. 不能把比较整体关掉（B078 的 exp1 已经证明那会改光照）：代码里不许出现关 compareEnable 的写法
 # Do not turn comparison off wholesale (B078's exp1 already showed that changes the lighting): no such code
 assert 's.compareEnable=VK_FALSE' not in source, 'comparison must not be disabled to silence the layer'
+
+# 7. 立方体：形状/层数随绑定传入，副本按同型视图建，每一层都拷，建不出来就保持彩色视图。
+#    Cube: shape and layer count come from the binding, the copy gets the matching view type, every layer is copied, and
+#    a failure keeps the colour view.
+assert 'cv.two_dimensional=xbg_compare_2d_target(im.source.d.target)' in bind, 'the binding must use the shared shape test'
+assert 'cv.cube=xbg_compare_cube_target(im.source.d.target)' in bind, 'the binding must say whether it is a cube'
+assert 'cv.layers=im.layers' in bind, 'the binding must pass the layer count'
+assert 'cv.data_bytes=xbg_compare_mirror_bytes(im.width,im.height,im.levels,im.layers)' in bind, \
+    'the copy size must count every layer (a cube is six)'
+# 视图类型由同一份纯函数决定（不是就地 if(layers>1)），绑定与创建不会漂移 | one shared pure decision, no drift
+assert 'xbg_compare_mirror_view_kind(cube,im.layers)' in source, 'the view type must come from the policy'
+assert 'im.layers>1?VK_IMAGE_VIEW_TYPE_2D_ARRAY:VK_IMAGE_VIEW_TYPE_2D' not in source, \
+    'a layer count alone cannot pick the view type: a cube is CUBE, not a 2D array of a single layer'
+
+create = source[source.index('bool compare_mirror_create(Image &im){'):source.index('VkImageView compare_mirror_sync(')]
+for needle in ['VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT', 'VK_IMAGE_VIEW_TYPE_CUBE', 'VK_IMAGE_VIEW_TYPE_CUBE_ARRAY',
+               'XBG_MIRROR_VIEW_NONE', 'fail("no-legal-view")']:
+    assert needle in create, needle
+assert 'ci.arrayLayers=im.layers' in create, 'the copy must allocate every layer'
+assert 'ci.flags' in create and 'vkGetPhysicalDeviceImageFormatProperties(cfg.physical,ci.format' in create, \
+    'cube-compatible images must be checked against the device, not assumed'
+
+sync = source[source.index('VkImageView compare_mirror_sync('):source.index('void provenance_image(')]
+for needle in ['xbg_compare_mirror_regions(im.levels,im.layers)', 'offsets)!=xbg_compare_mirror_bytes(im.width,im.height,im.levels,im.layers)',
+               'for(uint32_t y=0;y<im.layers;y++)', 'return VK_NULL_HANDLE;']:
+    assert needle in sync, needle
+assert 'regions.reserve(size_t(im.levels)*im.layers)' not in sync, 'the region count must come from the policy'
+
+# 副本建不出来/拷贝不完整时，绑定必须留着彩色视图（那一帧的结果照旧未定义，但不许读别的层、不许崩）
+# When the copy cannot be built or is short, the binding must keep the colour view (that frame stays undefined, but no
+# other layer is read and nothing crashes).
+assert 'if(mirror){ii.imageView=mirror;' in bind, 'a missing copy must fall back to the colour view'
 
 print('r16_compare_mirror_source_test: ok')

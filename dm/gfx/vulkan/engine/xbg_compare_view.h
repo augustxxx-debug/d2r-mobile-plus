@@ -7,6 +7,14 @@
 // validation layer reports VUID-vkCmdDrawIndexed-None-06479 and the result is undefined (B078 section 5:
 // serial 44, 128x128, cmp_func=2; the same texture is also sampled without comparison).
 // This header holds only the pure "which view" decision, with no Vulkan, so the host can unit-test it.
+//
+// Fold8 实测（display-p0 真机 A/B）：唯一触发这条规则的贴图是 serial 44 的 6 层立方体，旧判据把它算作
+// 「不是 2D」直接放弃，副本从未建立（r16_mirrors=0）。立方体就是 6 层的 2D 数组，D16 副本同样适用，
+// 所以形状判断扩到 CUBE/CUBE_ARRAY；3D/1D/矩形仍然不做。
+// Fold8 measurement (display-p0 device A/B): the only texture that trips this rule is serial 44, a 6-layer cube,
+// which the old test counted as "not 2D" and gave up on, so the copy was never created (r16_mirrors=0). A cube is a
+// 6-layer 2D array and the D16 copy applies just the same, so the shape test now covers CUBE/CUBE_ARRAY; 3D/1D/
+// rectangle are still out.
 #pragma once
 #include <stdint.h>
 
@@ -15,6 +23,54 @@
 // The 16-bit single-channel UNORM NVN format: only 0x6 (NVN_FORMAT_R16) maps to VK_FORMAT_R16_UNORM.
 // Depth formats such as 0x32 are outside this fix.
 static const uint32_t XBG_NVN_FORMAT_R16 = 0x6;
+
+// 形状判断放在这里，绑定路径和副本创建共用同一份，免得两处对 target 的理解漂移。
+// 2D 形状：2D、2D 数组、2D 多采样（多采样另有开关）、立方体、立方体数组。3D/1D/矩形/buffer 不在内。
+// The shape test lives here so the binding path and the copy creation cannot drift apart.
+// 2D-shaped: 2D, 2D array, 2D multisample (multisampling is refused separately), cube, cube array. 3D/1D/rectangle/
+// buffer are not.
+inline bool xbg_compare_2d_target(uint32_t target) {
+    return target == 1 || target == 4 || target == 5 || target == 6 || target == 8 || target == 9;
+}
+inline bool xbg_compare_cube_target(uint32_t target) { return target == 8 || target == 9; }
+
+// 一个立方体 6 张面：CUBE 视图要求正好 6 层，CUBE_ARRAY 要求 6 的倍数。
+// Six faces per cube: a CUBE view needs exactly six layers and a CUBE_ARRAY needs a multiple of six.
+static const uint32_t XBG_CUBE_FACES = 6;
+
+// 副本的视图类型。立方体不能当 2D 单层：它要么是 CUBE（6 层），要么是 CUBE_ARRAY（6 的倍数）。
+// 立方体的层序（+X,-X,+Y,-Y,+Z,-Z）与数组层序一致，所以整层逐字节拷贝后按同样视图采样就是同一组面。
+// The copy's view type. A cube is never a single 2D layer: it is CUBE (six layers) or CUBE_ARRAY (a multiple of six).
+// A cube's layer order (+X,-X,+Y,-Y,+Z,-Z) is the array layer order, so a whole-layer verbatim copy sampled through
+// the matching view is the same set of faces.
+enum xbg_mirror_view_kind {
+    XBG_MIRROR_VIEW_2D = 0,
+    XBG_MIRROR_VIEW_2D_ARRAY = 1,
+    XBG_MIRROR_VIEW_CUBE = 2,
+    XBG_MIRROR_VIEW_CUBE_ARRAY = 3,
+    XBG_MIRROR_VIEW_NONE = 4     // 没有合法视图：保持旧路径 | no legal view: keep the old path
+};
+
+inline xbg_mirror_view_kind xbg_compare_mirror_view_kind(bool cube, uint32_t layers) {
+    if(!layers) return XBG_MIRROR_VIEW_NONE;
+    if(cube) {
+        if(layers % XBG_CUBE_FACES) return XBG_MIRROR_VIEW_NONE;   // 没有合法立方体视图 | no legal cube view
+        return layers == XBG_CUBE_FACES ? XBG_MIRROR_VIEW_CUBE : XBG_MIRROR_VIEW_CUBE_ARRAY;
+    }
+    return layers > 1 ? XBG_MIRROR_VIEW_2D_ARRAY : XBG_MIRROR_VIEW_2D;
+}
+
+// 副本的字节数：层数与级别都算进去（R16/D16 都是 2 字节/像素）。
+// The copy's size: layers and levels both count (R16 and D16 are 2 bytes per pixel).
+inline uint64_t xbg_compare_mirror_bytes(uint32_t width, uint32_t height, uint32_t levels, uint32_t layers) {
+    uint64_t bytes = 0;
+    for(uint32_t l = 0; l < levels; l++) bytes += uint64_t(width >> l ? width >> l : 1) * (height >> l ? height >> l : 1) * layers * 2;
+    return bytes;
+}
+
+// 拷贝区域数：每个级别 × 每一层一条（立方体的 6 张面各有自己的一条）。
+// Number of copy regions: one per level per layer (each of a cube's six faces has its own).
+inline uint32_t xbg_compare_mirror_regions(uint32_t levels, uint32_t layers) { return levels * layers; }
 
 // 视图选择的三种结果：保持彩色视图（不涉及这个违例）、改用 D16 深度副本、或没有安全的做法。
 // Three outcomes: keep the colour view (no violation involved), use a D16 depth copy, or nothing safe.
@@ -77,7 +133,9 @@ struct xbg_compare_view_input {
     uint32_t nvn_format;       // tex_t.d.format
     uint64_t data_bytes;       // 这份内容的大小（层×级别×像素）| size of the content (layers x levels x pixels)
     bool color_aspect;         // 图像是彩色（R16_UNORM 走这条）| image has the colour aspect (R16_UNORM takes this one)
-    bool two_dimensional;      // 2D 或 2D 数组（副本的视图类型只有这两种）| 2D or 2D array (the only view types the copy makes)
+    bool two_dimensional;      // 2D 形状（2D/2D 数组/立方体/立方体数组）| 2D-shaped (2D, 2D array, cube, cube array)
+    bool cube;                 // 立方体/立方体数组 | cube or cube array
+    uint32_t layers;           // 层数（立方体是 6 的倍数）| layers (a cube's is a multiple of six)
     bool multisampled;         // 图像是多采样 | image is multisampled
     bool subresource_view;     // 绑定用的是子视图（只取部分层/级别）；副本覆盖整张图，不能替 | the binding is a
                                // subresource view (a layer/level subrange); the copy covers the whole image and cannot stand in
@@ -92,19 +150,22 @@ struct xbg_compare_view_input {
 // 让驱动用深度比较硬件算，而不是在彩色视图上做未定义的事。
 // 只有这几种情况不做：没开比较（本来合法）、图像本来就是深度格式（合法）、多采样（副本要另算，
 // 现有上传路径只处理单采样）、不是 R16（别的格式没有对应的无损深度格式）、
+// 立方体层数不是 6 的倍数（没有合法的 CUBE/CUBE_ARRAY 视图）、只绑了子视图（副本代表不了），
 // 或者设备上的 D16 不支持深度比较 / 不支持采样器要求的线性过滤（硬换会撞上采样器的线性过滤检查）。
 // The spec-minimal step: put the same 16-bit UNORM values in a D16_UNORM image (both are 16-bit UNORM, so
 // identical bits mean an identical value) and let the driver compare in depth hardware instead of doing
 // something undefined on a colour view. Skipped when comparison is off (legal already), when the image is
 // already depth (legal), when it is multisampled (a copy needs separate treatment and the upload path is
-// single-sampled only), when the format is not R16 (no lossless depth format to mirror into), or when the
-// device's D16 lacks depth comparison or the linear filtering the sampler asks for (forcing it would trip
-// the sampler's linear-filtering check).
+// single-sampled only), when the format is not R16 (no lossless depth format to mirror into), when a cube's
+// layer count is not a multiple of six (no legal CUBE/CUBE_ARRAY view), when only a sub-view is bound (a copy
+// cannot stand in), or when the device's D16 lacks depth comparison or the linear filtering the sampler asks
+// for (forcing it would trip the sampler's linear-filtering check).
 inline xbg_compare_view_plan xbg_compare_view_plan_for(const xbg_compare_view_input &in) {
     if(!in.compare) return XBG_COMPARE_VIEW_COLOR;
     if(!in.color_aspect) return XBG_COMPARE_VIEW_COLOR;   // 已经是深度格式：比较合法 | already depth: comparison is legal
     if(in.nvn_format != XBG_NVN_FORMAT_R16) return XBG_COMPARE_VIEW_UNAVAILABLE;
     if(!in.two_dimensional) return XBG_COMPARE_VIEW_UNAVAILABLE;
+    if(in.cube && (!in.layers || in.layers % XBG_CUBE_FACES)) return XBG_COMPARE_VIEW_UNAVAILABLE;
     if(in.multisampled) return XBG_COMPARE_VIEW_UNAVAILABLE;
     if(in.subresource_view) return XBG_COMPARE_VIEW_UNAVAILABLE;
     if(!in.d16_sampled || !in.d16_compare) return XBG_COMPARE_VIEW_UNAVAILABLE;
@@ -129,6 +190,7 @@ inline const char *xbg_compare_view_reason(xbg_compare_view_plan plan) {
 inline const char *xbg_compare_view_unavailable_reason(const xbg_compare_view_input &in) {
     if(in.nvn_format != XBG_NVN_FORMAT_R16) return "format-not-r16";
     if(!in.two_dimensional) return "not-2d";
+    if(in.cube && (!in.layers || in.layers % XBG_CUBE_FACES)) return "cube-layers";
     if(in.multisampled) return "multisampled";
     if(in.subresource_view) return "subresource-view";
     if(!in.d16_sampled) return "d16-not-sampled";

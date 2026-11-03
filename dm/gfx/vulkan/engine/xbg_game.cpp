@@ -1497,10 +1497,18 @@ bool compare_mirror_create(Image &im){
     auto fail=[&](const char *reason){im.mirror_fail=1;++r16_mirror_failed;
         xbg_logf("NVN r16 compare mirror unavailable serial=%llu %ux%u levels=%u layers=%u reason=%s",
             (unsigned long long)im.source.serial,im.width,im.height,im.levels,im.layers,reason);return false;};
+    // 视图类型与源图同型：立方体是 CUBE（6 层）/CUBE_ARRAY（6 的倍数），不是 2D 单层；没有合法视图就不做副本。
+    // The view type matches the source: a cube is CUBE (six layers) or CUBE_ARRAY (a multiple of six), never a single
+    // 2D layer; with no legal view there is no copy.
+    const bool cube=xbg_compare_cube_target(im.source.d.target);
+    const xbg_mirror_view_kind kind=xbg_compare_mirror_view_kind(cube,im.layers);
+    if(kind==XBG_MIRROR_VIEW_NONE)return fail("no-legal-view");
+    const VkImageViewType type=kind==XBG_MIRROR_VIEW_CUBE?VK_IMAGE_VIEW_TYPE_CUBE:kind==XBG_MIRROR_VIEW_CUBE_ARRAY?VK_IMAGE_VIEW_TYPE_CUBE_ARRAY:kind==XBG_MIRROR_VIEW_2D_ARRAY?VK_IMAGE_VIEW_TYPE_2D_ARRAY:VK_IMAGE_VIEW_TYPE_2D;
     auto m=std::make_unique<Image::Mirror>();
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.imageType=VK_IMAGE_TYPE_2D;ci.format=VK_FORMAT_D16_UNORM;
     ci.extent={im.width,im.height,1};ci.mipLevels=im.levels;ci.arrayLayers=im.layers;ci.samples=VK_SAMPLE_COUNT_1_BIT;
     ci.tiling=VK_IMAGE_TILING_OPTIMAL;ci.usage=VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;ci.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
+    if(kind==XBG_MIRROR_VIEW_CUBE || kind==XBG_MIRROR_VIEW_CUBE_ARRAY)ci.flags|=VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;   // CUBE 视图的前提 | required for a CUBE view
     VkImageFormatProperties sup{};   // unsupported extent/layers here is a device fact, not a bug: fall back to the old path
     if(vkGetPhysicalDeviceImageFormatProperties(cfg.physical,ci.format,ci.imageType,ci.tiling,ci.usage,ci.flags,&sup)!=VK_SUCCESS)return fail("extent");
     if(vkCreateImage(cfg.device,&ci,nullptr,&m->image)!=VK_SUCCESS)return fail("create");
@@ -1509,12 +1517,12 @@ bool compare_mirror_create(Image &im){
     if(vkAllocateMemory(cfg.device,&ai,nullptr,&m->memory)!=VK_SUCCESS ||
        vkBindImageMemory(cfg.device,m->image,m->memory,0)!=VK_SUCCESS){if(m->memory)vkFreeMemory(cfg.device,m->memory,nullptr);vkDestroyImage(cfg.device,m->image,nullptr);return fail("memory");}
     VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};vi.image=m->image;
-    vi.viewType=im.layers>1?VK_IMAGE_VIEW_TYPE_2D_ARRAY:VK_IMAGE_VIEW_TYPE_2D;vi.format=VK_FORMAT_D16_UNORM;
+    vi.viewType=type;vi.format=VK_FORMAT_D16_UNORM;
     vi.subresourceRange={VK_IMAGE_ASPECT_DEPTH_BIT,0,im.levels,0,im.layers};
     if(vkCreateImageView(cfg.device,&vi,nullptr,&m->view)!=VK_SUCCESS){vkFreeMemory(cfg.device,m->memory,nullptr);vkDestroyImage(cfg.device,m->image,nullptr);return fail("view");}
     im.mirror=std::move(m);m=nullptr;++r16_mirror_created;
     im.mirror->mem_bytes=int64_t(r.size);image_bytes_live+=im.mirror->mem_bytes;
-    xbg_logf("NVN r16 compare mirror serial=%llu %ux%u levels=%u layers=%u vk=%u",(unsigned long long)im.source.serial,im.width,im.height,im.levels,im.layers,unsigned(VK_FORMAT_D16_UNORM));
+    xbg_logf("NVN r16 compare mirror serial=%llu %ux%u levels=%u layers=%u vk=%u viewType=%d",(unsigned long long)im.source.serial,im.width,im.height,im.levels,im.layers,unsigned(VK_FORMAT_D16_UNORM),int(type));
     return true;
 }
 // 每个提交最多刷新一次：源图这一帧被谁写过都算进去了（复制在录制这一帧的绘制之前），下一帧再刷。
@@ -1526,11 +1534,23 @@ VkImageView compare_mirror_sync(Image &im,VkCommandBuffer cmd){
     if(!xbg_mirror_refresh_needed(stats.submissions,im.last_write,im.mirror->stamp))return im.mirror->view;
     prepare_read(im,cmd);
     end_open_pass();   // the copy is a transfer op: never inside a render pass
-    std::vector<VkBufferImageCopy> regions;regions.reserve(size_t(im.levels)*im.layers);
+    std::vector<VkBufferImageCopy> regions;regions.reserve(xbg_compare_mirror_regions(im.levels,im.layers));
     VkDeviceSize offsets=0;
     for(uint32_t l=0;l<im.levels;l++){uint32_t w=std::max(1u,im.width>>l),h=std::max(1u,im.height>>l);
         for(uint32_t y=0;y<im.layers;y++){VkBufferImageCopy rc{};rc.bufferOffset=offsets;rc.imageSubresource={im.aspects,l,y,1};rc.imageExtent={w,h,1};regions.push_back(rc);offsets+=VkDeviceSize(w)*h*2;}}
     if(!offsets){return VK_NULL_HANDLE;}
+    // 拷贝必须覆盖每一层：区域数与字节数都要和策略层算出的副本大小一致。少了就是只拷了部分层（立方体 6 张面各一层），
+    // 那样比较采样会读到别的面——宁可这次不走副本，也不读错层。
+    // The copy must cover every layer: region count and byte count must match what the policy computed. Anything short
+    // means only some layers were copied (each of a cube's six faces is a layer), and compare sampling would then read
+    // another face; better to skip the copy for this binding than to read the wrong layer.
+    if(regions.size()!=size_t(xbg_compare_mirror_regions(im.levels,im.layers)) ||
+       uint64_t(offsets)!=xbg_compare_mirror_bytes(im.width,im.height,im.levels,im.layers)){
+        static unsigned short_copies=0;if(short_copies++<4)xbg_logf("NVN r16 compare mirror copy short serial=%llu regions=%zu/%u bytes=%llu/%llu layers=%u levels=%u",
+            (unsigned long long)im.source.serial,regions.size(),xbg_compare_mirror_regions(im.levels,im.layers),
+            (unsigned long long)offsets,(unsigned long long)xbg_compare_mirror_bytes(im.width,im.height,im.levels,im.layers),im.layers,im.levels);
+        return VK_NULL_HANDLE;
+    }
     Buffer mid=stream_buffer(size_t(offsets));
     VkMemoryBarrier pre{VK_STRUCTURE_TYPE_MEMORY_BARRIER};pre.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT;pre.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&pre,0,nullptr,0,nullptr);
@@ -3170,8 +3190,9 @@ void descriptors_build(Descriptors &out,Commands &commands,bool compute){CPU_SCO
                     if(b.type==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && parameters.cmp_mode){
                         xbg_compare_view_input cv{};
                         cv.nvn_format=im.source.d.format;cv.color_aspect=im.aspects==VK_IMAGE_ASPECT_COLOR_BIT;
-                        for(uint32_t l=0;l<im.levels;l++)cv.data_bytes+=uint64_t(std::max(1u,im.width>>l))*std::max(1u,im.height>>l)*im.layers*2;   // 副本的字节数 | the copy's size
-                        cv.two_dimensional=im.source.d.target==1 || im.source.d.target==4 || im.source.d.target==6;
+                        cv.data_bytes=xbg_compare_mirror_bytes(im.width,im.height,im.levels,im.layers);   // 副本的字节数（含层）| the copy's size, layers included
+                        cv.two_dimensional=xbg_compare_2d_target(im.source.d.target);
+                        cv.cube=xbg_compare_cube_target(im.source.d.target);cv.layers=im.layers;
                         cv.multisampled=im.samples!=VK_SAMPLE_COUNT_1_BIT;cv.compare=true;
                         cv.subresource_view=registered.has_view;   // 子视图只取部分层/级别，副本代表不了 | a sub-view covers part of the image only
                         cv.linear=((parameters.minf&1)!=0) || parameters.magf!=0;   // xbg_sampler.cpp 的映射 | the mapping in xbg_sampler.cpp
