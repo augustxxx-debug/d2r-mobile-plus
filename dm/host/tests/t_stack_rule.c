@@ -110,6 +110,60 @@ int main(void) {
     CHECK(dmstk_badges_on(DMSTK_PANEL_STASH, 0) == 0);
     CHECK(dmstk_badges_on(DMSTK_PANEL_OTHER, 0) == 0);
 
+    // 仓库角标的格数：日志那一行只能报实际摆出来的格数。审计反例是收起循环把同一路计数推到 24，
+    // 于是 0 / 1 / 2 格都记成「24 格」（dm_stack.c:279-286，HEAD 9353e58）。
+    // 这里按 dm_stack.c 的用法走：边扫边 add，收起从 shown 开始，日志取 logged。
+    // Cell count of the stash badges: the log line may only report the cells actually placed. The audit's
+    // counterexample is the hide loop pushing the same counter to 24, so 0 / 1 / 2 cells were all logged as
+    // "24 cells" (dm_stack.c:279-286, HEAD 9353e58). Here it is driven the way dm_stack.c drives it: add while
+    // scanning, hide from shown, log via logged.
+    {
+        dmstk_badge_plan p;
+        dmstk_badge_reset(&p);
+
+        // 0 格：一件叠都没有，日志「0 格」，24 个控件全收起
+        // 0 cells: no stack at all, the log says 0 and all 24 widgets are put away
+        CHECK(DMSTK_BADGE_MAX == 24);          // 布局里就是 24 个 TouchQtyS00..S23 / N00..N23
+        CHECK(dmstk_badge_logged(&p) == 0);
+        CHECK(dmstk_badge_hide_from(&p) == 0);
+        CHECK(dmstk_badge_hidden(&p) == 24);
+
+        // 1 格：12 瓶那一叠摆一格，日志「1 格 12」（审计反例：HEAD 记 24 格 12），收起 23 格
+        // 1 cell: the 12-bottle stack places one cell, the log says 1 (HEAD logged 24), 23 widgets are put away
+        CHECK(dmstk_badge_add(&p, 12, 3, 4) == 1);
+        CHECK(p.shown == 1 && p.cell[0].q == 12 && p.cell[0].x == 3 && p.cell[0].y == 4);
+        CHECK(dmstk_badge_logged(&p) == 1);
+        CHECK(dmstk_badge_hide_from(&p) == 1);
+        CHECK(dmstk_badge_hidden(&p) == 23);
+
+        // 单瓶 / 空叠不摆角标，也不占格 | a single bottle or an empty stack places nothing and takes no cell
+        CHECK(dmstk_badge_add(&p, 1, 0, 0) == 0);
+        CHECK(dmstk_badge_add(&p, 0, 9, 9) == 0);
+        CHECK(p.shown == 1);
+
+        // 收起时序：照 dm_stack.c 的收起循环从 shown 走到 23，走完计数是 24，但日志的格数仍是 1
+        // Hide timing: run the hide loop from shown to 23 the way dm_stack.c does; the loop counter ends at 24
+        // while the logged cell count stays 1
+        int i, hidden = 0;
+        for (i = dmstk_badge_hide_from(&p); i < DMSTK_BADGE_MAX; i++) hidden++;
+        CHECK(hidden == 23 && i == 24);
+        CHECK(dmstk_badge_logged(&p) == 1);    // 按收起循环的计数记就是审计的恒 24 | logging the loop counter is the audit's constant 24
+        CHECK(i != dmstk_badge_logged(&p));
+
+        // 24 格满：布局只有 24 个控件，第 25 件叠不再摆；日志 24 格、收起 0 格
+        // 24 cells full: the layout only has 24 widgets so the 25th stack places nothing; log 24, nothing hidden
+        dmstk_badge_reset(&p);
+        int placed = 0;
+        for (int q = 0; q < 30; q++) placed += dmstk_badge_add(&p, 5 + q, q % 12, q / 12);
+        CHECK(placed == 24 && p.shown == 24);
+        CHECK(dmstk_badge_logged(&p) == 24);
+        CHECK(dmstk_badge_hide_from(&p) == 24);
+        CHECK(dmstk_badge_hidden(&p) == 0);
+        // 摆的顺序就是扫描顺序：第 k 格是第 k 个 ≥2 瓶的叠 | placement order is scan order
+        CHECK(p.cell[0].q == 5 && p.cell[0].x == 0 && p.cell[0].y == 0);
+        CHECK(p.cell[23].q == 28 && p.cell[23].x == 11 && p.cell[23].y == 1);
+    }
+
     printf("t_stack_rule: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

@@ -48,3 +48,12 @@ def build(romfs, outdir):
         path, t = wide_stash._entry(romfs, '/global/excel/' + sub.replace('_', '/') + 'itemtypes.bin'); t = bytearray(t); _types(t)
         p = os.path.join(outdir, 'sp_' + sub + 'itemtypes.bin'); open(p, 'wb').write(t); out[path] = p
     return out, {'files': len(out)}
+
+
+def wire(romfs, outdir, repl):
+    """建好四张表并登记进覆盖层 REPL（gen_romfs_overlay.py 只调这一个）。返回 (映射, 计数)。
+    build + repl.update 绑在一起，单测按同一条路真跑：调 wire 后 REPL 里必须有这四个路径。
+    Build the four tables and register them in the overlay REPL (the one entry gen_romfs_overlay.py calls).
+    Returns (mapping, stats). build + repl.update are bound together so a test can run the same path: after
+    wire the REPL must hold these four paths."""
+    out, stats = build(romfs, outdir); repl.update(out); return out, stats

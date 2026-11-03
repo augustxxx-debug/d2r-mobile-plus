@@ -81,3 +81,32 @@ static inline int dmstk_badge_page(int panel) {
 }
 // 这一格要不要画角标：容器页对上、且是方式 0（背包 / 仓库里的物品，不是腰带 / 装备位） | whether this cell gets a badge
 static inline int dmstk_badges_on(int panel, int page) { int p = dmstk_badge_page(panel); return p >= 0 && page == p; }
+
+// 角标最多摆几格 = 布局里的控件数（wide_stash.py 与 pouch_layout.py 各生成 24 个 TouchQtyS00..S23 / N00..N23）；超出的叠不画角标。
+// Badges at most this many cells = the widget count in the layouts (wide_stash.py and pouch_layout.py each
+// generate 24 TouchQtyS00..S23 / N00..N23). Stacks beyond that get no badge.
+#define DMSTK_BADGE_MAX 24
+
+// 角标计划：扫物品时把要摆的格子记下来，界面照着摆、收起循环从 shown 之后开始、日志报 logged。
+// 计数只有 shown 这一份：收起循环不能再数一遍（那一路走到 DMSTK_BADGE_MAX，0 / 1 / 2 格都会记成 24 格，审计 P2-01）。
+// Badge plan: record the cells to place while scanning; the UI places them, the hide loop starts after
+// `shown`, and the log reports `logged`. There is exactly one counter, `shown`: the hide loop must not count
+// again (that counter reaches DMSTK_BADGE_MAX, so 0 / 1 / 2 cells were all logged as 24, audit P2-01).
+typedef struct { int q, x, y; } dmstk_badge;              // 数量与屏幕坐标 | count and screen position
+typedef struct { int shown; dmstk_badge cell[DMSTK_BADGE_MAX]; } dmstk_badge_plan;
+
+static inline void dmstk_badge_reset(dmstk_badge_plan *p) { p->shown = 0; }
+// 摆一格：一叠 ≥2 瓶才有角标，最多 DMSTK_BADGE_MAX 格。返回 1 = 摆了（数量 / 坐标记进计划），0 = 不摆（单瓶或已满）
+// Place one cell: only a stack of 2+ gets a badge and at most DMSTK_BADGE_MAX of them. 1 = placed (count and
+// position recorded), 0 = nothing (single bottle or full)
+static inline int dmstk_badge_add(dmstk_badge_plan *p, int q, int x, int y) {
+    if (!p || q < 2 || p->shown >= DMSTK_BADGE_MAX) return 0;
+    p->cell[p->shown].q = q; p->cell[p->shown].x = x; p->cell[p->shown].y = y; p->shown++;
+    return 1;
+}
+// 收起循环的起点 = 实际摆出来的格数；还要收起的格数 = MAX − shown
+// Where the hide loop starts = the cells actually placed; how many are still to put away = MAX - shown
+static inline int dmstk_badge_hide_from(const dmstk_badge_plan *p) { return p->shown; }
+static inline int dmstk_badge_hidden(const dmstk_badge_plan *p) { return DMSTK_BADGE_MAX - p->shown; }
+// 日志里的格数：只能是 shown | the cell count in the log line: `shown` and nothing else
+static inline int dmstk_badge_logged(const dmstk_badge_plan *p) { return p->shown; }

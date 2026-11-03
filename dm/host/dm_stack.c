@@ -222,7 +222,7 @@ void dm_stack_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
 
 // ---- 界面（游戏主线程；只写自己的 TouchQty* 控件）
 // ---- UI (game main thread; writes only our own TouchQty* widgets)
-#define NDIG 24
+#define NDIG DMSTK_BADGE_MAX   // 角标控件数，规则表里与布局（24 个 TouchQtyS / N）对齐 | badge widget count, aligned with the layout in the rule header
 #define CELL 98   // 背包网格 (216, 893)、一格 98 布局单位（布局文件） | Inventory grid at (216, 893), 98 layout units per cell (layout file)
 #define OFF 99999
 
@@ -275,15 +275,18 @@ static void stash_badges(uint8_t *b, uint64_t pl) {
     static uint64_t last; uint64_t root = *(uint64_t *)(b + 0x2f05458), bk = root ? find_w(root, "BankExpansionLayout", 12) : 0, pool = bk ? find_w(bk, "TouchQtyStash", 2) : 0; if (!pool) return;
     uint64_t tabs = find_w(bk, "BankTabs", 3), g = find_w(bk, "grid", 3); int show = *(uint8_t *)(bk + 0x50) && tabs && g && *(int32_t *)(tabs + 0xdc4) == 0 && *(uint8_t *)(g + 0x50);
     if (!show && last == pool) return;   // 收过了：不再每帧扫 | Already put away: no need to scan every frame
-    last = show ? 0 : pool; char nm[20]; int nd = 0; uint64_t inv = pl ? *(uint64_t *)(pl + 0x90) : 0; char sum[80]; int sk = 0; sum[0] = 0;
-    if (show) for (uint64_t it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0, k = 0; it && k < 2048 && nd < NDIG; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
+    last = show ? 0 : pool; char nm[20], sum[80]; int sk = 0; sum[0] = 0; dmstk_badge_plan plan; dmstk_badge_reset(&plan); uint64_t inv = pl ? *(uint64_t *)(pl + 0x90) : 0;
+    if (show) for (uint64_t it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0, k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
         if (*(uint32_t *)(it + 0xc) == 0 && dmstk_badges_on(DMSTK_PANEL_STASH, *(uint8_t *)(d + 0x55)) && pp && is_potion(it)) { int q = qty(it);
-            if (q >= 2) { if (sk < (int)sizeof sum - 8) sk += snprintf(sum + sk, sizeof sum - sk, " %d", q); snprintf(nm, sizeof nm, "TouchQtyS%02d", nd++); uint64_t w = find_w(pool, nm, 1); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, *(int32_t *)(g + 0x70) + CELL * *(int32_t *)(pp + 0x10), *(int32_t *)(g + 0x74) + CELL * *(int32_t *)(pp + 0x14) + 60); } }
+            if (dmstk_badge_add(&plan, q, *(int32_t *)(g + 0x70) + CELL * *(int32_t *)(pp + 0x10), *(int32_t *)(g + 0x74) + CELL * *(int32_t *)(pp + 0x14) + 60)) {
+                int idx = plan.shown - 1; if (sk < (int)sizeof sum - 8) sk += snprintf(sum + sk, sizeof sum - sk, " %d", q); snprintf(nm, sizeof nm, "TouchQtyS%02d", idx); uint64_t w = find_w(pool, nm, 1); char t[8]; snprintf(t, sizeof t, "%d", q); w_text(w, t); w_move(w, plan.cell[idx].x, plan.cell[idx].y); } }
         it = *(uint64_t *)(d + 0xb0); }
-    for (; nd < NDIG; nd++) { snprintf(nm, sizeof nm, "TouchQtyS%02d", nd); w_move(find_w(pool, nm, 1), OFF, 0); }
-    // 角标一行汇总（只在显示内容变了时记一条，不刷屏）：回归脚本按这一行断言摆了几格、每格几个数
-    // One summary line per change of what is shown (no spam): the regression script asserts on this line how many cells were placed and with what counts
-    { static char lastsum[80]; if (strcmp(sum, lastsum)) { strlcpy(lastsum, sum, sizeof lastsum); LOG("堆叠：仓库角标 %d 格%s", nd, sum); } }
+    for (int i = dmstk_badge_hide_from(&plan); i < NDIG; i++) { snprintf(nm, sizeof nm, "TouchQtyS%02d", i); w_move(find_w(pool, nm, 1), OFF, 0); }
+    // 角标一行汇总（只在显示内容变了时记一条，不刷屏）：回归脚本按这一行断言摆了几格、每格几个数。
+    // 格数取 dmstk_badge_logged（= 收起循环之前的 shown）：收起循环的计数走到 24，按它记就恒报 24 格（审计 P2-01）。
+    // One summary line per change of what is shown (no spam): the regression script asserts on this line how many cells were placed and with what counts.
+    // The cell count comes from dmstk_badge_logged (= shown before the hide loop): the hide loop's counter reaches 24, and logging that constantly reported 24 (audit P2-01).
+    { static char lastsum[80]; if (strcmp(sum, lastsum)) { strlcpy(lastsum, sum, sizeof lastsum); LOG("堆叠：仓库角标 %d 格%s", dmstk_badge_logged(&plan), sum); } }
 }
 int dm_bag_page(void);
 void dm_stack_ui(uint8_t *b, uint64_t inv_panel, uint64_t pl) {   // 游戏主线程每帧（dm_pouch.c ui_pump；物品栏面板开着才来） | Game main thread every frame (ui_pump in dm_pouch.c; only while the inventory panel is open)
