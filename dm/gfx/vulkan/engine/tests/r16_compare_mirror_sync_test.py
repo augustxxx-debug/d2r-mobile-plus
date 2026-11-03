@@ -51,7 +51,8 @@ assert 'last_write=++write_seq' in stamp, 'the write-stamp helper bumps the stam
 assert 'gpu_written=true' in stamp and 'provenance_write(' in stamp, 'the helper also marks the image written'
 # 其余地方不许再手写 gpu_written/provenance 组合，否则下一次加写路径还会漏
 # No other place may hand-roll the pair, or the next write path will leak again
-assert source.count('gpu_written=true,provenance_write(') == 0, 'mark writes only through the helper'
+assert source.count('gpu_written=true') == 1, 'image write marks come from note_image_write only'
+assert 'gpu_written=true' in stamp, 'the helper is the one place that marks the image written'
 
 for name in ('void copy_texture_buffer(', 'void copy_texture(', 'void partial_clear_texture(',
              'void clear_texture(', 'void resolve_texture(', 'Image &get_image_slow(const tex_t *t,bool upload){',
