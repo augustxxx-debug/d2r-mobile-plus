@@ -29,6 +29,48 @@ enum xbg_compare_view_plan {
 // 32 KB).
 static const uint64_t XBG_COMPARE_MIRROR_MAX_BYTES = 4ull << 20;
 
+// 副本每个提交最多填一次；源图的写戳变了（GPU 写进去）或者源图被重建（mutable 升级换了 VkImage/内存）
+// 就必须重填。判据放在这里，绑定路径、描述符记忆命中路径和 mutable 重建共用同一份。
+// The copy is filled at most once per submission; it has to be refilled when the source's write stamp moves (a GPU
+// write) or when the source was rebuilt (a mutable upgrade swapped the VkImage/memory). The predicate lives here so
+// the binding path, the descriptor-memo hit path and the mutable rebuild share one copy of it.
+struct xbg_mirror_stamp {
+    uint64_t filled_submission;
+    uint64_t filled_write;
+};
+static const uint64_t XBG_MIRROR_NEVER = ~0ull;   // 还没填过 | never filled
+
+inline void xbg_mirror_stamp_clear(xbg_mirror_stamp &s) {
+    s.filled_submission = XBG_MIRROR_NEVER;
+    s.filled_write = XBG_MIRROR_NEVER;
+}
+
+inline bool xbg_mirror_never_filled(const xbg_mirror_stamp &s) {
+    return s.filled_submission == XBG_MIRROR_NEVER;
+}
+
+inline bool xbg_mirror_refresh_needed(uint64_t submission, uint64_t last_write, const xbg_mirror_stamp &s) {
+    return s.filled_submission != submission || s.filled_write != last_write;
+}
+
+inline void xbg_mirror_stamp_filled(uint64_t submission, uint64_t last_write, xbg_mirror_stamp &s) {
+    s.filled_submission = submission;
+    s.filled_write = last_write;
+}
+
+// 副本最终的 TRANSFER_DST → GENERAL 屏障，目标阶段必须覆盖实际的比较采样阶段：compute 走
+// VK_PIPELINE_BIND_POINT_COMPUTE，采样也可能出现在顶点/细分/几何阶段，只写 FRAGMENT_SHADER 会漏掉依赖。
+// 这里保守取 ALL_COMMANDS（xbg_game.cpp 里有 static_assert 把它钉在 Vulkan 枚举上）。
+// The copy's final TRANSFER_DST -> GENERAL barrier must cover the stages that actually sample: compute binds a
+// compute pipeline, and sampling can also happen in vertex/tessellation/geometry stages, so a FRAGMENT_SHADER-only
+// destination leaves dependencies out. ALL_COMMANDS is the conservative choice (pinned to the Vulkan enum in
+// xbg_game.cpp by a static_assert).
+static const uint32_t XBG_COMPARE_MIRROR_DST_STAGE = 0x00010000u;   // VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
+inline uint32_t xbg_compare_mirror_dst_stage(bool compute) {
+    (void)compute;   // 两种消费方都是全阶段 | both consumers get every stage
+    return XBG_COMPARE_MIRROR_DST_STAGE;
+}
+
 // 一次绑定能拿到的全部事实。布尔字段都来自设备/描述符，不含猜测。
 // Everything one binding knows. Every flag comes from the device or the descriptor; none is a guess.
 struct xbg_compare_view_input {

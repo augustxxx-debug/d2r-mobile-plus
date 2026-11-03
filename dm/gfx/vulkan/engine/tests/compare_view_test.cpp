@@ -107,6 +107,40 @@ int main(void) {
     {   xbg_compare_view_input in = r16(true, false); in.data_bytes = 0;
         CHECK(xbg_compare_view_plan_for(in) == XBG_COMPARE_VIEW_UNAVAILABLE); }
 
+    // 副本刷新判据的完整生命周期（生产代码里 compare_mirror_sync 与 upgrade_mutable 用的就是这三个函数）：
+    // 首次建 memo/首次绑定 → 下一提交命中 memo → 同提交里源被写 → mutable 重建。
+    // The copy's refresh lifecycle (compare_mirror_sync and upgrade_mutable use exactly these three functions):
+    // first memo, next-submission hit, a source write inside the same submission, and a mutable rebuild.
+    {   xbg_mirror_stamp s; xbg_mirror_stamp_clear(s);
+        CHECK(xbg_mirror_never_filled(s));
+        // 首次建 memo、首次比较绑定：没有内容，必须刷 | first bind: nothing filled yet, must refresh
+        CHECK(xbg_mirror_refresh_needed(1, 5, s));
+        xbg_mirror_stamp_filled(1, 5, s);
+        // 同提交第二个比较绑定：一次提交只拷一次 | second compare bind in the same submission: one copy per submit
+        CHECK(!xbg_mirror_refresh_needed(1, 5, s));
+        // 下一提交命中同一 memo（源写戳没动）：副本还是上一帧的，仍要刷
+        // next submission hits the same memo (source write stamp unchanged): the copy still holds last frame
+        CHECK(xbg_mirror_refresh_needed(2, 5, s));
+        xbg_mirror_stamp_filled(2, 5, s);
+        CHECK(!xbg_mirror_refresh_needed(2, 5, s));
+        // 同提交里 clear/copy 写了源图（写戳前进）：之后再做比较采样必须重拷，不能读旧副本
+        // a clear/copy wrote the source in the same submission: a later compare sample must re-copy
+        CHECK(xbg_mirror_refresh_needed(2, 6, s));
+        xbg_mirror_stamp_filled(2, 6, s);
+        CHECK(!xbg_mirror_refresh_needed(2, 6, s));
+        // mutable 重建换了源图的 VkImage/内存：填戳作废 | mutable rebuild swapped the source: invalidate the stamp
+        xbg_mirror_stamp_clear(s);
+        CHECK(xbg_mirror_never_filled(s));
+        CHECK(xbg_mirror_refresh_needed(2, 6, s));
+    }
+
+    // 副本最终屏障的目标阶段：比较采样可能来自 compute，也可能是顶点/细分/几何阶段的采样，只挡片元不够。
+    // The copy's final barrier destination: compare sampling can come from compute or vertex/tessellation/geometry,
+    // so a fragment-only barrier is not enough.
+    CHECK(XBG_COMPARE_MIRROR_DST_STAGE != 0x80u);   // VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+    CHECK(xbg_compare_mirror_dst_stage(false) == XBG_COMPARE_MIRROR_DST_STAGE);
+    CHECK(xbg_compare_mirror_dst_stage(true) == XBG_COMPARE_MIRROR_DST_STAGE);
+
     // 原因字符串与决策一致 | the reason strings agree with the decisions
     CHECK(!__builtin_strcmp(xbg_compare_view_reason(XBG_COMPARE_VIEW_COLOR), "no-compare-or-depth"));
     CHECK(!__builtin_strcmp(xbg_compare_view_reason(XBG_COMPARE_VIEW_DEPTH_MIRROR), "d16-mirror"));
