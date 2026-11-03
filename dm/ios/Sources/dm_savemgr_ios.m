@@ -18,11 +18,11 @@ static UIViewController *top_vc(void) {   // 同 dm_sharelog.m | as dm_sharelog.
     vc = vc ?: alt ?: any; while (vc.presentedViewController) vc = vc.presentedViewController;
     return vc;
 }
-// 选文件夹要拷到临时目录：先量总量，选错大目录不把盘写满（与原生 zf_open 同一上限）。云端占位是点开头的文件，宿主不收 | a picked folder is copied to a temporary directory: measure first so a wrong pick cannot fill the disk (same limit as the native zf_open). Cloud placeholders are dot files, which the host does not take
+// 选文件夹要拷到临时目录：先量总量与文件数，选错大目录不把盘写满、也不拷几万个小文件（数量与总量跟原生 MAX_FILES / zf_open 同一套）。云端占位是点开头的文件，宿主不收 | a picked folder is copied to a temporary directory: measure the total and the file count first so a wrong pick can neither fill the disk nor copy tens of thousands of small files (the same count and total as the native MAX_FILES / zf_open). Cloud placeholders are dot files, which the host does not take
 static BOOL pick_too_big(NSURL *u) {
-    NSNumber *sz = nil; const long long cap = 320ll << 20; long long sum = 0; NSNumber *isdir = nil; [u getResourceValue:&isdir forKey:NSURLIsDirectoryKey error:NULL];
+    NSNumber *sz = nil; const long long cap = 320ll << 20; const int max_files = 4096; long long sum = 0; int n = 0; NSNumber *isdir = nil; [u getResourceValue:&isdir forKey:NSURLIsDirectoryKey error:NULL];
     if (!isdir.boolValue) { [u getResourceValue:&sz forKey:NSURLFileSizeKey error:NULL]; return sz.longLongValue > cap; }
-    for (NSURL *f in [NSFileManager.defaultManager enumeratorAtURL:u includingPropertiesForKeys:@[NSURLFileSizeKey] options:0 errorHandler:nil]) { sz = nil; [f getResourceValue:&sz forKey:NSURLFileSizeKey error:NULL]; if ((sum += sz.longLongValue) > cap) return YES; }
+    for (NSURL *f in [NSFileManager.defaultManager enumeratorAtURL:u includingPropertiesForKeys:@[NSURLFileSizeKey] options:0 errorHandler:nil]) { if (++n > max_files) return YES; sz = nil; [f getResourceValue:&sz forKey:NSURLFileSizeKey error:NULL]; if ((sum += sz.longLongValue) > cap) return YES; }
     return NO;
 }
 @interface DmSavePick : NSObject <UIDocumentPickerDelegate> @end

@@ -603,6 +603,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         try { String lp = LoadPageView.lastLine(); if (lp != null && !lp.isEmpty()) Os.setenv("DM_LOADPAGE_LAST", lp, true); } catch (ErrnoException | UnsatisfiedLinkError ignored) {}
         try { if (!communityLast.isEmpty()) Os.setenv("DM_COMMUNITY_LAST", communityLast, true); } catch (ErrnoException ignored) {}   // 社区信息拉取的最后一行，同上进 boot.log | the community fetch's last line, into boot.log likewise
         saveDeleteTree(new File(new File(getFilesDir(), "temp"), "save_import_tree"));   // 同下 | as below
+        saveDeleteTree(new File(new File(getFilesDir(), "temp"), "save_pick"));   // 同下 | as below
         new File(new File(getFilesDir(), "temp"), "save_import_pick.zip").delete();   // 上一局选的包（内容已校验进待应用目录）| the package picked last run (already staged)
         nativeSaveInit(Environment.isExternalStorageManager() ? downloads.getAbsolutePath() : "", "", String.valueOf(BuildConfig.VERSION_CODE));
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
@@ -856,20 +857,21 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         });
     }
     private static void saveDeleteTree(File f) { File[] k = f.listFiles(); if (k != null) for (File c : k) saveDeleteTree(c); f.delete(); }
-    // budget[0] 文件数上限；单个大文件（游戏资源）跳过，存档没有这么大 | budget[0] caps the file count; a single large file (game resources) is skipped, no save is that large
+    // budget 按文件数（同原生 MAX_FILES）与总量封顶，超了整份放弃；单个大文件（游戏资源）跳过，存档没有这么大 | budget caps the file count (native MAX_FILES) and the total, and the whole copy is given up past them; a single large file (game resources) is skipped, no save is that large
     private static final class SaveTooBig extends java.io.IOException {}
-    private static void saveCopyTree(android.content.ContentResolver cr, Uri tree, String id, File dst, int depth, int[] budget, long[] room, boolean rootLevel) throws java.io.IOException {
+    private static void saveCopyTree(android.content.ContentResolver cr, Uri tree, String id, File dst, int depth, SaveCopy.Budget budget, boolean rootLevel) throws java.io.IOException {
         if (depth > 4) return; if (!dst.mkdirs() && !dst.isDirectory()) throw new java.io.IOException("mkdir");
         java.util.List<String[]> kids = new java.util.ArrayList<>();
         try (android.database.Cursor c = cr.query(android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, id), new String[] { android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID, android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME, android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE, android.provider.DocumentsContract.Document.COLUMN_SIZE }, null, null, null)) {
             while (c != null && c.moveToNext()) kids.add(new String[] { c.getString(0), c.getString(1), c.getString(2), c.getString(3) });
         }
-        if (rootLevel) for (String[] k : kids) if ("save".equals(k[1]) && android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(k[2])) { saveCopyTree(cr, tree, k[0], new File(dst, "save"), depth + 1, budget, room, false); return; }   // 选了上级就只拷 save | a parent was picked: only save is copied
+        if (rootLevel) for (String[] k : kids) if ("save".equals(k[1]) && android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(k[2])) { saveCopyTree(cr, tree, k[0], new File(dst, "save"), depth + 1, budget, false); return; }   // 选了上级就只拷 save | a parent was picked: only save is copied
         for (String[] k : kids) {
             String nm = k[1]; if (nm == null || nm.startsWith(".") || nm.contains("/")) continue; File to = new File(dst, nm);
-            if (android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(k[2])) { saveCopyTree(cr, tree, k[0], to, depth + 1, budget, room, false); continue; }
-            if (k[3] != null && Long.parseLong(k[3]) > (64L << 20)) continue; if (--budget[0] < 0) throw new java.io.IOException("too many files");
-            try (java.io.InputStream in = cr.openInputStream(android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, k[0])); java.io.OutputStream out = new java.io.FileOutputStream(to)) { if (!SaveCopy.copy(in, out, room[0])) throw new SaveTooBig(); } room[0] -= to.length();
+            if (android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(k[2])) { saveCopyTree(cr, tree, k[0], to, depth + 1, budget, false); continue; }
+            long sz = 0; try { if (k[3] != null) sz = Long.parseLong(k[3]); } catch (NumberFormatException ignored) {}
+            if (sz > (64L << 20)) continue; if (!budget.fits(sz)) throw new SaveTooBig();
+            try (java.io.InputStream in = cr.openInputStream(android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, k[0])); java.io.OutputStream out = new java.io.FileOutputStream(to)) { if (!SaveCopy.copy(in, out, SaveCopy.PICK_MAX)) throw new SaveTooBig(); } budget.spend(to.length());
         }
     }
     static void saveExport(String path) {
@@ -889,20 +891,23 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         super.onActivityResult(req, res, data);
         if (req != REQ_SAVE_PICK && req != REQ_SAVE_EXPORT && req != REQ_SAVE_FOLDER) return;
         if (!started) { android.util.Log.w("dm", "save panel result after the process was recreated: dropped"); return; }   // 面板开着时进程被系统杀了：这是新进程，原生库没加载，也没有等结果的界面；临时 ZIP 下次启动清 | the process was killed while the panel was open: this is a new one, the native library is not loaded and nothing is waiting; the temporary ZIP is cleared at the next start
-        Uri uri = res == RESULT_OK && data != null ? data.getData() : null; String src = saveExportPath; File tmp = new File(new File(getFilesDir(), "temp"), saveNameOf(uri)); android.content.ContentResolver cr = getContentResolver();
+        Uri uri = res == RESULT_OK && data != null ? data.getData() : null; String src = saveExportPath; android.content.ContentResolver cr = getContentResolver();
         if (req == REQ_SAVE_FOLDER) {
             if (uri == null) { nativeSavePicked(null); return; }
             File dir = new File(new File(getFilesDir(), "temp"), "save_import_tree");
             new Thread(() -> {
-                boolean ok = false; String bad = "!io"; try { saveDeleteTree(dir); saveCopyTree(cr, uri, android.provider.DocumentsContract.getTreeDocumentId(uri), dir, 0, new int[] { 4096 }, new long[] { SaveCopy.PICK_MAX }, true); ok = true; } catch (SaveTooBig e) { bad = "!limit"; } catch (Exception e) { android.util.Log.w("dm", "save pick folder copy: " + e); }
+                boolean ok = false; String bad = "!io"; try { saveDeleteTree(dir); saveCopyTree(cr, uri, android.provider.DocumentsContract.getTreeDocumentId(uri), dir, 0, new SaveCopy.Budget(SaveCopy.PICK_MAX), true); ok = true; } catch (SaveTooBig e) { bad = "!limit"; } catch (Exception e) { android.util.Log.w("dm", "save pick folder copy: " + e); }
                 if (!ok) saveDeleteTree(dir);   // 同选文件：总量有上限，失败不留半份 | as a picked file: the total is capped and a failure leaves nothing behind
                 nativeSavePicked(ok ? dir.getPath() : bad);
             }, "dm-save-pick").start();
         } else if (req == REQ_SAVE_PICK) {
             if (uri == null) { nativeSavePicked(null); return; }
+            final Uri pu = uri;
             new Thread(() -> {
-                boolean ok = false; String bad = "!io"; try (java.io.InputStream in = cr.openInputStream(uri); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { ok = SaveCopy.copy(in, out, SaveCopy.PICK_MAX); if (!ok && in != null) bad = "!limit"; } catch (Exception e) { android.util.Log.w("dm", "save pick copy: " + e); }
-                if (!ok) tmp.delete();
+                File tmp = new File(new File(getFilesDir(), "temp/save_pick"), saveNameOf(pu));   // 名字在后台线程问系统（provider 可能慢）| the name is asked on the background thread: a provider can be slow
+                if (tmp.getParentFile() != null) tmp.getParentFile().mkdirs();
+                boolean ok = false; String bad = "!io"; try (java.io.InputStream in = cr.openInputStream(pu); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { ok = SaveCopy.copy(in, out, SaveCopy.PICK_MAX); if (!ok && in != null) bad = "!limit"; } catch (Exception e) { android.util.Log.w("dm", "save pick copy: " + e); }
+                if (!ok) tmp.delete();   // 失败不留半份；成功的副本下次启动整目录清（save_pick）| a failure leaves nothing; a good copy is cleared with the whole directory at the next start
                 nativeSavePicked(ok ? tmp.getPath() : bad);   // 拷失败不是取消：原生那边给失败提示 | a failed copy is not a cancel: the native side shows the failure
             }, "dm-save-pick").start();
         } else {

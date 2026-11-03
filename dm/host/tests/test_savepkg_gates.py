@@ -34,6 +34,17 @@ if 'case DM_PKG_E_DUP: return "dmSaveErrDup"' not in open(HOST + '/dm_savemgr.c'
 # 安卓选文件的上限（S-09）| the Android pick cap
 J = ROOT + '/android/app/src/main/java/com/xiaoboluo/d2r'; a = open(J + '/DmActivity.java', encoding='utf-8').read()
 if 'SaveCopy.copy(in, out, SaveCopy.PICK_MAX)' not in a or 'tmp.delete()' not in a: fail('安卓选文件没走上限')
+# 选文件夹的副本：数量与总量都封顶，超了就整份不留（2026-11-01 审计）| a picked folder's copy: capped by count and total, and nothing is left behind past them (the 2026-11-01 audit)
+if 'new SaveCopy.Budget(SaveCopy.PICK_MAX)' not in a or 'budget.fits(' not in a: fail('安卓选文件夹的副本没有数量 / 总量上限')
+# 两个选进来的副本都有自己的目录，启动时一起清（临时树清理）| both picked copies live in their own directory and are cleared at the next start (temporary-tree cleanup)
+if '"temp/save_pick"' not in a: fail('安卓选文件的副本没有自己的目录，启动时清不掉')
+if 'saveDeleteTree(new File(new File(getFilesDir(), "temp"), "save_pick"))' not in a: fail('安卓启动时不清选文件的副本')
+# iOS 同一套上限：数量 4096、总量 320 MiB（与安卓、与 zf_open 相同）| iOS carries the same caps: 4096 files, 320 MiB (as Android and zf_open)
+i = open(ROOT + '/ios/Sources/dm_savemgr_ios.m', encoding='utf-8').read()
+for want in ('4096', '320ll << 20'):
+    if want not in i: fail('iOS 选文件夹的上限缺 ' + want)
+# 外壳把「!limit / !io」交给宿主：选文件夹超限走「存档包不符合要求」，与单个文件一致 | the shells hand "!limit / !io" to the host: a folder past the caps gets the package-invalid message, as a single file does
+if "p[1] == 'l' ? DM_PKG_E_LIMIT : DM_PKG_E_IO" not in s: fail('外壳的 !limit 没接到 DM_PKG_E_LIMIT')
 jh = os.environ.get('JAVA_HOME') or os.path.expanduser('~/dm-android/jdk'); jc = shutil.which('javac', path=':'.join(d for d, _, fs in os.walk(jh) if 'javac' in fs)) if os.path.isdir(jh) else None
 if not jc: print('test_savepkg_gates: 没有 JDK，SaveCopyTest 跳过')
 else:

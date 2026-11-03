@@ -393,7 +393,10 @@ static int foreign_zip(zf *z, const char *tree) {
     char prefix[512] = ""; int have = 0;
     for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; if (strstr(nm, "..") || nm[0] == '/' || strchr(nm, '\\')) return DM_PKG_E_PATH; if (coop_path(nm)) { LOG("存档管理：包里有联机角色标记，整包拒绝"); return DM_PKG_E_COOP; } }
     for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; if (zip_junk(nm)) continue; size_t L = strlen(nm); int up = L > 4 && !strcmp(nm + L - 4, ".d2s") ? 2 : L > 4 && !strcmp(nm + L - 4, ".d2i") ? 1 : 0; if (!up) continue; char t[512]; strlcpy(t, nm, sizeof t); char *sl = strrchr(t, '/'); if (!sl && up == 2) continue; if (sl) *sl = 0; else t[0] = 0;
-        if (up == 1 && t[0]) { const char *par = strrchr(t, '/'); par = par ? par + 1 : t; if (is_stash_name(par)) up = 2; } if (up == 2) { char *s2 = strrchr(t, '/'); if (s2) *s2 = 0; else t[0] = 0; } if (t[0]) strlcat(t, "/", sizeof t); if (!have || strlen(t) < strlen(prefix)) { strlcpy(prefix, t, sizeof prefix); have = 1; } }
+        if (up == 1 && t[0]) { const char *par = strrchr(t, '/'); par = par ? par + 1 : t; if (is_stash_name(par)) up = 2; } if (up == 2) { char *s2 = strrchr(t, '/'); if (s2) *s2 = 0; else t[0] = 0; } if (t[0]) strlcat(t, "/", sizeof t);
+        { char seg[128]; strlcpy(seg, t, sizeof seg); size_t sl2 = strlen(seg); if (sl2 && seg[sl2 - 1] == '/') seg[sl2 - 1] = 0; const char *sg = strrchr(seg, '/'); sg = sg ? sg + 1 : seg;
+          if (!strcasecmp(sg, "save.test") || (strlen(sg) > 5 && !strcasecmp(sg + strlen(sg) - 5, ".work"))) continue; }   // 只认叫 save 的目录：save.test / save.work 里的存档不进来（与文件夹入口同一条规则）| only the directory named save: saves under save.test / save.work stay out (same rule as the folder entry)
+        if (!have || strlen(t) < strlen(prefix)) { strlcpy(prefix, t, sizeof prefix); have = 1; } }
     if (!have) return DM_PKG_E_NOTOURS;
     size_t pl = strlen(prefix); int cnt = 0; long long total = 0;
     for (int i = 0; i < z->n; i++) { zr *e = &z->e[i]; if (zip_junk(e->name) || strncmp(e->name, prefix, pl)) continue; const char *rem = e->name + pl; char unit[64]; int c = dm_savepkg_path_class(rem, unit, sizeof unit); if (c != PC_CHAR && c != PC_STASH) continue;

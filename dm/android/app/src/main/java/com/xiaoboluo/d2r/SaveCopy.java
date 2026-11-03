@@ -16,4 +16,16 @@ final class SaveCopy {
         while ((n = in.read(buf)) > 0) { total += n; if (total > max) return false; out.write(buf, 0, n); }
         out.flush(); return true;
     }
+    /** 选文件夹时的副本预算：文件数（同原生 MAX_FILES）与总量，逐文件扣，选错目录时整份放弃。| The copy's budget when a folder is picked: file count (native MAX_FILES) and total size, spent file by file, so a wrong pick is given up as a whole. */
+    static final class Budget {
+        static final int MAX_FILES = 4096;
+        private int files = MAX_FILES; private long bytes;
+        Budget(long maxBytes) { bytes = maxBytes; }
+        /** 还能不能再要一份：数量或总量到顶就 false。| Whether the next one still fits: false once the count or the bytes run out. */
+        boolean fits(long size) { return size >= 0 && files > 0 && size <= bytes; }
+        /** 拷完扣账：按实际字节算（系统报的大小可能比实际小）。| Charges after the copy, by the bytes actually written (the size the system reports can be short). */
+        void spend(long size) { files--; bytes -= size < 0 ? 0 : size; }
+        int filesLeft() { return files; }
+        long bytesLeft() { return bytes; }
+    }
 }
