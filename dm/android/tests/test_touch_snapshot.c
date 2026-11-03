@@ -14,7 +14,7 @@
 #include "dm/android/touch_android.c"
 #include "dm/ios/Sources/dm_touch_controls.c"
 
-_Static_assert(DM_ANDROID_TOUCH_DRAW_FLOATS == 183, "Review the Java/native ABI before changing this test");
+_Static_assert(DM_ANDROID_TOUCH_DRAW_FLOATS == 185, "Review the Java/native ABI before changing this test");
 enum { DRAW_JOY = 12, DRAW_SWAP = 13, DRAW_DIFF = 14, DRAW_PICK0 = 15 };
 static const char *case_name = "startup";
 static unsigned checks, cases;
@@ -62,6 +62,9 @@ dm_ta_glyph dm_ta_current_set(const dm_tg_snapshot *s,uint64_t key,uint64_t now,
 int dm_ta_frame_at(int atlas,int frame,dm_ta_frame *out) { (void)atlas; (void)frame; (void)out; return 0; }
 int dm_swapskill_slot(int slot,int *charges) { (void)slot; *charges=0; return 0; }
 int dm_ui_minimap_rect(float r[4]) { (void)r; return 0; }
+int dm_hud_stack_msg(const char *act,const char *arg) { (void)act; (void)arg; return 0; }
+void dm_ui_map_hold(int on) { (void)on; }
+void dm_touch_game_set_scene(int game,uint64_t scene_id,uint64_t world_id) { (void)game; (void)scene_id; (void)world_id; }
 int dm_ui_map_is_full(void) { return 0; }
 void dm_ui_map_full(int on) { (void)on; unexpected_host_call(__func__); }
 unsigned dm_world_tap(float x,float y) { (void)x; (void)y; unexpected_host_call(__func__); return 0; }
