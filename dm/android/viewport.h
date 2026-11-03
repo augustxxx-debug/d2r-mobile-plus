@@ -48,6 +48,30 @@ static inline int dm_vp_map(dm_vp_rect r, double x, double y, double *u, double 
     return inside;
 }
 
+/* 交换链（窗口缓冲）里的矩形 → 窗口里的矩形。合成器把缓冲按窗口尺寸缩放，所以这一段必须由「实际的缓冲像素」
+   算，不能由「请求的缓冲像素」算：setBuffersGeometry 被驱动拒绝时缓冲仍是旧尺寸，被拉满窗口的正是那块缓冲。
+   buf_w == win_w && buf_h == win_h 时逐位恒等（普通手机、缓冲本来就是窗口尺寸的情况不变）。
+   A rectangle inside the swapchain (window buffer) -> the rectangle inside the window. The compositor scales the
+   buffer to the window, so this must start from the buffer's *actual* pixels, never the requested ones: when the
+   driver refuses setBuffersGeometry the buffer keeps its old size and that buffer is what gets stretched to the
+   window. With buf == window this is the identity (a phone whose buffer already is the window is unchanged). */
+static inline dm_vp_rect dm_vp_window_rect(dm_vp_rect buf, int buf_w, int buf_h, int win_w, int win_h) {
+    dm_vp_rect r = {0, 0, win_w > 0 ? win_w : 0, win_h > 0 ? win_h : 0};
+    if (buf_w <= 0 || buf_h <= 0 || win_w <= 0 || win_h <= 0) return r;
+    double sx = (double)win_w / buf_w, sy = (double)win_h / buf_h;
+    int x = (int)(buf.x * sx), y = (int)(buf.y * sy);
+    int w = (int)(buf.w * sx + 0.5), h = (int)(buf.h * sy + 0.5);
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    if (w > win_w - x) w = win_w - x;
+    if (h > win_h - y) h = win_h - y;
+    if (w < 1 || h < 1) { r.w = win_w; r.h = win_h; return r; }
+    r.x = x; r.y = y; r.w = w; r.h = h;
+    return r;
+}
+
 /* 两边的比例是否算相同（相对差 1% 以内）。呈现那边只在相同时把窗口缓冲设成游戏出图尺寸、由显示硬件
    铺满（present_native）；不同就按画面矩形 blit 并留黑边，触控按同一个矩形换算。
    Whether the two aspects count as the same (within 1% relative). Presentation takes the window buffer at
@@ -58,4 +82,26 @@ static inline int dm_vp_same_aspect(int a_w, int a_h, int b_w, int b_h) {
     long long l = (long long)a_w * b_h, r = (long long)b_w * a_h;
     long long d = l > r ? l - r : r - l;
     return d * 100 <= r;
+}
+
+/* 要不要改写窗口缓冲尺寸（present_native 铺满 / 退回窗口尺寸），以及写成多少。present 每帧调用一次；
+   native_on = 窗口缓冲**实际**就是游戏出图尺寸（由 ANativeWindow_getWidth/Height 读回，不按下一次请求记账）。
+   返回 1 = 调 ANativeWindow_setBuffersGeometry(*req_w,*req_h,0)；req 为 0,0 表示回到窗口尺寸。
+   请求被驱动拒绝时这里不改任何「以为已经生效」的状态：下一帧读回的实际尺寸仍是旧值，于是继续请求；
+   呈现与触控按实际尺寸走，不会出现「画面拉满而触控按 letterbox」。
+   Whether to rewrite the window buffer size (present_native fill, or back to the window size) and to what.
+   present calls it once per frame; native_on = the window buffer's *actual* size is the game's output (read back
+   with ANativeWindow_getWidth/Height, never from the previous request). 1 = call ANativeWindow_setBuffersGeometry
+   with the request; 0,0 means back to the window size. A refused request changes no "assume applied" state here:
+   the next frame reads the old geometry back and asks again, and presentation and touch both follow the actual
+   size, so "picture stretched while touch uses letterbox" cannot arise. */
+static inline int dm_vp_geometry_request(int present_native,int win_w,int win_h,int content_w,int content_h,int native_on,int *req_w,int *req_h) {
+    *req_w = 0; *req_h = 0;
+    if (content_w <= 0 || content_h <= 0) return 0;
+    if (present_native && dm_vp_same_aspect(win_w,win_h,content_w,content_h)) {
+        if (native_on) return 0;
+        *req_w = content_w; *req_h = content_h;
+        return 1;
+    }
+    return native_on ? 1 : 0;   /* 请求 (0,0)：回到窗口尺寸 | request (0,0): back to the window size */
 }

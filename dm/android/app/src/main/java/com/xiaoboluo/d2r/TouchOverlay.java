@@ -68,19 +68,19 @@ public final class TouchOverlay extends View {
             long pc=nativePresentCount(); if (pc!=seenPresent) { seenPresent=pc; seenPresentNs=frameTimeNanos; }
             boolean gameFrame = pc!=lastPresent || frameTimeNanos-seenPresentNs>200_000_000L;
             if (inputEnabled && isShown() && gameFrame) {
-                if (viewportChanged()) { resizeNative(); drawnValid=false; }   // 首个游戏帧 / 折叠 / 旋转 / 分辨率档变了 | first frame, fold, rotation, resolution step
+                // 首个游戏帧 / 折叠 / 旋转 / 分辨率档变了：先取消全部触点（Java 槽位、原生、原始触屏），再重摆。
+                // First frame, fold, rotation, resolution step: cancel every touch (Java slots, native, raw) first,
+                // then lay out again.
+                if (viewportChanged()) { resizeNative(); drawnValid=false; }
                 nativeLayout(probe); int f=nativeFpsHud(), hm=nativeHudMask(); if (!drawnValid || f!=fpsHud || hm!=hudMask || !Arrays.equals(probe, drawn)) { fpsHud=f; hudMask=hm; lastPresent=pc; invalidate(); } }
             Choreographer.getInstance().postFrameCallback(this);
         }
     };
-    private final int[] pointerIds = new int[16];
-    private final float[] lastX = new float[16], lastY = new float[16];
-    private final int[] rawIds = new int[16];
-    private final float[] rawX = new float[16], rawY = new float[16];
+    private final TouchDispatch touches;
     // 画面矩形（窗口像素）与换算用的暂存：矩形由原生（dm_vp_fit）给，画与触摸都用同一份。
     // The picture rectangle (window pixels) and scratch for the conversion: native (dm_vp_fit) gives the rectangle,
     // and both drawing and touch use that one copy.
-    private final float[] vp = new float[4], vpProbe = new float[4], pt = new float[3];
+    private final float[] vp = new float[4], vpProbe = new float[4];
     private final float[] mapP = new float[5];
     private boolean vpValid;
     private final String[] gameLabels, menuLabels;
@@ -99,7 +99,17 @@ public final class TouchOverlay extends View {
     public TouchOverlay(Context context, String[] labels, String[] menuLabels) {
         super(context);
         density = getResources().getDisplayMetrics().density;
-        Arrays.fill(pointerIds,-1);
+        touches = new TouchDispatch(density, new TouchDispatch.Out() {
+            @Override public void event(int phase,int slot,float x,float y) { nativeEvent(phase,slot,x,y); }
+            @Override public void raw(int count,int[] ids,float[] xs,float[] ys) { DmActivity.nativeTouch(count,ids,xs,ys); }
+        }, new TouchDispatch.Projection() {
+            @Override public boolean map(float vx,float vy,float[] out) {
+                mapP[0]=vx; mapP[1]=vy;
+                if (!nativeMap(mapP)) { out[0]=vx; out[1]=vy; return true; }   // 没有矩形（还没呈现过）：整窗即画面 | no rectangle yet: the window is the picture
+                out[0]=mapP[2]; out[1]=mapP[3];
+                return mapP[4]!=0;
+            }
+        });
         gameLabels = labels == null ? new String[15] : labels.clone();
         this.menuLabels = menuLabels == null ? new String[5] : menuLabels.clone();
         lifeFormat=context.getString(R.string.dmHudLife); manaFormat=context.getString(R.string.dmHudMana);
@@ -133,6 +143,7 @@ public final class TouchOverlay extends View {
     private void resizeNative() {
         if (!(inputEnabled && getWidth()>0 && getHeight()>0)) return;
         int wpx=getWidth(), hpx=getHeight();
+        touches.setViewSize(wpx,hpx);
         // 画面矩形每次重新问：内外屏切换、旋转、渲染分辨率档变化都会改它，控件按矩形内的点数摆。
         // Ask for the picture rectangle every time: a fold switch, a rotation or a render-resolution step changes it,
         // and the controls are laid out in points inside that rectangle.
@@ -147,12 +158,13 @@ public final class TouchOverlay extends View {
     }
     private float viewW() { return vpValid ? vp[2]/density : getWidth()/density; }
     private float viewH() { return vpValid ? vp[3]/density : getHeight()/density; }
-    /** 画面矩形变了（首个游戏帧、折叠、旋转、分辨率档）：按新矩形重摆控件。 | The rectangle changed: lay the controls out again. */
+    /** 画面矩形变了（首个游戏帧、折叠、旋转、分辨率档）：先取消全部触点，再按新矩形重摆控件。
+        The rectangle changed: cancel every touch first, then lay the controls out again. */
     private boolean viewportChanged() {
-        if (!nativeViewport(vpProbe)) return false;
-        if (!vpValid) return true;
-        return Math.abs(vpProbe[0]-vp[0])>=0.5f || Math.abs(vpProbe[1]-vp[1])>=0.5f
-            || Math.abs(vpProbe[2]-vp[2])>=0.5f || Math.abs(vpProbe[3]-vp[3])>=0.5f;
+        if (!nativeViewport(vpProbe) || vpProbe[2]<1 || vpProbe[3]<1) return false;
+        if (!touches.updatePicture(vpProbe)) return false;   // 内部先 cancel：手指按住不动时也不会留旧坐标 | cancels inside
+        System.arraycopy(vpProbe,0,vp,0,4); vpValid=true;
+        return true;
     }
     @Override protected void onSizeChanged(int w,int h,int oldw,int oldh) {
         cancelTouches(); resizeNative();
@@ -164,60 +176,24 @@ public final class TouchOverlay extends View {
         running=false; Choreographer.getInstance().removeFrameCallback(poll); cancelTouches(); super.onDetachedFromWindow();
     }
     public void cancelTouches() {
-        if (!inputEnabled) { Arrays.fill(pointerIds,-1); return; }
-        for (int i=0;i<16;++i) if (pointerIds[i]>=0) {
-            nativeEvent(3,i,lastX[i],lastY[i]); pointerIds[i]=-1;
-        }
-        publishRaw();
-    }
-    private void publishRaw() {
-        int count=0;
-        // lastX / lastY 是画面矩形内的像素，归一化用矩形尺寸（画面帧的宽高），不是视图尺寸。
-        // lastX / lastY are pixels inside the picture rectangle; normalize by the rectangle's size (the frame's), not the view's.
-        float rw=vpValid?vp[2]:getWidth(), rh=vpValid?vp[3]:getHeight();
-        if (rw>0 && rh>0) for (int s=0;s<16;++s) if (pointerIds[s]>=0) {
-            rawIds[count]=s; rawX[count]=lastX[s]/rw; rawY[count]=lastY[s]/rh; ++count;
-        }
-        DmActivity.nativeTouch(count,rawIds,rawX,rawY);
-    }
-    private int slot(int id) {
-        for (int i=0;i<16;++i) if (pointerIds[i]==id) return i;
-        return -1;
-    }
-    /** 视图点 → 画面矩形内的像素；返回 false = 落在黑边上（此时 pt 已夹到最近的边）。
-        View point -> pixels inside the picture rectangle; false = on a black bar (pt is then clamped to the nearest edge). */
-    private boolean mapPoint(float px,float py) {
-        mapP[0]=px; mapP[1]=py;
-        if (!nativeMap(mapP)) { pt[0]=px; pt[1]=py; return true; }   // 没有矩形（还没呈现过）：整窗即画面
-        pt[0]=mapP[2]; pt[1]=mapP[3];
-        return mapP[4]!=0;
-    }
-    private boolean event(MotionEvent e,int index,int phase,int s) {
-        boolean inside=mapPoint(e.getX(index),e.getY(index));
-        lastX[s]=pt[0]; lastY[s]=pt[1];
-        nativeEvent(phase,s,lastX[s]/density,lastY[s]/density);
-        return inside;
+        if (!inputEnabled) { touches.reset(); return; }
+        touches.cancel();   // Java 槽位 + 原生 phase 3 + 原始触屏空集 | Java slots + native phase 3 + empty raw set
     }
     @Override public boolean onTouchEvent(MotionEvent e) {
         if (!inputEnabled) return false;
         int action=e.getActionMasked(), index=e.getActionIndex();
         if (action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN) {
-            for (int s=0;s<16;++s) if (pointerIds[s]<0) {
-                // 黑边上的按下不算（不占手指、不发事件）：那里没有画面，按钮也不该被它碰到。
-                // A press on the black bars does not count (no finger taken, no event sent): there is no picture
-                // there, and it must not reach a button.
-                if (!mapPoint(e.getX(index),e.getY(index))) break;
-                lastX[s]=pt[0]; lastY[s]=pt[1];
-                nativeEvent(0,s,lastX[s]/density,lastY[s]/density);
-                pointerIds[s]=e.getPointerId(index); break;
-            }
+            // 黑边上的按下在 TouchDispatch 里丢掉（不占手指、不发事件）：那里没有画面，按钮也不该被它碰到。
+            // A press on the black bars is dropped in TouchDispatch (no finger taken, no event sent): there is no
+            // picture there, and it must not reach a button.
+            touches.down(e.getPointerId(index),e.getX(index),e.getY(index));
         } else if (action==MotionEvent.ACTION_MOVE) {
-            for (int i=0;i<e.getPointerCount();++i) { int s=slot(e.getPointerId(i)); if (s>=0) event(e,i,1,s); }
+            for (int i=0;i<e.getPointerCount();++i) touches.move(e.getPointerId(i),e.getX(i),e.getY(i));
         } else if (action==MotionEvent.ACTION_UP || action==MotionEvent.ACTION_POINTER_UP) {
-            int s=slot(e.getPointerId(index)); if (s>=0) { event(e,index,2,s); pointerIds[s]=-1; }
+            touches.up(e.getPointerId(index),e.getX(index),e.getY(index));
             if (action==MotionEvent.ACTION_UP) performClick();
         } else if (action==MotionEvent.ACTION_CANCEL) cancelTouches();
-        publishRaw(); return true;
+        return true;
     }
     @Override public boolean performClick() { super.performClick(); return true; }
     private String label(int i,boolean navigation) {

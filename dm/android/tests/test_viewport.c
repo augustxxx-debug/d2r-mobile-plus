@@ -80,6 +80,27 @@ int main(void) {
     r = dm_vp_fit(1000, 500, 0, 0);                          /* 尺寸未知：整窗 | unknown size: the whole window */
     CHECK(r.x == 0 && r.y == 0 && r.w == 1000 && r.h == 500);
 
+    /* A2. 交换链矩形 → 窗口矩形（dm_vp_window_rect）：缓冲就是窗口时逐位恒等（普通手机不变）；缓冲是内容时
+       合成器把它拉满窗口，矩形就是整窗；缓冲在两者之间时按窗口缩放。几何被驱动拒绝的回退靠这一条成立。
+       Swapchain rect -> window rect: identity when the buffer is the window (a phone is unchanged); the whole
+       window when the buffer is the content (the compositor stretches it); scaled when the buffer is between. */
+    {   dm_vp_rect b = dm_vp_fit(1600, 1200, 1600, 900), w2 = dm_vp_window_rect(b, 1600, 1200, 1600, 1200);
+        CHECK(w2.x == b.x && w2.y == b.y && w2.w == b.w && w2.h == b.h);
+        CHECK(w2.y == 150 && w2.h == 900);
+        b = dm_vp_fit(2340, 1080, 1920, 1080); w2 = dm_vp_window_rect(b, 2340, 1080, 2340, 1080);
+        CHECK(w2.x == 210 && w2.y == 0 && w2.w == 1920 && w2.h == 1080);
+        w2 = dm_vp_window_rect((dm_vp_rect){0, 0, 1600, 900}, 1600, 900, 1600, 1200);   /* 缓冲是内容 | buffer is the content */
+        CHECK(w2.x == 0 && w2.y == 0 && w2.w == 1600 && w2.h == 1200);
+        w2 = dm_vp_window_rect((dm_vp_rect){0, 75, 800, 450}, 800, 600, 1600, 1200);      /* 缓冲介于两者之间 | in between */
+        CHECK(w2.x == 0 && w2.y == 150 && w2.w == 1600 && w2.h == 900);
+        w2 = dm_vp_window_rect((dm_vp_rect){0, 0, 800, 600}, 800, 600, 1600, 1200);       /* 整块缓冲 | the whole buffer */
+        CHECK(w2.x == 0 && w2.y == 0 && w2.w == 1600 && w2.h == 1200);
+        w2 = dm_vp_window_rect((dm_vp_rect){0, 0, 100, 100}, 0, 0, 1600, 1200);           /* 缓冲尺寸未知 | buffer unknown */
+        CHECK(w2.w == 1600 && w2.h == 1200);
+        w2 = dm_vp_window_rect((dm_vp_rect){0, 0, 100, 100}, 100, 100, 0, 0);             /* 窗口尺寸未知 | window unknown */
+        CHECK(w2.w == 0 && w2.h == 0);
+    }
+
     /* 比例判定的边界：1% 以内算相同（呈现那边据此决定铺满 / 留黑边） | aspect test: within 1% counts as the same */
     CHECK(dm_vp_same_aspect(1920, 1080, 1600, 900));
     CHECK(dm_vp_same_aspect(1600, 1200, 1600, 900) == 0);
