@@ -14,6 +14,7 @@ extern "C" int xbg_completion_wait_selftest(char *report,size_t bytes);
 #include "xbg_vulkan.h"
 #include "xbg_depth.h"
 #include "xbg_sampler.h"
+#include "xbg_compare_view.h"
 #include "xbg_framebuffer.h"
 #include "xbg_clear.h"
 #include "xbg_blit.h"
@@ -142,6 +143,20 @@ bool format_feature_flags2=false;
 // shadow maps with linear depth comparison, and Adreno 730 512.615 reports no SAMPLED_IMAGE_FILTER_LINEAR for D16_UNORM (or
 // D32_SFLOAT). Transfers convert 16 <-> 24-bit depth with exact rounding; constant depth bias is rescaled to the finer depth unit.
 bool depth16_as_d24=false;
+// B131：R16_UNORM（NVN 0x6）被带深度比较的采样器采样时，规范上该视图不支持
+// VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT（VUID-vkCmdDrawIndexed-None-06479），
+// 结果未定义。修法是把同一批 16 位 UNORM 值放进 D16 深度副本，让深度比较硬件算（位相同即数值相同）。
+// 这里记设备能力与 A/B 开关：D16 不支持深度比较、或者采样器要线性过滤而 D16 不支持时，保持旧路径并记录原因，
+// 不为消报错去关比较（B078 的 exp1 已证明关比较会改光照）。
+// B131: when an R16_UNORM (NVN 0x6) view is sampled with depth comparison, the view cannot support
+// VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT per spec (VUID-vkCmdDrawIndexed-None-06479) and the
+// result is undefined. The fix puts the same 16-bit UNORM values into a D16 depth copy so depth-compare hardware
+// does the work (identical bits mean an identical value). The device capabilities and the A/B switch live here:
+// when D16 lacks depth comparison, or lacks the linear filtering the sampler asks for, the old path stays and the
+// reason is logged; comparison is never disabled to silence the layer (B078's exp1 showed that changes lighting).
+bool r16_compare_mirror_enabled=false,r16_d16_sampled=false,r16_d16_compare=false,r16_d16_linear=false;
+uint64_t r16_mirror_created=0,r16_mirror_refreshes=0,r16_mirror_unavailable=0;
+
 uint32_t d16_to_d24(uint32_t k){return uint32_t((uint64_t(k)*2*16777215u+65535u)/(2*65535u));}
 uint32_t d24_to_d16(uint32_t v){return uint32_t((uint64_t(v&0xffffffu)*2*65535u+16777215u)/(2*16777215u));}
 bool storage_without_format_listed(VkFormat f){
@@ -989,7 +1004,7 @@ void perf_frame(){
     xbg_logf("NVN PERF mali guards=%llu clipcull=%llu nonwritable=%llu",(unsigned long long)mali_guards.load(std::memory_order_relaxed),(unsigned long long)mali_clips.load(std::memory_order_relaxed),(unsigned long long)mali_nonwritables.load(std::memory_order_relaxed));xbg_logf("NVN PERF quad_rewrites=%llu warp_rewrites=%llu laneid_rewrites=%llu ldc_folds=%llu temps_forwarded=%llu nan_minmax=%llu",(unsigned long long)quad_rewrites.load(std::memory_order_relaxed),(unsigned long long)warp_rewrites.load(std::memory_order_relaxed),(unsigned long long)laneid_rewrites.load(std::memory_order_relaxed),(unsigned long long)ldc_folds.load(std::memory_order_relaxed),(unsigned long long)temps_forwarded.load(std::memory_order_relaxed),(unsigned long long)nan_minmax_swaps.load(std::memory_order_relaxed));
     xbg_logf("NVN PERF snapfront front_hits=%.1f map_hits=%.1f invalidations=%.1f erased=%.1f",snap_front_hits/f,snap_map_hits/f,snap_invalidations/f,snap_invalidated/f);{static const char *const bc_names[16]={"BC1","BC1A","BC2","BC3","BC1s","BC1As","BC2s","BC3s","BC4","BC4s","BC5","BC5s","BC7","BC7s","BC6s","BC6u"};char by[256];int at=0;by[0]=0;
      for(int i=0;i<16 && at<int(sizeof(by))-24;i++)if(bc_format_bytes_live[i]>0)at+=snprintf(by+at,sizeof(by)-at,"%s%s:%.1f",at?",":" by_format_MB=",bc_names[i],bc_format_bytes_live[i]/1048576.0);
-     xbg_logf("NVN PERF textures bc_native=%llu bc_decoded=%llu bc_astc=%llu live_images=%.1fMB bc_images=%.1fMB bc_payload=%.1fMB%s",(unsigned long long)native_bc_images,(unsigned long long)decoded_bc_images,(unsigned long long)astc_bc_images,image_bytes_live/1048576.0,bc_image_bytes_live/1048576.0,bc_data_bytes_live/1048576.0,by);}snap_front_hits=snap_map_hits=snap_invalidations=snap_invalidated=0;
+     xbg_logf("NVN PERF textures bc_native=%llu bc_decoded=%llu bc_astc=%llu live_images=%.1fMB bc_images=%.1fMB bc_payload=%.1fMB r16_mirrors=%llu r16_refreshes=%.1f r16_unavailable=%llu%s",(unsigned long long)native_bc_images,(unsigned long long)decoded_bc_images,(unsigned long long)astc_bc_images,image_bytes_live/1048576.0,bc_image_bytes_live/1048576.0,bc_data_bytes_live/1048576.0,(unsigned long long)r16_mirror_created,r16_mirror_refreshes/f,(unsigned long long)r16_mirror_unavailable,by);}snap_front_hits=snap_map_hits=snap_invalidations=snap_invalidated=0;
     if(bright::enabled){xbg_logf("NVN PERF bright applied=%.2f k=%.2f",bright::applied/f,bright::last_k);bright::applied=0;}
     if(tex_dirty){xbg_logf("NVN PERF texdirty tracked=%.1f checks=%.1f changed=%.1f",tex_dirty_tracked/f,tex_dirty_checks/f,tex_dirty_changed/f);tex_dirty_tracked=tex_dirty_checks=tex_dirty_changed=0;}
     if(vcache::enabled){xbg_logf("NVN PERF vcache hits=%.1f (%.2fMB) fills=%.1f (%.2fMB) refills=%.2f volatile=%llu untracked=%llu flushes=%llu entries=%zu arena=%.1fMB pools=%d",vcache::hits/f,vcache::hit_bytes/1048576.0/f,vcache::fills/f,vcache::fill_bytes/1048576.0/f,vcache::refills/f,(unsigned long long)vcache::volatiles,(unsigned long long)vcache::untracked,(unsigned long long)vcache::flushes,vcache::live(),vcache::arena_bytes()/1048576.0,[]{int live=0,used=0;uint64_t adds=0;if(nvn_dirty_slot_stats)nvn_dirty_slot_stats(&live,&used,&adds);return used;}());vcache::hits=vcache::hit_bytes=vcache::fills=vcache::fill_bytes=vcache::refills=0;}
@@ -1376,8 +1391,13 @@ struct Image {
     // (gfx-upload-prologue decides by it whether an upload may go ahead of the submission).
     uint64_t slot_use=0;
     uint64_t dirty_stamp=0,dirty_seen=0;   // tex_dirty: the tracker stamp of the checked content (0: not tracked yet) and the tracker generation last checked
+    // B131：R16_UNORM 视图被深度比较采样时的 D16 深度副本（只在比较绑定时使用，非比较用法仍走原图）。
+    // B131: the D16 depth copy used when this image's R16_UNORM view is sampled with depth comparison (used for
+    // compare bindings only; non-comparison uses keep the original image).
+    struct Mirror {VkImage image{};VkDeviceMemory memory{};VkImageView view{};uint64_t filled_submission=UINT64_MAX,filled_write=UINT64_MAX;uint64_t bytes=0;int64_t mem_bytes=0;};
+    std::unique_ptr<Mirror> mirror;
     std::map<std::array<uint32_t,8>,VkImageView> views;std::vector<std::vector<uint64_t>> fb_keys; // fb_keys: persistent framebuffers using these views
-    ~Image(){image_bytes_live-=mem_bytes;bc_image_bytes_live-=bc_bytes;if(bc_bytes)bc_format_bytes_live[(source.d.format-0x41)&15]-=bc_bytes;bc_data_bytes_live-=bc_data;forget_framebuffers(*this);for(auto &v:views)vkDestroyImageView(cfg.device,v.second,nullptr);if(image)vkDestroyImage(cfg.device,image,nullptr);if(memory)vkFreeMemory(cfg.device,memory,nullptr);}
+    ~Image(){image_bytes_live-=mem_bytes;if(mirror)image_bytes_live-=mirror->mem_bytes;bc_image_bytes_live-=bc_bytes;if(bc_bytes)bc_format_bytes_live[(source.d.format-0x41)&15]-=bc_bytes;bc_data_bytes_live-=bc_data;forget_framebuffers(*this);for(auto &v:views)vkDestroyImageView(cfg.device,v.second,nullptr);if(mirror){if(mirror->view)vkDestroyImageView(cfg.device,mirror->view,nullptr);if(mirror->image)vkDestroyImage(cfg.device,mirror->image,nullptr);if(mirror->memory)vkFreeMemory(cfg.device,mirror->memory,nullptr);}if(image)vkDestroyImage(cfg.device,image,nullptr);if(memory)vkFreeMemory(cfg.device,memory,nullptr);}
     void transition(VkCommandBuffer cmd,VkImageLayout next){
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};b.oldLayout=layout;b.newLayout=next;b.image=image;b.srcQueueFamilyIndex=b.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;
         b.subresourceRange={aspects,0,levels,0,layers};b.srcAccessMask=layout==VK_IMAGE_LAYOUT_UNDEFINED?0:VK_ACCESS_MEMORY_WRITE_BIT|VK_ACCESS_MEMORY_READ_BIT;b.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
@@ -1455,6 +1475,71 @@ void prepare_attachment(Image &im,VkCommandBuffer cmd){
     bool in_open=open_pass.cmd && std::find(open_pass.images.begin(),open_pass.images.end(),&im)!=open_pass.images.end();
     if(im.layout!=VK_IMAGE_LAYOUT_GENERAL && !in_open){end_open_pass();im.transition(cmd,VK_IMAGE_LAYOUT_GENERAL);}
     im.last_write=++write_seq;
+}
+// B131：R16 图像里的 16 位 UNORM 值与 D16_UNORM 的深度值是同一个数（都是 16 位 UNORM），所以副本逐字节搬运即可，
+// 不需要解码、不需要读回 CPU。只做 2D / 2D 数组、单采样；其余由策略层挡住。
+// B131: the 16-bit UNORM values in the R16 image and a D16_UNORM depth value are the same number (both are 16-bit
+// UNORM), so the copy ships bytes verbatim: no decode, no CPU readback. 2D / 2D arrays, single sample only; the
+// policy layer keeps everything else out.
+bool compare_mirror_create(Image &im){
+    if(im.mirror)return true;
+    auto m=std::make_unique<Image::Mirror>();
+    VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};ci.imageType=VK_IMAGE_TYPE_2D;ci.format=VK_FORMAT_D16_UNORM;
+    ci.extent={im.width,im.height,1};ci.mipLevels=im.levels;ci.arrayLayers=im.layers;ci.samples=VK_SAMPLE_COUNT_1_BIT;
+    ci.tiling=VK_IMAGE_TILING_OPTIMAL;ci.usage=VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;ci.sharingMode=VK_SHARING_MODE_EXCLUSIVE;
+    VkImageFormatProperties sup{};   // unsupported extent/layers here is a device fact, not a bug: fall back to the old path
+    if(vkGetPhysicalDeviceImageFormatProperties(cfg.physical,ci.format,ci.imageType,ci.tiling,ci.usage,ci.flags,&sup)!=VK_SUCCESS)return false;
+    if(vkCreateImage(cfg.device,&ci,nullptr,&m->image)!=VK_SUCCESS)return false;
+    VkMemoryRequirements r{};vkGetImageMemoryRequirements(cfg.device,m->image,&r);
+    VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};ai.allocationSize=r.size;ai.memoryTypeIndex=memory_type(r.memoryTypeBits,VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if(vkAllocateMemory(cfg.device,&ai,nullptr,&m->memory)!=VK_SUCCESS ||
+       vkBindImageMemory(cfg.device,m->image,m->memory,0)!=VK_SUCCESS){if(m->memory)vkFreeMemory(cfg.device,m->memory,nullptr);vkDestroyImage(cfg.device,m->image,nullptr);return false;}
+    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};vi.image=m->image;
+    vi.viewType=im.layers>1?VK_IMAGE_VIEW_TYPE_2D_ARRAY:VK_IMAGE_VIEW_TYPE_2D;vi.format=VK_FORMAT_D16_UNORM;
+    vi.subresourceRange={VK_IMAGE_ASPECT_DEPTH_BIT,0,im.levels,0,im.layers};
+    if(vkCreateImageView(cfg.device,&vi,nullptr,&m->view)!=VK_SUCCESS){vkFreeMemory(cfg.device,m->memory,nullptr);vkDestroyImage(cfg.device,m->image,nullptr);return false;}
+    im.mirror=std::move(m);m=nullptr;++r16_mirror_created;
+    im.mirror->mem_bytes=int64_t(r.size);image_bytes_live+=im.mirror->mem_bytes;
+    xbg_logf("NVN r16 compare mirror serial=%llu %ux%u levels=%u layers=%u vk=%u",(unsigned long long)im.source.serial,im.width,im.height,im.levels,im.layers,unsigned(VK_FORMAT_D16_UNORM));
+    return true;
+}
+// 每个提交最多刷新一次：源图这一帧被谁写过都算进去了（复制在录制这一帧的绘制之前），下一帧再刷。
+// At most one refresh per submission: whatever wrote the source this frame is included (the copy is recorded before
+// the frame's draws) and the next submission refreshes again.
+VkImageView compare_mirror_sync(Image &im,VkCommandBuffer cmd){
+    if(!r16_compare_mirror_enabled || !r16_d16_compare)return VK_NULL_HANDLE;
+    if(!compare_mirror_create(im))return VK_NULL_HANDLE;
+    if(im.mirror->filled_submission==stats.submissions && im.mirror->filled_write==im.last_write)return im.mirror->view;
+    prepare_read(im,cmd);
+    end_open_pass();   // the copy is a transfer op: never inside a render pass
+    std::vector<VkBufferImageCopy> regions;regions.reserve(size_t(im.levels)*im.layers);
+    VkDeviceSize offsets=0;
+    for(uint32_t l=0;l<im.levels;l++){uint32_t w=std::max(1u,im.width>>l),h=std::max(1u,im.height>>l);
+        for(uint32_t y=0;y<im.layers;y++){VkBufferImageCopy rc{};rc.bufferOffset=offsets;rc.imageSubresource={im.aspects,l,y,1};rc.imageExtent={w,h,1};regions.push_back(rc);offsets+=VkDeviceSize(w)*h*2;}}
+    if(!offsets){return VK_NULL_HANDLE;}
+    Buffer mid=stream_buffer(size_t(offsets));
+    VkMemoryBarrier pre{VK_STRUCTURE_TYPE_MEMORY_BARRIER};pre.srcAccessMask=VK_ACCESS_MEMORY_WRITE_BIT;pre.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,1,&pre,0,nullptr,0,nullptr);
+    vkCmdCopyImageToBuffer(cmd,im.image,VK_IMAGE_LAYOUT_GENERAL,mid.buffer,uint32_t(regions.size()),regions.data());
+    VkBufferMemoryBarrier bb{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};bb.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;bb.dstAccessMask=VK_ACCESS_TRANSFER_READ_BIT;
+    bb.srcQueueFamilyIndex=bb.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;bb.buffer=mid.buffer;bb.offset=mid.offset;bb.size=offsets;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,1,&bb,0,nullptr);
+    VkImageMemoryBarrier ib{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    ib.oldLayout=im.mirror->filled_submission==UINT64_MAX?VK_IMAGE_LAYOUT_UNDEFINED:VK_IMAGE_LAYOUT_GENERAL;ib.newLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    ib.image=im.mirror->image;ib.srcQueueFamilyIndex=ib.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED;ib.subresourceRange={VK_IMAGE_ASPECT_DEPTH_BIT,0,im.levels,0,im.layers};
+    ib.srcAccessMask=ib.oldLayout==VK_IMAGE_LAYOUT_UNDEFINED?0:VK_ACCESS_TRANSFER_WRITE_BIT;ib.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;
+    // 先前的绘制可能已经在读这张副本（同一提交里再次刷新）：WAR 也要挡住，所以源阶段取全部、源访问含着色器读。
+    // Earlier draws may already read this copy (a second refresh in one submission): block the WAR too, so the source
+    // stage is everything and the source access includes shader reads.
+    ib.srcAccessMask|=VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&ib);
+    for(auto &rc:regions)rc.imageSubresource.aspectMask=VK_IMAGE_ASPECT_DEPTH_BIT;   // 源是彩色，目标是深度 | colour source, depth target
+    vkCmdCopyBufferToImage(cmd,mid.buffer,im.mirror->image,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,uint32_t(regions.size()),regions.data());
+    ib.oldLayout=VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;ib.newLayout=VK_IMAGE_LAYOUT_GENERAL;ib.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;ib.dstAccessMask=VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,0,0,nullptr,0,nullptr,1,&ib);
+    if(im.mirror->filled_submission==UINT64_MAX)xbg_logf("NVN r16 compare mirror first fill serial=%llu bytes=%llu regions=%zu",(unsigned long long)im.source.serial,(unsigned long long)offsets,regions.size());
+    im.mirror->bytes=offsets;im.mirror->filled_submission=stats.submissions;im.mirror->filled_write=im.last_write;++r16_mirror_refreshes;
+    return im.mirror->view;
 }
 void provenance_image(const char *event,const tex_t *t,const Image &im,const view_t *v=nullptr){
     if(!provenance_file || !provenance.window(stats.presents.load()))return;
@@ -1894,7 +1979,7 @@ Image &get_image_slow(const tex_t *t,bool upload){CPU_SCOPE(Image);
             s.pro_images.push_back({im.image,im.layout,im.aspects,im.levels,im.layers,staging.buffer,copies});im.layout=VK_IMAGE_LAYOUT_GENERAL;++uploads_prologue;}
         else{++uploads_inpass;if(open_pass.cmd)++uploads_broke_pass;
             Commands c;im.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);vkCmdCopyBufferToImage(c.command,staging.buffer,im.image,im.layout,copies.size(),copies.data());im.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();}
-        im.uploaded=true;provenance_write(im,__LINE__);im.cpu_hash=can_skip?fresh_hash:hash_memory(t->mem,t->L.size);im.checked_submission=stats.submissions;
+        im.uploaded=true;provenance_write(im,__LINE__);im.last_write=++write_seq;im.cpu_hash=can_skip?fresh_hash:hash_memory(t->mem,t->L.size);im.checked_submission=stats.submissions;
         if(dif){   // this cycle's compressed source becomes the next comparison base | 本轮的压缩源成为下一轮的比较基准
             dif->src.swap(dif->src_new);
             if(!dif->ready)dif->ready=true;
@@ -1936,7 +2021,7 @@ const RegisteredTexture &null_texture(const xbg_shader_binding &b){
     t.d.target=dim==0?(array?3:0):dim==1?(array?4:1):dim==2?2:dim==3?(array?9:8):dim==5?10:-1;need(t.d.target>=0,"Unknown null texture dimension");
     nvn_tex_layout(&t.d,&t.L);
     if(dim==5){static uint8_t zero[65536]{};t.mem=zero;t.L.size=sizeof(zero);}
-    else{Image &im=get_image(&t,false);Commands c;im.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);VkImageSubresourceRange range{im.aspects,0,1,0,im.layers};if(im.aspects==VK_IMAGE_ASPECT_COLOR_BIT){VkClearColorValue zero{};vkCmdClearColorImage(c.command,im.image,im.layout,&zero,1,&range);}else{VkClearDepthStencilValue zero{};vkCmdClearDepthStencilImage(c.command,im.image,im.layout,&zero,1,&range);}im.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();im.gpu_written=true,provenance_write(im,__LINE__);}
+    else{Image &im=get_image(&t,false);Commands c;im.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);VkImageSubresourceRange range{im.aspects,0,1,0,im.layers};if(im.aspects==VK_IMAGE_ASPECT_COLOR_BIT){VkClearColorValue zero{};vkCmdClearColorImage(c.command,im.image,im.layout,&zero,1,&range);}else{VkClearDepthStencilValue zero{};vkCmdClearDepthStencilImage(c.command,im.image,im.layout,&zero,1,&range);}im.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();im.gpu_written=true,provenance_write(im,__LINE__);im.last_write=++write_seq;}
     xbg_logf("NVN defined null sampled resource: dim=%u array=%d scalar=%u",dim,array,scalar);return null_textures.emplace(key,r).first->second;
 }
 
@@ -2694,7 +2779,9 @@ Buffer uniform_snapshot_slow(uint64_t address,size_t copy){
 // sampler. A hit still performs the pending CPU upload and the read barrier for the image.
 struct ImgKey{uint64_t h,sh,tp,to,sp,so,kind;bool operator==(const ImgKey &o)const{return h==o.h&&sh==o.sh&&tp==o.tp&&to==o.to&&sp==o.sp&&so==o.so&&kind==o.kind;}};
 struct ImgKeyHash{size_t operator()(const ImgKey &k)const{uint64_t x=k.h*0x9E3779B97F4A7C15ull^k.sh*0xC2B2AE3D27D4EB4Full^k.tp^(k.to<<17)^(k.sp<<7)^k.so^(k.kind<<40);x^=x>>29;return size_t(x*0xBF58476D1CE4E5B9ull);}};
-struct ImgEntry{const tex_t *tex;Image *im;VkImageView view;VkSampler sampler;const RegisteredTexture *record;uint64_t revision;};
+// mirror：这个（贴图, 采样器）组合绑的是 D16 副本，每次提交都要先刷新它（见 compare_mirror_sync）。
+// mirror: this (texture, sampler) pair binds the D16 copy, which has to be refreshed once per submission (compare_mirror_sync).
+struct ImgEntry{const tex_t *tex;Image *im;VkImageView view;VkSampler sampler;const RegisteredTexture *record;uint64_t revision;bool mirror=false;};
 std::unordered_map<ImgKey,ImgEntry,ImgKeyHash> img_cache;bool img_cache_enabled=true;uint64_t img_cache_hits=0,img_cache_misses=0;
 // Recreate an image created without MUTABLE_FORMAT with it, copy every level and layer, and retire the old image and its
 // views (queue order keeps earlier recorded uses on the old one). Cached descriptor sets and the image cache hold the old
@@ -2990,7 +3077,7 @@ void descriptors_build(Descriptors &out,Commands &commands,bool compute){CPU_SCO
                         auto live=it==img_cache.end()?images.end():images.find(it->second.tex->serial);
                         if(it!=img_cache.end() && it->second.record->revision==it->second.revision &&
                             live!=images.end() && live->second.get()==it->second.im){Image *im=&get_image(it->second.tex,true);
-                            prepare_read(*im,commands.command);if(desc_memo_recording)desc_memo_images.push_back({it->second.tex,im,it->second.record,it->second.revision});
+                            prepare_read(*im,commands.command);if(it->second.mirror)compare_mirror_sync(*im,commands.command);if(desc_memo_recording)desc_memo_images.push_back({it->second.tex,im,it->second.record,it->second.revision});
                             VkDescriptorImageInfo ii{};ii.imageView=it->second.view;ii.sampler=b.type==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER?it->second.sampler:VK_NULL_HANDLE;ii.imageLayout=VK_IMAGE_LAYOUT_GENERAL;
                             image_infos.push_back(ii);write.pImageInfo=&image_infos.back();img_fast=true;++img_cache_hits;}
                         else if(it!=img_cache.end())img_cache.erase(it);
@@ -3015,18 +3102,45 @@ void descriptors_build(Descriptors &out,Commands &commands,bool compute){CPU_SCO
                     else{snap_site=4;buf=out.keep(snapshot(base,bytes,properties.limits.minTexelBufferOffsetAlignment));snap_site=0;texel_frame_keys.insert((base<<12)^bytes);++texel_binds;}
                     VkBufferViewCreateInfo v{VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO};v.buffer=buf->buffer;v.offset=buf->offset;v.format=format(texture.d.format);v.range=bytes;VkBufferView bv;{auto &cache=recording_slot().texel_views;std::array<uint64_t,4> key{uint64_t(v.buffer),v.offset,v.range,uint64_t(v.format)};auto f=cache.find(key);if(f!=cache.end())bv=f->second;else{VK(vkCreateBufferView(cfg.device,&v,nullptr,&bv));cache.emplace(key,bv);}}texel_views.push_back(bv);write.pTexelBufferView=&texel_views.back();}}
                 else{if(aspect(texture.d.format)!=VK_IMAGE_ASPECT_COLOR_BIT){auto prior=images.find(texture.serial);if(prior==images.end() || (!prior->second->uploaded && !prior->second->gpu_written))xbg_logf("NVN initial depth descriptor shader=%s stage=%u slot=%u id=%d serial=%llu format=%#x",shader.key.c_str(),ns,slot,id,(unsigned long long)texture.serial,texture.d.format);}
+                    bool mirror_bound=false;
                     VkDescriptorImageInfo ii{};
                     Image &im=get_image(&texture,true);provenance_log("BIND shader=%s stage=%u slot=%u id=%d handle=%llu descriptorMem=%p descriptorOff=%lld type=%u",shader.key.c_str(),ns,slot,id,(unsigned long long)handle,state.texture_pool.pool?state.texture_pool.pool->mem:nullptr,(long long)state.texture_pool.off,unsigned(b.type));provenance_image("BIND",&texture,im,registered.has_view?&registered.view:nullptr);DESC_CALL(ImageTransition, prepare_read(im,commands.command));if(desc_memo_recording)desc_memo_images.push_back({&texture,&im,record,record->revision});ii.imageView=DESC_CALL(ImageView, im.view(registered.has_view?&registered.view:nullptr,false,b.type==VK_DESCRIPTOR_TYPE_STORAGE_IMAGE));ii.imageLayout=VK_IMAGE_LAYOUT_GENERAL;
                     if(capture.active){char label[100];snprintf(label,sizeof(label),"st%u-bind%u-el%u-input",st,b.binding,element);out.capture_inputs.push_back({&im,registered.view,registered.has_view,label});capture_log("TEXTURE label=%s shader=%s nvnStage=%u slot=%u handle=%#llx id=%d serial=%llu cachedSerial=%llu image=%p view=%p viewFormat=%u sourceKind=%u",label,shader.key.c_str(),ns,slot,(unsigned long long)handle,id,(unsigned long long)texture.serial,(unsigned long long)im.source.serial,(void*)im.image,(void*)ii.imageView,unsigned(im.view_format(registered.has_view?&registered.view:nullptr)),b.source);}
                     if(b.type==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER || b.type==VK_DESCRIPTOR_TYPE_SAMPLER){DESC_SCOPE(SamplerBind);uint64_t sh=handle;if(b.sampler_slot!=UINT32_MAX){need(b.sampler_slot<128,"Sampler slot out of range");sh=state.samp[ns][b.sampler_slot];}int sid=int(sh>>20);samp_par parameters{};if(sid==0){parameters.ws=parameters.wt=parameters.wr=7;parameters.aniso=1;parameters.cmp_func=1;}
-                        else{auto sp=samplers.find(pool_key(&state.sampler_pool));auto &table=sp==samplers.end()?legacy_samplers:sp->second;auto sa=table.find(sid);if(sa==table.end())xbg_fatalf("Unregistered sampler id=%d",sid);parameters=sa->second;}ii.sampler=sampler(parameters,im,im.view_format(registered.has_view?&registered.view:nullptr),((b.flags>>16)&3)!=0);if(capture.active)capture_log("SAMPLER st=%u binding=%u sid=%d samplerSlot=%u min=%u mag=%u wrap=%u/%u/%u lod=%g/%g bias=%g",st,b.binding,sid,b.sampler_slot,parameters.minf,parameters.magf,parameters.ws,parameters.wt,parameters.wr,parameters.lod_min,parameters.lod_max,parameters.lod_bias);}
+                        else{auto sp=samplers.find(pool_key(&state.sampler_pool));auto &table=sp==samplers.end()?legacy_samplers:sp->second;auto sa=table.find(sid);if(sa==table.end())xbg_fatalf("Unregistered sampler id=%d",sid);parameters=sa->second;}ii.sampler=sampler(parameters,im,im.view_format(registered.has_view?&registered.view:nullptr),((b.flags>>16)&3)!=0);if(capture.active)capture_log("SAMPLER st=%u binding=%u sid=%d samplerSlot=%u min=%u mag=%u wrap=%u/%u/%u lod=%g/%g bias=%g",st,b.binding,sid,b.sampler_slot,parameters.minf,parameters.magf,parameters.ws,parameters.wt,parameters.wr,parameters.lod_min,parameters.lod_max,parameters.lod_bias);
+                    // B131：R16_UNORM（NVN 0x6）视图被深度比较采样时，验证层报 VUID-vkCmdDrawIndexed-None-06479，
+                    // 规范上结果未定义。改用 D16 深度副本（16 位 UNORM 值逐字节相同），只有这个比较绑定走副本；
+                    // 同一张贴图的非比较用法仍然绑原彩色视图（B078：serial 44 两种用法都有）。
+                    // B131: sampling an R16_UNORM (NVN 0x6) view with depth comparison trips
+                    // VUID-vkCmdDrawIndexed-None-06479 and is undefined per spec. Sample a D16 depth copy instead
+                    // (16-bit UNORM values are byte-identical); only this compare binding uses the copy, while
+                    // non-compare uses of the same texture keep the colour view (B078: serial 44 is used both ways).
+                    if(b.type==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER && parameters.cmp_mode){
+                        xbg_compare_view_input cv{};
+                        cv.nvn_format=im.source.d.format;cv.color_aspect=im.aspects==VK_IMAGE_ASPECT_COLOR_BIT;
+                        for(uint32_t l=0;l<im.levels;l++)cv.data_bytes+=uint64_t(std::max(1u,im.width>>l))*std::max(1u,im.height>>l)*im.layers*2;   // 副本的字节数 | the copy's size
+                        cv.two_dimensional=im.source.d.target==1 || im.source.d.target==4 || im.source.d.target==6;
+                        cv.multisampled=im.samples!=VK_SAMPLE_COUNT_1_BIT;cv.compare=true;
+                        cv.subresource_view=registered.has_view;   // 子视图只取部分层/级别，副本代表不了 | a sub-view covers part of the image only
+                        cv.linear=((parameters.minf&1)!=0) || parameters.magf!=0;   // xbg_sampler.cpp 的映射 | the mapping in xbg_sampler.cpp
+                        cv.d16_sampled=r16_d16_sampled;cv.d16_compare=r16_d16_compare;cv.d16_linear=r16_d16_linear;
+                        const xbg_compare_view_plan plan=xbg_compare_view_plan_for(cv);
+                        if(plan==XBG_COMPARE_VIEW_DEPTH_MIRROR){
+                            VkImageView mirror=DESC_CALL(ImageView,compare_mirror_sync(im,commands.command));
+                            if(mirror){ii.imageView=mirror;ii.sampler=sampler(parameters,im,VK_FORMAT_D16_UNORM,((b.flags>>16)&3)!=0);mirror_bound=true;}
+                        }else if(plan==XBG_COMPARE_VIEW_UNAVAILABLE && r16_compare_mirror_enabled){
+                            static unsigned notes=0;if(notes++<12){++r16_mirror_unavailable;xbg_logf("NVN r16 compare sampling stays on the colour view serial=%llu nvn=%#x %ux%u layers=%u linear=%d reason=%s",
+                                (unsigned long long)im.source.serial,im.source.d.format,im.width,im.height,im.layers,int(cv.linear),xbg_compare_view_unavailable_reason(cv));}
+                        }
+                    }
+                    }
                     if(b.type==VK_DESCRIPTOR_TYPE_STORAGE_IMAGE){VkFormat viewed=im.view_format(registered.has_view?&registered.view:nullptr);if(!(im.usage&VK_IMAGE_USAGE_STORAGE_BIT))xbg_fatalf("NVN storage image without IMAGE flag serial=%llu format=%#x flags=%#x",(unsigned long long)texture.serial,texture.d.format,texture.d.flags);const VkFormatProperties &fp=format_properties(viewed);need(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,"Format not usable as storage image");
                         if((b.flags&3) && format_feature_flags2){VkFormatProperties3 extra{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3};VkFormatProperties2 all{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2};all.pNext=&extra;vkGetPhysicalDeviceFormatProperties2(cfg.physical,viewed,&all);if(b.flags&1)need(extra.optimalTilingFeatures&VK_FORMAT_FEATURE_2_STORAGE_WRITE_WITHOUT_FORMAT_BIT,"Image format lacks formatless-write support");if(b.flags&2)need(extra.optimalTilingFeatures&VK_FORMAT_FEATURE_2_STORAGE_READ_WITHOUT_FORMAT_BIT,"Image format lacks formatless-read support");}
                         else if(b.flags&3){VkFormatProperties fp{};vkGetPhysicalDeviceFormatProperties(cfg.physical,viewed,&fp);bool listed=storage_without_format_listed(viewed) && (fp.optimalTilingFeatures&VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT);
                             if((b.flags&1) && !(listed && cfg.enabled_core.shaderStorageImageWriteWithoutFormat))xbg_fatalf("Image format %d lacks formatless-write support without VK_KHR_format_feature_flags2 (shader=%s listedWithStorageImage=%d shaderStorageImageWriteWithoutFormat=%u)",int(viewed),shader.key.c_str(),int(listed),unsigned(cfg.enabled_core.shaderStorageImageWriteWithoutFormat));
                             if((b.flags&2) && !(listed && cfg.enabled_core.shaderStorageImageReadWithoutFormat))xbg_fatalf("Image format %d lacks formatless-read support without VK_KHR_format_feature_flags2 (shader=%s listedWithStorageImage=%d shaderStorageImageReadWithoutFormat=%u)",int(viewed),shader.key.c_str(),int(listed),unsigned(cfg.enabled_core.shaderStorageImageReadWithoutFormat));}im.gpu_written=true,provenance_write(im,__LINE__);im.last_write=++write_seq;}
                     image_infos.push_back(ii);write.pImageInfo=&image_infos.back();
-                    if(img_cacheable){img_cache.emplace(ikey,ImgEntry{&texture,&im,ii.imageView,ii.sampler,record,record->revision});++img_cache_misses;}
+                    if(img_cacheable){img_cache.emplace(ikey,ImgEntry{&texture,&im,ii.imageView,ii.sampler,record,record->revision,mirror_bound});++img_cache_misses;}
                 }
                 }
             }
@@ -3741,7 +3855,7 @@ void copy_texture(const p_copy_t2t &p){preflight_cpu_reads();Image &s=get_image(
         VkImageBlit blit{};VkFilter filter{};
         need(xbg_astc_bc_plan(s.fmt,d.fmt,source,destination,uint32_t(p.flags),sf.optimalTilingFeatures,df.optimalTilingFeatures,&blit,&filter)==0,"ASTC to decoded-BC copy requires matching sRGB, supported regions/flags and blit features");
         Commands c;s.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);d.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);vkCmdBlitImage(c.command,s.image,s.layout,d.image,d.layout,1,&blit,filter);
-        s.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);d.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();d.gpu_written=true,provenance_write(d,__LINE__);
+        s.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);d.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();d.gpu_written=true,provenance_write(d,__LINE__);d.last_write=++write_seq;
         {static unsigned n=0;if(n++<8)xbg_logf("NVN ASTC2BC blit src=%llu fmt=%#x -> dst=%llu fmt=%#x %dx%d lv%u/%u layer%u/%u",(unsigned long long)p.src->serial,p.src->d.format,(unsigned long long)p.dst->serial,p.dst->d.format,p.sr.width,p.sr.height,sl,dl,sa,da);}
         return;
     }
@@ -3765,10 +3879,10 @@ void copy_texture(const p_copy_t2t &p){preflight_cpu_reads();Image &s=get_image(
     // also preserves untouched mip levels and array layers for ordinary copies.
     bool full_destination=xbg_copy_is_full({d.width,d.height,d.source.d.target==2?d.depth:d.layers,d.levels,dl,da,p.dr.xoffset,p.dr.yoffset,p.dr.zoffset,p.dr.width,p.dr.height,p.dr.depth})!=0;
     if(!full_destination){need(d.samples==VK_SAMPLE_COUNT_1_BIT || d.gpu_written,"Partial copy into initial CPU multisample storage unsupported");get_image(p.dst,true);}
-    if(scaled){Commands c;s.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);d.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);vkCmdBlitImage(c.command,s.image,s.layout,d.image,d.layout,1,&blit,filter);s.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);d.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();d.gpu_written=true,provenance_write(d,__LINE__);return;}
+    if(scaled){Commands c;s.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);d.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);vkCmdBlitImage(c.command,s.image,s.layout,d.image,d.layout,1,&blit,filter);s.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);d.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();d.gpu_written=true,provenance_write(d,__LINE__);d.last_write=++write_seq;return;}
     Commands c;s.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);d.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);VkImageCopy r{};r.srcSubresource=copy_layers(s,sl,sa,p.sr);r.dstSubresource=copy_layers(d,dl,da,p.dr);r.srcOffset=copy_offset(s,p.sr);r.dstOffset=copy_offset(d,p.dr);r.extent=copy_extent(s,p.sr);std::vector<VkImageCopy> regions;
     for(VkImageAspectFlags flag: {VkImageAspectFlags(VK_IMAGE_ASPECT_COLOR_BIT),VkImageAspectFlags(VK_IMAGE_ASPECT_DEPTH_BIT),VkImageAspectFlags(VK_IMAGE_ASPECT_STENCIL_BIT)})if(s.aspects&flag){auto one=r;one.srcSubresource.aspectMask=one.dstSubresource.aspectMask=flag;regions.push_back(one);}
-    vkCmdCopyImage(c.command,s.image,s.layout,d.image,d.layout,regions.size(),regions.data());s.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);d.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();d.gpu_written=true,provenance_write(d,__LINE__);}
+    vkCmdCopyImage(c.command,s.image,s.layout,d.image,d.layout,regions.size(),regions.data());s.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);d.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();d.gpu_written=true,provenance_write(d,__LINE__);d.last_write=++write_seq;}
 void partial_clear_texture(Image &im,const p_clear_tex &request,uint32_t level,uint32_t base_layer,int scalar){
     need(im.source.d.target!=2,"Partial 3D texture clear requires 2D slice-view support");
     bool color=im.aspects==VK_IMAGE_ASPECT_COLOR_BIT;need(color || request.mask==15,"Depth/stencil texture channel-mask semantics not implemented");
@@ -3855,7 +3969,7 @@ void resolve_texture(const p_copy_t2t &p){preflight_cpu_reads();
     uint32_t sn=p.has_sv&&p.sv.set_layers?p.sv.nlayers:s.layers,dn=p.has_dv&&p.dv.set_layers?p.dv.nlayers:d.layers;
     need(sl<s.levels && dl<d.levels && sa+sn<=s.layers && da+dn<=d.layers && sn==dn,"Resolve view out of range");
     uint32_t w=std::max(1u,s.width>>sl),h=std::max(1u,s.height>>sl);need(w==std::max(1u,d.width>>dl)&&h==std::max(1u,d.height>>dl),"Resolve extents differ");
-    Commands c;s.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);d.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);VkImageResolve r{};r.srcSubresource={s.aspects,sl,sa,sn};r.dstSubresource={d.aspects,dl,da,dn};r.extent={w,h,1};vkCmdResolveImage(c.command,s.image,s.layout,d.image,d.layout,1,&r);s.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);d.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();d.gpu_written=true,provenance_write(d,__LINE__);
+    Commands c;s.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);d.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);VkImageResolve r{};r.srcSubresource={s.aspects,sl,sa,sn};r.dstSubresource={d.aspects,dl,da,dn};r.extent={w,h,1};vkCmdResolveImage(c.command,s.image,s.layout,d.image,d.layout,1,&r);s.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);d.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();d.gpu_written=true,provenance_write(d,__LINE__);d.last_write=++write_seq;
 }
 
 // CPU-visible writes occur only after all preceding synchronous GPU work finished.
@@ -4128,6 +4242,21 @@ extern "C" int xbg_game_initialize(const xbg_game_config *c,char *error,size_t b
        bool d16_linear=(d16.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)!=0;depth16_as_d24=!d16_linear && (d24.optimalTilingFeatures&d24_needs)==d24_needs;
        xbg_logf("NVN depth16 stored as %s (D16 linear filtering=%u, X8_D24 features=%#x)",depth16_as_d24?"X8_D24":"D16",unsigned(d16_linear),d24.optimalTilingFeatures);
        xbg_logf("NVN compatibility format_feature_flags2=%d depth16_as_d24=%d",int(format_feature_flags2),int(depth16_as_d24));}
+      // B131：R16_UNORM 视图被深度比较采样（VUID 06479）时改用 D16 副本，需要 D16 支持采样与深度比较（1.3 的
+      // SAMPLED_IMAGE_DEPTH_COMPARISON 位只能用 FormatProperties2 查）。能力不足时保持旧路径，日志里写明原因。
+      // B131: the D16 copy for compare sampling of an R16_UNORM view (VUID 06479) needs D16 sampled and
+      // depth-comparable (the 1.3 SAMPLED_IMAGE_DEPTH_COMPARISON bit is only visible through FormatProperties2).
+      // When the device falls short the old path stays, with the reason in the log.
+      {VkFormatProperties2 all{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2};VkFormatProperties3 extra{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3};
+       all.pNext=&extra;vkGetPhysicalDeviceFormatProperties2(cfg.physical,VK_FORMAT_D16_UNORM,&all);
+       r16_d16_sampled=(all.formatProperties.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT)!=0;
+       r16_d16_linear=(all.formatProperties.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)!=0;
+       r16_d16_compare=(extra.optimalTilingFeatures&VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT)!=0;
+       xbg_logf("NVN r16 compare sampling: D16 sampled=%d depthCompare=%d linear=%d features2=%#llx core=%#x",int(r16_d16_sampled),int(r16_d16_compare),int(r16_d16_linear),
+           (unsigned long long)extra.optimalTilingFeatures,all.formatProperties.optimalTilingFeatures);}
+      {FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-r16-compare-mirror").c_str(),"rb");r16_compare_mirror_enabled=true;if(m){r16_compare_mirror_enabled=fgetc(m)!='0';fclose(m);}
+       else if(const char *e=getenv("DM_GFX_R16_COMPARE_MIRROR"))r16_compare_mirror_enabled=atoi(e)!=0;
+       xbg_logf("NVN r16 compare sampling uses a D16 depth copy=%d (marker gfx-r16-compare-mirror, 0 keeps the R16_UNORM compare view)",int(r16_compare_mirror_enabled));}
       for(size_t at=0;at<list.size();at+=900)xbg_logf("NVN caps extensions[%zu] %s",at/900,list.substr(at,900).c_str());
       xbg_logf("NVN caps api=%u.%u.%u driver=%u maxUBdyn=%u maxPerStageUB=%u minUBAlign=%llu maxBoundSets=%u",VK_API_VERSION_MAJOR(properties.apiVersion),VK_API_VERSION_MINOR(properties.apiVersion),VK_API_VERSION_PATCH(properties.apiVersion),properties.driverVersion,properties.limits.maxDescriptorSetUniformBuffersDynamic,properties.limits.maxPerStageDescriptorUniformBuffers,(unsigned long long)properties.limits.minUniformBufferOffsetAlignment,properties.limits.maxBoundDescriptorSets);}
      {FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-ab-toggle").c_str(),"rb");ab_period=0;if(m){if(fscanf(m,"%d",&ab_period)!=1)ab_period=0;fclose(m);}{FILE *t=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-ab-target").c_str(),"rb");memset(ab_target,0,sizeof ab_target);if(t){if(fscanf(t,"%15s",ab_target)!=1)ab_target[0]=0;fclose(t);}}xbg_logf("NVN PERF ab_period=%d",ab_period);}
