@@ -6,7 +6,9 @@
 #      表已经改过、行宽变了要报错（不静默过去）。
 #   ③ 接线：这两张表要真的进覆盖层。以前这里只扫两个子串，把生产调用整行注释掉仍然 42 项全绿（审计 P2-02），
 #      所以现在两步都真跑：用 fixture RomFS 调生产 stack_potions.wire（build 四张表 + REPL.update 消费），
-#      再用 AST 看 gen_romfs_overlay.py 里那一次调用是不是真的可执行代码（注释里的同名子串不算）。
+#      再用 AST 看 gen_romfs_overlay.py 里那一次调用是不是真的可执行代码（注释里的同名子串不算；挂在
+#      if / while / for / try / match / 推导式 / 短路 / 函数体等下面也不算——这类祖先要么跳过调用、要么执行次数不定，
+#      “放进 if False 仍全绿”就是上一轮漏过的 P2-02 残余）。唯一放行的是 with：body 必定执行一次。
 #   ④ 控件名与角标格数：宿主按名字找数量框的按钮与角标（dm_stack_rule.h ↔ pouch_layout.py / wide_stash.py），
 #      写错一个字就点不到、角标不出现；DMSTK_BADGE_MAX 必须等于两份布局各生成的角标控件数。
 # Potion stacking: reconcile the data tables with the host (takes a second, no game data needed).
@@ -18,7 +20,10 @@
 #   ③ Wiring: both tables really have to reach the overlay. This used to be two substring scans, and commenting out the
 #      production line still passed all 42 checks (audit P2-02). Now both halves are executed: a fixture RomFS drives the
 #      production stack_potions.wire (build four tables + REPL.update consuming them), and an AST read of
-#      gen_romfs_overlay.py proves that call is real code (the same substring inside a comment does not count).
+#      gen_romfs_overlay.py proves that call is real code (the same substring inside a comment does not count; neither
+#      does a call under if / while / for / try / match / a comprehension / a short circuit / a def — those either skip it
+#      or run it an unknown number of times, which is the P2-02 leftover "if False still green"). Only `with` is allowed:
+#      its body always runs once.
 #   ④ Widget names and badge capacity: the host finds the quantity-box buttons and the badges by name (dm_stack_rule.h vs
 #      pouch_layout.py / wide_stash.py); one wrong letter and the tap misses or the badge never appears. DMSTK_BADGE_MAX
 #      must equal the number of badge widgets both layouts generate.
@@ -104,14 +109,28 @@ def fixture_romfs(root, tables):
     open(os.path.join(data, 'build_manifest.psv'), 'w', encoding='utf-8').write('\n'.join(lines) + '\n')
 
 
+# 可跳过 / 执行次数不定的祖先：调用挂在它们下面时只能算“AST 里有”，不算生成器一定会执行。
+# 判据是整条祖先链，不是只看紧邻的父节点——`if False:` 里再套一层 `with` 也要拒绝（外层已经跳过了）。
+# `with` 是唯一放行的复合语句：body 必定执行一次，`__enter__` 失败会让整条生成链当场报错退出，
+# 不会“静默跳过还全绿”；生产调用就在模块级的 with 里（临时目录），放行它才不用改生成器结构。
+# Ancestors that can skip the call or run it an unknown number of times. The whole chain is walked, not
+# just the immediate parent, so a `with` nested inside `if False:` is still rejected. `with` is the one
+# compound statement allowed: its body always runs once, and a failing `__enter__` aborts the whole build
+# loudly instead of silently skipping; the production call sits inside the module-level with (temp dir).
+_SKIP_ANCESTORS = tuple(getattr(ast, n) for n in (
+    'If', 'IfExp', 'BoolOp', 'While', 'For', 'AsyncFor', 'Try', 'TryStar', 'Match',
+    'ListComp', 'SetComp', 'DictComp', 'GeneratorExp', 'comprehension',
+    'FunctionDef', 'AsyncFunctionDef', 'Lambda') if hasattr(ast, n))
+
+
 def wiring_calls(src):
     """gen_romfs_overlay.py 里真正会执行的 stack_potions 调用：[(函数名, 行号, [参数源码], 作用域)]，
-    作用域 'module' = 生成器执行时会走到（含 with / for / if 里），'function' = 在函数定义里，没人调就不执行。
-    注释不在 AST 里，所以“整行注释掉但子串还在”的变异看不见 —— 这正是 P2-02 的反例。
+    作用域 'module' = 生成器执行时会走到；'function' = 在函数/闭包里，没人调就不执行；'skipped:<节点>' = 挂在
+    条件、循环、try、match 等下面，可能根本不执行。注释不在 AST 里，所以“整行注释掉但子串还在”的变异看不见。
     The stack_potions calls that really execute in gen_romfs_overlay.py: name, line, argument source, scope.
-    Scope 'module' means the generator reaches it while running (also inside with / for / if); 'function' means
-    it sits in a def and only runs if called. Comments are not in the AST, so the "commented out but the
-    substring is still there" mutation is invisible — exactly the P2-02 counterexample."""
+    Scope 'module' means the generator reaches it while running; 'function' means it sits in a def/lambda and only
+    runs if called; 'skipped:<node>' means a conditional, loop, try or match ancestor can skip it. Comments are not
+    in the AST, so the "commented out but the substring is still there" mutation is invisible — the P2-02 case."""
     tree = ast.parse(src)
     parents = {}
     for n in ast.walk(tree):
@@ -124,8 +143,9 @@ def wiring_calls(src):
             continue
         p, scope = parents.get(node), 'module'
         while p is not None:
-            if isinstance(p, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-                scope = 'function'
+            if isinstance(p, _SKIP_ANCESTORS):
+                scope = ('function' if isinstance(p, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+                         else 'skipped:' + type(p).__name__)
                 break
             p = parents.get(p)
         calls.append((node.func.attr, node.lineno, [ast.unparse(a) for a in node.args], scope))
@@ -204,8 +224,47 @@ def main():
     calls = [(c[0], c[2]) for c in wiring_calls(src)]
     scopes = {c[3] for c in wiring_calls(src)}
     check(('wire', ['romfs', 't', 'REPL']) in calls, 'gen_romfs_overlay.py 真调 stack_potions.wire(romfs, t, REPL)', repr(calls))
-    check(scopes == {'module'}, '这一次调用在生成器的执行路径上（不在没人调的函数里）', repr(scopes))
+    check(scopes == {'module'}, '这一次调用在生成器的执行路径上（不在没人调的函数 / 条件 / 循环里）', repr(scopes))
     check(not any(name == 'build' for name, _ in calls), '生成器不绕过 wire 直接调 build（build 不登记 REPL）', repr(calls))
+    # 反例：AST 里有、但生成器不保证执行到 —— 条件 / 循环 / try / match / 推导式 / 短路 / 函数体；注释同理（不在 AST 里）。
+    #   只看“是不是在 def 里”会漏掉 if False 这类不可达接线（审计 P2-02 的残余），所以判据是整条祖先链。
+    # Counterexamples: present in the AST but not guaranteed to run (conditionals, loops, try, match,
+    # comprehensions, short circuits, function bodies). The criterion is the whole ancestor chain.
+    CALL = 'import stack_potions; _,sps=stack_potions.wire(romfs,t,REPL)'
+    WIRE_LINE = re.compile(r'^[ \t]*import stack_potions;[^\n]*$', re.M)
+    SYNTH = 'import stack_potions, tempfile\nwith tempfile.TemporaryDirectory() as t:\n' + '    ' + CALL + '\n'
+
+    def wire_swapped(body):
+        """把生产调用那一行换成 body（同一层缩进，反例落在真实上下文里）；生成器认不出那一行时换到最小骨架里，
+        反例照样能验护栏（真实调用本身已由上面的正检查判红）。
+        Swap the production line for body at the same indent so the counterexample sits in the real context; when the
+        generator no longer has that line, swap into a minimal skeleton so the guard is still exercised."""
+        for base in (src, SYNTH):
+            m = WIRE_LINE.search(base)
+            if m:
+                return base[:m.start()] + body.rstrip('\n') + base[m.end():]
+        return body.rstrip('\n')
+
+    unreachable = [
+        ('if False（审计 P2-02 的变异）', '    if False:\n        ' + CALL + '\n'),
+        ('if True（条件祖先一律不认，今天真跑也一样）', '    if True:\n        ' + CALL + '\n'),
+        ('while False', '    while False:\n        ' + CALL + '\n'),
+        ('for _ in ()', '    for _ in ():\n        ' + CALL + '\n'),
+        ('try/except', '    try:\n        ' + CALL + '\n    except Exception:\n        pass\n'),
+        ('def 里（没人调）', '    def _later():\n        ' + CALL + '\n'),
+        ('if False 里再套 with（紧邻祖先可执行、外层不可执行）',
+         '    if False:\n        with open(__file__) as _f:\n            ' + CALL + '\n'),
+        ('推导式（表为空时一行都不跑）', '    [stack_potions.wire(romfs,t,REPL) for _ in ()]\n'),
+        ('短路布尔（前半句一改就跳过）', '    False and stack_potions.wire(romfs,t,REPL)\n'),
+    ]
+    if hasattr(ast, 'Match'):
+        unreachable.append(('match/case', '    match 0:\n        case 0:\n            ' + CALL + '\n'))
+    for label, body in unreachable:
+        got = wiring_calls(wire_swapped(body))
+        check({c[0] for c in got} == {'wire'} and 'module' not in {c[3] for c in got},
+              '反例：%s 里的生产调用不算可执行接线' % label, repr([(c[0], c[3]) for c in got]))
+    plain = 'import stack_potions\nstack_potions.wire(romfs,t,REPL)\n'
+    check({c[3] for c in wiring_calls(plain)} == {'module'}, '正常模块顶层无条件调用判为可执行接线', repr(wiring_calls(plain)))
     commented = '# ' + '\n# '.join(l.strip() for l in src.splitlines() if 'stack_potions.wire(' in l) + '\n'
     check(wiring_calls(commented) == [], '反例：生产调用整行注释后 AST 看不见它（旧子串检查在这里会绿）', repr(wiring_calls(commented)))
     mocked = [(c[0], c[2]) for c in wiring_calls(src.replace('wire(romfs,t,REPL)', 'wire(romfs,t,{})'))]
