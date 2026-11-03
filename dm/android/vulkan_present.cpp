@@ -50,6 +50,15 @@ ANativeWindow *desired=nullptr,*active=nullptr;uint64_t generation=0,active_gene
 VkInstance instance;VkPhysicalDevice physical;VkDevice device;VkQueue queue;uint32_t family;
 VkSurfaceKHR surface;VkSwapchainKHR swapchain;VkFormat swap_format;VkExtent2D extent;
 VkSurfaceTransformFlagBitsKHR created_transform;VkExtent2D created_surface_extent;
+// 窗口像素尺寸（Java 交来的 SurfaceView 尺寸）与最近一次呈现的内容尺寸。触控层用这两个和 dm_vp_fit/ dm_vp_map
+// 换算，与下面 blit 的目标矩形同出一处，显示与触摸不再各算一套。窗口尺寸必须由 Java 交：present_native 生效时
+// ANativeWindow_getWidth 返回的是被改写的缓冲尺寸（= 游戏出图），读不出窗口本身。
+// Window size in pixels (handed over by Java: the SurfaceView's size) and the content size of the most recent
+// present. The touch layer converts with these through dm_vp_fit / dm_vp_map, the same place the blit's dest
+// rectangle comes from, so display and touch cannot use two different sizes. The window size must come from
+// Java: with present_native in effect ANativeWindow_getWidth reports the rewritten buffer size (= the game's
+// output), not the window.
+std::atomic<int> window_w{0},window_h{0},frame_w{0},frame_h{0},fill_window{0};
 // 无旋转 blit 由系统合成器旋转；记录属性以免 SUBOPTIMAL 触发逐帧重建。
 // The compositor rotates our unrotated blit; cache properties to avoid rebuilding every SUBOPTIMAL frame.
 bool surface_properties_changed(){
@@ -217,9 +226,20 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
     VkFormatProperties sp;vkGetPhysicalDeviceFormatProperties(physical,source_format,&sp);if(!(sp.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_SRC_BIT))return VK_ERROR_FORMAT_NOT_SUPPORTED;
     int x=0,y=0,w=int(width),h=int(height);if(crop&&crop[2]>0&&crop[3]>0){x=std::clamp(crop[0],0,w);y=std::clamp(crop[1],0,h);w=std::min(crop[2],int(width)-x);h=std::min(crop[3],int(height)-y);}if(w<=0||h<=0)return VK_ERROR_INITIALIZATION_FAILED;
     for(;;){
-    if(present_native && surface && active && (native_w!=w || native_h!=h)){   // the next swapchain takes this size (currentExtent follows the buffer geometry)
+    // 窗口缓冲尺寸由显示硬件铺满窗口只在比例对得上时成立（present_native）；比例对不上就按画面矩形居中 blit、
+    // 四周留黑边，触控层按同一个矩形换算。否则 16:9 的游戏画面会被合成器拉满近 4:3 的折叠内屏，画面与手指都走形。
+    // Handing the window buffer to the display hardware, which fills the window, only holds when the aspects match
+    // (present_native); otherwise the picture is blitted centred into the window with bars around it, and the touch
+    // layer converts through that same rectangle. Left alone, a 16:9 picture on a fold inner screen near 4:3 is
+    // stretched to fill by the compositor, and both the picture and the fingers are distorted.
+    int win_w=window_w.load(std::memory_order_relaxed),win_h=window_h.load(std::memory_order_relaxed);
+    bool native_fill=present_native && dm_vp_same_aspect(win_w,win_h,w,h);
+    if(native_fill && surface && active && (native_w!=w || native_h!=h)){   // the next swapchain takes this size (currentExtent follows the buffer geometry)
         int g=ANativeWindow_setBuffersGeometry(active,w,h,0);native_w=w;native_h=h;swap_dirty=true;
         vlog("Present at the game's output size %dx%d result=%d (marker gfx-present-native)",w,h,g);}
+    else if(!native_fill && surface && active && (native_w || native_h)){
+        int g=ANativeWindow_setBuffersGeometry(active,0,0,0);native_w=native_h=0;swap_dirty=true;
+        vlog("Present letterboxed: window %dx%d, picture %dx%d (aspects differ; buffers back to the window size) result=%d",win_w,win_h,w,h,g);}
     // 后台等待释放UI锁；保留同一源帧，恢复并真正呈现后才返回成功。
     // Suspend without the UI lock; keep this source frame until it is presented.
     wait_window();
@@ -264,6 +284,14 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
     // 目标矩形与触控换算同出一处（viewport.h）：显示与触摸不再各算一套尺寸。
     // The destination rectangle comes from the same place as the touch conversion (viewport.h): display and touch no longer compute separate sizes.
     dm_vp_rect vp=dm_vp_fit(int(extent.width),int(extent.height),w,h);int dw=vp.w,dh=vp.h,dx=vp.x,dy=vp.y;
+    // 交给触控层的同一份数据：内容尺寸，以及「这一帧是不是被显示硬件铺满窗口」。后者按交换链实际尺寸判（比例与内容
+    // 相同 = 缓冲就是内容、合成器把它拉满窗口；比例与窗口相同 = 上面按画面矩形 blit、四周留黑边），不看意图，
+    // 于是 setBuffersGeometry 被拒这类情况也仍然与屏幕上真实所见一致。
+    // The same data for the touch layer: the content size, and whether the display hardware fills the window this
+    // frame. The latter is judged from the swapchain's actual size (aspect equal to the content's = the buffer is the
+    // content and the compositor fills the window; equal to the window's = blitted into the picture rectangle with
+    // bars), not from intent, so a refused setBuffersGeometry still matches what is really on screen.
+    frame_w.store(w);frame_h.store(h);fill_window.store(dm_vp_same_aspect(int(extent.width),int(extent.height),w,h) ? 1 : 0);
     if(dx || dy || dw!=int(extent.width) || dh!=int(extent.height)){   // letterbox bars only where the blit leaves part of the image
         VkClearColorValue black{};vkCmdClearColorImage(cmd,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&black,1,&barrier.subresourceRange);
         barrier.oldLayout=barrier.newLayout;barrier.srcAccessMask=barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);}
@@ -309,6 +337,27 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
 }
 }
 extern "C" void dm_android_vk_set_window(ANativeWindow *window){if(window)ANativeWindow_acquire(window);{std::lock_guard<std::mutex> l(window_mutex);if(desired)ANativeWindow_release(desired);desired=window;++generation;}window_cv.notify_all();}
+// 窗口像素尺寸（Java 的 SurfaceView 尺寸）：present_native 会把窗口缓冲尺寸改成游戏出图，之后
+// ANativeWindow_getWidth 读不出窗口本身，所以由 Java 每次 surfaceChanged 交来。
+// Window size in pixels (Java's SurfaceView size): present_native rewrites the window buffer size to the game's
+// output, after which ANativeWindow_getWidth no longer reports the window, so Java hands it over on surfaceChanged.
+extern "C" void dm_android_vk_set_window_size(int w,int h){window_w.store(w>0?w:0,std::memory_order_relaxed);window_h.store(h>0?h:0,std::memory_order_relaxed);}
+// 画面在窗口里的矩形（窗口像素）：触控层每次取布局前问一次。没呈现过 / 尺寸未知时返回 0，调用方按整个视图算（今天的行为）。
+// The picture's rectangle inside the window (window pixels): the touch layer asks before every layout pass. Returns 0
+// before the first present or when a size is unknown, and the caller then uses the whole view (today's behaviour).
+extern "C" int dm_android_vk_viewport(int *vx,int *vy,int *vw,int *vh){
+    int ww=window_w.load(std::memory_order_relaxed),wh=window_h.load(std::memory_order_relaxed);
+    int cw=frame_w.load(std::memory_order_relaxed),ch=frame_h.load(std::memory_order_relaxed);
+    if(ww<=0||wh<=0||cw<=0||ch<=0)return 0;
+    dm_vp_rect r=fill_window.load(std::memory_order_relaxed) ? dm_vp_rect{0,0,ww,wh} : dm_vp_fit(ww,wh,cw,ch);
+    // 诊断：矩形一变记一行（折叠内外屏切换、旋转、渲染分辨率档变化都能在日志里对上，报告机的日志也够用）。
+    // Diagnostic: one line per change (fold switch, rotation and render-resolution steps are then visible in the log,
+    // and a reporter's log is enough to tell what geometry the touch layer used).
+    static std::atomic<int> lx{-1},ly{-1},lw{-1},lh{-1};
+    if(lx.exchange(r.x)!=r.x || ly.exchange(r.y)!=r.y || lw.exchange(r.w)!=r.w || lh.exchange(r.h)!=r.h)
+        vlog("Viewport: picture %dx%d in window %dx%d -> x=%d y=%d w=%d h=%d (%s)",cw,ch,ww,wh,r.x,r.y,r.w,r.h,fill_window.load(std::memory_order_relaxed)?"display fills":"letterboxed");
+    *vx=r.x;*vy=r.y;*vw=r.w;*vh=r.h;return 1;
+}
 extern "C" int dm_android_vk_has_window(){return has_window(nullptr);}
 extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t bytes){
     if(path){std::string dir=path;size_t cut=dir.find_last_of('/');if(FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-present-native").c_str(),"rb")){present_native=fgetc(m)!='0';fclose(m);}
