@@ -184,9 +184,22 @@ static int android_copy(const char *text) {
     pthread_detach(th); return 1;
 }
 int dm_android_diag_copy(const char *text) { return android_copy(text); }   // 上传提示框的「复制编号」 | Copy number in the upload box
+// 社区网盘的「用系统浏览器打开」（dm_community.c → dm_community_open_pan）：回调在游戏主线程，JNI 不进客体线程，照 copy_thread 另起一条线程交给 Java；
+// 起得来就算已交给系统（Java 侧在 UI 线程发起，ActivityNotFoundException 只记日志）；线程起不来返回 0。
+// Open a cloud-drive link in the system browser (dm_community.c -> dm_community_open_pan): the callback runs on the game main thread and JNI stays off guest threads,
+// so a separate thread hands it to Java as copy_thread does; a started thread counts as handed to the system (Java launches it on the UI thread and
+// ActivityNotFoundException is only logged); a thread that cannot start returns 0.
+int dm_android_open_url(const char *url);
+static void *open_thread(void *arg) { dm_android_open_url(arg); free(arg); return NULL; }
+static int android_open(const char *url) {
+    char *t = strdup(url ? url : ""); pthread_t th;
+    if (!t) return 0;
+    if (pthread_create(&th, NULL, open_thread, t)) { free(t); return 0; }
+    pthread_detach(th); return 1;
+}
 static void community_boot(void) {
-    void dm_community_copy_init(int (*)(const char *)), dm_community_load(void); int dm_community_manifest(const char *, size_t);
-    dm_community_copy_init(android_copy); dm_community_load();
+    void dm_community_copy_init(int (*)(const char *)), dm_community_open_init(int (*)(const char *)), dm_community_load(void); int dm_community_manifest(const char *, size_t);
+    dm_community_copy_init(android_copy); dm_community_open_init(android_open); dm_community_load();
     char path[1200], buf[4097]; snprintf(path, sizeof path, "%s/community_manifest.json", g_files);   // 4096 = CommunityFetch 的上限 | CommunityFetch's limit
     FILE *f = fopen(path, "r"); if (!f) return;
     size_t n = fread(buf, 1, sizeof buf, f); fclose(f);

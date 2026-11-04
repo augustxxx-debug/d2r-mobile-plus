@@ -33,14 +33,18 @@ uint64_t dm_wref_get(dm_wref *r) { return r ? r->w : 0; }
 void dm_ui_top_chk(uint64_t r, const char *n, uint64_t g) { (void)r; (void)n; (void)g; }
 static int checks, fails;
 static int t_rect_hit(uint64_t w, uint64_t xy) { int32_t *r = (int32_t *)(uintptr_t)(w + 0x70); int x = (int32_t)(uint32_t)xy, y = (int32_t)(xy >> 32); return x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3]; }   // 假控件的命中判断（虚表 +0x48） | fake widgets' hit test (vtable +0x48)
-static int chs(int lg, char *first) { int c[2]; int n = dm_community_channels(lg, c); first[0] = n ? (char)c[0] : 0; return n; }   // 渠道行数，first[0] = 第一行渠道 | channel rows; first[0] = the first row's channel
+static int chs(int lg, char *first) { int c[3]; int n = dm_community_channels(lg, c); first[0] = n ? (char)c[0] : 0; return n; }   // 渠道行数，first[0] = 第一行渠道 | channel rows; first[0] = the first row's channel
 static int t_recalcs; static void t_recalc(uint64_t w) { (void)w; t_recalcs++; }   // 假控件虚表 +0x10（重算）：只计数 | fake widget vtable +0x10 (recompute): counts only
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
 static char dir[64], cache[128], logp[128];
 static int copies; static char copied[256];
 static int copy_ok(const char *s) { copies++; snprintf(copied, sizeof copied, "%s", s); return 1; }
 static int copy_bad(const char *s) { (void)s; return 0; }
-static void restart(void) { g_qq[0] = g_gh[0] = g_site[0] = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0); }
+static int opens; static char opened[256];
+static int open_ok(const char *s) { opens++; snprintf(opened, sizeof opened, "%s", s ? s : ""); return 1; }
+static int open_bad(const char *s) { (void)s; return 0; }
+static void restart(void) { g_qq[0] = g_gh[0] = g_site[0] = g_mirror[0] = 0; g_n_pans = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0);
+    atomic_store(&g_confirm, 0); atomic_store(&g_confirm_pan, -1); atomic_store(&g_confirm_foc, 0); atomic_store(&g_copied_pan, -1); atomic_store(&g_open_fail_at, 0); }
 static char *log_text(void) { static char t[16384]; fflush(stderr); FILE *f = fopen(logp, "r"); size_t n = f ? fread(t, 1, sizeof t - 1, f) : 0; t[n] = 0; if (f) fclose(f); return t; }
 static void log_reset(void) { fflush(stderr); if (ftruncate(fileno(stderr), 0) == 0) rewind(stderr); }   // 截断并回到文件头（只重开文件会从旧偏移接着写、前面留一段空洞） | truncate and rewind (reopening alone keeps writing at the old offset, leaving a hole at the front)
 static int cache_has(const char *s) { FILE *f = fopen(cache, "r"); char t[512] = {0}; if (!f) return 0; fread(t, 1, sizeof t - 1, f); fclose(f); return strstr(t, s) != NULL; }
@@ -213,15 +217,15 @@ int main(void) {
       n = credits_all(k_maker_default, 1, k_special_default, 1, th, 1, ", ", "", ln, 2, &tr); CHECK(n == 2 && tr && strstr(ln[1].text, "…"));
       n = credits_all(NULL, 0, k_special_default, 1, NULL, 0, ", ", "", ln, CR_LINES, &tr); CHECK(n == 1 && ln[0].kind == 1);   // 没有制作名单：不出那一行 | no maker list: no line
       CHECK(!strstr(log_text(), "Augustus")); }   // 名字不进日志（日志只记行数 / 人数） | the name never goes to the log (counts only)
-    // 21. 社区 / 关于弹窗（RC1.1 重构）的纵向排版：渠道 0–2 行，卡片高 100、行距 120 不重叠；免费声明在卡片下、分隔线在声明与页脚之间；页脚两行；
-    //     末行文字下沿到「确定」顶 = CO_GAP；框高 = 按钮顶 + 115 + 45，按行数算（2 / 1 / 0 行 → 802 / 682 / 562）；横向 标签列 | 值列 | 小「复制」三列不重叠
-    // 21. Vertical layout of the redesigned box: 0-2 channel rows, cards 100 high at 120 pitch without overlap; free notice under the cards, divider between it and the footer; two footer lines;
-    //     last text bottom to OK top = CO_GAP; height = button top + 115 + 45 by row count (802 / 682 / 562); horizontally label | value | small Copy do not overlap
+    // 21. 社区 / 关于弹窗（RC1.1 重构；RC2 第三行）的纵向排版：渠道 0–3 行，卡片高 100、行距 120 不重叠；免费声明在卡片下、分隔线在声明与页脚之间；页脚两行；
+    //     末行文字下沿到「确定」顶 = CO_GAP；框高 = 按钮顶 + 115 + 45，按行数算（3 / 2 / 1 / 0 行 → 922 / 802 / 682 / 562）；横向 标签列 | 值列 | 小「复制」三列不重叠
+    // 21. Vertical layout of the redesigned box (RC1.1; RC2 third row): 0-3 channel rows, cards 100 high at 120 pitch without overlap; free notice under the cards, divider between it and the footer; two footer lines;
+    //     last text bottom to OK top = CO_GAP; height = button top + 115 + 45 by row count (922 / 802 / 682 / 562); horizontally label | value | small Copy do not overlap
     for (int n = 0; n <= CO_ROWS; n++) { co_geom_t g = co_geom(n); int bottom = 100;   // 标题文字框 40–100 | title box 40-100
         for (int k = 0; k < n; k++) { CHECK(g.card_y[k] >= bottom + 20); bottom = g.card_y[k] + 100; }
         CHECK(g.free_y >= bottom + 20); CHECK(g.div_y > g.free_y + 60 && g.foot_y[0] > g.div_y); CHECK(g.foot_y[1] == g.foot_y[0] + 48);
         CHECK(g.btn_y - (g.foot_y[1] + 30 + 14) == CO_GAP); CHECK(g.h == g.btn_y + 115 + 45); }
-    CHECK(co_geom(2).h == 802 && co_geom(1).h == 682 && co_geom(0).h == 562 && co_geom(5).h == 802);
+    CHECK(co_geom(3).h == 922 && co_geom(2).h == 802 && co_geom(1).h == 682 && co_geom(0).h == 562 && co_geom(5).h == 922);
     CHECK(40 + CO_LABEL_W <= CO_CARD_W / 2 + CO_VALUE_X - 20);                                    // 标签列右缘在值列左边 | label column ends left of the value column
     CHECK(CO_VALUE_X + CO_VALUE_W + 30 == CO_CARD_W / 2 - 30 - CO_BTN_W && CO_VALUE_W >= 800);     // 值列到小按钮留 30 | value column ends 30 left of the small button
     // 截断：按 §2.6 估宽超了列宽就截断加「…」，复制不受影响 | truncation: over the column by the §2.6 estimate → cut with "…"; copy unaffected
@@ -263,7 +267,7 @@ int main(void) {
       CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus"));   // 退回 GitHub | falls back to GitHub
       CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(!cache_has("site="));
       static const char *const s3 = "{\"community\": {\"site\": \"https://a.example\", \"site\": \"https://b.example\"}}";
-      log_reset(); CHECK(dm_community_manifest(s3, strlen(s3)) == 0); CHECK(strstr(log_text(), "site 重复")); CHECK(!dm_community_available());
+      log_reset(); CHECK(dm_community_manifest(s3, strlen(s3)) == 0); CHECK(strstr(log_text(), "site / mirror 重复")); CHECK(!dm_community_available());
       static const char *const s4 = "{\"community\": {\"site\": \"https://d2rplus.example.com/path\"}}";   // 只有官网：外文显示、中文也显示链接 | site only: every language shows it
       CHECK(dm_community_manifest(s4, strlen(s4)) == 1); CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/path"));
       CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_SITE && chs(DM_LG_ZH, lb) == 1 && lb[0] == DM_CH_SITE);   // 只有官网：中外文都是一行官网 | website only: one website row in every language
@@ -279,8 +283,8 @@ int main(void) {
       log_reset(); CHECK(dm_community_manifest(s8, strlen(s8)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB);
       // RC1.1 弹窗重构 / 补审 Q11.1-06：渠道行——中文 [QQ 群, 官网, GitHub] 取前两个有值的，外文 [官网, GitHub]；显示值去 https:// 与末尾 /、GitHub 只留仓库名；每行的「复制」复制那一行的完整值
       // RC1.1 box redesign / follow-up Q11.1-06: channel rows -- Chinese the first two of [QQ, website, GitHub], other languages [website, GitHub]; shown values trimmed, GitHub as repo name; each row's Copy copies that row's full value
-      { CHECK(dm_community_manifest(s1, strlen(s1)) == 1); int c[2]; char full[200], shown[200];
-        CHECK(dm_community_channels(DM_LG_ZH, c) == 2 && c[0] == DM_CH_QQ && c[1] == DM_CH_SITE);                 // 中文：群号 + 官网（Q11.1-06：中文看得到官网） | Chinese: number + website
+      { CHECK(dm_community_manifest(s1, strlen(s1)) == 1); int c[3]; char full[200], shown[200];
+        CHECK(dm_community_channels(DM_LG_ZH, c) == 3 && c[0] == DM_CH_QQ && c[1] == DM_CH_SITE && c[2] == DM_CH_GITHUB);   // 中文：群号 + 官网 + GitHub 三张（RC2 上限 3） | Chinese: number + website + GitHub, three cards (RC2 limit 3)
         CHECK(dm_community_channels(DM_LG_EN, c) == 2 && c[0] == DM_CH_SITE && c[1] == DM_CH_GITHUB);             // 外文：官网 + GitHub，不显示群号 | other languages: website + GitHub, no number
         CHECK(dm_community_channels(DM_LG_KO, c) == 2 && c[0] == DM_CH_SITE);
         CHECK(dm_community_channel_value(DM_CH_SITE, full, sizeof full, shown, sizeof shown) && !strcmp(full, "https://d2rplus.example.com/") && !strcmp(shown, "d2rplus.example.com"));
@@ -332,6 +336,33 @@ int main(void) {
         restart(); dm_community_load(); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_SITE); }
       FILE *f = fopen(cache, "w"); fputs("qq_group=1129913678\ngithub=https://github.com/example/d2r-mobile-plus\n", f); fclose(f);   // 旧缓存（RC1 写的） | an RC1 cache
       restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); }
+    // 22b. community.mirror（国内镜像，gitee；RC2 任务卡）：中文渠道按 群号 → 官网 → 国内镜像 → GitHub 取前三张卡；外文不出镜像卡；
+    //      显示值 gitee.com/<owner>/<repo>、复制完整地址；无效镜像只丢这一项、不清有效 github；缓存 mirror= 读回；没有镜像的显示与原先完全一致（上一段的 s1 / s10 已覆盖）
+    // 22b. community.mirror (mainland gitee mirror, RC2 card): Chinese cards take the first three of QQ -> website -> mirror -> GitHub; other languages have no mirror card;
+    //      shown value gitee.com/<owner>/<repo>, Copy keeps the full URL; an invalid mirror drops only that key and leaves a valid github alone; the mirror= cache line reads back;
+    //      without a mirror the display is exactly as before (s1 / s10 in the previous block already cover it)
+    { static const char *const m1 = "{\"community\": {\"qq_group\": \"1129913678\", \"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https://d2rplus.example.com/\", \"mirror\": \"https://gitee.com/example/d2r-mobile-plus\"}}";
+      int c[3]; char lb[200], full[200], shown[200];
+      log_reset(); CHECK(dm_community_manifest(m1, strlen(m1)) == 1); CHECK(strstr(log_text(), "国内镜像=https://gitee.com/example/d2r-mobile-plus"));
+      CHECK(dm_community_channels(DM_LG_ZH, c) == 3 && c[0] == DM_CH_QQ && c[1] == DM_CH_SITE && c[2] == DM_CH_MIRROR);   // 中文：三张卡，GitHub 排第四不上 | Chinese: three cards, GitHub is fourth and left out
+      CHECK(dm_community_channels(DM_LG_EN, c) == 2 && c[0] == DM_CH_SITE && c[1] == DM_CH_GITHUB);                      // 外文：没有镜像卡 | other languages: no mirror card
+      CHECK(dm_community_channel_value(DM_CH_MIRROR, full, sizeof full, shown, sizeof shown) && !strcmp(full, "https://gitee.com/example/d2r-mobile-plus") && !strcmp(shown, "gitee.com/example/d2r-mobile-plus"));
+      CHECK(cache_has("mirror=https://gitee.com/example/d2r-mobile-plus\n"));
+      restart(); dm_community_load(); CHECK(strstr(log_text(), "国内镜像=https://gitee.com/example/d2r-mobile-plus")); CHECK(dm_community_channels(DM_LG_ZH, c) == 3 && c[2] == DM_CH_MIRROR);   // 缓存 mirror= 读回 | the mirror= cache line reads back
+      dm_community_copy_init(copy_ok); atomic_store(&g_show, 2); copies = 0; t_group = DM_LG_ZH;   // 复制的仍是完整地址（第三行） | Copy still takes the full URL (third row)
+      dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy2"); CHECK(!strcmp(copied, "https://gitee.com/example/d2r-mobile-plus")); CHECK(strstr(log_text(), "复制 国内镜像"));
+      static const char *const m2 = "{\"community\": {\"qq_group\": \"1129913678\", \"github\": \"https://github.com/example/d2r-mobile-plus\", \"mirror\": \"https://gitee.com/example/d2r-mobile-plus\"}}";
+      CHECK(dm_community_manifest(m2, strlen(m2)) == 1); CHECK(dm_community_channels(DM_LG_ZH, c) == 3 && c[0] == DM_CH_QQ && c[1] == DM_CH_MIRROR && c[2] == DM_CH_GITHUB);   // 没有官网：群号 + 镜像 + GitHub
+      CHECK(dm_community_channels(DM_LG_EN, c) == 1 && c[0] == DM_CH_GITHUB);
+      static const char *const m3 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"mirror\": \"https://github.com/a/b\"}}";   // 无效镜像：只丢这一项 | invalid mirror: only this key is dropped
+      log_reset(); CHECK(dm_community_manifest(m3, strlen(m3)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(!strstr(log_text(), "国内镜像=")); CHECK(!cache_has("mirror="));
+      CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(chs(DM_LG_ZH, lb) == 1 && lb[0] == DM_CH_GITHUB);
+      static const char *const m4 = "{\"community\": {\"mirror\": \"https://gitee.com/a\", \"mirror\": \"https://gitee.com/b\"}}";   // 重复 = 格式错，入口不显示 | duplicate = format error, no entry
+      log_reset(); CHECK(dm_community_manifest(m4, strlen(m4)) == 0); CHECK(strstr(log_text(), "mirror 重复"));
+      static const char *const m5 = "{\"community\": {\"mirror\": \"https://gitee.com/example/d2r-mobile-plus\"}}";   // 只有镜像：中文可用、外文不显示 | mirror only: Chinese uses it, other languages do not
+      CHECK(dm_community_manifest(m5, strlen(m5)) == 1); CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 2 && !strcmp(v, "https://gitee.com/example/d2r-mobile-plus")); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 0);
+      CHECK(chs(DM_LG_ZH, lb) == 1 && lb[0] == DM_CH_MIRROR && chs(DM_LG_EN, lb) == 0);
+      atomic_store(&g_show, 0); t_group = DM_LG_ZH; }
     // 23. RC1.1（用户 Duo 真机 80c0882「加入社群讨论都歪到哪」）：入口先藏后显（新安装首启：清单还没到）时放回挪走前的 x，不放回写死的值——
     //     触屏首页「加入社区讨论」布局里居中 x −235，旧代码放回旧并排版式的 20（往右歪约 255）；还没挪过（home = 99999）就不动
     // 23. RC1.1 (user on the Duo, 80c0882: the Join button was off-centre): an entry hidden then shown (fresh install's first run, manifest not yet in) returns to its x before the move,
@@ -421,8 +452,9 @@ int main(void) {
       CHECK(co_tap_zone(&g, 1600, 310) == 0 && co_tap_zone(&g, 1600, 311) == 1);    // 两行之间不留缝 | no gap between rows
       CHECK(co_tap_zone(&g, 1600, 430) == 1 && co_tap_zone(&g, 1600, 431) == -1);   // 第二行下沿 + 10 | row two's bottom edge + 10
       CHECK(co_tap_zone(&g, 140, 250) == -1 && co_tap_zone(&g, 1880, 250) == -1);   // 框外左右 | left / right of the box
-      CHECK(co_tap_zone(&g, 1010, 800) == 2 && co_tap_zone(&g, 1010, 760 + 115 + 50) == 2 && co_tap_zone(&g, 775 - 60, 800) == 2 && co_tap_zone(&g, 1010, 760 - 50) == 2);   // 确定及四周 | OK and around it
+      CHECK(co_tap_zone(&g, 1010, 800) == 3 && co_tap_zone(&g, 1010, 760 + 115 + 50) == 3 && co_tap_zone(&g, 775 - 60, 800) == 3 && co_tap_zone(&g, 1010, 760 - 50) == 3);   // 确定及四周 | OK and around it
       CHECK(co_tap_zone(&g, 775 - 70, 800) == -1 && co_tap_zone(&g, 1010, 940) == -1);   // 再远：吞掉 | further: swallowed
+      { co_tapgeo_t g3 = g; g3.n = 3; g3.card_y[2] = 440; CHECK(co_tap_zone(&g3, 1600, 500) == 2 && co_tap_zone(&g3, 1600, 550) == 2 && co_tap_zone(&g3, 1600, 551) == -1); }   // 第三行 | third row
       g.n = 1; CHECK(co_tap_zone(&g, 1600, 380) == -1);                             // 只有一行渠道 | one channel row only
       g.valid = 0; CHECK(co_tap_zone(&g, 1010, 800) == -1); CHECK(co_tap_zone(NULL, 1, 1) == -1);
       // 用户真机日志（17 Pro，主菜单，游戏窗口 2468×1134，框中心 2350、顶 679、2 行）：四下都点在第一张卡片上沿上方 3–34 单位——现在都算第 1 行复制
@@ -430,7 +462,7 @@ int main(void) {
       co_tapgeo_t h = { 1, 1134, 0, 0, 2, 2350 - 860, 2350 + 860, { 679 + 130, 679 + 250 }, 2350 - 235, 679 + 642, 470, 115, 1.0f };
       CHECK(co_tap_zone(&h, 1560, 423) == 0 && co_tap_zone(&h, 1578, 411) == 0 && co_tap_zone(&h, 1564, 407) == 0 && co_tap_zone(&h, 1570, 412) == 0);
       CHECK(co_tap_zone(&h, 1799, 489) == -1);                                      // 框右边以外（框右沿约 1694 像素） | right of the box (its right edge is about 1694 px)
-      CHECK(co_tap_zone(&h, (int)(2350 * 1134 / 2160.0), (int)((679 + 642 + 57) * 1134 / 2160.0)) == 2);   // 「确定」正中 | OK's centre
+      CHECK(co_tap_zone(&h, (int)(2350 * 1134 / 2160.0), (int)((679 + 642 + 57) * 1134 / 2160.0)) == 3);   // 「确定」正中 | OK's centre
     }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
@@ -444,7 +476,7 @@ int main(void) {
       for (size_t i = 0; i < sizeof k_site_cases / sizeof *k_site_cases; i++) E01_ONE(k_site_cases[i].site, k_site_cases[i].ok);
       for (size_t i = 0; i < sizeof k_site_long / sizeof *k_site_long; i++) { site_contract_long(l, sizeof l, k_site_long[i].len); E01_ONE(l, k_site_long[i].ok); }
       // 别的「唯一无效渠道」形状：转义、不是字符串、空串、群号 / GitHub 不合规 | other invalid sole channels: escape, non-string, empty, bad number / GitHub
-      static const char *const keep[] = { "{\"community\":{\"qq_group\":\"1234\\u0035678\"}}", "{\"community\":{\"github\":\"https://github.com/a\\/b\"}}", "{\"community\":{\"qq_group\":123456}}", "{\"community\":{\"site\":42}}", "{\"community\":{\"site\":\"\"}}", "{\"community\":{\"qq_group\":\"12\"}}", "{\"community\":{\"github\":\"https://example.com/x\"}}" };
+      static const char *const keep[] = { "{\"community\":{\"qq_group\":\"1234\\u0035678\"}}", "{\"community\":{\"github\":\"https://github.com/a\\/b\"}}", "{\"community\":{\"qq_group\":123456}}", "{\"community\":{\"site\":42}}", "{\"community\":{\"site\":\"\"}}", "{\"community\":{\"qq_group\":\"12\"}}", "{\"community\":{\"github\":\"https://example.com/x\"}}", "{\"community\":{\"mirror\":\"https://github.com/a/b\"}}" };
       for (size_t i = 0; i < sizeof keep / sizeof *keep; i++) { E01_SEED(); log_reset(); CHECK(dm_community_manifest(keep[i], strlen(keep[i])) == -1); CHECK(dm_community_available()); CHECK(cache_has(old_cache)); CHECK(strstr(log_text(), "沿用缓存")); }
       // 没有旧值时入口仍不显示 | with no old value the entry stays hidden
       unlink(cache); restart(); dm_community_load(); CHECK(dm_community_manifest("{\"community\":{\"site\":\"https://example.com:443/\"}}", 49) == -1); CHECK(!dm_community_available());
@@ -454,6 +486,135 @@ int main(void) {
       #undef E01_ONE
       #undef E01_SEED
     }
+    // 28. community.pans（网盘数组，规则见 dm_pan.h）：清单解析进状态与缓存、dm_community_pans 快照、重启读回；缓存坏字段逐项丢；没有 pans 时缓存与渠道逐字节不变
+    // 28. community.pans (cloud drives, rules in dm_pan.h): parsed into state and cache, the dm_community_pans snapshot, read back after a restart; bad cache fields dropped per field; without pans the cache and channels stay byte-for-byte
+    { dm_pan_entry pe[DM_PAN_MAX]; char t[1024]; FILE *fp; size_t n;
+      static const char *const p1 = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": ["
+          "{\"name\": \"夸克\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/abc\", \"code\": \"ab12\"},"
+          "{\"name\": \"Baidu\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/1x\"}]}}";
+      log_reset(); CHECK(dm_community_manifest(p1, strlen(p1)) == 1);
+      CHECK(dm_community_pans(pe) == 2 && dm_community_pans(NULL) == 2);
+      CHECK(!strcmp(pe[0].name, "夸克") && pe[0].icon == DM_PAN_QUARK && !strcmp(pe[0].url, "https://pan.quark.cn/s/abc") && !strcmp(pe[0].code, "ab12"));
+      CHECK(!strcmp(pe[1].name, "Baidu") && pe[1].icon == DM_PAN_BAIDU && !pe[1].code[0]);
+      CHECK(cache_has("pan0_name=夸克\n") && cache_has("pan0_icon=quark\n") && cache_has("pan0_url=https://pan.quark.cn/s/abc\n") && cache_has("pan0_code=ab12\n"));
+      CHECK(cache_has("pan1_name=Baidu\n") && cache_has("pan1_icon=baidu\n") && cache_has("pan1_url=https://pan.baidu.com/s/1x\n") && !cache_has("pan1_code="));
+      fp = fopen(cache, "r"); n = fp ? fread(t, 1, sizeof t - 1, fp) : 0; if (fp) fclose(fp); t[n] = 0;
+      CHECK(!strcmp(t, "qq_group=1129913678\npan0_name=夸克\npan0_icon=quark\npan0_url=https://pan.quark.cn/s/abc\npan0_code=ab12\npan1_name=Baidu\npan1_icon=baidu\npan1_url=https://pan.baidu.com/s/1x\n"));
+      restart(); log_reset(); dm_community_load();
+      CHECK(dm_community_pans(pe) == 2 && !strcmp(pe[0].name, "夸克") && pe[0].icon == DM_PAN_QUARK && !strcmp(pe[0].code, "ab12") && pe[1].icon == DM_PAN_BAIDU && !pe[1].code[0]);
+      CHECK(strstr(log_text(), "网盘=2"));
+      // 没有 pans：缓存逐字节仍是旧格式、渠道不变、日志不提网盘 | no pans: the cache is exactly the old format, channels unchanged, no cloud-drive mention in the log
+      log_reset(); CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1);
+      fp = fopen(cache, "r"); n = fp ? fread(t, 1, sizeof t - 1, fp) : 0; if (fp) fclose(fp); t[n] = 0;
+      CHECK(!strcmp(t, "qq_group=1129913678\ngithub=https://github.com/example/d2r-mobile-plus/discussions\n"));
+      CHECK(dm_community_pans(pe) == 0); CHECK(!strstr(log_text(), "网盘"));
+      { int c[3]; CHECK(dm_community_channels(DM_LG_ZH, c) == 2 && c[0] == DM_CH_QQ && c[1] == DM_CH_GITHUB); }
+      // 读回时逐字段再过 dm_pan.h：坏 name / 坏 url 丢整条，认不出的 icon = generic，坏 code 只丢 code | re-validated on read: a bad name / url drops the entry, an unknown icon is generic, a bad code is dropped alone
+      fp = fopen(cache, "w"); fputs("qq_group=1129913678\n"
+          "pan0_name=good\npan0_icon=quark\npan0_url=https://pan.quark.cn/s/a\npan0_code=ab12\n"
+          "pan1_name=中中中中中中中中中中中中中\npan1_icon=baidu\npan1_url=https://pan.baidu.com/s/b\n"
+          "pan2_name=Baidu\npan2_icon=weird\npan2_url=https://pan.baidu.com/s/b\npan2_code=abc\n"
+          "pan3_name=badurl\npan3_icon=123pan\npan3_url=https://pan.quark.cn/s/x\n", fp); fclose(fp);
+      restart(); log_reset(); dm_community_load();
+      CHECK(dm_community_pans(pe) == 2);
+      CHECK(!strcmp(pe[0].name, "good") && pe[0].icon == DM_PAN_QUARK && !strcmp(pe[0].code, "ab12"));
+      CHECK(!strcmp(pe[1].name, "Baidu") && pe[1].icon == DM_PAN_GENERIC && !pe[1].code[0]);
+      // 第 5 条起丢弃，日志记一行 | the 5th on is dropped, one log line
+      static const char *const p5 = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": ["
+          "{\"name\": \"a\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/a\"},"
+          "{\"name\": \"b\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/b\"},"
+          "{\"name\": \"c\", \"icon\": \"aliyun\", \"url\": \"https://www.alipan.com/s/c\"},"
+          "{\"name\": \"d\", \"icon\": \"123pan\", \"url\": \"https://www.123pan.com/s/d\"},"
+          "{\"name\": \"e\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/e\"}]}}";
+      log_reset(); CHECK(dm_community_manifest(p5, strlen(p5)) == 1); CHECK(dm_community_pans(pe) == 4); CHECK(!strcmp(pe[3].name, "d"));
+      CHECK(!cache_has("pan4_")); CHECK(strstr(log_text(), "第 5 条起"));
+      // 形状坏（pans 不是数组）：整个键忽略，渠道照常，缓存不写 pan 行 | bad shape (pans not an array): the key is ignored, channels proceed, no pan cache lines
+      static const char *const pb = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": {}}}";
+      log_reset(); CHECK(dm_community_manifest(pb, strlen(pb)) == 1); CHECK(dm_community_pans(pe) == 0); CHECK(dm_community_available());
+      CHECK(!cache_has("pan0_")); CHECK(strstr(log_text(), "pans 须是数组"));
+      // 只有 pans（没有渠道）：网盘照存、渠道为空，返回 1 | pans only (no channels): the drives are stored, channels empty, returns 1
+      static const char *const po = "{\"community\": {\"pans\": [{\"name\": \"only\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/x\"}]}}";
+      log_reset(); CHECK(dm_community_manifest(po, strlen(po)) == 1); CHECK(dm_community_pans(pe) == 1 && !strcmp(pe[0].name, "only"));
+      CHECK(!dm_community_available()); CHECK(cache_has("pan0_name=only\n")); CHECK(!cache_has("qq_group="));
+      // 明确给空数组：撤下网盘（缓存清掉） | an explicitly empty array withdraws the drives (cache cleared)
+      { const char *const pe0 = "{\"community\": {\"pans\": []}}"; CHECK(dm_community_manifest(pe0, strlen(pe0)) == 0); CHECK(dm_community_pans(pe) == 0); CHECK(access(cache, F_OK) != 0); } }
+    // 29. 网盘「用系统浏览器打开」（dm_community_open_pan）：唯一入口；合规条目调回调且 URL 逐字一致；越界 / 没登记回调 / 非白名单 URL（直接塞进社区状态）→ 返回 0、不调回调、日志有【红】
+    // 29. Opening a cloud drive in the system browser (dm_community_open_pan): the only entry; a valid entry calls the callback with the exact URL; out-of-range idx / no registered callback /
+    //     a non-whitelisted URL (stuffed straight into the community state) -> 0, the callback is never called, a red log line
+    { dm_pan_entry pe[DM_PAN_MAX]; memset(pe, 0, sizeof pe);
+      snprintf(pe[0].name, sizeof pe[0].name, "夸克"); pe[0].icon = DM_PAN_QUARK; snprintf(pe[0].url, sizeof pe[0].url, "https://pan.quark.cn/s/abc");
+      set_pans(pe, 1); dm_community_open_init(open_ok);
+      opens = 0; opened[0] = 0; log_reset();
+      CHECK(dm_community_open_pan(0) == 1); CHECK(opens == 1); CHECK(!strcmp(opened, "https://pan.quark.cn/s/abc")); CHECK(!strstr(log_text(), "【红】"));
+      dm_community_open_init(open_bad); CHECK(dm_community_open_pan(0) == 0);   // 回调说失败：原样返回 | the callback reports failure: passed through
+      dm_community_open_init(open_ok);
+      opens = 0; log_reset(); CHECK(dm_community_open_pan(1) == 0); CHECK(dm_community_open_pan(-1) == 0); CHECK(opens == 0); CHECK(strstr(log_text(), "【红】社区入口：打开网盘失败"));   // 越界 | out of range
+      dm_community_open_init(NULL); opens = 0; log_reset(); CHECK(dm_community_open_pan(0) == 0); CHECK(opens == 0); CHECK(strstr(log_text(), "【红】社区入口：打开网盘失败"));   // 没登记 | not registered
+      dm_community_open_init(open_ok);
+      static const struct { dm_pan_icon icon; const char *url; } bad[] = {   // 直接往社区状态塞坏数据 | bad data stuffed straight into the community state
+          { DM_PAN_QUARK, "https://pan.baidu.com/s/x" }, { DM_PAN_GENERIC, "https://evil.example/s/x" },
+          { DM_PAN_GENERIC, "http://pan.quark.cn/s/x" }, { DM_PAN_123PAN, "" } };
+      for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) { dm_pan_entry b[DM_PAN_MAX]; memset(b, 0, sizeof b); b[0].icon = bad[i].icon;
+          snprintf(b[0].name, sizeof b[0].name, "bad"); snprintf(b[0].url, sizeof b[0].url, "%s", bad[i].url); set_pans(b, 1);
+          opens = 0; log_reset(); CHECK(dm_community_open_pan(0) == 0); CHECK(opens == 0); CHECK(strstr(log_text(), "【红】社区入口：打开网盘失败")); }
+      dm_community_manifest(M_NONE, strlen(M_NONE)); dm_community_open_init(NULL); }
+    // 30. 网盘行几何（RC2 任务卡）：接在渠道卡下面、免费声明上面，行高 100 / 行距 120（与渠道卡同一种间距）；没有网盘时每个字段与旧版一致
+    // 30. Drive-row geometry (RC2 card): after the channel cards, before the free notice, 100 high at a 120 pitch (the cards' spacing); with no drives every field matches the old version
+    { for (int n = 0; n <= CO_ROWS; n++) {
+        co_geom_t g0 = co_geom_pans(n, 0);
+        CHECK(g0.n == n && g0.np == 0); CHECK(g0.free_y == 140 + 120 * n); CHECK(g0.div_y == g0.free_y + 80);
+        CHECK(g0.foot_y[0] == g0.div_y + 30 && g0.foot_y[1] == g0.foot_y[0] + 48); CHECK(g0.btn_y == g0.foot_y[1] + 30 + 14 + CO_GAP);
+        CHECK(g0.h == g0.btn_y + 115 + 45); CHECK(g0.h == co_geom(n).h); CHECK(g0.btn_y == co_geom(n).btn_y);
+        for (int k = 0; k < n; k++) CHECK(g0.card_y[k] == 130 + 120 * k);
+        for (int np = 1; np <= DM_PAN_MAX; np++) { co_geom_t g = co_geom_pans(n, np);
+          CHECK(g.n == n && g.np == np); CHECK(g.h == g0.h + 120 * np); CHECK(g.free_y == 140 + 120 * (n + np));
+          for (int p = 0; p < np; p++) CHECK(g.pan_y[p] == 130 + 120 * (n + p));
+          CHECK(g.pan_y[0] >= (n ? g.card_y[n - 1] + 100 : 100) + 20);   // 第一行网盘在渠道卡下面留 20 | the first drive row keeps 20 below the cards
+          CHECK(g.free_y >= g.pan_y[np - 1] + 100 + 20); } }   // 免费声明在最后一行网盘下面留 20 | the free notice keeps 20 below the last drive row
+      int ic, na, co, op, cp; co_pan_x(0, &ic, &na, &co, &op, &cp);   // 框宽 1480（±740），右侧两颗 293 宽小按钮
+      CHECK(ic == -710 && na == -618 && co == -198 && op == 104 && cp == 417);
+      CHECK(op + CO_BTN_W + 20 == cp && cp + CO_BTN_W == 740 - 30); CHECK(na + 400 + 20 <= co && co + 280 <= op);
+      CHECK(co_geom_pans(3, 4).n == 3 && co_geom_pans(3, 5).np == 4); }   // 上限：渠道 3 / 网盘 4 | caps: 3 channels / 4 drives
+    // 31. 手柄焦点链：渠道复制 → 每条网盘打开 →（这一条有提取码才跟复制）→ 下一条 … → 确定；上下不循环，左右只在同一行切「打开 / 复制」
+    // 31. Controller focus chain: channel Copy -> each drive's Open -> (this row's Copy only with a code) -> next ... -> OK; up / down never wrap, left / right only switch within a row
+    { static const char *const p2 = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": ["
+          "{\"name\": \"夸克\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/abc\", \"code\": \"ab12\"},"
+          "{\"name\": \"Baidu\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/1x\"}]}}";
+      dm_pan_entry pe[DM_PAN_MAX]; co_foc_t fl[CO_FOC_MAX]; CHECK(dm_community_manifest(p2, strlen(p2)) == 1); CHECK(dm_community_pans(pe) == 2);
+      int nf = co_focus_build(1, pe, 2, fl, CO_FOC_MAX); CHECK(nf == 5);
+      CHECK(fl[0].kind == CO_F_CH && fl[0].idx == 0); CHECK(fl[1].kind == CO_F_PAN_OPEN && fl[1].idx == 0);
+      CHECK(fl[2].kind == CO_F_PAN_COPY && fl[2].idx == 0); CHECK(fl[3].kind == CO_F_PAN_OPEN && fl[3].idx == 1);   // 第二条没有提取码：后面直接是确定 | row 2 has no code: OK follows
+      CHECK(fl[4].kind == CO_F_OK);
+      nf = co_focus_build(0, pe, 2, fl, CO_FOC_MAX); CHECK(nf == 4 && fl[0].kind == CO_F_PAN_OPEN && fl[1].kind == CO_F_PAN_COPY && fl[2].kind == CO_F_PAN_OPEN && fl[3].kind == CO_F_OK);
+      CHECK(co_focus_toggle(fl, nf, 0, 1) == 1 && co_focus_toggle(fl, nf, 1, -1) == 0);
+      CHECK(co_focus_toggle(fl, nf, 1, 1) == 1 && co_focus_toggle(fl, nf, 2, 1) == 2 && co_focus_toggle(fl, nf, 2, -1) == 2);   // 没有同行的另一颗：左右不动 | no partner in the row: left / right do nothing
+      CHECK(co_focus_toggle(fl, nf, 0, -1) == 0 && co_focus_toggle(fl, nf, nf - 1, 1) == nf - 1);   // 不循环、不跨行 | no wrap, no crossing rows
+      nf = co_focus_build(2, NULL, 0, fl, CO_FOC_MAX); CHECK(nf == 3 && fl[0].kind == CO_F_CH && fl[1].kind == CO_F_CH && fl[2].kind == CO_F_OK);   // 没有网盘：链与旧版相同 | no drives: the old chain
+      CHECK(co_focus_build(3, pe, 4, fl, CO_FOC_MAX) <= CO_FOC_MAX); }
+    // 32. 网盘确认态（RC2 任务卡）：点「打开」只进确认态并记住第几条；确定 → dm_community_open_pan（白名单照旧），取消 / B → 回普通态不开；
+    //     不在白名单的链接即使在确认态点确定也不调回调；网盘「复制」复制提取码，按钮状态与渠道行同一套 2 秒
+    // 32. Drive confirmation (RC2 card): Open only enters the confirm state and remembers the index; OK -> dm_community_open_pan (whitelist unchanged), Cancel / B -> normal without opening;
+    //     a non-whitelisted link never calls the callback even after OK; a drive's Copy copies the code, with the same 2-second button state as the channel rows
+    { static const char *const p2 = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": ["
+          "{\"name\": \"夸克\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/abc\", \"code\": \"ab12\"},"
+          "{\"name\": \"Baidu\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/1x\"}]}}";
+      dm_pan_entry pe[DM_PAN_MAX]; CHECK(dm_community_manifest(p2, strlen(p2)) == 1); CHECK(dm_community_pans(pe) == 2);
+      atomic_store(&g_show, 2); atomic_store(&g_mode, 1); dm_community_copy_init(copy_ok); dm_community_open_init(open_ok); opens = 0; copies = 0; opened[0] = copied[0] = 0;
+      log_reset(); co_pan_request(0); CHECK(atomic_load(&g_confirm) == 1 && atomic_load(&g_confirm_pan) == 0 && atomic_load(&g_confirm_foc) == 0);
+      CHECK(strstr(log_text(), "请确认打开外部网站"));
+      co_confirm_ok(1); CHECK(!atomic_load(&g_confirm) && opens == 1 && !strcmp(opened, "https://pan.quark.cn/s/abc")); CHECK(strstr(log_text(), "确认打开外部网站"));
+      co_pan_request(1); CHECK(atomic_load(&g_confirm) == 1); co_confirm_cancel(); CHECK(!atomic_load(&g_confirm) && opens == 1);   // 取消：不开 | Cancel: no open
+      co_pan_request(0); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommOk"); CHECK(!atomic_load(&g_confirm) && opens == 2);   // 确认态的「确定」按钮 | the confirm state's OK button
+      co_pan_request(0); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCancel"); CHECK(!atomic_load(&g_confirm) && opens == 2);   // 取消按钮 | the Cancel button
+      co_pan_request(0); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommPanOpen1"); CHECK(atomic_load(&g_confirm) == 1 && atomic_load(&g_confirm_pan) == 1); co_confirm_cancel();   // 点第二行「打开」 | row 2's Open
+      do_copy_code(1, 0); CHECK(copies == 1 && !strcmp(copied, "ab12") && atomic_load(&g_copied_pan) == 0 && atomic_load(&g_copied) == 1);
+      log_reset(); do_copy_code(1, 1); CHECK(copies == 1 && atomic_load(&g_copied) == -1 && atomic_load(&g_copied_pan) == 1 && strstr(log_text(), "没有提取码"));   // 第二条没有提取码 | row 2 has no code
+      do_copy_code(1, 0); CHECK(copies == 2 && !strcmp(copied, "ab12")); dm_community_copy_init(NULL); do_copy_code(1, 0); CHECK(atomic_load(&g_copied) == -1); dm_community_copy_init(copy_ok);
+      dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommPanCopy0"); CHECK(copies == 3 && !strcmp(copied, "ab12"));   // 网盘复制按钮的消息 | the drive Copy button's message
+      // 非白名单：直接往社区状态塞一条坏链接，确认态点确定也不调回调 | non-whitelisted: a bad link stuffed into the state, OK in the confirm state still calls nothing
+      { dm_pan_entry bad[DM_PAN_MAX]; memset(bad, 0, sizeof bad); snprintf(bad[0].name, sizeof bad[0].name, "bad"); bad[0].icon = DM_PAN_GENERIC; snprintf(bad[0].url, sizeof bad[0].url, "https://evil.example/s/x"); set_pans(bad, 1);
+        opens = 0; log_reset(); co_pan_request(0); CHECK(atomic_load(&g_confirm) == 1); co_confirm_ok(1); CHECK(!atomic_load(&g_confirm) && opens == 0 && strstr(log_text(), "【红】社区入口：打开网盘失败")); }
+      dm_community_manifest(M_NONE, strlen(M_NONE)); dm_community_open_init(NULL); dm_community_copy_init(NULL); atomic_store(&g_show, 0); }
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);
     fflush(stderr); printf("t_community: %d checks, %d failed\n", checks, fails);
     return fails != 0;

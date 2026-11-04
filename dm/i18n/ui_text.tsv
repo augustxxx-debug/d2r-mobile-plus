@@ -566,10 +566,17 @@ dmCommunityTitle	加入社区讨论	Join the community	Unirse a la comunidad		С
 dmCommunityLabelQq	QQ 群	QQ	QQ		QQ	QQ	社区 / 关于弹窗渠道卡片的标签列（28 号 LightGray；RC1.1 重构）：QQ 群（只在中文界面出现）
 dmCommunityLabelSite	官网	Website	Sitio web		Сайт	웹사이트	渠道卡片标签：项目官网（清单 community.site；值行去掉 https:// 与末尾 /，复制完整网址）
 dmCommunityLabelGithub	GitHub	GitHub	GitHub		GitHub	GitHub	渠道卡片标签：GitHub（清单 community.github；值行只显示仓库名，复制完整网址）
+dmCommunityLabelMirror	国内镜像	Mirror (China)	Espejo (China)		Зеркало (Китай)	중국 미러	渠道卡片标签：国内镜像（清单 community.mirror，gitee；只在中文界面出现；值行去掉 https:// 与末尾 /，复制完整网址）
 dmCommunityCopy	复制	Copy	Copiar		Копировать	복사	渠道卡片各自的小「复制」按钮字（28 号，原版前端小按钮 × 0.8，宽 293；dm_community.c）
 dmCommunityCopyFailShort	复制失败	Failed	Error		Ошибка	실패	小「复制」按钮上复制失败时的字，留 2 秒（按钮宽 293，按 §2.6 估宽放得下的短词）
 dmLoadCommFree	本软件免费，付费购买均为倒卖	This app is free. If you paid for it, it was resold	Esta app es gratis; si pagaste por ella, es reventa		Приложение бесплатно; платные копии — перепродажа	이 앱은 무료이며, 유료 판매는 모두 재판매입니다	免费声明：社区 / 关于弹窗渠道卡片下一行（28 号 GoldYellow）；同键同文与加载页分支（feat/loadpage，加载页底部社区第二行）共用
 dmCommunityCopied	已复制	Copied	Copiado		Скопировано	복사됨	小「复制」按钮上复制成功后的字，留 2 秒（dm_community.c）
+dmCommunityPanOpen	打开	Open	Abrir		Открыть	열기	社区框网盘行右侧「打开」按钮（28 号，原版前端小按钮 × 0.8，宽 293；dm_community.c）
+dmCommunityPanCopy	复制	Copy	Copiar		Копировать	복사	社区框网盘行「复制」按钮上的字（复制提取码；宽 293）
+dmCommunityPanCode	提取码 %s	Code: %s	Código: %s		Код: %s	추출 코드 %s	社区框网盘行的提取码（28 号 LightGray）；%s = 清单 community.pans 的 code（4–8 位字母或数字）
+dmCommunityPanConfirmTitle	即将打开外部网站	Opening an external website	Se abrirá un sitio externo		Открытие внешнего сайта	외부 웹사이트를 엽니다	社区框的确认态标题（48 号）：点网盘「打开」后，经「确定」才交给系统浏览器
+dmCommunityCancel	取消	Cancel	Cancelar		Отмена	취소	社区框确认态的「取消」按钮（确定旁边；原版前端小按钮，宽 470）
+dmCommunityPanOpenFail	无法打开链接	Could not open the link	No se pudo abrir el enlace		Не удалось открыть ссылку	링크를 열 수 없습니다	社区框免费声明行：打开网盘失败后 2 秒的提示（dm_community.c）
 dmCreditsSpecial	特别鸣谢	Special thanks	Gracias especiales		Особая благодарность	특별 감사	鸣谢子块第一行的标签（36 号 LightGold，名单 36 号 LightGray 由宿主写）；西语用「Gracias especiales」：原「Agradecimiento especial」在 Duo 内屏压到名单列（用户 2026-10-29 反馈「关于」区排版）
 dmCreditsThanks	鸣谢	Thanks	Agradecimientos		Благодарность	감사	鸣谢子块第二行的标签（名单为空时整行不显示）
 dmCreditsMaker	制作	Made by	Hecho por	Hecho por	Автор	제작	鸣谢区署名标签（用户 2026-10-29：「制作」+ 名字，排在特别鸣谢前；名字在代码常量 dm_community.c k_maker_default、不翻译）；俄文用「Автор」不分性别
@@ -658,6 +665,7 @@ dmLoadCommCopyGh	复制链接	Copy link	Copiar		Копировать	링크 복�
 dmLoadCommCopied	已复制	Copied	Copiado		Скопировано	복사됨	加载页复制钮：复制成功后 2 秒
 dmLoadCommCopyFail	复制失败	Copy failed	Error al copiar		Ошибка	복사 실패	加载页复制钮：剪贴板写入失败后 2 秒
 dmLoadCommPrefer	qq	github	github		github	github	不显示：加载页复制钮先复制哪一项（qq = 群号，github = 链接；只有一项时用那一项）
+dmLoadCommPrefix	官方免费渠道：	Official free channels:	Canales oficiales gratis:		Бесплатные каналы:	공식 무료 채널:	加载页底部社区第一行前缀（有国内镜像时按标签逐项拼：群号 → 官网 → 国内镜像 → GitHub，最多 3 项）
 dmAndGraphicsApplyHint	点“应用”生效，无需重启。\n“默认”恢复全部 Plus 选项，保留语言及配音。	Apply without restarting.\nDefaults resets all Plus options; language and voice stay unchanged.	Aplica sin reiniciar.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.	Aplica sin reiniciar.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.	Применяется без перезапуска.\nСброс восстанавливает все настройки Plus; язык и озвучка сохраняются.	재시작 없이 적용됩니다.\n기본값은 모든 Plus 옵션을 초기화하며 언어와 음성은 유지합니다.	安卓图形页说明，不提另一端专属的超分（另一端用 dmGraphicsApplyHint）| Android Graphics page help: leaves out the upscaling only the other platform has (which uses dmGraphicsApplyHint)
 dmSaveMgrRow	存档管理	Save Management	Gestión de partidas		Управление сохранениями	저장 관리	自定义页「存档管理」组的标题与行名（dm_custom.c、dm_savemgr.c）
 dmSaveMgrOpen	打开	Open	Abrir		Открыть	열기	自定义页「存档管理」行的按钮

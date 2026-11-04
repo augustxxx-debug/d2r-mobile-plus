@@ -6,6 +6,12 @@
   "community": {
     "qq_group": "1129913678",
     "github": "https://github.com/augustxxx-debug/d2r-mobile-plus",
-    "site": "https://d2rplus.augustusplay.com/"
+    "site": "https://d2rplus.augustusplay.com/",
+    "pans": [
+      { "name": "夸克网盘", "icon": "quark", "url": "https://pan.quark.cn/s/example", "code": "abcd" },
+      { "name": "百度网盘", "icon": "baidu", "url": "https://pan.baidu.com/s/example" },
+      { "name": "阿里云盘", "icon": "aliyun", "url": "https://www.alipan.com/s/example" },
+      { "name": "123网盘", "icon": "123pan", "url": "https://www.123pan.com/s/example" }
+    ]
   }
 }

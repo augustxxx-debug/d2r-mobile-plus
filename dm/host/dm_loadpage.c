@@ -200,37 +200,57 @@ static void text_main(dm_lp_text *t, uint64_t now_ms) {
 }
 
 // ---- 社区信息（接口说明见 dm_loadpage.h） | community info (see dm_loadpage.h) ----
-static struct { char qq[16], gh[168], site[168]; int pad, copy_state; uint64_t copy_t; } cm;   // 不随 begin 清零 | not reset by begin
-static void lpi_community(const char *qq, const char *github, const char *site) {
-    snprintf(cm.qq, sizeof cm.qq, "%s", qq ? qq : ""); snprintf(cm.gh, sizeof cm.gh, "%s", github ? github : ""); snprintf(cm.site, sizeof cm.site, "%s", site ? site : "");
-    LOG("加载页：社区信息 官网%s、群号%s、GitHub %s", cm.site[0] ? "有" : "无", cm.qq[0] ? "有" : "无", cm.gh[0] ? "有" : "无");
+static struct { char qq[16], gh[168], site[168], mirror[168]; int pad, copy_state; uint64_t copy_t; } cm;   // 不随 begin 清零 | not reset by begin
+static void lpi_community(const char *qq, const char *github, const char *site, const char *mirror) {
+    snprintf(cm.qq, sizeof cm.qq, "%s", qq ? qq : ""); snprintf(cm.gh, sizeof cm.gh, "%s", github ? github : ""); snprintf(cm.site, sizeof cm.site, "%s", site ? site : ""); snprintf(cm.mirror, sizeof cm.mirror, "%s", mirror ? mirror : "");
+    LOG("加载页：社区信息 官网%s、群号%s、GitHub %s%s%s", cm.site[0] ? "有" : "无", cm.qq[0] ? "有" : "无", cm.gh[0] ? "有" : "无", cm.mirror[0] ? "、国内镜像 " : "", cm.mirror[0] ? "有" : "");
 }
-static int lpi_community_shown(void) { return (cm.qq[0] || cm.gh[0] || cm.site[0]) && (g.state == DM_LP_RUNNING || g.state == DM_LP_FAILED); }
+static int lpi_community_shown(void) { return (cm.qq[0] || cm.gh[0] || cm.site[0] || cm.mirror[0]) && (g.state == DM_LP_RUNNING || g.state == DM_LP_FAILED); }
 // 复制哪一项（用户 2026-10-29）：有官网时页脚同时显示官网与群号，复制钮复制群号（各语言都是），没有群号才复制官网；
 // 没有官网时按语言（dmLoadCommPrefer：中文先群号、其余先链接），只有一项就用那一项
 // what to copy (user 2026-10-29): with a site the footer shows the site and the group number, and the button copies the number (every language), the site only when there is no number;
 // without a site by language (dmLoadCommPrefer: Chinese the number, others the link); a single item is used as is
-enum { CP_SITE, CP_QQ, CP_GH };
+enum { CP_SITE, CP_QQ, CP_GH, CP_MIRROR };
 static int copy_kind(void) {
     if (cm.site[0]) return cm.qq[0] ? CP_QQ : CP_SITE;
-    return cm.qq[0] && (!cm.gh[0] || !strcmp(dm_loadpage_ui("dmLoadCommPrefer"), "qq")) ? CP_QQ : CP_GH;
+    if (cm.qq[0] && (!cm.gh[0] || !strcmp(dm_loadpage_ui("dmLoadCommPrefer"), "qq"))) return CP_QQ;
+    return cm.gh[0] ? CP_GH : cm.mirror[0] ? CP_MIRROR : CP_GH;
 }
 static int prefer_qq(void) { return copy_kind() == CP_QQ; }
-static const char *lpi_copy_value(void) { if (!dm_loadpage_community_shown()) return ""; int k = copy_kind(); return k == CP_SITE ? cm.site : k == CP_QQ ? cm.qq : cm.gh; }
+static const char *lpi_copy_value(void) { if (!dm_loadpage_community_shown()) return ""; int k = copy_kind(); return k == CP_SITE ? cm.site : k == CP_QQ ? cm.qq : k == CP_MIRROR ? cm.mirror : cm.gh; }
 static void lpi_copied(int ok, int pad, uint64_t now_ms) {
     if (!dm_loadpage_community_shown()) return;
     cm.copy_state = ok ? 1 : -1; cm.copy_t = now_ms;
-    LOG("加载页：复制%s%s（%s）", copy_kind() == CP_SITE ? "官网" : prefer_qq() ? "群号" : "链接", ok ? "" : "失败", pad ? "手柄 A" : "触屏");
+    LOG("加载页：复制%s%s（%s）", copy_kind() == CP_SITE ? "官网" : copy_kind() == CP_MIRROR ? "国内镜像" : prefer_qq() ? "群号" : "链接", ok ? "" : "失败", pad ? "手柄 A" : "触屏");
 }
 static void lpi_pad(int on) { if ((on != 0) != cm.pad) { cm.pad = on != 0; LOG("加载页：输入换成%s", cm.pad ? "手柄" : "触屏"); } }
 static int lpi_pad_mode(void) { return cm.pad; }
 int dm_loadpage_hit_copy(const dm_lp_layout *L, double x, double y) {
     const double pad = 8; return L->comm && x >= L->copy.x - pad && x <= L->copy.x + L->copy.w + pad && y >= L->copy.y - pad && y <= L->copy.y + L->copy.h + pad;
 }
+// 页脚拼一项（镜像存在时才走这条组合路径）：标签 + 值（无值只留标签），「 · 」分隔，最多 3 项 | append one footer item (only on the mirror path): label + value (label only without one), " · " between, at most 3
+static void comm_item(char *b, size_t n, int *o, int *items, const char *label, const char *value) {
+    if (*items >= 3 || *o >= (int)n) return;
+    *o += snprintf(b + *o, n - (size_t)*o, "%s%s%s%s", *items ? " · " : "", label, value && *value ? " " : "", value ? value : "");
+    (*items)++;
+}
+// 只显示主机与路径（去掉 https:// 与结尾斜杠） | host and path only (no https://, no trailing slash)
+static void comm_disp(const char *raw, char *out, size_t n) {
+    snprintf(out, n, "%s", raw + (strncmp(raw, "https://", 8) ? 0 : 8)); size_t L = strlen(out); if (L > 1 && out[L - 1] == '/') out[L - 1] = 0;
+}
 static void community_text(dm_lp_text *t, uint64_t now_ms) {
     if (!dm_loadpage_community_shown()) return;
-    if (cm.site[0]) {   // 官网只显示主机与路径（去掉 https:// 与结尾斜杠） | the site shows host and path only (no https://, no trailing slash)
-        char disp[168]; snprintf(disp, sizeof disp, "%s", cm.site + (strncmp(cm.site, "https://", 8) ? 0 : 8)); size_t n = strlen(disp); if (n > 1 && disp[n - 1] == '/') disp[n - 1] = 0;
+    int zh = !strcmp(dm_loadpage_ui("dmLoadCommPrefer"), "qq");
+    if (cm.mirror[0] && zh) {   // 中文且清单带国内镜像：群号 → 官网 → 国内镜像 → GitHub 取前三项（没有镜像时下面原样不变） | Chinese with the mirror: QQ → website → mirror → GitHub, first three (unchanged below without one)
+        char site[168] = "", mir[168] = "", out[400]; comm_disp(cm.site, site, sizeof site); comm_disp(cm.mirror, mir, sizeof mir);
+        int o = snprintf(out, sizeof out, "%s", dm_loadpage_ui("dmLoadCommPrefix")), items = 0;
+        if (cm.qq[0]) comm_item(out, sizeof out, &o, &items, dm_loadpage_ui("dmCommunityLabelQq"), cm.qq);
+        if (cm.site[0]) comm_item(out, sizeof out, &o, &items, dm_loadpage_ui("dmCommunityLabelSite"), site);
+        comm_item(out, sizeof out, &o, &items, dm_loadpage_ui("dmCommunityLabelMirror"), mir);
+        if (cm.gh[0]) comm_item(out, sizeof out, &o, &items, dm_loadpage_ui("dmCommunityLabelGithub"), "");
+        snprintf(t->comm1, sizeof t->comm1, "%s", out);
+    } else if (cm.site[0]) {
+        char disp[168]; comm_disp(cm.site, disp, sizeof disp);
         if (cm.qq[0]) snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui("dmLoadCommSiteQq"), disp, cm.qq);
         else snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui("dmLoadCommSite"), disp);
     } else if (cm.qq[0]) snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui(cm.gh[0] ? "dmLoadCommQqGh" : "dmLoadCommQq"), cm.qq);
@@ -373,7 +393,7 @@ int dm_loadpage_stage_kind(int stage) { lp_lock(); int r = lpi_stage_kind(stage)
 int dm_loadpage_stage_ms(int stage) { lp_lock(); int r = lpi_stage_ms(stage); lp_unlock(); return r; }
 int dm_loadpage_summary(char *buf, size_t n, uint64_t now_ms) { lp_lock(); int r = lpi_summary(buf, n, now_ms); lp_unlock(); return r; }
 void dm_loadpage_text(dm_lp_text *t, uint64_t now_ms) { lp_lock(); lpi_text(t, now_ms); lp_unlock(); }
-void dm_loadpage_community(const char *qq, const char *github, const char *site) { lp_lock(); lpi_community(qq, github, site); lp_unlock(); }
+void dm_loadpage_community(const char *qq, const char *github, const char *site, const char *mirror) { lp_lock(); lpi_community(qq, github, site, mirror); lp_unlock(); }
 int dm_loadpage_community_shown(void) { lp_lock(); int r = lpi_community_shown(); lp_unlock(); return r; }
 const char *dm_loadpage_copy_value(void) { lp_lock(); const char *r = lpi_copy_value(); lp_unlock(); return r; }
 void dm_loadpage_copied(int ok, int pad, uint64_t now_ms) { lp_lock(); lpi_copied(ok, pad, now_ms); lp_unlock(); }

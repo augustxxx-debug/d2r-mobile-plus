@@ -53,7 +53,7 @@ public final class LoadPageView extends View {
     static native String nativeLastLine();
     static native void nativeSetWordmark(boolean on);
     static native String[] nativeManifest(byte[] body);
-    static native void nativeCommunity(String qq, String github, String site);
+    static native void nativeCommunity(String qq, String github, String site, String mirror);
     static native String nativeCopyValue();
     static native void nativeCopied(boolean ok, boolean pad);
     static native void nativePad(boolean on);
@@ -89,7 +89,7 @@ public final class LoadPageView extends View {
     // 社区信息（dm_loadpage.h）：清单校验走原生 dm_manifest_parse；拿到合法清单后交社区两项，页面底部显示官方免费渠道与复制钮
     // community info (dm_loadpage.h): manifests are validated by native dm_manifest_parse; once valid, the two items go to the page, which shows the official free channels and a copy button at the bottom
     public static String[] manifest(byte[] body) { return nativeManifest(body); }
-    public static void community(String qq, String github, String site) { nativeCommunity(qq, github, site); }
+    public static void community(String qq, String github, String site, String mirror) { nativeCommunity(qq, github, site, mirror); }
 
     private final float density;
     private Bitmap bg; private String bgName; private int baseColor = 0xff050403; private Bitmap logo; private boolean logoTried;

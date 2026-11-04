@@ -22,15 +22,19 @@ public class CommunityFetchTest {
     static final String GOOD_GH = "{\"build\": 6, \"note\": \"n\", \"urgent\": false, \"community\": {\"github\": \"https://github.com/c/d\"}}";
     static final String NO_COMM = "{\"build\": 7, \"note\": \"n\", \"urgent\": false}";
     static final String SITE_ONLY = "{\"build\": 8, \"note\": \"n\", \"urgent\": false, \"community\": {\"site\": \"https://s.example/\"}}";
+    static final String MIRROR_ONLY = "{\"build\": 9, \"note\": \"n\", \"urgent\": false, \"community\": {\"mirror\": \"https://gitee.com/a/b\"}}";
+    static final String ALL = "{\"build\": 10, \"note\": \"n\", \"urgent\": false, \"community\": {\"qq_group\": \"1129913678\", \"github\": \"https://github.com/a/b\", \"site\": \"https://s.example/\", \"mirror\": \"https://gitee.com/a/b\"}}";
 
     // 测试用的校验：只认上面几份（真机走原生 dm_manifest_parse，单测在 dm/host/tests/t_manifest.c） | test validator: knows only the samples above (the device uses native dm_manifest_parse, unit tested in t_manifest.c)
     static String[] check(byte[] b) {
         String s = new String(b, StandardCharsets.UTF_8);
-        if (s.equals(GOOD)) return new String[]{"1", "", "1129913678", "https://github.com/a/b", "5"};
-        if (s.equals(GOOD_GH)) return new String[]{"1", "", "", "https://github.com/c/d", "6"};
-        if (s.equals(NO_COMM)) return new String[]{"1", "", "", "", "7", ""};
-        if (s.equals(SITE_ONLY)) return new String[]{"1", "", "", "", "8", "https://s.example/"};
-        return new String[]{"0", "坏", "", "", ""};
+        if (s.equals(GOOD)) return new String[]{"1", "", "1129913678", "https://github.com/a/b", "5", "", ""};
+        if (s.equals(GOOD_GH)) return new String[]{"1", "", "", "https://github.com/c/d", "6", "", ""};
+        if (s.equals(NO_COMM)) return new String[]{"1", "", "", "", "7", "", ""};
+        if (s.equals(SITE_ONLY)) return new String[]{"1", "", "", "", "8", "https://s.example/", ""};
+        if (s.equals(MIRROR_ONLY)) return new String[]{"1", "", "", "", "9", "", "https://gitee.com/a/b"};
+        if (s.equals(ALL)) return new String[]{"1", "", "1129913678", "https://github.com/a/b", "10", "https://s.example/", "https://gitee.com/a/b"};
+        return new String[]{"0", "坏", "", "", "", "", ""};
     }
     static final class Fake implements CommunityFetch.Http {
         final List<String> calls = new ArrayList<>(); final java.util.Map<String, Object[]> plan = new java.util.HashMap<>();   // url → 依次返回的结果（int 码 / String 内容 / IOException） | url → results in turn
@@ -46,7 +50,7 @@ public class CommunityFetchTest {
     static final List<String> got = new ArrayList<>(), logs = new ArrayList<>(), sleeps = new ArrayList<>();
     static String run(List<String> urls, File cache, Fake http) throws Exception {
         got.clear(); logs.clear(); sleeps.clear();
-        return new CommunityFetch(urls, cache, http, CommunityFetchTest::check, logs::add, ms -> sleeps.add(String.valueOf(ms))).run((q, g, w, from) -> got.add(q + "|" + g + (w.isEmpty() ? "" : "|" + w) + "|" + from));
+        return new CommunityFetch(urls, cache, http, CommunityFetchTest::check, logs::add, ms -> sleeps.add(String.valueOf(ms))).run((q, g, w, mi, from) -> got.add(q + "|" + g + (w.isEmpty() ? "" : "|" + w) + (mi.isEmpty() ? "" : "|" + mi) + "|" + from));
     }
 
     public static void main(String[] args) throws Exception {
@@ -84,6 +88,9 @@ public class CommunityFetchTest {
         f = new Fake(); equal("cache", run(both, cache, f)); equal(0, got.size());
         // 8b. 只有官网也交给页脚 | a site alone reaches the footer too
         f = new Fake(); f.on(SERVER, SITE_ONLY); equal("source1", run(both, cache, f)); equal(Arrays.asList("||https://s.example/|example.org"), got);
+        // 8c. 国内镜像原样交给页脚；只有镜像也交 | the mainland mirror reaches the sink unchanged; a mirror alone is delivered too
+        f = new Fake(); f.on(SERVER, MIRROR_ONLY); equal("source1", run(both, cache, f)); equal(Arrays.asList("||https://gitee.com/a/b|example.org"), got);   // 空官网不占位（同 8b 的拼法）| an empty site takes no slot (same joining as 8b)
+        f = new Fake(); f.on(SERVER, ALL); equal("source1", run(both, cache, f)); equal(Arrays.asList("1129913678|https://github.com/a/b|https://s.example/|https://gitee.com/a/b|example.org"), got);
         // 9. 没配地址：不联网 | no addresses: no network access
         f = new Fake(); equal("none", run(new ArrayList<>(), cache, f)); equal(0, f.calls.size()); equal(0, sleeps.size());
         // 10. 日志不带地址路径（只有主机名） | the log carries no address path (host name only)

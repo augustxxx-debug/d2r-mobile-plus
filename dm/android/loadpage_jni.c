@@ -89,7 +89,7 @@ static jobjectArray text_array(JNIEnv *env) {   // { 标题, 百分数, 正文, 
     return a;
 }
 // 社区信息（dm_loadpage.h）与清单校验（dm_manifest.h） | community info (dm_loadpage.h) and manifest validation (dm_manifest.h)
-// nativeManifest：{ "1" 合法 / "0" 不合法, 原因, 群号, 链接, build, 官网 } | nativeManifest: { "1" valid / "0" invalid, reason, group number, link, build, site }
+// nativeManifest：{ "1" 合法 / "0" 不合法, 原因, 群号, 链接, build, 官网, 国内镜像 } | nativeManifest: { "1" valid / "0" invalid, reason, group number, link, build, site, mainland mirror }
 jobjectArray F(nativeManifest)(JNIEnv *env, jclass cls, jbyteArray data) {
     (void)cls; dm_manifest m; memset(&m, 0, sizeof m); char why[192] = "", b[16] = ""; int ok = 0;
     jsize n = data ? (*env)->GetArrayLength(env, data) : 0;
@@ -97,15 +97,15 @@ jobjectArray F(nativeManifest)(JNIEnv *env, jclass cls, jbyteArray data) {
     else if (n > DM_MANIFEST_MAX) snprintf(why, sizeof why, "超过 %d 字节（%d）", DM_MANIFEST_MAX, (int)n);
     else { char buf[DM_MANIFEST_MAX]; (*env)->GetByteArrayRegion(env, data, 0, n, (jbyte *)buf); ok = dm_manifest_parse(buf, (size_t)n, &m, why, sizeof why); }
     if (ok) snprintf(b, sizeof b, "%d", m.build);
-    const char *parts[6] = { ok ? "1" : "0", why, ok ? m.qq : "", ok ? m.github : "", b, ok ? m.site : "" };
-    jobjectArray a = (*env)->NewObjectArray(env, 6, (*env)->FindClass(env, "java/lang/String"), NULL);
-    for (int i = 0; i < 6; i++) (*env)->SetObjectArrayElement(env, a, i, (*env)->NewStringUTF(env, parts[i]));
+    const char *parts[7] = { ok ? "1" : "0", why, ok ? m.qq : "", ok ? m.github : "", b, ok ? m.site : "", ok ? m.mirror : "" };
+    jobjectArray a = (*env)->NewObjectArray(env, 7, (*env)->FindClass(env, "java/lang/String"), NULL);
+    for (int i = 0; i < 7; i++) (*env)->SetObjectArrayElement(env, a, i, (*env)->NewStringUTF(env, parts[i]));
     return a;
 }
-void F(nativeCommunity)(JNIEnv *env, jclass cls, jstring qq, jstring gh, jstring site) {
-    (void)cls; const char *q = qq ? (*env)->GetStringUTFChars(env, qq, NULL) : NULL, *g = gh ? (*env)->GetStringUTFChars(env, gh, NULL) : NULL, *w = site ? (*env)->GetStringUTFChars(env, site, NULL) : NULL;
-    dm_loadpage_community(q, g, w);
-    if (q) (*env)->ReleaseStringUTFChars(env, qq, q); if (g) (*env)->ReleaseStringUTFChars(env, gh, g); if (w) (*env)->ReleaseStringUTFChars(env, site, w);
+void F(nativeCommunity)(JNIEnv *env, jclass cls, jstring qq, jstring gh, jstring site, jstring mirror) {
+    (void)cls; const char *q = qq ? (*env)->GetStringUTFChars(env, qq, NULL) : NULL, *g = gh ? (*env)->GetStringUTFChars(env, gh, NULL) : NULL, *w = site ? (*env)->GetStringUTFChars(env, site, NULL) : NULL, *mi = mirror ? (*env)->GetStringUTFChars(env, mirror, NULL) : NULL;
+    dm_loadpage_community(q, g, w, mi);
+    if (q) (*env)->ReleaseStringUTFChars(env, qq, q); if (g) (*env)->ReleaseStringUTFChars(env, gh, g); if (w) (*env)->ReleaseStringUTFChars(env, site, w); if (mi) (*env)->ReleaseStringUTFChars(env, mirror, mi);
 }
 jstring F(nativeCopyValue)(JNIEnv *env, jclass cls) { (void)cls; dm_loadpage_lock(); jstring r = (*env)->NewStringUTF(env, dm_loadpage_copy_value()); dm_loadpage_unlock(); return r; }   // 指针只在锁内有效 | the pointer is valid only under the lock
 void F(nativeCopied)(JNIEnv *env, jclass cls, jboolean ok, jboolean pad) { (void)env; (void)cls; dm_loadpage_copied(ok, pad, now_ms()); }

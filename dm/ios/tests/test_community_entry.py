@@ -273,14 +273,14 @@ class Host(unittest.TestCase):
     def test_host_wiring(self):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
         for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_community_input_gate(uint64_t *bt', 'atomic_exchange(&g_md_ev, 0)', 'dm_update_label()', '"dmAboutVersion"',
-                  '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : ch[row] == DM_CH_SITE ? "官网" : "GitHub"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
+                  '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : ch[row] == DM_CH_SITE ? "官网" : ch[row] == DM_CH_MIRROR ? "国内镜像" : "GitHub"', '"TouchCommPanOpen"', '"TouchCommPanCopy"', '"TouchCommCancel"', 'dm_community_open_pan(', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
                   '"TouchAboutRow"', '"dmCreditsSpecial"', '"dmCreditsMaker"', 'k_maker_default[] = { "Augustus" }', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)
         self.assertNotIn('credits_render', c); self.assertNotIn('TouchCredit', c)   # RC1.1 B008：自定义页鸣谢块删了 | B008: the Custom page credits block is gone
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss
         self.assertNotIn('co_text(b, de[2], dm_str(b, "dmCommunityAbout"))', c)   # 社区框不再写「关于」子标题 | the community box no longer writes the About sub-title
-        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 42 + 42)   # 社区框 42 + 存档管理列表框 42 | community box 42 + save-management list box 42
+        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 97 + 42)   # 社区框 97（原 42 + 第三张渠道卡 + 4 行网盘 + 确认态，第 9 项）+ 存档管理列表框 42 | community box 97 (42 + third channel card + 4 drive rows + confirm, item 9) + save-management list box 42
         self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))
@@ -291,11 +291,52 @@ class Host(unittest.TestCase):
     def test_shells_hand_over_manifest_and_clipboard(self):
         ios = (DM / 'ios' / 'Sources' / 'dm_update.m').read_text(encoding='utf-8')
         self.assertIn('dm_community_manifest(', ios); self.assertIn('UIPasteboard', ios); self.assertIn('dm_community_copy_init(', ios)
-        self.assertNotIn('openURL', ios)   # 四审 Q4-04：仍不打开任何页面 | fourth review Q4-04: still opens no page
         mac = (DM / 'host' / 'app_mac.m').read_text(encoding='utf-8')
         self.assertIn('dm_community_manifest(', mac); self.assertIn('NSPasteboard', mac); self.assertIn('dm_community_copy_init(', mac)
+        # 四审 Q4-04 原为「不打开任何页面」；用户 2026-11-04 定新规矩：只有白名单四家网盘的分享链接可经系统浏览器打开，且必须先过确认态（见 test_open_only_whitelisted_after_confirm）
+        # fourth review Q4-04 used to be "open no page"; the user's rule of 2026-11-04: only share links of the four whitelisted drives may open in the system browser, after the confirm state
         main = (DM / 'host' / 'main.c').read_text(encoding='utf-8'); self.assertIn('dm_community_load()', main)
         self.assertIn('dm_community_load()', (DM / 'ios' / 'Sources' / 'main.m').read_text(encoding='utf-8'))
+
+    def test_open_only_whitelisted_after_confirm(self):
+        def body(src, sig):
+            i = src.index('{', src.index(sig)); d = 0
+            for j in range(i, len(src)):
+                d += {'{': 1, '}': -1}.get(src[j], 0)
+                if d == 0: return src[i:j + 1]
+            raise AssertionError(sig)
+        def strip(t): return re.sub(r'(?<![:"\\w])//[^\n]*', '', t)   # 只去行注释（不碰字符串里的 https://） | line comments only (keeps https:// inside strings)
+        host = strip((DM / 'host' / 'dm_community.c').read_text(encoding='utf-8'))
+        pan_h = (DM / 'host' / 'dm_pan.h').read_text(encoding='utf-8')
+        # 宿主：外部回调 g_open 只在 dm_community_open_pan 里调，且调之前用 dm_pan_open_allowed 复核；dm_community_open_pan 只从确认态的「确定」进
+        # host: the shell callback g_open is called only inside dm_community_open_pan, after dm_pan_open_allowed; dm_community_open_pan is entered only from the confirm state's OK
+        op = body(host, 'int dm_community_open_pan(int idx)')
+        self.assertIn('dm_pan_open_allowed(', op); self.assertLess(op.index('dm_pan_open_allowed('), op.index('g_open('))
+        self.assertEqual(host.count('g_open('), op.count('g_open('))
+        calls = [m.start() for m in re.finditer(r'dm_community_open_pan\(', host)]
+        self.assertEqual(len(calls), 2, 'definition + one call')
+        ok = body(host, 'static void co_confirm_ok(int by)')
+        self.assertIn('dm_community_open_pan(', ok); self.assertIn('atomic_load(&g_confirm)', ok)
+        # 白名单：只有四家分享前缀；mirror / github / site / http / javascript: 不在里面 | whitelist: the four share prefixes only
+        prefixes = sorted(set(re.findall(r'"(https://[^"]+/s/)"', pan_h)))
+        self.assertEqual(prefixes, sorted(['https://pan.quark.cn/s/', 'https://pan.baidu.com/s/', 'https://www.alipan.com/s/', 'https://www.aliyundrive.com/s/', 'https://www.123pan.com/s/']))
+        for bad in ('gitee.com', 'github.com', 'http://', 'javascript:'): self.assertNotIn(bad, ''.join(prefixes))
+        self.assertIn('dm_pan_url_ok(DM_PAN_GENERIC, url)', body(host, 'int dm_community_url_openable(const char *url)'))
+        # iOS / Mac：openURL 只在 ios_open / mac_open 里，先过 dm_community_url_openable 与 https 判定 | iOS / Mac: openURL only in ios_open / mac_open, after dm_community_url_openable and the https check
+        for rel, fn in (('ios/Sources/dm_update.m', 'static int ios_open(const char *s)'), ('host/app_mac.m', 'static int mac_open(const char *s)')):
+            src = strip((DM / rel).read_text(encoding='utf-8')); f = body(src, fn)
+            self.assertEqual(src.count('openURL'), f.count('openURL'), rel)
+            self.assertLess(f.index('dm_community_url_openable(s)'), f.index('openURL'), rel)
+            self.assertIn('isEqualToString:@"https"', f, rel)
+            self.assertIn('dm_community_open_init(%s)' % fn.split('(')[0].split()[-1], src, rel)
+        # 安卓：ACTION_VIEW 只在 openExternalUrl，先过 UrlRules.openable；UrlRules 的前缀表与 dm_pan.h 逐条一致 | Android: ACTION_VIEW only in openExternalUrl after UrlRules.openable; its prefix table equals dm_pan.h
+        jd = DM / 'android' / 'app' / 'src' / 'main' / 'java' / 'com' / 'xiaoboluo' / 'd2r'
+        act = strip((jd / 'DmActivity.java').read_text(encoding='utf-8')); f = body(act, 'static void openExternalUrl(String url)')
+        self.assertEqual(act.count('ACTION_VIEW'), f.count('ACTION_VIEW'))
+        self.assertLess(f.index('UrlRules.openable(url)'), f.index('ACTION_VIEW'))
+        rules = (jd / 'UrlRules.java').read_text(encoding='utf-8')
+        self.assertEqual(sorted(re.findall(r'"(https://[^"]+/s/)"', rules)), prefixes)
+        self.assertIn('dm_community_open_init(android_open)', (DM / 'android' / 'jni_android.c').read_text(encoding='utf-8'))
 
     def test_share_log_summary_keys(self):
         share = (DM / 'ios' / 'Sources' / 'dm_sharelog.m').read_text(encoding='utf-8')
