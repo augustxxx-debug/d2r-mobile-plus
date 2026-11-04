@@ -47,14 +47,11 @@ def generateStartupStrings = tasks.register('generateStartupStrings', Exec) {
     commandLine(project.findProperty('dmPython') ?: 'python3', '../tools/gen_strings.py', '--output', startupStrings.get().asFile)
 }
 
-// 复用仓库现有 iOS 图标，生成安卓资源，不重复提交图片。
-// Reuse the existing iOS icon as a generated Android resource without duplicating the image.
-def launcherIcon = layout.buildDirectory.dir('generated/launcherIcon')
-def generateLauncherIcon = tasks.register('generateLauncherIcon', Copy) {
-    from('../../ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png')
-    into(launcherIcon.map { it.dir('mipmap-nodpi') })
-    rename { 'ic_launcher.png' }
-}
+// 启动器图标：res/mipmap-anydpi-v26/ic_launcher.xml 自适应图标（三层 PNG 由 dm/android/tools/adaptive_icon.py 从 iOS AppIcon1024.png 生成并提交，
+// test_adaptive_icon.py 核对与源图一致）。minSdk 31 全部走 v26，旧的方形图生成任务已删，APK 不再带 1 MB 的整张图。
+// Launcher icon: the adaptive icon in res/mipmap-anydpi-v26/ic_launcher.xml (its PNG layers are generated from the iOS AppIcon1024.png by
+// dm/android/tools/adaptive_icon.py and committed; test_adaptive_icon.py checks they match the source). minSdk 31 always uses v26, so the old
+// square-icon task is gone and the APK no longer carries the 1 MB full image.
 
 android {
     namespace 'com.xiaoboluo.d2r'
@@ -101,7 +98,7 @@ android {
     }
     if (!prebuilt) externalNativeBuild { cmake { path '../CMakeLists.txt'; version '3.31.6' } }
     if (prebuilt) sourceSets { main { jniLibs.srcDirs = [prebuilt] } }
-    sourceSets { main { res.srcDir(startupStrings.get().asFile); res.srcDir(launcherIcon.get().asFile); assets.srcDir('../../assets/loadpage') } }   // 加载页自制素材（背景图 + 循环音乐）进 assets 根 | self-made loading page assets (backgrounds + loop music) at the assets root
+    sourceSets { main { res.srcDir(startupStrings.get().asFile); assets.srcDir('../../assets/loadpage') } }   // 加载页自制素材（背景图 + 循环音乐）进 assets 根 | self-made loading page assets (backgrounds + loop music) at the assets root
     packaging { jniLibs { useLegacyPackaging false; keepDebugSymbols += ['**/*.so'] } }
     buildFeatures { buildConfig true }
     // 正式版签名：钥匙不进仓库，路径与密码从环境变量来（tools/shell_apk.sh release 读本机 ~/.config/dm-android/release.env）；没设就不签
@@ -144,4 +141,4 @@ def productLock = tasks.register('productLock') {
         if (have != want) throw new GradleException("patch_nso.py changed (registered ${have ?: 'nothing'}, now ${want}): bump the codename on the first line of dm/PRODUCT if output changes, then run python3 dm/host/tests/product_lock.py")
     }
 }
-tasks.named('preBuild').configure { dependsOn(productLock, generateStartupStrings, generateLauncherIcon); if (genRuntime) dependsOn(generateGenAssets) }
+tasks.named('preBuild').configure { dependsOn(productLock, generateStartupStrings); if (genRuntime) dependsOn(generateGenAssets) }
