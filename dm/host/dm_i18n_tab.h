@@ -1065,6 +1065,14 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
 #endif
     { "dmSaveFmtPc", "PC 版 D2R", "D2R on PC", "D2R en PC", "D2R en PC", "D2R на ПК", "PC판 D2R" },
     { "dmSaveFmtLod", "暗黑 2 毁灭之王", "Diablo II: LoD", "Diablo II: LoD", "Diablo II: LoD", "Diablo II: LoD", "디아블로 2: 파괴의 군주" },
+    { "dmSaveFmtUpstream", "来自 D2R Mobile 原版", "From the original D2R Mobile", "Del D2R Mobile original", "Del D2R Mobile original", "Из оригинального D2R Mobile", "원본 D2R Mobile에서" },
+    { "dmSaveUpstreamPartial", "只选了单个文件：多页仓库和百宝囊不会过来，全带上请选文件夹", "Single file only: stash pages and the Pouch stay behind. Pick the folder to bring all", "Solo un archivo: las páginas del alijo y el Zurrón no vienen. Elige la carpeta", "Solo un archivo: las páginas del alijo y el Zurrón no vienen. Elige la carpeta", "Только один файл: страницы тайника и Сумка не перенесутся. Выберите папку", "파일 하나만 선택: 보관함 페이지와 주머니는 오지 않습니다. 폴더를 선택하세요" },
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndSaveImportFolder", "从文件夹导入", "Import from Folder", "Importar desde carpeta", "Importar desde carpeta", "Импорт из папки", "폴더에서 가져오기" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndSaveUpstreamHint", "D2R Mobile 原版的存档没有 root 取不到，这里只能选拷出来的副本", "Saves of the original D2R Mobile need root to reach; pick a copy already taken out", "Las partidas del D2R Mobile original requieren root; elige una copia ya extraída", "Las partidas del D2R Mobile original requieren root; elige una copia ya extraída", "Сохранения оригинального D2R Mobile доступны только с root; выберите копию", "원본 D2R Mobile 저장은 루트 권한이 있어야 꺼낼 수 있습니다. 꺼낸 사본을 선택하세요" },
+#endif
     { "dmSaveFmtOther", "其他来源", "another source", "otro origen", "otro origen", "другой источник", "다른 출처" },
     { "dmSaveFromOtherDevice", "其他设备", "another device", "otro dispositivo", "otro dispositivo", "другое устройство", "다른 기기" },
     { "dmSaveErrConvert", "这个存档包需要转换，当前版本还不支持", "This package needs converting, which this version does not support yet", "Este paquete requiere conversión, aún no disponible", "Este paquete requiere conversión, aún no disponible", "Пакет требует преобразования, пока не поддерживается", "이 패키지는 변환이 필요하며 아직 지원되지 않습니다" },

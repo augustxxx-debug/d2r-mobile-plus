@@ -7,7 +7,10 @@ static size_t spy_strlcpy(char *d, const char *s, size_t n) { if (d == s) { g_se
 #undef strlcpy
 #define strlcpy spy_strlcpy
 #include "dm_savepkg.h"
+#include "dm_savejob.h"
 #undef strlcpy
+#include <ftw.h>
+#include <pthread.h>
 #include <CommonCrypto/CommonDigest.h>
 #include <dirent.h>
 #include <fcntl.h>
@@ -148,6 +151,32 @@ static void t_swcharm(void) {
     // 包里头坏：这一行无法导入，别的角色不受影响 | a bad header in the package: that row cannot be imported, other characters are not affected
     mk_char("sb/save", "Alice", 1, 30, 0, 100); mk_char("sb/save", "Bobby", 2, 31, 0, 101); put("sb/save/Alice/Alice.swcharm", "SWXX0000000", 11); CHECK(export_all("sb/save", "sb.zip", 0, 0) == 0, "坏头导出"); mkdir(R, 0755); CHECK(inspect("sb.zip", "sb2/save", 0, &v) == 0, "坏头校验"); a = row(&v, "Alice"); dm_pkg_char *o = row(&v, "Bobby"); CHECK(a && a->status == DM_PKG_BAD && a->level == 30, "坏头无法导入"); CHECK(o && o->status == DM_PKG_NEW, "别的角色照常"); dm_savepkg_view_free(&v);
 }
+static void t_upstream(void) {
+    char in[1024], w[1024], o[1100]; int part = 0; dm_pkg_view v; size_t gn = 0; uint8_t *gp; P(w, "up/work");
+    mk_char("up/Documents/save", "Alice", 1, 30, 0, 100); puts_("up/Documents/save/Alice/Alice.swpage", "page"); puts_("up/Documents/save/Alice.cloudstate", "x"); puts_("up/Documents/save/_cloudinbox/x.pack", "x"); puts_("up/Documents/save/SharedStashSoftCoreV2.d2i", "stash"); mk_char("up/Documents/save.test", "Testy", 1, 3, 0, 1); mk_char("up/Documents/save.coop", "Ghost", 1, 3, 0, 1);
+    P(in, "up/Documents"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0 && !part, "选 Documents 下到 save"); CHECK(strstr(o, "upstream.zip") != NULL, "打成包 %s", o);
+    { char s[1024]; P(s, "up2/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0, "上游包校验"); } CHECK(!strcmp(v.source_format, "d2r-mobile"), "来源 %s", v.source_format); CHECK(v.nchars == 1 && row(&v, "Alice") && row(&v, "Alice")->status == DM_PKG_NEW, "只有 save 里的角色，不进 save.test / save.coop [%d]", v.nchars); CHECK(v.nstash == 1 && v.stash[0].status == DM_PKG_NEW, "共享仓库在 [%d]", v.nstash); commit("up2/save", &v); dm_savepkg_view_free(&v); CHECK(apply("up2/save") == 1, "换入"); same_file("up/Documents/save/Alice/Alice.swpage", "up2/save/Alice/Alice.swpage"); gp = get("up2/save/_cloudinbox/x.pack", &gn); CHECK(!gp, "设备状态不进来"); free(gp);
+    P(in, "up/Documents/save"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "直接选 save"); P(in, "up/Documents/save.coop"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_COOP, "联机根拒绝"); P(in, "up/Documents/save.test/Testy"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "没有存档的文件夹拒绝");
+    // 单个文件：只有主档，旁路文件带不过来 | a single file: only the main file, its side files do not come along
+    P(in, "up/Documents/save/Alice/Alice.d2s"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0 && part == 1, "单个 d2s"); { char s[1024]; P(s, "up3/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0 && v.nchars == 1, "单个 d2s 校验"); dm_savepkg_view_free(&v); }
+    puts_("up/bad.d2s", "not a save"); P(in, "up/bad.d2s"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "坏 d2s 拒绝"); P(in, "up/Documents/save/SharedStashSoftCoreV2.d2i"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "内容不是仓库的 d2i 拒绝");
+    // 无 manifest 的 ZIP：带任意前缀；我们自己的包原样过 | a ZIP without a manifest, under any prefix; our own packages pass through
+    size_t dn = 0; uint8_t *d = get("up/Documents/save/Alice/Alice.d2s", &dn); ent z1[3] = { { .name = "backup/save/Alice/Alice.d2s", .d = d, .n = (uint32_t)dn }, { .name = "backup/save/Alice/Alice.swpage", .d = (const uint8_t *)"page", .n = 4 }, { .name = "backup/readme.txt", .d = (const uint8_t *)"x", .n = 1 } }; mkzip("up/z1.zip", z1, 3, 0); P(in, "up/z1.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0 && strstr(o, "upstream.zip") && !part, "无 manifest ZIP"); { char s[1024]; P(s, "up4/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0 && row(&v, "Alice"), "ZIP 校验"); commit("up4/save", &v); dm_savepkg_view_free(&v); CHECK(apply("up4/save") == 1, "ZIP 换入"); same_file("up/Documents/save/Alice/Alice.swpage", "up4/save/Alice/Alice.swpage"); }
+    ent z2[1] = { { .name = "../Alice/Alice.d2s", .d = d, .n = (uint32_t)dn } }; mkzip("up/z2.zip", z2, 1, 0); P(in, "up/z2.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_PATH, "穿越拒绝"); ent z3[2] = { { .name = "save/Alice/Alice.d2s", .d = d, .n = (uint32_t)dn }, { .name = "save/Alice/Alice.sw_coop", .d = (const uint8_t *)"1", .n = 1 } }; mkzip("up/z3.zip", z3, 2, 0); P(in, "up/z3.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_COOP, "联机标记拒绝"); ent z4[1] = { { .name = "readme.txt", .d = (const uint8_t *)"x", .n = 1 } }; mkzip("up/z4.zip", z4, 1, 0); P(in, "up/z4.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "没有存档的 ZIP 拒绝"); free(d);
+    CHECK(export_all("up/Documents/save", "ours.zip", 0, 0) == 0, "自家包"); P(in, "ours.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0 && !strcmp(o, in), "自家包原样过"); puts_("up/plain.txt", "x"); P(in, "up/plain.txt"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0 && !strcmp(o, in), "不是 ZIP 的交给校验报错");
+    // 第一期审计的边界对上游入口同样成立 | the phase-one audit's edges hold for this entry too
+    d = get("up/Documents/save/Alice/Alice.d2s", &dn); ent zd[2] = { { .name = "save/Alice/Alice.d2s", .d = d, .n = (uint32_t)dn }, { .name = "save/alice/alice.d2s", .d = d, .n = (uint32_t)dn } }; mkzip("up/zd.zip", zd, 2, 0); P(in, "up/zd.zip"); { int zr_ = dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part); if (!zr_) { char s[1024]; P(s, "ud/save"); zr_ = dm_savepkg_inspect(o, s, 0, &v); dm_savepkg_view_free(&v); } CHECK(zr_ == DM_PKG_E_DUP || zr_ == DM_PKG_E_CHECK, "无 manifest ZIP 只差大小写不换入 %d", zr_); } free(d);   // 不分大小写的盘上解压时拦（E_DUP）；分大小写的盘上第二个的头对不上（E_CHECK）或 manifest 判重 | caught at extraction on a case-insensitive disk, by the header or the manifest on a case-sensitive one
+    mk_char("ul/save", "Alice", 1, 30, 0, 100); puts_("ul/secret", "secret"); { char tg[1024], ln[1024]; P(tg, "ul/secret"); P(ln, "ul/save/Alice/Alice.swpage"); unlink(ln); CHECK(!symlink(tg, ln), "造链接"); P(ln, "ul/save/Bobby"); CHECK(!symlink(tg, ln), "造目录链接"); } P(in, "ul/save"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "文件夹里有链接"); { size_t zn = 0; uint8_t *zb = NULL; FILE *zf_ = fopen(o, "rb"); if (zf_) { fseek(zf_, 0, SEEK_END); zn = (size_t)ftell(zf_); fseek(zf_, 0, SEEK_SET); zb = malloc(zn); if (zb && fread(zb, 1, zn, zf_) != zn) zn = 0; fclose(zf_); } int leak = 0; for (size_t i = 0; zb && i + 6 < zn; i++) if (!memcmp(zb + i, "secret", 6) || !memcmp(zb + i, ".swpage", 7) || !memcmp(zb + i, "Bobby/", 6)) leak = 1; CHECK(zb && !leak, "链接不跟随"); free(zb); }
+    { char ln[1024], tg[1024]; mk_char("ua/save.coop", "Ghost", 1, 3, 0, 1); P(tg, "ua/save.coop"); P(ln, "ua/alias"); CHECK(!symlink(tg, ln), "造别名"); P(in, "ua/alias"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_COOP, "联机根的链接别名拒绝"); }
+    uint8_t cb[16]; memcpy(cb, "SWXX000000", 10); mk_char("uc/save", "Alice", 1, 30, 0, 100); put("uc/save/Alice/Alice.swcharm", cb, 10); P(in, "uc/save"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "坏护身符页打包"); { char s[1024]; P(s, "uc2/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0 && row(&v, "Alice") && row(&v, "Alice")->status == DM_PKG_BAD, "坏护身符页这一行无法导入"); dm_savepkg_view_free(&v); }
+    mk_char("us/save", "Alice", 1, 30, 0, 100); puts_("us/save/Settings/Settings.json", "{}"); P(in, "us/save"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "带设置的文件夹"); { char s[1024]; P(s, "us2/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0 && !v.has_settings, "设置不带"); dm_pkg_char *ca = row(&v, "Alice"); CHECK(ca && !strcmp(v.source_format, "d2r-mobile"), "来源"); dm_savepkg_view_free(&v); }
+    // 单个仓库文件：只有 .d2i 也能进（安卓选文件按扩展名分流到这里）| a single stash file: a .d2i alone goes in too (the Android picker sends it here by extension)
+    { uint8_t dh[16]; memset(dh, 0, sizeof dh); dh[0] = 0x55; dh[1] = 0xaa; dh[2] = 0x55; dh[3] = 0xaa; memcpy(dh + 4, "stash", 5); put("up/Documents/save/SharedStashSoftCoreV2.d2i", dh, sizeof dh); }   // 头里必须是仓库的魔数 | the header carries the stash magic
+    P(in, "up/Documents/save/SharedStashSoftCoreV2.d2i"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0 && part == 1 && strstr(o, "upstream.zip"), "单个 d2i"); { char s[1024]; P(s, "ui/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0 && v.nstash == 1 && !strcmp(v.stash[0].name, "SharedStashSoftCoreV2") && v.stash[0].status == DM_PKG_NEW, "单个 d2i 校验 [%d]", v.nstash); commit("ui/save", &v); dm_savepkg_view_free(&v); CHECK(apply("ui/save") == 1, "单个 d2i 换入"); same_file("up/Documents/save/SharedStashSoftCoreV2.d2i", "ui/save/SharedStashSoftCoreV2.d2i"); }
+    // ZIP 只认叫 save 的那个目录：save.test / save.work 里的存档不进来（与文件夹入口同一条规则，只选它们时整包拒绝）| the ZIP takes only the directory named save: saves under save.test / save.work stay out (same rule as the folder entry; a ZIP holding only those is refused)
+    { size_t tn = 0; uint8_t *t2 = get("up/Documents/save.test/Testy/Testy.d2s", &tn); ent zt[2] = { { .name = "save.test/Testy/Testy.d2s", .d = t2, .n = (uint32_t)tn }, { .name = "backup/save.work/Testy/Testy.d2s", .d = t2, .n = (uint32_t)tn } }; mkzip("up/zt.zip", zt, 2, 0); P(in, "up/zt.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "只有 save.test / save.work 的 ZIP 拒绝"); free(t2); }
+    { size_t an = 0, tn2 = 0; uint8_t *a2 = get("up/Documents/save/Alice/Alice.d2s", &an), *t2 = get("up/Documents/save.test/Testy/Testy.d2s", &tn2); ent zm[3] = { { .name = "save/Alice/Alice.d2s", .d = a2, .n = (uint32_t)an }, { .name = "save.test/Testy/Testy.d2s", .d = t2, .n = (uint32_t)tn2 }, { .name = "save.work/Testy/Testy.d2s", .d = t2, .n = (uint32_t)tn2 } }; mkzip("up/zm.zip", zm, 3, 0); P(in, "up/zm.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "save 与 save.test 同时在"); { char s[1024]; P(s, "um/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0 && v.nchars == 1 && row(&v, "Alice") && !row(&v, "Testy"), "只进 save 里的角色 [%d]", v.nchars); dm_savepkg_view_free(&v); } free(a2); free(t2); }
+}
 static void t_roundtrip(void) {
     mk_save("a/save"); mk_save("b/save"); char sv[1024]; CHECK(export_all("a/save", "p.zip", 1, 1) == 0, "导出");
     size_t n = 0; uint8_t *z = get("p.zip", &n); CHECK(z && n > 30 && !memcmp(z + 30, "manifest.json", 13), "manifest 第一条"); uint8_t *hit = z; int leak = 0; for (size_t i = 0; i + 15 < n; i++) if (!memcmp(hit + i, "_cloudinbox", 11) || !memcmp(hit + i, "Alice 2", 7) || !memcmp(hit + i, "placeholder", 11) || !memcmp(hit + i, "icloud-conflict", 15)) leak = 1; CHECK(!leak, "不属于存档的东西进了包"); free(z);
@@ -270,9 +299,97 @@ static void t_cross(void) {
     { char m[512], h[65]; static const uint8_t def[] = { 0x4b, 0x4c, 0x4c, 0x4c, 0x4c, 0x04, 0x00 }; sha("aaaaa", 5, h); snprintf(m, sizeof m, "{\"format\":\"d2rmp-saves\",\"format_major\":1,\"save_gen\":2,\"files\":[{\"path\":\"Alice/Alice.key\",\"size\":5,\"sha256\":\"%s\"}]}", h); ent b[2] = { { .name = "manifest.json", .d = (const uint8_t *)m, .n = (uint32_t)strlen(m) }, { .name = "Alice/Alice.key", .d = def, .n = sizeof def, .method = 8, .use_over = 1, .usize_override = 5 } }; char pz[1024]; P(pz, "d.zip"); mkzip("d.zip", b, 2, 0); FILE *f = fopen(pz, "r+b"); (void)f; if (f) { uint8_t *zb; size_t zn = 0; fclose(f); zb = get("d.zip", &zn); uint32_t cc = crc((const uint8_t *)"aaaaa", 5); for (size_t i = 0; i + 4 < zn; i++) { uint32_t sg; memcpy(&sg, zb + i, 4); if (sg == 0x04034b50 && !memcmp(zb + i + 30, "Alice", 5)) memcpy(zb + i + 14, &cc, 4); if (sg == 0x02014b50 && !memcmp(zb + i + 46, "Alice", 5)) memcpy(zb + i + 16, &cc, 4); } put("d.zip", zb, zn); free(zb); } CHECK(inspect("d.zip", "d/save", 0, &v) == 0 && has("d/save.import.tmp/files/Alice/Alice.key"), "deflate 能读"); P(t, "d/save"); dm_savepkg_stage_cancel(t); dm_savepkg_view_free(&v); }
 }
 
+// ---- 审计 20261104 的三条 P1 与预算漏杀（每条都有语义变异证明能抓到，见 dm-work/run/saves-p1-fix/）| The audit's three P1s and the budget survivor
+// P1-1：后台活一次一个；选文件回调只收挂了号的；释放后的预览不越界 | one job at a time; only the awaited pick callback; a freed view does not walk out of bounds
+static dm_savejob g_race; static _Atomic int g_race_won;
+static void *race_begin(void *a) { (void)a; if (dm_savejob_begin(&g_race)) atomic_fetch_add(&g_race_won, 1); return NULL; }
+static void t_job_gate(void) {
+    dm_savejob j; memset(&j, 0, sizeof j); int rc = -1;
+    CHECK(dm_savejob_begin(&j), "第一个活能起"); CHECK(!dm_savejob_begin(&j), "跑着的时候不起第二个（备份 + 导入并发）"); CHECK(!dm_savejob_take(&j, &rc), "没完不能取");
+    dm_savejob_finish(&j, 7); CHECK(!dm_savejob_begin(&j), "完了还没取也不起：结果不能被下一个活覆盖"); CHECK(dm_savejob_take(&j, &rc) && rc == 7, "取到这个活自己的结果 %d", rc); CHECK(!dm_savejob_take(&j, &rc), "只取一次");
+    CHECK(dm_savejob_begin(&j), "取了才能起下一个"); dm_savejob_finish(&j, 0); dm_savejob_take(&j, &rc);
+    CHECK(!dm_savejob_pick_accept(&j), "没挂号的选文件回调丢掉"); dm_savejob_pick_arm(&j); CHECK(dm_savejob_pick_accept(&j), "挂了号的收"); CHECK(!dm_savejob_pick_accept(&j), "第二次回调（又开了一次面板）丢掉");
+    CHECK(dm_savejob_begin(&j), "起活"); dm_savejob_pick_arm(&j); CHECK(!dm_savejob_pick_accept(&j), "有活在跑时到的回调丢掉，不起第二个"); dm_savejob_finish(&j, 0); dm_savejob_take(&j, &rc);
+    memset(&g_race, 0, sizeof g_race); pthread_t th[16]; for (int i = 0; i < 16; i++) pthread_create(&th[i], NULL, race_begin, NULL); for (int i = 0; i < 16; i++) pthread_join(th[i], NULL); CHECK(atomic_load(&g_race_won) == 1, "16 个线程同时抢只有一个起得来 [%d]", atomic_load(&g_race_won));
+    // view_free 之后按 nchars 遍历不越界（start_import / 预览返回都会 free，之后若被当成校验完成去画预览）| walking by nchars after view_free stays in bounds
+    mk_save("jg/save"); CHECK(export_all("jg/save", "jg.zip", 1, 1) == 0, "导出"); dm_pkg_view v; CHECK(inspect("jg.zip", "jg2/save", 0, &v) == 0 && v.nchars > 0 && v.nstash > 0, "校验 [%d/%d]", v.nchars, v.nstash);
+    dm_savepkg_view_free(&v); CHECK(!v.chars && v.nchars == 0 && v.nstash == 0 && !v.has_settings, "释放后计数清零 [%d/%d/%d]", v.nchars, v.nstash, v.has_settings); int walked = 0; for (int i = 0; i < v.nchars; i++) walked += v.chars[i].level; CHECK(!walked, "释放后不遍历");
+    char t[1024]; P(t, "jg2/save"); dm_savepkg_stage_cancel(t);
+}
+// P1-2：每一步从 0 开始，校验段自己报进度、单调走到 pn | each step starts at zero; the inspect step reports its own progress, monotonically up to pn
+extern void (*dm_savepkg_test_prog_hook)(int done, int total);
+static int g_pd[8192], g_pt[8192], g_pn;
+static void prog_rec(int d, int t) { if (g_pn < 8192) { g_pd[g_pn] = d; g_pt[g_pn] = t; } g_pn++; }
+static void prog_check(const char *what, int want_total) {
+    CHECK(g_pn >= 2 && g_pn <= 8192, "%s：有进度 [%d 次]", what, g_pn); if (g_pn < 2 || g_pn > 8192) return;
+    CHECK(g_pd[0] == 0 && g_pt[0] == 0, "%s：一开始先清零，不读上一步 [%d/%d]", what, g_pd[0], g_pt[0]);
+    int mono = 1, tot = g_pt[g_pn - 1]; for (int i = 1; i < g_pn; i++) { if (g_pd[i] < g_pd[i - 1] && g_pt[i] == g_pt[i - 1]) mono = 0; if (g_pt[i] && g_pt[i] != tot) mono = 0; if (g_pd[i] > g_pt[i]) mono = 0; }
+    CHECK(mono, "%s：单调、总数不变、不超总数", what); CHECK(tot > 0 && g_pd[g_pn - 1] == tot && (want_total < 0 || tot == want_total), "%s：走到头 %d/%d（应为 %d）", what, g_pd[g_pn - 1], tot, want_total);
+    int steps = 0; for (int i = 1; i < g_pn; i++) steps += g_pt[i] == tot && g_pd[i] > 0; CHECK(steps == tot, "%s：每个文件报一次 [%d/%d]", what, steps, tot);
+}
+static void t_progress(void) {
+    mk_save("pg/save"); dm_savepkg_test_prog_hook = prog_rec; int dn = -1, tt = -1;
+    g_pn = 0; CHECK(export_all("pg/save", "pg.zip", 1, 1) == 0, "导出"); prog_check("导出", -1); dm_savepkg_progress_read(&dn, &tt); CHECK(tt > 0 && dn == tt, "导出完停在终值 %d/%d", dn, tt);
+    // 上一步的终值还在时开始校验：读到的必须是 0/0，不是满格 | inspect starts while the last step's final value is still there: it must read 0/0, not full
+    { dm_pkg_view v; g_pn = 0; CHECK(inspect("nope.zip", "pg3/save", 0, &v) != 0, "打不开的包"); dm_savepkg_view_free(&v); dm_savepkg_progress_read(&dn, &tt); CHECK(dn == 0 && tt == 0, "校验刚开始（还没报总数）读到 0/0，不是上一步的 [%d/%d]", dn, tt); }
+    export_all("pg/save", "pg.zip", 1, 1); dm_pkg_view v; g_pn = 0; CHECK(inspect("pg.zip", "pg2/save", 0, &v) == 0, "校验"); int files = v.nfiles + v.skipped_unknown; prog_check("校验", files); dm_savepkg_progress_read(&dn, &tt); CHECK(dn == files && tt == files, "校验结束 = pn %d/%d（%d）", dn, tt, files);
+    char t[1024]; P(t, "pg2/save"); dm_savepkg_stage_cancel(t); dm_savepkg_view_free(&v);
+    // 上游包两段：打包段报完后校验段重新从 0 报 | an upstream package: after the wrap step the inspect step reports again from 0
+    { char in[1024], w[1024], o[1100], s2[1024]; int part = 0; P(in, "pg/save"); P(w, "pg/work"); g_pn = 0; CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "上游打包"); prog_check("上游打包", -1); P(s2, "pg4/save"); g_pn = 0; CHECK(dm_savepkg_inspect(o, s2, 0, &v) == 0, "上游校验"); prog_check("上游校验", v.nfiles + v.skipped_unknown); dm_savepkg_stage_cancel(s2); dm_savepkg_view_free(&v); dm_savepkg_rmtree(w); }
+    dm_savepkg_progress_reset(); dm_savepkg_progress_read(&dn, &tt); CHECK(dn == 0 && tt == 0, "reset 后 0/0"); dm_savepkg_test_prog_hook = NULL;
+}
+// P1-3：外壳拷到临时目录后，凭原路径仍然拒绝联机角色 | after the shell's copy, the original path still refuses a co-op character
+static void t_coop_origin(void) {
+    char in[1024], w[1024], o[1100], org[1024]; int part = 0; P(w, "og/work");
+    mk_char("og/Documents/save.coop", "Ghost", 1, 30, 0, 100); puts_("og/Documents/save.coop/Ghost/Ghost.sw_coop", "1"); mk_char("og/Documents/save", "Alice", 1, 30, 0, 100);
+    size_t n = 0; uint8_t *b = get("og/Documents/save.coop/Ghost/Ghost.d2s", &n); put("og/dm_save_pick/1234/Ghost.d2s", b, n); free(b);
+    P(in, "og/dm_save_pick/1234/Ghost.d2s"); P(org, "og/Documents/save.coop/Ghost/Ghost.d2s");
+    CHECK(dm_savepkg_is_coop_root(org), "iOS 外壳拷之前的判定：原路径是联机");
+    CHECK(dm_savepkg_wrap_foreign_from(in, NULL, w, o, sizeof o, &part) == 0 && part == 1, "只看副本判不出来（所以外壳必须交原路径）");
+    CHECK(dm_savepkg_wrap_foreign_from(in, org, w, o, sizeof o, &part) == DM_PKG_E_COOP, "副本 + 原路径：拒绝");
+    CHECK(!strcmp(o, in), "拒绝时不出包 %s", o);
+    { char ln[1024], tg[1024]; P(tg, "og/Documents/save.coop"); P(ln, "og/alias"); CHECK(!symlink(tg, ln), "造别名"); P(org, "og/alias/Ghost/Ghost.d2s"); CHECK(dm_savepkg_wrap_foreign_from(in, org, w, o, sizeof o, &part) == DM_PKG_E_COOP, "原路径是联机根的别名：按真实路径拒绝"); }
+    CHECK(dm_savepkg_wrap_foreign_from(in, "primary:Download/save.coop/Ghost/Ghost.d2s", w, o, sizeof o, &part) == DM_PKG_E_COOP, "安卓 SAF 文档 ID 带 save.coop：拒绝");
+    CHECK(dm_savepkg_wrap_foreign_from(in, "primary:Download/Ghost.sw_coop/Ghost.d2s", w, o, sizeof o, &part) == DM_PKG_E_COOP, "带 .sw_coop 段：拒绝");
+    P(in, "og/Documents/save/Alice/Alice.d2s"); size_t an = 0; b = get("og/Documents/save/Alice/Alice.d2s", &an); put("og/dm_save_pick/5678/Alice.d2s", b, an); free(b); P(org, "og/Documents/save/Alice/Alice.d2s"); P(in, "og/dm_save_pick/5678/Alice.d2s");
+    CHECK(dm_savepkg_wrap_foreign_from(in, org, w, o, sizeof o, &part) == 0 && part == 1 && strstr(o, "upstream.zip"), "单机角色的副本 + 原路径照常收");
+    CHECK(dm_savepkg_wrap_foreign_from(in, "primary:Download/save/Alice/Alice.d2s", w, o, sizeof o, &part) == 0, "安卓普通路径照常收");
+    dm_savepkg_rmtree(w);
+}
+// 上游 ZIP 的数量 / 总量预算：解压中实时生效，停下时盘上不超（审计 P2-5，变异 M1b 曾存活）| an upstream ZIP's count and total budgets act during extraction and nothing past them reaches the disk
+typedef struct { uint8_t *b; size_t n, cap; uint32_t acc; int bits; } bw;
+static void bw_put(bw *w, uint32_t v, int n) { for (int i = 0; i < n; i++) { w->acc |= ((v >> i) & 1u) << w->bits; if (++w->bits == 8) { if (w->n == w->cap) { w->cap = w->cap ? w->cap * 2 : 4096; w->b = realloc(w->b, w->cap); } w->b[w->n++] = (uint8_t)w->acc; w->acc = 0; w->bits = 0; } } }
+static void bw_code(bw *w, uint32_t code, int n) { for (int i = n - 1; i >= 0; i--) bw_put(w, (code >> i) & 1u, 1); }   // 哈夫曼码高位先出 | Huffman codes go MSB first
+static uint8_t *deflate_zeros(size_t usize, size_t *clen) {   // 固定哈夫曼：一个字面 0，之后全是「长 258、距 1」| fixed Huffman: one literal 0, then all length-258 distance-1 matches
+    bw w = {0}; bw_put(&w, 1, 1); bw_put(&w, 1, 2); bw_code(&w, 0x30, 8); size_t left = usize - 1; for (; left >= 258; left -= 258) { bw_code(&w, 0xC5, 8); bw_code(&w, 0, 5); } for (; left; left--) bw_code(&w, 0x30, 8); bw_code(&w, 0, 7); if (w.bits) bw_put(&w, 0, 8 - w.bits); *clen = w.n; return w.b;
+}
+static void zname(char *o, size_t n, int i) { char a[6] = { 'X', (char)('a' + i / 17576 % 26), (char)('a' + i / 676 % 26), (char)('a' + i / 26 % 26), (char)('a' + i % 26), 0 }; snprintf(o, n, "save/%s/%s.d2s", a, a); }   // 角色名要首尾是字母 | character names start and end with a letter
+static void mkzip_many(const char *rel, int n, const uint8_t *d, uint32_t clen, uint32_t usize, uint32_t crc32_, int method) {
+    char p[1024]; P(p, rel); mkparents(p); FILE *f = fopen(p, "wb"); uint32_t *off = calloc((size_t)n, sizeof *off); char nm[64];
+    for (int i = 0; i < n; i++) { zname(nm, sizeof nm, i); off[i] = (uint32_t)ftell(f); size_t L = strlen(nm); w32(f, 0x04034b50); w16(f, 20); w16(f, 0); w16(f, (uint32_t)method); w16(f, 0); w16(f, 0x21); w32(f, crc32_); w32(f, clen); w32(f, usize); w16(f, (uint32_t)L); w16(f, 0); fwrite(nm, 1, L, f); fwrite(d, 1, clen, f); }
+    uint32_t cd = (uint32_t)ftell(f); for (int i = 0; i < n; i++) { zname(nm, sizeof nm, i); size_t L = strlen(nm); w32(f, 0x02014b50); w16(f, 20); w16(f, 20); w16(f, 0); w16(f, (uint32_t)method); w16(f, 0); w16(f, 0x21); w32(f, crc32_); w32(f, clen); w32(f, usize); w16(f, (uint32_t)L); w16(f, 0); w16(f, 0); w16(f, 0); w16(f, 0); w32(f, 0); w32(f, off[i]); fwrite(nm, 1, L, f); }
+    uint32_t sz = (uint32_t)ftell(f) - cd; w32(f, 0x06054b50); w16(f, 0); w16(f, 0); w16(f, (uint32_t)n); w16(f, (uint32_t)n); w32(f, sz); w32(f, cd); w16(f, 0); fclose(f); free(off);
+}
+static long long g_du_bytes; static int g_du_files;
+static int du_cb(const char *p, const struct stat *st, int fl, struct FTW *fw) { (void)p; (void)fw; if (fl == FTW_F) { g_du_bytes += st->st_size; g_du_files++; } return 0; }
+static void du_tree(const char *rel) { char p[1024]; P(p, rel); g_du_bytes = 0; g_du_files = 0; nftw(p, du_cb, 32, FTW_PHYS); }
+static void t_upstream_budget(void) {
+    char in[1024], w[1024], o[1100]; int part = 0, rc; P(w, "ub/work");
+    // 条数：4097 条角色，第 4097 条就停，盘上不超过 4096 个 | count: 4097 character entries stop at the 4097th, at most 4096 reach the disk
+    { const uint8_t x = 'x'; mkzip_many("ub/c.zip", 4097, &x, 1, 1, crc(&x, 1), 0); P(in, "ub/c.zip"); rc = dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part); du_tree("ub/work/tree"); CHECK(rc == DM_PKG_E_LIMIT, "4097 条 E_LIMIT [%d]", rc); CHECK(g_du_files <= 4096, "解压中途停：盘上 %d 个（上限 4096）", g_du_files); CHECK(!strstr(o, "upstream.zip"), "超限不出包"); dm_savepkg_rmtree(w); }
+    size_t clen = 0, big = 16u << 20; uint8_t *z = calloc(1, 20u << 20); uint32_t c16 = crc(z, big), c20 = crc(z, 20u << 20); free(z);
+    // 总量：17 × 16 MiB 的压缩炸弹（ZIP 不到 2 MiB），到 256 MiB 停 | total: a 17 × 16 MiB zip bomb (the ZIP is under 2 MiB) stops at 256 MiB
+    { uint8_t *d = deflate_zeros(big, &clen); mkzip_many("ub/d.zip", 17, d, (uint32_t)clen, (uint32_t)big, c16, 8); free(d); struct stat zs; char zp[1024]; P(zp, "ub/d.zip"); stat(zp, &zs); CHECK(zs.st_size < (2 << 20), "炸弹本身小 [%lld]", (long long)zs.st_size);
+      P(in, "ub/d.zip"); rc = dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part); du_tree("ub/work/tree"); CHECK(rc == DM_PKG_E_LIMIT, "压缩炸弹 E_LIMIT [%d]", rc); CHECK(g_du_bytes <= (256ll << 20), "解压中途停：盘上 %lld MiB（上限 256）", g_du_bytes >> 20); CHECK(g_du_files == 16, "停在第 17 份之前 [%d]", g_du_files); dm_savepkg_rmtree(w); }
+    // 单条：一条声明 20 MiB（单文件上限 16 MiB）| a single entry declaring 20 MiB (the per-file cap is 16 MiB)
+    { uint8_t *d = deflate_zeros(20u << 20, &clen); mkzip_many("ub/e.zip", 1, d, (uint32_t)clen, 20u << 20, c20, 8); free(d); P(in, "ub/e.zip"); rc = dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part); du_tree("ub/work/tree"); CHECK(rc == DM_PKG_E_LIMIT, "单条 20 MiB E_LIMIT [%d]", rc); CHECK(g_du_bytes == 0, "什么都没写 [%lld]", g_du_bytes); dm_savepkg_rmtree(w); }
+    // 自测：同一个生成器 1 MiB 的能正常解出来（证明上面停是因为预算，不是包坏了）| self-check: the same generator at 1 MiB extracts fine, so the stops above come from the budget, not a broken ZIP
+    { size_t u = 1u << 20; uint8_t *zz = calloc(1, u); uint32_t c1 = crc(zz, u); free(zz); uint8_t *d = deflate_zeros(u, &clen); mkzip_many("ub/ok.zip", 3, d, (uint32_t)clen, (uint32_t)u, c1, 8); free(d); P(in, "ub/ok.zip"); rc = dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part); du_tree("ub/work/tree"); CHECK(rc == DM_PKG_E_LIMIT || rc == 0 || rc == DM_PKG_E_NOTOURS, "生成器自测 rc=%d", rc); CHECK(g_du_files == 3 && g_du_bytes == 3ll << 20, "生成器自测：3 × 1 MiB 都解出来 [%d / %lld]", g_du_files, g_du_bytes); dm_savepkg_rmtree(w); }
+}
+
 int main(void) {
     const char *td = getenv("TMPDIR"); snprintf(R, sizeof R, "%s/t_savepkg_%d", td ? td : "/tmp", (int)getpid()); mkdir(R, 0755);
-    t_path_set(); t_names(); t_paths(); t_d2s(); t_swcharm(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_mirror_test_run(); t_cross(); t_coop(); t_mirror_dirs();
+    t_path_set(); t_names(); t_paths(); t_d2s(); t_swcharm(); t_upstream(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_mirror_test_run(); t_cross(); t_coop(); t_mirror_dirs(); t_job_gate(); t_progress(); t_coop_origin(); t_upstream_budget();
     char cmd[700]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", R); if (!fails) system(cmd); else printf("  保留现场 %s\n", R);
     printf("t_savepkg: %d 项检查，%d 项失败\n", checks, fails); return fails != 0;
 }

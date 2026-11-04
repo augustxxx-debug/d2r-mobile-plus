@@ -677,6 +677,10 @@ dmCloudSaveOn	iCloud 同步开启：导入的内容会传到其他设备	iCloud 
 dmAndSaveBackupPath	备份也保存在 Download/S2X/…/SaveBackups	Backups are also in Download/S2X/…/SaveBackups	Copias también en Download/S2X/…/SaveBackups		Копии также в Download/S2X/…/SaveBackups	백업은 Download/S2X/…/SaveBackups 에도 저장됩니다	备份列表提示（只安卓，§2.8）#android
 dmSaveFmtPc	PC 版 D2R	D2R on PC	D2R en PC		D2R на ПК	PC판 D2R	预览页来源（第二期转换的包）
 dmSaveFmtLod	暗黑 2 毁灭之王	Diablo II: LoD	Diablo II: LoD		Diablo II: LoD	디아블로 2: 파괴의 군주	预览页来源（第二期转换的包）
+dmSaveFmtUpstream	来自 D2R Mobile 原版	From the original D2R Mobile	Del D2R Mobile original		Из оригинального D2R Mobile	원본 D2R Mobile에서	预览页来源（上游存档导入）
+dmSaveUpstreamPartial	只选了单个文件：多页仓库和百宝囊不会过来，全带上请选文件夹	Single file only: stash pages and the Pouch stay behind. Pick the folder to bring all	Solo un archivo: las páginas del alijo y el Zurrón no vienen. Elige la carpeta		Только один файл: страницы тайника и Сумка не перенесутся. Выберите папку	파일 하나만 선택: 보관함 페이지와 주머니는 오지 않습니다. 폴더를 선택하세요	预览页说明（上游单个 .d2s / .d2i）
+dmAndSaveImportFolder	从文件夹导入	Import from Folder	Importar desde carpeta		Импорт из папки	폴더에서 가져오기	存档管理首页（安卓：选文件夹是单独的系统面板）
+dmAndSaveUpstreamHint	D2R Mobile 原版的存档没有 root 取不到，这里只能选拷出来的副本	Saves of the original D2R Mobile need root to reach; pick a copy already taken out	Las partidas del D2R Mobile original requieren root; elige una copia ya extraída		Сохранения оригинального D2R Mobile доступны только с root; выберите копию	원본 D2R Mobile 저장은 루트 권한이 있어야 꺼낼 수 있습니다. 꺼낸 사본을 선택하세요	存档管理首页说明（安卓，用户 2026-10-31 定）
 dmSaveFmtOther	其他来源	another source	otro origen		другой источник	다른 출처	预览页来源（第二期转换的包）
 dmSaveFromOtherDevice	其他设备	another device	otro dispositivo		другое устройство	다른 기기	导入预览的来源：包来自另一端时不写平台名 | import preview source when the package comes from the other platform
 dmSaveErrConvert	这个存档包需要转换，当前版本还不支持	This package needs converting, which this version does not support yet	Este paquete requiere conversión, aún no disponible		Пакет требует преобразования, пока не поддерживается	이 패키지는 변환이 필요하며 아직 지원되지 않습니다	失败框正文

@@ -382,6 +382,10 @@ def _savebox():
             + ''.join(_co_text('TouchSaveRow%d' % k, 36, '$FontColorLightGold', 'left', 1120, 76) + _co_text('TouchSaveTag%d' % k, 28, '$FontColorLightGray', 'right', 500, 76) for k in range(6))
             + _co_text('TouchSavePage', 28, '$FontColorLightGray') + _co_text('TouchSaveNote', 28, '$FontColorLightGray')
             + ''.join(_btn('TouchSaveBtn%d' % k, 99999, '', 'PanelManager:ClosePanel:TouchSaveNoop', x=99999, anchor=False) + _co_text('TouchSaveBtnText%d' % k, 36, '$LightButtonTextColor', 'center', 470, 115) for k in range(2))
+            # 读取画面的进度条（\Loading\loadingBar）。图的宽度改不了（精灵共用），所以整张画好，用一块底色盖住没走到的部分，边框压在最上面 | the load screen's bar. The art cannot be narrowed (the sprite is shared), so it is drawn whole, a track-coloured rectangle covers the part not reached yet, and the border goes on top
+            + '        { "type": "ImageWidget", "name": "TouchSaveBarFill", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1594, "height": 81 }, "filename": "\\\\Loading\\\\loadingBar" } },\n'
+            + '        { "type": "RectangleWidget", "name": "TouchSaveBarCover", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1594, "height": 81 }, "color": { "r": 0.04, "g": 0.03, "b": 0.03, "a": 1 } } },\n'
+            + '        { "type": "ImageWidget", "name": "TouchSaveBarBorder", "fields": { "rect": { "x": 99999, "y": 99999, "width": 1594, "height": 81 }, "filename": "\\\\Loading\\\\loadingBar_border" } },\n'
             + ''.join(_co_line('TouchSaveFocus%s' % e, 'focus_h' if e in 'TB' else 'focus_v') for e in 'TBLR'))
 _SAVEBOX = _savebox()
 def pad_charcreate(s):   # 手柄版职业选择页走原版布局（gen_romfs_overlay.py）：同样要「导入存档（Y）」和存档框，加在根 children 末尾 | the controller class-select page uses the original layout (gen_romfs_overlay.py): it needs Import Saves (Y) and the save box too, appended at the end of the root children
@@ -390,7 +394,7 @@ def pad_charcreate(s):   # 手柄版职业选择页走原版布局（gen_romfs_o
 INSERT['controller/console/charactercreatepanelhd.json'] = (INSERT['controller/console/charactercreatepanelhd.json'][0], INSERT['controller/console/charactercreatepanelhd.json'][1] + _SAVEBOX)
 _COMM = _community() + _SAVEBOX
 _COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(Touch(?:Comm|Save)\w+)"', _COMM))
-assert _COMM_STUB.count('\n') == 42 + 39   # 边框 15 片、标题、两行渠道（边框 4 + 标签 + 值 + 复制钮 + 钮上的字）× 2、免费声明、分隔线、页脚 3、确定、焦点框 4 | 15 tiles, title, 2 × (4 border + label + value + copy + its text), free, divider, 3 footer, OK, 4 focus
+assert _COMM_STUB.count('\n') == 42 + 42   # 边框 15 片、标题、两行渠道（边框 4 + 标签 + 值 + 复制钮 + 钮上的字）× 2、免费声明、分隔线、页脚 3、确定、焦点框 4 | 15 tiles, title, 2 × (4 border + label + value + copy + its text), free, divider, 3 footer, OK, 4 focus
 # 「上传诊断报告」提示框（dm/host/dm_diagup.c）：与社区入口提示框同一套做法——边框 15 片（自己一套切片 Ztouch_diag）+ 标题 + 正文两行（36 号）+ 副文一行（28 号，§2.6）
 # + 六颗原版前端按钮（上传 / 重试 / 导出到本地 / 复制编号 / 取消 / 关闭，宿主按状态露出至多三颗）。全部屏外起步、字空着、不带锚点，挂在暂停菜单面板（两份）末尾、社区框之后（画在最上层）；
 # 点「分享诊断日志」且构建配了上传地址时由宿主打开，没配就不出现（原导出链路不变）

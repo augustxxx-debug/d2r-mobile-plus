@@ -7,6 +7,7 @@
 // After an import is confirmed the box says it applies after a restart; OK goes through dm_host_shutdown (the crash fence records a normal end), dm_savemgr_boot applies it at the next start and the result shows on reaching the front end.
 // The modal mechanism is borrowed from the community box: dm_community_modal / hit answer / tap / gate forward here (dm_community.c), so dm_cursor.c and hle_hid.c stay untouched. Slow work runs on a background thread. Log prefix "存档管理：", never a character name.
 #include "dm_savepkg.h"
+#include "dm_savejob.h"
 #include "dm_community.h"
 #include "dm_custom.h"
 #include "dm_i18n.h"
@@ -46,7 +47,8 @@ enum { S_NONE, S_HOME, S_EXPORT, S_WORK, S_PREVIEW, S_RESTART, S_MSG, S_BKLIST, 
 enum { RK_PLAIN, RK_CHAR, RK_STASH, RK_SETTINGS };
 enum { J_NONE, J_EXPORT, J_INSPECT, J_BACKUP };
 
-static _Atomic int g_st, g_shown, g_pick_wait;    // g_shown：控件已摆好（命中用） | g_shown: widgets are placed (for hit testing)
+static _Atomic int g_st, g_shown;    // g_shown：控件已摆好（命中用） | g_shown: widgets are placed (for hit testing)
+static dm_savejob g_jb;   // 后台活一次一个、选文件回调只收挂了号的那一次（dm_savejob.h）| one background job at a time; only the awaited pick callback is taken
 static row_t *g_rows; static int g_nrows, g_page, g_foc, g_home_import;   // g_foc：0..本页行数-1 = 行，之后是按钮 | g_foc: 0..rows on page-1 = row, then buttons
 static char g_title[160], g_sub[260], g_note[200], g_btn[2][48]; static int g_nbtn;
 static dm_pkg_view g_view; static int g_view_ok, g_restore;
@@ -55,12 +57,16 @@ static dm_pkg_source g_src = { "macos", "", "", "", "3.3.94012" };
 static char g_src_buf[4][64];
 static void (*g_pick)(void), (*g_share)(const char *path);
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
-static char g_picked[1400]; static _Atomic int g_picked_new, g_share_done;   // 外壳回调：选好了 / 系统面板关了（1 = 存了，-1 = 没存）| shell callbacks: picked / the system panel closed (1 saved, -1 not)
+static char g_picked[1400], g_picked_from[1400]; static _Atomic int g_picked_new, g_share_done;   // 外壳回调：选好了 / 系统面板关了（1 = 存了，-1 = 没存）| shell callbacks: picked / the system panel closed (1 saved, -1 not)
 static char g_share_path[1400];
-static _Atomic int g_job_done, g_job_rc; static int g_job; static char g_job_arg[1400];
+static int g_job; static char g_job_arg[1400], g_job_from[1400];
 static const char **g_sel_names; static int g_sel_n, g_sel_stash, g_sel_settings;
 
 void dm_savemgr_shell(void (*pick)(void), void (*share)(const char *)) { g_pick = pick; g_share = share; }
+#ifdef __ANDROID__
+static void (*g_pick_folder)(void);   // SAF 选文件和选文件夹是两个系统面板 | SAF picks files and folders with two separate system panels
+void dm_savemgr_shell_folder(void (*pick)(void)) { g_pick_folder = pick; }
+#endif
 void dm_savemgr_set_source(const char *platform, const char *commit, const char *build, const char *version) {
     const char *in[4] = { platform, commit, build, version }; for (int i = 0; i < 4; i++) strlcpy(g_src_buf[i], in[i] ? in[i] : "", sizeof g_src_buf[i]);
     g_src.platform = g_src_buf[0]; g_src.commit = g_src_buf[1]; g_src.build = g_src_buf[2]; g_src.version = g_src_buf[3];
@@ -68,13 +74,15 @@ void dm_savemgr_set_source(const char *platform, const char *commit, const char 
 static const char *save_dir(void) { return getenv("DM_SAVE"); }
 // 启动期：挂存档与云同步之前（iOS boot_thread、Mac main、安卓 nativeStart）。清上次导出的残留，换入待应用的导入 | at boot, before mount and cloud sync: clear the last export's leftovers and apply a pending import
 void dm_savemgr_boot(void) {
-    const char *sv = save_dir(); if (!sv) return; char d[1400]; snprintf(d, sizeof d, "%s.export.tmp", sv); dm_savepkg_rmtree(d);
+    const char *sv = save_dir(); if (!sv) return; char d[1400]; snprintf(d, sizeof d, "%s.export.tmp", sv); dm_savepkg_rmtree(d); snprintf(d, sizeof d, "%s.foreign.tmp", sv); dm_savepkg_rmtree(d);
     char cd[1100]; const char *custom = dm_custom_dir(cd, sizeof cd) ? cd : NULL; if (dm_savepkg_apply_pending(sv, custom, time(NULL), &g_src) == 1) dm_custom_reload();
 }
 int dm_savemgr_modal(void) { return atomic_load(&g_st) != S_NONE; }
 int dm_savemgr_shown(void) { return atomic_load(&g_shown); }
 // 外壳回调（任意线程）| shell callbacks (any thread)
-void dm_savemgr_picked(const char *path) { pthread_mutex_lock(&g_mu); strlcpy(g_picked, path ? path : "", sizeof g_picked); pthread_mutex_unlock(&g_mu); atomic_store(&g_picked_new, 1); }
+// origin = 外壳拷贝之前的原路径（可空）：联机判定按它做（dm_savepkg_wrap_foreign_from）| origin = the path before the shell copied it (may be NULL): the co-op check goes by it
+void dm_savemgr_picked_from(const char *path, const char *origin) { pthread_mutex_lock(&g_mu); strlcpy(g_picked, path ? path : "", sizeof g_picked); strlcpy(g_picked_from, origin ? origin : "", sizeof g_picked_from); pthread_mutex_unlock(&g_mu); atomic_store(&g_picked_new, 1); }
+void dm_savemgr_picked(const char *path) { dm_savemgr_picked_from(path, NULL); }
 void dm_savemgr_share_done(int saved) { atomic_store(&g_share_done, saved ? 1 : -1); }
 
 static uint8_t *base_(void) { return co_base(); }
@@ -88,24 +96,39 @@ static int g_msg_back;   // 消息框确定后回哪一页（S_NONE = 收起）|
 static void show_fail(int rc, int back) { rows_clear(); set_box(S("dmSaveFailTitle"), S(err_key(rc)), S("dmSaveFailSub"), S("dmSaveOk"), NULL); g_msg_back = back; go(S_MSG); LOG("存档管理：失败提示 代码 %d", rc); }
 static void show_msg(const char *title, const char *sub, int back) { rows_clear(); set_box(title, sub, NULL, S("dmSaveOk"), NULL); g_msg_back = back; go(S_MSG); }
 static void show_home(void);
+static int g_view_partial;   // 上游单个文件：旁路文件带不过来 | a single upstream file: its side files do not come along
 
 // ---- 后台活 | Background work
+// 进度条（读取画面那张图）：工作超过 BAR_DELAY_MS 才露，存档小的时候不闪。上游包先打包再校验，各占一半 | progress bar (the load screen's art): shown only past BAR_DELAY_MS so small saves do not flash it. An upstream package is wrapped, then checked: half each
+#define BAR_DELAY_MS 400
+#define BAR_W 1594
+#define BAR_H 81
+static _Atomic int g_bar_half, g_bar_base; static uint64_t g_work_ms; static int g_bar_max;
+static uint64_t now_ms(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return (uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000; }
 static void iso_stamp(char *o, size_t n) { time_t t = time(NULL); struct tm tm; localtime_r(&t, &tm); strftime(o, n, "%Y%m%d-%H%M%S", &tm); }
 static void *job_main(void *arg) {
     (void)arg; int rc = DM_PKG_E_IO; const char *sv = save_dir(); char cd[1100]; const char *custom = dm_custom_dir(cd, sizeof cd) ? cd : NULL;
-    if (g_job == J_INSPECT) { dm_pkg_view v; rc = dm_savepkg_inspect(g_job_arg, sv, g_restore, &v); if (!rc) { g_view = v; g_view_ok = 1; } else dm_savepkg_view_free(&v); }
+    if (g_job == J_INSPECT) { dm_pkg_view v; memset(&v, 0, sizeof v); char wk[1400], in[1500]; snprintf(wk, sizeof wk, "%s.foreign.tmp", sv); int part = 0; strlcpy(in, g_job_arg, sizeof in); atomic_store(&g_bar_half, 1); rc = g_restore ? DM_PKG_OK : dm_savepkg_wrap_foreign_from(g_job_arg, g_job_from, wk, in, sizeof in, &part); dm_savepkg_progress_reset(); atomic_store(&g_bar_base, strcmp(in, g_job_arg) ? 500 : 0); atomic_store(&g_bar_half, 0); g_view_partial = part; if (!rc) rc = dm_savepkg_inspect(in, sv, g_restore, &v); dm_savepkg_rmtree(wk); if (!rc) { g_view = v; g_view_ok = 1; } else dm_savepkg_view_free(&v); }
     else if (g_job == J_BACKUP) { char d[1400], snap[1500]; snprintf(d, sizeof d, "%s.export.tmp", sv); dm_savepkg_rmtree(d); mkdir(d, 0755); snprintf(snap, sizeof snap, "%s/snap", d); rc = dm_save_snapshot(snap) ? DM_PKG_E_IO : dm_savepkg_backup_tree(sv, snap, "manual", time(NULL), custom, &g_src, NULL, 0); dm_savepkg_rmtree(d); }
     else if (g_job == J_EXPORT) { char d[1400], snap[1500], ts[32]; snprintf(d, sizeof d, "%s.export.tmp", sv); dm_savepkg_rmtree(d); mkdir(d, 0755); snprintf(snap, sizeof snap, "%s/snap", d); iso_stamp(ts, sizeof ts); snprintf(g_share_path, sizeof g_share_path, "%s/D2RMobilePlus_saves_%s.zip", d, ts);
         if (dm_save_snapshot(snap)) rc = DM_PKG_E_IO; else { dm_pkg_export_opts o; memset(&o, 0, sizeof o); o.names = g_sel_names; o.nnames = g_sel_n; o.stash = g_sel_stash; o.settings = g_sel_settings; o.source_root = sv; o.custom_dir = custom; o.kind = "export"; o.now = time(NULL); rc = dm_savepkg_export(snap, g_share_path, &o, &g_src); } }
-    atomic_store(&g_job_rc, rc); atomic_store(&g_job_done, 1); return NULL;
+    dm_savejob_finish(&g_jb, rc); return NULL;
 }
-static void job_start(int j, const char *arg) { g_job = j; strlcpy(g_job_arg, arg ? arg : "", sizeof g_job_arg); atomic_store(&g_job_done, 0); rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); go(S_WORK); pthread_t th; if (pthread_create(&th, NULL, job_main, NULL)) { atomic_store(&g_job_rc, DM_PKG_E_IO); atomic_store(&g_job_done, 1); } else pthread_detach(th); }
+// 已经有后台活在跑就不起第二个（两个活会互相覆盖 g_job 和结果，审计 20261104 P1-1）：记日志、给失败提示，正在跑的那个照常收尾 | no second job while one runs (two would overwrite each other's g_job and result): log, show the failure, the running one finishes as usual
+static int job_start(int j, const char *arg, const char *from) {
+    if (!dm_savejob_begin(&g_jb)) { LOG("【红】存档管理：已有后台活（%d），不起第 %d 个", g_job, j); show_fail(DM_PKG_E_IO, S_HOME); return 0; }
+    g_job = j; g_work_ms = now_ms(); g_bar_max = 0; atomic_store(&g_bar_base, 0); atomic_store(&g_bar_half, 0); dm_savepkg_progress_reset(); strlcpy(g_job_arg, arg ? arg : "", sizeof g_job_arg); strlcpy(g_job_from, from ? from : "", sizeof g_job_from); rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); go(S_WORK);
+    pthread_t th; if (pthread_create(&th, NULL, job_main, NULL)) dm_savejob_finish(&g_jb, DM_PKG_E_IO); else pthread_detach(th); return 1; }
 
 // ---- 各页 | Pages
 static void fmt_date(uint32_t t, char *o, size_t n) { time_t tt = t; struct tm tm; localtime_r(&tt, &tm); strftime(o, n, "%Y-%m-%d", &tm); }
 static void char_row_text(const dm_pkg_char *c, char *o, size_t n) { char d[16], key[16], cl[64]; fmt_date(c->last_played, d, sizeof d); snprintf(key, sizeof key, "dmSaveCls%d", c->cls); strlcpy(cl, S(key), sizeof cl); snprintf(o, n, S("dmSaveRowFmt"), c->name, cl, c->level, d); if (c->hardcore) { strlcat(o, " · ", n); strlcat(o, S("dmSaveStashHard"), n); } }
 static void stash_label(const char *nm, char *o, size_t n) { snprintf(o, n, S("dmSaveStashRow"), S(strstr(nm, "HardCore") ? "dmSaveStashHard" : "dmSaveStashSoft")); }
-static void show_home(void) { rows_clear(); row_add(S("dmSaveExport"), NULL, RK_PLAIN, 0); row_add(S("dmSaveImport"), NULL, RK_PLAIN, 1); row_add(S("dmSaveBackupNow"), NULL, RK_PLAIN, 2); row_add(S("dmSaveBackupList"), NULL, RK_PLAIN, 3); set_box(S("dmSaveMgrRow"), S("dmSaveMgrSub"), NULL, S("dmSaveBack"), NULL); go(S_HOME); }
+static void show_home(void) { rows_clear(); row_add(S("dmSaveExport"), NULL, RK_PLAIN, 0); row_add(S("dmSaveImport"), NULL, RK_PLAIN, 1); row_add(S("dmSaveBackupNow"), NULL, RK_PLAIN, 2); row_add(S("dmSaveBackupList"), NULL, RK_PLAIN, 3); const char *note = NULL;
+#ifdef __ANDROID__
+    row_add(S("dmAndSaveImportFolder"), NULL, RK_PLAIN, 4); note = S("dmAndSaveUpstreamHint");
+#endif
+    set_box(S("dmSaveMgrRow"), S("dmSaveMgrSub"), note, S("dmSaveBack"), NULL); go(S_HOME); }
 static void export_page(void) {
     rows_clear(); const char *sv = save_dir(); DIR *d = opendir(sv); struct dirent *e;
     while (d && (e = readdir(d))) { if (e->d_name[0] == '.' || e->d_name[0] == '_' || dm_savepkg_is_coop_char(sv, e->d_name)) continue; char p[1400]; snprintf(p, sizeof p, "%s/%s/%s.d2s", sv, e->d_name, e->d_name); size_t L = 0; FILE *f = fopen(p, "rb"); if (!f) continue; uint8_t *b = malloc(1 << 20); if (b) { L = fread(b, 1, 1 << 20, f); dm_pkg_char c; memset(&c, 0, sizeof c); if (dm_savepkg_parse_d2s(b, L, &c)) { char t[200]; char_row_text(&c, t, sizeof t); row_t *r = row_add(t, S("dmSaveSelected"), RK_CHAR, 0); if (r) r->on = 1; } free(b); } fclose(f); }
@@ -137,11 +160,12 @@ static void preview_page(void) {
 #endif
      if (!strcmp(g_view.source_format, "d2r-pc")) pl = S("dmSaveFmtPc"); else if (!strcmp(g_view.source_format, "d2lod")) pl = S("dmSaveFmtLod"); else if (strcmp(g_view.source_format, "d2r-switch-plus")) pl = S("dmSaveFmtOther"); const char *ver = g_view.version[0] ? g_view.version : g_view.build;
     if (g_restore) strlcpy(sub, S("dmSaveRestoreMerge"), sizeof sub);   // 恢复只合并，这里说清楚（内审 I-04）| restore merges, say so here
-    else if (ver[0]) snprintf(sub, sizeof sub, S("dmSavePreviewFrom"), pl, ver, when); else snprintf(sub, sizeof sub, S("dmSavePreviewFromNoVer"), pl, when);
+    else if (ver[0]) snprintf(sub, sizeof sub, S("dmSavePreviewFrom"), pl, ver, when); else snprintf(sub, sizeof sub, S("dmSavePreviewFromNoVer"), pl, when); if (!strcmp(g_view.source_format, "d2r-mobile")) strlcpy(sub, S("dmSaveFmtUpstream"), sizeof sub);
     const char *note = NULL;
 #ifndef __ANDROID__
     if (dm_custom_get("icloud") && !getenv("DM_TEST_ICLOUD_OFF")) note = S("dmCloudSaveOn");
 #endif
+    if (g_view_partial) note = S("dmSaveUpstreamPartial");
     set_box(S("dmSaveImport"), sub, note, S("dmSavePreviewGo"), S("dmSaveBack")); go(S_PREVIEW);
 }
 static void bklist_page(void) {
@@ -154,12 +178,19 @@ static void bklist_page(void) {
     set_box(S("dmSaveBackupList"), S(g_nbk ? "dmSaveBkKeep" : "dmSaveBkEmpty"), note, S("dmSaveBack"), NULL); go(S_BKLIST);
 }
 static void bkitem_page(void) { rows_clear(); dm_pkg_backup *b = &g_bk[g_bk_sel]; row_add(S("dmSaveBkRestore"), NULL, RK_PLAIN, 0); row_add(S(b->starred ? "dmSaveBkUnstar" : "dmSaveBkStar"), NULL, RK_PLAIN, 1); row_add(S("dmSaveBkShare"), NULL, RK_PLAIN, 2); row_add(S("dmSaveBkDelete"), NULL, RK_PLAIN, 3); char when[32]; time_t tt = (time_t)b->when; struct tm tm; localtime_r(&tt, &tm); strftime(when, sizeof when, "%Y-%m-%d %H:%M", &tm); set_box(S("dmSaveBackupList"), when, NULL, S("dmSaveBack"), NULL); go(S_BKITEM); }
-static void start_import(int restore, const char *path) { g_restore = restore; if (g_view_ok) { dm_savepkg_view_free(&g_view); g_view_ok = 0; } job_start(J_INSPECT, path); }
-static void request_pick(void) {
+static void start_import(int restore, const char *path, const char *from) { if (dm_savejob_busy(&g_jb)) { job_start(J_INSPECT, path, from); return; } g_restore = restore; if (g_view_ok) { dm_savepkg_view_free(&g_view); g_view_ok = 0; } job_start(J_INSPECT, path, from); }   // 有活在跑时不碰 g_view：它可能正被那个活写 | with a job running g_view is left alone: that job may be writing it
+static void request_pick(int folder) {
+    (void)folder;
 #ifdef DM_QA_BUILD
-    { const char *t = getenv("DM_TEST_SAVEPKG_IN"); if (t) { if (!strcmp(t, "cancel")) { LOG("存档管理：测试旁路：取消选文件"); dm_savemgr_picked(NULL); return; } start_import(0, t); return; } }   // 系统选文件驱动不了，QA 构建直接给路径（CLAUDE.md §2.9）| the system picker cannot be driven, QA builds take a path directly
+    { const char *t = getenv("DM_TEST_SAVEPKG_IN"); if (t) { if (!strcmp(t, "cancel")) { LOG("存档管理：测试旁路：取消选文件"); dm_savejob_pick_arm(&g_jb); dm_savemgr_picked(NULL); return; } start_import(0, t, getenv("DM_TEST_SAVEPKG_FROM")); return; } }   // 系统选文件驱动不了，QA 构建直接给路径（CLAUDE.md §2.9）| the system picker cannot be driven, QA builds take a path directly
 #endif
-    if (!g_pick) { show_fail(DM_PKG_E_IO, S_HOME); return; } atomic_store(&g_pick_wait, 1); LOG("存档管理：打开系统选文件"); g_pick();
+    void (*pick)(void) = g_pick;
+#ifdef __ANDROID__
+    if (folder) pick = g_pick_folder;
+#endif
+    if (!pick) { show_fail(DM_PKG_E_IO, S_HOME); return; } if (dm_savejob_busy(&g_jb)) { LOG("【红】存档管理：后台活没完，不开选文件"); show_fail(DM_PKG_E_IO, S_HOME); return; }
+    // 面板关了到外壳拷完之间界面是锁着的（处理中框，没有行和按钮）：不能再点导入或备份（审计 20261104 P1-1 a）| between the panel closing and the shell's copy finishing the box is locked (working box, no rows or buttons): import or backup cannot be tapped again
+    rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); go(S_WORK); dm_savejob_pick_arm(&g_jb); LOG("存档管理：打开系统选文件"); pick();
 }
 static void share_now(const char *path) {
 #ifdef DM_QA_BUILD
@@ -171,7 +202,7 @@ static void share_now(const char *path) {
 static int name_taken(const char *c, void *ctx) { (void)ctx; char p[1400]; struct stat st; snprintf(p, sizeof p, "%s/%s", save_dir(), c); if (!stat(p, &st)) return 1; for (int i = 0; i < g_view.nchars; i++) if (!strcasecmp(g_view.chars[i].name, c) || !strcasecmp(g_view.chars[i].newname, c)) return 1; return 0; }
 static void row_action(row_t *r) {
     int st = atomic_load(&g_st);
-    if (st == S_HOME) { if (r->idx == 0) export_page(); else if (r->idx == 1) { g_home_import = 1; request_pick(); } else if (r->idx == 2) job_start(J_BACKUP, NULL); else bklist_page(); return; }
+    if (st == S_HOME) { if (r->idx == 0) export_page(); else if (r->idx == 1) { g_home_import = 1; request_pick(0); } else if (r->idx == 2) job_start(J_BACKUP, NULL, NULL); else if (r->idx == 3) bklist_page(); else { g_home_import = 1; request_pick(1); } return; }
     if (st == S_EXPORT) { r->on = !r->on; strlcpy(r->tag, S(r->on ? "dmSaveSelected" : "dmSaveNotSelected"), sizeof r->tag); return; }
     if (st == S_PREVIEW) {
         if (r->kind == RK_CHAR) { dm_pkg_char *c = &g_view.chars[r->idx]; if (c->status == DM_PKG_SAME || c->status == DM_PKG_BAD) return;
@@ -182,7 +213,7 @@ static void row_action(row_t *r) {
         preview_tag(r); return; }
     if (st == S_BKLIST) { g_bk_sel = r->idx; bkitem_page(); return; }
     if (st == S_BKITEM) { dm_pkg_backup *b = &g_bk[g_bk_sel]; char p[1500]; snprintf(p, sizeof p, "%s/%s", b->dir, b->file);
-        if (r->idx == 0) start_import(1, p); else if (r->idx == 1) { int rc = dm_savepkg_backup_star(save_dir(), b, !b->starred); if (rc) { show_fail(rc, S_BKLIST); return; } b->starred = !b->starred; bklist_page(); } else if (r->idx == 2) { go(S_WORK); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); share_now(p); } else { rows_clear(); set_box(S("dmSaveBkDeleteAsk"), S("dmSaveBkDeleteSub"), NULL, S("dmSaveBkDelete"), S("dmSaveBack")); go(S_BKDEL); } return; }
+        if (r->idx == 0) start_import(1, p, NULL); else if (r->idx == 1) { int rc = dm_savepkg_backup_star(save_dir(), b, !b->starred); if (rc) { show_fail(rc, S_BKLIST); return; } b->starred = !b->starred; bklist_page(); } else if (r->idx == 2) { go(S_WORK); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); share_now(p); } else { rows_clear(); set_box(S("dmSaveBkDeleteAsk"), S("dmSaveBkDeleteSub"), NULL, S("dmSaveBkDelete"), S("dmSaveBack")); go(S_BKDEL); } return; }
 }
 static void *shutdown_main(void *a) { (void)a; dm_host_shutdown("save import"); return NULL; }
 static void close_box(void) { go(S_NONE); if (g_view_ok) { dm_savepkg_view_free(&g_view); g_view_ok = 0; } }
@@ -191,7 +222,7 @@ static void btn_action(int k) {
     switch (st) {
     case S_HOME: close_box(); LOG("存档管理：收起"); break;
     case S_EXPORT: if (k == 1) { show_home(); break; } { static const char *names[MAX_ROWS]; static char store[DM_PKG_MAX_CHARS][64]; int n = 0; g_sel_stash = g_sel_settings = 0;
-            for (int i = 0; i < g_nrows; i++) { row_t *r = &g_rows[i]; if (r->kind == RK_STASH) g_sel_stash = r->on; else if (r->kind == RK_SETTINGS) g_sel_settings = r->on; else if (r->kind == RK_CHAR && r->on && n < DM_PKG_MAX_CHARS) { const char *sep = strstr(r->text, " · "); size_t L = sep ? (size_t)(sep - r->text) : strlen(r->text); snprintf(store[n], sizeof store[n], "%.*s", (int)L, r->text); names[n] = store[n]; n++; } } g_sel_names = names; g_sel_n = n; job_start(J_EXPORT, NULL); } break;
+            for (int i = 0; i < g_nrows; i++) { row_t *r = &g_rows[i]; if (r->kind == RK_STASH) g_sel_stash = r->on; else if (r->kind == RK_SETTINGS) g_sel_settings = r->on; else if (r->kind == RK_CHAR && r->on && n < DM_PKG_MAX_CHARS) { const char *sep = strstr(r->text, " · "); size_t L = sep ? (size_t)(sep - r->text) : strlen(r->text); snprintf(store[n], sizeof store[n], "%.*s", (int)L, r->text); names[n] = store[n]; n++; } } g_sel_names = names; g_sel_n = n; job_start(J_EXPORT, NULL, NULL); } break;
     case S_PREVIEW: if (k == 1) { dm_savepkg_stage_cancel(save_dir()); dm_savepkg_view_free(&g_view); g_view_ok = 0; show_home(); break; }
         { int act = g_view.settings_action == DM_PKG_OVERWRITE; for (int i = 0; i < g_view.nchars; i++) act |= g_view.chars[i].action != DM_PKG_SKIP && g_view.chars[i].status != DM_PKG_BAD && g_view.chars[i].status != DM_PKG_SAME; for (int i = 0; i < g_view.nstash; i++) act |= g_view.stash[i].action == DM_PKG_OVERWRITE; if (!act) { dm_savepkg_stage_cancel(save_dir()); dm_savepkg_view_free(&g_view); g_view_ok = 0; show_home(); LOG("存档管理：没有要导入的内容，回首页"); break; }
           int rc = dm_savepkg_stage_commit(save_dir(), &g_view, NULL); dm_savepkg_view_free(&g_view); g_view_ok = 0; if (rc) { show_fail(rc, S_HOME); break; } rows_clear(); set_box(S("dmSaveRestartTitle"), S("dmSaveRestartSub"), NULL, S("dmSaveOk"), NULL); go(S_RESTART); } break;
@@ -202,7 +233,7 @@ static void btn_action(int k) {
     case S_BKDEL: if (k == 0) { dm_savepkg_backup_delete(save_dir(), &g_bk[g_bk_sel]); LOG("存档管理：删除一份备份"); bklist_page(); } else bkitem_page(); break;
     default: break; }
 }
-void dm_savemgr_open(int from) { if (dm_uiscreen_ingame()) { LOG("存档管理：局内不打开（入口 %d）", from); return; } g_home_import = 0; { const char *sv = save_dir(); if (sv && dm_savepkg_is_coop_root(sv)) { show_msg(S("dmSaveMgrRow"), S("dmSaveCoopRoot"), S_NONE); LOG("存档管理：联机存档根，不开面板（入口 %d）", from); return; } } if (from == 3) { rows_clear(); set_box(S("dmSaveWorking"), S("dmSaveWorkingSub"), NULL, NULL, NULL); go(S_WORK); request_pick(); LOG("存档管理：打开（入口 3）"); return; } show_home(); LOG("存档管理：打开（入口 %d）", from); }
+void dm_savemgr_open(int from) { if (dm_uiscreen_ingame()) { LOG("存档管理：局内不打开（入口 %d）", from); return; } g_home_import = 0; { const char *sv = save_dir(); if (sv && dm_savepkg_is_coop_root(sv)) { show_msg(S("dmSaveMgrRow"), S("dmSaveCoopRoot"), S_NONE); LOG("存档管理：联机存档根，不开面板（入口 %d）", from); return; } } if (from == 3) { request_pick(0); LOG("存档管理：打开（入口 3）"); return; } show_home(); LOG("存档管理：打开（入口 %d）", from); }
 void dm_savemgr_on_uimsg(const char *cat, const char *act, const char *arg) { if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return; if (!strcmp(arg, "TouchSavesOpt")) dm_savemgr_open(1); else if (!strcmp(arg, "TouchSavesCc")) dm_savemgr_open(3); }
 
 // ---- 弹窗：输入 | The box: input
@@ -233,7 +264,7 @@ void dm_savemgr_ui_tap(uint64_t root, int x, int y) {
 static const char *const k_save_hosts[] = { "VideoOptionsPanel", "CharacterCreatePanel", "MainMenuButtonRibbon", "MainMenuPanel", "PauseLayout", "PauseLayoutGarden" };
 static uint64_t box_host(uint64_t root) { for (size_t i = 0; i < sizeof k_save_hosts / sizeof *k_save_hosts; i++) { uint64_t p = dm_ui_top(root, k_save_hosts[i]); if (p && *(uint8_t *)(p + 0x50) && co_find(p, "TouchSaveTitle", 0)) return p; } return 0; }
 static void hide_all(uint8_t *b, uint64_t p) {
-    static const char *const nm[] = { "TouchSaveTitle", "TouchSaveSub", "TouchSavePage", "TouchSaveNote", "TouchSaveBtn0", "TouchSaveBtn1", "TouchSaveBtnText0", "TouchSaveBtnText1" }; for (size_t i = 0; i < sizeof nm / sizeof *nm; i++) { uint64_t w = co_find(p, nm[i], 0); if (w) { co_place(w, 99999, 99999); if (strncmp(nm[i], "TouchSaveBtn", 12) || strstr(nm[i], "Text")) co_text(b, w, ""); } }
+    static const char *const nm[] = { "TouchSaveTitle", "TouchSaveSub", "TouchSavePage", "TouchSaveNote", "TouchSaveBtn0", "TouchSaveBtn1", "TouchSaveBtnText0", "TouchSaveBtnText1", "TouchSaveBarBorder", "TouchSaveBarFill", "TouchSaveBarCover" }; for (size_t i = 0; i < sizeof nm / sizeof *nm; i++) { uint64_t w = co_find(p, nm[i], 0); if (w) { co_place(w, 99999, 99999); if (strncmp(nm[i], "TouchSaveBtn", 12) || strstr(nm[i], "Text")) co_text(b, w, ""); } }
     for (int k = 0; k < PER_PAGE; k++) { char n[32]; snprintf(n, sizeof n, "TouchSaveRow%d", k); uint64_t w = co_find(p, n, 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); } snprintf(n, sizeof n, "TouchSaveTag%d", k); w = co_find(p, n, 0); if (w) { co_place(w, 99999, 99999); co_text(b, w, ""); } }
     for (int k = 0; k < 15; k++) { char n[24]; snprintf(n, sizeof n, "TouchSaveTile%d%d", k / 3, k % 3); uint64_t w = co_find(p, n, 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); r[0] = r[1] = 99999; } } co_rect_hide(p, "TouchSaveFocus");
 }
@@ -270,13 +301,16 @@ void dm_savemgr_pump(void) {
 #endif
     int st = atomic_load(&g_st);   // 驱动动作之后才读：它可能刚进 S_WORK | read after the driver: it may have just entered S_WORK
     // 外壳回调与后台活的结果，都在这里接（游戏主线程）| shell callbacks and job results are taken here (game main thread)
-    if (atomic_exchange(&g_picked_new, 0)) { char p[1400]; pthread_mutex_lock(&g_mu); strlcpy(p, g_picked, sizeof p); pthread_mutex_unlock(&g_mu); atomic_store(&g_pick_wait, 0); if (p[0] == '!') show_fail(p[1] == 'l' ? DM_PKG_E_LIMIT : DM_PKG_E_IO, g_home_import ? S_HOME : S_NONE); else if (p[0]) start_import(0, p); else { LOG("存档管理：取消选文件"); if (g_home_import) show_home(); else close_box(); } st = atomic_load(&g_st); }
+    if (atomic_exchange(&g_picked_new, 0)) { char p[1400], from[1400]; pthread_mutex_lock(&g_mu); strlcpy(p, g_picked, sizeof p); strlcpy(from, g_picked_from, sizeof from); pthread_mutex_unlock(&g_mu);
+      if (!dm_savejob_pick_accept(&g_jb)) LOG("【红】存档管理：没在等的选文件回调，丢掉（%s）", p[0] ? "有路径" : "取消");   // 重复、迟到的回调不起活（审计 20261104 P1-1 b）| a duplicate or late callback starts nothing
+      else if (p[0] == '!') show_fail(p[1] == 'l' ? DM_PKG_E_LIMIT : p[1] == 'c' ? DM_PKG_E_COOP : DM_PKG_E_IO, g_home_import ? S_HOME : S_NONE); else if (p[0]) start_import(0, p, from); else { LOG("存档管理：取消选文件"); if (g_home_import) show_home(); else close_box(); } st = atomic_load(&g_st); }
     { int sd = atomic_exchange(&g_share_done, 0); if (sd) { char d[1400]; snprintf(d, sizeof d, "%s.export.tmp", save_dir()); dm_savepkg_rmtree(d); LOG("存档管理：系统面板关闭（%s）", sd > 0 ? "已保存" : "没保存"); if (atomic_load(&g_st) == S_WORK) show_msg(S(sd > 0 ? "dmSaveExportDone" : "dmSaveExportCancel"), sd > 0 ? S("dmSaveExportDoneSub") : "", S_HOME); st = atomic_load(&g_st); } }
-    if (st == S_WORK && atomic_exchange(&g_job_done, 0)) { int rc = atomic_load(&g_job_rc), j = g_job; g_job = J_NONE;
-        if (j == J_INSPECT) { if (rc) show_fail(rc, g_home_import || g_restore ? S_HOME : S_NONE); else preview_page(); }
+    { int rc = 0; if (dm_savejob_take(&g_jb, &rc)) { int j = g_job; g_job = J_NONE;   // 不管当前页都取：取了才放开占位；不在处理中框时结果作废 | taken whatever the page, so the slot is released; the result is dropped outside the working box
+        if (st != S_WORK) LOG("【红】存档管理：后台活 %d 结束时不在处理中框（页 %d），结果作废", j, st);
+        else if (j == J_INSPECT) { if (rc) show_fail(rc, g_home_import || g_restore ? S_HOME : S_NONE); else preview_page(); }
         else if (j == J_BACKUP) { if (rc) show_fail(rc, S_HOME); else show_msg(S("dmSaveBackupDone"), S("dmSaveBkKeep"), S_HOME); }
         else if (j == J_EXPORT) { if (rc) show_fail(rc, S_HOME); else share_now(g_share_path); }
-        st = atomic_load(&g_st); }
+        st = atomic_load(&g_st); } }
     // 底下菜单的焦点：同社区框，开着时清空、关掉交还 | the focus of the menu underneath: as the community box, cleared while open and handed back on close
     int pad = dm_padmode_current();
     { static uint64_t saved; static char saved_nm[64]; static int held; uint64_t fm = *(uint64_t *)(root + 0xd0);
@@ -294,7 +328,7 @@ void dm_savemgr_pump(void) {
           st = atomic_load(&g_st); if (!st) return; } }
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840; int ox, oy; float s; co_origin(p, xr, &ox, &oy, &s);
     int pages = g_nrows ? (g_nrows + PER_PAGE - 1) / PER_PAGE : 1; if (g_page >= pages) g_page = pages - 1; int on = g_nrows - g_page * PER_PAGE; if (on > PER_PAGE) on = PER_PAGE; if (on < 0) on = 0;
-    int has_note = g_note[0] != 0, row_y0 = 180, y_after = row_y0 + on * ROW_H + (on ? 10 : 0), page_y = y_after, note_y = page_y + (pages > 1 ? 50 : 0), btn_y = note_y + (has_note ? 60 : 0) + 20, H = btn_y + (g_nbtn ? BTN_H : 0) + 45;
+    int has_note = g_note[0] != 0, row_y0 = 180, y_after = row_y0 + on * ROW_H + (on ? 10 : 0), page_y = y_after, note_y = page_y + (pages > 1 ? 50 : 0), btn_y = note_y + (has_note ? 60 : 0) + 20, H = btn_y + (g_nbtn ? BTN_H : 0) + 45 + (st == S_WORK ? BAR_H + 30 : 0);   // 处理中的框高不变，进度条露出来时不跳 | the working box keeps its height, so the bar does not make it jump
     int cx = (int)((xr / 2 - ox) / s), y0 = (int)((1080 - oy) / s) - H / 2;
 #define W(nm) co_find(p, nm, 0)
     if (!W("TouchSaveTitle") || !W("TouchSaveBtn1") || !W("TouchSaveRow5")) { go(S_NONE); LOG("【红】存档管理：面板里的控件不全，收起"); return; }
@@ -307,6 +341,11 @@ void dm_savemgr_pump(void) {
     tapgeo g = { 1, vh, ox, oy, on, cx - 860, cx + 860, y0 + row_y0, y0 + btn_y, { 0, 0 }, g_nbtn, s };
     for (int k = 0; k < 2; k++) { char nm[32], nt[32]; snprintf(nm, sizeof nm, "TouchSaveBtn%d", k); snprintf(nt, sizeof nt, "TouchSaveBtnText%d", k); if (k >= g_nbtn) { co_place(W(nm), 99999, 99999); co_place(W(nt), 99999, 99999); co_text(b, W(nt), ""); continue; } int bx = g_nbtn == 1 ? cx - BTN_W / 2 : k == 0 ? cx + 20 : cx - BTN_W - 20; g.btn_x[k] = bx; co_place(W(nm), bx, y0 + btn_y); co_place(W(nt), bx, y0 + btn_y + 2); strlcpy(line, g_btn[k], sizeof line); dm_community_fit(line, sizeof line, 36, BTN_W - 40); co_text(b, W(nt), line); }
     g_tap = g;
+    { uint64_t bb = W("TouchSaveBarBorder"), bf = W("TouchSaveBarFill"), bc = W("TouchSaveBarCover"); int dn = 0, tt = 0, on_bar = st == S_WORK && g_job != J_NONE && now_ms() - g_work_ms >= BAR_DELAY_MS;
+      // 先读哪一段、再读进度；写端换段前先清零（job_main），所以读到新的段就不会拿到上一段的满格 | read the step first, then the progress; the writer zeroes before switching steps (job_main), so the new step never comes with the last step's full count
+      if (bb && bf && bc && on_bar) { int half = atomic_load(&g_bar_half), bs = atomic_load(&g_bar_base); dm_savepkg_progress_read(&dn, &tt); int pm = tt > 0 ? (int)((long long)dn * 1000 / tt) : 0; if (half) pm /= 2; else pm = bs + pm * (1000 - bs) / 1000; if (pm > 1000) pm = 1000; if (pm > g_bar_max) g_bar_max = pm;   // 只进不退：两步之间不回头；这一步还没报总数时停在这一段的起点 | never moves back between the two steps; before this step reports a total it sits at the step's start
+          int bx = cx - BAR_W / 2, by = y0 + 165, fw = BAR_W * g_bar_max / 1000, cw = BAR_W - fw; co_place(bf, bx, by); co_place(bb, bx, by); int32_t *cr = (int32_t *)(bc + 0x70); if (cr[2] != cw) { cr[2] = cw; cr[0] = bx + fw + 1; } co_place(bc, cw > 0 ? bx + fw : 99999, by); }
+      else { if (bb) co_place(bb, 99999, 99999); if (bf) co_place(bf, 99999, 99999); if (bc) co_place(bc, 99999, 99999); } }
     if (pad && (on || g_nbtn)) { if (g_foc >= on + g_nbtn) g_foc = on + g_nbtn - 1; if (g_foc < on) co_rect_lines(b, p, "TouchSaveFocus", "focus_h", "focus_v", cx - 860, y0 + row_y0 + g_foc * ROW_H, 1720, ROW_H, 4); else { int k = foc_btn(g_foc - on); co_rect_lines(b, p, "TouchSaveFocus", "focus_h", "focus_v", g.btn_x[k] - 8, y0 + btn_y - 8, BTN_W + 16, BTN_H + 16, 4); } } else co_rect_hide(p, "TouchSaveFocus");
 #undef W
     if (atomic_load(&g_shown) == 0) { atomic_store(&g_shown, 1); LOG("存档管理：已显示 页 %d（%d 行，框高 %d）", st, g_nrows, H); }

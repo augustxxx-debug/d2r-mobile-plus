@@ -100,7 +100,7 @@ static int mac_copy(const char *s) {
 }
 // 存档管理的系统面板（Mac）：主线程上开，结果回调给宿主（dm_savemgr.c）| save management's system panels (Mac): opened on the main thread, the result goes back to the host
 void dm_savemgr_shell(void (*)(void), void (*)(const char *)); void dm_savemgr_picked(const char *); void dm_savemgr_share_done(int); void dm_savemgr_set_source(const char *, const char *, const char *, const char *);
-static void mac_pick(void) { dispatch_async(dispatch_get_main_queue(), ^{ NSOpenPanel *p = NSOpenPanel.openPanel; p.identifier = @"dmSavePicker"; p.allowedFileTypes = @[@"zip"]; p.allowsMultipleSelection = NO; dm_savemgr_picked([p runModal] == NSModalResponseOK ? p.URL.fileSystemRepresentation : NULL); }); }
+static void mac_pick(void) { dispatch_async(dispatch_get_main_queue(), ^{ NSOpenPanel *p = NSOpenPanel.openPanel; p.identifier = @"dmSavePicker"; p.allowedFileTypes = @[@"zip", @"d2s", @"d2i"]; p.canChooseDirectories = YES; p.allowsMultipleSelection = NO; dm_savemgr_picked([p runModal] == NSModalResponseOK ? p.URL.fileSystemRepresentation : NULL); }); }
 static void mac_share(const char *path) { NSString *src = @(path); dispatch_async(dispatch_get_main_queue(), ^{ NSSavePanel *p = NSSavePanel.savePanel; p.identifier = @"dmSaveShare"; p.nameFieldStringValue = src.lastPathComponent;
 #ifdef DM_QA_BUILD
     { const char *qa = getenv("DM_TEST_SHARE_CLOSE"); if (qa) [p performSelector:@selector(cancel:) withObject:nil afterDelay:atoi(qa) inModes:@[NSModalPanelRunLoopMode]]; }   // 同 iOS：QA 构建到点收起 | as on iOS: QA builds close it on time

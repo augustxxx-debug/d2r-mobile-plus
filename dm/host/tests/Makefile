@@ -217,8 +217,8 @@ $(B)/t_modetx: t_modetx.c ../dm_modetx.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_modetx.c
 $(B)/t_namegen: t_namegen.c ../dm_namegen.c | $(B)
 	clang -O1 -Wall -Werror -o $@ t_namegen.c ../dm_namegen.c
-$(B)/t_savepkg: t_savepkg.c ../dm_savepkg.c ../dm_savepkg.h ../dm.h | $(B)
-	clang -O1 -Wall -Werror -Wno-unused-result -Wno-unused-label -I.. -o $@ t_savepkg.c ../dm_savepkg.c ../../third_party/libdeflate/lib/deflate_decompress.c ../../third_party/libdeflate/lib/utils.c ../../third_party/libdeflate/lib/arm/cpu_features.c
+$(B)/t_savepkg: t_savepkg.c ../dm_savepkg.c ../dm_savepkg.h ../dm_savejob.h ../dm.h | $(B)
+	clang -O1 -DDM_SAVEPKG_TEST_HOOKS -Wall -Werror -Wno-unused-result -Wno-unused-label -I.. -o $@ t_savepkg.c ../dm_savepkg.c ../../third_party/libdeflate/lib/deflate_decompress.c ../../third_party/libdeflate/lib/utils.c ../../third_party/libdeflate/lib/arm/cpu_features.c
 
 $(B)/t_cloudsync: t_cloudsync.c ../dm_cloudsync.c ../dm.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_cloudsync.c ../dm_cloudsync.c

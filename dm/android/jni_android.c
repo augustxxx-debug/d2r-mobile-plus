@@ -200,11 +200,12 @@ void dm_savemgr_shell(void (*)(void), void (*)(const char *)); void dm_savemgr_p
 int dm_savepkg_mirror_from_downloads(const char *, int); void dm_savemgr_boot(void);
 static char g_save_downloads[1024], g_save_commit[64], g_save_build[32];
 static void *save_panel_thread(void *arg) { dm_android_save_panel(arg); free(arg); return NULL; }
-static void save_panel(const char *path) { char *c = path ? strdup(path) : NULL; pthread_t th; if ((path && !c) || pthread_create(&th, NULL, save_panel_thread, c)) { free(c); if (path) dm_savemgr_share_done(0); else dm_savemgr_picked(NULL); } else pthread_detach(th); }
+static void save_panel(const char *path) { char *c = path ? strdup(path) : NULL; pthread_t th; if ((path && !c) || pthread_create(&th, NULL, save_panel_thread, c)) { free(c); if (path && *path) dm_savemgr_share_done(0); else dm_savemgr_picked(NULL); } else pthread_detach(th); }
 static void save_on_pick(void) { save_panel(NULL); }
 static void save_on_share(const char *path) { save_panel(path); }
+static void save_on_pick_folder(void) { save_panel(""); }
 static void savemgr_boot(void) {
-    const char *ver = getenv("DM_VERSION_LABEL"); dm_savemgr_set_source("android", g_save_commit, g_save_build, ver ? ver : ""); dm_savemgr_shell(save_on_pick, save_on_share);
+    const char *ver = getenv("DM_VERSION_LABEL"); dm_savemgr_set_source("android", g_save_commit, g_save_build, ver ? ver : ""); dm_savemgr_shell(save_on_pick, save_on_share); { void dm_savemgr_shell_folder(void (*)(void)); dm_savemgr_shell_folder(save_on_pick_folder); }
     if (dm_savepkg_mirror_from_downloads(g_save_downloads, getenv("DM_SAVE_TEST") != NULL)) LOG("存档管理：备份只存内部目录（没有所有文件访问权限或目录建不了）");
     dm_savemgr_boot();
 }
