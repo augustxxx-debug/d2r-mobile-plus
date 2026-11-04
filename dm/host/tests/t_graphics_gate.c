@@ -70,8 +70,9 @@ int main(void) {
           { "bright_level=x\nq3d_v2=1\n", 2 }, { "bright_level=-1\nq3d_v2=1\n", 2 }, { "bright_level=1\r\nq3d_v2=1\n", 1 }, { "bright_level=\nq3d_v2=1\n", 2 } };
       for (unsigned k = 0; k < sizeof bc / sizeof *bc; k++) { f = fopen(path, "w"); CHECK(f); fputs(bc[k].file, f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("bright_level") == bc[k].want); }
       CHECK(k_def[K_BRIGHT] == 2 && !strcmp(k_keys[K_BRIGHT], "bright_level")); }
-    // 游戏页手柄停靠点（审计 r1 P2-6）：组的折叠钮、可见的勾选框按表序；只有触屏才起作用的两行（换组键位置、商店钮）不停靠；收起组里藏着的行不停靠；末项是原版表格组的折叠钮
-    // Gameplay controller stops (audit r1 P2-6): group fold buttons and visible checkboxes in table order; the two touch-only rows (swap position, store button) are not stops; hidden rows of a collapsed group are not stops; the last is the original table's fold button
+    // 游戏页手柄停靠点（审计 r1 P2-6）：组的折叠钮、可见的勾选框按表序；只有触屏才起作用的那一行（换组键位置）不停靠；收起组里藏着的行不停靠；末项是原版表格组的折叠钮。
+    // 「存放」按钮两种模式都在屏上（REQ12），手柄模式下照常停靠 | Controller focus stops (audit r1 P2-6): group fold buttons and visible checkboxes in table order; the one touch-only row (swap position) is not a stop; hidden rows of a collapsed group are not stops; the last is the original table's fold button.
+    // The Deposit button is on screen in both modes (REQ12), so it is a stop in controller mode too
     { static unsigned char wbuf[48][0x100]; static uint64_t kids[48]; static char names[48][48]; int nw = 0;
       #define W(nm, vis) do { uint64_t w_ = (uint64_t)wbuf[nw]; memset(wbuf[nw], 0, 0x100); snprintf(names[nw], 48, "%s", nm); *(const char **)(w_ + 8) = names[nw]; *(uint8_t *)(w_ + 0x50) = (vis); kids[nw++] = w_; } while (0)
       static const char *const fold[4] = { "TouchFoldCombat", "TouchFoldLoot", "TouchFoldUi", "TouchFoldOrig" }; for (int g = 0; g < 4; g++) W(fold[g], 1);
@@ -80,7 +81,7 @@ int main(void) {
       unsigned long long st[32]; int ns = dm_custom_game_stops((unsigned long long)(uint64_t)gp, st, 32), folds = 0, boxes = 0;
       CHECK(ns > 4 && !strcmp(*(const char **)(st[0] + 8), "TouchFoldCombat") && !strcmp(*(const char **)(st[ns - 1] + 8), "TouchFoldOrig"));
       for (int k = 0; k < ns; k++) { const char *nm = *(const char **)(st[k] + 8); folds += !strncmp(nm, "TouchFold", 9); boxes += !strncmp(nm, "TouchCustom_", 12);
-          CHECK(strcmp(nm, "TouchCustom_touch_swap_above") && strcmp(nm, "TouchCustom_store_btn") && strcmp(nm, "TouchCustom_drop_light")); }
+          CHECK(strcmp(nm, "TouchCustom_touch_swap_above") && strcmp(nm, "TouchCustom_drop_light")); }   // 商店钮照常停靠（REQ12）| the store button is a stop as usual (REQ12)
       int want_boxes = 0; for (int i = 1; i < NK; i++) want_boxes += row_on_page(i, PG_GAME) && !touch_only_row(i) && strcmp(k_keys[i], "drop_light");
       CHECK(folds == 4 && boxes == want_boxes && ns == folds + boxes);
       #undef W

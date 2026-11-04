@@ -41,6 +41,9 @@
 // Threads: dm_pouch_step on the game main thread (dm_world.c); UI message callback dm_pouch_on_uimsg (diag.c); stow / release / system notices in the server tick dm_pouch_srv_tick (hud_tick in diag.c);
 // persistence in the pre-commit hook pouch_hook on the disk-write thread (start of Commit in hle_fs.c, [2]).
 #include "dm_widget.h"
+#include "dm_bag_layout.h"
+#include "dm_input.h"
+#include "dm_store_nav.h"
 #include "hle.h"
 #include "dm_i18n.h"
 #include <stdatomic.h>
@@ -441,6 +444,97 @@ int dm_pouch_tip_gate(int x, int y) {
     if (box && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)box + 0x48))(box, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32)) & 1)) return 0;
     tip_show(root, 0); LOG("百宝囊：点了清单外 → 收起清单，这一下不做别的"); return 1;
 }
+// ---- 「存放」按钮进手柄焦点链（照大背包页签的做法，dm_bag.c pad_nav）
+// 两种输入模式叠同一份布局（pouch_layout.py 写进手柄版物品栏布局），手柄模式下按钮本来就在屏上，只是原版焦点导航走不到我们加的控件。
+// 这里只接两个方向（其余照常交原版）：网格最下一行、光标 x 在按钮水平范围 → ↓ 接管，按下把原版光标放到按钮中心；
+// 悬停在按钮上 → ↑ 接管，按下回网格最下一行（进来前那一格优先，没有记录就回按钮正上方那格、列夹在网格内）。
+// A / ← / → / B 不接管：按钮被悬停时原版 A 照常发它的 onClickMessage（ClosePanel:TouchStore，dm_pouch_on_uimsg 当信号收）。
+// 控件每帧按名字现找、不留控件地址；缓存的两块矩形只是屏幕坐标，视口大小一变就作废重量。
+// ---- Controller focus chain for the 「存放」(Deposit) button (same approach as pad_nav for the bag tabs in dm_bag.c)
+// Both input modes stack the same layout (pouch_layout.py writes into the controller inventory layout), so in controller mode the
+// button is already on screen; the original focus navigation just cannot reach widgets we add.
+// Only two directions are taken over (the rest stays with the original): grid's last row with the cursor x within the button's
+// horizontal range -> Down takes over and puts the original cursor on the button centre; on the button -> Up takes over and
+// returns to the grid's last row (the cell we came from wins; with no record, the cell above the button, column clamped inside).
+// A / left / right / B are not taken over: while the button is hovered the original A sends its onClickMessage
+// (ClosePanel:TouchStore, received as a signal by dm_pouch_on_uimsg).
+// Widgets are found by name every frame and no widget address is kept; the two cached rects are screen coordinates only and are
+// invalidated when the viewport size changes.
+int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t mask);
+int dm_ui_hover_now(int x, int y); int dm_ui_modal_active(uint64_t root);
+#define HIT(w, px, py) (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)(w) + 0x48))((w), (uint64_t)(uint32_t)(px) | ((uint64_t)(uint32_t)(py) << 32)) & 1)
+static dm_store_grid g_sgrid; static dm_store_rect g_sbtn; static int g_sgrid_ok, g_sbtn_ok, g_svw, g_svh;
+static int g_sprev_ok, g_sprev_x, g_sprev_y;   // 进来前网格上那一格 | the grid cell we came from
+static int panel_up(uint64_t w) { return w && *(uint8_t *)(w + 0x50) && *(uint8_t *)(w + 0x51); }
+
+// 网格屏幕矩形：光标在网格上时用原版命中函数往四边二分量（同 dm_cursor.c dm_ui_bag_point）；格距 = 宽 / 列数，行数 = 高 / 格距。
+// Grid screen rect: with the cursor on the grid, binary-search the four edges with the original hit test (same as dm_ui_bag_point
+// in dm_cursor.c); cell pitch = width / column count, rows = height / cell pitch.
+static int store_grid_rect(uint64_t grid, int px, int py) {
+    int vw = *(int32_t *)(B + 0x211da38), vh = *(int32_t *)(B + 0x211da3c);
+    if (px < 0 || py < 0 || px >= vw || py >= vh || !HIT(grid, px, py)) return 0;
+    int a, b, x0, x1, y0, y1;
+    for (a = 0, b = px; a < b;) { int mid = (a + b) / 2; if (HIT(grid, mid, py)) b = mid; else a = mid + 1; } x0 = a;
+    for (a = px, b = vw - 1; a < b;) { int mid = (a + b + 1) / 2; if (HIT(grid, mid, py)) a = mid; else b = mid - 1; } x1 = a;
+    for (a = 0, b = py; a < b;) { int mid = (a + b) / 2; if (HIT(grid, px, mid)) b = mid; else a = mid + 1; } y0 = a;
+    for (a = py, b = vh - 1; a < b;) { int mid = (a + b + 1) / 2; if (HIT(grid, px, mid)) a = mid; else b = mid - 1; } y1 = a;
+    int w = x1 - x0 + 1, h = y1 - y0 + 1, cell = (w + DM_BAG_COLS / 2) / DM_BAG_COLS; if (cell < 1) return 0;   // 大背包网格列数（布局 cellCount）| the big-bag grid's column count (layout cellCount)
+    g_sgrid = (dm_store_grid){ { x0, y0, w, h }, cell, (h + cell / 2) / cell }; g_sgrid_ok = 1; return 1;
+}
+
+// 按钮屏幕矩形：布局单位（1 格 = 98，见 dm_bag_layout.h）按网格量出的比例换算到屏幕，再用按钮自己的命中函数往四边二分量准。
+// 光标已经在按钮上就直接从光标量。量不到（不在屏上 / 布局变了）返回 0，调用处就不接管。
+// Button screen rect: layout units (1 cell = 98, see dm_bag_layout.h) converted to the screen with the scale measured from the
+// grid, then the four edges refined with the button's own hit test. When the cursor is already on the button, measure from it.
+// Returns 0 when it cannot be measured (not on screen / layout changed) and the caller then does not take over.
+static int store_btn_rect(uint64_t btn, const dm_store_grid *g, int px, int py) {
+    int vw = *(int32_t *)(B + 0x211da38), vh = *(int32_t *)(B + 0x211da3c), sx, sy;
+    if (HIT(btn, px, py)) { sx = px; sy = py; }
+    else {
+        if (!g || g->cell <= 0) return 0;
+        int32_t *r = (int32_t *)(btn + 0x70); double u = g->cell / (double)DM_STORE_CELL_UNITS;   // 1 面板单位 = u 像素 | 1 panel unit = u pixels
+        sx = g->r.x + (int)((r[0] + r[2] / 2 - DM_BAG_GRID_X) * u);
+        sy = g->r.y + (int)((r[1] + 20 - DM_BAG_GRID_Y) * u);
+        if (sx < 0 || sy < 0 || sx >= vw || sy >= vh) return 0;
+        int st = (int)(2 * u); if (st < 1) st = 1; if (st > 4) st = 4;   // 按钮高度从布局推不出，竖着探一小段 | the height is not in the layout, probe a short vertical span
+        int got = 0; for (int y = sy; y < sy + (int)(90 * u) && y < vh; y += st) if (HIT(btn, sx, y)) { sy = y; got = 1; break; }
+        if (!got) return 0;
+    }
+    int a, b, x0, x1, y0, y1;
+    for (a = 0, b = sx; a < b;) { int mid = (a + b) / 2; if (HIT(btn, mid, sy)) b = mid; else a = mid + 1; } x0 = a;
+    for (a = sx, b = vw - 1; a < b;) { int mid = (a + b + 1) / 2; if (HIT(btn, mid, sy)) a = mid; else b = mid - 1; } x1 = a;
+    for (a = 0, b = sy; a < b;) { int mid = (a + b) / 2; if (HIT(btn, sx, mid)) b = mid; else a = mid + 1; } y0 = a;
+    for (a = sy, b = vh - 1; a < b;) { int mid = (a + b + 1) / 2; if (HIT(btn, sx, mid)) a = mid; else b = mid - 1; } y1 = a;
+    g_sbtn = (dm_store_rect){ x0, y0, x1 - x0 + 1, y1 - y0 + 1 }; g_sbtn_ok = 1; return 1;
+}
+
+static void store_pad_nav(uint64_t root, uint64_t inv, uint64_t boxw) {
+    if (!root || !panel_up(inv)) return;
+    uint64_t grid = find_w(inv, "grid", 1), btn = find_w(boxw, "TouchStore", 1);
+    uint64_t fm = *(uint64_t *)(root + 0xd0), hov = fm ? *(uint64_t *)(fm + 0x178) : 0;
+    if (!grid || !btn || !hov) return;
+    int vw = *(int32_t *)(B + 0x211da38), vh = *(int32_t *)(B + 0x211da3c);
+    if (vw != g_svw || vh != g_svh) { g_svw = vw; g_svh = vh; g_sgrid_ok = g_sbtn_ok = g_sprev_ok = 0; }
+    int cx = *(int32_t *)(B + 0x2d128f8), cy = *(int32_t *)(B + 0x2d128fc);
+    if (hov == grid && HIT(grid, cx, cy)) {
+        if (!store_grid_rect(grid, cx, cy)) return;
+        if (dm_store_row(&g_sgrid, cy) != g_sgrid.rows - 1) return;   // 不在最下一行：↓ 交原版，不量按钮 | not the last row: Down stays with the original, do not measure the button
+        if (!store_btn_rect(btn, &g_sgrid, cx, cy)) return;
+        int x, y; if (!dm_store_down_target(&g_sgrid, &g_sbtn, cx, cy, &x, &y)) return;   // x 不在按钮范围：↓ 交原版 | x outside the button: Down stays with the original
+        if (dm_padmode_page_keys(DM_BTN_DOWN) & DM_BTN_DOWN) {
+            g_sprev_x = cx; g_sprev_y = cy; g_sprev_ok = 1;
+            if (dm_ui_hover_now(x, y)) LOG("存放：手柄 ↓ 进按钮中心 (%d,%d)，记住网格点 (%d,%d)", x, y, cx, cy);
+        }
+        return;
+    }
+    if (hov != btn || !g_sgrid_ok) return;   // 没量过网格（不是从 ↓ 进来的）：不接管 | grid never measured (did not come in through Down): do not take over
+    if (!g_sbtn_ok || !dm_store_in_rect(&g_sbtn, cx, cy)) { if (!store_btn_rect(btn, &g_sgrid, cx, cy)) return; }
+    if (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP) {
+        int x, y; dm_store_back(&g_sgrid, &g_sbtn, g_sprev_ok, g_sprev_x, g_sprev_y, &x, &y);
+        if (dm_ui_hover_now(x, y)) LOG("存放：手柄 ↑ 回网格 (%d,%d)%s", x, y, g_sprev_ok && dm_store_in_rect(&g_sgrid.r, g_sprev_x, g_sprev_y) ? "（进来前那一格）" : "（按钮正上方那格）");
+    }
+}
+
 static void ui_pump(void) {
     // 百宝囊的控件全部插在物品栏布局里（pouch_layout.py）：先取物品栏面板（界面根的直接子控件，dm_widget.h），再在面板里找；物品栏没开就不扫整棵界面树
     // All of the pouch widgets are inserted into the inventory layout (pouch_layout.py): first get the inventory panel (a direct child of the UI root, dm_widget.h), then search inside it; when the inventory is not open, the whole UI tree is not scanned
@@ -454,6 +548,8 @@ static void ui_pump(void) {
     if (atomic_exchange(&g_pouch_tap, 0)) tip_show(root, !g_tip);
     if (g_tip) tip_show(root, 1);   // 文字控件量尺寸要晚一两帧（fitToText）：开着时每帧对齐 | Text widgets measure their size a frame or two late (fitToText): align every frame while open
     { void dm_bag_ui(uint8_t *, uint64_t, uint64_t, uint64_t); dm_bag_ui(B, inv, boxw, cli_player()); }   // 大背包图标条（dm_bag.c） | Large-bag strip (dm_bag.c)
+    // 「存放」按钮的手柄焦点进出：物品栏开着、手柄模式、无模态框、按钮开着才跑（触屏模式原版光标不归这里）| controller focus in / out of the Deposit button: only with the inventory open, in controller mode, no modal, and the button on
+    if (inv && sb && dm_padmode_current() && !dm_ui_modal_active(root)) store_pad_nav(root, inv, boxw);
     { void dm_stack_ui(uint8_t *, uint64_t, uint64_t); dm_stack_ui(B, boxw, cli_player()); }   // 药水叠数与拆分框（dm_stack.c） | Potion counts and the split box (dm_stack.c)
 }
 

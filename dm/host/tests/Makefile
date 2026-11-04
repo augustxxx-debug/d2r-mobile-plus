@@ -99,7 +99,8 @@ run: \
 	$(B)/t_widget \
 	$(B)/t_stack_rule \
 	$(B)/t_cursor_item_page \
-	$(B)/t_bag_rule
+	$(B)/t_bag_rule \
+	$(B)/t_store_padfocus
 	python3 native_write_scan.py --selftest ..
 	python3 widget_cache_scan.py --selftest ..
 	python3 mode_scan.py ../..
@@ -194,6 +195,7 @@ run: \
 	$(B)/t_stack_rule
 	$(B)/t_cursor_item_page
 	$(B)/t_bag_rule
+	$(B)/t_store_padfocus
 	$(B)/t_doorspot
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
 	TMPDIR="$(abspath $(B))" $(B)/t_savepkg 2>/dev/null
@@ -225,6 +227,8 @@ $(B)/t_cursor_item_page: t_cursor_item_page.c ../dm_cursor_item.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_cursor_item_page.c
 $(B)/t_bag_rule: t_bag_rule.c ../dm_bag_rule.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_bag_rule.c
+$(B)/t_store_padfocus: t_store_padfocus.c ../dm_store_nav.h | $(B)
+	clang -O1 -Wall -Werror -o $@ t_store_padfocus.c
 $(B)/t_unit_level: t_unit_level.c ../dm_unit.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_unit_level.c
 $(B)/t_padmap: t_padmap.c ../dm_padmap.h ../dm_input.h | $(B)

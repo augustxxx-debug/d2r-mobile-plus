@@ -937,13 +937,17 @@ void dm_custom_tel_answer(int yes) {
     if (dm_custom_tel_stats() != ts0) dm_telemetry_setting_changed(yes);
 }
 // 这一页上的普通勾选行：页刚出现时摆成该显示的值，之后玩家点了就记待定值（两项单选行存一个键）| Plain checkbox rows of a page: set to the value to show when the page appears, then record pending values on taps (two-option radio rows store one key)
-// 只有触屏才起作用的两行：手柄模式置灰、副文「仅触屏」（D8），设置值不动 | the two touch-only rows: greyed in controller mode with the subtext "touch only" (D8), the setting stays
+// 只有触屏才起作用的那一行（换组键位置）：手柄模式置灰、副文「仅触屏」（D8），设置值不动。
+// 「存放」按钮两种模式都在屏上（REQ12），手柄模式下也照常可勾选、焦点链走到它（dm_pouch.c store_pad_nav）。
+// The one touch-only row (swap position): greyed in controller mode with the subtext "touch only" (D8), the setting stays.
+// The Deposit button is on screen in both modes (REQ12), so in controller mode its row stays a normal, focusable checkbox
+// (the focus chain is store_pad_nav in dm_pouch.c).
 // iCloud 能不能用：页刚出现时问一次，之后每 60 帧（约 1 秒）再问一次，不每帧调 ubiquityIdentityToken（审计 r1 P2-8） | iCloud usability: asked once when the page appears, then every 60 frames (about 1 s), not every frame (audit r1 P2-8)
 #ifndef __ANDROID__
 static int g_icloud_probes;   // 单测核调用次数 | call count for the unit test
 static int icloud_available_throttled(int fresh) { static int ok = 1, n; if (fresh || n <= 0) { ok = dm_icloud_available(); g_icloud_probes++; n = 60; } n--; return ok; }
 #endif
-static int touch_only_row(int i) { return i == K_TOUCH_SWAP || !strcmp(k_keys[i], "store_btn"); }
+static int touch_only_row(int i) { return i == K_TOUCH_SWAP; }
 static void sync_toggles(uint64_t sp, int page, dm_wref *seen) {
     int dm_padmode_current(void); int pad = dm_padmode_current();
     for (int i = 1; i < NK; i++) { if (!row_on_page(i, page)) continue; char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
@@ -991,11 +995,13 @@ static void game_ui_pump(uint64_t root) {
         if (!vt_good) LOG("【红】游戏页：面板虚表里没有 main+0xae5f28，不写「有改动」位（原版版本变了？）"); }
     if (vt_good && enhanced_settings_dirty() && !*(uint8_t *)(sp + 0x1a0)) { *(uint8_t *)(sp + 0x1a0) = 1; LOG("游戏页：Plus 勾选有未应用的改动 → 「应用 / 放弃」点亮"); }
 }
-// 手柄焦点停靠点：本页可选的 Plus 勾选框，按表序；只有触屏才起作用的两行不停靠（D8）| Controller focus stops: this page's selectable Plus checkboxes in table order; the two touch-only rows are not stops (D8)
+// 手柄焦点停靠点：本页可选的 Plus 勾选框，按表序；只有触屏才起作用的那一行不停靠（D8）。
+// 「存放」按钮两种模式都在屏上（REQ12），手柄模式下也停靠 | Controller focus stops: this page's selectable Plus checkboxes in table order; the one touch-only row is not a stop (D8).
+// The Deposit button is on screen in both modes (REQ12), so it is a stop in controller mode too.
 int dm_custom_game_stops(unsigned long long gp, unsigned long long *out, int max) {
     int n = 0; const char *grp = NULL; for (int o = 0; o < N_OPTS && n < max; o++) { int i = key_index(k_opts[o].key); if (i < 0 || !row_on_page(i, PG_GAME)) continue; char nm[48];
         if (!grp || strcmp(grp, k_opts[o].group)) { grp = k_opts[o].group; snprintf(nm, sizeof nm, "TouchFold%s", grp); uint64_t f = find_w(gp, nm, 0); if (f && n < max) out[n++] = f; }
-        if (i == K_TOUCH_SWAP || !strcmp(k_keys[i], "store_btn")) continue;
+        if (i == K_TOUCH_SWAP) continue;
         snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]); uint64_t w = find_w(gp, nm, 0); if (w && *(uint8_t *)(w + 0x50)) out[n++] = w; }
     { uint64_t f = find_w(gp, "TouchFoldOrig", 0); if (f && n < max) out[n++] = f; }
     return n;
