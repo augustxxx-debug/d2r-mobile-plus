@@ -191,7 +191,7 @@ static struct {
     id<MTLBuffer> badv; uint32_t bad_seen[2];   // 坏顶点计数缓冲与已报过的数 | bad-vertex counter buffer and the counts already reported
     double hang_t; int hang_seen, hang_events;   // GPU 挂起保护：已看过的挂起计数、上次挂起事件时刻、事件数 | GPU hang protection: hang count already seen, time of the last hang event, number of events
     int preset, ao_latched, area_seen;   // 玩家档（-1 = DM_RT_SHADOW 钉住，不跟设置）；降档关掉 AO 后本关不再开回；上次见到的关卡 | player level (-1 = pinned by DM_RT_SHADOW, not following the setting); AO stays off for the rest of the level once the downgrade dropped it; the level last seen
-    rts_gov gov; rts_lvl_params eff; int auto_on, lvl_pin; double pause_until;   // pause_until：GPU 挂起保护的暂停到这个时刻（0 = 没暂停） | pause_until: the hang-protection pause lasts until this time (0 = not paused)
+    rts_gov gov; rts_lvl_params eff; int auto_on, lvl_pin, hang_floor; double pause_until, hang_next;   // pause_until：GPU 挂起保护的暂停到这个时刻（0 = 没暂停） | pause_until: the hang-protection pause lasts until this time (0 = not paused)
     double ts_tick, rt_sum, fr_sum; uint64_t rt_n, fr_n, n_lvl_down, n_lvl_up, n_gov_skip;   // 自动降档：档位状态、本档实际参数、时间戳每拍毫秒、600 帧统计 | automatic downgrade: level state, effective parameters, ms per timestamp tick, 600-frame counters
     int ao_on, ao_pin, ao_rays, ao_done, ao_applied; float ao_radius, ao_strength; id<MTLComputePipelineState> ps_ao, ps_aoblur, ps_ao_a; id<MTLTexture> ao_half, ao_tmp, ao_full; uint64_t n_ao_traced, n_ao_applied, n_ao_missed;   // 光追 AO（实验性）：设置、管线、半分辨率 / 模糊 / 全分辨率贴图、统计 | ray-traced AO (experimental): settings, pipelines, half-res / blur / full-res textures, counters
     // 光追内存（2026-10-28 真机内存 P1 之后）：budget0 = 网格缓存上限的设置值（DM_RT_SHADOW_CACHE_MB，缺省 64 MB），budget = 按预算 / 告警收紧后的生效值；mem_avail = 光追建好时离系统内存上限（0 = 不知道）
@@ -250,7 +250,9 @@ static rts_lvl_params rts_lvl_of(int lvl) { return rts_lvl_apply(lvl, g_rts.poin
 static int rts_mem_floor(void) { return MAX(g_rts.memw.floor, g_rts.mplan.lvl_floor); }   // 内存定的最低档：自动降档与 DM_RT_LEVEL 都不低于它 | the lowest level memory allows: neither the automatic downgrade nor DM_RT_LEVEL goes below it
 static double rts_now(void);
 static void rts_lvl_update(void) {   // 自动降档换了档，或挂起保护的暂停开始 / 结束：从这一帧起生效 | the automatic downgrade changed level, or the hang-protection pause began / ended: effective from this frame
-    if (g_rts.gov.lvl < rts_mem_floor()) g_rts.gov.lvl = rts_mem_floor();
+    // 自动调档关时 gov.lvl 只是算出来的实际档（玩家档与保护下限取保守的那个），不由降档器改；开时照旧：降档器的档被下限抬起
+    // with the governor off gov.lvl is only the computed effective level (the more conservative of the player level and the protection floors), never moved by the governor; on: as before, the governor's level raised by the floors
+    g_rts.gov.lvl = rts_eff_lvl(g_rts.auto_on, g_rts.gov.lvl, g_rts.lvl_pin >= 0 ? g_rts.lvl_pin : g_rts.gov.min_lvl, rts_mem_floor(), g_rts.hang_floor);
     g_rts.eff = rts_lvl_of(g_rts.gov.lvl);
     // 室内：点光是主光，哪一档都至少 1 盏（最近最亮、排除随身光，1/4 分辨率）；太阳在室内本来就不追，省下的正好给它 | indoors the point lights are the key light: at least 1 on every level (closest / brightest, the character's own excluded, quarter resolution); the sun is not traced indoors, so its budget goes to them
     if (g_rts.indoor > 0 && g_rts.part && g_rts.point_on && !g_rts.eff.point_on) { g_rts.eff.point_on = 1; g_rts.eff.point_n = 1; g_rts.eff.point_div = 4; g_rts.eff.excl_player = 1; }
@@ -316,9 +318,12 @@ static int rts_on(void) {
         { const char *ao = getenv("DM_RT_AO"), *ar = getenv("DM_RT_AO_RADIUS"), *as = getenv("DM_RT_AO_STRENGTH"), *an = getenv("DM_RT_AO_RAYS");
           g_rts.ao_pin = ao ? atoi(ao) != 0 : -1; g_rts.ao_on = g_rts.ao_pin > 0; g_rts.ao_radius = ar ? (float)atof(ar) : RTS_AO_RADIUS; if (!(g_rts.ao_radius > 0 && g_rts.ao_radius <= 2000)) g_rts.ao_radius = RTS_AO_RADIUS;
           g_rts.ao_strength = as ? (float)atof(as) : 0.6f; if (!(g_rts.ao_strength >= 0 && g_rts.ao_strength <= 1)) g_rts.ao_strength = 0.6f; g_rts.ao_rays = an ? atoi(an) : 4; if (g_rts.ao_rays < 1 || g_rts.ao_rays > 16) g_rts.ao_rays = 4; }
-        // 自动降档：缺省开（DM_RT_AUTO=0 关）；DM_RT_LEVEL=<0–3> 钉住档位（同时关掉自动） | automatic downgrade: on by default (DM_RT_AUTO=0 turns it off); DM_RT_LEVEL=<0–3> pins a level (and turns automatic off)
+        // 自动降档：B149 起缺省关（用户 2026-11-04：按玩家选的档位跑，点光阴影 / AO 不再被运行中自动关掉）；DM_RT_AUTO=1 打开（实验对比用）；DM_RT_LEVEL=<0–3> 钉住档位（同时关掉自动）。
+        // 系统内存告警降档（rts 内存那一节）与 GPU 挂起保护的暂停不归这里管，照旧：那两条防的是被系统结束进程与 GPU 卡死
+        // automatic downgrade: off by default from B149 (user 2026-11-04: run at the player's chosen level; point-light shadows / AO are no longer switched off mid-run); DM_RT_AUTO=1 turns it on (for comparisons); DM_RT_LEVEL=<0–3> pins a level (and turns automatic off).
+        // The memory-warning downgrade (the rts memory section) and the GPU-hang protection pause are not governed here and stay: they guard against the process being killed and the GPU hanging
         { const char *ae = getenv("DM_RT_AUTO"), *le = getenv("DM_RT_LEVEL"); g_rts.lvl_pin = le ? atoi(le) : -1; if (g_rts.lvl_pin > RTS_LVL_MAX) g_rts.lvl_pin = RTS_LVL_MAX;
-          g_rts.auto_on = g_rts.lvl_pin < 0 && (ae ? atoi(ae) != 0 : 1); rts_gov_init(&g_rts.gov, RTS_LVL_MAX); if (g_rts.lvl_pin > 0) g_rts.gov.lvl = g_rts.lvl_pin; rts_lvl_update(); }   // 缺省 2 盏（评审：先 1–2 盏重要灯） | 2 by default (review: 1–2 important lights first)
+          g_rts.auto_on = g_rts.lvl_pin < 0 && (ae ? atoi(ae) != 0 : 0); rts_gov_init(&g_rts.gov, RTS_LVL_MAX); if (g_rts.lvl_pin > 0) g_rts.gov.lvl = g_rts.lvl_pin; rts_lvl_update(); }   // 缺省 2 盏（评审：先 1–2 盏重要灯） | 2 by default (review: 1–2 important lights first)
         // 前缀与宿主 dm_rt_shadow_setting 的「光追阴影：生效」同一个：钉住时不走宿主那条，分享诊断日志的摘要照样取得到 | same prefix as "光追阴影：生效" in the host dm_rt_shadow_setting: when pinned that path is skipped, and the share-diagnostics summary still finds the line
         if (e) MLOG("光追阴影：生效 %s（测试开关 DM_RT_SHADOW=%s 钉住%s）", atoi(e) && g_rts.gate ? "开" : "关", e, g_rts.gate ? "" : "，机器不可用，仍不生效");
     }
@@ -475,7 +480,7 @@ static int rts_setup(void) {
       MLOG("光追阴影：建好（TLAS %lu KiB、暂存 %lu KiB、最多 %d 实例、网格缓存预算 %llu MB、蒙皮导出每帧 ≤ %d、点光 %s ≤ %d 盏（GPU 分簇收集）、软阴影 %s、太阳射线 %s、点光射线 1/%d 分辨率、玩家光 × %.2f、包里 _rt 变体 %d 个、%s）",
           (unsigned long)(sz.accelerationStructureSize >> 10), (unsigned long)(g_rts.scratch_len >> 10), RTS_MAX_INST, (unsigned long long)(g_rts.budget >> 20), RTS_MAX_EXPORT, g_rts.point_on ? "开" : "关", g_rts.point_n, g_rts.soft > 0 ? "开" : "关（DM_RT_SOFT）", g_rts.soft > 0 ? "全分辨率（软阴影）" : g_rts.sun_half ? "半分辨率 + 上采样" : "全分辨率", g_rts.point_div ? g_rts.point_div : 2, g_rts.player_scale, nrt,
           g_rts.part ? "局部回退 开（进 TLAS 的太阳阴影绘制不画进阴影图，没进的照原版画；太阳取最大阴影图的光源）" : "局部回退 关（整帧清图，DM_RT_SHADOW_PART=0）"); }
-    { char b[160]; MLOG("光追降档：自动 %s，当前第 %d 档（%s；0 = 全开、1 = 太阳全分辨率 + 点光 2 盏 + 关 AO、2 = 太阳半分辨率 + 点光 1 盏（排除随身光）、3 = 太阳半分辨率 + 关点光 + 镂空照原版；暂停只给 GPU 挂起保护；按光追通道与整帧 GPU 时间对出图节拍预算判）", g_rts.auto_on ? "开" : g_rts.lvl_pin >= 0 ? "关（DM_RT_LEVEL 钉住）" : "关（DM_RT_AUTO=0）", g_rts.gov.lvl, rts_lvl_desc(b, sizeof b)); }
+    { char b[160]; MLOG("光追降档：自动 %s，当前第 %d 档（%s；0 = 全开、1 = 太阳全分辨率 + 点光 2 盏 + 关 AO、2 = 太阳半分辨率 + 点光 1 盏（排除随身光）、3 = 太阳半分辨率 + 关点光 + 镂空照原版；暂停只给 GPU 挂起保护；按光追通道与整帧 GPU 时间对出图节拍预算判）", g_rts.auto_on ? "开" : g_rts.lvl_pin >= 0 ? "关（DM_RT_LEVEL 钉住）" : "关（缺省，B149：按玩家档位跑；DM_RT_AUTO=1 打开）", g_rts.gov.lvl, rts_lvl_desc(b, sizeof b)); }
     { static float bias = -1; if (bias < 0) { const char *e = getenv("DM_RT_SHADOW_BIAS"); bias = e ? (float)atof(e) : 0.6f; }   // 与追踪核同一个读法 | read the same way as the trace kernels
       float nb, nl; rts_sun_bias(&nb, &nl);
       MLOG("光追质量：太阳 %s、太阳射线 %s、点光 %s、射线偏移 %.2f、法线偏移 %.2f、背光面 %s、局部回退 %s、点光只替换原版投影的灯 %s、主菜单 / 选角 %s（分享诊断日志摘要键）", g_rts.soft > 0 ? [NSString stringWithFormat:@"软阴影（接触硬化，强度 %.1f、距离归一 %.0f）", g_rts.soft, g_rts.soft_maxd].UTF8String : "硬阴影",
@@ -607,9 +612,9 @@ static void rts_mem_frame(uint64_t f) {   // 帧开头：新告警、迟滞放�
     { static int nt = -1; static unsigned long long tf[4]; if (nt < 0) { const char *e = getenv("DM_TEST_RT_MEMWARN"); nt = e ? sscanf(e, "%llu,%llu,%llu,%llu", &tf[0], &tf[1], &tf[2], &tf[3]) : 0; if (nt < 0) nt = 0; }   // 测试开关 DM_TEST_RT_MEMWARN=<帧>[,…]：这几帧假装收到系统内存告警（Mac 没有系统告警） | test switch DM_TEST_RT_MEMWARN=<frame>[,…]: pretend a system memory warning at these frames (the Mac has none)
       for (int i = 0; i < nt; i++) if (tf[i] && f == tf[i]) { atomic_fetch_add(&g_mem_warn_n, 1); MLOG("DM_TEST_RT_MEMWARN：第 %llu 帧假装收到系统内存告警", (unsigned long long)f); } }
     uint32_t w = atomic_load(&g_mem_warn_n); if (w != g_rts.memw_seen) { g_rts.memw_seen = w; rts_mem_warned(); }
-    if (rts_memw_tick(&g_rts.memw, rts_now())) { char b[160]; rts_mem_apply();
-        MLOG("光追内存：告警解除一档（最后一次告警 %.0f 秒前）：最低第 %d 档、网格缓存上限 %llu MB、AO %s；升不升档仍由自动降档按 GPU 余量定（当前第 %d 档：%s）", rts_now() - g_rts.memw.t_last, rts_mem_floor(), (unsigned long long)(g_rts.budget >> 20),
-             g_rts.ao_on ? (g_rts.memw.ao_off || g_rts.mplan.ao_off ? "仍关" : "可开") : "没开", g_rts.gov.lvl, rts_lvl_desc(b, sizeof b)); }
+    if (rts_memw_tick(&g_rts.memw, rts_now())) { char b[160]; rts_mem_apply(); rts_lvl_update();   // 自动调档关：下限放宽就重算实际档，回落到玩家档（B149 终审 P1-1）| governor off: recompute the effective level as the floor loosens, back down to the player level (B149 final audit P1-1)
+        MLOG("光追内存：告警解除一档（最后一次告警 %.0f 秒前）：最低第 %d 档、网格缓存上限 %llu MB、AO %s；%s（当前第 %d 档：%s）", rts_now() - g_rts.memw.t_last, rts_mem_floor(), (unsigned long long)(g_rts.budget >> 20),
+             g_rts.ao_on ? (g_rts.memw.ao_off || g_rts.mplan.ao_off ? "仍关" : "可开") : "没开", g_rts.auto_on ? "升不升档由自动降档按 GPU 余量定" : "自动调档关，按玩家档与下限取保守", g_rts.gov.lvl, rts_lvl_desc(b, sizeof b)); }
 }
 // 上一帧的光追完不完整：NULL = 完整（或本帧不需要），否则是原因 | Was the previous frame's ray tracing complete: NULL = complete (or not needed), else the reason
 static const char *rts_frame_fail(void) {
@@ -636,11 +641,15 @@ static const char *rts_unc_str(char *b, size_t n, const uint64_t *c64, const int
 static void rts_hang_check(uint64_t f) {
     { static int nt = -1; static unsigned long long tf[2]; if (nt < 0) { const char *e = getenv("DM_TEST_RT_HANG"); nt = e ? sscanf(e, "%llu,%llu", &tf[0], &tf[1]) : 0; if (nt < 0) nt = 0; }   // 测试开关：到这些帧号假装报了一次挂起（只读环境变量，不分配） | test switch: pretend a hang was reported at these frames (reads an environment variable only, allocates nothing)
       for (int i = 0; i < nt; i++) if (tf[i] && f == tf[i]) { atomic_fetch_add(&g_gpu_hang_n, 2); MLOG("DM_TEST_RT_HANG：第 %llu 帧假装 GPU 挂起", (unsigned long long)f); } }
+    if (!g_rts.auto_on && rts_now() >= g_rts.pause_until && rts_hangfloor_tick(&g_rts.hang_floor, &g_rts.hang_next, rts_now(), RTS_MEMW_STEP_S)) { char b[160]; rts_lvl_update();
+        MLOG("光追阴影：GPU 挂起保护放宽一档：保护下限第 %d 档 → 当前第 %d 档（%s）%s", g_rts.hang_floor, g_rts.gov.lvl, rts_lvl_desc(b, sizeof b), g_rts.hang_floor ? "" : "，已回到玩家档"); }
     int h = atomic_load(&g_gpu_hang_n); if (h == g_rts.hang_seen) return;
     int nnew = h - g_rts.hang_seen; g_rts.hang_seen = h; double now = rts_now();
     if (g_rts.hang_events && now - g_rts.hang_t < 3.0) { g_rts.hang_t = now; return; }   // 同一次挂起的后续报错 | follow-up errors of the same hang
     g_rts.hang_t = now; g_rts.hang_events++;
-    if (g_rts.hang_events == 1) { g_rts.gov.lvl = RTS_LVL_MAX; g_rts.gov.t_change = now; g_rts.gov.hold_up = 120; g_rts.pause_until = now + 120; rts_lvl_update();
+    if (g_rts.hang_events == 1) { g_rts.gov.lvl = RTS_LVL_MAX; g_rts.gov.t_change = now; g_rts.gov.hold_up = 120; g_rts.pause_until = now + 120;
+        if (!g_rts.auto_on) { g_rts.hang_floor = RTS_LVL_MAX; g_rts.hang_next = now + 120 + RTS_MEMW_STEP_S; }   // 自动调档关：保护下限到最低档，暂停结束后每 30 秒放宽一档、回到玩家档 | governor off: the protection floor goes to the lowest level, loosened one level per 30 s after the pause, back to the player level
+        rts_lvl_update();
         MLOG("【红】光追阴影：GPU 挂起（命令缓冲报 Caused GPU Hang %d 条）→ 光追暂停 120 秒（原版阴影），之后从第 %d 档恢复、再 120 秒内不升；再挂一次本次运行关掉光追", nnew, RTS_LVL_MAX); }
     else { g_rts.failed = 1; MLOG("【红】光追阴影：GPU 又挂起（第 %d 次事件）→ 本次运行关掉光追，退回原版阴影图", g_rts.hang_events); }
 }
@@ -669,7 +678,7 @@ static void rts_frame_begin(uint64_t f) {
               (unsigned long long)g_rts.n_alpha_rt_draws, (unsigned long long)wtot, o ? wb : "无",
               atomic_load(&g_rts_alpha_st) == 2 ? "可用" : atomic_load(&g_rts_alpha_st) == 1 ? "在编" : atomic_load(&g_rts_alpha_st) == -2 ? "关" : "无", g_rts.alpha_nfs, g_rts.n_var_loaded, g_rts.n_var_missing, (unsigned long long)g_rts.n_exp_lost, (unsigned long long)g_rts.n_instanced); }
         { char b[160]; MLOG("光追降档：第 %llu 帧 当前第 %d 档（%s）%s；光追 GPU 均值 %.2f ms（%llu 帧）、整帧 GPU 均值 %.2f ms；累计降 %llu 次、升 %llu 次、不计建网格 / 开局的帧 %llu；降档器 光追 %.2f、整帧 %.2f、预算 %.2f、样本 %d、最高档 %d、超预算已持续 %.1f 秒、距上次换档 %.1f 秒", (unsigned long long)g_rts.n_frames, g_rts.gov.lvl,
-              g_rts.auto_on ? "自动" : g_rts.lvl_pin >= 0 ? "DM_RT_LEVEL 钉住" : "自动关（DM_RT_AUTO=0）", rts_lvl_desc(b, sizeof b), g_rts.rt_n ? g_rts.rt_sum / g_rts.rt_n : 0, (unsigned long long)g_rts.rt_n, g_rts.fr_n ? g_rts.fr_sum / g_rts.fr_n : 0,
+              g_rts.auto_on ? "自动" : g_rts.lvl_pin >= 0 ? "DM_RT_LEVEL 钉住" : "自动关（缺省，B149：按玩家档位跑）", rts_lvl_desc(b, sizeof b), g_rts.rt_n ? g_rts.rt_sum / g_rts.rt_n : 0, (unsigned long long)g_rts.rt_n, g_rts.fr_n ? g_rts.fr_sum / g_rts.fr_n : 0,
               (unsigned long long)g_rts.n_lvl_down, (unsigned long long)g_rts.n_lvl_up, (unsigned long long)g_rts.n_gov_skip, g_rts.gov.rt, g_rts.gov.fr, 1000.0 / (mtl_pace_hz() > 0 ? mtl_pace_hz() : 60), g_rts.gov.n, g_rts.gov.max_lvl, g_rts.gov.t_over >= 0 ? rts_now() - g_rts.gov.t_over : -1.0, rts_now() - g_rts.gov.t_change); g_rts.rt_sum = g_rts.fr_sum = 0; g_rts.rt_n = g_rts.fr_n = 0; }
         { char mb[480] = ""; size_t o = 0;   // 上一帧的阴影图各是什么、怎么处理（这时表还是上一帧的） | what each of the previous frame's shadow maps was and how it was handled (the table still belongs to the previous frame here)
           for (int i = 0; i < g_rts.nsmap && o + 1 < sizeof mb; i++) { typeof(g_rts.smap[0]) *e = &g_rts.smap[i]; float d[3] = {0, 0, 0}; if (e->has_l) rts_sun_from_lvp(e->l, d);

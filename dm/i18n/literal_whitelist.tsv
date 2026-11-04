@@ -123,7 +123,6 @@ host/dm_custom.c	本机不支持（插值器 / 屏幕 / 内存档位）	同上�
 host/dm_custom.c	30 帧档下不可用	同上，只进日志
 host/dm_custom.c	高刷档下不可用	同上，只进日志
 host/dm_custom.c	光追开着	同上，只进日志
-host/dm_custom.c	温控退档	同上，只进日志
 host/dm_custom.c	本端暂未接入	同上：AI 帧生成状态原因（安卓 / 鸿蒙壳按关生效），只进日志
 host/dm_custom.c	（钉住 %d）	同上：钉住的档位（DM_TEST_FG / DM_FGEN_PRESET）写进「帧生成：状态」行
 host/dm_custom.c	=、	同上：日志里各项之间的分隔

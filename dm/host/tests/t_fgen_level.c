@@ -77,9 +77,9 @@ int main(int argc, char **argv) {
     CHECK(!strcmp(k_keys[K_FGEN], "fgen_level")); CHECK(k_def[K_FGEN] == DM_FGEN_OFF);
     // 插进 fgen_level 之后每个 K_* 宏仍指向它名字的键（前面写死的、后面 NK - n 倒数的都核）| after inserting fgen_level every K_* macro still names its key (both the fixed and the NK - n ones)
     { static const struct { int k; const char *name; } km[] = { { K_VOICE, "voice" }, { K_MERC, "merc_pot" }, { K_ICLOUD, K_ICLOUD_KEY }, { K_FPS, "eco_fps" }, { K_Q3D, "q3d" }, { K_TOUCH_SWAP, "touch_swap_above" },
-          { K_FGEN, "fgen_level" }, { K_TELSTATS, "tel_stats" }, { K_AUTOCRASH, "auto_crash" }, { K_BRIGHT, "bright_level" }, { K_FPSHUD, "fps_hud" }, { K_UPSCALE, "upscale" }, { K_RES, "render_res" }, { K_RTLVL, "rt_level" } };
+          { K_FGEN, "fgen_level" }, { K_DYN3D, "dyn3d" }, { K_TELSTATS, "tel_stats" }, { K_AUTOCRASH, "auto_crash" }, { K_BRIGHT, "bright_level" }, { K_FPSHUD, "fps_hud" }, { K_UPSCALE, "upscale" }, { K_RES, "render_res" }, { K_RTLVL, "rt_level" } };
       for (unsigned i = 0; i < sizeof km / sizeof *km; i++) CHECK(km[i].k >= 0 && km[i].k < NK && !strcmp(k_keys[km[i].k], km[i].name));
-      CHECK((int)(sizeof k_def / sizeof *k_def) == NK && k_def[key_index("belt_refill")] == 1 && k_def[key_index("free_tp")] == 1 && k_def[K_BRIGHT] == 2);
+      CHECK((int)(sizeof k_def / sizeof *k_def) == NK && k_def[key_index("belt_refill")] == 1 && k_def[key_index("free_tp")] == 1 && k_def[K_BRIGHT] == 2 && k_def[K_DYN3D] == 0);
       CHECK(!strcmp(k_bak_name[BAK_FGEN], "fgen_level") && N_BAK == 4 && !strcmp(k_bak_name[1], "rt_level")); }
     write_settings("");
     CHECK(dm_fgen_level() == DM_FGEN_OFF); CHECK(dm_custom_get("fgen_level") == 0); CHECK(!dm_fg_setting());
@@ -229,12 +229,12 @@ int main(int argc, char **argv) {
     CHECK(!strcmp(fg_note_key(0, FG_OFF, 0, 0), "dmGraphicsFrameGenNoHw")); CHECK(!strcmp(fg_note_key(0, FG_ON, 1, 1), "dmGraphicsFrameGenNoHw"));                     // 置灰优先写原因 | greyed: the reason first
     CHECK(!strcmp(fg_note_key(1, FG_OFF, 0, 0), "dmIosGraphicsFrameGenNote")); CHECK(!strcmp(fg_note_key(1, FG_ON, 1, 0), "dmIosGraphicsFrameGenNote"));               // 关着 / 生效：写代价 | off / in effect: the cost
     CHECK(!strcmp(fg_note_key(1, FG_ECO30, 1, 0), "dmGraphicsFrameGenNoEco")); CHECK(!strcmp(fg_note_key(1, FG_CAPPED, 1, 0), "dmGraphicsFrameGenCapped"));
-    CHECK(!strcmp(fg_note_key(1, FG_RT, 1, 0), "dmGraphicsFrameGenNoRt")); CHECK(!strcmp(fg_note_key(1, FG_HOT, 1, 0), "dmGraphicsFrameGenHot"));
+    CHECK(!strcmp(fg_note_key(1, FG_RT, 1, 0), "dmGraphicsFrameGenNoRt"));
     CHECK(!strcmp(fg_note_key(1, FG_ECO_CLOSED, 1, 0), "dmGraphicsFrameGenEcoClosed")); CHECK(!strcmp(fg_note_key(1, FG_ON, 1, 1), "dmGraphicsFrameGenBackoff")); CHECK(!strcmp(fg_note_key(1, FG_ON, 0, 1), "dmIosGraphicsFrameGenNote"));
     // 页上选着高刷档（90 / 120）或光追（rt_level > 0）时副文写原因、设置照留；选回 60 / 关光追就是代价副文 | high refresh (90 / 120) or ray tracing selected on the page: the reason as subtext, the setting kept; back to 60 / ray tracing off gives the cost again
-    CHECK(fg_reason(DM_FGEN_SMOOTH, 1, 90, 0, 0) == FG_CAPPED && fg_reason(DM_FGEN_SMOOTH, 1, 120, 0, 0) == FG_CAPPED && fg_reason(DM_FGEN_SMOOTH, 1, 60, 1, 0) == FG_RT && fg_reason(DM_FGEN_SMOOTH, 1, 40, 0, 0) == FG_ON);
+    CHECK(fg_reason(DM_FGEN_SMOOTH, 1, 90, 0) == FG_CAPPED && fg_reason(DM_FGEN_SMOOTH, 1, 120, 0) == FG_CAPPED && fg_reason(DM_FGEN_SMOOTH, 1, 60, 1) == FG_RT && fg_reason(DM_FGEN_SMOOTH, 1, 40, 0) == FG_ON);
     // 副文键都在六语表里、都标 iOS 专属（§2.8 不进安卓包）| every subtext key is in the six-language table and marked iOS-only (§2.8: out of the Android package)
-    { static const char *const nk[] = { "dmGraphicsFrameGen", "dmGraphicsFrameGenNoHw", "dmIosGraphicsFrameGenNote", "dmGraphicsFrameGenNoEco", "dmGraphicsFrameGenCapped", "dmGraphicsFrameGenNoRt", "dmGraphicsFrameGenHot", "dmGraphicsFrameGenBackoff", "dmGraphicsFrameGenEcoClosed" };
+    { static const char *const nk[] = { "dmGraphicsFrameGen", "dmGraphicsFrameGenNoHw", "dmIosGraphicsFrameGenNote", "dmGraphicsFrameGenNoEco", "dmGraphicsFrameGenCapped", "dmGraphicsFrameGenNoRt", "dmGraphicsFrameGenBackoff", "dmGraphicsFrameGenEcoClosed" };
       for (unsigned i = 0; i < sizeof nk / sizeof *nk; i++) { int found = 0; for (size_t k = 0; k < sizeof k_dm_i18n / sizeof *k_dm_i18n; k++) found |= !strcmp(k_dm_i18n[k].k, nk[i]) && k_dm_i18n[k].zh[0] && k_dm_i18n[k].en[0] && k_dm_i18n[k].ko[0]; CHECK(found); } }
     // 10. 分享摘要：设置值与生效状态分开（选了平滑、实际正在退档时两处对得上）| share summary: setting value and effective state separately (a chosen smooth level that is currently backed off shows both)
     write_settings("fgen_level=2\n"); (void)dm_fgen_level();

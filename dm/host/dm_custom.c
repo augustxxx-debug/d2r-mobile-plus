@@ -48,9 +48,9 @@
 #else
 #define K_ICLOUD_KEY "icloud"
 #endif
-static const char *const k_keys[] = { "lang", "voice", "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", K_ICLOUD_KEY, "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "fgen_level", "belt_refill", "tel_stats", "auto_crash", "bright_level", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
+static const char *const k_keys[] = { "lang", "voice", "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", K_ICLOUD_KEY, "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "fgen_level", "dyn3d", "belt_refill", "tel_stats", "auto_crash", "bright_level", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
-static const int k_def[NK] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 2, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
+static const int k_def[NK] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 1, 0, 0, 2, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 // voice 恒为第 1 行后，其余下标整体后移一位（键表顺序见上，直接写死，改键表时一并核对）| with voice always row 1 the other indices shift by one (fixed numbers; check them together with the key table)
@@ -65,6 +65,11 @@ static const int k_def[NK] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0
 // （t_fgen_level 逐个核 K_* 宏指向的键名）| fgen_level: AI frame generation level (experimental) 0 off (default) / 1 power saving (enum kept, not opened in this train) / 2 smooth.
 // Inserted after free_tp and before belt_refill so neither the fixed indices above nor the NK - n ones below move (t_fgen_level checks every K_* macro against its key name)
 #define K_FGEN 18
+// dyn3d：动态 3D 分辨率（B147，用户 2026-11-04）：0 关（缺省，3D 比例固定为设置值）/ 1 开（掉帧时 hle_oe.c 自动降 3D 比例、3D 到底再降整帧输出）。
+// 插在 fgen_level 之后、belt_refill 之前（同 fgen_level 的插法）：前面写死的下标与后面按 NK - n 倒数的下标都不动
+// dyn3d: Dynamic 3D resolution (B147, user 2026-11-04): 0 off (default; the 3D scale stays at the configured value) / 1 on (hle_oe.c lowers the 3D scale on dropped frames, then the whole-frame output once 3D is at its floor).
+// Inserted after fgen_level and before belt_refill (as fgen_level was): neither the fixed indices above nor the NK - n ones below move
+#define K_DYN3D 19
 // free_tp（免费回城，dm_freetp.c）缺省开（用户 2026-10-30，RC2 起）：RC1.2 / 安卓 1.0.x 缺省关且存盘写全部键，它们留下的 free_tp=0 分不出是不是玩家关的，所以另记 free_tp_v2：没有这个标记的旧文件迁移一次到开；存盘都带标记，之后玩家再关就一直是关
 // free_tp (free town portal, dm_freetp.c) on by default (user 2026-10-30, from RC2): RC1.2 / Android 1.0.x shipped it off and saved every key, so their free_tp=0 cannot be told from a player choice; hence the free_tp_v2 marker: an old file without it migrates once to on; every save writes the marker, so a later off by the player stays off
 // auto_crash（自动上报崩溃，dm_crashreport.c）缺省关；第一次打开要在游戏内确认框里同意（dm_diagup.c），同意记一行 auto_crash_ok=1（点「应用」才写）。文件里只有 auto_crash=1 没有同意记录 = 当关 | auto_crash (automatic crash reports) off by default; the first enable needs consent in the in-game box, recorded as auto_crash_ok=1 (written on Apply). auto_crash=1 without that record counts as off
@@ -118,7 +123,7 @@ enum { PF_APPLE = 1, PF_ANDROID = 2, PF_ALL = 3 };
 #define PF_HERE PF_APPLE
 #endif
 static const struct { const char *key; unsigned char page; const char *group; unsigned char plat; } k_opts[] = {
-    { "render_res", PG_GFX, "Display", PF_ALL }, { "bright_level", PG_GFX, "Display", PF_ALL },
+    { "render_res", PG_GFX, "Display", PF_ALL }, { "bright_level", PG_GFX, "Display", PF_ALL }, { "dyn3d", PG_GFX, "Display", PF_ALL },
     { "fps_hud", PG_GFX, "Frame", PF_ALL }, { "eco_fps", PG_GFX, "Frame", PF_ALL }, { "dyn_refresh", PG_GFX, "Frame", PF_ALL }, { "fgen_level", PG_GFX, "Frame", PF_APPLE },
     { "upscale", PG_GFX, "Upscale", PF_APPLE }, { "q3d", PG_GFX, "Upscale", PF_APPLE },
     { "rt_level", PG_GFX, "Rt", PF_APPLE },   // RC2 光追档位一行取代 rt_shadow / rt_ao 两个开关（23a2ee3e） | RC2's one ray-tracing level row replaces the rt_shadow / rt_ao switches
@@ -458,26 +463,14 @@ static int fps_effective(int saved) {   // 设置值（eco_fps）+ 测试开关 
     int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t >= 90 ? FPS_120 : 0) : saved;
     return fps_rate(v, t);
 }
-// 高刷档（90 / 120）遇热自动退回 60（用户 2026-10-30 定，原 RC2 待办提前；B060：用户 Duo 开局就是温控 2，进野外打怪 CPU 主频从约 3.6 降到约 1.5 GHz，
-// 120 档 1 分钟内从 113 帧掉到 53）：温控 ≥ 2（严重 / 危急）立刻按 60 走；回落到 ≤ 1 并持续 THERMAL_RECOVER_NS（60 秒）才回本机高刷档（90 或 120），中途再热重新计时，不来回跳。
-// 只动生效帧率（显示节拍、节拍器、ProMotion 表态、3D 比例控制都每帧读 dm_fps_setting，运行时切档已有）；设置文件、图形页帧率格（仍显示玩家选的高刷档）、
-// 超分高画质上限（跟选的帧率）都不变。温控未知（−1：Mac、单测）按凉。DM_THERMAL_NOFALLBACK（功耗测量，front_ios.m 同名开关）不退。
-// 测试开关 DM_TEST_THERMAL=<档>[@秒][,<档>@秒…]（0–3）：按宿主计时秒数换温控，Mac 上验证用。纯函数 fps_thermal_step / thermal_schedule 给单测（t_fps_thermal）
-// The high-refresh stop (90 / 120) falls back to 60 when hot (user 2026-10-30, pulled forward from RC2; B060: the user's Duo started at thermal state 2, and in the field with monsters the CPU clock fell from about 3.6 to about 1.5 GHz,
-// the 120 mode dropping from 113 to 53 fps within a minute): thermal >= 2 (serious / critical) runs at 60 at once; back to this machine's high-refresh rate (90 or 120) only after it has stayed <= 1 for THERMAL_RECOVER_NS (60 s), the timer restarting if it heats up again, so it does not flap.
-// Only the effective rate changes (display link, pacer, ProMotion declaration and the 3D scale controller all read dm_fps_setting every frame; runtime switching already exists); the settings file, the Graphics frame-rate stop (still showing the player's high-refresh stop)
-// and the Quality cap (following the selected rate) stay. Unknown thermal state (-1: Mac, unit tests) counts as cool. DM_THERMAL_NOFALLBACK (power measurement, same switch as in front_ios.m) does not fall back.
-// Test switch DM_TEST_THERMAL=<state>[@sec][,<state>@sec...] (0-3): thermal state by host seconds, for checks on the Mac. Pure functions fps_thermal_step / thermal_schedule for unit tests (t_fps_thermal)
-#define THERMAL_CAP_AT 2
-#define THERMAL_RECOVER_NS 60000000000ull
-typedef struct { int capped; uint64_t cool_since; } fps_thermal_state;
-static int fps_thermal_step(fps_thermal_state *st, int thermal, uint64_t now) {
-    if (thermal >= THERMAL_CAP_AT) { st->capped = 1; st->cool_since = 0; return 1; }
-    if (!st->capped) return 0;
-    if (!st->cool_since) { st->cool_since = now ? now : 1; return 1; }
-    if (now - st->cool_since >= THERMAL_RECOVER_NS) { st->capped = 0; st->cool_since = 0; }
-    return st->capped;
-}
+// 帧率只听设置（B147，用户 2026-11-04）：原先高刷档（90 / 120）温控 ≥ 2 自动退回 60、回落 60 秒再回高刷（2026-10-30 定，B060），
+// 用户 Duo 实测开局约 157 秒就退到 60（dm-work/run/bugs/B147），改为不再按温控改帧率：30 / 60 / 120 只看设置，省电档仍是玩家手选。
+// 过热只在游戏内提示一次（dm_thermal_hint_step，diag.c 局内调），不改任何设置。温控读数 thermal_now 只给这条提示用（AI 帧生成同样不再看温控）。
+// 测试开关 DM_TEST_THERMAL=<档>[@秒][,<档>@秒…]（0–3）：按宿主计时秒数换温控，Mac 上验证用（单测 t_fps_thermal 核「温控 2 / 3 仍是 120」）
+// The frame rate follows the setting only (B147, user 2026-11-04): the high-refresh stop (90 / 120) used to fall back to 60 at thermal >= 2 and return after 60 s cool (2026-10-30, B060);
+// on the user's Duo it dropped to 60 about 157 s into a run (dm-work/run/bugs/B147). The rate is no longer changed by heat: 30 / 60 / 120 follow the setting, the power-saving stop is still the player's choice.
+// Overheating shows one in-game tip (dm_thermal_hint_step, called in a run from diag.c) and changes no setting. thermal_now feeds only that tip (AI frame generation no longer consults it either).
+// Test switch DM_TEST_THERMAL=<state>[@sec][,<state>@sec...] (0-3): thermal state by host seconds, for checks on the Mac (the unit test t_fps_thermal checks "thermal 2 / 3 stays at 120")
 static int thermal_schedule(const char *spec, double elapsed) { return res_schedule_level(spec, elapsed); }   // 同渲染档时间表的写法与取值范围 0–3 | same syntax and 0-3 range as the render-level schedule
 static uint64_t mono_ns(void) { return (uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC); }
 static uint64_t (*g_fps_clock)(void) = mono_ns;   // 单测换成假时钟 | unit tests swap in a fake clock
@@ -491,9 +484,10 @@ static int thermal_now(void) {
     if (on < 0) { spec = getenv("DM_TEST_THERMAL"); on = spec && thermal_schedule(spec, 0) >= 0; t0 = g_fps_clock(); if (spec && !on) LOG("【红】DM_TEST_THERMAL 非法：%s", spec); }
     return on ? thermal_schedule(spec, (g_fps_clock() - t0) / 1e9) : dm_thermal_now();
 }
-static _Atomic int g_fps_hot;                 // 此刻是否因过热按 60（图形页说明、分享摘要读）| whether the high-refresh stop is running as 60 because of heat right now (read by the Graphics note and the share summary)
-static _Atomic uint64_t g_fps_cool_since;     // 回落开始的时刻（0 = 没在回落）| when cooling started (0 = not cooling)
-int dm_fps_thermal_capped(void) { return atomic_load(&g_fps_hot); }
+int dm_fps_thermal_capped(void) { return 0; }   // B147 起帧率不再按温控退回：恒 0（分享摘要 thermalFallback60 照写 0，字段不删，老脚本照读）| from B147 the rate no longer falls back on heat: always 0 (the share summary still writes thermalFallback60=0 so old scripts keep parsing)
+int dm_thermal_eff(void) { return thermal_now(); }   // 温控档位（含 DM_TEST_THERMAL）：diag.c 的过热提示用 | thermal state (DM_TEST_THERMAL included): for the overheating tip in diag.c
+// 过热提示（B147 ③）：温控第一次到严重（≥ 2）时提示一次（每次启动一次），之后不再提示；未知（−1）不算。纯函数给单测 | overheating tip (B147 ③): once, the first time thermal reaches serious (>= 2) in this launch; unknown (-1) does not count. Pure function for unit tests
+int dm_thermal_hint_step(int *shown, int thermal) { if (*shown || thermal < 2) return 0; *shown = 1; return 1; }
 // 选的帧率（测试开关 / 设置 + 屏幕刷新率 + 内存档位），未计遇热退回 | the selected rate (test switch / setting + screen refresh + memory tier), before the thermal fallback
 static int fps_selected(void) {
     int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t >= 90 ? FPS_120 : 0) : dm_custom_get("eco_fps");
@@ -502,25 +496,23 @@ static int fps_selected(void) {
 int dm_fps_setting(void) {
     int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t >= 90 ? FPS_120 : 0) : dm_custom_get("eco_fps"), hz = dm_display_max_hz();
     int f = fps_rate(v, t), why = (v == FPS_120 && f == 60) * 2 + (t > 0);
-    int th = thermal_now(), hot = 0;
-    if (f >= 90 && !getenv("DM_THERMAL_NOFALLBACK")) {
-        fps_thermal_state st = { atomic_load(&g_fps_hot), atomic_load(&g_fps_cool_since) };
-        hot = fps_thermal_step(&st, th, g_fps_clock());
-        atomic_store(&g_fps_hot, hot); atomic_store(&g_fps_cool_since, st.cool_since);
-    } else { atomic_store(&g_fps_hot, 0); atomic_store(&g_fps_cool_since, 0); }
-    int sel = f; if (hot) f = 60;
-    static _Atomic int last = -1; int key = f * 16 + why * 4 + (hz > 0) + (hz >= 89) * 2 + hot * 4096;
+    int sel = f;
+    static _Atomic int last = -1; int key = f * 16 + why * 4 + (hz > 0) + (hz >= 89) * 2;
     if (atomic_exchange(&last, key) != key) {
-        // 生效帧率变了（应用、测试开关、建窗后才读到高刷屏、遇热退回 / 回升）：3D 比例控制的高画质模式跟着「选的」高刷档上限走 | the effective rate changed (Apply, test switch, a high-refresh screen known once the window exists, thermal fallback / recovery): the 3D scale controller's Quality mode follows the selected high-refresh cap
+        // 生效帧率变了（应用、测试开关、建窗后才读到高刷屏）：3D 比例控制的高画质模式跟着「选的」高刷档上限走 | the effective rate changed (Apply, test switch, a high-refresh screen known once the window exists, thermal fallback / recovery): the 3D scale controller's Quality mode follows the selected high-refresh cap
         if (atomic_load(&g_loaded)) dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && q3d_for_fps(atomic_load(&g_val[K_Q3D]), sel) == 3);
         int req = t == 40 ? 40 : v == 1 ? 30 : v == FPS_120 ? (t >= 90 ? t : fps_high_hz() ? fps_high_hz() : 120) : 60;
-        if (hot) LOG("帧率档：生效 60 帧（%s%d，过热 温控 %d，自动退回 60；温控回落到 ≤ 1 并持续 60 秒后回 %d）", t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", req, th, sel);
-        else LOG("帧率档：生效 %d 帧（%s%d，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", req, hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz,
+        LOG("帧率档：生效 %d 帧（%s%d，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", req, hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz,
             why >= 2 && hz >= 89 ? "；内存档位不开放高刷档（见「内存档位：」行），高刷档按 60" : why >= 2 && hz > 0 ? "；屏幕不到 90 Hz，高刷档按 60" : why >= 2 ? "；暂按 60"
-            : sel == 90 && th >= 0 ? "；温控已回落，回到 90" : sel == 120 && th >= 0 ? "；温控已回落，回到 120" : "");
+            : "");
     }
     return f;
 }
+// 动态 3D 分辨率（B147 ②，键 dyn3d，图形页「显示」组，缺省关）：开 = hle_oe.c 按实际掉帧降 3D 比例（3D 到底再降整帧输出档）；关 = 3D 比例固定为设置值。
+// 设置还没读到时按缺省（关）答。测试开关 DM_3D_SCALE_DYN=0/1 在 hle_oe.c 那边钉住，不经这里
+// Dynamic 3D resolution (B147 ②, key dyn3d, Graphics "Display" group, off by default): on = hle_oe.c lowers the 3D scale on actual dropped frames (then the whole-frame output level once 3D is at its floor);
+// off = the 3D scale stays at the configured value. Answers the default (off) until the settings are read. The DM_3D_SCALE_DYN=0/1 test switch pins it on the hle_oe.c side, not here
+int dm_dyn3d_setting(void) { return atomic_load(&g_loaded) ? atomic_load(&g_val[K_DYN3D]) != 0 : k_def[K_DYN3D] != 0; }
 // 光追阴影（键 rt_shadow，实验性，缺省关，图形页）：图形层 nvn_rtshadow.inc rts_on 每帧读；机器不过门槛（mtl_rt_shadow_supported）时按关处理，图形页也不显示这一行
 // Ray-traced shadows (key rt_shadow, experimental, off by default, Graphics tab): read every frame by rts_on in nvn_rtshadow.inc; treated as off on machines that fail the gate (mtl_rt_shadow_supported), and the Graphics tab hides the row
 #ifdef DM_RT_GATE_TEST_HOOK   // 单测自己给强定义（同 DM_GFX_GATE_TEST_HOOK）| the unit test supplies the definition (as DM_GFX_GATE_TEST_HOOK)
@@ -541,12 +533,12 @@ __attribute__((weak)) int dm_render_res_supported(void) { return 1; }
 #endif
 // 图形页的行（与 touch_layout.py _graphics_page 同序）：可见的紧挨着排，返回可见行数，out 依次是布局行号；选中框按可见序号放、行为按布局行号走（单测 t_graphics_gate）
 // Graphics-tab rows (same order as touch_layout.py _graphics_page): the visible ones are packed, returns the visible count with the layout row ids in out; the selection frame follows the visible index, behaviour follows the layout row (unit test t_graphics_gate)
-enum { ROW_RES, ROW_BRIGHT, ROW_FPSHUD, ROW_FPS, ROW_FG, ROW_UPSCALE, ROW_PROFILE, ROW_RT };   // 显示帧数行第二（用户 2026-10-28）；AI 帧生成在「帧率」组、帧率滑块之后（k_opts 的 Frame 组）| the Show-frame-rate row is second (user 2026-10-28); AI frame generation sits in the Frame group after the frame-rate slider (k_opts' Frame group)
+enum { ROW_RES, ROW_BRIGHT, ROW_DYN3D, ROW_FPSHUD, ROW_FPS, ROW_FG, ROW_UPSCALE, ROW_PROFILE, ROW_RT };   // 显示帧数行第二（用户 2026-10-28）；AI 帧生成在「帧率」组、帧率滑块之后（k_opts 的 Frame 组）| the Show-frame-rate row is second (user 2026-10-28); AI frame generation sits in the Frame group after the frame-rate slider (k_opts' Frame group)
 // 可见行 i 的 y：行紧挨着排，换组的地方多一行分组标题（方案 C：画面 / 帧率 / 超分 / 光线追踪）| y of visible row i: rows are packed, with one heading row where the group changes (plan C)
-static int graphics_row_group(int row) { return row <= ROW_BRIGHT ? 0 : row <= ROW_FG ? 1 : row <= ROW_PROFILE ? 2 : 3; }
+static int graphics_row_group(int row) { return row <= ROW_DYN3D ? 0 : row <= ROW_FG ? 1 : row <= ROW_PROFILE ? 2 : 3; }
 static int graphics_row_y(const int *vis, int i) { int y = 180; for (int k = 1; k <= i; k++) y += graphics_row_group(vis[k]) != graphics_row_group(vis[k - 1]) ? 360 : 180; return y; }
-static int graphics_rows_pack(int res_ok, int up_ok, int prof_on, int rt_ok, int fg_ok, int out[8]) {
-    int n = 0; if (res_ok) out[n++] = ROW_RES; out[n++] = ROW_BRIGHT; out[n++] = ROW_FPSHUD; out[n++] = ROW_FPS; if (fg_ok) out[n++] = ROW_FG; if (up_ok) { out[n++] = ROW_UPSCALE; if (prof_on) out[n++] = ROW_PROFILE; } if (rt_ok) out[n++] = ROW_RT; return n;
+static int graphics_rows_pack(int res_ok, int up_ok, int prof_on, int rt_ok, int fg_ok, int out[9]) {
+    int n = 0; if (res_ok) out[n++] = ROW_RES; out[n++] = ROW_BRIGHT; out[n++] = ROW_DYN3D; out[n++] = ROW_FPSHUD; out[n++] = ROW_FPS; if (fg_ok) out[n++] = ROW_FG; if (up_ok) { out[n++] = ROW_UPSCALE; if (prof_on) out[n++] = ROW_PROFILE; } if (rt_ok) out[n++] = ROW_RT; return n;
 }
 // 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义）：玩家档 0–3，已含机器门槛和内存封顶；DM_RT_PRESET=0–3 钉住。生效值一变就记一行「光追档位：生效 rt_level=」（分享诊断日志的摘要按这个前缀取最后一行）
 // 内存档位 < 2 时高档不开放（AO、软影多两张贴图，内存紧的机器不值得）：存的还是高，生效值夹到中
@@ -617,18 +609,16 @@ int dm_fg_need_fi(void) { pthread_once(&g_fgs_once, fg_sched_load); if (!g_fgs_n
 // AI 帧生成（实验性，图形页「帧率」组一行，键 fgen_level，缺省关；帧插值，日志前缀「帧生成：」）：帧率档只管真渲染帧率，帧生成只管显示翻倍。
 // 两层门控（方案 C，同光追 / 超分）：平台层照键表 k_opts（fgen_level 只有 Apple；安卓整行不出现，§2.8）；本机层 fg_row_ok = 设备支持插值器（图形层 mtl_fg_supported）、
 // 屏幕 ≥ 120 Hz、内存档位放开高刷档（档位 ≥ 2）——不满足时这一行还在、置灰、副文写原因。
-// 生效（fg_reason）还要：不是 30 帧档（用户 2026-10-27 定）、不是高刷档（90 / 120，RC2 84c04ac2；屏幕已到顶，按「选的」帧率判，遇热退回 60 时也不开）、光追关（rt_level 生效档 0；
-// 两个实验项的组合没有验证过内存与 GPU 预算，且只能二选一拿预算）、温控没有退档（≥ 2 停，回落满 FG_COOL_SEC 秒才恢复）。
-// 测试开关 DM_TEST_FG=<0|1>[@秒],…（写法同 DM_TEST_FPS）顶替设置值，不读写设置文件；DM_TEST_FG_HOT=<0|1>[@秒],… 假装温控 ≥ 2；DM_THERMAL_NOFALLBACK（只供功耗测量，同 front_ios.m）不看温控。
+// 生效（fg_reason）还要：不是 30 帧档（用户 2026-10-27 定）、不是高刷档（90 / 120，RC2 84c04ac2；屏幕已到顶，按「选的」帧率判）、光追关（rt_level 生效档 0；
+// 两个实验项的组合没有验证过内存与 GPU 预算，且只能二选一拿预算）。不看温控（B147，用户 2026-11-04「一样取消自动关闭，只按你的设置来」：原先温控 ≥ 2 停、回落 60 秒才恢复）；过热只沿用那条一次性提示。
+// 测试开关 DM_TEST_FG=<0|1>[@秒],…（写法同 DM_TEST_FPS）顶替设置值，不读写设置文件。
 // 生效值或原因一变就记一行「帧生成：状态 fg=…」（分享诊断日志摘要取最后一行就是当前状态）
 // AI frame generation (experimental, one row in the Graphics page's Frame group, key fgen_level, off by default; frame interpolation, log prefix "帧生成："): the frame-rate mode sets only the true render rate, frame generation only doubles what is shown.
 // Two-layer gate (plan C, as ray tracing / upscaling): the platform layer follows k_opts (fgen_level is Apple only; on Android the row is absent, §2.8); the machine layer fg_row_ok = interpolator support
 // (graphics layer mtl_fg_supported), a >= 120 Hz screen and a memory tier that allows the high-refresh stop (tier >= 2) - failing it the row stays, greyed, with the reason as subtext.
-// In effect (fg_reason) also needs: not the 30 fps mode (user decision 2026-10-27), not the high-refresh stop (90 / 120, RC2 84c04ac2; judged by the selected rate, so not even while the heat runs it at 60), ray tracing off
-// (effective rt_level 0; the combination has no verified memory / GPU budget), no thermal fallback (stops at >= 2, resumes after FG_COOL_SEC seconds below).
-// Test switches DM_TEST_FG=<0|1>[@seconds],... override the setting without touching the settings file; DM_TEST_FG_HOT=<0|1>[@seconds],... pretends thermal >= 2; DM_THERMAL_NOFALLBACK ignores the thermal state. One "帧生成：状态 fg=..." line whenever the effective value or its reason changes
-#define FG_COOL_SEC 60
-#define FG_HOT_LEVEL 2   // 温控到这一档就停（DM_FG_HOT_LEVEL=<1–3> 可改，给真机对比用）| Stop at this thermal state (DM_FG_HOT_LEVEL=<1-3> overrides it for device comparisons)
+// In effect (fg_reason) also needs: not the 30 fps mode (user decision 2026-10-27), not the high-refresh stop (90 / 120, RC2 84c04ac2; judged by the selected rate), ray tracing off
+// (effective rt_level 0; the combination has no verified memory / GPU budget). The thermal state is not consulted (B147, user 2026-11-04 "cancel the automatic stop too, follow my setting": it used to stop at >= 2 and resume after 60 s cool); overheating only shows the one-time tip.
+// Test switches DM_TEST_FG=<0|1>[@seconds],... override the setting without touching the settings file. One "帧生成：状态 fg=..." line whenever the effective value or its reason changes
 #ifndef DM_FG_TEST_HOOK   // 单测（t_fgen_level.c）自带强定义 | the unit test brings its own strong definitions
 __attribute__((weak)) int mtl_fg_supported(void) { return 0; }
 __attribute__((weak)) int mtl_fg_backoff(void) { return 0; }
@@ -688,13 +678,13 @@ static int fg_test(void) {
     return v;
 }
 // 0 = 生效，其余为不生效的原因 | 0 = in effect, otherwise the reason it is not
-enum { FG_ON, FG_OFF, FG_UNSUPPORTED, FG_ECO30, FG_CAPPED, FG_RT, FG_HOT, FG_ECO_CLOSED, FG_PLATFORM };
+enum { FG_ON, FG_OFF, FG_UNSUPPORTED, FG_ECO30, FG_CAPPED, FG_RT, FG_ECO_CLOSED, FG_PLATFORM };
 static int fg_row_ok(void) { return mtl_fg_supported() && dm_display_max_hz() >= 119 && dm_mem_tier() >= 2; }
 // 图形页这一行：平台层（fg_row_show）照键表 k_opts 与平台判定——安卓 / 鸿蒙壳没有这一行；本机层（fg_row_editable）不过门槛时行在、勾选框置灰、副文写原因
 // The Graphics row: the platform layer (fg_row_show) follows k_opts and the platform check - the Android / Harmony shell has no such row; the machine layer (fg_row_editable) failing leaves the row, greyed, with the reason as subtext
 static int fg_row_show(void) { int i = key_index("fgen_level"); return fg_platform_ok() && i >= 0 && opt_page(i) == PG_GFX; }
 static int fg_row_editable(void) { return fg_row_show() && fg_row_ok(); }
-static int fg_reason(int level, int row_ok, int fps, int rt_on, int hot) {
+static int fg_reason(int level, int row_ok, int fps, int rt_on) {
     if (level == DM_FGEN_OFF) return FG_OFF;
     if (!fg_platform_ok()) return FG_PLATFORM;            // 安卓壳：档位照读、按关生效 | Android shell: the level is read but takes effect as off
     if (level != DM_FGEN_SMOOTH) return FG_ECO_CLOSED;    // 省电枚举保留、本车不开放 | power-saving enum kept, not opened in this train
@@ -702,20 +692,7 @@ static int fg_reason(int level, int row_ok, int fps, int rt_on, int hot) {
     if (fps == 30) return FG_ECO30;
     if (fps >= 90) return FG_CAPPED;                      // 高刷档 90 / 120 | the high-refresh stop 90 / 120
     if (rt_on) return FG_RT;
-    if (hot) return FG_HOT;
     return FG_ON;
-}
-// 温控门（纯函数）：≥ 2 立刻停；回落后连续 cool_sec 秒才恢复（不来回切：每次重开都要重攒历史）| Thermal gate (pure): stops at once at >= 2; resumes only after cool_sec seconds below (no flapping: every restart rebuilds the history)
-static int fg_hot_step(int therm, int level, double now, double cool_sec, double *hot_until) {
-    if (therm >= level) { *hot_until = now + cool_sec; return 1; }
-    return now < *hot_until;
-}
-static int fg_hot(void) {
-    static int on = -1; static const char *spec; static uint64_t t0; double el = 0; int t = fg_test_env("DM_TEST_FG_HOT", &spec, &on, &t0, &el);
-    static double hot_until; static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;   // 翻译线程 / 出图线程 / 主线程都问 | asked from the translation, present and main threads
-    double now = (uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC) / 1e9; static int level; if (!level) { const char *e = getenv("DM_FG_HOT_LEVEL"); int v = e ? atoi(e) : 0; level = v >= 1 && v <= 3 ? v : FG_HOT_LEVEL; }
-    pthread_mutex_lock(&mu); int r = fg_hot_step(t > 0 ? 3 : getenv("DM_THERMAL_NOFALLBACK") ? 0 : thermal_now(), level, now, FG_COOL_SEC, &hot_until); pthread_mutex_unlock(&mu);   // thermal_now 含 DM_TEST_THERMAL | thermal_now honours DM_TEST_THERMAL
-    return r;
 }
 // 光追实际开没开（rt_level 生效档 > 0）：DM_RT_PRESET 不在时测试开关 DM_RT_SHADOW 钉住就按它（同 nvn_rtshadow.inc rts_on 与 dm_render_res_rt_drop），否则按 dm_rt_level_setting
 // Whether ray tracing is really on (effective rt_level > 0): without DM_RT_PRESET, the DM_RT_SHADOW test pin when given (as rts_on and dm_render_res_rt_drop), otherwise dm_rt_level_setting
@@ -723,14 +700,14 @@ static int fg_rt_on(void) { const char *e = getenv("DM_RT_PRESET") ? NULL : gete
 int dm_fg_setting(void) {
     int t = fg_test(), preset = fgen_preset(), setting = dm_fgen_level();
     int level = fgen_choose_level(t >= 0 ? (t ? DM_FGEN_SMOOTH : DM_FGEN_OFF) : -1, preset, setting);
-    int fps = dm_fps_setting(), sel = fps_selected(), hz = dm_display_max_hz(), rt = fg_rt_on(), hot = fg_hot();   // fps = 生效（含遇热退回）只进日志；判定按选的帧率 sel | fps = effective (thermal fallback included), log only; the decision uses the selected rate sel
+    int fps = dm_fps_setting(), sel = fps_selected(), hz = dm_display_max_hz(), rt = fg_rt_on();   // 判定按选的帧率 sel，fps 只进日志 | the decision uses the selected rate sel, fps is for the log only
     static int eco = -1; if (eco < 0) eco = getenv("DM_FG_ECO") != NULL || fg_sched() != NULL;   // 探索开关：渲染 30 + 插到 60（省电方向，真机对比用；产品上 30 帧档仍禁用）| exploration switch: render 30 and interpolate to 60 (power-saving direction, device comparisons only; the product still disables it at 30 fps)
-    int why = fg_reason(level, fg_row_ok(), eco && sel < 60 ? 60 : sel, rt, hot);
+    int why = fg_reason(level, fg_row_ok(), eco && sel < 60 ? 60 : sel, rt);
     static _Atomic int last = -1; int key = why * 4096 + level * 1024 + fps * 2 + (t >= 0);
     if (atomic_exchange(&last, key) != key) {
         // 摘要里的 fgen_level 是设置值（存储的档位），fg 是实际生效状态：安卓壳存储 2 时写 fgen_level=2, fg=0，不把设置值改成 0（主会话 2026-11-03 裁定，设置与生效分离）
         // The summary's fgen_level is the setting (the stored level) and fg the effective state: on the Android shell a stored 2 prints fgen_level=2, fg=0 (ruled by the main session on 2026-11-03: setting and effective state are separate)
-        static const char *const reason[] = { "", "开关关着", "本机不支持（插值器 / 屏幕 / 内存档位）", "30 帧档下不可用", "高刷档下不可用", "光追开着", "温控退档", "省电档未开放", "本端暂未接入" };
+        static const char *const reason[] = { "", "开关关着", "本机不支持（插值器 / 屏幕 / 内存档位）", "30 帧档下不可用", "高刷档下不可用", "光追开着", "省电档未开放", "本端暂未接入" };
         char pin[32] = ""; if (level != setting) snprintf(pin, sizeof pin, "（钉住 %d）", level);   // 钉住的档位与设置值不同时写上 | writes the pinned level when it differs from the setting
         LOG("帧生成：状态 fg=%d %s fgen_level=%d%s（%s%s；渲染 %d，显示 %d，屏幕最高 %d Hz；%s）", why == FG_ON, why == FG_ON ? "开" : "关", setting, pin,
             why == FG_ON ? "" : "原因 ", reason[why], fps, why == FG_ON ? fps * 2 : fps, hz,
@@ -742,12 +719,12 @@ int dm_fg_setting(void) {
 // The two inputs on the Graphics frame-generation row (pure, checked for both modes by t_fgen_level): controller A and a touch on the checkbox change the pending value only when switchable, checked = smooth 2, unchecked = off 0; greyed (machine fails the gate) never changes it (returns -1)
 static int fg_pad_press(int editable, int pending) { return editable ? (pending != DM_FGEN_OFF ? DM_FGEN_OFF : DM_FGEN_SMOOTH) : -1; }
 static int fg_touch_toggle(int editable, int toggled, int pending) { int to = toggled ? DM_FGEN_SMOOTH : DM_FGEN_OFF; return editable && (to != DM_FGEN_OFF) != (pending != DM_FGEN_OFF) ? to : -1; }
-// 帧生成行的副文键（§2.6 副文一句，两种输入模式同一份）：置灰写本机不支持的原因；能生效时写代价，不能生效时写原因（30 帧 / 高刷档 / 光追开 / 过热 / 省电档 / 退避）
+// 帧生成行的副文键（§2.6 副文一句，两种输入模式同一份）：置灰写本机不支持的原因；能生效时写代价，不能生效时写原因（30 帧 / 高刷档 / 光追开 / 省电档 / 退避）
 // The frame-generation row's subtext key (one §2.6 subtext line, the same in both input modes): greyed = why this machine is unsupported; otherwise the cost when it can take effect, the reason when not
 static const char *fg_note_key(int editable, int why, int pending_on, int backoff) {
     return !editable ? "dmGraphicsFrameGenNoHw"
         : why == FG_ECO_CLOSED ? "dmGraphicsFrameGenEcoClosed" : why == FG_ECO30 ? "dmGraphicsFrameGenNoEco" : why == FG_CAPPED ? "dmGraphicsFrameGenCapped" : why == FG_RT ? "dmGraphicsFrameGenNoRt"
-        : why == FG_HOT ? "dmGraphicsFrameGenHot" : pending_on && backoff ? "dmGraphicsFrameGenBackoff" : "dmIosGraphicsFrameGenNote"; }
+        : pending_on && backoff ? "dmGraphicsFrameGenBackoff" : "dmIosGraphicsFrameGenNote"; }
 #else
 #define fg_platform_ok() 0   // 安卓壳：没有帧生成 | Android shell: no frame generation
 #endif
@@ -945,7 +922,7 @@ static void move_ours_y(uint64_t w, int y) {
 }
 void dm_graphics_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
-    static dm_wref seen[9]; static int paint;
+    static dm_wref seen[10]; static int paint;
     uint64_t sp = dm_ui_top(root, "3PlusGraphicsOptionsPanel");
     static int was_open;
     if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); was_open = 0; return; }
@@ -1005,6 +982,13 @@ void dm_graphics_ui_pump(unsigned long long root) {
         if (dm_wref_get(&seen[5]) != fpshud) { dm_wref_set(&seen[5], fpshud); set_toggle(fpshud, want); }
         else if (TOGGLED(fpshud) != want) atomic_store(&g_pend[K_FPSHUD], TOGGLED(fpshud));
     }
+    // 动态 3D 分辨率（B147 ②，键 dyn3d，「显示」组、加亮下一行，缺省关）：勾选框与显示帧数同一套处理；两端都有（hle_oe.c 双端共用）| Dynamic 3D resolution (B147 ②, key dyn3d, Display group under brightening, off by default): handled like Show frame rate; on both platforms (hle_oe.c is shared)
+    uint64_t dyn3d = find_w(sp, "TouchGraphicsDyn3d", 0);
+    if (dyn3d) {
+        int want = pending_value(K_DYN3D);
+        if (dm_wref_get(&seen[9]) != dyn3d) { dm_wref_set(&seen[9], dyn3d); set_toggle(dyn3d, want); }
+        else if (TOGGLED(dyn3d) != want) atomic_store(&g_pend[K_DYN3D], TOGGLED(dyn3d));
+    }
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t);
     static int selected; static dm_wref focus_panel;
     if (dm_wref_get(&focus_panel) != sp) { dm_wref_set(&focus_panel, sp); selected = 0; }
@@ -1014,13 +998,14 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // 可见行紧挨着排：档位行藏起来时光追行上移一格补位（下面按可见行数挪光追行与说明行），所以选中框按可见序号 selected 放，行为按布局行号 row_id 走
     // Rows (same order as touch_layout.py _graphics_page, user 2026-10-27): 0 render resolution / 1 frame rate / 2 upscale switch / 3 upscale profile (only while the switch is on) / 4 ray-tracing level (experimental, Apple only; greyed on machines that fail the gate).
     // Visible rows are packed: with the profile row hidden, the ray-tracing row moves up one slot (the ray-tracing row and the hint are moved below by the visible row count), so the selection frame follows the visible index selected and behaviour follows the layout row row_id
-    int prof_on = up_ok && pending_value(K_UPSCALE) != 0, vis[8], rows = graphics_rows_pack(res_ok, up_show, prof_on, rt_show, fg_show, vis);
+    int prof_on = up_ok && pending_value(K_UPSCALE) != 0, vis[9], rows = graphics_rows_pack(res_ok, up_show, prof_on, rt_show, fg_show, vis);
     if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
     if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
     int row_id = vis[selected];
 #ifndef __ANDROID__
     if ((ev & DM_BTN_A) && row_id == ROW_FG && fg) { int to = fg_pad_press(fg_edit, pending_value(K_FGEN)); if (to >= 0) { atomic_store(&g_pend[K_FGEN], to); set_toggle(fg, to != DM_FGEN_OFF); } }   // 置灰时 fg = 0：A 不改 | greyed: fg = 0, A does nothing
 #endif
+    if ((ev & DM_BTN_A) && row_id == ROW_DYN3D && dyn3d) { int to = !pending_value(K_DYN3D); atomic_store(&g_pend[K_DYN3D], to); set_toggle(dyn3d, to); }
     if ((ev & DM_BTN_A) && row_id == ROW_FPSHUD && fpshud) { int to = !pending_value(K_FPSHUD); atomic_store(&g_pend[K_FPSHUD], to); set_toggle(fpshud, to); }
     if (row_id == ROW_FPS && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
         int to = fps_pos(pending_value(K_FPS)) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
@@ -1038,13 +1023,14 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // 全部可见时各行正好在布局原位（180 / 360 / 540 / 720 / 900），Apple 行为不变
     // Visible rows are packed: visible row i sits at y = 180 x (i + 1) (text / container), sliders and checkboxes at +55 (touch_layout.py's label / toggle placement); the hint follows the last visible row.
     // With every row visible each sits at its layout position (180 / 360 / 540 / 720 / 900): Apple unchanged
-    { int all_vis[8], nv = graphics_rows_pack(res_ok, up_show, enabled, rt_show, fg_show, all_vis);
+    { int all_vis[9], nv = graphics_rows_pack(res_ok, up_show, enabled, rt_show, fg_show, all_vis);
       static const char *const heads[4] = { NULL, "TouchOptHeadFrame", "TouchOptHeadUpscale", "TouchOptHeadRt" };
       for (int g = 1; g < 4; g++) { uint64_t hw = find_w(sp, heads[g], 0); int on = 0; for (int i = 0; i < nv; i++) if (graphics_row_group(all_vis[i]) == g) { if (hw) move_ours_y(hw, graphics_row_y(all_vis, i) - 180); on = 1; break; } if (hw) ui_show_ours(hw, on); }
       for (int i = 0; i < nv; i++) { int y = graphics_row_y(all_vis, i);
         switch (all_vis[i]) {
         case ROW_BRIGHT: move_ours_y(find_w(sp, "TouchGraphicsBrightRow", 0), y); break;
         case ROW_RES: move_ours_y(find_w(sp, "TouchGraphicsResRow", 0), y); break;
+        case ROW_DYN3D: move_ours_y(find_w(sp, "TouchGraphicsDyn3dRow", 0), y); break;
         case ROW_FPSHUD: move_ours_y(find_w(sp, "TouchGraphicsFpsHudRow", 0), y); break;
         case ROW_FPS: move_ours_y(find_w(sp, "TouchGraphicsFpsText", 0), y); if (fps) move_ours_y(fps, y + 55); move_ours_y(find_w(sp, "TouchGraphicsFpsNote", 0), y + 116); break;
         case ROW_UPSCALE: move_ours_y(find_w(sp, "TouchGraphicsUpscaleText", 0), y); { uint64_t ub = find_w(sp, "TouchGraphicsUpscale", 0); if (ub) move_ours_y(ub, y + 55); } move_ours_y(find_w(sp, "TouchGraphicsUpscaleNoHw", 0), y + 116); break;
@@ -1142,7 +1128,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // AI 帧生成的副文（§2.6 副文一句）：本机不支持写原因；能生效时写代价，不能生效时写原因（按图形页上选着、还没应用的值算：30 帧 / 高刷档 / 光追开 / 过热 / 退避）
     // AI frame generation subtext: unsupported machines get the reason; otherwise the cost when it can take effect, the reason when not (from the pending values on the page: 30 fps / high refresh / ray tracing on / hot / back-off)
     if (fg_show) { int fpos = fps_pos(pending_value(K_FPS)), fps_p = fpos == 0 ? 30 : fpos == 2 ? fps_high_hz() : 60;
-        int why = fg_reason(pending_value(K_FGEN), 1, fps_p, rt_ok && pending_value(K_RTLVL) > 0, fg_hot());
+        int why = fg_reason(pending_value(K_FGEN), 1, fps_p, rt_ok && pending_value(K_RTLVL) > 0);
         graphics_text(find_w(sp, "TouchGraphicsFrameGenNote", 0), dm_str(main_base(), fg_note_key(fg_edit, why, pending_value(K_FGEN) != DM_FGEN_OFF, mtl_fg_backoff())));
     }
 #endif
@@ -1163,11 +1149,11 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // 120 帧格选着时档位行下的灰色副文「120 帧下不提供高画质」（布局 touch_layout.py TouchGraphicsProfileNote，缺省藏着）| at the 120 fps stop, the grey subtext under the profile row (layout TouchGraphicsProfileNote, hidden by default)
     { uint64_t note = find_w(sp, "TouchGraphicsProfileNote", 0); if (note) ui_show_ours(note, enabled && profile_max() < 3); }
     // 内存 1 / 0 档：屏幕撑得住 120 却不开放时，帧率行下一行灰色副文说明（布局 TouchGraphicsFpsNote，缺省藏着）| memory tiers 1 / 0: when the screen could do 120 but it is not offered, a grey subtext line under the frame-rate row (layout TouchGraphicsFpsNote, hidden by default)
-    // 同一行副文还用于「过热暂按 60 帧」（120 帧格选着、遇热退回时；用户 2026-10-30）：内存说明优先（那时根本没有 120 格）| the same subtext also says "running at 60 while hot" (120 stop selected and the thermal fallback active; user 2026-10-30): the memory note wins (no 120 stop at all then)
+    // B147 起不再有「过热暂按 60 帧」这一句（帧率不按温控退回）| from B147 there is no "running at 60 while hot" line (the rate no longer falls back on heat)
     { uint64_t note = find_w(sp, "TouchGraphicsFpsNote", 0);
-      if (note) { int mem = fps_ok && fps_mem_capped(), hot = !mem && fps_ok && fps_pos(pending_value(K_FPS)) == 2 && dm_fps_thermal_capped();
-          if (mem || hot) graphics_text(note, dm_str(main_base(), mem ? "dmGraphicsFps120MemNote" : "dmGraphicsFps120HotNote"));
-          ui_show_ours(note, mem || hot); } }
+      if (note) { int mem = fps_ok && fps_mem_capped();
+          if (mem) graphics_text(note, dm_str(main_base(), "dmGraphicsFps120MemNote"));
+          ui_show_ours(note, mem); } }
     { uint64_t note = find_w(sp, "TouchGraphicsResNote", 0); if (note) ui_show_ours(note, res_ok && res_raise_needs_restart()); }
     uint64_t vt = *(uint64_t *)sp; int valid = 0;
     for (int k = 0; k < 96 && !valid; k++) valid = *(uint64_t *)(vt + 8 * k) == (uint64_t)main_base() + 0xae5f28;

@@ -220,6 +220,18 @@ static inline int rts_memw_warn(rts_memw *m, int cur_lvl, int max_lvl, double no
     if (m->streak >= 2) { m->floor = max_lvl; m->ao_off = 1; m->mesh_half = 1; }
     return m->floor;
 }
+// 实际档位（B149 终审 P1-1）：玩家档、保护下限（内存告警 / 预算方案、GPU 挂起）与性能调档三者分开。
+// 自动调档开：按降档器的档，下限照旧抬；关（B149 缺省）：按玩家档，下限只在保护期间抬，解除后回到玩家档。档位越大越保守
+// Effective level (B149 final audit P1-1): the player level, the protection floors (memory warning / budget plan, GPU hang) and the performance governor are kept apart.
+// Governor on: the governor's level, raised by the floors as before; off (the B149 default): the player level, raised only while a protection holds and back to it once released. Higher = more conservative
+static inline int rts_eff_lvl(int auto_on, int gov_lvl, int player_lvl, int mem_floor, int hang_floor) {
+    int b = auto_on ? gov_lvl : player_lvl; if (b < mem_floor) b = mem_floor; if (b < hang_floor) b = hang_floor; return b;
+}
+// GPU 挂起保护的下限（自动调档关时用）：暂停结束后每 step 秒放宽一档，到 0 为止；放宽了返回 1 | GPU-hang floor (used with the governor off): after the pause ends, one level looser every step seconds down to 0; returns 1 when loosened
+static inline int rts_hangfloor_tick(int *floor, double *t_next, double now, double step) {
+    if (*floor <= 0 || now < *t_next) return 0;
+    (*floor)--; *t_next = now + step; return 1;
+}
 static inline int rts_memw_tick(rts_memw *m, double now) {   // 放宽了一档返回 1 | returns 1 when one level was loosened
     if (m->floor <= 0 || now - m->t_last < RTS_MEMW_HOLD_S || now - m->t_step < (m->t_step > m->t_last ? RTS_MEMW_STEP_S : RTS_MEMW_HOLD_S)) return 0;
     m->floor--; m->t_step = now; if (!m->floor) { m->ao_off = 0; m->mesh_half = 0; m->streak = 0; }

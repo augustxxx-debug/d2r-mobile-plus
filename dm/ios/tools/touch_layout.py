@@ -1471,7 +1471,7 @@ def _drop_rows(*rows):
 # Options "key -> page / group / platform" table (RC2 plan C, user 2026-10-30): the same table as k_opts in the host's dm_custom.c, compared line by line by test_options_table.py. Platform is apple (iOS, with the Mac lab host) / android / all (DM_TARGET=android is passed by d2rm_android.py).
 # Order = display order within a page. _OPT_PENDING = keys whose code is not merged yet: they hold a place and get no row; remove them here when merging. Rows sit on their own pages
 _OPT_TABLE = (
-    ('render_res', 'gfx', 'Display', 'all'), ('bright_level', 'gfx', 'Display', 'all'),
+    ('render_res', 'gfx', 'Display', 'all'), ('bright_level', 'gfx', 'Display', 'all'), ('dyn3d', 'gfx', 'Display', 'all'),
     ('fps_hud', 'gfx', 'Frame', 'all'), ('eco_fps', 'gfx', 'Frame', 'all'), ('dyn_refresh', 'gfx', 'Frame', 'all'), ('fgen_level', 'gfx', 'Frame', 'apple'),
     ('upscale', 'gfx', 'Upscale', 'apple'), ('q3d', 'gfx', 'Upscale', 'apple'),
     ('rt_level', 'gfx', 'Rt', 'apple'),   # RC2 光追档位一行取代 rt_shadow / rt_ao 两个开关 | RC2's one ray-tracing level row replaces the rt_shadow / rt_ao switches
@@ -1780,10 +1780,10 @@ def _graphics_page(text):
     profile_note['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
     # 内存档位（用户 2026-10-29）：屏幕撑得住 120、只因本机内存上限不开放 120 帧时，帧率文字下方一行同款副文；宿主跟着帧率行挪（y + 116）、按 fps_mem_capped 显示
     # Memory tier (user 2026-10-29): when the screen could do 120 but this device's memory limit forbids it, the same subtext style under the frame-rate caption; the host moves it with the frame-rate row (y + 116) and shows it via fps_mem_capped
-    fps_note = label('TouchGraphicsFpsNote', 'dmGraphicsFps120MemNote', 0, 900 + 116, 1000, 60)
+    fps_note = label('TouchGraphicsFpsNote', 'dmGraphicsFps120MemNote', 0, 1080 + 116, 1000, 60)
     fps_note['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
     profile = {'type': 'Widget', 'name': 'TouchGraphicsProfileRow', 'fields': {
-        'rect': {'x': 0, 'y': 1620, 'width': 1730, 'height': 180}}, 'children': [
+        'rect': {'x': 0, 'y': 1800, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsProfileText', 'dmGraphicsProfileAuto', 0, 0, 1000, 180), profile_note,
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsProfile', 'fields': {
             'rect': {'x': 1110, 'y': 55, 'width': 480, 'height': 72},
@@ -1821,7 +1821,7 @@ def _graphics_page(text):
     rt_off = label('TouchGraphicsRtTextOff', 'dmGraphicsRtLevelNone', 0, 0, 1090, 140)
     rt_off['fields']['style/fontColor'] = '$FontColorLightGray'
     rt_row = {'type': 'Widget', 'name': 'TouchGraphicsRtRow', 'fields': {
-        'rect': {'x': 0, 'y': 1980, 'width': 1730, 'height': 180}}, 'children': [
+        'rect': {'x': 0, 'y': 2160, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsRtText', 'dmGraphicsRtLevelOff', 0, 0, 1090, 140), rt_off,
         rt_note('TouchGraphicsRtNote', 'dmGraphicsRtLevelNote'), rt_note('TouchGraphicsRtHighNote', 'dmGraphicsRtLevelHighNote'), rt_note('TouchGraphicsRtNoHw', 'dmGraphicsRtLevelNoHw'),
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsRtLevel', 'fields': {
@@ -1840,7 +1840,7 @@ def _graphics_page(text):
     # 显示帧数（fps_hud，缺省开；原在自定义页末行，用户 2026-10-28 要求放图形页第二行）：一行勾选框，宿主 dm_graphics_ui_pump 读写 TouchGraphicsFpsHud
     # Show frame rate (fps_hud, on by default; was the last Custom row, moved to Graphics row 2 at the user's request on 2026-10-28): one checkbox row, read and written by the host's dm_graphics_ui_pump via TouchGraphicsFpsHud
     fpshud_row = {'type': 'Widget', 'name': 'TouchGraphicsFpsHudRow', 'fields': {
-        'rect': {'x': 0, 'y': 720, 'width': 1730, 'height': 180}}, 'children': [
+        'rect': {'x': 0, 'y': 900, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsFpsHudText', 'dmCustomFpsHud', 0, 0, 1000, 180), toggle('TouchGraphicsFpsHud', 0)]}
     # 画面加亮（dm_bright.c 的曝光上限）：四档滑块，文字上移、副文进手柄选中框（sub_note）| brightening (the exposure cap in dm_bright.c): four-stop slider, caption moved up so the subtext fits the controller frame (sub_note)
     bright_note = sub_note('TouchGraphicsBrightNote', 'dmGraphicsBrightNote')
@@ -1855,6 +1855,11 @@ def _graphics_page(text):
             'onUpdateMessage': 'OptionsPanelMessage:SetD2RBrightness',
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}}]}
+    # 动态 3D 分辨率（B147 ②，键 dyn3d，缺省关，宿主 hle_oe.c 每帧读）：「显示」组加亮下一行，勾选框 + 一行副文（sub_note 进手柄选中框）；两端都有（3D 比例控制双端共用）
+    # Dynamic 3D resolution (B147 ②, key dyn3d, off by default, read every frame by the host's hle_oe.c): the row under brightening in the Display group, a checkbox + one subtext line (sub_note keeps it in the controller frame); on both platforms (the 3D scale controller is shared)
+    dyn3d_row = {'type': 'Widget', 'name': 'TouchGraphicsDyn3dRow', 'fields': {
+        'rect': {'x': 0, 'y': 540, 'width': 1730, 'height': 180}}, 'children': [
+        label('TouchGraphicsDyn3dText', 'dmGraphicsDyn3d', 0, 0, 1290, 140), sub_note('TouchGraphicsDyn3dNote', 'dmGraphicsDyn3dNote'), toggle('TouchGraphicsDyn3d', 0)]}
     def head(name, key, y):   # 分组标题，宿主按可见行摆 y、没行就藏 | group heading; the host sets its y from the visible rows and hides it when empty
         h = label(name, key, 0, y, 1730, 180); h['fields']['style'] = '$StyleSettingsTitle'
         h['children'] = [{'type': 'ImageWidget', 'name': name + 'Divider', 'fields': {'rect': '$OptionsDividerRect', 'filename': 'PauseMenu\\Divider'}}]
@@ -1864,28 +1869,28 @@ def _graphics_page(text):
     # AI frame generation (experimental, key fgen_level, dm_custom.c): the row under the frame-rate slider in the Frame group, a checkbox + one subtext line (§2.6, sub_note keeps it inside the controller frame).
     # On a machine failing the gate the host greys the checkbox and swaps the subtext for the reason; the subtext also follows the state. Android has no frame interpolation, so the row is not in its layout (§2.8, as the ray-tracing group)
     fg_row = {'type': 'Widget', 'name': 'TouchGraphicsFrameGenRow', 'fields': {
-        'rect': {'x': 0, 'y': 1080, 'width': 1730, 'height': 180}}, 'children': [
+        'rect': {'x': 0, 'y': 1260, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsFrameGenText', 'dmGraphicsFrameGen', 0, 0, 1290, 140), sub_note('TouchGraphicsFrameGenNote', 'dmIosGraphicsFrameGenNote'), toggle('TouchGraphicsFrameGen', 0)]}
-    # 初始 y = 宿主全部可见（Apple）时 graphics_row_y 摆的位置（每换一组多一行标题）：显示 180 / 360，帧率组标题 540、720 / 900 / 1080（帧生成，安卓没有），超分组标题 1260、1440 / 1620，光追组标题 1800、1980（只一行 rt_level；安卓整组不进布局），说明 2160。
+    # 初始 y = 宿主全部可见（Apple）时 graphics_row_y 摆的位置（每换一组多一行标题）：显示 180 / 360 / 540（动态 3D 分辨率，B147），帧率组标题 720、900 / 1080 / 1260（帧生成，安卓没有），超分组标题 1440、1620 / 1800，光追组标题 1980、2160（只一行 rt_level；安卓整组不进布局），说明 2340。
     # 宿主每帧照可见行重摆，这里对齐只是让第一帧不跳；两边同一张表由 t_graphics_gate 与 test_touch_layout_options.py 各核一侧（审计 r1 P2-5）
-    # Initial y = where the host's graphics_row_y places rows with everything visible (Apple; one heading row per group change): display 180 / 360, frame heading 540, 720 / 900 / 1080 (frame generation, not on Android),
-    # upscale heading 1260, 1440 / 1620, ray-tracing heading 1800, 1980 (the one rt_level row; not in the Android layout), hint 2160. The host re-places visible rows every frame; matching here only keeps the first frame
+    # Initial y = where the host's graphics_row_y places rows with everything visible (Apple; one heading row per group change): display 180 / 360 / 540 (Dynamic 3D resolution, B147), frame heading 720, 900 / 1080 / 1260 (frame generation, not on Android),
+    # upscale heading 1440, 1620 / 1800, ray-tracing heading 1980, 2160 (the one rt_level row; not in the Android layout), hint 2340. The host re-places visible rows every frame; matching here only keeps the first frame
     # still. The same table is checked on each side by t_graphics_gate and test_touch_layout_options.py (audit r1 P2-5)
-    up_nohw = rt_note('TouchGraphicsUpscaleNoHw', 'dmGraphicsUpscaleNoHw'); up_nohw['fields']['rect']['y'] = 1440 + 116   # 宿主跟着超分行摆（y + 116） | the host moves it with the upscale row (y + 116)
+    up_nohw = rt_note('TouchGraphicsUpscaleNoHw', 'dmGraphicsUpscaleNoHw'); up_nohw['fields']['rect']['y'] = 1620 + 116   # 宿主跟着超分行摆（y + 116） | the host moves it with the upscale row (y + 116)
     rows = {'type': 'Widget', 'name': 'TouchGraphicsRows', 'fields': {
-        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 2480}}, 'children': [title, head('TouchOptHeadFrame', 'dmOptGrpFrame', 540), head('TouchOptHeadUpscale', 'dmOptGrpUpscale', 1260), res_row, bright_row, fpshud_row,
-        label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 900, 1000, 180), fps_note,
+        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 2660}}, 'children': [title, head('TouchOptHeadFrame', 'dmOptGrpFrame', 720), head('TouchOptHeadUpscale', 'dmOptGrpUpscale', 1440), res_row, bright_row, dyn3d_row, fpshud_row,
+        label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 1080, 1000, 180), fps_note,
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsFps', 'fields': {
-            'rect': {'x': 1110, 'y': 955, 'width': 480, 'height': 72},
+            'rect': {'x': 1110, 'y': 1135, 'width': 480, 'height': 72},
             'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',
             'focusIndicatorFilename': '$OptionsSliderFocusIndicatorFilename', 'isHorizontal': True, 'increment': 1,
             'indicatorFilepath': 'PauseMenu\\HorizontalIndicator', 'background': '$SettingsSliderBackground',
             'onUpdateMessage': 'OptionsPanelMessage:SetD2RFrameRate',
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}},
-        label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 1440, 1000, 180), toggle('TouchGraphicsUpscale', 1440), up_nohw,
+        label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 1620, 1000, 180), toggle('TouchGraphicsUpscale', 1620), up_nohw,
         # 说明文案按平台分：安卓没有 MetalFX，用中性文案 dmAndGraphicsApplyHint | Hint text per platform: Android has no MetalFX, so it uses the neutral dmAndGraphicsApplyHint
-        profile] + ([] if os.environ.get('DM_TARGET') == 'android' else [fg_row, head('TouchOptHeadRt', 'dmOptGrpRt', 1800), rt_row]) + [label('TouchGraphicsApplyHint', 'dmAndGraphicsApplyHint' if os.environ.get('DM_TARGET') == 'android' else 'dmGraphicsApplyHint', 0, 2160, 1670, 300),
+        profile] + ([] if os.environ.get('DM_TARGET') == 'android' else [fg_row, head('TouchOptHeadRt', 'dmOptGrpRt', 1980), rt_row]) + [label('TouchGraphicsApplyHint', 'dmAndGraphicsApplyHint' if os.environ.get('DM_TARGET') == 'android' else 'dmGraphicsApplyHint', 0, 2340, 1670, 300),
         {'type': 'NineTileImageWidget', 'name': 'TouchGraphicsSel', 'fields': {
             'rect': {'x': 99999, 'y': 0, 'width': 1700, 'height': 180}, 'backgroundColor': [0, 0, 0, 0],
             'filename': 'Controller/PANEL/ControllerSelector/ControllerSelectorBorder', 'tileScale': 0.5}}]}
