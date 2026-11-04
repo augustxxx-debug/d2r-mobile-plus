@@ -106,6 +106,15 @@ class AdaptiveIcon(unittest.TestCase):
             visible = sum(1 for value in alpha.crop((left, top, right + 1, bottom + 1)).getdata() if value >= 128)
         self.assertGreater(visible, 50, 'PLUS box has almost no opaque foreground')
 
+    def test_key_points_fit_and_plus_is_larger(self):
+        # 真机奥丁 60aac2e3：PLUS 太小。PLUS / MOBILE 四角与纹章外环要点都在羽化带以内，且绘制比比旧做法（按外圈尖刺定，0.2305）大至少 15%
+        # Thor 60aac2e3: PLUS too small. All key points sit inside the feather, and the draw scale beats the old one (set by the outer spikes, 0.2305) by at least 15%
+        inner = icon.SAFE_RADIUS_PX - icon.FEATHER_PX
+        for x, y in icon.key_points_source():
+            mx, my = self.layout.map_point(x, y)
+            self.assertLessEqual(radius(mx, my), inner + 1.0, f'key point ({x},{y}) maps to radius {radius(mx, my):.1f}px > {inner}px')
+        self.assertGreater(self.layout.draw_scale, 0.2305 * 1.15, f'draw scale {self.layout.draw_scale:.4f}')
+
     def test_three_previews_are_generated(self):
         for _, name in icon.PREVIEW_SHAPES:
             path = self.generated_preview / name
