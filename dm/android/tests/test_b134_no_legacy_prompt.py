@@ -200,7 +200,7 @@ class NoLegacyPrompt(unittest.TestCase):
         self.assertLess(gen.index('recordGenerationOutcome(app'), gen.rindex('generating = false'))
         breaker = method_body(self.code, 'private void failGenerationLimit(File base)')
         self.assertIn('R.string.dmAndroidGenLimit', breaker)
-        self.assertIn('gen_log.txt', breaker)
+        self.assertIn('PackGenerator.genLogFile(base)', breaker)   # 熔断页也写 gen_log，且一律经 genLogFile 落新目录（真机奥丁 60aac2e3）| the breaker writes gen_log too, always through genLogFile into the new folder
         self.assertIn('genLogText = text', breaker)
         self.assertIn('genRetryOffered = true', breaker)
         self.assertIn('showGenFailure()', breaker)
