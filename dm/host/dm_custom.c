@@ -1204,6 +1204,11 @@ static int icloud_available_throttled(int fresh) { static int ok = 1, n; if (fre
 static int touch_only_row(int i) { return i == K_TOUCH_SWAP; }
 static void restart_hints(uint64_t sp, int page) {   // 配音 / 物品注释两行的「重启后生效」（iCloud 在 sync_toggles 里跟账号状态一起判） | voice / item notes restart hints (iCloud is judged in sync_toggles with the account state)
     static int k_in = -2; if (k_in == -2) k_in = key_idx("item_notes");
+    // 测试开关 DM_TEST_PEND=<键>=<值>|!（! = 启动值取反）[,…]（截「重启后生效」提示用）：第一次进这两页时当作玩家点选了这些值（只进待应用 g_pend，不点「应用」、不写文件）
+    // Test switch DM_TEST_PEND=<key>=<value>[,...] (for screenshots of the restart hints): on the first visit to these pages, act as if the player picked these values (pending g_pend only, no Apply, no file write)
+    { static int done; const char *e = done ? NULL : getenv("DM_TEST_PEND"); done = 1;
+      if (e) { char buf[200]; strlcpy(buf, e, sizeof buf); for (char *sv, *t = strtok_r(buf, ",", &sv); t; t = strtok_r(NULL, ",", &sv)) { char *eq = strchr(t, '='); if (!eq) continue; *eq = 0; int i = key_idx(t);
+          if (i >= 0) { int nv = eq[1] == '!' ? !g_boot_v[i] : atoi(eq + 1); atomic_store(&g_pend[i], nv); LOG("自定义设置：测试开关 DM_TEST_PEND %s → %d（启动值 %d，当作玩家点选、没应用）", t, nv, g_boot_v[i]); } else LOG("【红】DM_TEST_PEND：没有键 %s", t); } } }
     if (page == PG_SYS && row_on_page(K_VOICE, page)) { uint64_t w = find_w(sp, "TouchCustom_voice_Restart", 0); if (w) ui_show_ours(w, restart_pending(K_VOICE)); }
     if (k_in >= 0 && row_on_page(k_in, page)) { uint64_t w = find_w(sp, "TouchCustom_item_notes_Note", 0); if (w) ui_show_ours(w, restart_pending(k_in)); }
 }
