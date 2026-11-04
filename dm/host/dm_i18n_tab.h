@@ -1013,6 +1013,8 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
 #endif
 #if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidZipFailed", "解压没有完成：%s\n已解压的部分保留着，重新打开 App 会接着解。", "Extraction did not finish: %s\nWhat has been extracted is kept; reopen the app to continue.", "La extracción no terminó: %s\nLo ya extraído se conserva; vuelve a abrir la app para continuar.", "La extracción no terminó: %s\nLo ya extraído se conserva; vuelve a abrir la app para continuar.", "Распаковка не завершена: %s\nРаспакованное сохранено; откройте приложение снова, чтобы продолжить.", "압축 해제가 끝나지 않았습니다: %s\n이미 푼 부분은 남아 있으며, 앱을 다시 열면 이어서 진행합니다." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidZipCheckFailed", "解完后核对大小 / 校验和不一致", "size / checksum check after extraction did not match", "la comprobación de tamaño / suma tras extraer no coincide", "la comprobación de tamaño / suma tras extraer no coincide", "проверка размера / контрольной суммы после распаковки не совпала", "압축 해제 후 크기 / 체크섬 검사가 맞지 않음" },
 #endif
     { "dmLoadStageDownload", "正在下载游戏内容", "Downloading game content", "Descargando el contenido del juego", "Descargando el contenido del juego", "Загрузка игрового содержимого", "게임 콘텐츠 다운로드 중" },
