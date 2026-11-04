@@ -17,6 +17,7 @@ run: \
 	$(B)/t_modal_input_gate \
 	$(B)/t_settings_modal_input \
 	$(B)/t_ui_gate \
+	$(B)/t_ql_cover \
 	$(B)/t_focus_clip \
 	$(B)/t_slider_part \
 	$(B)/t_metalfx_auto \
@@ -181,6 +182,7 @@ run: \
 	$(B)/t_modal_input_gate
 	$(B)/t_settings_modal_input
 	$(B)/t_ui_gate
+	$(B)/t_ql_cover
 	$(B)/t_focus_clip
 	$(B)/t_slider_part
 	$(B)/t_notice_geometry
@@ -457,6 +459,8 @@ $(B)/t_modal_input_gate: t_modal_input_gate.c ../dm_cursor.c ../dm_cursor.h | $(
 $(B)/t_slider_part: t_slider_part.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
 $(B)/t_focus_clip: t_focus_clip.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
+$(B)/t_ql_cover: t_ql_cover.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
 $(B)/t_ui_gate: t_ui_gate.c ../dm_ui_gate.h ../dm_cursor.c | $(B)
 	clang -std=c11 -O1 -Wall -Wextra -Werror -I.. -o $@ $<

@@ -987,13 +987,18 @@ static _Atomic uint64_t g_qt_dn, g_qt_xy, g_qt_stop_at;
 // went through press classification (Mac host touches, UI regression) taps on the tabs / X were swallowed and the open quest log could not be left. Recognized here:
 // on a tab = 3 (the caller switches tabs the way classification does), on the X = 0 (clicked as usual)
 static _Atomic int g_tab_delta, g_tab_top;   // 定义在后面（页签切换） | defined later (tab switching)
-static int ql_tab(module_t *m, uint64_t root, int x, int y, int *d, int *top) {
+static int ql_tab(module_t *m, uint64_t root, int x, int y, int wide, int *d, int *top) {   // wide = 0：只看触点本身；1：只看上下放宽的几档 | wide = 0: the touch point only; 1: only the widened steps
     uint64_t rch = *(uint64_t *)(root + 0x58), rn = *(uint64_t *)(root + 0x60); int32_t vh = *(int32_t *)(m->base + 0x211da3c); if (!rch || rn > 256 || vh <= 0) return 0;
     static const int off[5] = { 0, 45, -45, 90, -90 };   // 同 ui_classify0：页签条上下各放宽到 90 单位 | as in ui_classify0: the tab bar widened by 90 units up and down
-    for (int i = 0; i < 5; i++) { int yy = y + off[i] * vh / 2160; if (yy < 0 || yy >= vh) continue; int tl = ui_top_cover(m, root, x, yy); if (tl < 0) tl = 0;
+    for (int i = wide ? 1 : 0; i < (wide ? 5 : 1); i++) { int yy = y + off[i] * vh / 2160; if (yy < 0 || yy >= vh) continue; int tl = ui_top_cover(m, root, x, yy); if (tl < 0) tl = 0;
         for (int k = (int)rn - 1; k >= tl; k--) if (tab_walk(*(uint64_t *)(rch + 8 * k), (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)yy << 32), 1, (uint64_t)m->base + 0x20ba3a8, d, top)) return 1; }
     return 0;
 }
+// 任务日志这一下怎么处理（纯函数，t_ql_decide.c）：0 = 照常点（X）/ 3 = 切页签 / -1 = 接着按任务行 / 空处判。放宽的那几档（页签条上下 90 单位）只在触点本身没压着
+// 可点控件时才算页签——同 ui_classify0 的 on_ctl（交叉审 P1：页签条下面第一条任务行被放宽的页签抢走，「一次点显示当前目标」退化）
+// How this quest log tap is handled (pure, t_ql_decide.c): 0 = click as usual (the X) / 3 = switch tabs / -1 = go on to quest row / empty space. The widened steps (90 units around the tab bar) count as a tab only
+// when the touch point itself is not on a clickable widget -- the on_ctl of ui_classify0 (cross-review P1: the first quest row under the tab bar was taken by the widened tab, regressing "one tap shows the objective")
+int dm_ql_decide(int on_close, int tab_exact, int tab_wide, int on_ctl) { return on_close ? 0 : tab_exact ? 3 : tab_wide && !on_ctl ? 3 : -1; }
 static int ql_close(uint64_t root, int x, int y) {   // 点在可见的 TouchClose（右上角 X）上 | on a visible TouchClose (the top-right X)
     uint64_t xy = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32), ch = *(uint64_t *)(root + 0x58), n = *(uint64_t *)(root + 0x60); if (!ch || n > 256) return 0;
     for (uint64_t i = 0; i < n; i++) { uint64_t p = *(uint64_t *)(ch + 8 * i); if (!p || !*(uint8_t *)(p + 0x50)) continue; uint64_t c = ui_find(p, "TouchClose", 1);
@@ -1003,8 +1008,9 @@ static int ql_close(uint64_t root, int x, int y) {   // 点在可见的 TouchClo
 static int quest_log_tap(module_t *m, uint64_t root, int x, int y) {
     uint64_t qp = ui_find(root, "QuestLogPanelExpansion", 1); if (!qp || !*(uint8_t *)(qp + 0x50)) return 0;
     uint64_t cd = atomic_load(&g_close_down); if (cd && dm_guest_frame() - cd < 60) return 0;
-    if (ql_close(root, x, y)) return 0;
-    { int d = 0, top = 0; if (ql_tab(m, root, x, y, &d, &top)) { atomic_store(&g_tab_delta, d); atomic_store(&g_tab_top, top); return 3; } }
+    { int d = 0, top = 0, on_close = ql_close(root, x, y), exact = !on_close && ql_tab(m, root, x, y, 0, &d, &top), wide = !on_close && !exact && ql_tab(m, root, x, y, 1, &d, &top), on_ctl = 0;
+      if (wide) { int qx = x, qy = y; on_ctl = ui_snap(m, root, &qx, &qy) == 1; }
+      int r = dm_ql_decide(on_close, exact, wide, on_ctl); if (r == 3) { atomic_store(&g_tab_delta, d); atomic_store(&g_tab_top, top); } if (r >= 0) return r; }
     int t = ui_top_cover(m, root, x, y); if (t < 0) return 0;
     uint64_t ch = *(uint64_t *)(root + 0x58), tp = *(uint64_t *)(ch + 8 * t); if (!tp) return 0;
     const char *nm = *(uint64_t *)(tp + 8) ? (const char *)*(uint64_t *)(tp + 8) : "";
