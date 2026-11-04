@@ -123,20 +123,22 @@ int main(int argc, char **argv) {
         { "ipad_pro11_port_834x1194", { 834, 1194, 0, 24, 0, 20 }, 1 },
     };
     int fails = gate_ios_view(); char path[1024];
-    // B139 根因守卫：iPad 的静态尺寸按长边放大（24 → 28.656 pt），图标框不再吃满剩余高度、进度组不再贴底——
-    // 横屏标题在 72.3% 屏高（修前 76.4%）、条 78.7%（修前 81.8%）；竖屏 80.6% / 85.1%（修前 83.5% / 87.2%）。
+    // B139 返工根因守卫：iPad 的静态尺寸按安全内容高缩放——横屏 k = (834 − 20) / 500 = 1.628（24 → 39.07 pt），
+    // 竖屏 k = (1194 − 20) / 840 = 1.3976（24 → 33.54 pt）。进度组不再贴底：横屏标题在 63.1% 屏高、条 71.8%（奥丁 62.2% / 71.7%）；
+    // 竖屏 77.6% / 82.8%（17 Pro 竖 75.9% / 81.0%）。上一版按长边 k = 1.194 时是横屏 72.3% / 78.7%、竖屏 80.6% / 85.1%。
     // 安卓参照（奥丁 832.5×468.3、Fold8 934.2×841.7、出图的 873×393）长边都 ≤ 1000，字号仍是 24 pt、矩形逐位不变。
-    // B139 root-cause gate: the iPad's static metrics scale with the long side (24 → 28.656 pt), so the icon box no longer eats all the
-    // remaining height and the progress group no longer hugs the bottom - title at 72.3% of the height (76.4% before), bar 78.7% (81.8%);
-    // portrait 80.6% / 85.1% (83.5% / 87.2%). The Android references (Thor 832.5×468.3, Fold8 934.2×841.7, the 873×393 shot) all have a
-    // long side ≤ 1000: their fonts stay 24 pt and every rectangle is bit-identical.
+    // B139 rework root-cause gate: the iPad's static metrics scale with the safe content height - landscape k = (834 - 20) / 500 = 1.628
+    // (24 → 39.07 pt), portrait k = (1194 - 20) / 840 = 1.3976 (24 → 33.54 pt). The progress group no longer hugs the bottom: landscape
+    // title at 63.1% of the height, bar 71.8% (Thor 62.2% / 71.7%); portrait 77.6% / 82.8% (17 Pro portrait 75.9% / 81.0%). The previous
+    // long side / 1000 rule (k = 1.194) gave 72.3% / 78.7% and 80.6% / 85.1%. The Android references (Thor 832.5×468.3, Fold8 934.2×841.7,
+    // the 873×393 shot) all have a long side ≤ 1000: their fonts stay 24 pt and every rectangle is bit-identical.
     {
         dm_lp_screen ip[2] = { { 1194, 834, 0, 24, 0, 20 }, { 834, 1194, 0, 24, 0, 20 } };
-        const double want[2][2] = { { 0.7229, 0.7865 }, { 0.8064, 0.8508 } };
+        const double kt[2] = { 39.072, 33.542857142857 }, want[2][2] = { { 0.6309, 0.7176 }, { 0.7763, 0.8283 } };
         for (int i = 0; i < 2; i++) {
             dm_lp_layout L; dm_loadpage_layout(&ip[i], &L);
-            printf("  iPad %s：标题 %.1f pt，标题在 %.1f%% 高，条在 %.1f%% 高\n", i ? "竖" : "横", L.title_pt, L.title.y / ip[i].h * 100, L.bar.y / ip[i].h * 100);
-            if (fabs(L.title_pt - 28.656) > 0.01) { fprintf(stderr, "【红】iPad %s 的字号没按大屏放大（%.2f pt）\n", i ? "竖" : "横", L.title_pt); fails++; }
+            printf("  iPad %s：标题 %.2f pt，标题在 %.1f%% 高，条在 %.1f%% 高\n", i ? "竖" : "横", L.title_pt, L.title.y / ip[i].h * 100, L.bar.y / ip[i].h * 100);
+            if (fabs(L.title_pt - kt[i]) > 0.01) { fprintf(stderr, "【红】iPad %s 的字号没按安全内容高放大（%.2f pt，期望 %.2f）\n", i ? "竖" : "横", L.title_pt, kt[i]); fails++; }
             if (fabs(L.title.y / ip[i].h - want[i][0]) > 0.002 || fabs(L.bar.y / ip[i].h - want[i][1]) > 0.002) {
                 fprintf(stderr, "【红】iPad %s 的进度组相对位置不对（标题 %.3f、条 %.3f，期望 %.3f / %.3f）\n", i ? "竖" : "横", L.title.y / ip[i].h, L.bar.y / ip[i].h, want[i][0], want[i][1]); fails++; }
         }

@@ -18,6 +18,11 @@ static int checks, fails;
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
 #define NEAR(a, b) (fabs((a) - (b)) < 0.51)
 static int rect_in(dm_lp_rect r, double x0, double y0, double x1, double y1) { return r.x >= x0 - 1e-6 && r.y >= y0 - 1e-6 && r.x + r.w <= x1 + 1e-6 && r.y + r.h <= y1 + 1e-6; }
+// 竖向比例（除以屏高）：图标框高、标题顶、条顶、进度组整体高（标题顶到屏底）。参照机也用同一组函数算，避免手抄常数
+// Vertical ratios over the screen height: icon box height, title top, bar top, whole progress group (title top to the screen bottom). The reference phones are measured with the same
+// functions so the numbers are not hand-copied
+static double icon_share(const dm_lp_layout *L, double h) { const double *ib = L->landscape ? k_icon_land : k_icon_port; return L->bg_dst.h * (ib[3] - ib[1]) / h; }
+static double at(const dm_lp_layout *L, double h, int what) { return what == 0 ? L->title.y / h : what == 1 ? L->bar.y / h : (h - L->title.y) / h; }   // 0 = 标题顶、1 = 条顶、2 = 进度组整体 | 0 = title top, 1 = bar top, 2 = whole group
 
 int main(void) {
     dm_lp_text t; dm_lp_detail d = { 0 };
@@ -239,21 +244,24 @@ int main(void) {
         dm_loadpage_ui_set_group(-1); dm_loadpage_community(NULL, NULL, NULL);
     }
 
-    // 11. 大屏适配（B139）：静态尺寸（字号 / 边距 / 间距 / 页脚 / 条高 / 静音钮）按整屏长边缩放——长边 1000 点 / dp 以内保持手持原值，
-    //     更大的屏（iPad Pro 11 横 1194×834、竖 834×1194，安全区上 24 / 下 20）按 1194 / 1000 = 1.194 放大。
-    //     修前 iPad 横屏图标框高 567 点（屏高 68.0%）、标题在 76.4% 高、条在 81.8% 高；修后 524 点（62.8%）、72.3%、78.7%，
-    //     和安卓参照（奥丁 52.4% / 62.2% / 71.7%，Fold8 73.5% / 79.0% / 84.3%）落在同一范围。
-    //     奥丁（832.5×468.3）与 Fold8 内屏（934.2×841.7）长边都 ≤ 1000，k 恰好是 1，矩形与修前逐位相同——这里逐项钉住。
-    // 11. Large-screen fit (B139): static metrics (fonts / margins / gaps / footer / bar height / mute button) scale with the long side - up to 1000 pt / dp
-    //     they keep the handheld values; larger screens (iPad Pro 11 1194×834, 834×1194, safe insets 24 top / 20 bottom) scale by 1194 / 1000 = 1.194.
-    //     Before, the iPad landscape icon box was 567 pt tall (68.0% of the height), the title at 76.4% and the bar at 81.8%; after, 524 pt (62.8%), 72.3%, 78.7%,
-    //     in the same band as the Android references (Thor 52.4% / 62.2% / 71.7%, Fold8 73.5% / 79.0% / 84.3%).
-    //     The Thor (832.5×468.3) and the Fold8 inner screen (934.2×841.7) both have a long side ≤ 1000, so k is exactly 1 and every rectangle is bit-identical to
-    //     before - pinned item by item below.
+    // 11. 大屏适配（B139 返工）：静态尺寸（字号 / 边距 / 间距 / 页脚 / 条高 / 静音钮）按安全内容高缩放——长边 1000 点 / dp 以内保持手持原值，
+    //     更大的屏（iPad Pro 11 横 1194×834、竖 834×1194，安全区上 24 / 下 20）取 k =（屏高 − 底安全区）/ 参照内容高：
+    //     横屏 814 / 500 = 1.628（奥丁 468.3 那一档），竖屏 1174 / 840 = 1.3976（17 Pro 874 − 34）。
+    //     验收：iPad 横屏三项比例对奥丁（图标 52.4% / 标题 62.2% / 进度组 37.8%）都在 ±5 个百分点内；竖屏对 17 Pro 竖（39.0% / 75.9% / 24.1%）同样。
+    //     上一版按「长边 / 1000」（k = 1.194）时横屏图标 62.8%、标题 72.3%、条 78.7%，竖屏图标 58.6%、标题 80.6%——超线。
+    //     奥丁（832.5×468.3）、Fold8 内屏（934.2×841.7）、Duo 内屏（951×669）、iPhone 17 Pro 横竖长边都 ≤ 1000，k 恰好是 1，矩形与修前逐位相同——这里逐项钉住。
+    // 11. Large-screen fit (B139 rework): static metrics scale with the safe content height - up to 1000 pt / dp on the long side they keep the handheld
+    //     values; larger screens (iPad Pro 11 1194×834, 834×1194, safe insets 24 top / 20 bottom) take k = (height - bottom inset) / reference content height:
+    //     landscape 814 / 500 = 1.628 (the Thor band), portrait 1174 / 840 = 1.3976 (the 17 Pro's 874 - 34).
+    //     Acceptance: the iPad's three ratios are within 5 points of the Thor in landscape (icon 52.4% / title 62.2% / group 37.8%) and of the 17 Pro portrait
+    //     in portrait (39.0% / 75.9% / 24.1%). The previous long side / 1000 rule (k = 1.194) gave landscape icon 62.8%, title 72.3%, bar 78.7% and portrait
+    //     icon 58.6%, title 80.6% - outside the line. The Thor (832.5×468.3), Fold8 inner (934.2×841.7), Duo inner (951×669) and iPhone 17 Pro both ways
+    //     all have a long side ≤ 1000, so k is exactly 1 and every rectangle is bit-identical to before - pinned item by item below.
     {
-        dm_lp_screen thor2 = { 832.5, 468.3, 0, 0, 0, 0 }, fold = { 934.2, 841.7, 0, 0, 0, 0 };
+        dm_lp_screen thor2 = { 832.5, 468.3, 0, 0, 0, 0 }, fold = { 934.2, 841.7, 0, 0, 0, 0 }, duo2 = { 951, 669, 0, 0, 0, 0 };
         dm_lp_screen ipad_l = { 1194, 834, 0, 24, 0, 20 }, ipad_p = { 834, 1194, 0, 24, 0, 20 };
-        dm_lp_layout L2;
+        dm_lp_screen ipp = { 402, 874, 0, 59, 0, 34 }, ipl = { 874, 402, 59, 0, 59, 21 };
+        dm_lp_layout L2, REF;
         dm_loadpage_set_wordmark(0); dm_loadpage_begin(two, 2, w_two, 15000); dm_loadpage_set(0, 0.5, NULL, 15001); dm_loadpage_set(1, 0.16, NULL, 15002);
         // 安卓手持：字号仍是 24 / 18 / 14，矩形与修前完全一致（同一份小数） | Android handheld: fonts stay 24 / 18 / 14 and the rectangles are exactly as before
         dm_loadpage_layout(&thor2, &L2);
@@ -266,29 +274,53 @@ int main(void) {
         CHECK(L2.title_pt == 24 && L2.body_pt == 18 && L2.sub_pt == 14 && L2.mute.w == 40);
         CHECK(fabs(L2.title.y - 664.9) < 1e-9 && fabs(L2.bar.y - 709.3) < 1e-9 && fabs(L2.bar.w - 544.484) < 1e-9 && fabs(L2.body.y - 727.3) < 1e-9 && fabs(L2.sub.y - 758.5) < 1e-9);
         CHECK(fabs(L2.bg_dst.x - (-226.456003)) < 1e-6 && fabs(L2.bg_dst.y - 4.615869) < 1e-6 && fabs(L2.bg_dst.w - 1385.72628) < 1e-6 && fabs(L2.bg_dst.h - 779.471033) < 1e-6);
+        // Duo 内屏长边 951 ≤ 1000：k = 1，字号与进度组位置和修前逐位相同 | the Duo inner screen's long side is 951 ≤ 1000: k = 1, fonts and progress group bit-identical
+        dm_loadpage_layout(&duo2, &L2);
+        CHECK(L2.title_pt == 24 && L2.body_pt == 18 && L2.sub_pt == 14 && fabs(L2.title.y - 492.2) < 1e-6 && fabs(L2.bar.y - 536.6) < 1e-6);
         // iPhone 17 Pro 横竖也都在 1000 以内：字号与矩形同样逐位不变 | iPhone 17 Pro in both orientations is under 1000 too: same fonts and rectangles
-        dm_lp_screen ipp = { 402, 874, 0, 59, 0, 34 }, ipl = { 874, 402, 59, 0, 59, 21 };
         dm_loadpage_layout(&ipp, &L2);
         CHECK(L2.title_pt == 24 && L2.body_pt == 18 && fabs(L2.title.y - 663.2) < 1e-9 && fabs(L2.bar.w - 346) < 1e-9 && fabs(L2.bg_dst.x - (-2.900118)) < 1e-6 && fabs(L2.bg_dst.h - 722.809766) < 1e-6);
         dm_loadpage_layout(&ipl, &L2);
         CHECK(L2.title_pt == 24 && fabs(L2.title.y - 204.2) < 1e-9 && fabs(L2.bar.w - 434) < 1e-9 && fabs(L2.bg_dst.x - 259.716821) < 1e-6 && fabs(L2.bg_dst.h - 199.244332) < 1e-6);
-        // iPad：静态尺寸 ×1.194；图标框占屏比例与进度组相对位置（根因：修前图标吃满剩余高度、进度组贴底） | iPad: static metrics ×1.194; icon box share and progress group position (the root cause: the icon ate all remaining height, the group hugged the bottom)
+        // 验收线（本轮返工第 1 条）：iPad 横屏对奥丁、竖屏对 17 Pro 竖，图标框高 / 标题顶 / 条顶 / 进度组整体四项比例都在 ±5 个百分点内。
+        // 变异证明：把 dm_loadpage.c 的大屏系数改回 k = 1（横屏图标 62.8 / 标题 72.3 / 条 78.7，竖屏 58.6 / 80.6 / 85.1），下面这 8 行全部报红。
+        // Acceptance line (rework item 1): iPad landscape against the Thor, portrait against the 17 Pro portrait - icon box height, title top, bar top and
+        // whole group all within 5 points. Mutation: forcing the large-screen factor back to k = 1 in dm_loadpage.c (landscape icon 62.8 / title 72.3 / bar
+        // 78.7, portrait 58.6 / 80.6 / 85.1) turns all eight lines below red.
+        dm_loadpage_layout(&thor2, &REF);
+        { double ri = icon_share(&REF, thor2.h), rt = at(&REF, thor2.h, 0), rb = at(&REF, thor2.h, 1), rg = at(&REF, thor2.h, 2);
+          dm_loadpage_layout(&ipad_l, &L2);
+          CHECK(fabs(icon_share(&L2, ipad_l.h) - ri) <= 0.05 && fabs(at(&L2, ipad_l.h, 0) - rt) <= 0.05);
+          CHECK(fabs(at(&L2, ipad_l.h, 1) - rb) <= 0.05 && fabs(at(&L2, ipad_l.h, 2) - rg) <= 0.05);
+          printf("  iPad 横：图标 %.1f%% / 标题 %.1f%% / 条 %.1f%% / 进度组 %.1f%%（奥丁 %.1f / %.1f / %.1f / %.1f）\n",
+              icon_share(&L2, ipad_l.h) * 100, at(&L2, ipad_l.h, 0) * 100, at(&L2, ipad_l.h, 1) * 100, at(&L2, ipad_l.h, 2) * 100,
+              ri * 100, rt * 100, rb * 100, rg * 100); }
+        dm_loadpage_layout(&ipp, &REF);
+        { double ri = icon_share(&REF, ipp.h), rt = at(&REF, ipp.h, 0), rb = at(&REF, ipp.h, 1), rg = at(&REF, ipp.h, 2);
+          dm_loadpage_layout(&ipad_p, &L2);
+          CHECK(fabs(icon_share(&L2, ipad_p.h) - ri) <= 0.05 && fabs(at(&L2, ipad_p.h, 0) - rt) <= 0.05);
+          CHECK(fabs(at(&L2, ipad_p.h, 1) - rb) <= 0.05 && fabs(at(&L2, ipad_p.h, 2) - rg) <= 0.05);
+          printf("  iPad 竖：图标 %.1f%% / 标题 %.1f%% / 条 %.1f%% / 进度组 %.1f%%（17 Pro 竖 %.1f / %.1f / %.1f / %.1f）\n",
+              icon_share(&L2, ipad_p.h) * 100, at(&L2, ipad_p.h, 0) * 100, at(&L2, ipad_p.h, 1) * 100, at(&L2, ipad_p.h, 2) * 100,
+              ri * 100, rt * 100, rb * 100, rg * 100); }
+        // iPad：静态尺寸按 k = 1.628（横）/ 1.3976（竖）放大；图标框占屏比例与进度组相对位置逐项钉住（防止以后调参悄悄跑偏）
+        // iPad: static metrics ×1.628 (landscape) / ×1.3976 (portrait); icon box share and progress group position pinned item by item (so later tuning cannot drift silently)
         dm_loadpage_layout(&ipad_l, &L2);
-        CHECK(NEAR(L2.title_pt, 24 * 1.194) && NEAR(L2.body_pt, 18 * 1.194) && NEAR(L2.sub_pt, 14 * 1.194) && NEAR(L2.mute.w, 40 * 1.194) && NEAR(L2.bar.h, 8 * 1.194));
-        { const double *ib = L2.landscape ? k_icon_land : k_icon_port;
+        CHECK(NEAR(L2.title_pt, 24 * 1.628) && NEAR(L2.body_pt, 18 * 1.628) && NEAR(L2.sub_pt, 14 * 1.628) && NEAR(L2.mute.w, 40 * 1.628) && NEAR(L2.bar.h, 8 * 1.628));
+        { const double *ib = k_icon_land;
           double ix0 = L2.bg_dst.x + L2.bg_dst.w * ib[0], iy0 = L2.bg_dst.y + L2.bg_dst.h * ib[1];
           double ix1 = L2.bg_dst.x + L2.bg_dst.w * ib[2], iy1 = L2.bg_dst.y + L2.bg_dst.h * ib[3];
-          CHECK(fabs((iy1 - iy0) / ipad_l.h - 0.6283) < 0.002 && fabs((ix1 - ix0) / ipad_l.w - 0.4451) < 0.002);   // 图标框高 62.8% / 宽 44.5%（修前 68.0% / 48.2%，安卓 52.4–73.5%） | icon box 62.8% high / 44.5% wide (before 68.0% / 48.2%; Android 52.4-73.5%)
-          CHECK(iy0 >= 24 + 28 * 1.194 - 0.5 && iy1 <= L2.title.y - 18 * 1.194 + 0.5 && ix0 >= 28 * 1.194 - 0.5 && ix1 <= 1194 - 28 * 1.194 + 0.5); }
-        CHECK(fabs(L2.title.y / ipad_l.h - 0.7229) < 0.002 && fabs(L2.bar.y / ipad_l.h - 0.7865) < 0.002);   // 标题 72.3% / 条 78.7%（修前 76.4% / 81.8%） | title 72.3% / bar 78.7% (before 76.4% / 81.8%)
+          CHECK(fabs((iy1 - iy0) / ipad_l.h - 0.5123) < 0.002 && fabs((ix1 - ix0) / ipad_l.w - 0.3630) < 0.002);   // 图标框高 51.2%（奥丁 52.4%）/ 宽 36.3% | icon box 51.2% high (Thor 52.4%) / 36.3% wide
+          CHECK(iy0 >= 24 + 28 * 1.628 - 0.5 && iy1 <= L2.title.y - 18 * 1.628 + 0.5 && ix0 >= 28 * 1.628 - 0.5 && ix1 <= 1194 - 28 * 1.628 + 0.5); }
+        CHECK(fabs(L2.title.y / ipad_l.h - 0.6309) < 0.002 && fabs(L2.bar.y / ipad_l.h - 0.7176) < 0.002);   // 标题 63.1%（奥丁 62.2%）/ 条 71.8%（71.7%） | title 63.1% (Thor 62.2%) / bar 71.8% (71.7%)
         dm_loadpage_layout(&ipad_p, &L2);
-        CHECK(NEAR(L2.title_pt, 24 * 1.194) && NEAR(L2.mute.w, 40 * 1.194));
-        { const double *ib = k_icon_port;   // 竖屏：图标框宽占 85.1%（内容宽内），高 58.6%；标题 80.6% / 条 85.1%（修前 83.5% / 87.2%） | portrait: icon box 85.1% wide (inside the content width), 58.6% high; title 80.6% / bar 85.1% (before 83.5% / 87.2%)
+        CHECK(NEAR(L2.title_pt, 24 * 1.3976190476) && NEAR(L2.mute.w, 40 * 1.3976190476));
+        { const double *ib = k_icon_port;   // 竖屏：图标框高封顶 40.0%（17 Pro 39.0%）、宽 58.1%；标题 77.6% / 条 82.8%（17 Pro 75.9% / 81.0%）
           double ix0 = L2.bg_dst.x + L2.bg_dst.w * ib[0], iy0 = L2.bg_dst.y + L2.bg_dst.h * ib[1];
           double ix1 = L2.bg_dst.x + L2.bg_dst.w * ib[2], iy1 = L2.bg_dst.y + L2.bg_dst.h * ib[3];
-          CHECK(fabs((ix1 - ix0) / ipad_p.w - 0.8510) < 0.002 && fabs((iy1 - iy0) / ipad_p.h - 0.5861) < 0.002);
-          CHECK(ix0 >= 28 * 1.194 - 0.5 && ix1 <= 834 - 28 * 1.194 + 0.5 && iy1 <= L2.title.y - 18 * 1.194 + 0.5); }
-        CHECK(fabs(L2.title.y / ipad_p.h - 0.8064) < 0.002 && fabs(L2.bar.y / ipad_p.h - 0.8508) < 0.002);
+          CHECK(fabs((ix1 - ix0) / ipad_p.w - 0.5808) < 0.002 && fabs((iy1 - iy0) / ipad_p.h - 0.4000) < 0.002);
+          CHECK(ix0 >= 28 * 1.3976190476 - 0.5 && ix1 <= 834 - 28 * 1.3976190476 + 0.5 && iy1 <= L2.title.y - 18 * 1.3976190476 + 0.5 && iy0 >= 24 + 28 * 1.3976190476 - 0.5); }
+        CHECK(fabs(L2.title.y / ipad_p.h - 0.7763) < 0.002 && fabs(L2.bar.y / ipad_p.h - 0.8283) < 0.002);
         dm_loadpage_set_wordmark(1);
     }
 

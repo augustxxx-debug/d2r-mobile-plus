@@ -273,17 +273,26 @@ void dm_loadpage_cover(double iw, double ih, double dw, double dh, double fx, do
 static void lpi_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     memset(o, 0, sizeof *o);
     double w = s->w > 0 ? s->w : 1, h = s->h > 0 ? s->h : 1;
-    // 静态尺寸（字号、边距、间距、页脚、条高、静音钮）按整屏长边缩放（B139）。参照的是手持上已经调好的版本：长边 1000 点 / dp
-    // 以内（奥丁 832×468、Fold8 内屏 934×842、Duo 951×669）保持原值不动；更大的屏（iPad 1194×834 / 834×1194）按「长边 / 1000」
-    // 等比放大。以前这些尺寸全是绝对点：屏一大，固定的字高 / 页脚 / 间距占屏比例就变小，而图标按「标题以上」的全部剩余高度摆放，
-    // 于是 iPad 横屏图标 567 点（占高 68%）对奥丁 245 点（52%）、标题落在 64% 对 62%（进度组被压到屏底），观感和安卓完全不同。
-    // Static metrics (fonts, margins, gaps, footer, bar height, mute button) scale with the screen's long side (B139). The reference is the handheld
-    // tuning: up to 1000 pt / dp on the long side (Thor 832×468, Fold8 inner 934×842, Duo 951×669) values stay exactly as before; larger screens
-    // (iPad 1194×834 / 834×1194) scale by long side / 1000. Previously every metric was absolute: on a bigger screen the fixed text / footer / gaps took
-    // a smaller share, while the icon took all the height left above the title - iPad landscape drew a 567 pt icon (68% of the height) against the
-    // Thor's 245 pt (52%), with the title at 64% against 62% (the progress group jammed at the bottom), nothing like Android.
-    double long_side = w > h ? w : h, k = long_side / 1000.0; if (k < 1) k = 1;
+    // 静态尺寸（字号、边距、间距、页脚、条高、静音钮）在大屏上按「安全内容高」缩放（B139 返工）。长边 1000 点 / dp 以内
+    // （奥丁 832×468、Fold8 内屏 934×842、Duo 951×669、iPhone 17 Pro）保持原值 k = 1 不动；更大的屏（iPad 1194×834 / 834×1194）
+    // 取 k =（屏高 − 底安全区）/ 参照内容高：横屏参照 500（奥丁 468.3 那一档横屏机的内容高取整），竖屏参照 iPhone 17 Pro 874 − 34 = 840。
+    // 所以从底往上那一组（页脚 / 副文 / 正文 / 条 / 标题）恒占屏高的同一比例——横屏与奥丁一致（图标 52.4%、标题 62.2%），
+    // 竖屏与 17 Pro 一致（图标 39%、标题 75.9%）。上一版按「长边 / 1000」，iPad 的屏高只有长边的 0.70，底部那一组放得不够大，
+    // 进度组仍被压在屏幕下四分之一（图 62.8%、标题 72.3%、条 78.7%）；竖屏的图标还会被竖图 cover 撑到 58.6%，这里另用 0.40h 封顶。
+    // Static metrics (fonts, margins, gaps, footer, bar height, mute button) scale with the safe content height on large screens (B139 rework).
+    // Up to 1000 pt / dp on the long side (Thor 832×468, Fold8 inner 934×842, Duo 951×669, iPhone 17 Pro) values stay at k = 1; larger screens
+    // (iPad 1194×834 / 834×1194) take k = (height - bottom safe inset) / reference content height: the landscape reference is 500
+    // (the band of the Thor's 468.3), the portrait reference iPhone 17 Pro's 874 - 34 = 840. The bottom stack (footer / sub / body / bar / title) then keeps the
+    // reference's share of the height - landscape matches the Thor (icon 52.4%, title 62.2%), portrait matches the 17 Pro (icon 39%, title 75.9%).
+    // The previous long side / 1000 rule under-scaled the stack on the iPad (its height is only 0.70 of the long side), leaving the progress group
+    // in the bottom quarter (icon 62.8%, title 72.3%, bar 78.7%); in portrait the portrait image's cover also blew the icon up to 58.6%, capped here at 0.40h.
     o->landscape = w >= h;
+    double long_side = w > h ? w : h, k = 1;
+    if (long_side > 1000) {
+        double content_h = h - s->inset_b;
+        k = content_h / (o->landscape ? 500.0 : 840.0);
+        if (k < 1) k = 1;
+    }
     o->bg_name = dm_loadpage_bg_name(w, h, &o->bg_w, &o->bg_h);
     dm_loadpage_cover(o->bg_w, o->bg_h, w, h, LP_FOCUS_X, LP_FOCUS_Y, &o->bg_src);
     o->bg_dst = (dm_lp_rect){ 0, 0, w, h };
@@ -325,6 +334,9 @@ static void lpi_layout(const dm_lp_screen *s, dm_lp_layout *o) {
         double cover = w / iw > h / ih ? w / iw : h / ih, sc = cover;
         if (ah > 0 && sc * ih * (ib[3] - ib[1]) > ah) sc = ah / (ih * (ib[3] - ib[1]));
         if (sc * iw * (ib[2] - ib[0]) > aw) sc = aw / (iw * (ib[2] - ib[0]));
+        // 大屏竖屏：竖图 cover 铺满屏宽时图标框会占到屏高的 58.6%（17 Pro 竖屏是 39%），封顶到 0.40h；横屏的 52.4% 由上面的标题位置自然给出。
+        // Large portrait screens: the portrait image's cover fills the width and grows the icon box to 58.6% of the height (the 17 Pro portrait is 39%), so cap it at 0.40h; landscape gets the Thor's 52.4% naturally from the title position above.
+        if (k > 1 && !o->landscape) { double cap = 0.40 * h; if (sc * ih * (ib[3] - ib[1]) > cap) sc = cap / (ih * (ib[3] - ib[1])); }
         double icx = iw * (ib[0] + ib[2]) / 2 * sc, icy = ih * (ib[1] + ib[3]) / 2 * sc;   // 图标中心在缩放后图里的位置 | icon centre within the scaled image
         double cx = cx0 + cw / 2, cy = (ah > 0 ? top + ah / 2 : h * 0.3);
         o->bg_src = (dm_lp_rect){ 0, 0, iw, ih };

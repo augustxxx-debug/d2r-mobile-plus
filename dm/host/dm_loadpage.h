@@ -94,7 +94,7 @@ typedef struct {   // 四行字 + 百分数。层级：标题（阶段动词短�
 void dm_loadpage_text(dm_lp_text *t, uint64_t now_ms);
 
 typedef struct { double x, y, w, h; } dm_lp_rect;
-typedef struct { double w, h, inset_l, inset_t, inset_r, inset_b; } dm_lp_screen;   // 逻辑点（iOS pt / 安卓 dp）与安全区内缩；长边 > 1000 的大屏（iPad）静态尺寸按「长边 / 1000」放大，手持原样（B139） | logical points (iOS pt / Android dp) and safe-area insets; on screens with a long side > 1000 (iPad) the static metrics scale by long side / 1000, handhelds stay as is (B139)
+typedef struct { double w, h, inset_l, inset_t, inset_r, inset_b; } dm_lp_screen;   // 逻辑点（iOS pt / 安卓 dp）与安全区内缩；长边 > 1000 的大屏（iPad）静态尺寸按安全内容高相对参照机缩放（横屏 500、竖屏 iPhone 17 Pro 840），手持原样（B139） | logical points (iOS pt / Android dp) and safe-area insets; on screens with a long side > 1000 (iPad) the static metrics scale by safe content height against the reference phone (500 landscape, iPhone 17 Pro 840 portrait), handhelds stay as is (B139)
 typedef struct {
     int landscape;                 // 1 = 横屏（w >= h） | 1 = landscape (w >= h)
     const char *bg_name;           // 背景图文件名（包内 loadpage/ 目录） | background file name (loadpage/ in the package)
