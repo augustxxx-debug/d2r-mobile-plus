@@ -1,6 +1,7 @@
 // 远端更新清单的严格解析，接口与规则见 dm_manifest.h。JSON 语法检查沿用 RC1 社区入口（dm_community.c，十一审 Q11-01）那套最小解析器的写法。
 // Strict parsing of the remote update manifest; interface and rules in dm_manifest.h. The JSON syntax check follows the minimal parser of the RC1 community entry (dm_community.c, Q11-01).
 #include "dm_manifest.h"
+#include "dm_pan.h"
 #include "dm_site.h"
 #include <ctype.h>
 #include <stdarg.h>
@@ -10,7 +11,7 @@
 typedef struct {
     const char *p, *e;
     dm_manifest m;
-    int n_build, n_version, n_note, n_urgent, n_render, n_comm, n_qq, n_gh, n_site, n_mirror;   // 出现次数（查重复） | occurrences (to catch duplicates)
+    int n_build, n_version, n_note, n_urgent, n_render, n_comm, n_qq, n_gh, n_site, n_mirror, n_pans;   // 出现次数（查重复） | occurrences (to catch duplicates)
     const char *bad;                                                         // 第一条语义错（类型 / 取值），NULL = 没有 | the first semantic error (type / value), NULL = none
 } mp_t;
 
@@ -58,6 +59,54 @@ static int plain(mp_t *j, int depth, char *out, size_t n, const char *why_type, 
     if (esc) { out[0] = 0; bad(j, why_type); } else if (over) { out[0] = 0; bad(j, why_long); }
     return 1;
 }
+// 网盘条目里的普通字符串：1 好 / 0 语义坏（已消费）/ -1 语法错 | a plain string in a pan entry: 1 good / 0 semantically bad (consumed) / -1 syntax error
+static int pan_str(mp_t *j, char *out, size_t n) {
+    if (j->p >= j->e || *j->p != '"') return 0;
+    int esc = 0, over = 0; if (!str(j, out, n, &esc, &over)) return -1;
+    if (esc || over) { out[0] = 0; return 0; }
+    return 1;
+}
+// community.pans 的一条：必须是对象；name / icon / url 必须有且合规，code 可选、不合规只丢 code。坏条目不报错，直接不要（第 5 条起也不要）
+// One community.pans entry: must be an object; name / icon / url are required and must pass, code is optional and an invalid one is just dropped. A bad entry is skipped, not an error (same for the 5th on)
+static int pan_entry(mp_t *j, int depth, dm_pan_entry *out, int *valid) {
+    if (depth > 16 || j->p >= j->e || *j->p != '{') return 0; j->p++; ws(j);
+    char name[DM_PAN_NAME_MAX + 1] = "", icon[16] = "", url[DM_PAN_URL_MAX + 1] = "", code[DM_PAN_CODE_MAX + 1] = "";
+    int hn = 0, hi = 0, hu = 0, hc = 0, dup = 0, bad_e = 0;
+    if (j->p < j->e && *j->p == '}') { j->p++; *valid = 0; return 1; }
+    for (;;) { char key[24]; int kesc = 0, kover = 0;
+        if (!str(j, key, sizeof key, &kesc, &kover)) return 0; if (kesc || kover) key[0] = 0;
+        ws(j); if (j->p >= j->e || *j->p != ':') return 0; j->p++; ws(j);
+        int is_name = !strcmp(key, "name"), is_icon = !strcmp(key, "icon"), is_url = !strcmp(key, "url"), is_code = !strcmp(key, "code");
+        if (is_name || is_icon || is_url || is_code) {
+            int *cnt = is_name ? &hn : is_icon ? &hi : is_url ? &hu : &hc; if (++*cnt > 1) dup = 1;
+            char *o = is_name ? name : is_icon ? icon : is_url ? url : code;
+            size_t on = is_name ? sizeof name : is_icon ? sizeof icon : is_url ? sizeof url : sizeof code;
+            if (j->p < j->e && *j->p == '"') { int r = pan_str(j, o, on); if (r < 0) return 0; if (!r && !is_icon && !is_code) bad_e = 1; if (is_icon && r != 1) icon[0] = 0; }
+            else { if (!value(j, depth + 1, 0)) return 0; if (is_name || is_url) bad_e = 1; }   // icon 非字符串 / code 非字符串：当没给 | a non-string icon / code counts as absent
+        } else if (!value(j, depth + 1, 0)) return 0;
+        ws(j); if (j->p >= j->e) return 0;
+        if (*j->p == '}') { j->p++; break; }
+        if (*j->p != ',') return 0; j->p++; ws(j); }
+    dm_pan_icon ic = dm_pan_icon_of(icon);
+    if (dup || bad_e || !hn || !hi || !hu || !dm_pan_name_ok(name) || !dm_pan_url_ok(ic, url)) *valid = 0;
+    else { memset(out, 0, sizeof *out); snprintf(out->name, sizeof out->name, "%s", name); out->icon = ic; snprintf(out->url, sizeof out->url, "%s", url); if (hc && dm_pan_code_ok(code)) snprintf(out->code, sizeof out->code, "%s", code); *valid = 1; }
+    return 1;
+}
+// community.pans：必须是数组；元素必须是对象（否则整份清单不合法，与 mirror 的严格口径一致）；第 5 条起只验语法、不要
+// community.pans: must be an array; elements must be objects (otherwise the whole manifest is invalid, matching mirror's strictness); from the 5th on only syntax is checked, then dropped
+static int pans(mp_t *j, int depth) {
+    if (depth > 16 || j->p >= j->e || *j->p != '[') { bad(j, "community.pans 不是数组"); return value(j, depth, 0); }
+    j->p++; ws(j);
+    if (j->p < j->e && *j->p == ']') { j->p++; return 1; }
+    int idx = 0;
+    for (;;) {
+        if (j->p < j->e && *j->p == '{') { dm_pan_entry e; memset(&e, 0, sizeof e); int valid = 0;
+            if (!pan_entry(j, depth + 1, &e, &valid)) return 0;
+            if (idx < DM_PAN_MAX && valid) { j->m.pans[j->m.n_pans++] = e; } }
+        else { bad(j, "community.pans 的元素不是对象"); if (!value(j, depth + 1, 0)) return 0; }
+        idx++; ws(j); if (j->p >= j->e) return 0;
+        if (*j->p == ']') { j->p++; return 1; } if (*j->p != ',') return 0; j->p++; ws(j); }
+}
 static int object(mp_t *j, int depth, int ctx) {   // ctx：0 别处 / 1 根对象 / 2 community 对象 | ctx: 0 elsewhere / 1 root object / 2 the community object
     if (depth > 16 || j->p >= j->e || *j->p != '{') return 0; j->p++; ws(j);
     if (j->p < j->e && *j->p == '}') { j->p++; return 1; }
@@ -79,6 +128,7 @@ static int object(mp_t *j, int depth, int ctx) {   // ctx：0 别处 / 1 根对�
         else if (ctx == 2 && !strcmp(key, "github")) { j->n_gh++; ok = plain(j, depth + 1, j->m.github, sizeof j->m.github, "github 不是不带转义的字符串", "github 超过 160 个字符"); }
         else if (ctx == 2 && !strcmp(key, "site")) { j->n_site++; ok = plain(j, depth + 1, j->m.site, sizeof j->m.site, "site 不是不带转义的字符串", "site 太长（上限见 dm_site.h）"); }
         else if (ctx == 2 && !strcmp(key, "mirror")) { j->n_mirror++; ok = plain(j, depth + 1, j->m.mirror, sizeof j->m.mirror, "mirror 不是不带转义的字符串", "mirror 超过 160 个字符"); }
+        else if (ctx == 2 && !strcmp(key, "pans")) { j->n_pans++; ok = pans(j, depth + 1); }
         else ok = value(j, depth + 1, 0);
         if (!ok) return 0;
         ws(j); if (j->p >= j->e) return 0;
@@ -121,7 +171,7 @@ int dm_manifest_parse(const char *json, size_t len, dm_manifest *out, char *why,
     mp_t j; memset(&j, 0, sizeof j); j.p = json; j.e = json + len; ws(&j);
     int ok = j.p < j.e && *j.p == '{' && object(&j, 1, 1); if (ok) { ws(&j); ok = j.p == j.e; }
     if (!ok) return fail(why, why_n, "JSON 语法错（第 %zu 字节附近），或根不是对象", (size_t)(j.p - json));
-    if (j.n_build > 1 || j.n_version > 1 || j.n_note > 1 || j.n_urgent > 1 || j.n_render > 1 || j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1 || j.n_mirror > 1) return fail(why, why_n, "有重复的键");
+    if (j.n_build > 1 || j.n_version > 1 || j.n_note > 1 || j.n_urgent > 1 || j.n_render > 1 || j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1 || j.n_mirror > 1 || j.n_pans > 1) return fail(why, why_n, "有重复的键");
     if (j.bad) return fail(why, why_n, "%s", j.bad);
     if (!j.n_build || !j.n_note || !j.n_urgent) return fail(why, why_n, "缺必填字段（build / note / urgent）");
     if (j.n_version && !ver_ok(j.m.version)) return fail(why, why_n, "version 只许数字、字母与 .+-，且不能为空");

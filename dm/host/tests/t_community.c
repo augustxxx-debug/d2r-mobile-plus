@@ -40,7 +40,7 @@ static char dir[64], cache[128], logp[128];
 static int copies; static char copied[256];
 static int copy_ok(const char *s) { copies++; snprintf(copied, sizeof copied, "%s", s); return 1; }
 static int copy_bad(const char *s) { (void)s; return 0; }
-static void restart(void) { g_qq[0] = g_gh[0] = g_site[0] = g_mirror[0] = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0); }
+static void restart(void) { g_qq[0] = g_gh[0] = g_site[0] = g_mirror[0] = 0; g_n_pans = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0); }
 static char *log_text(void) { static char t[16384]; fflush(stderr); FILE *f = fopen(logp, "r"); size_t n = f ? fread(t, 1, sizeof t - 1, f) : 0; t[n] = 0; if (f) fclose(f); return t; }
 static void log_reset(void) { fflush(stderr); if (ftruncate(fileno(stderr), 0) == 0) rewind(stderr); }   // 截断并回到文件头（只重开文件会从旧偏移接着写、前面留一段空洞） | truncate and rewind (reopening alone keeps writing at the old offset, leaving a hole at the front)
 static int cache_has(const char *s) { FILE *f = fopen(cache, "r"); char t[512] = {0}; if (!f) return 0; fread(t, 1, sizeof t - 1, f); fclose(f); return strstr(t, s) != NULL; }
@@ -482,6 +482,58 @@ int main(void) {
       #undef E01_ONE
       #undef E01_SEED
     }
+    // 28. community.pans（网盘数组，规则见 dm_pan.h）：清单解析进状态与缓存、dm_community_pans 快照、重启读回；缓存坏字段逐项丢；没有 pans 时缓存与渠道逐字节不变
+    // 28. community.pans (cloud drives, rules in dm_pan.h): parsed into state and cache, the dm_community_pans snapshot, read back after a restart; bad cache fields dropped per field; without pans the cache and channels stay byte-for-byte
+    { dm_pan_entry pe[DM_PAN_MAX]; char t[1024]; FILE *fp; size_t n;
+      static const char *const p1 = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": ["
+          "{\"name\": \"夸克\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/abc\", \"code\": \"ab12\"},"
+          "{\"name\": \"Baidu\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/1x\"}]}}";
+      log_reset(); CHECK(dm_community_manifest(p1, strlen(p1)) == 1);
+      CHECK(dm_community_pans(pe) == 2 && dm_community_pans(NULL) == 2);
+      CHECK(!strcmp(pe[0].name, "夸克") && pe[0].icon == DM_PAN_QUARK && !strcmp(pe[0].url, "https://pan.quark.cn/s/abc") && !strcmp(pe[0].code, "ab12"));
+      CHECK(!strcmp(pe[1].name, "Baidu") && pe[1].icon == DM_PAN_BAIDU && !pe[1].code[0]);
+      CHECK(cache_has("pan0_name=夸克\n") && cache_has("pan0_icon=quark\n") && cache_has("pan0_url=https://pan.quark.cn/s/abc\n") && cache_has("pan0_code=ab12\n"));
+      CHECK(cache_has("pan1_name=Baidu\n") && cache_has("pan1_icon=baidu\n") && cache_has("pan1_url=https://pan.baidu.com/s/1x\n") && !cache_has("pan1_code="));
+      fp = fopen(cache, "r"); n = fp ? fread(t, 1, sizeof t - 1, fp) : 0; if (fp) fclose(fp); t[n] = 0;
+      CHECK(!strcmp(t, "qq_group=1129913678\npan0_name=夸克\npan0_icon=quark\npan0_url=https://pan.quark.cn/s/abc\npan0_code=ab12\npan1_name=Baidu\npan1_icon=baidu\npan1_url=https://pan.baidu.com/s/1x\n"));
+      restart(); log_reset(); dm_community_load();
+      CHECK(dm_community_pans(pe) == 2 && !strcmp(pe[0].name, "夸克") && pe[0].icon == DM_PAN_QUARK && !strcmp(pe[0].code, "ab12") && pe[1].icon == DM_PAN_BAIDU && !pe[1].code[0]);
+      CHECK(strstr(log_text(), "网盘=2"));
+      // 没有 pans：缓存逐字节仍是旧格式、渠道不变、日志不提网盘 | no pans: the cache is exactly the old format, channels unchanged, no cloud-drive mention in the log
+      log_reset(); CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1);
+      fp = fopen(cache, "r"); n = fp ? fread(t, 1, sizeof t - 1, fp) : 0; if (fp) fclose(fp); t[n] = 0;
+      CHECK(!strcmp(t, "qq_group=1129913678\ngithub=https://github.com/example/d2r-mobile-plus/discussions\n"));
+      CHECK(dm_community_pans(pe) == 0); CHECK(!strstr(log_text(), "网盘"));
+      { int c[3]; CHECK(dm_community_channels(DM_LG_ZH, c) == 2 && c[0] == DM_CH_QQ && c[1] == DM_CH_GITHUB); }
+      // 读回时逐字段再过 dm_pan.h：坏 name / 坏 url 丢整条，认不出的 icon = generic，坏 code 只丢 code | re-validated on read: a bad name / url drops the entry, an unknown icon is generic, a bad code is dropped alone
+      fp = fopen(cache, "w"); fputs("qq_group=1129913678\n"
+          "pan0_name=good\npan0_icon=quark\npan0_url=https://pan.quark.cn/s/a\npan0_code=ab12\n"
+          "pan1_name=中中中中中中中中中中中中中\npan1_icon=baidu\npan1_url=https://pan.baidu.com/s/b\n"
+          "pan2_name=Baidu\npan2_icon=weird\npan2_url=https://pan.baidu.com/s/b\npan2_code=abc\n"
+          "pan3_name=badurl\npan3_icon=123pan\npan3_url=https://pan.quark.cn/s/x\n", fp); fclose(fp);
+      restart(); log_reset(); dm_community_load();
+      CHECK(dm_community_pans(pe) == 2);
+      CHECK(!strcmp(pe[0].name, "good") && pe[0].icon == DM_PAN_QUARK && !strcmp(pe[0].code, "ab12"));
+      CHECK(!strcmp(pe[1].name, "Baidu") && pe[1].icon == DM_PAN_GENERIC && !pe[1].code[0]);
+      // 第 5 条起丢弃，日志记一行 | the 5th on is dropped, one log line
+      static const char *const p5 = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": ["
+          "{\"name\": \"a\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/a\"},"
+          "{\"name\": \"b\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/b\"},"
+          "{\"name\": \"c\", \"icon\": \"aliyun\", \"url\": \"https://www.alipan.com/s/c\"},"
+          "{\"name\": \"d\", \"icon\": \"123pan\", \"url\": \"https://www.123pan.com/s/d\"},"
+          "{\"name\": \"e\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/e\"}]}}";
+      log_reset(); CHECK(dm_community_manifest(p5, strlen(p5)) == 1); CHECK(dm_community_pans(pe) == 4); CHECK(!strcmp(pe[3].name, "d"));
+      CHECK(!cache_has("pan4_")); CHECK(strstr(log_text(), "第 5 条起"));
+      // 形状坏（pans 不是数组）：整个键忽略，渠道照常，缓存不写 pan 行 | bad shape (pans not an array): the key is ignored, channels proceed, no pan cache lines
+      static const char *const pb = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": {}}}";
+      log_reset(); CHECK(dm_community_manifest(pb, strlen(pb)) == 1); CHECK(dm_community_pans(pe) == 0); CHECK(dm_community_available());
+      CHECK(!cache_has("pan0_")); CHECK(strstr(log_text(), "pans 须是数组"));
+      // 只有 pans（没有渠道）：网盘照存、渠道为空，返回 1 | pans only (no channels): the drives are stored, channels empty, returns 1
+      static const char *const po = "{\"community\": {\"pans\": [{\"name\": \"only\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/x\"}]}}";
+      log_reset(); CHECK(dm_community_manifest(po, strlen(po)) == 1); CHECK(dm_community_pans(pe) == 1 && !strcmp(pe[0].name, "only"));
+      CHECK(!dm_community_available()); CHECK(cache_has("pan0_name=only\n")); CHECK(!cache_has("qq_group="));
+      // 明确给空数组：撤下网盘（缓存清掉） | an explicitly empty array withdraws the drives (cache cleared)
+      { const char *const pe0 = "{\"community\": {\"pans\": []}}"; CHECK(dm_community_manifest(pe0, strlen(pe0)) == 0); CHECK(dm_community_pans(pe) == 0); CHECK(access(cache, F_OK) != 0); } }
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);
     fflush(stderr); printf("t_community: %d checks, %d failed\n", checks, fails);
     return fails != 0;
