@@ -9,6 +9,7 @@ This changelog records changes introduced by **D2R Mobile Plus** relative to its
 RC2 merges the iOS and Android lines: one tree, and both packages come from the same commit.
 
 - **Crash fixes**: Quick Restart with the full-screen map setting no longer crashes (B120, from upstream). A crash now leaves within about 3 seconds in the cases we tested instead of freezing (B121, B122); a crash on some paths may still take those 3 seconds, and this was tested with unit tests and one forced crash on an Android handheld.
+- **Android**: when the game files are not in place yet, the App now extracts an `S2X.zip` placed in `Download` on first launch (progress page, space check, B / Back pauses and Resume continues; hidden files such as `data/.build.config` survive the zip), fixing B023.
 - **Android**: test runs keep their backup copies apart, so they never touch or mix with a player's backups (B116).
 - **Controller**: on the Gameplay page out of a run, Up on the first row no longer enters the difficulty row (B066). On the mode page, one Left from Hardcore returns to Standard (B072). A dark strip keeps the Options legend off the skill bar (B067).
 - **iPhone Duo**: closing onto the cover screen no longer shows the picture upside down at first (B115; not yet checked on a Duo).

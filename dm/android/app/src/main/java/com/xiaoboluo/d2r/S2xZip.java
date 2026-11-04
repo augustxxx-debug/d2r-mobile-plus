@@ -103,6 +103,15 @@ final class S2xZip {
         return null;
     }
 
+    // 首启要不要走解压（REQ28）：游戏文件没放齐（missingInputs 非空）且 Download 根目录找到了包。
+    // 游戏文件已经齐了完全不看 zip：现有启动 / 导入 / 生成判定原样走。纯判定，不碰文件；find 已保证找到的是普通文件。
+    // Whether the first launch should unpack (REQ28): the game files are incomplete (missingInputs non-empty) and a pack was found in the
+    // Download root. With complete game files the zip is not looked at at all: the existing boot / import / generate decision runs unchanged.
+    // Pure judgement, touches no file; find already guarantees the result is a regular file.
+    static boolean shouldOffer(List<String> missingInputs, File zipFound) {
+        return missingInputs != null && !missingInputs.isEmpty() && zipFound != null;
+    }
+
     // 只读中央目录：识别根前缀、必需项、总字节数、zip slip。不解压任何内容。
     // Read only the central directory: root prefix, required items, total bytes, zip slip. Nothing is decompressed.
     static Plan plan(File zip) throws IOException {

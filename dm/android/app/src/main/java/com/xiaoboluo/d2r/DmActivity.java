@@ -43,6 +43,7 @@ import java.lang.ref.WeakReference;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DmActivity extends Activity implements SurfaceHolder.Callback, DisplayManager.DisplayListener, android.hardware.input.InputManager.InputDeviceListener {
     static native int nativeStart(String filesDir, String extDir, String romfsSrc, String lang, String versionLabel);
@@ -165,6 +166,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             importing = true;
             // 加载页（LoadPageView，核心在 dm/host/dm_loadpage.c）：单阶段「导入」，进度按字节报，页面自己算速度与剩余时间 | the loading page (LoadPageView, core in dm/host/dm_loadpage.c): the single stage "import", progress in bytes, the page computes speed and ETA itself
             showLoadPage();
+            LoadPageView.title(null);   // 回到阶段标题（解压页可能用过覆盖）| back to the stage title (the zip page may have overridden it)
             LoadPageView.begin(new int[] {LoadPageView.IMPORT}, null);
             new Thread(() -> {
                 String error = null;
@@ -182,6 +184,117 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         return true;
     }
 
+    // 触发条件（纯函数 S2xZip.shouldOffer，单测在 S2xZipTest）：游戏文件没放齐且找到了包才走解压；文件齐了完全不看 zip。
+    // 返回 true = 可以继续现有启动 / 导入 / 生成判定；false = 正在解压 / 暂停 / 失败页。
+    // Trigger (the pure S2xZip.shouldOffer, unit-tested in S2xZipTest): extract only when the game files are incomplete and a pack was found;
+    // complete game files never look at the zip. true = the existing boot / import / generate decision may continue; false = extracting / paused / failure page.
+    private boolean ensureZipUnpacked(File downloads, File gameBase) {
+        java.util.List<String> missing = PackGenerator.missingInputs(gameBase);
+        // 游戏文件已齐（或本进程已经解过一次）就不碰 zip，现有判定原样走 | complete game files (or one pass already done) never touch the zip; the existing decision runs unchanged
+        File zip = missing.isEmpty() || zipDone ? null : S2xZip.find(downloads);
+        if (!S2xZip.shouldOffer(missing, zip)) return true;
+        if (zipFailure != null) { showZipFailure(); return false; }
+        if (zipPaused) { if (!zipPausedShown) { showZipPaused(); zipPausedShown = true; } return false; }
+        if (zipRunning) { if (zipPageShown && (loadPage == null || loadPage.getParent() == null)) showLoadPage(); return false; }
+        startZip(zip, gameBase);
+        return false;
+    }
+
+    // 解压全部在后台线程（"dm-s2x-zip"）：plan 只读中央目录 → 结构 / 空间判定 → 加载页 → extract；主线程只换界面。
+    // 状态是静态的：App 被杀后重开自然再次触发并续传；Activity 重建时由 ensureZipUnpacked 接回。
+    // Extraction runs entirely on a background thread ("dm-s2x-zip"): plan reads only the central directory -> structure / space checks -> loading
+    // page -> extract; the main thread only updates the screen. The state is static: after the app is killed the next start triggers again and
+    // resumes; a recreated Activity reattaches through ensureZipUnpacked.
+    private void startZip(File zip, File dest) {
+        zipCancel.set(false);
+        zipRunning = true; zipPageShown = false; zipPaused = false; zipPausedShown = false;
+        zipFailTitle = null; zipFailure = null;
+        final android.content.Context app = getApplicationContext();
+        final String progressFormat = app.getString(R.string.dmAndroidZipProgress);
+        new Thread(() -> {
+            S2xZip.Plan plan;
+            try { plan = S2xZip.plan(zip); }
+            catch (IOException e) { finishZipFailure(app.getString(R.string.dmAndroidZipFailTitle), app.getString(R.string.dmAndroidZipFailed, message(e))); return; }
+            if (!plan.ok()) {   // 结构不对：列出缺项，或给出整包拒绝的原因（zip slip 等）| structurally wrong: list missing items or the whole-pack rejection (zip slip etc.)
+                String body = plan.reject != null ? app.getString(R.string.dmAndroidZipReject, plan.reject)
+                        : app.getString(R.string.dmAndroidZipNeedFiles, String.join(", ", plan.missing));
+                finishZipFailure(app.getString(R.string.dmAndroidZipFailTitle), body); return;
+            }
+            // 空间：还要写的字节（续传时扣掉已完成的）+ 200 MB 余量，跟目标目录所在存储的可用空间比 | space: bytes still to write (finished files deducted on
+            // resume) + 200 MB headroom against the destination's usable space
+            long need = S2xZip.spaceNeeded(plan, dest);
+            if (need > usableSpace(dest)) {
+                finishZipFailure(app.getString(R.string.dmAndroidZipFailTitle), app.getString(R.string.dmAndroidZipNoSpace, gb(need))); return;
+            }
+            zipPageShown = true;
+            LoadPageView.begin(new int[]{LoadPageView.IMPORT}, null);   // 与生成同一套进度条 / 版式，标题换成解压 | same bar / layout as generation, title switched to extraction
+            LoadPageView.title(app.getString(R.string.dmAndroidZipTitle));
+            postUi(a -> a.showLoadPage());
+            S2xZip.Result result;
+            try {
+                result = S2xZip.extract(plan, dest, (done, total, current) -> {
+                    LoadPageView.set(0, total > 0 ? (double) done / total : 0, 0, 0, done, total);
+                    LoadPageView.note(String.format(Locale.ROOT, progressFormat, current, gb(done), gb(total)));   // 正文：当前文件名 + 已解 / 总 GB | body: current file + done / total GB
+                }, zipCancel);
+            } catch (IOException e) {
+                finishZipFailure(app.getString(R.string.dmAndroidZipFailTitle), app.getString(R.string.dmAndroidZipFailed, message(e))); return;
+            }
+            if (result == S2xZip.Result.OK) {
+                zipRunning = false; zipPageShown = false; zipDone = true;   // zip 保留；成功照常进现有流程 | the zip is kept; success follows the existing flow
+                postUi(a -> { LoadPageView.finish(); if (a.resumed) a.startHost(); });
+            } else if (result == S2xZip.Result.CANCELLED) {
+                zipRunning = false; zipPageShown = false; zipPaused = true;   // 已完成文件保留，核心下次续传 | finished files stay; the core resumes next time
+                postUi(a -> { a.zipPausedShown = true; a.showZipPaused(); });
+            } else {
+                finishZipFailure(app.getString(R.string.dmAndroidZipFailTitle), app.getString(R.string.dmAndroidZipFailed, app.getString(R.string.dmAndroidZipCheckFailed)));
+            }
+        }, "dm-s2x-zip").start();
+    }
+
+    // 后台线程的结果只改静态状态 + 投递界面工作；没有 Activity（被杀 / 重建中）时状态照样留着，下次 onResume 接着处理。
+    // Worker results only change static state and post UI work; without an Activity (killed / recreating) the state stays for the next onResume.
+    private static void finishZipFailure(String title, String body) {
+        zipRunning = false; zipPageShown = false; zipPaused = false;
+        zipFailTitle = title; zipFailure = body;
+        postUi(DmActivity::showZipFailure);
+    }
+    private static void postUi(java.util.function.Consumer<DmActivity> work) {
+        DmActivity a = current.get();
+        if (a == null) return;
+        a.runOnUiThread(() -> { if (!a.isDestroyed()) work.accept(a); });
+    }
+    private static String message(IOException e) { return e.getMessage() == null ? e.toString() : e.getMessage(); }
+    private static String gb(long bytes) { return String.format(Locale.ROOT, "%.1f", bytes / 1e9); }
+    // 目标目录可能还不存在：往上找到第一个存在的目录再问可用空间 | the destination may not exist yet: walk up to the first existing directory for the usable space
+    private static long usableSpace(File f) {
+        File d = f;
+        while (d != null && !d.exists()) d = d.getParentFile();
+        return d == null ? 0 : d.getUsableSpace();
+    }
+
+    // 解压暂停页：已解的部分留着，触屏点「继续解压」或手柄 A 回到第 2 步（核心续传）| extraction paused page: what was extracted stays; a tap on
+    // "Resume" or controller A re-enters step 2 (the core resumes)
+    private void showZipPaused() {
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL); box.setPadding(64, 48, 64, 48);
+        box.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        TextView t = new TextView(this); t.setTextSize(24); t.setText(R.string.dmAndroidZipPaused); box.addView(t);
+        TextView b = new TextView(this); b.setTextSize(18); b.setText(R.string.dmAndroidZipPausedBody); b.setPadding(0, 24, 0, 0); box.addView(b);
+        android.widget.Button btn = new android.widget.Button(this); btn.setText(R.string.dmAndroidZipResume); btn.setAllCaps(false); btn.setOnClickListener(v -> resumeZip());
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = 32; box.addView(btn, lp); btn.requestFocus();
+        setContentView(box);
+    }
+    private void resumeZip() {
+        if (!zipPaused) return;
+        zipPaused = false; zipPausedShown = false;
+        startHost();   // 重新走触发条件 → 重新 plan → extract 续传 | re-enter the trigger -> plan again -> extract resumes
+    }
+    private void showZipFailure() {
+        String t = zipFailTitle != null ? zipFailTitle : getString(R.string.dmAndroidZipFailTitle);
+        showGenScreen(t, zipFailure, null);
+    }
+
     private interface Progress { void bytes(long done, long total); }
 
     // ---- 手机端生成导入包（PackGenerator）：自动开始，进度与失败原因显示在这一页；生成线程不持有 Activity，界面每半秒从静态状态取一次 ----
@@ -194,6 +307,17 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private static volatile boolean genShareOpen;  // 分享面板开着：回来时的 onResume 不清失败、不重新生成 | the share sheet is open: the onResume on return keeps the failure and does not regenerate
     private static volatile long genStartMs = Long.MAX_VALUE;   // 这次生成开始的时刻：分享只附这之后写的步骤日志 | when this generation started: sharing attaches only step logs written since
     private final android.os.Handler genHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    // ---- S2X.zip 首启自动解压（REQ28，B023）：游戏文件没放齐、Download 根目录里有 S2X.zip 时，先自己解开，再照常走原有启动 / 导入 / 生成 ----
+    // ---- First-launch automatic extraction of S2X.zip (REQ28, B023): when the game files are incomplete and Download holds S2X.zip, unpack it
+    // first, then follow the existing boot / import / generate path unchanged ----
+    private static volatile boolean zipRunning;     // 解压线程在跑 | an extraction thread is running
+    private static volatile boolean zipPaused;      // 等玩家按「继续解压」 | waiting for the player to resume
+    private static volatile boolean zipPageShown;   // 加载页已到（Activity 重建时接回，不重新 begin） | the loading page is up (reattach on recreation, do not begin again)
+    private static volatile boolean zipDone;        // 本进程已完整解过一次：不再重复触发；zip 保留不删 | one full pass this process: never trigger again; the zip is kept
+    private static final AtomicBoolean zipCancel = new AtomicBoolean(false);   // 解压中 B / 返回键置位，核心自带续传 | set by B / Back while extracting; the core resumes
+    private static volatile String zipFailTitle, zipFailure;   // 失败页（静态：后台线程与重建后的界面都能显示） | failure page (static: the worker and a recreated screen can both show it)
+    private boolean zipPausedShown;                 // 本实例已显示暂停页 | this instance already shows the paused page
 
     // 熔断（P2-4）：同一版本最多自动生成 2 次。生成返回成功、但 contentReady 仍判不齐时，以前会立刻再生成，没有上限；
     // 第 3 次不再空跑，落到失败页并给「分享诊断日志」入口。
@@ -329,6 +453,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             failEarly(base, data, getString(R.string.dmAndroidGenFailSpace), getString(R.string.dmAndroidGenNoSpace, f), String.format(Locale.ROOT, "剩余空间 %s，生成需要约 %d GB（缓存 + 中间产物 + 成品）", f, PackGenerator.SPACE_NEEDED >> 30)); return; }
         countGenerationStart();   // 真开跑才计次：缺文件 / 空间不够的早停不算一次 | count only a real run: an early stop for missing files / space does not count
         generating = true; genState.reset(); genLogText = null; genFailTitle = null; genStartMs = System.currentTimeMillis() - 2000;
+        LoadPageView.title(null);   // 回到阶段标题（解压页可能用过覆盖）| back to the stage title (the zip page may have overridden it)
         LoadPageView.begin(GEN_STAGES, PackGenerator.LOAD_WEIGHTS_MS); genHandler.post(genPoll);
         final File dataDir = data; final String nativeDir = getApplicationInfo().nativeLibraryDir;
         final String appHome = getFilesDir().getParent(), apkDir = new File(nativeDir).getParentFile().getParent(), appId = getPackageName();   // gen_log.txt 脱敏用 | for scrubbing gen_log.txt
@@ -537,6 +662,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (!BuildConfig.DEBUG || !getIntent().getBooleanExtra("dmLoadPageDemo", false)) return false;
         if (loadPageDemo) return true; loadPageDemo = true;
         showLoadPage();
+        LoadPageView.title(null);
         LoadPageView.begin(new int[] {LoadPageView.PATCH, LoadPageView.ASSETS, LoadPageView.OVERLAY, LoadPageView.PACKS, LoadPageView.SHADERS, LoadPageView.INSTALL}, null);
         new Thread(() -> {
             try {
@@ -589,6 +715,10 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (started || importing || !resumed || !ensureFileAccess()) return;
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         File gameBase = PackGenerator.gameBase(downloads);
+        // 有权限、准备判定之前：游戏文件没放齐而 Download 里有 S2X.zip，就先在加载页自己解开（REQ28，B023）；文件齐了它直接放行
+        // With permission granted and before the preparation decision: when the game files are incomplete and Download holds S2X.zip, unpack it
+        // on the loading page first (REQ28, B023); complete files pass straight through
+        if (!libraryLoaded && !ensureZipUnpacked(downloads, gameBase)) return;
         if (!libraryLoaded && !ensureImported(new File(gameBase, "android"))) return;
         if (gameFrame.getParent() == null) setContentView(gameFrame);
         if (!libraryLoaded) {
@@ -841,15 +971,22 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // 实体手柄：按键与轴都先交原生（pad_android.c 判断来源与键位；手柄来源的 BACK 当 B 吃掉）；不归手柄的照常交给系统
     // Physical controllers: keys and axes go native first (pad_android.c decides source and mapping; BACK from a controller counts as B and is swallowed); anything else goes to the system as usual
     @Override public boolean dispatchKeyEvent(android.view.KeyEvent e) {
-        // 首启生成 / 导入的加载页上吞掉返回与手柄 B（玩家按 B 习惯是「取消」，原来会把 App 切到后台、久了可能被系统清掉；离开仍可按 Home）
-        // On the first-launch generation / import loading page, swallow BACK and controller B (players press B to cancel; it used to send the App to the
-        // background, where the system may later clean it up; Home still leaves)
+        // 首启生成 / 导入 / 解压的加载页上吞掉返回与手柄 B（玩家按 B 习惯是「取消」，原来会把 App 切到后台、久了可能被系统清掉；离开仍可按 Home）。
+        // 解压中这两种键 = 取消（置 AtomicBoolean，线程收尾时显示「解压已暂停」，已完成文件保留）；解压暂停页上手柄 A 松开 = 继续解压。
+        // On the first-launch generation / import / extraction loading page, swallow BACK and controller B (players press B to cancel; it used to send the
+        // App to the background, where the system may later clean it up; Home still leaves). During extraction these two keys are Cancel (set the
+        // AtomicBoolean; the worker then shows "extraction paused" with finished files kept); on the paused page controller A on release = resume.
         // 权限提示页：手柄 A / START、确认键或回车松开时打开系统设置（只有手柄或键盘的玩家；有的手柄把确认键映射成 DPAD_CENTER，七审 Q7-02） | permission prompt: controller A / START, confirm or Enter on release opens system settings (controller or keyboard players; some controllers map confirm to DPAD_CENTER, seventh audit Q7-02)
         if (!started && prompting && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_START || e.getKeyCode() == android.view.KeyEvent.KEYCODE_DPAD_CENTER || e.getKeyCode() == android.view.KeyEvent.KEYCODE_ENTER || e.getKeyCode() == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER)) {
             if (e.getAction() == android.view.KeyEvent.ACTION_UP) openFileAccessSettings(); return true; }
+        if (!started && zipPaused && e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A) {
+            if (e.getAction() == android.view.KeyEvent.ACTION_UP) resumeZip(); return true; }
         // 加载页上的手柄（§2.7）：切到手柄模式；页脚显示时 A 键 = 复制群号 / 链接 | controller on the loading page (§2.7): switch to controller mode; with the footer shown, A = copy the number / link
-        if (!started && (generating || importing || loadPageDemo) && loadPage != null && loadPage.isAttachedToWindow() && loadPage.padKey(e)) return true;
+        if (!started && (generating || importing || loadPageDemo || zipRunning) && loadPage != null && loadPage.isAttachedToWindow() && loadPage.padKey(e)) {
+            if (zipRunning && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) zipCancel.set(true);
+            return true; }
         if (!started && (generating || importing || loadPageDemo) && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) return true;
+        if (!started && zipRunning && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) { zipCancel.set(true); return true; }
         // 生成失败页（§2.7）：手柄 A 松开 = 分享诊断日志（触屏点按钮）| generation failure screen (§2.7): controller A on release = Share Diagnostics (touch taps the button)
         if (!started && !generating && genFailure != null && genLogText != null && e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A) { if (e.getAction() == android.view.KeyEvent.ACTION_UP) shareGenLog(); return true; }
         if (started && (e.getAction() == android.view.KeyEvent.ACTION_DOWN || e.getAction() == android.view.KeyEvent.ACTION_UP)) {
@@ -875,7 +1012,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     @Override public void onDisplayRemoved(int id) { updateRefresh(); }
     @Override public void onDisplayChanged(int id) { updateRefresh(); }
     // 回到前台时生成失败的结论作废、重新判断：玩家可能刚补好游戏文件或腾出空间 | back in the foreground a generation failure is dropped and judged afresh: the player may have just added the game files or freed space
-    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); if (!generating && !genShareOpen) genFailure = null; genShareOpen = false; startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
+    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); if (!generating && !genShareOpen) genFailure = null; if (!zipRunning && !zipPaused) { zipFailure = null; zipFailTitle = null; } genShareOpen = false; startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
     @Override protected void onPause() { resumed = false; if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
     @Override protected void onStart() { super.onStart(); if (started) nativeFocus(2); }
     @Override protected void onStop() { if (started) nativeFocus(1); com.xiaoboluo.d2r.widget.HeroWidgetProvider.requestUpdate(this); super.onStop(); }

@@ -73,6 +73,13 @@ public final class LoadPageView extends View {
     // 提示页（权限页与加载页同一套样子）：标题 / 副文是多语键，正文是串；点屏幕（静音钮以外）调 onTap | notice page (the permission page looks like the loading page): title / sub are i18n keys, the body a string; a tap (outside the mute button) calls onTap
     public static void prompt(String titleKey, String body, String subKey) { nativePrompt(titleKey, body, subKey); }
     public static String ui(String key) { return nativeUi(key); }
+    // 标题覆盖（REQ28）：解压流程沿用公共加载页的进度条与版式，但公共核心的阶段标题是固定的多语键，这里只在画字时换掉第一行。
+    // 传 null 恢复阶段标题；下一次 begin 不自动清（解压线程与界面可能分属两个 Activity 实例）。
+    // Title override (REQ28): the zip flow reuses the shared loading page's bar and layout, but the core's stage titles are fixed i18n keys; this
+    // replaces only the first text line. null restores the stage title; begin does not clear it (the worker and the screen may belong to two
+    // Activity instances).
+    private static volatile String titleOverride;
+    public static void title(String text) { titleOverride = text; }
     private Runnable onTap; public void setOnTap(Runnable r) { onTap = r; }
     public static void fail(String reason) { nativeFail(reason); }
     public static void finish() { nativeFinish(); }
@@ -203,7 +210,7 @@ public final class LoadPageView extends View {
         if (L[L_LOGO + 2] > 0) loadLogo();   // 关字标时不读字标图 | the wordmark image is not read with the wordmark off
         if (logo != null && L[L_LOGO + 2] > 0) c.drawBitmap(logo, null, r(L, L_LOGO, new RectF()), paint);   // 字标图：等比居中（矩形由公共布局算） | wordmark: aspect kept, centred (rect from the shared layout)
         else line(c, T[4], brand, (float) L[L_BRANDPT], nativeColor(C_TITLE), false, serif);
-        line(c, T[0], title, (float) L[L_TITLEPT], nativeColor(C_TITLE), false, serif);
+        line(c, titleOverride != null ? titleOverride : T[0], title, (float) L[L_TITLEPT], nativeColor(C_TITLE), false, serif);
         line(c, T[1], pct, (float) L[L_TITLEPT], nativeColor(C_PCT), true, serif);
         line(c, T[2], body, (float) L[L_BODYPT], nativeColor(C_BODY), false, sans);
         line(c, T[3], sub, (float) L[L_SUBPT], nativeColor(C_SUB), false, sans);

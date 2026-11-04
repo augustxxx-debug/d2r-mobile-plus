@@ -144,6 +144,7 @@ public class S2xZipTest {
         root = Files.createTempDirectory("dm-s2x-zip").toFile();
         try {
             findCases();
+            shouldOfferCases();
             outerPrefixCase();
             flatCase();
             missingConfigCase();
@@ -176,6 +177,19 @@ public class S2xZipTest {
         equal(new File(dl2, "D2R Mobile.zip"), S2xZip.find(dl2));
         equal(null, S2xZip.find(dir("find/empty")));
         equal(null, S2xZip.find(new File(root, "find/does-not-exist")));
+    }
+
+    // 1b. 触发条件（需求 1）：缺文件 + 找到包才解压；游戏文件齐了完全不看 zip
+    // 1b. trigger (requirement 1): extract only with missing files + a pack found; complete game files never look at the zip
+    static void shouldOfferCases() throws IOException {
+        File z = zip("offer/S2X.zip", x -> game(x, "S2X/", true));
+        ok(S2xZip.shouldOffer(Arrays.asList("ExeFS/main"), z), "missing files and a zip -> offer");
+        ok(S2xZip.shouldOffer(Arrays.asList("ExeFS/main", "ExeFS/sdk", "data/build_manifest.psv"), z), "any missing set -> offer");
+        ok(!S2xZip.shouldOffer(new ArrayList<String>(), z), "game files complete -> never look at the zip");
+        ok(!S2xZip.shouldOffer(null, z), "no missing list -> no offer");
+        ok(!S2xZip.shouldOffer(Arrays.asList("ExeFS/main"), null), "no zip -> no offer");
+        ok(!S2xZip.shouldOffer(null, null), "neither -> no offer");
+        ok(!S2xZip.shouldOffer(new ArrayList<String>(), null), "complete files and no zip -> no offer");
     }
 
     // 2. 外层多一级目录：S2X/ 剥掉再解；总字节数 = 四个文件；完成后 spaceNeeded 只剩 200 MB 余量

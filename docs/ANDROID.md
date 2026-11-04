@@ -24,6 +24,8 @@ Download/S2X/D2R Mobile Plus/data/    the game resources, as in step 2 below
 
 If you already have your files in the older `Download/S2X/D2R Mobile/` folder, keep them there: the App uses it when `D2R Mobile Plus` holds nothing.
 
+**Recommended: copy one zip.** On a computer, zip the whole `S2X` folder into `S2X.zip` and put it in the phone's `Download`. A zip keeps hidden files such as `data/.build.config`, which are easy to miss when copying a folder by hand. When the game files are not in place yet, the App extracts the zip itself on first launch, with progress on screen (done / total GB and the current file). B or Back pauses it; tap "Resume" to continue, and the next launch continues too. The zip is kept after extraction, so you can delete it yourself. Copying the files one by one still works as below.
+
 Open the App. When it finds no import pack it says it is building the shader cache and starts by itself: it makes, on the phone and from your game files, the same content a computer would, byte for byte. It takes about 5–15 minutes, only once; stay on that screen. It needs about 3 GB of free space (the intermediate files are deleted afterwards, leaving about 0.7 GB). If files are missing, space runs out or a step fails, the screen says why, and the log is in `Download/S2X/D2R Mobile Plus/gen_log.txt`. After installing a new APK it builds again by itself.
 
 `ExeFS` and `data` come from the same extraction (see [GAME_FILES.md](GAME_FILES.md)). On-phone generation uses the font bundled in the APK, LXGW WenKai (霞鹜文楷, SIL OFL 1.1), for the Chinese / Japanese glyphs of the UI, the same as the computer route by default; for another UI font, make the import pack on a computer as below.
