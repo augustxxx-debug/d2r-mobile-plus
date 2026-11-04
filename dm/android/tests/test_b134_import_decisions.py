@@ -1,13 +1,17 @@
-"""B134 返工：启动前「启动 / 导入 / 生成」判定的行为测试（P0-1、P1-1、P1-2、P2-1、P2-2）。
-B134 rework: behavioural tests for the pre-start "boot / import / generate" decision (P0-1, P1-1, P1-2, P2-1, P2-2).
+"""B134 返工：启动前「启动 / 导入 / 生成」判定的测试（P0-1、P1-1、P1-2、P2-1、P2-4）。
+B134 rework: tests for the pre-start "boot / import / generate" decision (P0-1, P1-1, P1-2, P2-1, P2-4).
 
-本机没有 JDK（/usr/bin/javac 是空壳），所以：
-- 用 Python 按 StartupDecision.decide / contentReady 的同一套规则建临时目录，逐个状态跑行为用例；
-- 再加一层源码契约检查，把 Java 里真正做判定的那几行钉住，确保审计的 M3–M7 变异能被抓住。
-No JDK on this machine (/usr/bin/javac is an empty stub), so:
-- a Python port of StartupDecision.decide / contentReady builds temporary directories and runs every state as a behavioural case;
-- a source-contract layer pins the exact decision lines in Java, so the audit's M3-M7 mutations are caught.
+主测试是 Java 单测 StartupDecisionTest.java（run_startup_decision_test.sh）：直接执行 StartupDecision 的真实代码。
+本文件保留两份补充：
+- 用 Python 按同一套规则建临时目录跑行为用例（没有 JDK 的机器上也能挡回退）；
+- 源码契约：两边的规则表（六件程序、判定顺序）必须相同，另外钉住 DmActivity / PackGenerator 里无法 javac 单测的行。
+The primary test is the Java unit test StartupDecisionTest.java (run_startup_decision_test.sh), which executes the real StartupDecision code.
+This file keeps two supplements:
+- a Python port of the same rules builds temporary directories and runs the states (catches regressions on machines without a JDK);
+- source contracts: the rule table (six program files, decision order) must be identical on both sides, and the lines in DmActivity / PackGenerator that
+  cannot be unit-tested with plain javac are pinned.
 """
+import inspect
 import os
 import re
 import tempfile
@@ -92,6 +96,11 @@ def decide(source, runtime, ext_runtime, product, generating=False):
     if want is not None and want != have and product is not None and product == pack_product(want):
         return 'IMPORT'
     if runtime is not None and install_pending(runtime):
+        # P2-1：只有 import.part 残留、没有 install.pending，且下载目录还有本版配套包 → 重走导入（importPack 开头清 part）
+        # P2-1: only import.part is left with no install.pending, and the download folder still has this build's pack -> redo the import (importPack clears part)
+        part_only = (not (Path(runtime) / 'install.pending').exists()) and (Path(runtime) / 'import.part').exists()
+        if part_only and want is not None and product is not None and product == pack_product(want):
+            return 'IMPORT'
         return 'GENERATE'
     internal = content_ready(runtime, product)
     external = (runtime is not None
@@ -194,6 +203,28 @@ class Behaviour(unittest.TestCase):
         self.assertEqual('GENERATE', decide(None, self.runtime(pending=True), None, self.product))
         self.assertEqual('GENERATE', decide(None, self.runtime(part=True), None, self.product))
 
+    # P2-1：导入在删 import.part 之前被杀（没有 install.pending），下载目录还有本版配套包 → 重走导入即可恢复，不卡在「不含生成器」页
+    # P2-1: the import was killed before deleting import.part (no install.pending) and the download folder still has this build's pack -> redo the import
+    def test_import_killed_before_part_cleanup_recovers(self):
+        source = self.source(self.product)
+        runtime = self.runtime(name='files/dm-part')
+        # importPack 拷过去的就是源包这份 pack_info.txt，所以 have == want | the import copies the source pack_info.txt verbatim, so have == want
+        write(runtime / 'pack_info.txt', 'PRODUCT=%s\nMADE=old\n' % self.product)
+        write(runtime / 'import.part/pack_info.txt', 'PRODUCT=%s\n' % self.product)
+        self.assertEqual('IMPORT', decide(source, runtime, None, self.product))
+        # 有 install.pending（生成换上的标记）时 importPack 清不掉它 → 只能重新生成 | with install.pending importPack would leave it behind -> generate
+        both = self.runtime(name='files/dm-part-pending')
+        write(both / 'pack_info.txt', 'PRODUCT=%s\nMADE=old\n' % self.product)
+        write(both / 'import.part/x', 'x')
+        write(both / 'install.pending', '1')
+        self.assertEqual('GENERATE', decide(source, both, None, self.product))
+        # 没有配套导入包就照旧生成 | without a matching import pack, generate as before
+        none = self.runtime(name='files/dm-part-none')
+        write(none / 'import.part/x', 'x')
+        self.assertEqual('GENERATE', decide(None, none, None, self.product))
+        old = make_source(self.root / 'Download/S2X/D2R Mobile/old-android', '3.3.94012-r43')
+        self.assertEqual('GENERATE', decide(old, none, None, self.product))
+
     # 内部没有主程序时看外部私有目录；内部有主程序但不全时不能被外部盖过去
     # External private storage counts when internal has no main module; an incomplete internal with main must not be masked by external
     def test_external_runtime_rule(self):
@@ -211,8 +242,29 @@ class Behaviour(unittest.TestCase):
 
 
 class SourceContract(unittest.TestCase):
-    """钉住 Java 里真正做判定的行（本机无 JDK，行为由上面的 Python 同规则用例覆盖）。
-    Pin the Java lines that really decide (no JDK here; the behaviour is covered by the Python cases above with the same rules)."""
+    """钉住 Java 里真正做判定的行；行为主测是 Java 单测，这里的 Python 用例作无 JDK 时的补充。
+    Pin the Java lines that really decide; the Java unit test is the primary behaviour test and the Python cases here supplement it without a JDK."""
+
+    # 判定顺序（两边必须一致）：生成中 → 读 want/have → 配套导入 → 换到一半 → 内部齐全 → 外部齐全 → 启动/生成
+    # Decision order (must match on both sides): generating -> want/have -> matching import -> unfinished swap -> internal ready -> external ready -> boot/generate
+    JAVA_ORDER = [
+        'if (generating) return Action.GENERATE;',
+        'String want =',
+        'if (want != null && !want.equals(have)',
+        'PackGenerator.installPending(runtime)) {',
+        'boolean internal = contentReady',
+        'boolean external =',
+        'return internal || external ? Action.BOOT',
+    ]
+    PYTHON_ORDER = [
+        'if generating:',
+        'want = read_text',
+        'if want is not None and want != have',
+        'if runtime is not None and install_pending(runtime):',
+        'internal = content_ready(runtime, product)',
+        'external = (runtime is not None',
+        "return 'BOOT' if internal or external else 'GENERATE'",
+    ]
 
     def setUp(self):
         self.decision = strip_comments(DECISION.read_text(encoding='utf-8'))
@@ -222,6 +274,18 @@ class SourceContract(unittest.TestCase):
         # Python 侧与 Java 侧的六件程序是同一份清单 | the six program files are the same list on the Python and Java sides
         declared = re.search(r'MODULES\s*=\s*\{([^}]*)\}', self.decision).group(1)
         self.assertEqual(MODULES, re.findall(r'"([^"]+)"', declared))
+
+    def test_decision_order_matches_python(self):
+        # 源码契约：Java 与 Python 同规则实现的判定顺序逐条相同；P2-1 的恢复分支两边都在换到一半的分支里
+        # Source contract: the Java and Python implementations decide in the same order; the P2-1 recovery branch sits in the unfinished-swap branch on both sides
+        java = method_body(self.decision, 'static Action decide(File source, File runtime, File extRuntime, String product, boolean generating)')
+        py = inspect.getsource(decide)
+        self.assertEqual(len(self.JAVA_ORDER), len(self.PYTHON_ORDER))
+        for side, body, anchors in (('java', java, self.JAVA_ORDER), ('python', py, self.PYTHON_ORDER)):
+            at = [body.index(a) for a in anchors]
+            self.assertEqual(sorted(at), at, '%s decide order: %s' % (side, at))
+        self.assertIn('importOnly', java)
+        self.assertIn('part_only', py)
 
     def test_content_ready_checks_every_dimension(self):
         body = method_body(self.decision, 'static boolean contentReady(File runtime, String product)')
@@ -239,7 +303,12 @@ class SourceContract(unittest.TestCase):
         self.assertIn('if (want != null && !want.equals(have) && product != null && product.equals(packProduct(want))) return Action.IMPORT;', body)
         self.assertNotIn('!product.equals(packProduct(want))', body)                # 不配套不再单独生成 | incompatible no longer generates on its own
         self.assertNotIn('generate(', body)
-        self.assertIn('if (runtime != null && PackGenerator.installPending(runtime)) return Action.GENERATE;', body)   # P1-1
+        # P1-1：换上没做完就生成；P2-1：只有 import.part 残留、且有本版配套包时先重走导入 | P1-1: an unfinished swap generates;
+        # P2-1: when only import.part is left and this build's pack is present, redo the import first
+        self.assertIn('if (runtime != null && PackGenerator.installPending(runtime)) {', body)
+        self.assertIn('boolean importOnly = !new File(runtime, PackGenerator.PENDING).exists() && new File(runtime, "import.part").exists();', body)
+        self.assertIn('if (importOnly && want != null && product != null && product.equals(packProduct(want))) return Action.IMPORT;', body)
+        self.assertIn('return Action.GENERATE;', body)
         self.assertIn('boolean internal = contentReady(runtime, product);', body)
         self.assertIn('!new File(runtime, "out/main.patched.bin").canRead() && contentReady(extRuntime, product)', body)
         self.assertIn('return internal || external ? Action.BOOT : Action.GENERATE;', body)   # M4

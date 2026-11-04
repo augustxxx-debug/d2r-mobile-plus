@@ -27,6 +27,10 @@ OLD_PHRASES = (
     '请在电脑上用 d2rm_android.py',
     '做出导入包（android 文件夹）',
     'Game content has not been imported yet',
+    # P2-2：安卓导入包不公开发、玩家在手机端生成，任何文案都不许再指电脑导入包 | P2-2: the Android import pack is not public and players generate
+    # on the phone, so no text may point at a computer-made import pack any more
+    '或使用电脑端导入包',
+    'computer-made import pack',
 )
 
 
@@ -88,6 +92,9 @@ class NoLegacyPrompt(unittest.TestCase):
         # B134 rework P0-1: an incompatible old import pack no longer has its own generate branch; only the runtime directory decides generation.
         self.assertNotIn('!BuildConfig.DM_PRODUCT.equals(product)', body)
         self.assertNotIn('packProduct(want)', body)
+        # 不配套包的判定只在 StartupDecision 里；ensureImported 自己再取一次产品代号就是旧行为回来了
+        # Incompatible-pack handling lives only in StartupDecision; reading the product code again in ensureImported brings the old behaviour back
+        self.assertNotIn('packProduct(', body)
         # 与本版配套的电脑导入包仍走导入流程 | a computer pack for this build still goes through the import flow
         self.assertIn('StartupDecision.Action.IMPORT', body)
         # 开发时直推到外部私有目录的完整内容也算「有可用内容」：按 startHost / jni_android.c 的运行目录规则，内部没有主程序时看外部。
@@ -164,6 +171,28 @@ class NoLegacyPrompt(unittest.TestCase):
         self.assertNotIn('dmAndroidGenInterrupted', branch)
         early = method_body(self.code, 'private void failEarly(File base, File data, String title, String reason, String why)')
         self.assertIn('showGenFailure()', early)
+
+    def test_generation_has_a_per_version_circuit_breaker(self):
+        # P2-4：同一版本最多自动生成 2 次；第 3 次不再进加载页，落到失败页并给「分享诊断日志」入口（写出带结论的 gen_log）。
+        # P2-4: at most two automatic builds per version; the third does not enter the loading page but lands on the failure page with the
+        # "Share Diagnostics" entry (a gen_log with a verdict is written).
+        self.assertIn('static final int GEN_TRIES_MAX = 2;', self.code)
+        limit = method_body(self.code, 'private boolean generationLimitReached()')
+        self.assertIn('getLong("gen_tries_for", 0) == BuildConfig.VERSION_CODE', limit)
+        self.assertIn('getInt("gen_tries", 0) >= GEN_TRIES_MAX', limit)
+        count = method_body(self.code, 'private void countGenerationStart()')
+        self.assertIn('putLong("gen_tries_for", BuildConfig.VERSION_CODE)', count)
+        self.assertIn('putInt("gen_tries", n + 1)', count)
+        gen = method_body(self.code, 'private void generate(File base, File runtime)')
+        # 先判熔断再计数；Activity 重建接回正在跑的生成不计次 | test the limit before counting; reattaching to a running build does not count
+        self.assertLess(gen.index('generationLimitReached()'), gen.index('countGenerationStart()'))
+        self.assertIn('failGenerationLimit(base)', gen)
+        self.assertIn('!generating && generationLimitReached()', gen)
+        breaker = method_body(self.code, 'private void failGenerationLimit(File base)')
+        self.assertIn('R.string.dmAndroidGenLimit', breaker)
+        self.assertIn('gen_log.txt', breaker)
+        self.assertIn('genLogText = text', breaker)
+        self.assertIn('showGenFailure()', breaker)
 
     def test_generation_failure_does_not_loop(self):
         # 生成失败只停在文字失败页：轮询看到 genFailure 就 showGenFailure 后 return，不再 postDelayed；失败路径不重开进程、不再次生成。

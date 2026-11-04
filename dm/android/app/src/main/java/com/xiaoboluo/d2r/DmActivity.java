@@ -191,6 +191,21 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private static volatile long genStartMs = Long.MAX_VALUE;   // 这次生成开始的时刻：分享只附这之后写的步骤日志 | when this generation started: sharing attaches only step logs written since
     private final android.os.Handler genHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
+    // 熔断（P2-4）：同一版本最多自动生成 2 次。生成返回成功、但 contentReady 仍判不齐时，以前会立刻再生成，没有上限；
+    // 第 3 次不再空跑，落到失败页并给「分享诊断日志」入口。
+    // Circuit breaker (P2-4): at most 2 automatic builds per version. When a build returns success but contentReady still rejects the result, the old
+    // code started another build at once with no limit; the third start no longer runs and lands on the failure page with the "Share Diagnostics" entry.
+    static final int GEN_TRIES_MAX = 2;
+    private boolean generationLimitReached() {
+        android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE);
+        return sp.getLong("gen_tries_for", 0) == BuildConfig.VERSION_CODE && sp.getInt("gen_tries", 0) >= GEN_TRIES_MAX;
+    }
+    private void countGenerationStart() {
+        android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE);
+        int n = sp.getLong("gen_tries_for", 0) == BuildConfig.VERSION_CODE ? sp.getInt("gen_tries", 0) : 0;
+        sp.edit().putLong("gen_tries_for", BuildConfig.VERSION_CODE).putInt("gen_tries", n + 1).commit();
+    }
+
     private boolean generatorAvailable() {
         if (!new File(getApplicationInfo().nativeLibraryDir, "libdmgen_py.so").canExecute()) return false;
         try (InputStream in = getAssets().open("dmgen/runtime.txt")) { return true; } catch (IOException e) { return false; }
@@ -292,6 +307,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // A package without the generator (slim build / resource-only pack) cannot be fixed by generating. Show a dedicated explanation, never say
         // "reopen to continue", and do not wait on the loading page (P2-2)
         if (!generatorAvailable()) { genFailTitle = getString(R.string.dmAndroidGenFailed); genFailure = getString(R.string.dmAndroidGenNoGenerator); genLogText = null; showGenFailure(); return; }
+        // 熔断：第 3 次不再进加载页空跑（只在真正要开新一轮时判；重建界面接回现有生成不计数）| circuit breaker: the third start does not
+        // enter the loading page (checked only for a new round; reattaching a recreated Activity to the running build does not count)
+        if (!generating && generationLimitReached()) { failGenerationLimit(base); return; }
         showLoadPage();   // 阶段状态在原生侧（静态），Activity 重建时只换一个新视图接上 | stage state lives natively (static); a recreated Activity just attaches a new view
         if (generating) { genHandler.post(genPoll); return; }   // Activity 重建：生成线程还在跑，只接回界面 | the Activity was recreated: the generation thread is still running; only reattach the screen
         // 资源目录与 startHost 同一条规则（缺省 data，没有就沿用早先的 Download/data） | resource directory by the same rule as startHost (data by default, else the earlier Download/data)
@@ -307,6 +325,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (BuildConfig.DEBUG && getIntent().hasExtra("dmTestFreeBytes")) free = getIntent().getLongExtra("dmTestFreeBytes", free);
         if (free < PackGenerator.SPACE_NEEDED) { String f = android.text.format.Formatter.formatShortFileSize(this, free);
             failEarly(base, data, getString(R.string.dmAndroidGenFailSpace), getString(R.string.dmAndroidGenNoSpace, f), String.format(Locale.ROOT, "剩余空间 %s，生成需要约 %d GB（缓存 + 中间产物 + 成品）", f, PackGenerator.SPACE_NEEDED >> 30)); return; }
+        countGenerationStart();   // 真开跑才计次：缺文件 / 空间不够的早停不算一次 | count only a real run: an early stop for missing files / space does not count
         generating = true; genState.reset(); genLogText = null; genFailTitle = null; genStartMs = System.currentTimeMillis() - 2000;
         LoadPageView.begin(GEN_STAGES, PackGenerator.LOAD_WEIGHTS_MS); genHandler.post(genPoll);
         final File dataDir = data; final String nativeDir = getApplicationInfo().nativeLibraryDir;
@@ -385,6 +404,22 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             default: id = R.string.dmAndroidGenStepPrepare;
         }
         return c.getString(id);
+    }
+
+    // 熔断页（P2-4）：同一版本已经自动生成 2 次仍未就绪。写一份带结论的 gen_log 并给分享入口，不再第三次空跑。
+    // Circuit-breaker page (P2-4): two automatic builds for this version still did not leave ready content. Write a gen_log with a verdict and offer
+    // the share entry instead of a third pointless run.
+    private void failGenerationLimit(File base) {
+        File data = new File(base, "data"), earlier = new File(base.getParentFile().getParentFile(), "data");
+        if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
+        String title = getString(R.string.dmAndroidGenFailed), reason = getString(R.string.dmAndroidGenLimit, GEN_TRIES_MAX);
+        genState.reset(); genState.summary.add(reason); genStartMs = Long.MAX_VALUE;   // 没开始新一轮：不附步骤日志 | no new run: no step logs
+        String nativeDir = getApplicationInfo().nativeLibraryDir;
+        String text = PackGenerator.scrubLog(PackGenerator.genLog(title, reason, genState.summary, envReport(this, getFilesDir(), base, null),
+                PackGenerator.listInputs(new File(base, "ExeFS"), data), "（没有开始生成：同一版本已自动生成 " + GEN_TRIES_MAX + " 次）\n"),
+                new File(nativeDir).getParentFile().getParent(), getFilesDir().getParent(), getPackageName());
+        try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) { o.write(text.getBytes(StandardCharsets.UTF_8)); } catch (IOException ignored) {}
+        genFailTitle = title; genFailure = reason; genLogText = text; showGenFailure();
     }
 
     // 开始生成之前就停下（缺 main / sdk / build_manifest、空间不够）：同样写 gen_log（结论 + 环境 + 输入文件）并给「分享诊断日志」| stopped before generating (missing

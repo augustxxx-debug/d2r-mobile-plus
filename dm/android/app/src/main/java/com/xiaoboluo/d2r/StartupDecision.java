@@ -61,9 +61,16 @@ final class StartupDecision {
         if (want != null && !want.equals(have) && product != null && product.equals(packProduct(want))) return Action.IMPORT;
         // 不配套的旧导入包到这里就当没有：不再因为它生成，只看运行目录（已有本版内容就启动，否则才生成）| an incompatible old import pack is treated as absent here:
         // it never triggers generation; only the runtime directory decides (boot when it already holds this build's content, otherwise generate)
-        // 内部目录上次换上没做完：不能拿外部的旧内容顶上，直接重新生成（P1-1，四审 A4-04）| the last swap into internal did not finish: do not fall back to old
-        // external content, generate again (P1-1, fourth audit A4-04)
-        if (runtime != null && PackGenerator.installPending(runtime)) return Action.GENERATE;
+        // 内部目录上次换上没做完：不能拿外部的旧内容顶上（P1-1，四审 A4-04）。只有 import.part 残留、没有 install.pending，说明是导入在删 part 之前
+        // 被杀（P2-1）：下载目录里还有本版配套的导入包就重走导入（importPack 开头会清 part），没有才生成。
+        // The last swap into internal did not finish: never fall back to old external content (P1-1, fourth audit A4-04). When only import.part is left with
+        // no install.pending, the import was killed before deleting part (P2-1): redo the import when the download folder still holds this build's pack
+        // (importPack clears part first), otherwise generate.
+        if (runtime != null && PackGenerator.installPending(runtime)) {
+            boolean importOnly = !new File(runtime, PackGenerator.PENDING).exists() && new File(runtime, "import.part").exists();
+            if (importOnly && want != null && product != null && product.equals(packProduct(want))) return Action.IMPORT;
+            return Action.GENERATE;
+        }
         boolean internal = contentReady(runtime, product);
         boolean external = runtime != null && !new File(runtime, "out/main.patched.bin").canRead() && contentReady(extRuntime, product);
         return internal || external ? Action.BOOT : Action.GENERATE;

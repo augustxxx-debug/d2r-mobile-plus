@@ -43,8 +43,9 @@ your game resources (the whole `RomFS/data` directory) to `data` in the same
 place. Open the App: when it finds a new import pack it copies it into the
 internal `files/dm/` (with progress; the first time takes a minute or two), then
 starts. The import pack must come from the same release as the App (the product
-code in `pack_info.txt` must equal the one built into the App); otherwise the App
-says so. After the import you can delete the `android` folder on the phone. The
+code in `pack_info.txt` must equal the one built into the App); a pack from
+another release is ignored, and when content is missing the App generates it on
+the phone. After the import you can delete the `android` folder on the phone. The
 import pack contains game content; keep it to yourself.
 
 ## Build locally
@@ -155,6 +156,13 @@ javac -encoding UTF-8 -d /tmp/dm-input-tests \
   dm/android/app/src/main/java/com/xiaoboluo/d2r/TextInputRules.java \
   dm/android/tests/TextInputRulesTest.java
 java -cp /tmp/dm-input-tests com.xiaoboluo.d2r.TextInputRulesTest
+```
+
+The pre-start decision (`StartupDecision`) has its own Java unit test that runs the
+real code (JDK 17+; `JAVA_HOME` selects the JDK when set):
+
+```sh
+bash dm/android/tests/run_startup_decision_test.sh
 ```
 
 Device acceptance must separately record installation, genuine GPU output/FPS,
