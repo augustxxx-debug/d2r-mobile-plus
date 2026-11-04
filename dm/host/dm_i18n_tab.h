@@ -21,6 +21,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmVaultSetFull", "已存 %d / %d　已存齐", "%d / %d stored · complete", "%d / %d guardadas · completo", "%d / %d guardadas · completo", "%d / %d сохранено · полный", "%d / %d 보관 · 완성" },
     { "dmVaultSetHave", "已存 %d / %d", "%d / %d stored", "%d / %d guardadas", "%d / %d guardadas", "%d / %d сохранено", "%d / %d 보관" },
     { "dmVaultSearch", "搜索「%s」：%d 件（暗金 %d · 套装 %d）", "%s: %d items (%d unique · %d set)", "%s: %d objetos (%d únicos · %d de conjunto)", "%s: %d objetos (%d únicos · %d de conjunto)", "«%s»: %d предметов (уник. %d · сет %d)", "'%s': %d개 (유니크 %d · 세트 %d)" },
+    { "dmPadLegStore", "存放", "Deposit", "Depositar", "Depositar", "Сложить", "보관" },
     { "dmStoreHead", "存放：", "Deposited: ", "Depositado: ", "Depositado: ", "Внесено: ", "보관: " },
     { "dmStoreVault", "编年史 %d 件", "Chronicle %d", "Crónica %d", "Crónica %d", "История %d", "연대기 %d개" },
     { "dmStoreStash", "%s储藏箱 %d 件", "%sStash %d", "%sAlijo %d", "%sArcón %d", "%sТайник %d", "%s창고 %d개" },
