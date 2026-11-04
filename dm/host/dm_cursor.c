@@ -2954,13 +2954,13 @@ static uint64_t ui_panel(uint64_t root, const char *name) {
     return 0;
 }
 // 手柄佣兵页两处焦点（B100）。游戏主线程每帧（ui_panel_state_pump），只在手柄模式：
-// ① 副手格（slot_left_arm）按上：布局里写的是 up = 头盔格（merc_slots.py NAV），原版不认——头盔格的矩形下沿低于副手格上沿（两格同一排、头盔格不在副手格「上面」），
+// ① 副手格（slot_left_arm）、右戒格（slot_right_hand）按上：布局里写的是 up = 头盔格 / 躯干格（merc_slots.py NAV），原版不认——目标格不整个在上面、或与起始格左右不重叠（dm_pad_up_dropped，p4_upedges 七条逐条实测），
 //    原版焦点导航弃了这条，按几何往上找到顶部页签条（实测 FOCUS 1394,44）。这里收下这一下「上」，把光标放到头盔格中心（坐标 = 副手格在屏上的左上角 + 两格布局坐标之差 × 面板缩放，
 //    左上角拿副手格自己的命中函数从光标往左上量，同 dm_bag.c 量网格；光标停在副手格里不一定在中心，实测偏下 60 像素），落点先用头盔格的命中函数核过才收这一下。别的格、别的方向照旧归原版。
 // ② 手上拿着物品时页签条上的 A：原版直接换页（物品留在光标上被带到别的页，如选项页），这里收下不交——同大背包页签（dm_bag.c）。
 //    换页仍可用 L / R（原版本来就许拿着物品换页，物品不丢）；这里只拦「焦点在顶部页签条上按 A」这一种，焦点在别处的 A 照常是放下 / 交换。
 // Two focus spots on the controller mercenary page (B100). Game main thread every frame (ui_panel_state_pump), controller mode only:
-// (1) Up on the off-hand cell (slot_left_arm): the layout says up = helm cell (merc_slots.py NAV) but the game drops it -- the helm cell's bottom edge is below the off-hand cell's top edge
+// (1) Up on the off-hand (slot_left_arm) and right ring (slot_right_hand) cells: the layout says up = helm / torso (merc_slots.py NAV) but the game drops it -- the target is not wholly above or does not overlap horizontally (dm_pad_up_dropped, all seven edges measured in p4_upedges); for the helm, its bottom edge is below the off-hand cell's top edge
 //     (same row; the helm is not "above"), so the original navigation discards that entry and searches upwards geometrically, reaching the top tab bar (measured FOCUS 1394,44).
 //     Here that Up is taken and the cursor is put at the helm cell's centre (the off-hand cell's top-left on screen + the layout difference × panel scale; the top-left is measured with the
 //     off-hand cell's own hit test walking up-left from the cursor, as dm_bag.c measures the grid -- the cursor is not always at the cell centre, measured 60 px low), and Up is taken only after
@@ -2972,23 +2972,26 @@ static uint64_t ui_panel(uint64_t root, const char *name) {
 static void ui_pad_merc_pump(module_t *m, uint64_t root) {
     int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); if (!m || !root || !dm_padmode_current()) return;
     uint64_t fm = *(uint64_t *)(root + 0xd0), hov = fm ? *(uint64_t *)(fm + 0x178) : 0; const char *hn = hov ? *(const char **)(hov + 8) : NULL; if (!hn) return;
-    int held = dm_held_size(NULL, NULL), left_arm = !strcmp(hn, "slot_left_arm"); if (!held && !left_arm) return;   // 先用便宜的条件筛：每帧整树找控件只在可能用上时做 | cheap filters first: the whole-tree lookups only run when they can matter
+    // 布局里写了「上」、原版却弃掉的边（dm_pad_up_dropped；merc_slots.py NAV，test_b099_b100_merc_pad.py 拿真布局核这张表与 NAV 一致） | layout "up" entries the game drops (checked against NAV on the real layout by the test)
+    static const struct { const char *from, *to; } k_up[] = { { "slot_left_arm", "slot_head" }, { "slot_right_hand", "slot_torso" } };
+    int held = dm_held_size(NULL, NULL), e = -1; for (int i = 0; i < (int)(sizeof k_up / sizeof k_up[0]); i++) if (!strcmp(hn, k_up[i].from)) e = i;
+    if (!held && e < 0) return;   // 先用便宜的条件筛：每帧整树找控件只在可能用上时做 | cheap filters first: the whole-tree lookups only run when they can matter
     if (modal_any(root, 1, NULL)) return;
     if (held) { uint64_t tabs = ui_find(root, "UISwitcherTabs", 0);
         if (dm_pad_tab_a_take(1, held, tabs && *(uint8_t *)(tabs + 0x50) && ui_has(tabs, hov, 0), 0)) {
             if (dm_padmode_page_keys(DM_BTN_A) & DM_BTN_A) { static int lg; if (lg++ < 20) LOG("手柄页签：手上有物品，页签上的 A 不换页（物品留在手上，换页用 L / R）"); }
             return; } }
-    if (!left_arm || !root_panel_shown(root, "HirelingInventoryPanel")) return;
-    uint64_t mp = ui_panel(root, "HirelingInventoryPanel"), head = mp ? ui_find(mp, "slot_head", 0) : 0; if (!head || !ui_has(mp, hov, 0)) return;
-    const int32_t *a = (const int32_t *)(hov + 0x70), *h = (const int32_t *)(head + 0x70); if (!dm_pad_up_dropped(a, h)) return;   // 布局改得头盔格真在上面了：原版自己认，不接 | the layout put the helm really above: the game honours it, not taken
+    if (e < 0 || !root_panel_shown(root, "HirelingInventoryPanel")) return;
+    uint64_t mp = ui_panel(root, "HirelingInventoryPanel"), dst = mp ? ui_find(mp, k_up[e].to, 0) : 0; if (!dst || !ui_has(mp, hov, 0)) return;
+    const int32_t *a = (const int32_t *)(hov + 0x70), *h = (const int32_t *)(dst + 0x70); if (!dm_pad_up_dropped(a, h)) return;   // 布局改得原版自己认了：不接 | the layout changed so the game honours it: not taken
     double k = *(float *)(mp + 0x80) * *(int32_t *)(m->base + 0x211da3c) / 2160.0;
     int cx = *(int32_t *)(m->base + 0x2d128f8), cy = *(int32_t *)(m->base + 0x2d128fc);
-    if (!PM_HIT(hov, cx, cy)) return;   // 光标不在副手格上（焦点刚换、光标还没跟上）：这一拍不接，「上」照常归原版 | cursor not on the off-hand cell (focus just changed): not taken this frame, Up stays the game's
-    int x0 = cx, y0 = cy; while (x0 > 1 && PM_HIT(hov, x0 - 2, cy)) x0 -= 2; while (y0 > 1 && PM_HIT(hov, cx, y0 - 2)) y0 -= 2;   // 副手格在屏上的左上角（同 dm_bag.c 量网格） | the off-hand cell's top-left on screen (as dm_bag.c measures the grid)
+    if (!PM_HIT(hov, cx, cy)) return;   // 光标不在起始格上（焦点刚换、光标还没跟上）：这一拍不接，「上」照常归原版 | cursor not on the start cell yet: not taken this frame
+    int x0 = cx, y0 = cy; while (x0 > 1 && PM_HIT(hov, x0 - 2, cy)) x0 -= 2; while (y0 > 1 && PM_HIT(hov, cx, y0 - 2)) y0 -= 2;   // 起始格在屏上的左上角（同 dm_bag.c 量网格） | the start cell's top-left on screen (as dm_bag.c measures the grid)
     int tx, ty; dm_pad_slot_jump(x0, y0, a, h, k, &tx, &ty);
-    if (!PM_HIT(head, tx, ty)) { static int lg; if (lg++ < 8) LOG("手柄佣兵页：副手格按上，算出的头盔格落点 %d,%d 不在头盔格上，不接（照原版）", tx, ty); return; }   // 落点核过才声明「上」 | Up is declared only once the spot checks out
+    if (!PM_HIT(dst, tx, ty)) { static int lg; if (lg++ < 8) LOG("手柄佣兵页：%s 按上，算出的 %s 落点 %d,%d 不在格上，不接（照原版）", hn, k_up[e].to, tx, ty); return; }   // 落点核过才声明「上」 | Up is declared only once the spot checks out
     if (!(dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) return;
-    dm_ui_hover_now(tx, ty); static int lg; if (lg++ < 20) LOG("手柄佣兵页：副手格按上 → 头盔格（%d,%d → %d,%d）", cx, cy, tx, ty);
+    dm_ui_hover_now(tx, ty); static int lg; if (lg++ < 20) LOG("手柄佣兵页：%s 按上 → %s（%d,%d → %d,%d）", hn, k_up[e].to, cx, cy, tx, ty);
 }
 // 控件在屏上的中心（屏幕像素）：拿它自己的命中函数在全屏上粗扫（步长 = 屏高 / 60），再在命中框四边各细扫一步。一次按键才调一次（约 6 千次命中调用），不每帧调。0 = 没找到
 // A widget's centre on screen (screen pixels): a coarse scan of the whole screen with its own hit test (step = screen height / 60), then each edge of the hit box refined by one step.

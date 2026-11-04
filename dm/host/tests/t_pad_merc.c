@@ -21,7 +21,12 @@ int main(int argc, char **argv) {
     // B100 (1): helm and off-hand in one row (helm bottom 255 > off-hand top 188) = dropped; torso right below the helm (top 281 ≥ 255) = honoured
     const int32_t head[4] = { 607, 59, 196, 196 }, larm[4] = { 994, 188, 196, 392 }, torso[4] = { 607, 281, 196, 294 };
     CHECK(dm_pad_up_dropped(larm, head)); CHECK(!dm_pad_up_dropped(torso, head));
-    { const int32_t edge[4] = { 0, 255, 10, 10 }; CHECK(!dm_pad_up_dropped(edge, head)); }   // 贴着下沿 = 在上面 | touching the bottom edge = above
+    { const int32_t edge[4] = { 650, 255, 10, 10 }; CHECK(!dm_pad_up_dropped(edge, head)); }   // 贴着下沿、左右重叠 = 认 | touching the bottom edge, overlapping = honoured
+    // 右戒（460,603 98×98）→ 躯干（607,281 196×294）：在上面但左右不重叠 = 弃（p4_upedges 实测落到页签条）；左戒（857,603）→ 项链（851,221 98×98）：重叠 = 认
+    // right ring → torso: above but no horizontal overlap = dropped (measured landing on the tab bar); left ring → amulet: overlapping = honoured
+    { const int32_t rring[4] = { 460, 603, 98, 98 }, lring[4] = { 857, 603, 98, 98 }, neck[4] = { 851, 221, 98, 98 };
+      CHECK(dm_pad_up_dropped(rring, torso)); CHECK(!dm_pad_up_dropped(lring, neck));
+      const int32_t touch_r[4] = { 803, 400, 10, 10 }; CHECK(dm_pad_up_dropped(touch_r, head)); }   // 左沿正好接着头盔右沿：不重叠 | starting exactly at the helm's right edge: no overlap
     // 落点 = 头盔格中心：副手格在屏上左上角 (x0, y0) + (头盔中心 − 副手左上) × k | landing = helm centre: off-hand top-left on screen + (helm centre − off-hand top-left) × k
     double k = 0.5; int x0 = 517, y0 = 120, tx, ty; dm_pad_slot_jump(x0, y0, larm, head, k, &tx, &ty);
     CHECK(tx == x0 + (int)((607 + 98 - 994) * k)); CHECK(ty == y0 + (int)((59 + 98 - 188) * k));

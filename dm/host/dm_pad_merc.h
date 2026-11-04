@@ -19,11 +19,16 @@ static inline void dm_pad_slot_jump(int x0, int y0, const int32_t from[4], const
     *ty = y0 + (int)((to[1] + to[3] / 2 - from[1]) * k);
 }
 
-// 原版焦点导航认不认布局里写的「上 = 某格」：目标格整个在起始格上面（目标下沿 ≤ 起始上沿）才认（佣兵页副手格 → 头盔格就是不认的那种，B100 实测落到页签条）。
-// 1 = 原版会弃这条，要宿主接
-// Whether the original focus navigation honours a layout "up = cell": only when the target lies wholly above the start cell (target bottom ≤ start top) (the mercenary off-hand → helm entry is
-// one it drops, B100 measured landing on the tab bar). 1 = the game drops it and the host must take it
-static inline int dm_pad_up_dropped(const int32_t from[4], const int32_t to[4]) { return to[1] + to[3] > from[1]; }
+// 原版焦点导航认不认布局里写的「上 = 某格」：目标格整个在起始格上面（目标下沿 ≤ 起始上沿）且左右与起始格有重叠才认，否则弃了这条、按几何往上找，
+// 佣兵页上找到的是顶部页签条。实测（Mac 宿主 p4_upedges，佣兵页 NAV 七条「上」逐条走）：副手→头盔（同排）、右戒→躯干（左右不重叠）两条被弃，
+// 躯干→头盔、手套→武器、腰带→躯干、左戒→项链、鞋→副手五条照布局走。1 = 原版会弃这条，要宿主接
+// Whether the original focus navigation honours a layout "up = cell": only when the target lies wholly above the start cell (target bottom ≤ start top) and overlaps it horizontally;
+// otherwise the entry is dropped and the game searches upwards geometrically, reaching the top tab bar on the mercenary page. Measured (Mac host p4_upedges, all seven "up" entries of the
+// mercenary NAV walked): off-hand → helm (same row) and right ring → torso (no horizontal overlap) are dropped; torso → helm, gloves → weapon, belt → torso, left ring → amulet and
+// boots → off-hand follow the layout. 1 = the game drops it and the host must take it
+static inline int dm_pad_up_dropped(const int32_t from[4], const int32_t to[4]) {
+    return to[1] + to[3] > from[1] || to[0] >= from[0] + from[2] || from[0] >= to[0] + to[2];
+}
 
 // 页签条上的 A 收不收（B100 ②）：手柄模式、手上拿着物品、焦点在顶部页签条上、没有模态框 → 收（不换页）
 // Whether A on the tab bar is taken (B100 (2)): controller mode, an item in hand, the focus on the top tab bar and no modal → taken (no page switch)

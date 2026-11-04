@@ -106,15 +106,28 @@ class B100(unittest.TestCase):
             cx, cy = ox + (hd[0] + hd[2] / 2) * k, oy + (hd[1] + hd[3] / 2) * k
             self.assertLessEqual(abs(tx - cx), 2, (H, tx, cx)); self.assertLessEqual(abs(ty - cy), 2, (H, ty, cy))   # 落在头盔格中心 | lands on the helm centre
             self.assertEqual(run(to, hd, k, 0, 0)[2], 0)   # 躯干→头盔原版自己认，宿主不接 | torso → helm is the game's own
+        # NAV 里所有「上」：原版弃的那些（按判据）必须正好是宿主表 k_up 接的那些，落点都在目标格中心（p4_upedges 七条实测） | every NAV "up": the dropped ones must be exactly the host table k_up
+        tbl = set(re.findall(r'\{ "slot_(\w+)", "slot_(\w+)" \}', re.search(r'k_up\[\] = \{(.*?)\};', CUR).group(1)))
+        dropped = set()
+        for s_, nav in merc_slots.NAV.items():
+            t_ = nav.get('up')
+            if not t_: continue
+            a, h = R[s_], R[t_]
+            tx, ty, d = run(a, h, 0.5, int(a[0] * 0.5), int(a[1] * 0.5))
+            if d:
+                dropped.add((s_, t_)); self.assertLessEqual(abs(tx - (h[0] + h[2] / 2) * 0.5), 2); self.assertLessEqual(abs(ty - (h[1] + h[3] / 2) * 0.5), 2)
+        self.assertEqual(dropped, {('left_arm', 'head'), ('right_hand', 'torso')})
+        self.assertEqual(tbl, dropped, '宿主 k_up 与「原版会弃的 NAV 上边」不一致')
 
     def test_pump(self):
         b = code(body(CUR, 'ui_pad_merc_pump') or '')
         self.assertTrue(b, '没有 ui_pad_merc_pump')
         self.assertIn('dm_padmode_current()', b)
-        self.assertIn('left_arm = !strcmp(hn, "slot_left_arm")', b); self.assertIn('if (!left_arm || !root_panel_shown(root, "HirelingInventoryPanel")) return;', b)
+        self.assertRegex(b, r'if \(!strcmp\(hn, k_up\[i\]\.from\)\) e = i;'); self.assertIn('if (e < 0 || !root_panel_shown(root, "HirelingInventoryPanel")) return;', b)
+        self.assertIn('ui_find(mp, k_up[e].to, 0)', b)
         self.assertIn('dm_pad_up_dropped(a, h)', b)
         self.assertIn('dm_padmode_page_keys(DM_BTN_UP)', b)
-        self.assertRegex(b, r'dm_pad_slot_jump\(x0, y0, a, h, k, &tx, &ty\);\s*if \(!PM_HIT\(head, tx, ty\)\)[^\n]*return; \}[^\n]*\n\s*if \(!\(dm_padmode_page_keys\(DM_BTN_UP\)')   # 落点核过才收「上」 | Up is taken only after the spot is checked
+        self.assertRegex(b, r'dm_pad_slot_jump\(x0, y0, a, h, k, &tx, &ty\);\s*if \(!PM_HIT\(dst, tx, ty\)\)[^\n]*return; \}[^\n]*\n\s*if \(!\(dm_padmode_page_keys\(DM_BTN_UP\)')   # 落点核过才收「上」 | Up is taken only after the spot is checked
         self.assertRegex(b, r'while \(x0 > 1 && PM_HIT\(hov, x0 - 2, cy\)\) x0 -= 2; while \(y0 > 1 && PM_HIT\(hov, cx, y0 - 2\)\) y0 -= 2;')
         self.assertIn('dm_ui_hover_now(tx, ty)', b)
         self.assertIn('int held = dm_held_size(NULL, NULL)', b)
