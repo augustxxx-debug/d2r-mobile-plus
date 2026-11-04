@@ -987,6 +987,39 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
 #if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenRetry", "再试一次", "Try again", "Reintentar", "Reintentar", "Повторить", "다시 시도" },
 #endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipTitle", "正在解压游戏文件", "Extracting game files", "Extrayendo los archivos del juego", "Extrayendo los archivos del juego", "Распаковка файлов игры", "게임 파일 압축 해제 중" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipProgress", "%1$s · 已解 %2$s / %3$s GB", "%1$s · %2$s / %3$s GB extracted", "%1$s · %2$s / %3$s GB extraídos", "%1$s · %2$s / %3$s GB extraídos", "%1$s · распаковано %2$s из %3$s ГБ", "%1$s · %2$s / %3$sGB 해제됨" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipNeedFiles", "压缩包缺少这些文件：%s\n请在电脑上把整个 S2X 文件夹（含隐藏文件）压成 zip，拷到手机 Download 后重新打开 App。", "The zip is missing these files: %s\nOn a computer, zip the whole S2X folder (hidden files included), copy it to Download on the phone, then reopen the app.", "Al zip le faltan estos archivos: %s\nEn el ordenador, comprime toda la carpeta S2X (incluidos los archivos ocultos), cópiala a Download del teléfono y vuelve a abrir la app.", "Al zip le faltan estos archivos: %s\nEn el ordenador, comprime toda la carpeta S2X (incluidos los archivos ocultos), cópiala a Download del teléfono y vuelve a abrir la app.", "В архиве нет этих файлов: %s\nНа компьютере упакуйте всю папку S2X (включая скрытые файлы) в zip, скопируйте её в Download на телефоне и снова откройте приложение.", "압축 파일에 다음 파일이 없습니다: %s\n컴퓨터에서 S2X 폴더 전체(숨김 파일 포함)를 zip으로 압축해 휴대폰 Download에 복사한 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipNoSpace", "手机剩余空间不够：解压需要约 %s GB。\n清理空间后重新打开 App。", "Not enough free space: extracting needs about %s GB.\nFree up space, then reopen the app.", "No hay espacio suficiente: extraer necesita unos %s GB.\nLibera espacio y vuelve a abrir la app.", "No hay espacio suficiente: extraer necesita unos %s GB.\nLibera espacio y vuelve a abrir la app.", "Недостаточно свободного места: для распаковки нужно около %s ГБ.\nОсвободите место и снова откройте приложение.", "저장 공간이 부족합니다: 압축 해제에 약 %sGB가 필요합니다.\n공간을 확보한 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipPaused", "解压已暂停", "Extraction paused", "Extracción en pausa", "Extracción en pausa", "Распаковка приостановлена", "압축 해제 일시 중지됨" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipPausedBody", "已解压的部分保留着，点「继续解压」会接着解。", "What has been extracted is kept; tap \"Resume\" to continue.", "Lo ya extraído se conserva; toca «Reanudar» para continuar.", "Lo ya extraído se conserva; toca «Reanudar» para continuar.", "Распакованное сохранено; нажмите «Продолжить», чтобы продолжить.", "이미 압축을 푼 부분은 남아 있습니다. \"계속\"을 누르면 이어서 진행합니다." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipResume", "继续解压", "Resume", "Reanudar", "Reanudar", "Продолжить", "계속" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipReject", "这个压缩包不能解压：%s\n请在电脑上把整个 S2X 文件夹（含隐藏文件）压成 zip，拷到手机 Download 后重新打开 App。", "This zip cannot be extracted: %s\nOn a computer, zip the whole S2X folder (hidden files included), copy it to Download on the phone, then reopen the app.", "Este zip no se puede extraer: %s\nEn el ordenador, comprime toda la carpeta S2X (incluidos los archivos ocultos), cópiala a Download del teléfono y vuelve a abrir la app.", "Este zip no se puede extraer: %s\nEn el ordenador, comprime toda la carpeta S2X (incluidos los archivos ocultos), cópiala a Download del teléfono y vuelve a abrir la app.", "Этот архив нельзя распаковать: %s\nНа компьютере упакуйте всю папку S2X (включая скрытые файлы) в zip, скопируйте её в Download на телефоне и снова откройте приложение.", "이 압축 파일은 풀 수 없습니다: %s\n컴퓨터에서 S2X 폴더 전체(숨김 파일 포함)를 zip으로 압축해 휴대폰 Download에 복사한 뒤 앱을 다시 여세요." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipFailTitle", "无法解压游戏文件", "Could not extract the game files", "No se pudieron extraer los archivos del juego", "No se pudieron extraer los archivos del juego", "Не удалось распаковать файлы игры", "게임 파일 압축을 풀지 못했습니다" },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipFailed", "解压没有完成：%s\n已解压的部分保留着，重新打开 App 会接着解。", "Extraction did not finish: %s\nWhat has been extracted is kept; reopen the app to continue.", "La extracción no terminó: %s\nLo ya extraído se conserva; vuelve a abrir la app para continuar.", "La extracción no terminó: %s\nLo ya extraído se conserva; vuelve a abrir la app para continuar.", "Распаковка не завершена: %s\nРаспакованное сохранено; откройте приложение снова, чтобы продолжить.", "압축 해제가 끝나지 않았습니다: %s\n이미 푼 부분은 남아 있으며, 앱을 다시 열면 이어서 진행합니다." },
+#endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidZipCheckFailed", "解完后核对大小 / 校验和不一致", "size / checksum check after extraction did not match", "la comprobación de tamaño / suma tras extraer no coincide", "la comprobación de tamaño / suma tras extraer no coincide", "проверка размера / контрольной суммы после распаковки не совпала", "압축 해제 후 크기 / 체크섬 검사가 맞지 않음" },
+#endif
     { "dmLoadStageDownload", "正在下载游戏内容", "Downloading game content", "Descargando el contenido del juego", "Descargando el contenido del juego", "Загрузка игрового содержимого", "게임 콘텐츠 다운로드 중" },
     { "dmLoadStageImport", "正在导入游戏内容", "Importing game content", "Importando el contenido del juego", "Importando el contenido del juego", "Импорт игрового содержимого", "게임 콘텐츠 가져오는 중" },
     { "dmLoadStagePatch", "正在处理游戏文件", "Processing game files", "Procesando los archivos del juego", "Procesando los archivos del juego", "Обработка файлов игры", "게임 파일 처리 중" },
