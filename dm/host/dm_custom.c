@@ -11,6 +11,7 @@
 // UI: the 「自定义」(Custom) page of the options panel (borrowing the original game's video page VideoOptionsPanel), one original-game checkbox per row, widget name TouchCustom_<key> (_custom_page in the layout touch_layout.py). Checking only records a pending value;
 // only 「应用」(Apply) (OptionsPanelMessage:AcceptChanges) makes it take effect and saves to disk, 「放弃」(Discard) (CancelChanges) throws away the pending values, and 「默认」(Default) (ResetToDefaults) sets the pending values back to each key's default (power-saving mode off, the rest on; Apply still has to be tapped)
 #include "dm_custom.h"
+#include "dm_restart_hint.h"
 #include "dm_crashreport.h"
 #include "dm_diagup.h"
 #include "dm_community.h"
@@ -857,8 +858,7 @@ static void set_toggle_grey(uint64_t w) {
 static int pending_value(int i) { int p = atomic_load(&g_pend[i]); return p >= 0 ? p : atomic_load(&g_val[i]); }
 // 内存 1 / 0 档：图形页把渲染分辨率调到比启动时高的档 = 启动预留已按启动档缩小，要下次启动才生效（分辨率行副文 TouchGraphicsResNote）
 // memory tiers 1 / 0: a render-resolution level above the launch level on the Graphics tab only takes effect on the next launch, because the startup reserve was shrunk (subtext TouchGraphicsResNote)
-static int restart_pending(int i) { return g_boot_ok && pending_value(i) != g_boot_v[i]; }
-static int rt_drop_restart(void) { return g_boot_ok && (pending_value(K_RTLVL) > 0) != (g_boot_v[K_RTLVL] > 0); }
+static int restart_pending(int i) { return dm_restart_pending(g_boot_ok, g_boot_v[i], atomic_load(&g_val[i]), atomic_load(&g_pend[i])); }
 static int key_idx(const char *k) { for (int i = 0; i < NK; i++) if (!strcmp(k_keys[i], k)) return i; return -1; }
 static int res_raise_needs_restart(void) { int b = atomic_load(&g_boot_res); return dm_mem_tier() < 2 && b >= 0 && res_rank(pending_value(K_RES)) > res_rank(b); }
 static int enhanced_settings_dirty(void) {
@@ -1166,8 +1166,12 @@ void dm_graphics_ui_pump(unsigned long long root) {
           if (mem) graphics_text(note, dm_str(main_base(), "dmGraphicsFps120MemNote"));
           ui_show_ours(note, mem); } }
     test_pend_apply();
-    { uint64_t note = find_w(sp, "TouchGraphicsResNote", 0); int raise = res_ok && res_raise_needs_restart(), rt = res_ok && rt_drop_restart();
-      if (note) { int k = raise ? 1 : rt ? 2 : 0; if (k) graphics_text(note, dm_str(main_base(), k == 1 ? "dmGraphicsResRestartNote" : "dmGraphicsRtResRestart")); ui_show_ours(note, k != 0); } }   // 页重建后字回到布局缺省，所以每帧写（graphics_text 字没变不写） | the page rebuild resets the text to the layout default, so write every frame (graphics_text skips unchanged text)
+    { uint64_t note = find_w(sp, "TouchGraphicsResNote", 0); int raise = res_ok && res_raise_needs_restart(), rt = 0;
+#ifndef __ANDROID__
+      rt = res_ok && dm_rt_restart(g_boot_ok, rt_ok, dm_render_res_rt_drop(), pending_value(K_RTLVL));   // 生效值：启动时降没降 vs 现在选的过了机器门槛开不开；无硬件光追恒 0 | effective values; always 0 without hardware RT
+#endif
+      int k = dm_res_note_kind(raise, rt); static const char *const nk[4] = { NULL, "dmGraphicsResRestartNote", "dmGraphicsRtLevelResRestart", "dmGraphicsRtLevelResBoth" };
+      if (note) { if (k) graphics_text(note, dm_str(main_base(), nk[k])); ui_show_ours(note, k != 0); } }   // 页重建后字回到布局缺省，所以每帧写（graphics_text 字没变不写）；两条都成立合成一句（dm_restart_hint.h） | written every frame (the page rebuild resets the text; unchanged text is skipped); both reasons give one combined sentence
     uint64_t vt = *(uint64_t *)sp; int valid = 0;
     for (int k = 0; k < 96 && !valid; k++) valid = *(uint64_t *)(vt + 8 * k) == (uint64_t)main_base() + 0xae5f28;
     if (valid) { int dirty = enhanced_settings_dirty();
