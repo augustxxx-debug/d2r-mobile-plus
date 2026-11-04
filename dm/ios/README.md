@@ -2,7 +2,7 @@
 
 中文：[README.zh-CN.md](README.zh-CN.md)
 
-The iOS app of D2R Mobile: it packs the host (`dm/host`), the graphics layer (`dm/gfx`) and the rewritten game program into one app, and is responsible for starting up, locating the game assets, turning touches into input the game understands, and laying touch controls over the original UI.
+The iOS app of D2R Mobile Plus (home screen and Files app name "D2R Mobile Plus"): it packs the host (`dm/host`), the graphics layer (`dm/gfx`) and the rewritten game program into one app, and is responsible for starting up, locating the game assets, turning touches into input the game understands, and laying touch controls over the original UI.
 
 Read these first; this document does not repeat them:
 

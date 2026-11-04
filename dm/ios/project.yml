@@ -69,7 +69,7 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: D2R Mobile
+        CFBundleDisplayName: D2R Mobile Plus
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)         # 构建号 = 沿提交历史递增的序号（dm/tools/version.sh）；新版本提示按它比大小，TestFlight 要求递增 | Build number = a sequence increasing along the commit history (dm/tools/version.sh); the update notice compares it, TestFlight needs it to grow
         CFBundleShortVersionString: $(MARKETING_VERSION)
         DMVersionLabel: $(DM_VERSION_LABEL)                 # 显示版本「1.0.0+28 · b346e40」：选角页左下角、启动日志、诊断（dm/tools/version.sh） | Display version shown on character select, in the boot log and diagnostics

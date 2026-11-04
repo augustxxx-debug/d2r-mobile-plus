@@ -812,25 +812,19 @@ void svc_save_act(uint64_t *regs) {
     if ((st == ST_RUN || st == ST_DONE) && G && G == L.G && pl && pl == L.player) { int lv = unit_level(pl);
         if (in_rift_map(lv) && act != 4) { static int n; if (n++ < 6) LOG("秘境：人在秘境图 %d 里存档，存档里的当前幕 %u → 4（下次进局落哈洛加斯）", lv, act); regs[9] = 4; } }
 }
-// 分支门 0x8d（main+0x64a34c，产物 r39 起）：佣兵加装备位（秘境超过 10 层给佣兵按角色的布局加腰带 / 鞋 / 戒指 ×2 / 项链 / 手套）。
+// 分支门 0x8d（main+0x64a34c，产物 r39 起）：佣兵加装备位（按角色的布局加腰带 / 鞋 / 戒指 ×2 / 项链 / 手套）。
 // 原版通用放置校验 0x6493a8 对怪物类主人只放行护甲（类型 3）和头盔（0x25），其余按 monstats 的左右手武器类型判；门挂在「是不是头盔」返回之后，
 // w0 = 那次判断的结果、x20 = 物品、[x22] = 主人单位。主人是佣兵（类号在佣兵表里：数据表 +0x558 每行 0x150、行 +8 = 类号）且物品是戒指 / 项链 / 鞋 / 手套 / 腰带类时把 w0 改成 1，
 // 走头盔同一条放行路径（部位格子有没有定义、部位空不空、等级属性需求等通用检查照常；格子定义在 inventory 表佣兵行，wide_stash.py 补）。
-// 解锁只拦「玩家新穿」（这一拍收到过 0x51 / 0x5b 包）：秘境最高通关不到 10 层时不放行。读档落位（进局时把存档里佣兵身上的物品逐件放回去，走的是同一个校验）一律放行——
-// 那里拒掉 = 这件物品被销毁、下次存档就永久没了，不能因为「这一局没读到秘境记录」丢玩家的装备。x8 恒置 0
-// Branch gate 0x8d (main+0x64a34c, from build output r39): extra mercenary equipment slots (past rift level 10 the mercenary gets a belt / boots / ring ×2 / amulet / gloves, following the character's layout).
+// 六个新格对所有角色缺省全开（用户决定 REQ40）：不再要求通关地狱 + 秘境 10 层，也不再区分「玩家新穿」与「读档落位」；req 只留给日志说明来源。x8 恒置 0
+// Branch gate 0x8d (main+0x64a34c, from build output r39): extra mercenary equipment slots (belt / boots / ring ×2 / amulet / gloves, following the character's layout).
 // The original game's generic placement check 0x6493a8 lets through only armor (type 3) and helms (0x25) for monster-type owners, and judges the rest by the left / right hand weapon types in monstats; the gate is hooked after the "is it a helm" call returns,
 // w0 = the result of that check, x20 = item, [x22] = owner unit. When the owner is a mercenary (class id is in the mercenary table: data table +0x558, 0x150 per row, row +8 = class id) and the item is of the ring / amulet / boots / gloves / belt type, w0 is changed to 1,
 // taking the same pass path as the helm (generic checks such as whether the body location cell is defined, whether the location is empty, and level / stat requirements run as usual; the cell definitions are in the mercenary row of the inventory table, added by wide_stash.py).
-// The unlock only blocks "the player newly equipping" (a 0x51 / 0x5b packet was received this tick): not let through when the highest rift level cleared is below 10. Placement on load (on entering a run the items on the mercenary in the save are put back one by one, through the same check) is always let through --
-// rejecting there = the item is destroyed and permanently gone at the next save, and the player's equipment must not be lost because "this run did not read the rift record". x8 is always set to 0
+// The six new slots are open to every character by default (user decision REQ40): no Hell completion / rift level 10 requirement, and no distinction between "the player newly equipping" and "placement on load"; req is only used for the log line. x8 is always set to 0
 int dm_rift_cleared_any(void) { return R.best >= 1; }   // 最高通关层只在限时内过关时更新；记录进局时按角色读入（rec_load），所以跟着角色走 | highest cleared level only updates on a clear within the time limit; the record is loaded per character on game entry (rec_load), so it follows the character
-int dm_rift_merc_unlocked(void) { static int test = -1; if (test < 0) test = getenv("DM_TEST_MERC_SLOTS") != NULL; return R.best >= 10 || test; }   // 界面（dm_rift_ui.c）每帧问：六个新格要不要盖暗红 | Asked by the UI (dm_rift_ui.c) every frame: whether the six new cells should be covered in dark red
-void dm_rift_merc_locked_hint(void) {   // 没解锁时点那六格 / 往里放东西：弹一句系统提示。半秒内不重复——只为把同一下手势里的几次调用（按下命中、松手落点、服务端那道门）并成一次； | Tapping those six cells / putting something into them while not unlocked: pops up a one-line system notice. Not repeated within half a second -- only to merge the several calls within one gesture (press hit, release drop point, the server-side gate) into one;
-    // 提示框在屏上不到 1.8 秒就收（实测 0.5 秒时在、1.8 秒时已收），原先 2 秒不重复会让隔 1.6 秒的下一次点击没有任何反馈
-    // The hint box is dismissed after less than 1.8 seconds on screen (measured: present at 0.5 seconds, already gone at 1.8 seconds); the previous 2-second no-repeat would leave the next tap 1.6 seconds later with no feedback at all
-    static uint64_t last; struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); uint64_t now = (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000; if (!B || now - last < 500) return; last = now;
-    dm_game_notice(B, dm_str(B, "dmMercSlotLocked")); LOG("佣兵装备位：提示「%s」", dm_str(B, "dmMercSlotLocked")); }
+int dm_rift_merc_unlocked(void) { return 1; }   // 六个新装备格对所有角色、所有难度、0 层秘境都可用（REQ40）；界面 / 触摸层仍在问，保留此函数 | The six new slots are available to every character, on every difficulty and at 0 rift levels (REQ40); the UI / touch layer still asks, so the function stays
+void dm_rift_merc_locked_hint(void) { }   // 门槛已移除，不再弹「10 层解锁」提示；dm_cursor.c / dm_rift_ui.c 仍会调用，保留空实现 | The threshold is gone, so the "unlock at level 10" hint is never shown; dm_cursor.c / dm_rift_ui.c still call it, so keep an empty implementation
 static int merc_class(uint64_t u) { uint8_t v = *(uint8_t *)(uintptr_t)(u + 0x1bd); if (!B || v < 1 || v > 3) return 0; uint64_t T = rd((uint64_t)(uintptr_t)(B + 0x2d64a18 + v * 16)), a = rd(T + 0x558), n = rd(T + 0x560);
     int cls = *(int32_t *)(uintptr_t)(u + 4); for (uint64_t k = 0; a && k < n && k < 4096; k++) if (*(int32_t *)(uintptr_t)(a + k * 0x150 + 8) == cls) return 1; return 0; }
 // 触摸层问（游戏主线程，dm_cursor.c）：客户端这边玩家的佣兵身上，这个部位是不是空的。1 = 找到佣兵且该部位没有物品；找不到佣兵返回 0（照旧处理）。
@@ -846,23 +840,20 @@ int dm_rift_merc_slot_empty(int loc) {
     return 0;
 }
 void svc_merc_slot(uint64_t *regs) {
-    static const int ty[] = { 10, 12, 15, 16, 19 }; static int test = -1, nlog; regs[8] = 0; if ((uint32_t)regs[0]) return;   /* 已经是头盔 | Already a helm */
+    static const int ty[] = { 10, 12, 15, 16, 19 }; static int nlog; regs[8] = 0; if ((uint32_t)regs[0]) return;   /* 已经是头盔 | Already a helm */
     if (!B) { for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) B = (uint8_t *)g_mod[i].base; if (!B) return; }
     uint64_t it = regs[20], own = rd(regs[22]); if (!it || !own || *(uint32_t *)(uintptr_t)own != 1 || !merc_class(own)) return;
     int hit = 0; for (unsigned i = 0; i < sizeof ty / sizeof *ty && !hit; i++) hit = ((int (*)(uint64_t, int))(B + 0x574bc0))(it, ty[i]) != 0; if (!hit) return;
-    if (test < 0) test = getenv("DM_TEST_MERC_SLOTS") != NULL;
-    int req = atomic_load(&g_merc_req), unlocked = R.best >= 10 || test;
-    if (req && !unlocked) { if (nlog++ < 12) LOG("佣兵装备位：玩家要给佣兵穿新部位的物品（单位 id %u），秘境最高通关 %d 层不到 10 层 → 不放行", *(uint32_t *)(uintptr_t)(it + 8), R.best); dm_rift_merc_locked_hint(); return; }
+    int req = atomic_load(&g_merc_req);   // 只用于日志区分来源；门槛已移除（REQ40） | only tells the log where the placement came from; the threshold is gone (REQ40)
     regs[0] = 1; if (nlog++ < 12) LOG("佣兵装备位：%s，物品（单位 id %u，类号 %u）放行到佣兵（类号 %d）身上", req ? "玩家新穿" : "读档落位", *(uint32_t *)(uintptr_t)(it + 8), *(uint32_t *)(uintptr_t)(it + 4), *(int32_t *)(uintptr_t)(own + 4));
 }
-// 客户端那一半（门 0x8e，main+0x3beb58）：客户端「佣兵能不能穿这件」0x3bea44(佣兵, 物品) 正要拿 w1 = 0x25（头盔）问物品类型。已解锁时，物品是那五类之一就把 w1 换成它自己的类型号，
-// 判断成立、函数返回 1——物品格悬停不再画「不可放置」的红、原版松手放下能成。x19 = 物品。没解锁不动（红 + 放不下正是要的）
-// The client half (gate 0x8e, main+0x3beb58): the client's "can the mercenary wear this" 0x3bea44(mercenary, item) is about to ask the item type with w1 = 0x25 (helm). When unlocked, if the item is one of those five types w1 is replaced with its own type number,
-// the check passes and the function returns 1 -- hovering over the item cell no longer draws the "cannot place" red, and the original game's drop on release succeeds. x19 = item. Left alone when not unlocked (red + cannot be placed is exactly what is wanted)
+// 客户端那一半（门 0x8e，main+0x3beb58）：客户端「佣兵能不能穿这件」0x3bea44(佣兵, 物品) 正要拿 w1 = 0x25（头盔）问物品类型。物品是那五类之一就把 w1 换成它自己的类型号，
+// 判断成立、函数返回 1——物品格悬停不再画「不可放置」的红、原版松手放下能成。x19 = 物品。六个格缺省全开（REQ40），不再看秘境层数
+// The client half (gate 0x8e, main+0x3beb58): the client's "can the mercenary wear this" 0x3bea44(mercenary, item) is about to ask the item type with w1 = 0x25 (helm). If the item is one of those five types w1 is replaced with its own type number,
+// the check passes and the function returns 1 -- hovering over the item cell no longer draws the "cannot place" red, and the original game's drop on release succeeds. x19 = item. The six slots are open by default (REQ40), so the rift level is no longer consulted
 void svc_merc_slot_cl(uint64_t *regs) {
     static const int ty[] = { 10, 12, 15, 16, 19 }; regs[8] = 0; uint64_t it = regs[19]; if (!it || (uint32_t)regs[1] != 0x25) return;
     if (!B) { for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) B = (uint8_t *)g_mod[i].base; if (!B) return; }
-    if (!dm_rift_merc_unlocked()) return;
     for (unsigned i = 0; i < sizeof ty / sizeof *ty; i++) if (((int (*)(uint64_t, int))(B + 0x574bc0))(it, ty[i])) { regs[1] = (uint64_t)ty[i]; return; }
 }
 // 测试（验证包）：DM_TEST_MERC_EQUIP="拍:物品码:部位[;…]"——到拍时在玩家物品栏里找这种物品，替玩家发原版「从背包格给佣兵穿」包 0x5b；
@@ -1342,7 +1333,7 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
         { const char *nm = (const char *)(uintptr_t)rd(player + 0x10); if (nm) strlcpy(K.who, nm, sizeof K.who); }
         LOG("秘境：本局%s资格（难度 %u%s，角色「%s」）", L.eligible ? "有" : "没有", diff, test ? "，测试开关" : "", K.who);
         { const char *e = getenv("DM_RIFT_TEST_GIVE"); char b2[200]; if (e) { strlcpy(b2, e, sizeof b2); for (char *sv, *k = strtok_r(b2, ";", &sv); k; k = strtok_r(NULL, ";", &sv)) { int r, lv; char c[5] = "    "; if (sscanf(k, "%d:%3[a-z0-9]:%d", &r, c, &lv) == 3) { c[3] = ' '; give_item2(G, player, c, 7, lv, r, 0); } } } }   // 测试：进局按「行:底材:物品等级;…」生成指定暗金，看成不成 | Test: on entering a run, generate the specified uniques per "row:base:item level;..." to see whether it works
-        rec_load();   /* 秘境记录任何局都读（不看这一局有没有秘境资格）：佣兵装备位按最高通关层解锁，解锁状态要跟角色走，普通 / 噩梦局里也认 | Rift records are read in every run (regardless of whether this run qualifies for rifts): mercenary equipment slots unlock by highest level cleared, and the unlock state must follow the character, so it counts in Normal / Nightmare runs too */
+        rec_load();   /* 秘境记录任何局都读（不看这一局有没有秘境资格）：最高通关层等记录跟着角色走，普通 / 噩梦局里也认（佣兵装备位已缺省全开，与此无关） | Rift records are read in every run (regardless of whether this run qualifies for rifts): the highest cleared level and other records follow the character, so they count in Normal / Nightmare runs too (the mercenary slots are open by default and no longer depend on this) */
         if (L.eligible) { { const char *e = getenv("DM_RIFT_TEST_BEST"); if (e) R.best = atoi(e); e = getenv("DM_RIFT_TEST_UNLOCK"); if (e) R.unlock = atoi(e); } } }   // 测试：钉最高层（看赌博加成）   // 玩家数据开头即角色名（同极乐世界） | Test: pin the highest level (to see the gambling bonus)   // The player data starts with the character name (same as Elysium)
     if (!L.eligible) return;
     { static uint64_t seen; static uint32_t at; uint32_t tq = *(uint32_t *)(uintptr_t)(G + 0x170);   // 通关点数的补发：换了玩家单位（进局）后延 75 拍 | catch-up grant of clear points: delayed 75 ticks after the player unit changes (joining a game)
