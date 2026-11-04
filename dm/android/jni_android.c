@@ -456,6 +456,7 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSurface(JNIEnv *e
     ANativeWindow *old = g_win;
     g_win = surface ? ANativeWindow_fromSurface(env, surface) : NULL;
     dm_android_vk_set_window(g_win);
+    dm_android_vk_set_window_size(surface ? w : 0, surface ? h : 0);   /* 触控层换算画面矩形用的窗口尺寸 | window size for the touch layer's picture rectangle */
     front_android_set_window(g_win, w, h);
     if (old) ANativeWindow_release(old);
     LOG("前端：画面 %s %dx%d", g_win ? "就绪" : "收回", w, h);

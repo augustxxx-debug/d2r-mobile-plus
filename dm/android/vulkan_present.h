@@ -1,6 +1,7 @@
 #pragma once
 #include <stddef.h>
 #include <android/native_window.h>
+#include "viewport_android.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -8,6 +9,9 @@ extern "C" {
  * UI thread: retains window; NULL suspends presentation. Only updates the window
  * snapshot; never calls Vulkan or waits for the GPU. */
 void dm_android_vk_set_window(ANativeWindow *window);
+/* 画面矩形（窗口像素）的窗口尺寸 / 交换链尺寸 / 取矩形 / 日志接入都在 viewport_android.h（无 Android 依赖，
+ * 宿主测试直接编它）。The picture rectangle's window size, swapchain size, rect and log hook live in
+ * viewport_android.h (no Android dependency; the host test compiles that file directly). */
 /* 宿主线程：在dm_main前初始化一次；Surface暂时撤回时等待恢复。
  * Host thread: before dm_main, after set_window. Waits across surface withdrawal
  * and initializes genuine Vulkan replay once.
