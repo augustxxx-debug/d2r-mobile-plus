@@ -4,7 +4,12 @@
 // May only be called from the game main thread (where the controller is read / UI message callbacks): it reads client UI widgets and the client unit table, synchronously, read-only, without locking.
 #pragma once
 #include <stdint.h>
-enum { DM_ITEM_AT_NONE, DM_ITEM_AT_INVENTORY, DM_ITEM_AT_BELT, DM_ITEM_AT_EQUIP, DM_ITEM_AT_STASH, DM_ITEM_AT_CUBE, DM_ITEM_AT_SHOP, DM_ITEM_AT_TRADE };
+enum { DM_ITEM_AT_NONE, DM_ITEM_AT_INVENTORY, DM_ITEM_AT_BELT, DM_ITEM_AT_EQUIP, DM_ITEM_AT_STASH, DM_ITEM_AT_CUBE, DM_ITEM_AT_SHOP, DM_ITEM_AT_TRADE, DM_ITEM_AT_CHARM };
+// 物品格控件（grid）+0x630 的页号 → 容器：0 背包、3 方块、4 仓库、5 护身符页（大背包，dm_bag.c 每帧写），其余当交易。
+// 护身符页单列一类：它是玩家自己的物品栏，但不走光标、各处「背包里的物品」用法（存编年史、进腰带、悬停鉴定）都没对它验证过，所以不并进 INVENTORY。
+// Item grid widget page (+0x630) -> container: 0 inventory, 3 cube, 4 stash, 5 charm page (large bag, written every frame by dm_bag.c), anything else trade.
+// The charm page is its own kind: it is the player's own inventory, but it does not use the cursor and none of the "item in the inventory" paths (vault deposit, belt, hover identify) were verified for it, so it is not folded into INVENTORY.
+static inline int dm_item_container_of_page(int page) { return page == 0 ? DM_ITEM_AT_INVENTORY : page == 3 ? DM_ITEM_AT_CUBE : page == 4 ? DM_ITEM_AT_STASH : page == 5 ? DM_ITEM_AT_CHARM : DM_ITEM_AT_TRADE; }
 typedef struct {
     uint32_t id, cls;       // 物品单位 id、物品表行号 | Item unit id, item table row number
     char code[4];           // 物品码（去尾空格，如 "hp1"、"box"），以 0 结尾 | Item code (trailing spaces removed, e.g. "hp1", "box"), 0-terminated

@@ -112,7 +112,7 @@ void dm_bag_ui(uint8_t *b, uint64_t inv_panel, uint64_t box, uint64_t pl) {
     // 自动切页：手上是护身符 → 护身符页，手上是别的 → 背包页；对面面板里指着护身符也切（用户 15:5x）| Automatic page: a charm in hand goes to the charm page, anything else to the bag page; pointing at a charm in the opposite panel also switches (user rule)
     if (open) { int o = dm_bag_opp_of(root); dm_bag_set_opp(o);
         if (held) { uint64_t it = dm_bag_cli_item(b, (uint32_t)held); if (it) set_page(((int (*)(uint64_t, int))(b + 0x574bc0))(it, 13) ? 1 : 0, "held"); }
-        else if (o) { dm_cursor_item_info ci; if (dm_cursor_item(&ci) && ci.container != DM_ITEM_AT_INVENTORY && !strncmp(ci.code, "cm", 2)) set_page(1, "hover"); } 
+        else if (o) { dm_cursor_item_info ci; if (dm_cursor_item(&ci) && ci.container != DM_ITEM_AT_INVENTORY && ci.container != DM_ITEM_AT_CHARM && !strncmp(ci.code, "cm", 2)) set_page(1, "hover"); } 
         // 等客户端看到它回了页 0 再卖（搬动的通知包要走一拍）；0x433e50 距上次交易不足 500 ms 返回 0，下一帧再试 | Sell once the client sees it back on page 0 (the move notice takes a tick); 0x433e50 returns 0 within 500 ms of the last deal, so retry next frame
         { static uint32_t sid; static int wait; uint32_t nid = dm_bag_take_sell(); if (nid) { sid = nid; wait = 120; }
           if (sid && (o != 3 || --wait <= 0)) sid = 0;
@@ -134,7 +134,7 @@ void dm_bag_ui(uint8_t *b, uint64_t inv_panel, uint64_t box, uint64_t pl) {
       w_move(find_w(box, "TouchBagDot", 1), dot ? DM_BAG_TAB_X + DM_BAG_TAB_DX + DM_BAG_DOT_DX : OFF, DM_BAG_TAB_Y + DM_BAG_TAB_DY + DM_BAG_DOT_DY); }
     ui_test(inv_panel, grid);
     int pad = dm_padmode_current();
-    if (g_page && open && pad) { int o = dm_bag_opp_of(root); dm_cursor_item_info ci; const char *h = o == 1 ? "dmCharmHintStash" : o == 2 ? "dmCharmHintCube" : o == 3 ? "dmCharmHintSell" : NULL; if (h && dm_cursor_item(&ci) && ci.container == DM_ITEM_AT_INVENTORY) { void dm_padmode_legend(int, const char *); dm_padmode_legend(0, dm_str(b, h)); } }
+    if (g_page && open && pad) { int o = dm_bag_opp_of(root); dm_cursor_item_info ci; const char *h = o == 1 ? "dmCharmHintStash" : o == 2 ? "dmCharmHintCube" : o == 3 ? "dmCharmHintSell" : NULL; { int got = h && dm_cursor_item(&ci), ok = got && ci.container == DM_ITEM_AT_CHARM; static int lk = -1; int k = ok ? o : got ? 100 + ci.container : -1; if (k != lk) { lk = k; LOG("大背包：键位条 A 提示 %s（对面 %d，光标下容器 %d）", ok ? h : "不声明", o, got ? ci.container : -1); } if (ok) { void dm_padmode_legend(int, const char *); dm_padmode_legend(0, dm_str(b, h)); } } }
     int mine = open && pad && !tabs_theirs(root) && !dm_ui_modal_active(root);
     // 手柄焦点框：光标停在页签上时显示（原版 StashTab_Hover）| Controller focus frame: shown while the cursor rests on a tab (the original StashTab_Hover)
     { uint64_t fm = open && pad ? *(uint64_t *)(root + 0xd0) : 0, hov = fm ? *(uint64_t *)(fm + 0x178) : 0; const char *hn = w_name(hov); int ft = hn && !strcmp(hn, "TouchBagTab0") ? 0 : hn && !strcmp(hn, "TouchBagTab1") ? 1 : -1;
