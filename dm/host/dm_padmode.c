@@ -269,6 +269,7 @@ static void focus_capture(uint8_t *b) {   // 切换开始前：记下开着的�
 static int focus_restore_once(uint8_t *b) {   // 重建完成后：把焦点放回网格；返回 1 = 处理完 / 没得处理，0 = 下一帧再试 | after the rebuild: put the focus back on the grid; 1 = done / nothing to do, 0 = retry next frame
     if (g_focus_mem.panel < 0) return 1;
     uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)); if (!root) return 0;   // 界面根还没就位：下一帧再试 | UI root not in place yet: retry next frame
+    { uint64_t fm = rd8(root + 0xd0); if (fm && rd8(fm + 0x190)) { LOG("手柄 / 触屏布局：切到手柄版后焦点已在（原版自己恢复了），不改"); g_focus_mem.panel = -1; return 1; } }   // 只补空焦点，不和原版抢（只读指针值、不解引用；Opus 审 P2-1） | only fill an empty focus, never fight the original (reads the pointer value, no dereference; Opus review P2-1)
     int idx = g_focus_mem.panel; uint64_t p = dm_ui_top(root, k_focus_panel[idx]);
     if (!p) return 0;   // 新布局还没把这个面板建出来：下一帧再试 | the new layout has not built this panel yet: retry next frame
     if (!*(uint8_t *)(p + 0x50)) { g_focus_mem.panel = -1; return 1; }   // 面板已经关了：不硬塞 | panel closed: do not force it
