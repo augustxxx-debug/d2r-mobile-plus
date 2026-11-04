@@ -1202,21 +1202,6 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             }, "dm-save-export").start();
         }
     }
-    // 游戏内社区网盘卡的「用系统浏览器打开」（dm_community_open_pan → text_input_jni.c，工作线程）：再判一次 https 与主机名（UrlRules，纯 Java 可单测），
-    // 到界面线程发 ACTION_VIEW；没有浏览器时捕获 ActivityNotFoundException 只记日志，不闪退。整条链上只有网盘链接走这里，github / 官网 / 镜像仍只复制
-    // The in-game cloud-drive card's open-in-browser (dm_community_open_pan -> text_input_jni.c, a worker thread): re-check https and the host (UrlRules, unit-testable pure Java),
-    // then send ACTION_VIEW on the UI thread; with no browser the ActivityNotFoundException is caught and only logged, no crash. Only cloud-drive links come here; github / website / mirror stay copy-only
-    static void openExternalUrl(String url) {
-        if (!UrlRules.openable(url)) { android.util.Log.w("dm", "open: rejected url"); return; }
-        DmActivity a = current.get(); if (a == null) { android.util.Log.w("dm", "open: no activity"); return; }
-        a.runOnUiThread(() -> {
-            try {
-                Intent view = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                view.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                a.startActivity(view);
-            } catch (android.content.ActivityNotFoundException e) { android.util.Log.w("dm", "open: no browser for " + url); }
-        });
-    }
     // 游戏内社区弹窗的复制（dm_community.c → text_input_jni.c，工作线程）：到界面线程写剪贴板 | the in-game community box's copy (dm_community.c → text_input_jni.c, a worker thread): write the clipboard on the UI thread
     static void copyToClipboard(String text) {
         DmActivity a = current.get(); if (a == null) { android.util.Log.w("dm", "copy: no activity"); return; }

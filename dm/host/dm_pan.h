@@ -101,14 +101,3 @@ static inline int dm_pan_host(const char *url, char *out, size_t n) {
     if (out && n) { if (L > n - 1) L = n - 1; memcpy(out, p, L); out[L] = 0; }
     return (int)L;
 }
-// 打开前的最终判定（dm_community_open_pan 打开前再走一遍，单测也用它）：方案必须是 https、URL 必须仍是所属网盘的前缀（dm_pan_url_ok）、主机名非空。
-// 认不出的 icon 不放松：它不是四家之一 → dm_pan_url_ok 返回 0。只有这个判定通过，链接才会交给系统浏览器。
-// Final check before opening (also run by dm_community_open_pan and covered by unit tests): the scheme must be https, the URL must still carry its provider's prefix
-// (dm_pan_url_ok) and the host name must be non-empty. An unknown icon does not relax anything -- it is not one of the four, so dm_pan_url_ok returns 0.
-// Only a link that passes this check is ever handed to the system browser.
-static inline int dm_pan_open_allowed(const dm_pan_entry *e) {
-    if (!e || strncmp(e->url, "https://", 8)) return 0;
-    if (!dm_pan_url_ok(e->icon, e->url)) return 0;
-    char host[64];
-    return dm_pan_host(e->url, host, sizeof host) > 0;
-}

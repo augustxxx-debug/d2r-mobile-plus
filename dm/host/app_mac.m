@@ -98,18 +98,6 @@ static int mac_copy(const char *s) {
     if (NSThread.isMainThread) w(); else dispatch_sync(dispatch_get_main_queue(), w);
     return ok ? 1 : 0;
 }
-// 社区网盘的「用系统浏览器打开」（dm_community.c）：游戏主线程调，AppKit 的 NSWorkspace 在主线程开；只认 https 且主机名非空。
-// activates = NO 同 open -g，不抢前台（CLAUDE.md §2）；提交成功返回 1（打开结果由系统异步给，这里不等）。
-// Open a cloud-drive link in the system browser (dm_community.c): called on the game thread; AppKit's NSWorkspace is driven on the main thread; https with a non-empty host only.
-// activates = NO, like open -g, so it does not steal the foreground (CLAUDE.md §2); returns 1 once submitted (the system reports the result asynchronously, not awaited here).
-static int mac_open(const char *s) {
-    NSString *t = @(s ?: ""); NSURL *u = [NSURL URLWithString:t];
-    if (!u || ![u.scheme isEqualToString:@"https"] || u.host.length == 0) { LOG("【红】社区入口：打开网盘失败（Mac：不是 https 或没有主机名）"); return 0; }
-    // 异步交主线程（游戏线程不同步等主线程，防死锁），提交即返回 1 | async to the main thread (the game thread never waits on it: no deadlock); 1 = submitted
-    dispatch_async(dispatch_get_main_queue(), ^{ NSWorkspaceOpenConfiguration *c = [NSWorkspaceOpenConfiguration configuration]; c.activates = NO;   // 不抢前台 | no foreground steal
-        [NSWorkspace.sharedWorkspace openURL:u configuration:c completionHandler:nil]; });
-    return 1;
-}
 // 存档管理的系统面板（Mac）：主线程上开，结果回调给宿主（dm_savemgr.c）| save management's system panels (Mac): opened on the main thread, the result goes back to the host
 void dm_savemgr_shell(void (*)(void), void (*)(const char *)); void dm_savemgr_picked(const char *); void dm_savemgr_share_done(int); void dm_savemgr_set_source(const char *, const char *, const char *, const char *);
 static void mac_pick(void) { dispatch_async(dispatch_get_main_queue(), ^{ NSOpenPanel *p = NSOpenPanel.openPanel; p.identifier = @"dmSavePicker"; p.allowedFileTypes = @[@"zip", @"d2s", @"d2i"]; p.canChooseDirectories = YES; p.allowsMultipleSelection = NO; dm_savemgr_picked([p runModal] == NSModalResponseOK ? p.URL.fileSystemRepresentation : NULL); }); }
@@ -120,7 +108,7 @@ static void mac_share(const char *path) { NSString *src = @(path); dispatch_asyn
     if ([p runModal] != NSModalResponseOK) { dm_savemgr_share_done(0); return; } [NSFileManager.defaultManager removeItemAtURL:p.URL error:nil]; dm_savemgr_share_done([NSFileManager.defaultManager copyItemAtPath:src toPath:p.URL.path error:nil]); }); }
 int dm_app_bootstrap(int *argc, char ***argv) {
     dm_savemgr_shell(mac_pick, mac_share); { NSDictionary *d = NSBundle.mainBundle.infoDictionary; dm_savemgr_set_source("macos", [d[@"DMSourceCommit"] description].UTF8String ?: "", [d[@"CFBundleVersion"] description].UTF8String ?: "", [d[@"DMVersionLabel"] description].UTF8String ?: ""); }
-    { void dm_community_copy_init(int (*)(const char *)), dm_community_open_init(int (*)(const char *)); dm_community_copy_init(mac_copy); dm_community_open_init(mac_open); }   // App 形态与命令行宿主都登记（Mac 上复制走 NSPasteboard、打开走 NSWorkspace） | registered for both the App form and the command-line host (copy through NSPasteboard, open through NSWorkspace)
+    { void dm_community_copy_init(int (*)(const char *)); dm_community_copy_init(mac_copy); }   // App 形态与命令行宿主都登记（Mac 上复制走 NSPasteboard） | registered for both the App form and the command-line host (copy on Mac goes through NSPasteboard)
     @autoreleasepool {
         NSString *bp = NSBundle.mainBundle.bundlePath;
         if (*argc > 1 || ![bp.pathExtension isEqualToString:@"app"]) return 0;
