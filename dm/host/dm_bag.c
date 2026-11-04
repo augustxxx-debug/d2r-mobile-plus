@@ -11,6 +11,7 @@
 //   Up from the first three columns of grid row 0 enters the tabs; on the tabs left / right pick and down returns to the grid; right from the charm tab enters belt cell 0, left from belt cell 0 returns to the charm tab. With an item in hand, A on a tab is swallowed (no page change, no drop).
 //   ZL / ZR: the opposite panel's tab bar needs them (the original ignores where the cursor is, measured table in the design doc), so they belong to the inventory only when the opposite panel has no tabs, and the keycaps follow.
 #include "dm_bag_layout.h"
+#include "dm_bag_rule.h"
 #include "dm_widget.h"
 #include "dm_hud.h"
 #include "dm_input.h"
@@ -223,16 +224,17 @@ void dm_bag_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
     uint64_t inv = *(uint64_t *)(player + 0x90), f = 0; if (!inv || *(uint32_t *)inv != 0x01020304) return;
     { static uint32_t ls; uint64_t i0 = *(uint64_t *)(player + 0x90), c0 = i0 ? *(uint64_t *)(i0 + 0x40) : 0; uint32_t cid = c0 ? *(uint32_t *)(c0 + 8) : 0; if (cid != ls) { LOG("大背包：服务端手上 id %u → %u", ls, cid); ls = cid; } }
     uint32_t selling = atomic_load(&g_selling); if (selling && --g_selling_ticks <= 0) { atomic_store(&g_selling, 0); selling = 0; }
-    int (*is)(uint64_t, int) = (int (*)(uint64_t, int))(b + 0x574bc0); uint8_t used[ROWS][COLS]; memset(used, 0, sizeof used);
+    int (*is)(uint64_t, int) = (int (*)(uint64_t, int))(b + 0x574bc0); uint8_t used[ROWS][COLS]; memset(used, 0, sizeof used); int nf = 0; static int last_nf = -1;
     for (uint64_t it = *(uint64_t *)(inv + 0x10), n = 0; it && n < 2048; n++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
         if (*(uint32_t *)(it + 0xc) == 0 && pp) { int pg = *(uint8_t *)(d + 0x55);
             if (pg == CHARM_PAGE) { int gw = 1, gh = 1, x = *(int32_t *)(pp + 0x10), y = *(int32_t *)(pp + 0x14); dm_cursor_item_size(b, it, &gw, &gh); for (int r = y; r < y + gh && r < ROWS; r++) for (int c = x; c < x + gw && c < COLS; c++) if (r >= 0 && c >= 0) used[r][c] = 1; }
-            else if (pg == 0 && !f && is(it, 13) && *(uint32_t *)(it + 8) != selling) f = it; }
+            else if (pg == 0 && is(it, 13) && *(uint32_t *)(it + 8) != selling) { nf++; if (!f) f = it; } }
         it = *(uint64_t *)(d + 0xb0); }
-    if (!f) return;
+    if (!f) { last_nf = 0; return; }
     int gw = 1, gh = 1, fx = -1, fy = -1; dm_cursor_item_size(b, f, &gw, &gh);
     for (int c = 0; c + gw <= COLS && fx < 0; c++) for (int r = 0; r + gh <= ROWS && fx < 0; r++) { int ok = 1; for (int q = r; q < r + gh && ok; q++) for (int w = c; w < c + gw; w++) if (used[q][w]) { ok = 0; break; } if (ok) { fx = c; fy = r; } }
-    if (fx < 0) { static uint32_t told; if (told != *(uint32_t *)(f + 8)) { told = *(uint32_t *)(f + 8); atomic_store(&g_full, 1); } return; }
+    if (dmbag_full_notice(&last_nf, nf, fx < 0)) { atomic_store(&g_full, 1); LOG("大背包：护身符页满了，背包页有 %d 件护身符等着搬", nf); }
+    if (fx < 0) return;
     uint64_t d = *(uint64_t *)(f + 0x10), pp = *(uint64_t *)(f + 0x38); int ox = *(int32_t *)(pp + 0x10), oy = *(int32_t *)(pp + 0x14); uint32_t cls = *(uint32_t *)(player + 4); int row = *(int32_t *)(b + 0x1dae684 + cls * 8 + 4);
     void (*eff)(int, uint64_t, uint64_t, int) = (void (*)(int, uint64_t, uint64_t, int))(b + 0x645820); void (*nt)(uint64_t, uint64_t, uint64_t, int, int, int, int, int, uint64_t) = (void (*)(uint64_t, uint64_t, uint64_t, int, int, int, int, int, uint64_t))(b + 0x642f70);
     eff(*(uint8_t *)(G + 0x106), f, player, 0);

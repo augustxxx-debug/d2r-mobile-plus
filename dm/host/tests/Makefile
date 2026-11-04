@@ -79,7 +79,8 @@ run: \
 	$(B)/t_widestash_restore \
 	$(B)/t_widget \
 	$(B)/t_stack_rule \
-	$(B)/t_cursor_item_page
+	$(B)/t_cursor_item_page \
+	$(B)/t_bag_rule
 	python3 native_write_scan.py --selftest ..
 	python3 widget_cache_scan.py --selftest ..
 	python3 mode_scan.py ../..
@@ -155,6 +156,7 @@ run: \
 	$(B)/t_widget
 	$(B)/t_stack_rule
 	$(B)/t_cursor_item_page
+	$(B)/t_bag_rule
 	$(B)/t_doorspot
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
 	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
@@ -179,6 +181,8 @@ $(B)/t_stack_rule: t_stack_rule.c ../dm_stack_rule.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_stack_rule.c
 $(B)/t_cursor_item_page: t_cursor_item_page.c ../dm_cursor_item.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_cursor_item_page.c
+$(B)/t_bag_rule: t_bag_rule.c ../dm_bag_rule.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_bag_rule.c
 $(B)/t_unit_level: t_unit_level.c ../dm_unit.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_unit_level.c
 $(B)/t_padmap: t_padmap.c ../dm_padmap.h ../dm_input.h | $(B)
