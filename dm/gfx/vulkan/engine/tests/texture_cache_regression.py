@@ -40,7 +40,7 @@ def main():
     # Integration checks complement the executed CPU tests below; they are not GPU tests.
     assert 'cached.record->revision!=cached.revision' in source
     assert 'it->second.record->revision==it->second.revision' in source
-    assert 'for(auto &ti:m.images){Image &im=get_image(ti.first,true);' in source
+    assert 'for(size_t k=0;k<m.images.size();k++){Image &im=get_image(m.images[k].first,true);' in source
     assert 'Image *im=&get_image(it->second.tex,true);' in source
     guard = re.search(r'^\s*if\(b.type==VK_DESCRIPTOR_TYPE_STORAGE_IMAGE\)\{ok=false;\+\+desc_memo_why\[1\];break;\}',
                       source, re.MULTILINE)[0]
