@@ -22,6 +22,7 @@
 #include "hle.h"
 #include "dm_input.h"
 #include "dm_i18n.h"
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -47,9 +48,9 @@
 #else
 #define K_ICLOUD_KEY "icloud"
 #endif
-static const char *const k_keys[] = { "lang", "voice", "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", K_ICLOUD_KEY, "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "belt_refill", "tel_stats", "auto_crash", "bright_level", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
+static const char *const k_keys[] = { "lang", "voice", "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", K_ICLOUD_KEY, "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "fgen_level", "belt_refill", "tel_stats", "auto_crash", "bright_level", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
-static const int k_def[NK] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 2, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
+static const int k_def[NK] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 2, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 // voice 恒为第 1 行后，其余下标整体后移一位（键表顺序见上，直接写死，改键表时一并核对）| with voice always row 1 the other indices shift by one (fixed numbers; check them together with the key table)
@@ -60,6 +61,10 @@ static const int k_def[NK] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0
 #define FPS_120 2
 #define K_Q3D 13
 #define K_TOUCH_SWAP 16
+// fgen_level：AI 帧生成档位（实验性）0 关（缺省）/ 1 省电（枚举保留、本车不开放）/ 2 平滑。插在 free_tp 之后、belt_refill 之前：前面写死的下标与后面按 NK - n 倒数的下标都不动
+// （t_fgen_level 逐个核 K_* 宏指向的键名）| fgen_level: AI frame generation level (experimental) 0 off (default) / 1 power saving (enum kept, not opened in this train) / 2 smooth.
+// Inserted after free_tp and before belt_refill so neither the fixed indices above nor the NK - n ones below move (t_fgen_level checks every K_* macro against its key name)
+#define K_FGEN 18
 // free_tp（免费回城，dm_freetp.c）缺省开（用户 2026-10-30，RC2 起）：RC1.2 / 安卓 1.0.x 缺省关且存盘写全部键，它们留下的 free_tp=0 分不出是不是玩家关的，所以另记 free_tp_v2：没有这个标记的旧文件迁移一次到开；存盘都带标记，之后玩家再关就一直是关
 // free_tp (free town portal, dm_freetp.c) on by default (user 2026-10-30, from RC2): RC1.2 / Android 1.0.x shipped it off and saved every key, so their free_tp=0 cannot be told from a player choice; hence the free_tp_v2 marker: an old file without it migrates once to on; every save writes the marker, so a later off by the player stays off
 // auto_crash（自动上报崩溃，dm_crashreport.c）缺省关；第一次打开要在游戏内确认框里同意（dm_diagup.c），同意记一行 auto_crash_ok=1（点「应用」才写）。文件里只有 auto_crash=1 没有同意记录 = 当关 | auto_crash (automatic crash reports) off by default; the first enable needs consent in the in-game box, recorded as auto_crash_ok=1 (written on Apply). auto_crash=1 without that record counts as off
@@ -114,7 +119,7 @@ enum { PF_APPLE = 1, PF_ANDROID = 2, PF_ALL = 3 };
 #endif
 static const struct { const char *key; unsigned char page; const char *group; unsigned char plat; } k_opts[] = {
     { "render_res", PG_GFX, "Display", PF_ALL }, { "bright_level", PG_GFX, "Display", PF_ALL },
-    { "fps_hud", PG_GFX, "Frame", PF_ALL }, { "eco_fps", PG_GFX, "Frame", PF_ALL }, { "dyn_refresh", PG_GFX, "Frame", PF_ALL }, { "fgen", PG_GFX, "Frame", PF_APPLE },
+    { "fps_hud", PG_GFX, "Frame", PF_ALL }, { "eco_fps", PG_GFX, "Frame", PF_ALL }, { "dyn_refresh", PG_GFX, "Frame", PF_ALL }, { "fgen_level", PG_GFX, "Frame", PF_APPLE },
     { "upscale", PG_GFX, "Upscale", PF_APPLE }, { "q3d", PG_GFX, "Upscale", PF_APPLE },
     { "rt_level", PG_GFX, "Rt", PF_APPLE },   // RC2 光追档位一行取代 rt_shadow / rt_ao 两个开关（23a2ee3e） | RC2's one ray-tracing level row replaces the rt_shadow / rt_ao switches
     { "lang", PG_SYS, "Lang", PF_ALL }, { "voice", PG_SYS, "Lang", PF_ALL },
@@ -175,12 +180,30 @@ static int voice_running(void) { return lang_running() == 0 ? 0 : 1; }   // 没�
 // (merc_pot=1 in an old file is also on, the same result). The merc_pot line is still written with the current value, so packages of older versions read it without error
 static _Atomic int g_merc_explicit = -1;   // 文件里写着的 merc_pot_v2：-1 没写 / 0 / 1 | merc_pot_v2 as written in the file: -1 not written / 0 / 1
 
-// 崩溃围栏自动关实验项之前的原值（-1 = 没备份）：存进设置文件一行 exp_off_backup=eco_fps:2,rt_level:2,upscale:1；
+// 崩溃围栏自动关实验项之前的原值（-1 = 没备份）：存进设置文件一行 exp_off_backup=eco_fps:2,rt_level:2,upscale:1,fgen_level:2；
 // 玩家下次打开图形页时按它预选（勾选框恢复成原来的样子），点「应用」生效并清掉备份，「放弃」保留备份、下次打开再预选
-// Original values before the crash fence turned experimental features off (-1 = no backup): saved in the settings file as one line exp_off_backup=eco_fps:2,rt_level:2,upscale:1;
+// Original values before the crash fence turned experimental features off (-1 = no backup): saved in the settings file as one line exp_off_backup=eco_fps:2,rt_level:2,upscale:1,fgen_level:2;
 // the next time the player opens the Graphics tab they are pre-selected (checkboxes back as they were); Apply makes them effective and clears the backup, Discard keeps the backup and pre-selects again next time
-static const char *const k_bak_name[3] = { "eco_fps", "rt_level", "upscale" };
-static _Atomic int g_bak[3] = { -1, -1, -1 };
+// 帧生成一项记的是档位（0 / 1 / 2）；RC2 之前的包写的是开关，读到旧名 fgen:1 按 2 恢复 | the frame-generation entry holds the level (0 / 1 / 2); packages before RC2 wrote a switch, and the old name fgen:1 restores as 2
+#define N_BAK 4
+#define BAK_FGEN 3
+static const char *const k_bak_name[N_BAK] = { "eco_fps", "rt_level", "upscale", "fgen_level" };
+static _Atomic int g_bak[N_BAK] = { -1, -1, -1, -1 };
+// 帧生成档位的归一：新键只认 0 / 1 / 2，3（保留给高倍）与任何非法值都读作 0（RC2 草案 §5「读到就当 0」）
+// Level normalisation: the new key accepts only 0 / 1 / 2; 3 (reserved for higher multiples) and any invalid value read as 0 (RC2 draft §5)
+static int fgen_level_norm(long v) { return v == DM_FGEN_ECO ? DM_FGEN_ECO : v == DM_FGEN_SMOOTH ? DM_FGEN_SMOOTH : DM_FGEN_OFF; }
+static int fgen_level_parse(const char *s) {   // 整串是一个数才算（"2x" / 空 / 后导多余字符都按 0；前导空格与 q3d / render_res 一样被 strtol 跳过）| the whole rest must be a number ("2x" / empty / trailing junk all read as 0; leading space is skipped by strtol as for q3d / render_res)
+    char *end; long v = strtol(s, &end, 10);
+    if (end == s || (*end != '\n' && *end != '\r' && *end != 0)) return DM_FGEN_OFF;
+    return fgen_level_norm(v); }
+// 备份串 exp_off_backup 里第 b 项的原值（-1 = 没有）。两个旧名照读：光追一项读到旧包的 rt_shadow:1 按中档 2（RC2 23a2ee3e 原有规则）；帧生成一项读到 RC2 之前的 fgen:1 按档位 2（旧的 1 是「开」= 平滑）
+// Original value of entry b in the exp_off_backup string (-1 = absent). Two old names are still read: for ray tracing an older package's rt_shadow:1 restores as medium 2 (RC2 23a2ee3e's rule); for frame generation the pre-RC2 fgen:1 restores as level 2 (the old 1 meant "on" = smooth)
+static int bak_value(const char *s, int b) {
+    const char *q = strstr(s, k_bak_name[b]); size_t L = strlen(k_bak_name[b]);
+    if (q && q[L] == ':' && q[L + 1] >= '0' && q[L + 1] <= '9') return b == BAK_FGEN ? fgen_level_norm(q[L + 1] - '0') : q[L + 1] - '0';   // 帧生成这一项同样归一（别人写进来的 3 按 0）| the frame-generation entry is normalised too (a 3 written by something else reads as 0)
+    if (b == 1) { q = strstr(s, "rt_shadow:"); if (q && q[10] >= '1' && q[10] <= '9') return 2; }   // 旧包的围栏备份：光追开过 = 中 | a crash-fence backup from an older package: ray tracing on = medium
+    if (b == BAK_FGEN) { q = strstr(s, "fgen:"); if (q && q[5] >= '0' && q[5] <= '9') return q[5] != '0' ? DM_FGEN_SMOOTH : DM_FGEN_OFF; }   // 旧的开关：1 → 2（不是 1）| the old switch: 1 -> 2 (not 1)
+    return -1; }
 static _Atomic int g_repaint;
 // 内存档位（用户 2026-10-29：「要按机型考虑，不同机型运存不一样」）：按本进程内存上限（phys_footprint + os_proc_available_memory，iOS main.m 在游戏堆分配之前量一次交进来）分三档，
 // 阈值按上限、不按物理内存或机型清单（只有两台机实测，见共享笔记《iOS机型内存上限参考》：17 Pro / Duo 无权益都是 3375 MB；带 increased-memory-limit 权益约 6 GB，自然落最高档）：
@@ -253,13 +276,15 @@ static void load_once(void) {
     int v[NK]; for (int i = 0; i < NK; i++) v[i] = k_def[i];
     FILE *f = fopen(p, "r"); char ln[128];
     int lang = -1, voice = -1, merc = -1, qv2 = 0, ftv2 = 0, mem_was = -1, mem_ack = 0;
-    int has_rtlvl = 0, old_rt = 0, old_ao = 0;
-    for (int b = 0; b < 3; b++) atomic_store(&g_bak[b], -1);   // 备份以文件为准 | the backup follows the file
+    int has_rtlvl = 0, old_rt = 0, old_ao = 0, legacy_fgen = -1, new_fgen = 0;
+    for (int b = 0; b < N_BAK; b++) atomic_store(&g_bak[b], -1);   // 备份以文件为准 | the backup follows the file
     while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0';
         if (i == K_Q3D) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 4) v[i] = (int)q; else v[i] = 0; }
         if (i == K_BRIGHT) { char *end; long q = strtol(eq + 1, &end, 10); v[i] = end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 3 ? (int)q : k_def[i]; }
         if (i == K_RES) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q < DM_RES_LEVELS) v[i] = (int)q; else v[i] = 0; }
         if (i == K_RTLVL) { char *end; long q = strtol(eq + 1, &end, 10); v[i] = end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 3 ? (int)q : 0; has_rtlvl = 1; }
+        if (i == K_FGEN) { v[i] = fgen_level_parse(eq + 1); new_fgen = 1; }   // 0 / 1 / 2；3 与非法值按 0（RC2 草案 §5）| 0 / 1 / 2; 3 and invalid values read as 0 (RC2 draft §5)
+        if (!strcmp(ln, "fgen")) legacy_fgen = eq[1] != '0';   // 旧键（RC2 之前叫 fgen，布尔）| old key (called fgen before RC2, a boolean)
         if (!strcmp(ln, "rt_shadow")) old_rt = eq[1] != '0';
         if (!strcmp(ln, "rt_ao")) old_ao = eq[1] != '0';
         if (i == K_FPS && eq[1] == '2' && (eq[2] == '\n' || eq[2] == '\r' || eq[2] == 0)) v[i] = FPS_120;   // 其余照旧：0 = 60、非 0 = 30 | Otherwise as before: 0 = 60, non-zero = 30
@@ -272,10 +297,12 @@ static void load_once(void) {
         if (!strcmp(ln, "merc_pot_v2")) merc = eq[1] != '0';
         if (!strcmp(ln, "auto_crash_ok")) atomic_store(&g_ac_ok, eq[1] == '1');
         if (!strcmp(ln, "tel_notice")) atomic_store(&g_tel_notice, atoi(eq + 1) > 0 ? atoi(eq + 1) : 0);
-        if (!strcmp(ln, "exp_off_backup")) for (int b = 0; b < 3; b++) { const char *q = strstr(eq + 1, k_bak_name[b]); size_t L = strlen(k_bak_name[b]);
-            if (q && q[L] == ':' && q[L + 1] >= '0' && q[L + 1] <= '9') atomic_store(&g_bak[b], q[L + 1] - '0'); }
-        if (!strcmp(ln, "exp_off_backup") && atomic_load(&g_bak[1]) < 0) { const char *q = strstr(eq + 1, "rt_shadow:"); if (q && q[10] >= '1' && q[10] <= '9') atomic_store(&g_bak[1], 2); } }   // 旧包的围栏备份：光追开过 = 中 | a crash-fence backup from an older package: ray tracing on = medium
+        if (!strcmp(ln, "exp_off_backup")) for (int b = 0; b < N_BAK; b++) atomic_store(&g_bak[b], bak_value(eq + 1, b)); }   // 旧名 rt_shadow: / fgen: 见 bak_value | old names rt_shadow: / fgen: see bak_value
     if (f) fclose(f);
+    // 旧键 fgen 只在新键没写时读一次：fgen=1 → 2（平滑）、fgen=0 → 0。只在内存里迁，不在这里写盘——下一次存盘按新键写、旧行随整份重写消失
+    // The old key fgen is read once only while the new key is absent: fgen=1 -> 2 (smooth), fgen=0 -> 0. Migrated in memory only, no write here: the next save writes the new key and the old line disappears with the whole-file rewrite
+    if (!new_fgen && legacy_fgen >= 0) { v[K_FGEN] = legacy_fgen ? DM_FGEN_SMOOTH : DM_FGEN_OFF;
+        LOG("自定义设置：旧键 fgen=%d 迁移为 fgen_level=%d（只迁一次；新键存在时不再看旧键）", legacy_fgen, v[K_FGEN]); }
     if (!qv2) v[K_Q3D] = v[K_Q3D] == 1 ? 3 : 0;
     if (!has_rtlvl) { v[K_RTLVL] = rt_level_migrate(old_rt, old_ao); if (old_rt) LOG("光追档位：旧设置 rt_shadow=%d rt_ao=%d 迁移为 rt_level=%d", old_rt, old_ao, v[K_RTLVL]); }
     if (!ftv2) { int ft = key_index("free_tp"); if (f && !v[ft]) LOG("自定义设置：旧文件的 free_tp=0 迁移为开（RC2 起缺省开，free_tp_v2）"); v[ft] = 1; }
@@ -374,13 +401,16 @@ static void res_notify(void) { atomic_fetch_add(&g_res_notify_n, 1); LOG("图形
 static int fps_schedule(const char *spec, double elapsed) {
     if (!spec || !*spec) return -1;
     int cur = -1; const char *p = spec;
-    while (*p) { char *end; long f = strtol(p, &end, 10); if (end == p || (f != 30 && f != 60 && f != 90 && f != 120)) return -1;
+    while (*p) { char *end; long f = strtol(p, &end, 10); if (end == p || (f != 30 && f != 40 && f != 60 && f != 90 && f != 120)) return -1;   // 40 只给帧生成量测（120 Hz 屏的三分之一）| 40 only for frame-generation measurements (a third of a 120 Hz screen)
         double at = 0; p = end; if (*p == '@') { at = strtod(p + 1, &end); if (end == p + 1 || at < 0) return -1; p = end; }
         if (elapsed >= at || cur < 0) cur = (int)f;
         if (*p == ',') p++; else if (*p) return -1; }
     return cur;
 }
+typedef struct { double at; short fps, on, gen, mult; char name[16]; } fg_seg;
+static const fg_seg *fg_sched(void);
 static int fps_test(void) {
+    { const fg_seg *s = fg_sched(); if (s) return s->fps; }   // 帧生成量测时间表 DM_FG_SCHED 同时定渲染帧率 | the frame-generation measurement schedule DM_FG_SCHED also sets the render rate
     static int on = -1; static const char *spec; static uint64_t t0; static _Atomic int last = -1;
     if (on < 0) { spec = getenv("DM_TEST_FPS"); on = spec && fps_schedule(spec, 0) > 0; t0 = (uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC); if (spec && !on) LOG("【红】DM_TEST_FPS 非法：%s", spec); }
     if (!on) return -1;
@@ -408,6 +438,7 @@ static int fps_mem_capped(void) { return fps_high_hz() > 0 && dm_mem_tier() < 2;
 // Selected / effective rate: a test-switch value does not exceed this machine's high-refresh rate (DM_TEST_FPS=90 is 90 on a 120 Hz screen, 120 runs at 90 on a 90 Hz screen); the saved third stop takes the machine's high-refresh rate.
 // Memory tiers 1 / 0, a screen below 89 Hz, or no window yet -> the high-refresh stop runs at 60 (the saved value is unchanged)
 static int fps_rate(int v, int t) {
+    if (t == 40) return 40;   // 40 只有量测开关能到（DM_FG_SCHED / DM_TEST_FPS=40），不过高刷与遇热退回 | 40 only from the measurement switches; it skips the high-refresh and thermal logic
     if (v == 1) return 30;
     if (v != FPS_120 || !fps_high_ok()) return 60;
     int high = fps_high_hz();
@@ -474,7 +505,7 @@ int dm_fps_setting(void) {
     if (atomic_exchange(&last, key) != key) {
         // 生效帧率变了（应用、测试开关、建窗后才读到高刷屏、遇热退回 / 回升）：3D 比例控制的高画质模式跟着「选的」高刷档上限走 | the effective rate changed (Apply, test switch, a high-refresh screen known once the window exists, thermal fallback / recovery): the 3D scale controller's Quality mode follows the selected high-refresh cap
         if (atomic_load(&g_loaded)) dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && q3d_for_fps(atomic_load(&g_val[K_Q3D]), sel) == 3);
-        int req = v == 1 ? 30 : v == FPS_120 ? (t >= 90 ? t : fps_high_hz() ? fps_high_hz() : 120) : 60;
+        int req = t == 40 ? 40 : v == 1 ? 30 : v == FPS_120 ? (t >= 90 ? t : fps_high_hz() ? fps_high_hz() : 120) : 60;
         if (hot) LOG("帧率档：生效 60 帧（%s%d，过热 温控 %d，自动退回 60；温控回落到 ≤ 1 并持续 60 秒后回 %d）", t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", req, th, sel);
         else LOG("帧率档：生效 %d 帧（%s%d，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", req, hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz,
             why >= 2 && hz >= 89 ? "；内存档位不开放高刷档（见「内存档位：」行），高刷档按 60" : why >= 2 && hz > 0 ? "；屏幕不到 90 Hz，高刷档按 60" : why >= 2 ? "；暂按 60"
@@ -502,12 +533,12 @@ __attribute__((weak)) int dm_render_res_supported(void) { return 1; }
 #endif
 // 图形页的行（与 touch_layout.py _graphics_page 同序）：可见的紧挨着排，返回可见行数，out 依次是布局行号；选中框按可见序号放、行为按布局行号走（单测 t_graphics_gate）
 // Graphics-tab rows (same order as touch_layout.py _graphics_page): the visible ones are packed, returns the visible count with the layout row ids in out; the selection frame follows the visible index, behaviour follows the layout row (unit test t_graphics_gate)
-enum { ROW_RES, ROW_BRIGHT, ROW_FPSHUD, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT };   // 显示帧数行第二（用户 2026-10-28）| the Show-frame-rate row is second (user 2026-10-28)
+enum { ROW_RES, ROW_BRIGHT, ROW_FPSHUD, ROW_FPS, ROW_FG, ROW_UPSCALE, ROW_PROFILE, ROW_RT };   // 显示帧数行第二（用户 2026-10-28）；AI 帧生成在「帧率」组、帧率滑块之后（k_opts 的 Frame 组）| the Show-frame-rate row is second (user 2026-10-28); AI frame generation sits in the Frame group after the frame-rate slider (k_opts' Frame group)
 // 可见行 i 的 y：行紧挨着排，换组的地方多一行分组标题（方案 C：画面 / 帧率 / 超分 / 光线追踪）| y of visible row i: rows are packed, with one heading row where the group changes (plan C)
-static int graphics_row_group(int row) { return row <= ROW_BRIGHT ? 0 : row <= ROW_FPS ? 1 : row <= ROW_PROFILE ? 2 : 3; }
+static int graphics_row_group(int row) { return row <= ROW_BRIGHT ? 0 : row <= ROW_FG ? 1 : row <= ROW_PROFILE ? 2 : 3; }
 static int graphics_row_y(const int *vis, int i) { int y = 180; for (int k = 1; k <= i; k++) y += graphics_row_group(vis[k]) != graphics_row_group(vis[k - 1]) ? 360 : 180; return y; }
-static int graphics_rows_pack(int res_ok, int up_ok, int prof_on, int rt_ok, int out[7]) {
-    int n = 0; if (res_ok) out[n++] = ROW_RES; out[n++] = ROW_BRIGHT; out[n++] = ROW_FPSHUD; out[n++] = ROW_FPS; if (up_ok) { out[n++] = ROW_UPSCALE; if (prof_on) out[n++] = ROW_PROFILE; } if (rt_ok) out[n++] = ROW_RT; return n;
+static int graphics_rows_pack(int res_ok, int up_ok, int prof_on, int rt_ok, int fg_ok, int out[8]) {
+    int n = 0; if (res_ok) out[n++] = ROW_RES; out[n++] = ROW_BRIGHT; out[n++] = ROW_FPSHUD; out[n++] = ROW_FPS; if (fg_ok) out[n++] = ROW_FG; if (up_ok) { out[n++] = ROW_UPSCALE; if (prof_on) out[n++] = ROW_PROFILE; } if (rt_ok) out[n++] = ROW_RT; return n;
 }
 // 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义）：玩家档 0–3，已含机器门槛和内存封顶；DM_RT_PRESET=0–3 钉住。生效值一变就记一行「光追档位：生效 rt_level=」（分享诊断日志的摘要按这个前缀取最后一行）
 // 内存档位 < 2 时高档不开放（AO、软影多两张贴图，内存紧的机器不值得）：存的还是高，生效值夹到中
@@ -544,6 +575,168 @@ int dm_render_res_rt_drop(void) {
     LOG("光追降分辨率：判定 %s（启动时光追%s%s；整局不变，改光追设置下次启动生效）", r ? "降一档" : "不降", on ? "开" : "关", off ? "，测试开关 DM_RT_RES_DROP=0 关掉" : "");
     return r;
 }
+// 探索开关 DM_FG_SCHED=<段>@秒,…（多倍帧生成量测，同一局内按时段交替；公开包没有入口）：段 = off<基准> 或 <生成器><基准>x<倍数>，生成器 mfx / shift / null / ext，基准 30 / 40 / 60，如 off60@0,null60x2@70,shift30x4@110
+// Exploration switch DM_FG_SCHED=<segment>@sec,... (multi-frame generation measurement, alternating within one run; no entry in public builds): segment = off<base> or <generator><base>x<multiple>, generators mfx / shift / null / ext, bases 30 / 40 / 60
+static fg_seg g_fgs[64]; static int g_fgs_n; static uint64_t g_fgs_t0; static pthread_once_t g_fgs_once = PTHREAD_ONCE_INIT;
+static void fg_sched_load(void) {
+    const char *e = getenv("DM_FG_SCHED"); g_fgs_t0 = (uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC); if (!e) return;
+    static const char *const gn[4] = { "mfx", "shift", "null", "ext" };
+    for (const char *p = e; *p && g_fgs_n < 64; ) { fg_seg s = { .mult = 2 }; const char *c = strchr(p, ','); size_t n = c ? (size_t)(c - p) : strlen(p); char b[32]; if (n >= sizeof b) goto bad; memcpy(b, p, n); b[n] = 0;
+        char *at = strchr(b, '@'); if (at) { s.at = atof(at + 1); *at = 0; } strlcpy(s.name, b, sizeof s.name); char *q = b; s.gen = -1;
+        if (!strncmp(q, "off", 3)) { q += 3; s.gen = 0; } else { for (int i = 0; i < 4; i++) if (!strncmp(q, gn[i], strlen(gn[i]))) { s.gen = (short)i; s.on = 1; q += strlen(gn[i]); } }
+        if (s.gen < 0) goto bad;
+        s.fps = (short)strtol(q, &q, 10); if (s.fps != 30 && s.fps != 40 && s.fps != 60) goto bad;
+        if (s.on) { if (*q != 'x') goto bad; s.mult = (short)atoi(q + 1); if (s.mult < 2 || s.mult > 4) goto bad; }
+        g_fgs[g_fgs_n++] = s; p += n; if (*p == ',') p++; continue;
+      bad: LOG("【红】DM_FG_SCHED 非法：%s", e); g_fgs_n = 0; return; }
+}
+static const fg_seg *fg_sched(void) {
+    pthread_once(&g_fgs_once, fg_sched_load); if (!g_fgs_n) return NULL;
+    double el = ((uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC) - g_fgs_t0) / 1e9; int i = 0; while (i + 1 < g_fgs_n && el >= g_fgs[i + 1].at) i++;
+    static _Atomic int last = -1; if (atomic_exchange(&last, i) != i) LOG("帧生成调度：第 %.0f 秒 → %s", el, g_fgs[i].name);
+    return &g_fgs[i];
+}
+double dm_fg_sched_t(void) { pthread_once(&g_fgs_once, fg_sched_load); return ((uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC) - g_fgs_t0) / 1e9; }
+const char *dm_fg_sched_name(void) { const fg_seg *s = fg_sched(); return s ? s->name : "-"; }
+int dm_fg_gen(void) { const fg_seg *s = fg_sched(); if (s) return s->gen; static int v = -1; if (v < 0) v = getenv("DM_FG_SHIFT") != NULL; return v; }   // 0 插值器 / 1 平移 / 2 零成本（真帧再上屏一次）/ 3 镜头外推 | 0 interpolator / 1 shift / 2 null (the real frame again) / 3 camera extrapolation
+int dm_fg_mult(void) { const fg_seg *s = fg_sched(); return s ? s->mult : 2; }
+int dm_fg_need_fi(void) { pthread_once(&g_fgs_once, fg_sched_load); if (!g_fgs_n) return !getenv("DM_FG_SHIFT"); for (int i = 0; i < g_fgs_n; i++) if (g_fgs[i].on && g_fgs[i].gen == 0) return 1; return 0; }
+// AI 帧生成（实验性，图形页「帧率」组一行，键 fgen_level，缺省关；帧插值，日志前缀「帧生成：」）：帧率档只管真渲染帧率，帧生成只管显示翻倍。
+// 两层门控（方案 C，同光追 / 超分）：平台层照键表 k_opts（fgen_level 只有 Apple；安卓整行不出现，§2.8）；本机层 fg_row_ok = 设备支持插值器（图形层 mtl_fg_supported）、
+// 屏幕 ≥ 120 Hz、内存档位放开高刷档（档位 ≥ 2）——不满足时这一行还在、置灰、副文写原因。
+// 生效（fg_reason）还要：不是 30 帧档（用户 2026-10-27 定）、不是高刷档（90 / 120，RC2 84c04ac2；屏幕已到顶，按「选的」帧率判，遇热退回 60 时也不开）、光追关（rt_level 生效档 0；
+// 两个实验项的组合没有验证过内存与 GPU 预算，且只能二选一拿预算）、温控没有退档（≥ 2 停，回落满 FG_COOL_SEC 秒才恢复）。
+// 测试开关 DM_TEST_FG=<0|1>[@秒],…（写法同 DM_TEST_FPS）顶替设置值，不读写设置文件；DM_TEST_FG_HOT=<0|1>[@秒],… 假装温控 ≥ 2；DM_THERMAL_NOFALLBACK（只供功耗测量，同 front_ios.m）不看温控。
+// 生效值或原因一变就记一行「帧生成：状态 fg=…」（分享诊断日志摘要取最后一行就是当前状态）
+// AI frame generation (experimental, one row in the Graphics page's Frame group, key fgen_level, off by default; frame interpolation, log prefix "帧生成："): the frame-rate mode sets only the true render rate, frame generation only doubles what is shown.
+// Two-layer gate (plan C, as ray tracing / upscaling): the platform layer follows k_opts (fgen_level is Apple only; on Android the row is absent, §2.8); the machine layer fg_row_ok = interpolator support
+// (graphics layer mtl_fg_supported), a >= 120 Hz screen and a memory tier that allows the high-refresh stop (tier >= 2) - failing it the row stays, greyed, with the reason as subtext.
+// In effect (fg_reason) also needs: not the 30 fps mode (user decision 2026-10-27), not the high-refresh stop (90 / 120, RC2 84c04ac2; judged by the selected rate, so not even while the heat runs it at 60), ray tracing off
+// (effective rt_level 0; the combination has no verified memory / GPU budget), no thermal fallback (stops at >= 2, resumes after FG_COOL_SEC seconds below).
+// Test switches DM_TEST_FG=<0|1>[@seconds],... override the setting without touching the settings file; DM_TEST_FG_HOT=<0|1>[@seconds],... pretends thermal >= 2; DM_THERMAL_NOFALLBACK ignores the thermal state. One "帧生成：状态 fg=..." line whenever the effective value or its reason changes
+#define FG_COOL_SEC 60
+#define FG_HOT_LEVEL 2   // 温控到这一档就停（DM_FG_HOT_LEVEL=<1–3> 可改，给真机对比用）| Stop at this thermal state (DM_FG_HOT_LEVEL=<1-3> overrides it for device comparisons)
+#ifndef DM_FG_TEST_HOOK   // 单测（t_fgen_level.c）自带强定义 | the unit test brings its own strong definitions
+__attribute__((weak)) int mtl_fg_supported(void) { return 0; }
+__attribute__((weak)) int mtl_fg_backoff(void) { return 0; }
+#else
+int mtl_fg_supported(void); int mtl_fg_backoff(void);
+#endif
+// 平台：帧生成只有 Apple 图形层有。安卓 / 鸿蒙壳单独判，好在读到非 0 的 fgen_level（设置文件跨端互通）时不改写、按关生效（日志写「本端暂未接入」）
+// Platform: only the Apple graphics layer has frame generation. The Android / Harmony shell is checked separately so a non-zero fgen_level (settings files travel between platforms) is not rewritten and takes effect as off
+#if defined(__ANDROID__) || defined(__OHOS__)
+#define DM_FG_PLATFORM 0
+#else
+#define DM_FG_PLATFORM 1
+#endif
+#ifdef DM_FG_PLATFORM_TEST_HOOK   // 单测自己给（t_fgen_level.c：1 = Apple 壳 / 0 = 安卓壳）| supplied by the unit test (t_fgen_level.c: 1 = Apple shell / 0 = Android shell)
+int dm_fg_platform_test(void);
+static int fg_platform_ok(void) { return dm_fg_platform_test(); }
+#else
+static int fg_platform_ok(void) { return DM_FG_PLATFORM; }
+#endif
+// 设置值（已归一；旧键迁移也在这个值里）。图形页勾选框只做关 / 平滑两态（勾 = 2），省电档不出现在界面
+// The setting value (normalised; migration included). The Graphics checkbox has only the off / smooth states (checked = 2); the power-saving level is not on the page
+int dm_fgen_level(void) { return dm_custom_get("fgen_level"); }
+// DM_FGEN_PRESET=<0|1|2>：钉住档位（真机对比 / 纯设置路径回归用），优先于设置；3（保留档）同样按 0 处理，其余串非法
+// DM_FGEN_PRESET=<0|1|2>: pins the level (device comparisons / pure-settings regression), ahead of the setting; 3 (reserved) also reads as 0, anything else is invalid
+static int fgen_preset_parse(const char *spec) {
+    if (!spec || !*spec || spec[1]) return -1;
+    if (spec[0] >= '0' && spec[0] <= '9') { int v = spec[0] - '0'; return v <= 3 ? fgen_level_norm(v) : -1; }
+    return -1; }
+static int fgen_preset(void) {
+    static int v = -2; if (v != -2) return v;
+    const char *e = getenv("DM_FGEN_PRESET"); v = fgen_preset_parse(e);
+    if (e && *e && v < 0) LOG("【红】DM_FGEN_PRESET 非法（只认 0 / 1 / 2）：%s", e);
+    else if (v >= 0) LOG("帧生成：测试开关 DM_FGEN_PRESET=%d（钉住档位，优先于设置）", v);
+    return v; }
+// 档位优先级：DM_TEST_FG（局内按秒切 0 / 1，1 = 平滑）> DM_FGEN_PRESET > 设置。两者同给时 DM_TEST_FG 优先（RC2 草案 §5）
+// Level priority: DM_TEST_FG (the per-second in-run switch 0 / 1, 1 = smooth) > DM_FGEN_PRESET > the setting. With both given the test switch wins (RC2 draft §5)
+static int fgen_choose_level(int test_level, int preset, int setting) { return test_level >= 0 ? test_level : preset >= 0 ? preset : setting; }
+static int fg_schedule(const char *spec, double elapsed) {
+    if (!spec || !*spec) return -1;
+    int cur = -1; const char *p = spec;
+    while (*p) { if (*p != '0' && *p != '1') return -1; int v = *p++ - '0';
+        double at = 0; if (*p == '@') { char *end; at = strtod(p + 1, &end); if (end == p + 1 || at < 0) return -1; p = end; }
+        if (elapsed >= at || cur < 0) cur = v;
+        if (*p == ',') p++; else if (*p) return -1; }
+    return cur;
+}
+static int fg_test_env(const char *env, const char **spec, int *on, uint64_t *t0, double *el) {
+    if (*on < 0) { *spec = getenv(env); *on = *spec && fg_schedule(*spec, 0) >= 0; *t0 = (uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC); if (*spec && !*on) LOG("【红】%s 非法：%s", env, *spec); }
+    if (!*on) return -1;
+    *el = ((uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC) - *t0) / 1e9; return fg_schedule(*spec, *el);
+}
+static int fg_test(void) {
+    { const fg_seg *s = fg_sched(); if (s) return s->on; }
+    static int on = -1; static const char *spec; static uint64_t t0; static _Atomic int last = -1; double el = 0;
+    int v = fg_test_env("DM_TEST_FG", &spec, &on, &t0, &el);
+    if (v >= 0 && atomic_exchange(&last, v) != v) LOG("测试 DM_TEST_FG：第 %.0f 秒 → 帧生成 %s", el, v ? "开" : "关");
+    return v;
+}
+// 0 = 生效，其余为不生效的原因 | 0 = in effect, otherwise the reason it is not
+enum { FG_ON, FG_OFF, FG_UNSUPPORTED, FG_ECO30, FG_CAPPED, FG_RT, FG_HOT, FG_ECO_CLOSED, FG_PLATFORM };
+static int fg_row_ok(void) { return mtl_fg_supported() && dm_display_max_hz() >= 119 && dm_mem_tier() >= 2; }
+// 图形页这一行：平台层（fg_row_show）照键表 k_opts 与平台判定——安卓 / 鸿蒙壳没有这一行；本机层（fg_row_editable）不过门槛时行在、勾选框置灰、副文写原因
+// The Graphics row: the platform layer (fg_row_show) follows k_opts and the platform check - the Android / Harmony shell has no such row; the machine layer (fg_row_editable) failing leaves the row, greyed, with the reason as subtext
+static int fg_row_show(void) { int i = key_index("fgen_level"); return fg_platform_ok() && i >= 0 && opt_page(i) == PG_GFX; }
+static int fg_row_editable(void) { return fg_row_show() && fg_row_ok(); }
+static int fg_reason(int level, int row_ok, int fps, int rt_on, int hot) {
+    if (level == DM_FGEN_OFF) return FG_OFF;
+    if (!fg_platform_ok()) return FG_PLATFORM;            // 安卓壳：档位照读、按关生效 | Android shell: the level is read but takes effect as off
+    if (level != DM_FGEN_SMOOTH) return FG_ECO_CLOSED;    // 省电枚举保留、本车不开放 | power-saving enum kept, not opened in this train
+    if (!row_ok) return FG_UNSUPPORTED;
+    if (fps == 30) return FG_ECO30;
+    if (fps >= 90) return FG_CAPPED;                      // 高刷档 90 / 120 | the high-refresh stop 90 / 120
+    if (rt_on) return FG_RT;
+    if (hot) return FG_HOT;
+    return FG_ON;
+}
+// 温控门（纯函数）：≥ 2 立刻停；回落后连续 cool_sec 秒才恢复（不来回切：每次重开都要重攒历史）| Thermal gate (pure): stops at once at >= 2; resumes only after cool_sec seconds below (no flapping: every restart rebuilds the history)
+static int fg_hot_step(int therm, int level, double now, double cool_sec, double *hot_until) {
+    if (therm >= level) { *hot_until = now + cool_sec; return 1; }
+    return now < *hot_until;
+}
+static int fg_hot(void) {
+    static int on = -1; static const char *spec; static uint64_t t0; double el = 0; int t = fg_test_env("DM_TEST_FG_HOT", &spec, &on, &t0, &el);
+    static double hot_until; static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;   // 翻译线程 / 出图线程 / 主线程都问 | asked from the translation, present and main threads
+    double now = (uint64_t)clock_gettime_nsec_np(CLOCK_MONOTONIC) / 1e9; static int level; if (!level) { const char *e = getenv("DM_FG_HOT_LEVEL"); int v = e ? atoi(e) : 0; level = v >= 1 && v <= 3 ? v : FG_HOT_LEVEL; }
+    pthread_mutex_lock(&mu); int r = fg_hot_step(t > 0 ? 3 : getenv("DM_THERMAL_NOFALLBACK") ? 0 : thermal_now(), level, now, FG_COOL_SEC, &hot_until); pthread_mutex_unlock(&mu);   // thermal_now 含 DM_TEST_THERMAL | thermal_now honours DM_TEST_THERMAL
+    return r;
+}
+// 光追实际开没开（rt_level 生效档 > 0）：DM_RT_PRESET 不在时测试开关 DM_RT_SHADOW 钉住就按它（同 nvn_rtshadow.inc rts_on 与 dm_render_res_rt_drop），否则按 dm_rt_level_setting
+// Whether ray tracing is really on (effective rt_level > 0): without DM_RT_PRESET, the DM_RT_SHADOW test pin when given (as rts_on and dm_render_res_rt_drop), otherwise dm_rt_level_setting
+static int fg_rt_on(void) { const char *e = getenv("DM_RT_PRESET") ? NULL : getenv("DM_RT_SHADOW"); return e ? atoi(e) != 0 && rt_shadow_ok() : dm_rt_level_setting() > 0; }
+int dm_fg_setting(void) {
+    int t = fg_test(), preset = fgen_preset(), setting = dm_fgen_level();
+    int level = fgen_choose_level(t >= 0 ? (t ? DM_FGEN_SMOOTH : DM_FGEN_OFF) : -1, preset, setting);
+    int fps = dm_fps_setting(), sel = fps_selected(), hz = dm_display_max_hz(), rt = fg_rt_on(), hot = fg_hot();   // fps = 生效（含遇热退回）只进日志；判定按选的帧率 sel | fps = effective (thermal fallback included), log only; the decision uses the selected rate sel
+    static int eco = -1; if (eco < 0) eco = getenv("DM_FG_ECO") != NULL || fg_sched() != NULL;   // 探索开关：渲染 30 + 插到 60（省电方向，真机对比用；产品上 30 帧档仍禁用）| exploration switch: render 30 and interpolate to 60 (power-saving direction, device comparisons only; the product still disables it at 30 fps)
+    int why = fg_reason(level, fg_row_ok(), eco && sel < 60 ? 60 : sel, rt, hot);
+    static _Atomic int last = -1; int key = why * 4096 + level * 1024 + fps * 2 + (t >= 0);
+    if (atomic_exchange(&last, key) != key) {
+        // 摘要里的 fgen_level 是设置值（存储的档位），fg 是实际生效状态：安卓壳存储 2 时写 fgen_level=2, fg=0，不把设置值改成 0（主会话 2026-11-03 裁定，设置与生效分离）
+        // The summary's fgen_level is the setting (the stored level) and fg the effective state: on the Android shell a stored 2 prints fgen_level=2, fg=0 (ruled by the main session on 2026-11-03: setting and effective state are separate)
+        static const char *const reason[] = { "", "开关关着", "本机不支持（插值器 / 屏幕 / 内存档位）", "30 帧档下不可用", "高刷档下不可用", "光追开着", "温控退档", "省电档未开放", "本端暂未接入" };
+        char pin[32] = ""; if (level != setting) snprintf(pin, sizeof pin, "（钉住 %d）", level);   // 钉住的档位与设置值不同时写上 | writes the pinned level when it differs from the setting
+        LOG("帧生成：状态 fg=%d %s fgen_level=%d%s（%s%s；渲染 %d，显示 %d，屏幕最高 %d Hz；%s）", why == FG_ON, why == FG_ON ? "开" : "关", setting, pin,
+            why == FG_ON ? "" : "原因 ", reason[why], fps, why == FG_ON ? fps * 2 : fps, hz,
+            t >= 0 ? "测试开关 DM_TEST_FG" : preset >= 0 ? "测试开关 DM_FGEN_PRESET" : "设置");
+    }
+    return why == FG_ON;
+}
+// 图形页帧生成行的两种输入（纯函数，t_fgen_level 两种模式各核）：手柄 A / 触屏点勾选框都只在可切时改待定值，勾 = 平滑 2、不勾 = 关 0；置灰（本机不过门槛）时一律不改（返回 -1）
+// The two inputs on the Graphics frame-generation row (pure, checked for both modes by t_fgen_level): controller A and a touch on the checkbox change the pending value only when switchable, checked = smooth 2, unchecked = off 0; greyed (machine fails the gate) never changes it (returns -1)
+static int fg_pad_press(int editable, int pending) { return editable ? (pending != DM_FGEN_OFF ? DM_FGEN_OFF : DM_FGEN_SMOOTH) : -1; }
+static int fg_touch_toggle(int editable, int toggled, int pending) { int to = toggled ? DM_FGEN_SMOOTH : DM_FGEN_OFF; return editable && (to != DM_FGEN_OFF) != (pending != DM_FGEN_OFF) ? to : -1; }
+#ifndef __ANDROID__   // 安卓没有这一行（§2.8）：副文键不编进安卓包 | no such row on Android (§2.8): the subtext keys stay out of the Android build
+// 帧生成行的副文键（§2.6 副文一句，两种输入模式同一份）：置灰写本机不支持的原因；能生效时写代价，不能生效时写原因（30 帧 / 高刷档 / 光追开 / 过热 / 省电档 / 退避）
+// The frame-generation row's subtext key (one §2.6 subtext line, the same in both input modes): greyed = why this machine is unsupported; otherwise the cost when it can take effect, the reason when not
+static const char *fg_note_key(int editable, int why, int pending_on, int backoff) {
+    return !editable ? "dmGraphicsFrameGenNoHw"
+        : why == FG_ECO_CLOSED ? "dmGraphicsFrameGenEcoClosed" : why == FG_ECO30 ? "dmGraphicsFrameGenNoEco" : why == FG_CAPPED ? "dmGraphicsFrameGenCapped" : why == FG_RT ? "dmGraphicsFrameGenNoRt"
+        : why == FG_HOT ? "dmGraphicsFrameGenHot" : pending_on && backoff ? "dmGraphicsFrameGenBackoff" : "dmIosGraphicsFrameGenNote"; }
+#endif
 static void save(void) {
     char p[1100], t[1120]; if (!file_path(p, sizeof p)) { LOG("【红】自定义设置：存档目录没挂上，没存盘"); return; }
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); int ok = f != NULL;
@@ -556,7 +749,7 @@ static void save(void) {
     if (ok && atomic_load(&g_merc_explicit) >= 0) ok = fprintf(f, "merc_pot_v2=%d\n", atomic_load(&g_merc_explicit)) > 0;
     if (ok && atomic_load(&g_mem_tier_file) >= 0) ok = fprintf(f, "mem_tier=%d\n", atomic_load(&g_mem_tier_file)) > 0;   // 内存档位（首次 / 档位变化才套缺省） | memory tier (defaults apply only on first run / tier change)
     if (ok && atomic_load(&g_mem_notice)) ok = fprintf(f, "mem_notice=1\n") > 0;
-    { char bk[96]; size_t o = 0; bk[0] = 0; for (int b = 0; b < 3; b++) if (atomic_load(&g_bak[b]) >= 0) o += (size_t)snprintf(bk + o, sizeof bk - o, "%s%s:%d", o ? "," : "", k_bak_name[b], atomic_load(&g_bak[b]));
+    { char bk[96]; size_t o = 0; bk[0] = 0; for (int b = 0; b < N_BAK; b++) if (atomic_load(&g_bak[b]) >= 0) o += (size_t)snprintf(bk + o, sizeof bk - o, "%s%s:%d", o ? "," : "", k_bak_name[b], atomic_load(&g_bak[b]));
       if (ok && o) ok = fprintf(f, "exp_off_backup=%s\n", bk) > 0; }
     if (f) ok = fclose(f) == 0 && ok;
     if (ok) ok = rename(t, p) == 0;   // 先写临时文件再换名：写到一半被杀也不会留下半个文件 | Write a temporary file first and then rename: being killed halfway through the write does not leave half a file behind
@@ -568,18 +761,19 @@ void dm_custom_mem_notice_done(void) {
     if (atomic_exchange(&g_mem_notice, 1)) return;
     save(); LOG("内存档位：低内存提示玩家已确认，记进设置文件，以后不再提示");
 }
-// 崩溃围栏连续两次异常退出时调（dm_crashfence.c）：实验性功能全关并写回设置文件——120 帧档回 60、光追关、MetalFX 空间超分关。
+// 崩溃围栏连续两次异常退出时调（dm_crashfence.c）：实验性功能全关并写回设置文件——120 帧档回 60、光追关、MetalFX 空间超分关、AI 帧生成关（安卓壳没有帧生成，那一项不碰）。
 // 玩家没开的项不动；改了才存盘。what 写「改了什么」给日志；返回改了几项
-// Called by the crash fence after two abnormal exits in a row (dm_crashfence.c): turn every experimental feature off and save - 120 fps mode back to 60, ray tracing off, MetalFX spatial upscaling off.
+// Called by the crash fence after two abnormal exits in a row (dm_crashfence.c): turn every experimental feature off and save - 120 fps mode back to 60, ray tracing off, MetalFX spatial upscaling off, AI frame generation off (the Android shell has none and leaves that entry alone).
 // Items the player did not turn on are left alone; the file is saved only if something changed. what receives "what changed" for the log; returns how many items changed
 int dm_custom_safe_mode(char *what, size_t n) {
     load_once(); size_t o = 0; int ch = 0; what[0] = 0;
     if (!atomic_load(&g_loaded)) { snprintf(what, n, "设置文件还没法读，没改"); return 0; }
-    static const int bk_key[3] = { K_FPS, K_RTLVL, K_UPSCALE };   // 改之前记原值（已有备份不覆盖：连着两轮自动关时，第二轮看到的已经是关） | record the original before changing (an existing backup is kept: on a second automatic pass the value is already off)
-    for (int b = 0; b < 3; b++) { int v = atomic_load(&g_val[bk_key[b]]), on = b == 0 ? v == FPS_120 : v != 0; if (on && atomic_load(&g_bak[b]) < 0) atomic_store(&g_bak[b], v); }
+    static const int bk_key[N_BAK] = { K_FPS, K_RTLVL, K_UPSCALE, K_FGEN };   // 改之前记原值（已有备份不覆盖：连着两轮自动关时，第二轮看到的已经是关）；安卓壳不碰帧生成那一项（设置文件跨端互通，不改写） | record the original before changing (an existing backup is kept: on a second automatic pass the value is already off); the Android shell leaves the frame-generation entry alone (shared settings, not rewritten)
+    for (int b = 0; b < N_BAK; b++) { if (b == BAK_FGEN && !fg_platform_ok()) continue; int v = atomic_load(&g_val[bk_key[b]]), on = b == 0 ? v == FPS_120 : v != 0; if (on && atomic_load(&g_bak[b]) < 0) atomic_store(&g_bak[b], v); }
     if (atomic_load(&g_val[K_FPS]) == FPS_120) { atomic_store(&g_val[K_FPS], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s120 帧档 → 60", o ? "、" : ""); }
     if (atomic_load(&g_val[K_RTLVL])) { atomic_store(&g_val[K_RTLVL], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s光追 → 关", o ? "、" : ""); }
     if (atomic_load(&g_val[K_UPSCALE])) { atomic_store(&g_val[K_UPSCALE], 0); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%s" DM_STR_METALFX " 空间超分 → 关", o ? "、" : ""); dm_3d_quality_mode_set(0); }
+    if (fg_platform_ok() && atomic_load(&g_val[K_FGEN])) { int lv = atomic_load(&g_val[K_FGEN]); atomic_store(&g_val[K_FGEN], DM_FGEN_OFF); ch++; o += (size_t)snprintf(what + o, o < n ? n - o : 0, "%sAI 帧生成 → 关（原档位 %d）", o ? "、" : "", lv); }
     for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1);
     if (!ch) snprintf(what, n, "实验性功能本来都关着");
     else { save(); atomic_fetch_add(&g_repaint, 1); }
@@ -587,8 +781,10 @@ int dm_custom_safe_mode(char *what, size_t n) {
 }
 // 图形页刚打开（dm_graphics_ui_pump）：有崩溃围栏的备份就按原值预选，返回预选了几项 | The Graphics tab just opened (dm_graphics_ui_pump): with a crash-fence backup, pre-select the original values; returns how many were pre-selected
 static int exp_restore_pending(void) {
-    static const int bk_key[3] = { K_FPS, K_RTLVL, K_UPSCALE }; int n = 0;
-    for (int b = 0; b < 3; b++) { int v = atomic_load(&g_bak[b]); if (v >= 0) { atomic_store(&g_pend[bk_key[b]], v); n++; } }
+    static const int bk_key[N_BAK] = { K_FPS, K_RTLVL, K_UPSCALE, K_FGEN }; int n = 0;
+    // 安卓壳没有帧生成：这一项既不可切，就不预选；备份留在文件里，等 Apple 端打开图形页再恢复（设置文件跨端互通、不改写）
+    // The Android shell has no frame generation: the entry is not switchable, so it is not pre-selected; the backup stays in the file for the Apple side to restore later (shared settings, not rewritten)
+    for (int b = 0; b < N_BAK; b++) { if (b == BAK_FGEN && !fg_platform_ok()) continue; int v = atomic_load(&g_bak[b]); if (v >= 0) { atomic_store(&g_pend[bk_key[b]], v); n++; } }
     if (n) { atomic_fetch_add(&g_repaint, 1); LOG("自定义设置：图形页打开，按崩溃围栏自动关闭前的值预选 %d 项（点应用生效，放弃则保持关闭）", n); }
     return n;
 }
@@ -604,9 +800,10 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     if (!strcmp(act, "AcceptChanges")) { int ch = 0, res_changed = 0, ac0 = atomic_load(&g_val[K_AUTOCRASH]), ts0 = atomic_load(&g_val[K_TELSTATS]);
         // Migrate the former fifth radio option to the independent enable switch.
         if (atomic_load(&g_pend[K_Q3D]) == 4) { atomic_store(&g_pend[K_Q3D], 0); atomic_store(&g_pend[K_UPSCALE], 0); }
-        for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_RES) res_changed = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd == 3); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd == 3 ? "Quality" : "Adaptive", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else if (i == K_RTLVL) LOG("自定义设置：光追档位 → %d（应用）", pd); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
+        for (int i = 0; i < NK; i++) { int pd = atomic_exchange(&g_pend[i], -1); if (i == K_FGEN && !fg_platform_ok()) continue;   // 安卓壳不改写共享档位（待定值照样丢掉）| the Android shell does not rewrite the shared level (the pending value is still dropped)
+            if (pd >= 0 && pd != atomic_load(&g_val[i])) { atomic_store(&g_val[i], pd); ch = 1; if (i == K_RES) res_changed = 1; if (i == K_Q3D) { int dm_3d_quality_mode_get(void); float dm_3d_scale_cur(void); dm_3d_quality_mode_set(pd == 3); LOG("自定义设置：3D 画质 → %s（已交给 3D 比例控制，读回模式 %d，此刻 3D 比例 %.2f）", pd == 3 ? "Quality" : "Adaptive", dm_3d_quality_mode_get(), dm_3d_scale_cur()); } if (i == 0) atomic_store(&g_lang_explicit, pd); if (i == K_VOICE) atomic_store(&g_voice_explicit, pd); if (i == K_MERC) atomic_store(&g_merc_explicit, pd); if (i == 0) LOG("自定义设置：语言 → %s（应用；下次启动生效）", k_lang_name[pd]); else if (i == K_VOICE) LOG("自定义设置：配音 → %s（应用；下次启动生效）", pd ? "English" : "中文"); else if (i == K_RTLVL) LOG("自定义设置：光追档位 → %d（应用）", pd); else if (i == K_FGEN) LOG("自定义设置：fgen_level → %d（应用）", pd); else LOG("自定义设置：%s → %s（应用）", k_keys[i], pd ? "开" : "关"); } }
         dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && q3d_for_fps(atomic_load(&g_val[K_Q3D]), dm_fps_setting()) == 3);   // 120 帧下高画质按均衡 | Quality runs as Balanced at 120 fps
-        { int had = 0; for (int b = 0; b < 3; b++) had |= atomic_exchange(&g_bak[b], -1) >= 0;   // 应用 = 玩家已经决定：崩溃围栏的备份用完即清 | Apply = the player has decided: the crash-fence backup is cleared
+        { int had = 0; for (int b = 0; b < N_BAK; b++) { if (b == BAK_FGEN && !fg_platform_ok()) continue; had |= atomic_exchange(&g_bak[b], -1) >= 0; }   // 应用 = 玩家已经决定：崩溃围栏的备份用完即清；安卓壳不清帧生成那一项（没有这一行、档位也不可切） | Apply = the player has decided: the crash-fence backup is cleared; the Android shell keeps the frame-generation entry
           if (had) { ch = 1; LOG("自定义设置：应用，清掉崩溃围栏的实验项备份"); } }
         if (res_changed) res_notify();
         { int ac = atomic_load(&g_val[K_AUTOCRASH]); if (ac && atomic_exchange(&g_ac_ok_pending, 0) && !atomic_exchange(&g_ac_ok, 1)) ch = 1;   // 同意随「应用」生效 | consent takes effect with Apply
@@ -617,7 +814,7 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_ac_ok_pending, 0); atomic_fetch_add(&g_repaint, 1); }
     else if (!strcmp(act, "ResetToDefaults")) {
         // Preserve upstream global defaults across the two enhanced tabs. Language/voice stay unchanged.
-        for (int i = 2; i < NK; i++) atomic_store(&g_pend[i], tier_def(i, dm_mem_tier()));   // 从 2 起：语言 / 配音两行不跟「默认」走 | from 2: the language / voice rows do not follow Reset. This memory tier's defaults
+        for (int i = 2; i < NK; i++) { if (i == K_FGEN && !fg_platform_ok()) continue; atomic_store(&g_pend[i], tier_def(i, dm_mem_tier())); }   // 安卓壳不动帧生成（共享设置，不改写）；从 2 起：语言 / 配音两行不跟「默认」走 | from 2: the language / voice rows do not follow Reset. This memory tier's defaults
         atomic_fetch_add(&g_repaint, 1); }
 
 }
@@ -726,7 +923,7 @@ static void move_ours_y(uint64_t w, int y) {
 }
 void dm_graphics_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
-    static dm_wref seen[8]; static int paint;
+    static dm_wref seen[9]; static int paint;
     uint64_t sp = dm_ui_top(root, "3PlusGraphicsOptionsPanel");
     static int was_open;
     if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); was_open = 0; return; }
@@ -762,6 +959,19 @@ void dm_graphics_ui_pump(unsigned long long root) {
     int rt_row = rt_show;   // 平台层照键表 k_opts（rt_level 只有 Apple）| platform layer from k_opts (rt_level is Apple only)
     int rt_ok = rt_row && rt_shadow_ok(); uint64_t rtrow = find_w(sp, "TouchGraphicsRtRow", 0); if (rtrow) ui_show_ours(rtrow, rt_row);
     uint64_t rtl = find_w(sp, "TouchGraphicsRtLevel", 0); if (rtl) ui_show_ours(rtl, rt_ok); if (!rt_ok) rtl = 0;
+    // AI 帧生成（实验性，「帧率」组、帧率滑块下一行）：平台层照键表（安卓整行不出现，布局里也没有）；本机不过门槛（插值器 / 120 Hz 屏 / 内存档位）时行在、勾选框置灰、A 不改待定值、副文写原因。
+    // 勾选框只做关 / 平滑两态：勾上 = fgen_level 2、取消 = 0（省电档不出现，等 RC2 之后的数据）
+    // AI frame generation (experimental, Frame group, the row under the frame-rate slider): the platform layer follows the key table (absent on Android, not in its layout either); a machine failing the gate
+    // (interpolator / 120 Hz screen / memory tier) keeps the row with the checkbox greyed, A changing nothing and the reason as subtext. Two states only: checked = fgen_level 2, unchecked = 0
+    int fg_show = fg_row_show(), fg_edit = fg_row_editable();
+    uint64_t fgrow = find_w(sp, "TouchGraphicsFrameGenRow", 0); if (fgrow) ui_show_ours(fgrow, fg_show);
+    uint64_t fg = fg_show ? find_w(sp, "TouchGraphicsFrameGen", 0) : 0;
+    if (fg && !fg_edit) { set_toggle_grey(fg); fg = 0; }
+    if (fg) {
+        int want = pending_value(K_FGEN) != DM_FGEN_OFF;
+        if (dm_wref_get(&seen[8]) != fg) { dm_wref_set(&seen[8], fg); set_toggle(fg, want); }
+        else { int to = fg_touch_toggle(fg_edit, TOGGLED(fg), pending_value(K_FGEN)); if (to >= 0) atomic_store(&g_pend[K_FGEN], to); }
+    }
     // 显示帧数（fps_hud，图形页第二行，缺省开）：勾选框与超分开关同一套处理 | Show frame rate (fps_hud, Graphics row 2, on by default): the checkbox is handled like the upscale switch
     uint64_t fpshud = find_w(sp, "TouchGraphicsFpsHud", 0);
     if (fpshud) {
@@ -778,10 +988,11 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // 可见行紧挨着排：档位行藏起来时光追行上移一格补位（下面按可见行数挪光追行与说明行），所以选中框按可见序号 selected 放，行为按布局行号 row_id 走
     // Rows (same order as touch_layout.py _graphics_page, user 2026-10-27): 0 render resolution / 1 frame rate / 2 upscale switch / 3 upscale profile (only while the switch is on) / 4 ray-tracing level (experimental, Apple only; greyed on machines that fail the gate).
     // Visible rows are packed: with the profile row hidden, the ray-tracing row moves up one slot (the ray-tracing row and the hint are moved below by the visible row count), so the selection frame follows the visible index selected and behaviour follows the layout row row_id
-    int prof_on = up_ok && pending_value(K_UPSCALE) != 0, vis[7], rows = graphics_rows_pack(res_ok, up_show, prof_on, rt_show, vis);
+    int prof_on = up_ok && pending_value(K_UPSCALE) != 0, vis[8], rows = graphics_rows_pack(res_ok, up_show, prof_on, rt_show, fg_show, vis);
     if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
     if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
     int row_id = vis[selected];
+    if ((ev & DM_BTN_A) && row_id == ROW_FG && fg) { int to = fg_pad_press(fg_edit, pending_value(K_FGEN)); if (to >= 0) { atomic_store(&g_pend[K_FGEN], to); set_toggle(fg, to != DM_FGEN_OFF); } }   // 置灰时 fg = 0：A 不改 | greyed: fg = 0, A does nothing
     if ((ev & DM_BTN_A) && row_id == ROW_FPSHUD && fpshud) { int to = !pending_value(K_FPSHUD); atomic_store(&g_pend[K_FPSHUD], to); set_toggle(fpshud, to); }
     if (row_id == ROW_FPS && fps_ok && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
         int to = fps_pos(pending_value(K_FPS)) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
@@ -799,7 +1010,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // 全部可见时各行正好在布局原位（180 / 360 / 540 / 720 / 900），Apple 行为不变
     // Visible rows are packed: visible row i sits at y = 180 x (i + 1) (text / container), sliders and checkboxes at +55 (touch_layout.py's label / toggle placement); the hint follows the last visible row.
     // With every row visible each sits at its layout position (180 / 360 / 540 / 720 / 900): Apple unchanged
-    { int all_vis[7], nv = graphics_rows_pack(res_ok, up_show, enabled, rt_show, all_vis);
+    { int all_vis[8], nv = graphics_rows_pack(res_ok, up_show, enabled, rt_show, fg_show, all_vis);
       static const char *const heads[4] = { NULL, "TouchOptHeadFrame", "TouchOptHeadUpscale", "TouchOptHeadRt" };
       for (int g = 1; g < 4; g++) { uint64_t hw = find_w(sp, heads[g], 0); int on = 0; for (int i = 0; i < nv; i++) if (graphics_row_group(all_vis[i]) == g) { if (hw) move_ours_y(hw, graphics_row_y(all_vis, i) - 180); on = 1; break; } if (hw) ui_show_ours(hw, on); }
       for (int i = 0; i < nv; i++) { int y = graphics_row_y(all_vis, i);
@@ -810,7 +1021,8 @@ void dm_graphics_ui_pump(unsigned long long root) {
         case ROW_FPS: move_ours_y(find_w(sp, "TouchGraphicsFpsText", 0), y); if (fps) move_ours_y(fps, y + 55); move_ours_y(find_w(sp, "TouchGraphicsFpsNote", 0), y + 116); break;
         case ROW_UPSCALE: move_ours_y(find_w(sp, "TouchGraphicsUpscaleText", 0), y); { uint64_t ub = find_w(sp, "TouchGraphicsUpscale", 0); if (ub) move_ours_y(ub, y + 55); } move_ours_y(find_w(sp, "TouchGraphicsUpscaleNoHw", 0), y + 116); break;
         case ROW_PROFILE: if (row) move_ours_y(row, y); break;
-        case ROW_RT: if (rtrow) move_ours_y(rtrow, y); break; } }
+        case ROW_RT: if (rtrow) move_ours_y(rtrow, y); break;
+        case ROW_FG: if (fgrow) move_ours_y(fgrow, y); break; } }
       move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), graphics_row_y(all_vis, nv - 1) + 180); }
     uint64_t slider = find_w(sp, "TouchGraphicsProfile", 0);
     if (slider && DM_WIDGET_OK(main_base(), slider, DM_VT_SLIDER, "图形设置滑块")) {
@@ -895,6 +1107,14 @@ void dm_graphics_ui_pump(unsigned long long root) {
       int fpos = fps_pos(pending_value(K_FPS));
       if (fpos == 2) { char t[DM_FPS_CAPTION_MAX]; snprintf(t, sizeof t, dm_str(main_base(), fps_captions[2]), fps_high_hz()); graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), t); }   // 第三格按本机高刷档写 90 / 120 | the third stop shows 90 / 120, this machine's high-refresh rate
       else graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), dm_str(main_base(), fps_captions[fpos])); }
+#ifndef __ANDROID__   // 安卓没有这一行（§2.8）：副文键与文案选择都不编进安卓包 | no such row on Android (§2.8): the subtext keys and choice stay out of the Android build
+    // AI 帧生成的副文（§2.6 副文一句）：本机不支持写原因；能生效时写代价，不能生效时写原因（按图形页上选着、还没应用的值算：30 帧 / 高刷档 / 光追开 / 过热 / 退避）
+    // AI frame generation subtext: unsupported machines get the reason; otherwise the cost when it can take effect, the reason when not (from the pending values on the page: 30 fps / high refresh / ray tracing on / hot / back-off)
+    if (fg_show) { int fpos = fps_pos(pending_value(K_FPS)), fps_p = fpos == 0 ? 30 : fpos == 2 ? fps_high_hz() : 60;
+        int why = fg_reason(pending_value(K_FGEN), 1, fps_p, rt_ok && pending_value(K_RTLVL) > 0, fg_hot());
+        graphics_text(find_w(sp, "TouchGraphicsFrameGenNote", 0), dm_str(main_base(), fg_note_key(fg_edit, why, pending_value(K_FGEN) != DM_FGEN_OFF, mtl_fg_backoff())));
+    }
+#endif
     indent_rows(find_w(sp, "TouchGraphicsRows", 0), 0);
     uint64_t focus = find_w(sp, "TouchGraphicsSel", 0);
     if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? dm_sel_frame_x(DM_ROW_INDENT) : 99999, y = pad ? graphics_row_y(vis, selected) - 10 : 0;

@@ -64,6 +64,8 @@
 #import <CommonCrypto/CommonDigest.h>
 #include <stdarg.h>
 #include <mach-o/dyld.h>
+#include <mach/mach.h>
+#include <sys/resource.h>
 #include <libgen.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -81,6 +83,8 @@
 
 #define MLOG(...) do { fprintf(stderr, "[dm] [nvn-mtl] " __VA_ARGS__); fputc('\n', stderr); } while (0)
 #define MDIE(...) do { MLOG("FATAL " __VA_ARGS__); abort(); } while (0)
+static int g_red_once[64];
+#define RED_ONCE(k, ...) do { if (!g_red_once[k]++) MLOG("【红】" __VA_ARGS__); } while (0)
 
 static void warm_start(void);
 static void warm_claim(void);
@@ -158,6 +162,62 @@ int g_dm_present_link;   // 出图节拍模式（DM_PRESENT_LINK 的运行时值
 static int g_present_latency = 1;
 static uint64_t g_pq_done, g_pq_fin[NVN_PQ_RING];   // 持 g_pq_mu：1..g_pq_done 都已了结（GPU 执行完 / 丢弃 / 没交出去）；只经 pq_finish 前进（nvn_pqdone.h） | Under g_pq_mu: 1..g_pq_done have all ended (GPU finished / dropped / never handed over); advanced only through pq_finish (nvn_pqdone.h)
 static void pq_finish(uint64_t k) { nvn_pq_finish(&g_pq_done, g_pq_fin, k); }
+// 生成帧（插值 / 外推）命令缓冲的独立完成跟踪：present_mid 把它们 commit 到 g_q4，完成回调登记在这里。
+// 一票只有「真帧已有结局（完成回调 / 没交出去）」且「本票全部生成帧命令缓冲都已在 GPU 上完成」才 pq_finish，g_pq_done 仍是唯一水位；
+// 生成帧分配器 reset、历史环 busy[]、退役 reap、关闭 / 暂停清理因此都看同一个真实完成水位。
+// 原先生成帧的完成回调只记耗时 / 错误：真帧取不到 drawable 或编码失败时调用方立刻 pq_finish，生成帧还在 GPU 上，
+// 下一轮 present_mid 就按水位 reset 同一个分配器，历史环槽与退役资源也被提前放行。
+// Independent completion tracking for generated (interpolated / extrapolated) command buffers: present_mid commits them to g_q4 and their feedback is recorded here.
+// A ticket is pq_finish'ed only when the real frame has ended (feedback / never handed over) AND every generated command buffer of the ticket has completed on the GPU; g_pq_done stays the single watermark.
+// The generated-frame allocator reset, history ring busy[], retirement reap and shutdown / suspend cleanup therefore all see the same true completion watermark.
+// Previously the generated buffers' feedback only recorded timing / errors: when the real frame could not get a drawable or failed to encode, the caller called pq_finish at once while generated buffers were still on the GPU,
+// and the next present_mid reset the same allocator by that watermark, releasing history ring slots and retired resources early too.
+typedef struct { uint64_t ticket; uint8_t open, real, out; } pq_gen_st;   // 持 g_pq_mu | under g_pq_mu
+static pq_gen_st g_pq_gen[NVN_PQ_RING];
+#ifdef FGEN_TEST
+static _Atomic int g_fgen_test_hold_fb;   // 测试：生成帧完成回调先攥住直到放行（缺省 0，产品构建没有这个钩子） | test: hold generated-frame feedback until released (0 by default; the hook does not exist in product builds)
+static pthread_mutex_t g_fgen_test_fb_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_fgen_test_fb_cv = PTHREAD_COND_INITIALIZER;
+static _Atomic int g_fgen_test_no_drawable;      // 测试：真帧 nextDrawable 视为取不到（缺省 0，不触发） | test: treat the real frame's nextDrawable as unavailable (0 by default, not triggered)
+static _Atomic int g_fgen_test_fail_real_encode; // 测试：真帧编码强制失败（缺省 0，不触发） | test: force the real frame's encode to fail (0 by default, not triggered)
+static _Atomic int g_fgen_test_gen;              // 测试：覆盖外推判断（0 = 用 dm_fg_gen()） | test: override the extrapolation decision (0 = use dm_fg_gen())
+static _Atomic int g_fgen_test_skip_mid;         // 测试：不编码生成帧（MetalFX 的 Metal 4 编码器在调试层下不兼容，调用点接线测试用预登记的生成帧代替） | test: skip encoding generated frames (MetalFX's Metal 4 encoder is incompatible with the debug layer; call-site wiring tests use a pre-registered generated frame instead)
+#define FGEN_EFFECTIVE_GEN() (atomic_load(&g_fgen_test_gen) ? atomic_load(&g_fgen_test_gen) : dm_fg_gen())
+#define FGEN_REAL_ENCODE_FAILED() (atomic_load(&g_fgen_test_fail_real_encode) != 0)
+#else
+#define FGEN_EFFECTIVE_GEN() dm_fg_gen()
+#define FGEN_REAL_ENCODE_FAILED() 0
+#endif
+static pq_gen_st *pq_gen_slot_locked(uint64_t k) {   // 槽里是旧票号 = 重来 | a stale ticket in the slot means start over
+    pq_gen_st *s = &g_pq_gen[k % NVN_PQ_RING];
+    if (s->ticket != k) {
+        // 旧票号还有在途状态就被重写：正常只可能是这张已经了结（ticket 清零）；否则是乱序调用或环长不够，在途状态被静默清掉，水位会提前或永远不到
+        // A stale ticket is overwritten while it still has state in flight: normally this can only be an already-ended ticket (ticket cleared); otherwise it is an out-of-order call or too short a ring, and the in-flight state is silently wiped, making the watermark run early or never arrive
+        if (s->open || s->out) RED_ONCE(51, "生成帧槽 %llu 被旧票号 %llu 重写（旧票 open=%d out=%d），在途状态被清掉", (unsigned long long)(k % NVN_PQ_RING), (unsigned long long)s->ticket, (int)s->open, (int)s->out);
+        s->ticket = k; s->open = s->real = s->out = 0;
+    }
+    return s;
+}
+static void pq_gen_try_finish_locked(uint64_t k) {
+    pq_gen_st *s = pq_gen_slot_locked(k);
+    if (s->open || !s->real || s->out) return;
+    s->ticket = 0; pq_finish(k);
+}
+static void pq_gen_begin_locked(uint64_t k) { pq_gen_slot_locked(k)->open = 1; }
+static void pq_gen_commit_locked(uint64_t k) { pq_gen_slot_locked(k)->out++; }
+static void pq_gen_close_locked(uint64_t k) { pq_gen_slot_locked(k)->open = 0; pq_gen_try_finish_locked(k); }
+static void pq_gen_feedback_locked(uint64_t k) { pq_gen_st *s = pq_gen_slot_locked(k); if (s->out) s->out--; pq_gen_try_finish_locked(k); }
+static void pq_real_end_locked(uint64_t k) { pq_gen_slot_locked(k)->real = 1; pq_gen_try_finish_locked(k); }
+static void pq_gen_begin(uint64_t k) { pthread_mutex_lock(&g_pq_mu); pq_gen_begin_locked(k); pthread_mutex_unlock(&g_pq_mu); }
+static void pq_gen_commit(uint64_t k) { pthread_mutex_lock(&g_pq_mu); pq_gen_commit_locked(k); pthread_mutex_unlock(&g_pq_mu); }
+static void pq_gen_close(uint64_t k) { pthread_mutex_lock(&g_pq_mu); pq_gen_close_locked(k); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); }
+static void pq_gen_feedback(uint64_t k) { pthread_mutex_lock(&g_pq_mu); pq_gen_feedback_locked(k); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); }
+static void pq_present_failed(uint64_t k) { pthread_mutex_lock(&g_pq_mu); pq_real_end_locked(k); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); }
+// 显示节拍回调与经典出图线程共用：真帧没交出去（取不到 drawable / 编码失败）时登记真帧了结；本票仍有生成帧在 GPU 上时水位不越过它。
+// 两处 !submitted 都只调本函数：分支里直接 pq_finish（或换个别名）会让水位提前越过仍在 GPU 上的生成帧（t_fgen 第 10c 节行为测试锁住这里）。
+// Shared by the display-link callback and the classic present thread: when the real frame was not handed over (no drawable / encode failure), record the real frame as ended; the watermark does not pass this ticket while its generated frames are still on the GPU.
+// Both !submitted branches call only this function: calling pq_finish (or any alias) directly in a branch would let the watermark pass generated frames still on the GPU (section 10c of t_fgen locks this behavior).
+static void pq_real_end_unsubmitted(uint64_t ticket) { pthread_mutex_lock(&g_pq_mu); pq_real_end_locked(ticket); pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu); }
 static uint64_t g_pq_read;
 static id<MTLResidencySet> g_res;
 static int g_res_dirty;
@@ -869,7 +929,8 @@ static int ub_skip(const char *key) {   // 本相要不要丢掉这个片元着�
     for (int i = 0; i < g_ub_nk[uc]; i++) { const char *k = g_ub_keys[uc][i]; if (k[0] == '@') continue; if (k[0] == '*' || !strncmp(key, k, strlen(k))) return 1; }
     return 0;
 }
-void mtl_set_frame(uint64_t f) { atomic_store(&g_cur_frame, f); if (g_ub_n) ub_frame(f); }
+static double g_fgm_fb[256]; static int g_fgm_on; static mach_port_t g_fgm_thr;   // 多倍帧生成量测：每帧开始时刻与这条线程（DM_FG_MGTSV）| multi-frame generation measurement: frame start times and this thread
+void mtl_set_frame(uint64_t f) { atomic_store(&g_cur_frame, f); if (g_fgm_on) { g_fgm_fb[f & 255] = CACurrentMediaTime(); if (!g_fgm_thr) g_fgm_thr = mach_thread_self(); } if (g_ub_n) ub_frame(f); }
 // GPU 计时登记：提交前 gpu_tag_begin(帧)，完成时 gpu_tag_done(帧, GPU 起, GPU 止)（CACurrentMediaTime 基准秒）。
 // 旧队列命令缓冲走 gpu_tag_f；Metal 4 主提交在 mtl_sub_commit 的 feedback 里回填（换 Metal 4 时调用点全丢，「计时」行的 GPU 一栏成了空）
 // GPU timing registration: gpu_tag_begin(frame) before commit, gpu_tag_done(frame, GPU start, GPU end) on completion (seconds on the CACurrentMediaTime base).
@@ -1014,13 +1075,12 @@ static void mtl_finish_gpu(void) {
 void mtl_present_flush(void);
 void mtl_finish(void) { mtl_present_flush(); mtl_finish_gpu(); }   // 队列语义：已入队的出图也算队列工作 | Queue semantics: already-enqueued presents also count as queue work
 static void present_drop_for_suspend(void);
-void mtl_drain(void) { present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu(); }
+static void fgen_suspend_free(void);   // AI 帧生成：切后台放对象（nvn_fgen.inc） | AI frame generation: release objects when going to the background (nvn_fgen.inc)
+void mtl_drain(void) { present_drop_for_suspend(); mtl_present_flush(); mtl_init(); id<MTLCommandBuffer> cb = q_cb(); [cb commit]; [cb waitUntilCompleted]; mtl_finish_gpu(); fgen_suspend_free(); }
 
 // ================= 渲染回放 =================
 // ================= Render replay =================
 #include "../../host/front.h"
-static int g_red_once[64];
-#define RED_ONCE(k, ...) do { if (!g_red_once[k]++) MLOG("【红】" __VA_ARGS__); } while (0)
 
 // ---------- 贴图 → MTLTexture ----------
 // ---------- Texture → MTLTexture ----------
@@ -4797,6 +4857,10 @@ static void ghost_flush(void) {   // 渲染通道结束前：把认到的图标�
 #include "nvn_metalfx.inc"
 #include "nvn_rtcap.inc"
 #include "nvn_rtshadow.inc"
+// 帧生成（实验性）：实现在独立文件；rx_inv4（nvn_rtex.inc）与 mtl_fps_target 定义在后面 | Frame generation (experimental): implementation is separate; rx_inv4 (nvn_rtex.inc) and mtl_fps_target are defined further down
+static void rx_inv4(const double *m, double *o);
+int mtl_fps_target(void);
+#include "nvn_fgen.inc"
 static void draw(const p_draw *dw, const p_draw_idx *di) {
     if (!S.prog) { RED_ONCE(18, "绘制前没有绑定程序"); return; }
     __unsafe_unretained NvProg *pr = prog_get(S.prog);
@@ -4808,7 +4872,8 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         static const char *neg; static int ng = -1; if (ng < 0) { neg = getenv("DM_NVN_RULER_NEG"); ng = neg && *neg; }
         if (ng && pr) for (int st = 0; st < 5; st++) { __unsafe_unretained NvShader *sh = pr->sh[st]; if (sh && sh->stage == 1 && !strncmp(sh->key, neg, strlen(neg))) { static int once; if (!once++) MLOG("DM_NVN_RULER_NEG：被测模式丢弃着色器 %s 的绘制", sh->key); return; } }
     }
-    if (metalfx_draw(pr, dw, di)) return;
+    fgen_draw_begin();   // 帧生成：主通道记视投影 | frame generation: the main pass records the view-projection
+    if (metalfx_draw(pr, dw, di)) { fgen_after_upsample(pr, 1); return; }
     if (zskip_can_draw(pr)) {   // 零源跳过：输出恒为 0、写 0 盖 0，这次绘制不改变任何结果（见 zskip_can_draw） | Zero-source skip: the output is always 0, writing 0 over 0, so this draw changes no result (see zskip_can_draw)
         g_zskip_count++; { static int once; if (!once++) MLOG("零源跳过：首例 通道 %llu", g_stat_pass + 1); }
         PD("N %llu 零源跳过", g_stat_pass + 1); return; }
@@ -5068,6 +5133,7 @@ frz_plain:;
     }
     if (g_pso_noraster) rts_export_done();   // 光追阴影：导出绘制真编进去了 | ray-traced shadows: the export draw was actually encoded
     if (g_rt_range_pending) { PD("j rt_level_range pass=%llu vc=%u", g_stat_pass, (unsigned)(dw ? dw->count : di->count)); g_rt_range_pending=0; }
+    fgen_after_upsample(pr, 0);   // 帧生成：原版放大绘制编完后拷 3D 画面 | frame generation: copy the 3D picture after the original upsample draw
 }
 static nvn_hmap g_cps = {.klen = sizeof(void *)};
 static void warm_claim(void) { @autoreleasepool {   // 自带池（十三审 Q13-01）：表里取出的着色器 / 管线若经自动释放，随这一次认领排空，不依赖调用方的池 | own pool (thirteenth review Q13-01): anything autoreleased while claiming drains with this claim, regardless of the caller's pool
@@ -5642,7 +5708,7 @@ __attribute__((weak)) int dm_fps_setting(void) { return 60; }   // 宿主 dm_cus
 // 120 fps mode: the third stop of the Graphics page frame-rate slider (dm_custom.c, present only when the screen's maximum refresh rate is >= 120); the test switch DM_FPS=120 pins it. The display link, the ProMotion declaration, the present pacer (hle_nvn.c present_auto_hz)
 // and the 3D scale controller's period all follow it -- the pacer used to know only 30 / 60, and with DM_FPS=120 alone the link ran at 120 Hz and the pacer at 60 Hz, and the game stalled after running at 80–90 fps (nvn_pace.h nvn_pace_link)
 int mtl_fps_target(void) { static int env = -2; if (env == -2) { const char *e = getenv("DM_FPS"); env = e ? atoi(e) : -1; if (env != 30 && env != 60 && env != 90 && env != 120) env = -1; else MLOG("DM_FPS=%d：帧数由测试开关钉住", env); }
-    if (env > 0) return env; int f = dm_fps_setting(); return f == 30 || f == 90 || f == 120 ? f : 60; }   // 90 只在 90 Hz 屏的安卓前端出现；ProMotion 机型仍是 120，iPhone 行为不变 | 90 only comes from the Android front end on a 90 Hz screen; ProMotion models still get 120, so iPhone behaviour is unchanged
+    if (env > 0) return env; int f = dm_fps_setting(); return f == 30 || f == 40 || f == 90 || f == 120 ? f : 60; }   // 40 只有帧生成量测开关（DM_FG_SCHED / DM_TEST_FPS=40）能到 | 40 only from the frame-generation measurement switches   // 90 只在 90 Hz 屏的安卓前端出现；ProMotion 机型仍是 120，iPhone 行为不变 | 90 only comes from the Android front end on a 90 Hz screen; ProMotion models still get 120, so iPhone behaviour is unchanged
 int dm_display_max_hz(void) { return mtl_display_hz(); }   // 给宿主 dm_custom.c（弱定义的强定义）：设置页要不要给 120 那一格 | For the host's dm_custom.c (strong definition of its weak one): whether the settings page offers the 120 stop
 // 外推启用状态一变（省电模式切换、世界冻结接手 / 交回）：先让「跨帧不写回」账本重学（试用期里照常写回），外推晚一帧再真正切换——
 // 保证切换前最后一次提交是全量写回的。不然 30 帧时每帧先清空的附件被学成不写回，切回 60 帧的第一个外推帧读到旧内容、闪一帧（测试版实测，xv 自检报红后才撤销）
@@ -6297,7 +6363,7 @@ int mtl_display_hz(void) { return (int)(mtl_display_refresh() + 0.5); }
 // 原先固定 60：144 Hz 屏上 60 不整除，系统只能 2 拍 / 3 拍交替（13.9 / 20.8 ms），看着一顿一顿。算式见 nvn_pace.h nvn_pace_hz
 // Previously fixed at 60: 60 does not evenly divide a 144 Hz screen, so the system can only alternate 2 / 3 refreshes (13.9 / 20.8 ms), which looks stuttery. Formula in nvn_pace.h nvn_pace_hz
 double dm_pace_hz(double screen_hz, double floor_hz) { return nvn_pace_hz(screen_hz, floor_hz); }
-double mtl_pace_hz(void) { int f = mtl_fps_target(); return dm_pace_hz(mtl_display_refresh(), f == 30 ? 30 : f == 120 ? 120 : 60); }
+double mtl_pace_hz(void) { int f = mtl_fps_target(); return dm_pace_hz(mtl_display_refresh(), f == 30 || f == 40 ? f : f == 120 ? 120 : 60); }
 static _Atomic uint64_t g_present_stall_ns;   // 单测用：出图线程每次出图前额外停顿（模拟 drawable 迟迟不可用） | For unit tests: an extra pause before each present on the present thread (simulating a drawable that stays unavailable)
 #if !DM_NVN_M3
 static CAMetalLayer *g_present_layer_resident;
@@ -6461,6 +6527,154 @@ static void present_rgb(id<MTLTexture> dt, uint64_t ticket) {
     if (k == present_rgb_n()) MLOG("上屏取色 汇总：前 %ld 次上屏，品红 %ld 次（drawable %lux%lu）", k, magenta, (unsigned long)w, (unsigned long)h);
 }
 static double g_link_it_tin;   // 节拍回调正在上屏的那一帧的入队时刻（只在节拍线程读写） | Enqueue time of the frame the display-link callback is presenting (read and written only on the display-link thread)
+// 测试开关 DM_FG_SHOT=[m]<第几张插值帧>:<目录>（帧生成验收与截图素材；带 m = 从这一张起第一张镜头有平移（运动矢量 ≥ 0.5 个 3D 像素）的插值帧）：那张插值帧编进上屏命令缓冲时顺带拷一份本帧真帧；该命令缓冲做完后（下一次出图时）
+// 存 fg_mid.png（插值帧，已叠界面）、fg_real.png（同一帧的真帧）、fg_3d_prev.png / fg_3d_cur.png（前后两帧界面合成之前的 3D 画面）
+// Test switch DM_FG_SHOT=[m]<index of the interpolated frame>:<dir> (frame-generation acceptance and screenshot material; with m = the first interpolated frame from that index on whose camera moved, motion vector >= 0.5 3D pixels): when that interpolated frame is encoded, also copy this frame's real picture;
+// once that command buffer is done (at the next present), save fg_mid.png (interpolated, UI overlaid), fg_real.png (the real frame), fg_3d_prev.png / fg_3d_cur.png (the two 3D pictures before UI compositing)
+#if !DM_NVN_M3
+static struct { int k, move; char dir[700]; uint64_t ticket; id<MTLTexture> real, prev3d, cur3d, diag[5]; } g_fgshot = { .k = -2 };
+static void fgshot_mark(CBUF cb, id<MTLTexture> src, int ei, uint64_t ticket) {
+    if (g_fgshot.k == -2) { g_fgshot.k = -1; const char *e = getenv("DM_FG_SHOT"), *c = e ? strchr(e, ':') : NULL;
+        if (c) { g_fgshot.move = *e == 'm'; g_fgshot.k = atoi(e + g_fgshot.move); strlcpy(g_fgshot.dir, c + 1, sizeof g_fgshot.dir); mkdir(g_fgshot.dir, 0755);
+            MLOG("DM_FG_SHOT：%s第 %d 张插值帧存图到 %s", g_fgshot.move ? "从这一张起第一张镜头有平移的、" : "", g_fgshot.k, g_fgshot.dir); } }
+    if (g_fgshot.k < 0 || g_fgshot.ticket) return;
+    if (!g_fgshot.move ? (int)g_fg.n_mid != g_fgshot.k : (int)g_fg.n_mid < g_fgshot.k) return;
+    if (g_fgshot.move) { pthread_mutex_lock(&g_fg.mu); float mx = g_fg.e[ei].mvx, my = g_fg.e[ei].mvy; pthread_mutex_unlock(&g_fg.mu); if (hypotf(mx, my) < .5f) return;
+        MLOG("DM_FG_SHOT：第 %llu 张插值帧镜头有平移（运动矢量 %.2f,%.2f 3D 像素，真帧 %llu），存这一张", (unsigned long long)g_fg.n_mid, mx, my, (unsigned long long)g_fg.e[ei].frame); }
+    MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:src.pixelFormat width:src.width height:src.height mipmapped:NO];
+    d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModePrivate;
+    id<MTLTexture> t = [g_dev newTextureWithDescriptor:d]; if (!t) return; res_add(t); res_commit();
+    id e = enc_b_begin(cb); [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
+    enc_b_copy_texture(e, src, 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(src.width, src.height, 1), t, 0, 0, MTLOriginMake(0, 0, 0)); enc_b_end(e);
+    // 前后两帧（叠界面前）当场拷下：存盘在下一次出图之后，那时历史环的槽可能已被后面的帧覆盖（2026-10-28 实测存成了 3 帧之后的画面）
+    // Copy the two frames (before UI) right now: saving happens after the next present, when the ring slots may already hold later frames (measured 2026-10-28: saved a picture 3 frames later)
+    pthread_mutex_lock(&g_fg.mu); id<MTLTexture> hp = g_fg.h[g_fg.e[ei].prev], hc = g_fg.h[g_fg.e[ei].slot]; pthread_mutex_unlock(&g_fg.mu);
+    id<MTLTexture> pc[2] = { nil, nil }, hs[2] = { hp, hc };
+    for (int i = 0; i < 2; i++) { if (!hs[i]) continue; MTLTextureDescriptor *hd = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:hs[i].pixelFormat width:hs[i].width height:hs[i].height mipmapped:NO];
+        hd.usage = MTLTextureUsageShaderRead; hd.storageMode = MTLStorageModePrivate; pc[i] = [g_dev newTextureWithDescriptor:hd]; if (!pc[i]) continue; res_add(pc[i]); res_commit();
+        id be = enc_b_begin(cb); [be barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice];
+        enc_b_copy_texture(be, hs[i], 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(hs[i].width, hs[i].height, 1), pc[i], 0, 0, MTLOriginMake(0, 0, 0)); enc_b_end(be); }
+    g_fgshot.prev3d = pc[0]; g_fgshot.cur3d = pc[1];
+    if (!fgen_diag(cb, ei, src, g_fgshot.diag)) for (int i = 0; i < 5; i++) g_fgshot.diag[i] = nil;   // 帧生成诊断（只这一帧） | frame-generation diagnostics (this frame only)
+    g_fgshot.real = t; g_fgshot.ticket = ticket;
+}
+static void fgshot_poll(void) {
+    if (!g_fgshot.ticket) return;
+    pthread_mutex_lock(&g_pq_mu); while (g_pq_done < g_fgshot.ticket) pthread_cond_wait(&g_pq_cv, &g_pq_mu); pthread_mutex_unlock(&g_pq_mu);
+    static const char *const nm[4] = { "fg_mid.png", "fg_real.png", "fg_3d_prev.png", "fg_3d_cur.png" };
+    id<MTLTexture> tx[4] = { g_fg.comp, g_fgshot.real, g_fgshot.prev3d, g_fgshot.cur3d };
+    for (int i = 0; i < 4; i++) { char p[800]; snprintf(p, sizeof p, "%s/%s", g_fgshot.dir, nm[i]); if (tx[i]) shot(tx[i], p, 0, NULL); }
+    static const char *const dn[5] = { "fg_diag_out3d.png", "fg_diag_cur3d.png", "fg_diag_prev3d.png", "fg_diag_bypass.png", "fg_diag_out16.png" };
+    for (int i = 0; i < 5; i++) { char p[800]; snprintf(p, sizeof p, "%s/%s", g_fgshot.dir, dn[i]); if (g_fgshot.diag[i]) { shot(g_fgshot.diag[i], p, 0, NULL); defer_obj_release(g_fgshot.diag[i]); g_fgshot.diag[i] = nil; } }
+    MLOG("DM_FG_SHOT：第 %d 张插值帧存好", g_fgshot.k);
+    res_remove(g_fgshot.real); if (g_fgshot.prev3d) res_remove(g_fgshot.prev3d); if (g_fgshot.cur3d) res_remove(g_fgshot.cur3d); g_fgshot.k = -1; g_fgshot.ticket = 0; g_fgshot.real = g_fgshot.prev3d = g_fgshot.cur3d = nil;
+}
+#endif
+#if !DM_NVN_M3
+// 帧生成：插值帧单独取图、单独提交、先上屏，隔约 48% 个出图周期才轮到真帧（苹果移植指引的节奏）。原先同一帧要拿齐两张 drawable 才提交（图层总共 3 张），
+// 17 Pro 实测每对 8.3 + 16.7 = 25 ms、渲染卡在 40 帧，去掉插值器也一样。编不成插值就让这张也画真帧（节奏不乱）
+// Frame generation: the interpolated frame takes its own drawable, is committed on its own and presented first; the real frame follows about 48% of a present period later (Apple's porting guidance). It used to need both drawables before committing (the layer has 3 in all):
+// measured on 17 Pro each pair took 8.3 + 16.7 = 25 ms and rendering stuck at 40 fps, even without the interpolator. If interpolation cannot be encoded this one shows the real frame too (cadence kept)
+static id<MTL4CommandAllocator> g_fg_alloc[9]; static CBUF g_fg_cb[9]; static uint32_t g_fg_alloc_uses[9];
+// 多倍帧生成量测（DM_FG_MGTSV=<文件>，缺省不开）：每秒一行，段名、真帧 / 生成帧数、GPU、固定探针、节奏、延迟、线程 CPU、内存，同一局内按时段比较
+// 探针：每秒一个固定工作量的小离屏通道，耗时只随 GPU 当时的速度变，用来把 ms 换算到同一 GPU 档
+// Multi-frame generation measurement (DM_FG_MGTSV=<file>, off by default): one line per second with the segment, real / generated counts, GPU, a fixed probe, cadence, latency, thread CPU and memory, compared by segment within one run
+// Probe: a small fixed offscreen pass each second; its time varies only with the GPU's current speed, so ms can be normalised to one GPU state
+__attribute__((weak)) double dm_fg_sched_t(void) { return -1; }
+__attribute__((weak)) const char *dm_fg_sched_name(void) { return "-"; }
+static struct { pthread_mutex_t mu; FILE *f; double last, last_cpu, last_thr, gm, wm, dm, pr, gr, lr, lm; int ngm, npr, ngr, nlr, nlm, nr, nm, ndrop; unsigned b[5]; double tt; } g_fgm = { .mu = PTHREAD_MUTEX_INITIALIZER };
+static void fgm_mid(double dr, double wait, double gpu) { pthread_mutex_lock(&g_fgm.mu); g_fgm.gm += gpu; g_fgm.wm += wait; g_fgm.dm += dr; g_fgm.ngm++; pthread_mutex_unlock(&g_fgm.mu); }
+static void fgm_shown(int is_mid, int first, double tt, uint64_t frame) {
+    double fb = g_fgm_fb[frame & 255]; pthread_mutex_lock(&g_fgm.mu);
+    if (tt <= 0) g_fgm.ndrop++; else { if (is_mid) g_fgm.nm++; else g_fgm.nr++;
+        if (g_fgm.tt > 0 && tt > g_fgm.tt) { double ms = (tt - g_fgm.tt) * 1000; g_fgm.b[ms < 6 ? 0 : ms < 11 ? 1 : ms < 14 ? 2 : ms < 20 ? 3 : 4]++; } if (tt > g_fgm.tt) g_fgm.tt = tt;
+        if (fb > 0 && tt > fb && tt - fb < 1) { if (!is_mid) { g_fgm.lr += tt - fb; g_fgm.nlr++; } else if (first) { g_fgm.lm += tt - fb; g_fgm.nlm++; } } }
+    pthread_mutex_unlock(&g_fgm.mu);
+}
+static void fgm_probe(void) {
+    static id<MTLRenderPipelineState> pso; static id<MTLTexture> t; static id<MTL4CommandAllocator> al; static CBUF cb; static int st; static _Atomic int busy;
+    if (!st) { st = -1; NSError *e = nil; static const char *const src = "#include <metal_stdlib>\nusing namespace metal;\nvertex float4 p_vs(uint i [[vertex_id]]) { return float4(i == 1 ? 3 : -1, i == 2 ? 3 : -1, 0, 1); }\nfragment float4 p_fs(float4 p [[position]]) { float x = p.x * .01, y = p.y * .01; for (int i = 0; i < 64; i++) { x = sin(x + y) * 1.5; y = cos(x * y + .1); } return float4(x, y, 0, 1); }\n";
+        id<MTLLibrary> lib = [g_dev newLibraryWithSource:@(src) options:nil error:&e]; MTLRenderPipelineDescriptor *pd = [MTLRenderPipelineDescriptor new]; pd.vertexFunction = [lib newFunctionWithName:@"p_vs"]; pd.fragmentFunction = [lib newFunctionWithName:@"p_fs"]; pd.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA8Unorm;
+        pso = lib ? [g_dev newRenderPipelineStateWithDescriptor:pd error:&e] : nil; MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:512 height:512 mipmapped:NO]; d.usage = MTLTextureUsageRenderTarget; d.storageMode = MTLStorageModePrivate; t = [g_dev newTextureWithDescriptor:d]; al = [g_dev newCommandAllocator]; cb = [g_dev newCommandBuffer];
+        if (!pso || !t || !al || !cb) { MLOG("【红】帧生成量测：探针建不出 %s", e.localizedDescription.UTF8String ?: ""); return; } res_add(t); res_commit(); st = 1; }
+    if (st < 0 || atomic_exchange(&busy, 1)) return;
+    [al reset]; [cb beginCommandBufferWithAllocator:al]; RPD *rp = [RPD new]; rp.colorAttachments[0].texture = t; rp.colorAttachments[0].loadAction = MTLLoadActionDontCare; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+    RENC en = [cb renderCommandEncoderWithDescriptor:rp]; if (en) { [en setViewport:(MTLViewport){0, 0, 512, 512, 0, 1}]; [en setRenderPipelineState:pso]; [en drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3]; m4_end(en); } [cb endCommandBuffer];
+    MTL4CommitOptions *o = [MTL4CommitOptions new]; [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) { if (!f.error && f.GPUEndTime > f.GPUStartTime) { pthread_mutex_lock(&g_fgm.mu); g_fgm.pr += (f.GPUEndTime - f.GPUStartTime) * 1000.0; g_fgm.npr++; pthread_mutex_unlock(&g_fgm.mu); } atomic_store(&busy, 0); }];
+    CBUF bs[] = {cb}; [g_q4 commit:bs count:1 options:o];
+}
+static void fgm_tick(uint64_t frame) {
+    static int on = -1; if (on < 0) { const char *e = getenv("DM_FG_MGTSV"); on = 0; if (e) { g_fgm.f = fopen(e, "w"); on = g_fgm.f != NULL; if (on) { g_fgm_on = 1; fprintf(g_fgm.f, "t\tseg\tgen\tmult\tfps\tfg\tshown_real\tshown_gen\tdropped\tgen_gpu_ms\tgen_wait_ms\tdrawable_ms\treal_gpu_ms\tprobe_ms\tb6\tb11\tb14\tb20\tb20p\tlat_real_ms\tlat_gen1_ms\tcpu_pct\tframe_thread_pct\tthermal\tfootprint_mib\tscale3d_w\n"); } } } if (!on) return;
+    { double g = frame > 3 ? mtl_gpu_ms(frame - 3) : -1; if (g > 0) { pthread_mutex_lock(&g_fgm.mu); g_fgm.gr += g; g_fgm.ngr++; pthread_mutex_unlock(&g_fgm.mu); } }
+    double now = CACurrentMediaTime(); if (!g_fgm.last) g_fgm.last = now; if (now - g_fgm.last < 1) return; double dt = now - g_fgm.last; g_fgm.last = now; fgm_probe();
+    struct rusage ru; getrusage(RUSAGE_SELF, &ru); double cpu = ru.ru_utime.tv_sec + ru.ru_utime.tv_usec / 1e6 + ru.ru_stime.tv_sec + ru.ru_stime.tv_usec / 1e6, thr = 0;
+    if (g_fgm_thr) { thread_basic_info_data_t ti; mach_msg_type_number_t n = THREAD_BASIC_INFO_COUNT; if (thread_info(g_fgm_thr, THREAD_BASIC_INFO, (thread_info_t)&ti, &n) == KERN_SUCCESS) thr = ti.user_time.seconds + ti.user_time.microseconds / 1e6 + ti.system_time.seconds + ti.system_time.microseconds / 1e6; }
+    task_vm_info_data_t vi; mach_msg_type_number_t vn = TASK_VM_INFO_COUNT; double fp = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &vn) == KERN_SUCCESS ? vi.phys_footprint / 1048576.0 : -1;
+    pthread_mutex_lock(&g_fgm.mu);
+#define FGM_AVG(s, n) ((n) ? (s) / (n) : -1.0)
+    fprintf(g_fgm.f, "%.1f\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.2f\t%.2f\t%.2f\t%.2f\t%.2f\t%u\t%u\t%u\t%u\t%u\t%.1f\t%.1f\t%.1f\t%.1f\t%d\t%.0f\t%d\n", dm_fg_sched_t(), dm_fg_sched_name(), dm_fg_gen(), dm_fg_mult(), mtl_fps_target(), fgen_effective(), g_fgm.nr, g_fgm.nm, g_fgm.ndrop, FGM_AVG(g_fgm.gm, g_fgm.ngm), FGM_AVG(g_fgm.wm, g_fgm.ngm), FGM_AVG(g_fgm.dm, g_fgm.ngm), FGM_AVG(g_fgm.gr, g_fgm.ngr), FGM_AVG(g_fgm.pr, g_fgm.npr), g_fgm.b[0], g_fgm.b[1], g_fgm.b[2], g_fgm.b[3], g_fgm.b[4], FGM_AVG(g_fgm.lr, g_fgm.nlr) * 1000, FGM_AVG(g_fgm.lm, g_fgm.nlm) * 1000, g_fgm.last_cpu ? (cpu - g_fgm.last_cpu) / dt * 100 : -1, g_fgm.last_thr ? (thr - g_fgm.last_thr) / dt * 100 : -1, (int)[NSProcessInfo processInfo].thermalState, fp, g_fg.w3);
+    fflush(g_fgm.f); g_fgm.last_cpu = cpu; g_fgm.last_thr = thr; g_fgm.gm = g_fgm.wm = g_fgm.dm = g_fgm.pr = g_fgm.gr = g_fgm.lr = g_fgm.lm = 0; g_fgm.ngm = g_fgm.npr = g_fgm.ngr = g_fgm.nlr = g_fgm.nlm = g_fgm.nr = g_fgm.nm = g_fgm.ndrop = 0; memset(g_fgm.b, 0, sizeof g_fgm.b);
+    pthread_mutex_unlock(&g_fgm.mu);
+}
+// 连续截帧（DM_FG_SEQ=<秒>[;<秒>…]:<张数>:<目录>，秒 = 调度时间）：从那一刻起按上屏顺序把每一张（生成帧 + 真帧）拷下，结束后存 PNG，用来量人物动画是否随基准帧率跳；存盘时出图线程会停几秒，不要和量成本放同一局
+// Consecutive frames (DM_FG_SEQ=<sec>[;<sec>...]:<count>:<dir>, sec = schedule time): from then on copy every presented picture (generated + real) in presentation order and save PNGs afterwards, to measure whether animation jumps with the base rate; saving stalls the present thread for seconds, do not mix with cost measurement
+static struct { int init, n, cnt, shot, seq; double at[16]; char dir[600]; id<MTLTexture> t[24]; uint64_t last_ticket; char kind[24]; } g_fgq;
+static void fgq_copy(CBUF cb, id<MTLTexture> tx, char kind, uint64_t ticket) {
+    if (!g_fgq.init) { g_fgq.init = 1; const char *e = getenv("DM_FG_SEQ"); if (e) { char b[800]; strlcpy(b, e, sizeof b); char *c = strchr(b, ':'), *c2 = c ? strchr(c + 1, ':') : NULL; if (c2) { *c = *c2 = 0; g_fgq.cnt = MIN(atoi(c + 1), 24); strlcpy(g_fgq.dir, c2 + 1, sizeof g_fgq.dir); mkdir(g_fgq.dir, 0755); for (char *p = strtok(b, ";"); p && g_fgq.n < 16; p = strtok(NULL, ";")) g_fgq.at[g_fgq.n++] = atof(p); } } }
+    if (g_fgq.seq >= g_fgq.n || !g_fgq.cnt || !tx || dm_fg_sched_t() < g_fgq.at[g_fgq.seq] || g_fgq.shot >= g_fgq.cnt) return;
+    MTLTextureDescriptor *d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:tx.pixelFormat width:tx.width height:tx.height mipmapped:NO]; d.usage = MTLTextureUsageShaderRead; d.storageMode = MTLStorageModePrivate;
+    id<MTLTexture> t = [g_dev newTextureWithDescriptor:d]; if (!t) return; res_add(t); res_commit();
+    id e = enc_b_begin(cb); [e barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:MTL4VisibilityOptionDevice]; enc_b_copy_texture(e, tx, 0, 0, MTLOriginMake(0, 0, 0), MTLSizeMake(tx.width, tx.height, 1), t, 0, 0, MTLOriginMake(0, 0, 0)); enc_b_end(e);
+    g_fgq.kind[g_fgq.shot] = kind; g_fgq.t[g_fgq.shot++] = t; g_fgq.last_ticket = ticket;
+}
+static void fgq_poll(void) {
+    if (!g_fgq.cnt || g_fgq.shot < g_fgq.cnt) return;
+    pthread_mutex_lock(&g_pq_mu); int ready = g_pq_done >= g_fgq.last_ticket; pthread_mutex_unlock(&g_pq_mu); if (!ready) return;
+    usleep(30000);   // 生成帧的命令缓冲可能排在同票真帧之后（外推）| a generated frame's buffer may run after its ticket's real frame (extrapolation)
+    for (int i = 0; i < g_fgq.cnt; i++) { char p[800]; snprintf(p, sizeof p, "%s/seq%d_%02d_%c.png", g_fgq.dir, g_fgq.seq, i, g_fgq.kind[i]); shot(g_fgq.t[i], p, 0, NULL); res_remove(g_fgq.t[i]); g_fgq.t[i] = nil; }
+    MLOG("DM_FG_SEQ：第 %d 组 %d 张存好（调度时间 %.0f 秒）", g_fgq.seq, g_fgq.cnt, dm_fg_sched_t()); g_fgq.seq++; g_fgq.shot = 0;
+}
+// 生成帧命令缓冲提交：完成回调登记这一票的生成帧真实 GPU 完成（水位只在真帧与本票全部生成帧都了结后才前进）
+// Submit a generated frame's command buffer; its feedback records true GPU completion for this ticket (the watermark advances only after the real frame and every generated frame of the ticket have ended)
+static void fgen_mid_submit(CBUF cb, uint64_t ticket, id<CAMetalDrawable> dm, int interp, double dr_ms, double enc_ms, double commit_t) {
+    MTL4CommitOptions *o = [MTL4CommitOptions new];
+    [o addFeedbackHandler:^(id<MTL4CommitFeedback> f) {
+#ifdef FGEN_TEST
+        {   // 测试故障注入：攥住完成回调，模拟生成帧还在 GPU 上（缺省不触发） | test fault injection: hold the feedback to simulate the generated frame still being on the GPU (off by default)
+            if (atomic_load(&g_fgen_test_hold_fb)) { pthread_mutex_lock(&g_fgen_test_fb_mu); while (atomic_load(&g_fgen_test_hold_fb)) pthread_cond_wait(&g_fgen_test_fb_cv, &g_fgen_test_fb_mu); pthread_mutex_unlock(&g_fgen_test_fb_mu); } }
+#endif
+        if (f.error) MLOG("【红】插值帧命令缓冲错误：%s", f.error.description.UTF8String);
+        else if (interp && f.GPUEndTime > f.GPUStartTime) { fgen_note_gpu(dr_ms, enc_ms, (f.GPUStartTime - commit_t) * 1000.0, (f.GPUEndTime - f.GPUStartTime) * 1000.0); fgm_mid(dr_ms, (f.GPUStartTime - commit_t) * 1000.0, (f.GPUEndTime - f.GPUStartTime) * 1000.0); }
+        pq_gen_feedback(ticket);   // 无论成功失败，命令缓冲都已做完，这一票的生成帧才算真正了结 | regardless of success or error the buffer is done, so this generated frame of the ticket has truly ended
+    }];
+    pq_gen_commit(ticket);   // 先登记再提交：完成回调可能紧跟着 commit 就到 | record before commit: the feedback may arrive right after commit
+    CBUF buffers[] = {cb}; [g_q4 commit:buffers count:1 options:o];
+    if (dm) [g_q4 signalDrawable:dm];
+}
+// gk / gn：这一轮第 gk 张（从 1 起），时间点 t = gk / gn；真帧在第 gn − 1 张之后（外推在真帧之后）| gk / gn: the gk-th of this round (from 1), at t = gk / gn; the real frame follows the (gn-1)-th (extrapolation precedes them)
+static int present_mid(CAMetalLayer *layer, id<MTLTexture> src, int ei, uint64_t frame, uint64_t ticket, double period, const int crop[4], int gk, int gn) {
+#ifdef FGEN_TEST
+    if (atomic_load(&g_fgen_test_skip_mid)) return 0;   // 测试注入：本张不编码（缺省不触发） | test injection: do not encode this generated frame (off by default)
+#endif
+    uint64_t t0 = now_ns(); id<CAMetalDrawable> dm = [layer nextDrawable]; if (!dm) return 0;
+    uint64_t t1 = now_ns(); int i = (int)(ticket % 3), ai = i * 3 + gk - 1, gen = dm_fg_gen();
+    pthread_mutex_lock(&g_pq_mu); while (g_pq_done + (gen == 3 ? 2 : 3) < ticket) pthread_cond_wait(&g_pq_cv, &g_pq_mu); pthread_mutex_unlock(&g_pq_mu);   // 这一槽上一轮的插值命令缓冲排在它那一票的真帧之前，那一票了结它就做完了；水位含生成帧的真实完成，外推也不会提前 | this slot's previous interpolation buffer ran before that ticket's real frame, so it is done once that ticket has ended; the watermark includes true generated-frame completion, so extrapolation cannot pass early either
+    if (!g_fg_alloc[ai]) { g_fg_alloc[ai] = [g_dev newCommandAllocator]; g_fg_cb[ai] = [g_dev newCommandBuffer]; if (!g_fg_alloc[ai] || !g_fg_cb[ai]) { RED_ONCE(61, "帧生成：插值帧的命令分配器建不出"); [g_q4 waitForDrawable:dm]; [g_q4 signalDrawable:dm]; return 0; } }
+    g_fg_alloc[ai] = cmdalloc_recycle(g_fg_alloc[ai], &g_fg_alloc_uses[ai], "插值帧", ai); [g_fg_alloc[ai] reset];
+    [g_q4 waitForDrawable:dm];
+    CBUF cb = g_fg_cb[ai]; [cb beginCommandBufferWithAllocator:g_fg_alloc[ai]];
+    int ok = gen == 2 ? present_encode_m4(cb, src, dm.texture, crop, i) : fgen_encode_mid(cb, src, ei, frame, period, gk, gn) && present_encode_m4(cb, g_fg.comp, dm.texture, crop, i), interp = ok;
+    if (!ok) ok = present_encode_m4(cb, src, dm.texture, crop, i); else if (gen == 2) g_fg.n_mid++; else { if (gk == 1) fgshot_mark(cb, src, ei, ticket); fgq_copy(cb, g_fg.comp, 'g', ticket); }
+    [cb endCommandBuffer];
+    if (!ok) { [g_q4 signalDrawable:dm]; return 0; }
+    double dr_ms = (t1 - t0) / 1e6, enc_ms = (now_ns() - t1) / 1e6, commit_t = CACurrentMediaTime();
+    fgen_mid_submit(cb, ticket, dm, interp, dr_ms, enc_ms, commit_t);
+    [dm addPresentedHandler:^(id<MTLDrawable> d) { CFTimeInterval tt = d.presentedTime; if (tt > 0) atomic_fetch_add_explicit(&g_presented_ok, 1, memory_order_relaxed); fgen_note_present(1, tt); fgm_shown(1, gk == 1, tt, frame); }];   // 插值帧也算上屏（显示帧数标签 = 屏幕上真实帧数） | interpolated frames count as displayed (the frame-rate label shows what is really on screen)
+    [dm presentAfterMinimumDuration:period / gn];
+    double left = period / gn * .96 - (CACurrentMediaTime() - commit_t); if (left > 0) { struct timespec ts = { 0, (long)(left * 1e9) }; nanosleep(&ts, NULL); }
+    return 1;
+}
+#endif
 static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t ticket, const int crop[4], id<CAMetalDrawable> supplied, double target_ts) {
     if (g_present_stall_ns) { struct timespec ts = {0, (long)g_present_stall_ns}; nanosleep(&ts, NULL); }
     __atomic_add_fetch(&g_present_n, 1, __ATOMIC_RELAXED);
@@ -6476,6 +6690,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     PD("X ser=%llu", t->serial);
     id<MTLTexture> src = tex_mtl(t);
     if (!src) { RED_ONCE(8, "出图贴图建不出 MTLTexture"); return 0; }
+#if !DM_NVN_M3
+    fgshot_poll(); fgq_poll(); fgm_tick(frame);   // DM_FG_SHOT：上一张插值帧的存图（缺省不开） | DM_FG_SHOT: save the previous interpolated frame (off by default)
+#endif
     // DM_NVN_REGLUM=x0,y0,x1,y1:文件（归一化坐标）：每次出图回读该区域，记「出图序号、出图时刻 ns、区域平均亮度、隔点灰度小图（十六进制）」（诊断：核动画速度与帧率无关）。
     // 单独的命令缓冲排在本帧渲染之后（同一队列按提交序执行），不等 GPU、不扰动帧节奏
     // DM_NVN_REGLUM=x0,y0,x1,y1:file (normalized coordinates): read back this region on every present and record "present sequence number, present time ns, region mean luminance, subsampled grayscale thumbnail (hex)" (diagnostic: verify that animation speed is independent of frame rate).
@@ -6526,9 +6743,22 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     present_pipeline(layer.pixelFormat);   // 和原路径一样，首帧编管线在取drawable之前 | Same as the original path: the first frame compiles the pipeline before taking the drawable
     if (g_grab_cb) grab_present(src, crop, layer.drawableSize);   // 整窗截图要的游戏画面（不加锁先看一眼，真取在函数里加锁） | Game picture needed by the whole-window screenshot (peek without the lock first; the real take locks inside the function)
     uint64_t dt0 = now_ns();
+    int fg_ei = -1, fg_mid = 0, fg_gen_open = 0;   // fg_gen_open：本票的生成帧阶段还没关（外推排在真帧之后） | the ticket's generated-frame phase is still open (extrapolation follows the real frame)
+#if !DM_NVN_M3
+    int fg_gn = dm_fg_mult(), fg_ext = FGEN_EFFECTIVE_GEN() == 3;
+    if (!supplied && fgen_mid_entry(frame, t->serial, src, ticket, &fg_ei)) {
+        pq_gen_begin(ticket); fg_gen_open = 1;   // 本票有生成帧：水位要等它们真实完成；外推的提交在真帧之后，故先开、最后关 | this ticket has generated frames: the watermark waits for their true completion; extrapolated ones commit after the real frame, so open now and close at the end
+        if (fg_ext) fg_mid = 1;
+        else { for (int k = 1; k < fg_gn; k++) { int r = present_mid(layer, src, fg_ei, frame, ticket, period, crop, k, fg_gn); if (k == 1) fg_mid = r; if (!r) break; }
+            pq_gen_close(ticket); fg_gen_open = 0; }   // 插值的生成帧都在真帧之前 | the interpolated generated frames all precede the real frame
+        dt0 = now_ns(); }
+#endif
     id<CAMetalDrawable> dr = supplied ? supplied : [layer nextDrawable];
+#ifdef FGEN_TEST
+    if (atomic_load(&g_fgen_test_no_drawable)) dr = nil;   // 测试注入：真帧取不到 drawable（缺省不触发） | test injection: the real frame gets no drawable (off by default)
+#endif
     if (!supplied) g_drawable_ns += now_ns() - dt0;
-    if (!dr) return 0;
+    if (!dr) { if (fg_gen_open) pq_gen_close(ticket); return 0; }   // 真帧取不到 drawable：生成帧可能还在 GPU 上，关掉生成阶段，由调用方登记真帧失败，水位等生成帧完成再走 | no drawable for the real frame: generated frames may still be on the GPU; close the phase, the caller records the real frame as never handed over, and the watermark waits for the generated frames
     int alloc_i = (int)(ticket % 3);
     if (g_present_alloc_fence[alloc_i]) {
         pthread_mutex_lock(&g_pq_mu);
@@ -6537,7 +6767,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     }
 #if DM_NVN_M3
     CBUF cb = [g_q commandBuffer];   // 旧接口：交画面记在命令缓冲上（presentDrawable），这一帧的绘制做完才上屏 | older API: presentation is recorded on the command buffer (presentDrawable), so the frame reaches the screen only after its drawing is done
-    if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) return 0;
+    if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) { if (fg_gen_open) pq_gen_close(ticket); return 0; }
 #else
     // 守卫：这一槽的命令缓冲 / 分配器上一轮还在 GPU 上就被复用 = 水位走在 GPU 前面（nvn_pqdone.h 修的就是这个）。只记不挡
     // Guard: reusing this slot's command buffer / allocator while its previous round is still on the GPU = the watermark ran ahead of the GPU (what nvn_pqdone.h fixes). Log only, do not block
@@ -6548,12 +6778,16 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     [g_q4 waitForDrawable:dr];
     CBUF cb = g_present_cb[alloc_i];
     [cb beginCommandBufferWithAllocator:g_present_alloc4[alloc_i]];
-    if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) { [cb endCommandBuffer]; [g_q4 signalDrawable:dr]; return 0; }
+    if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i) || FGEN_REAL_ENCODE_FAILED()) { [cb endCommandBuffer]; [g_q4 signalDrawable:dr]; if (fg_gen_open) pq_gen_close(ticket); return 0; }   // 真帧编码失败：同上，生成帧未完成前水位不越过这一票 | real frame failed to encode: same as above, the watermark does not pass this ticket before its generated frames complete
     mp_encode(cb, src, crop, dr.texture, alloc_i);
+    fgq_copy(cb, src, 'r', ticket);
     [cb endCommandBuffer];
 #endif
 #if !DM_NVN_M3
     MTL4CommitOptions *o = [MTL4CommitOptions new];
+#endif
+#if !DM_NVN_M3
+    int fg_timed = fg_mid;
 #endif
     int64_t lt_i = target_ts > 0 ? g_lt_cur : -1;   // 显示节拍逐回调记录：这次上屏属于哪条回调 | Per-callback link record: which callback this present belongs to
     [FB_ON(o, cb) FB_SEL:^(FB_ARG f) {
@@ -6562,7 +6796,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 #if !DM_NVN_M3
         else mp_check(alloc_i, ticket);
 #endif
-        pthread_mutex_lock(&g_pq_mu); M4_ONLY(atomic_store(&g_present_slot_busy[alloc_i], 0);) pq_finish(ticket); g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
+        pthread_mutex_lock(&g_pq_mu); M4_ONLY(atomic_store(&g_present_slot_busy[alloc_i], 0);) pq_real_end_locked(ticket); g_pq_inflight--; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);   // 真帧完成回调：登记真帧了结；本票生成帧没做完时水位仍等它们的完成回调 | real frame feedback: record the real frame as ended; while the ticket's generated frames are unfinished the watermark still waits for their feedback
     }];
 #if !DM_NVN_M3
     CBUF buffers[] = {cb};
@@ -6599,18 +6833,27 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
         CFTimeInterval tt = d.presentedTime;
         g_pres[pn % PRING] = (pres_ent){pn, tt > 0 ? tt : -1};
         if (tt > 0) atomic_fetch_add_explicit(&g_presented_ok, 1, memory_order_relaxed);
+#if !DM_NVN_M3
+        if (fg_timed) fgen_note_present(0, tt);
+        fgm_shown(0, 0, tt, frame);
+#endif
     }];
     // 每张至少显示一个出图周期：GPU 完成时刻在 120 Hz 刷新边界附近抖动时，不再出现「25 ms + 8.33 ms」成对的顿挫
     // Each frame is displayed for at least one present period: when the GPU completion time jitters around a 120 Hz refresh boundary, the paired "25 ms + 8.33 ms" stutter no longer appears
 #if DM_NVN_M3
     if (target_ts <= 0 && period > 0) [cb presentDrawable:dr afterMinimumDuration:period]; else [cb presentDrawable:dr];
 #else
-    if (target_ts > 0) [dr present];
+    if (fg_mid) [dr presentAfterMinimumDuration:period / fg_gn];   // 帧生成：插值帧已在 present_mid 上屏，真帧接着半个出图周期 | frame generation: the interpolated frame was presented in present_mid, the real one follows half a present period later
+    else if (target_ts > 0) [dr present];
     else if (period > 0) [dr presentAfterMinimumDuration:period]; else [dr present];
 #endif
 #endif
 #if DM_NVN_M3
     [cb commit];
+#endif
+#if !DM_NVN_M3
+    if (fg_mid && fg_ext) { double base = CACurrentMediaTime(); for (int k = 1; k < fg_gn; k++) { double left = base + period * k / fg_gn - period / fg_gn * .96 - CACurrentMediaTime(); if (left > 0) { struct timespec ts = { 0, (long)(left * 1e9) }; nanosleep(&ts, NULL); } if (!present_mid(layer, src, fg_ei, frame, ticket, period, crop, k, fg_gn)) break; } }   // 外推：真帧已交，接着按节奏上外推帧 | extrapolation: the real frame is in, the extrapolated ones follow on cadence
+    if (fg_gen_open) { pq_gen_close(ticket); fg_gen_open = 0; }   // 外推的生成帧已全部提交（或没交成）：真帧的完成回调若先到，水位也要等这些生成帧真实完成 | all extrapolated generated frames are committed (or could not be): even if the real frame's feedback arrives first, the watermark still waits for them to truly complete
 #endif
     (void)frame;
     return 1;
@@ -6628,6 +6871,9 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
 // Swapchain texture return: before AcquireTexture gets a texture it waits for the ticket of that texture's previous present to be processed (mtl_present_wait), after which the commands the game draws into it
 // are necessarily ordered after that blit on the GPU queue.
 #define PQ 8
+// 同时未了结的票最多 PQ 张，而生成帧状态槽按 NVN_PQ_RING 取模：环长必须严格大于队列深度，否则旧票号的槽会被在途票静默重置（见 pq_gen_slot_locked 的告警）
+// At most PQ tickets are unfinished at once and the generated-frame state slots are indexed modulo NVN_PQ_RING: the ring must be strictly longer than the queue depth, or an in-flight ticket's slot is silently reset by a stale ticket (see the warning in pq_gen_slot_locked)
+_Static_assert(PQ < NVN_PQ_RING, "出图队列深度 PQ 必须小于完成水位环长 NVN_PQ_RING / present queue depth PQ must be smaller than the watermark ring NVN_PQ_RING");
 typedef struct { tex_t t; double period; uint64_t frame; int crop[4]; double t_in; } pq_item;   // t_in：游戏把这一帧交进出图队列的时刻（CACurrentMediaTime） | t_in: the time the game handed this frame into the present queue (CACurrentMediaTime)
 static pq_item g_pq[PQ];
 static uint64_t g_pq_in;
@@ -6694,10 +6940,7 @@ __attribute__((weak)) uint64_t dm_focus_in_since(void) { return 0; }
     @autoreleasepool { submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, update.drawable, update.targetPresentationTimestamp); }
     g_lt_cur = -1; le->ret = CACurrentMediaTime();
     if (!submitted) {
-        pthread_mutex_lock(&g_pq_mu);
-        pq_finish(ticket);
-        pthread_cond_broadcast(&g_pq_cv);
-        pthread_mutex_unlock(&g_pq_mu);
+        pq_real_end_unsubmitted(ticket);   // 真帧没交出去（取不到 drawable / 编码失败）：与出图线程共用同一处理 | real frame not handed over (no drawable / encode failure): same handling as the present thread
     }
     g_lt_n = ln + 1; lt_tick();
 }
@@ -6738,7 +6981,7 @@ static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象
     int want = g_dm_present_link;
     if (want < 0 || want > 2) { g_dm_present_link = applied == 3 ? 1 : applied; return; }
     { static int keep = -1; if (keep < 0) { const char *e = getenv("DM_120_LINK"); keep = e && atoi(e); if (keep) MLOG("DM_120_LINK=1：120 帧档也留显示节拍（对照用）"); }
-      int req = want; want = nvn_link_mode(want, mtl_fps_target(), TARGET_OS_IPHONE, keep);
+      int req = want; want = nvn_link_mode(want, fgen_effective() ? 120 : mtl_display_fps(), TARGET_OS_IPHONE, keep);   // 按显示帧率：帧生成 60 → 120 同 120 帧档走出图线程自取 | by display rate: frame generation 60 → 120 takes drawables on the present thread like the 120 mode
       static int said = -1; int note = req && !want; if (note != said) { said = note;   // 原因只在变化时记（分享诊断日志的摘要取「帧率档：」最后一行） | the reason is logged only on change (the share-diagnostics summary takes the last "帧率档：" line)
           if (note) MLOG("帧率档：出图改由出图线程自取 drawable（120 帧档在 iOS 上：显示节拍路径遇局内触控 / HUD 叠层会被系统按 60 Hz 合成、隔张丢）");
           else if (req) MLOG("帧率档：出图走显示节拍（模式 %d）", want); } }   // 省电 30 → 30 Hz 节拍（3）；iOS 120 帧档 → 自取 drawable（0），见 nvn_pace.h | power saving 30 → 30 Hz link (3); iOS 120 fps mode → take drawables (0), see nvn_pace.h
@@ -6797,10 +7040,7 @@ static void *present_main(void *arg) {
         @autoreleasepool { submitted = present_now(&it.t, it.period, it.frame, ticket, it.crop, nil, 0); }
         pthread_mutex_lock(&g_pq_mu); g_classic_busy = 0; pthread_cond_broadcast(&g_pq_cv); pthread_mutex_unlock(&g_pq_mu);
         if (!submitted) {
-            pthread_mutex_lock(&g_pq_mu);
-            pq_finish(ticket);
-            pthread_cond_broadcast(&g_pq_cv);
-            pthread_mutex_unlock(&g_pq_mu);
+            pq_real_end_unsubmitted(ticket);   // 同上：生成帧还在 GPU 上时水位不越过这一票 | same as above: the watermark does not pass this ticket while generated frames are still on the GPU
         }
     }
     return NULL;

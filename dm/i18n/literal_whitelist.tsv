@@ -117,6 +117,15 @@ host/dm_custom.c	设置文件还没法读	崩溃围栏关实验项的说明，�
 host/dm_custom.c	120 帧档 → 60	同上，只进日志
 host/dm_custom.c	光追 → 关	同上，只进日志
 host/dm_custom.c	空间超分 → 关	同上，只进日志
+host/dm_custom.c	AI 帧生成 → 关	同上，只进日志
+host/dm_custom.c	开关关着	AI 帧生成状态原因，只进日志（帧生成：状态）
+host/dm_custom.c	本机不支持（插值器 / 屏幕 / 内存档位）	同上，只进日志
+host/dm_custom.c	30 帧档下不可用	同上，只进日志
+host/dm_custom.c	高刷档下不可用	同上，只进日志
+host/dm_custom.c	光追开着	同上，只进日志
+host/dm_custom.c	温控退档	同上，只进日志
+host/dm_custom.c	本端暂未接入	同上：AI 帧生成状态原因（安卓 / 鸿蒙壳按关生效），只进日志
+host/dm_custom.c	（钉住 %d）	同上：钉住的档位（DM_TEST_FG / DM_FGEN_PRESET）写进「帧生成：状态」行
 host/dm_custom.c	=、	同上：日志里各项之间的分隔
 host/dm_custom.c	实验性功能本来都关着	同上，只进日志
 host/hle_lifecycle.c	@dm_crashfence_clean	崩溃围栏清标记的原因，只进日志

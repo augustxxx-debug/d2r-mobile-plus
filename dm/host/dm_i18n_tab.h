@@ -846,6 +846,33 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmGraphicsFrameRate30", "帧率：30 FPS", "Frame rate: 30 FPS", "Fotogramas: 30 FPS", "Fotogramas: 30 FPS", "Частота кадров: 30 FPS", "프레임 레이트: 30 FPS" },
     { "dmGraphicsFrameRate60", "帧率：60 FPS", "Frame rate: 60 FPS", "Fotogramas: 60 FPS", "Fotogramas: 60 FPS", "Частота кадров: 60 FPS", "프레임 레이트: 60 FPS" },
     { "dmGraphicsFrameRateHigh", "帧率：高刷 %d（实验性）", "Frame rate: High refresh %d (experimental)", "Fotogramas: alta frecuencia %d (experimental)", "Fotogramas: alta frecuencia %d (experimental)", "Частота кадров: высокая %d (эксперимент)", "프레임 레이트: 고주사율 %d (실험적)" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsFrameGen", "AI 帧生成（实验性）", "AI frame generation (experimental)", "Generación de fotogramas IA (experimental)", "Generación de fotogramas IA (experimental)", "ИИ-генерация кадров (эксперимент)", "AI 프레임 생성 (실험적)" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmIosGraphicsFrameGenNote", "渲染 60 帧、显示 120 帧；会增加少量延迟，运动物体可能有双影", "Renders 60, shows 120 FPS; slight added lag, moving objects may ghost", "Renderiza 60, muestra 120 FPS; algo más de retardo, posible doble imagen", "Renderiza 60, muestra 120 FPS; algo más de retardo, posible doble imagen", "Рендер 60, показ 120 кадров; чуть больше задержка, возможно двоение", "60프레임 렌더링, 120프레임 표시. 지연이 약간 늘고 잔상이 보일 수 있음" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsFrameGenNoEco", "30 帧档下不可用，切到 60 帧后生效", "Not available at 30 FPS; applies at 60 FPS", "No disponible a 30 FPS; se aplica a 60 FPS", "No disponible a 30 FPS; se aplica a 60 FPS", "Недоступно при 30 кадрах; работает при 60", "30 FPS에서는 사용 불가, 60 FPS에서 적용" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsFrameGenCapped", "高刷档下不可用，切到 60 帧后生效", "Not available at high refresh; applies at 60 FPS", "No disponible en alta frecuencia; se aplica a 60 FPS", "No disponible en alta frecuencia; se aplica a 60 FPS", "Недоступно при высокой частоте; работает при 60", "고주사율에서는 사용 불가, 60 FPS에서 적용" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsFrameGenNoRt", "光追开着时不生效，关掉光追后生效", "No effect with ray tracing on; turn it off", "Sin efecto con trazado activo; desactívalo", "Sin efecto con trazado activo; desactívalo", "Не работает при включённой трассировке; выключите её", "레이 트레이싱이 켜져 있으면 적용 안 됨" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsFrameGenHot", "手机过热，已暂停；降温后自动恢复", "Paused: device is hot; resumes when it cools", "En pausa por calor; se reanuda al enfriarse", "En pausa por calor; se reanuda al enfriarse", "Пауза: устройство нагрето; продолжится после остывания", "기기 과열로 일시 중지, 식으면 자동 재개" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsFrameGenBackoff", "画面跟不上或内存紧张，已暂停；稍后自动重试", "Paused: too slow or low memory; retries shortly", "En pausa: lento o poca memoria; se reintenta pronto", "En pausa: lento o poca memoria; se reintenta pronto", "Пауза: не хватает скорости или памяти; скоро повтор", "속도 또는 메모리 부족으로 일시 중지, 곧 재시도" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsFrameGenEcoClosed", "省电档暂未开放", "Power saving is not available yet", "El modo de ahorro aún no está disponible", "El modo de ahorro aún no está disponible", "Режим экономии пока недоступен", "절전 모드는 아직 사용할 수 없음" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsFrameGenNoHw", "本机不支持：需要帧插值、120 Hz 屏幕和足够内存", "Not supported: needs frame interpolation, 120 Hz and enough memory", "No compatible: requiere interpolación, 120 Hz y memoria", "No compatible: requiere interpolación, 120 Hz y memoria", "Не поддерживается: нужны интерполяция, 120 Гц и память", "지원 안 됨: 프레임 보간, 120Hz, 충분한 메모리 필요" },
+#endif
     { "dmGraphicsResAuto", "渲染分辨率：自动", "Resolution: Auto", "Resolución: Automática", "Resolución: Automática", "Разрешение: авто", "해상도: 자동" },
     { "dmGraphicsResEco", "渲染分辨率：省电", "Resolution: Eco", "Resolución: Ahorro", "Resolución: Ahorro", "Разрешение: экономия", "해상도: 절전" },
     { "dmGraphicsResBalanced", "渲染分辨率：均衡", "Resolution: Balanced", "Resolución: Equilibrada", "Resolución: Equilibrada", "Разрешение: баланс", "해상도: 균형" },

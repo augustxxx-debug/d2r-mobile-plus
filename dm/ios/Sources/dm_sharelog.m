@@ -43,7 +43,7 @@ static NSString *last_line(NSData *d, const char *key) {
 static void perf_block(NSMutableString *h, NSString *title, NSData *d) {
     [h appendFormat:@"\n—— %@ ——\n", title];
     if (!d) { [h appendString:@"（没有这份日志）\n"]; return; }
-    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "存档管理：", "诊断上传：", "自动上报：", "统计上报：", "统计告知：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "超分档位：", "内存档位：", "内存档位预留：", "光追阴影：机器判定", "光追档位：", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追阴影：局部回退 至第", "光追阴影：主光", "光追阴影：阴影图 第", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追质量：", "光追降分辨率：", "光追阴影：GPU", "自定义设置：读盘", "输入模式：", "社区入口：清单", "社区入口：已显示", "社区入口：复制", "Metal 抓帧层：", "光追内存：预算", "光追内存：第", "光追内存：告警", "内存 至帧", "【内存告警】", "游戏难度：", "线程同步：", "加载页：" };
+    static const char *keys[] = { "boot: 版本", "崩溃围栏：", "存档管理：", "诊断上传：", "自动上报：", "统计上报：", "统计告知：", "[诊断]", "[perf]", "[nvn] 上屏", "温控档位", "紫闪探针 至出图", "MetalFX spatial support", "MetalFX spatial ready", "MetalFX initialization unavailable", "图形设置：", "帧率档：生效", "帧率档：出图", "超分档位：", "内存档位：", "内存档位预留：", "光追阴影：机器判定", "光追档位：", "光追阴影：生效", "光追阴影：回退", "光追阴影：画面", "光追阴影：第", "光追点光：光源记录", "光追阴影：建好", "光追阴影：没进原因", "光追阴影：局部回退 至第", "光追阴影：主光", "光追阴影：阴影图 第", "光追镂空：第", "光追镂空：判定库", "光追降档：", "光追 AO：", "光追质量：", "光追降分辨率：", "光追阴影：GPU", "自定义设置：读盘", "输入模式：", "社区入口：清单", "社区入口：已显示", "社区入口：复制", "Metal 抓帧层：", "光追内存：预算", "光追内存：第", "光追内存：告警", "内存 至帧", "【内存告警】", "游戏难度：", "线程同步：", "加载页：", "帧生成：状态", "帧生成：插值器", "帧生成：插值 至帧", "帧生成：耗时", "帧生成：节奏", "帧生成：内存退避", "帧生成：帧率退避", "帧生成：上屏的是另一张贴图" };
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) { NSString *l = last_line(d, keys[i]); [h appendFormat:@"%@\n", l ?: [NSString stringWithFormat:@"（没有「%@」行）", @(keys[i])]]; }
 }
 // 日志里的路径会带系统用户主目录（Mac 上是 /Users/<用户名>，iPhone 上是 /var/mobile）：导出时一律换成 ~，不把用户名带出去
@@ -91,7 +91,7 @@ static NSData *build_data(NSUInteger log_limit, NSUInteger crash_limit, NSUInteg
       [h appendFormat:@"Memory tier=%d limitMB=%d physMB=%d model=%s | atLaunch renderRes=%d profile=%s | now renderRes=%d profile=%s\n", tier, lim, phys, dm_mem_model(), r0,
           q0 >= 0 && q0 < 5 ? profiles[q0] : "unknown", dm_render_res_level(), up ? (qn >= 0 && qn < 4 ? profiles[qn] : "unknown") : profiles[4]]; }
     [h appendString:@"Enhanced preferences (applied):"];
-    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "tel_stats", "auto_crash" };
+    static const char *const custom[] = { "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "tel_stats", "auto_crash", "fgen_level" };   // fgen_level 是档位（0 / 1 / 2），不是开关 | fgen_level is a level (0 / 1 / 2), not a switch
     for (unsigned i=0;i<sizeof custom/sizeof *custom;i++) [h appendFormat:@" %s=%d",custom[i],dm_custom_get(custom[i])];
     [h appendString:@"\n"];
     [h appendFormat:@"Log export: at most %lu bytes per log; omitted prefix bytes current=%llu previous=%llu. Original log files are unchanged.\n", (unsigned long)log_limit,cur_omitted,prev_omitted];

@@ -38,18 +38,22 @@ int main(void) {
     { char txt[2048] = {0}; f = fopen(path, "r"); CHECK(f); fread(txt, 1, sizeof txt - 1, f); fclose(f); CHECK(strstr(txt, "free_tp=0\n") && strstr(txt, "free_tp_v2=1\n")); }
     f = fopen(path, "w"); CHECK(f); fputs("upscale=1\nq3d=2\nq3d_v2=1\nrender_res=3\n", f); fclose(f); atomic_store(&g_loaded, 0);
     // 行打包 | row packing
-    int v[7], n;
-    n = graphics_rows_pack(1, 1, 1, 1, v); CHECK(n == 7 && v[0] == ROW_RES && v[1] == ROW_BRIGHT && v[2] == ROW_FPSHUD && v[3] == ROW_FPS && v[4] == ROW_UPSCALE && v[5] == ROW_PROFILE && v[6] == ROW_RT);   // Apple 全开；光追组只有档位一行（rt_level）| Apple, everything; the ray-tracing group is the one level row (rt_level)
+    int v[8], n;
+    n = graphics_rows_pack(1, 1, 1, 1, 0, v); CHECK(n == 7 && v[0] == ROW_RES && v[1] == ROW_BRIGHT && v[2] == ROW_FPSHUD && v[3] == ROW_FPS && v[4] == ROW_UPSCALE && v[5] == ROW_PROFILE && v[6] == ROW_RT);   // Apple 全开；光追组只有档位一行（rt_level）| Apple, everything; the ray-tracing group is the one level row (rt_level)
     CHECK(graphics_row_y(v, 0) == 180 && graphics_row_y(v, 1) == 360 && graphics_row_y(v, 2) == 720 && graphics_row_y(v, 3) == 900 && graphics_row_y(v, 4) == 1260 && graphics_row_y(v, 6) == 1800);   // 换组多一行标题 | one heading row per group change
-    n = graphics_rows_pack(1, 1, 0, 1, v); CHECK(n == 6 && v[5] == ROW_RT);                   // 档位行藏着：光追上移一格（原行为）| profile hidden: ray tracing moves up
-    n = graphics_rows_pack(1, 1, 0, 0, v); CHECK(n == 5 && v[4] == ROW_UPSCALE);
-    n = graphics_rows_pack(0, 0, 0, 0, v); CHECK(n == 3 && v[0] == ROW_BRIGHT && v[1] == ROW_FPSHUD && v[2] == ROW_FPS);   // 安卓 render_res 关时的最少行 | fewest rows
-    n = graphics_rows_pack(1, 0, 0, 0, v); CHECK(n == 4 && v[0] == ROW_RES && v[1] == ROW_BRIGHT && v[2] == ROW_FPSHUD && v[3] == ROW_FPS);   // 安卓 | Android
-    n = graphics_rows_pack(0, 0, 1, 1, v); CHECK(n == 4 && v[0] == ROW_BRIGHT && v[1] == ROW_FPSHUD && v[2] == ROW_FPS && v[3] == ROW_RT);
+    n = graphics_rows_pack(1, 1, 0, 1, 0, v); CHECK(n == 6 && v[5] == ROW_RT);                   // 档位行藏着：光追上移一格（原行为）| profile hidden: ray tracing moves up
+    n = graphics_rows_pack(1, 1, 0, 0, 0, v); CHECK(n == 5 && v[4] == ROW_UPSCALE);
+    n = graphics_rows_pack(0, 0, 0, 0, 0, v); CHECK(n == 3 && v[0] == ROW_BRIGHT && v[1] == ROW_FPSHUD && v[2] == ROW_FPS);   // 安卓 render_res 关时的最少行 | fewest rows
+    n = graphics_rows_pack(1, 0, 0, 0, 0, v); CHECK(n == 4 && v[0] == ROW_RES && v[1] == ROW_BRIGHT && v[2] == ROW_FPSHUD && v[3] == ROW_FPS);   // 安卓 | Android
+    n = graphics_rows_pack(0, 0, 1, 1, 0, v); CHECK(n == 4 && v[0] == ROW_BRIGHT && v[1] == ROW_FPSHUD && v[2] == ROW_FPS && v[3] == ROW_RT);
+    // AI 帧生成：「帧率」组里紧跟帧率行（不换组、不多标题）；Apple 全部可见共 8 行 | AI frame generation: right after the frame-rate row in the Frame group (no new heading); 8 rows with everything visible on Apple
+    n = graphics_rows_pack(1, 1, 1, 1, 1, v); CHECK(n == 8 && v[3] == ROW_FPS && v[4] == ROW_FG && v[5] == ROW_UPSCALE && v[7] == ROW_RT);
+    CHECK(graphics_row_group(ROW_FG) == graphics_row_group(ROW_FPS) && graphics_row_y(v, 4) == graphics_row_y(v, 3) + 180 && graphics_row_y(v, 5) == graphics_row_y(v, 4) + 360);
+    n = graphics_rows_pack(0, 0, 0, 0, 1, v); CHECK(n == 4 && v[3] == ROW_FG);
     // 自定义页的平台限制：有 iCloud 时 icloud 行在，没有时整页少一行、后面的行号前移（与 touch_layout.py DM_TARGET=android 对齐）
     // Per-platform Custom rows: with iCloud the icloud row exists; without it the page has one row fewer and later rows move up (matching touch_layout.py DM_TARGET=android)
     int n_gfx = 0, n_game = 0; for (int i = 0; i < NK; i++) { n_gfx += graphics_key(i); n_game += row_on_page(i, PG_GAME); }
-    icloud_ok = 1; int rows_apple = custom_rows(); CHECK(n_gfx == 7 && rows_apple == 4 + VOICE_ROW && rows_apple + n_game == NK - n_gfx && custom_key_at(1 + VOICE_ROW) == K_ICLOUD && row_on_page(K_TOUCH_SWAP, PG_GAME));
+    icloud_ok = 1; int rows_apple = custom_rows(); CHECK(n_gfx == 8 && rows_apple == 4 + VOICE_ROW && rows_apple + n_game == NK - n_gfx && custom_key_at(1 + VOICE_ROW) == K_ICLOUD && row_on_page(K_TOUCH_SWAP, PG_GAME));
     // 配音行在缺省包里也在（VOICE_ROW 恒为 1）：语言之后第一行，手柄与触屏都按这张键表出行 | the voice row is on default builds too (VOICE_ROW is always 1): first after language; both controller and touch iterate this key table
     CHECK(VOICE_ROW == 1 && K_VOICE == 1 && custom_row(K_VOICE) && custom_key_at(1) == K_VOICE);
     icloud_ok = 0; CHECK(custom_rows() == rows_apple - 1 && !custom_row(K_ICLOUD) && custom_key_at(rows_apple - 2) == key_index("auto_crash"));
@@ -64,7 +68,7 @@ int main(void) {
     icloud_ok = 1;
     // 全部可见（Apple）时各行的 y：与布局 touch_layout.py 的初始位置是同一张表（test_touch_layout_options.py 核布局那一侧，审计 r1 P2-5）
     // Row y with everything visible (Apple): the same table as the layout's initial positions in touch_layout.py (test_touch_layout_options.py checks the layout side, audit r1 P2-5)
-    { static const int want[7] = { 180, 360, 720, 900, 1260, 1440, 1800 }; n = graphics_rows_pack(1, 1, 1, 1, v); for (int i = 0; i < 7; i++) CHECK(graphics_row_y(v, i) == want[i]); CHECK(graphics_row_y(v, 6) + 180 == 1980); }
+    { static const int want[8] = { 180, 360, 720, 900, 1080, 1440, 1620, 1980 }; n = graphics_rows_pack(1, 1, 1, 1, 1, v); CHECK(n == 8); for (int i = 0; i < 8; i++) CHECK(graphics_row_y(v, i) == want[i]); CHECK(graphics_row_y(v, 7) + 180 == 2160); }
     // 平台门控照键表（审计 r1 P2-3）：Apple 有超分组、光追组 | platform gate from the key table (audit r1 P2-3): Apple has the upscaling and ray-tracing groups
     { int up = 0, rt = 0; graphics_plat_rows(&up, &rt); CHECK(up == 1 && rt == 1); }
     // 画面加亮档位（审计 r1 P2-6）：没写过 = 缺省「中」2；0–3 原样；坏值回落到缺省 2，不是 0 | brightening level (audit r1 P2-6): unset = default mid 2; 0-3 kept; bad values fall back to the default 2, not 0

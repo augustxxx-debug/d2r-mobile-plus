@@ -65,6 +65,7 @@ run: \
 	$(B)/t_fps_caption \
 	$(B)/t_mem_tier \
 	$(B)/t_graphics_gate \
+	$(B)/t_fgen_level \
 	$(B)/t_ingame \
 	$(B)/t_options_android \
 	$(B)/t_padmode_pure \
@@ -140,6 +141,7 @@ run: \
 	$(B)/t_fps_caption
 	$(B)/t_mem_tier
 	$(B)/t_graphics_gate
+	$(B)/t_fgen_level
 	$(B)/t_options_android
 	$(B)/t_padmode_pure
 	$(PY) test_padmode_focus.py
@@ -360,6 +362,8 @@ $(B)/t_render_profile: t_render_profile.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_render_profile.c
 $(B)/t_graphics_gate: t_graphics_gate.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_graphics_gate.c
+$(B)/t_fgen_level: t_fgen_level.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_fgen_level.c
 $(B)/t_custom_readlog: t_custom_readlog.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_custom_readlog.c
 # 同一份测试再用 -DDM_MOVIE_FFMPEG=1 编一份：VOICE_ROW 必须仍为 1（配音行与过场解码开关无关）

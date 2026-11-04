@@ -860,8 +860,8 @@ static void touch_ui_message(const char *cat,const char *act,const char *arg) {
 @end
 @implementation DmRateHint
 - (void)tick:(CADisplayLink *)l {
-    extern int mtl_fps_target(void);
-    { static int last = -1; int f = mtl_fps_target(); if (f != last) { last = f; l.preferredFrameRateRange = f == 30 ? CAFrameRateRangeMake(30, 30, 30) : f == 120 ? CAFrameRateRangeMake(120, 120, 120) : CAFrameRateRangeMake(60, 60, 60); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
+    extern int mtl_display_fps(void);   // 显示帧率：帧生成生效时 = 渲染帧率 × 2 | display rate: render rate x 2 while frame generation is in effect
+    { static int last = -1; int f = mtl_display_fps(); if (f != last) { last = f; l.preferredFrameRateRange = f == 30 ? CAFrameRateRangeMake(30, 30, 30) : f == 120 || f == 40 || f == 80 || f == 90 ? CAFrameRateRangeMake(120, 120, 120) : CAFrameRateRangeMake(60, 60, 60); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
     [self work];
 }
 // 驱动方式：1 = 刷新率表态显示链接（缺省），2 = DM_RATE_HINT=0 时的定时器；每 30 秒记一行实际 work 频率，便于实验报告核对（二审 R03）
@@ -977,7 +977,7 @@ UIView *front_ios_view(CGRect frame) {
                // Remaining differences from the default path: no rate declaration, and the timer is not phase-aligned with the display refresh (not vsync-aligned); interpret results with both, never as "a single variable"
         static DmRateHint *worker; static dispatch_source_t timer; static int cur_hz; worker = [DmRateHint new]; g_work_driver = 2;
         timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-        void (^retime)(void) = ^{ extern int mtl_fps_target(void); int f = mtl_fps_target(), hz = f == 30 ? 30 : f == 120 ? 120 : 60;
+        void (^retime)(void) = ^{ extern int mtl_display_fps(void); int f = mtl_display_fps(), hz = f == 30 ? 30 : f == 120 ? 120 : 60;
             if (hz != cur_hz) { cur_hz = hz; uint64_t iv = NSEC_PER_SEC / (uint64_t)hz; dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)iv), iv, iv / 10);
                 LOG("DM_RATE_HINT=0：触控 / 布局定时器 %d Hz（跟随目标帧率，不对齐屏幕刷新）", hz); } };
         dispatch_source_set_event_handler(timer, ^{ retime(); [worker work]; });

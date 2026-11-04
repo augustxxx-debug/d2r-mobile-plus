@@ -28,6 +28,15 @@ int dm_fps_thermal_capped(void);   // 高刷档（90 / 120）此刻因过热（�
 int dm_high_hz(int max_hz);
 int dm_fps_high_hz(void);   // 本机高刷档的帧率 = dm_high_hz(屏幕最高刷新率)，0 = 不开放 / 屏幕还不知道（遥测报选定帧率用）| this machine's high-refresh rate, 0 = not offered / screen unknown (for the telemetry selected rate)   // 纯函数：屏幕最高刷新率 < 89 → 0（不开放）/ 89–118 → 90 / ≥ 119 → 120（144 等封顶 120）| pure function: screen max < 89 -> 0 (not offered) / 89-118 -> 90 / >= 119 -> 120 (144 etc. cap at 120)
 int dm_fps_setting(void);   // 帧率档（键 eco_fps：0 = 60 缺省 / 1 = 30 省电 / 2 = 高刷档，按 dm_high_hz 取 90 或 120；高刷档只在屏幕最高刷新率 ≥ 89 且内存档 ≥ 2 时生效，否则按 60）；nvn_mtl.m / nvn_vk.c mtl_fps_target 读 | Frame rate mode (key eco_fps: 0 = 60 default / 1 = 30 power saving / 2 = the high-refresh stop, 90 or 120 from dm_high_hz; it takes effect only when the screen's maximum refresh rate is >= 89 and the memory tier is >= 2, otherwise 60); read by mtl_fps_target in nvn_mtl.m / nvn_vk.c
+// AI 帧生成档位（键 fgen_level，RC2 草案 §5）：0 关（缺省）/ 1 省电（枚举保留，本车不开放、图形页不出现）/ 2 平滑（渲染 60、插到 120）；
+// 3 保留给高倍，读到就当 0。旧键 fgen 只在新键没写时读一次（fgen=1 → 2）；存盘只写新键。安卓壳读到非 0 也按关生效、不改写设置文件。
+// AI frame generation level (key fgen_level, RC2 draft §5): 0 off (default) / 1 power saving (enum kept, not opened in this train, not on the Graphics tab) /
+// 2 smooth (render 60, interpolate to 120); 3 is reserved for higher multiples and reads as 0. The old key fgen is read once only when the new key is absent
+// (fgen=1 -> 2); only the new key is written. The Android shell treats any non-zero level as off and does not rewrite the settings file.
+#define DM_FGEN_OFF 0
+#define DM_FGEN_ECO 1
+#define DM_FGEN_SMOOTH 2
+int dm_fgen_level(void);   // 设置档位（已归一，含旧键迁移）：0 / 1 / 2；图形页勾选框只做关 / 平滑（勾 = 2）| setting level (normalised, migration included): 0 / 1 / 2; the Graphics checkbox only does off / smooth (checked = 2)
 int dm_mem_tier(void);   // 内存档位 0 / 1 / 2（按本进程内存上限：< 2600 / 2600–3199 / ≥ 3200 MB；没量到 = 2；DM_MEM_TIER 覆盖）| memory tier 0 / 1 / 2 by this process's memory limit; not measured = 2; DM_MEM_TIER overrides
 void dm_mem_measure_set(int limit_mb, int phys_mb, const char *model);   // iOS main.m 在游戏堆分配之前量一次交进来（上限 = phys_footprint + os_proc_available_memory）| measured once by iOS main.m before the game heap
 void dm_mem_boot_info(int *tier, int *limit_mb, int *phys_mb, int *res0, int *q3d0);   // 分享摘要：档位、上限、物理内存、启动时生效的渲染分辨率档 / 超分档（4 = 原版）| share summary: tier, limit, RAM, launch render level / profile (4 = Original)

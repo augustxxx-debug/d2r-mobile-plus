@@ -1,6 +1,8 @@
 // 画质配置迁移、持久化与旧布尔键兼容：只使用临时设置文件，不读游戏存档。
 // Test profile migration, persistence and legacy boolean compatibility using temporary settings only, never game saves.
 #define DM_DISPLAY_HZ_TEST_HOOK
+#define DM_FG_TEST_HOOK
+#define DM_THERMAL_TEST_HOOK
 #include "../dm_custom.c"
 #include <unistd.h>
 #include <sys/stat.h>
@@ -12,6 +14,11 @@ int dm_3d_quality_mode_get(void) { return quality; }
 float dm_3d_scale_cur(void) { return .75f; }
 static int display_hz;   // 屏幕最高刷新率替身（0 = 还没窗口） | stand-in for the screen's maximum refresh rate (0 = no window yet)
 int dm_display_max_hz(void) { return display_hz; }
+static int fg_supported;   // 插值器支持替身 | stand-in for interpolator support
+int mtl_fg_supported(void) { return fg_supported; }
+static int thermal_stub;   // 温控档位替身 | stand-in for the thermal state
+int dm_thermal_now(void) { return thermal_stub; }
+int mtl_fg_backoff(void) { return 0; }
 static int checks;
 #define CHECK(x) do { checks++; if (!(x)) { fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#x); return 1; } } while (0)
 int main(void) {
@@ -135,6 +142,7 @@ int main(void) {
       dm_custom_on_uimsg("OptionsPanelMessage","ResetToDefaults",NULL); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==60);   // 默认回 60 | defaults back to 60
       display_hz=0; }
     // DM_TEST_FPS 时间表（纯函数）：帧率只认 30 / 60 / 90 / 120 | DM_TEST_FPS schedule (pure function): only 30 / 60 / 90 / 120 are accepted
+    CHECK(fps_schedule("40",0)==40);   // 40 只有帧生成量测开关能到 | 40 only from the frame-generation measurement switches
     CHECK(fps_schedule("120",0)==120); CHECK(fps_schedule("30@0,60@40,120@70",39.9)==30); CHECK(fps_schedule("30@0,60@40,120@70",40)==60); CHECK(fps_schedule("30@0,60@40,120@70",500)==120);
     CHECK(fps_schedule("90",0)==90); CHECK(fps_schedule("30@0,90@40",50)==90);
     CHECK(fps_schedule("120@20",0)==120); CHECK(fps_schedule("",0)==-1); CHECK(fps_schedule("45",0)==-1); CHECK(fps_schedule("120@-1",0)==-1); CHECK(fps_schedule("60;120@5",0)==-1);
@@ -209,5 +217,36 @@ int main(void) {
       graphics_select_profile(3); CHECK(atomic_load(&g_pend[K_Q3D])==-1);
       display_hz=60; CHECK(profile_max()==3); CHECK(dm_fps_setting()==60);   // 60 Hz 屏：没有 120 档，也就没有上限 | 60 Hz screen: no 120 stop, so no cap
       display_hz=0; }
+    // AI 帧生成 fgen_level（实验性）：缺省 0（关）、应用才生效、存盘；生效 = 平滑档（2）+ 本机支持（插值器 / 120 Hz / 内存档位）+ 60 帧档 + 光追关 + 没有温控退档；
+    // 省电档（1）的枚举保留、本车不开放。读盘 / 迁移 / 优先级 / 围栏备份 / 安卓壳另见 t_fgen_level
+    // AI frame generation fgen_level (experimental): default 0 (off), takes effect on Apply, persisted; in effect = the smooth level (2) + supported (interpolator / 120 Hz / memory tier) + the 60 fps mode + ray tracing off + no thermal fallback;
+    // the power-saving level (1) keeps its enum but is not opened in this train. Parsing / migration / priority / fence backup / Android shell: see t_fgen_level
+    { FILE *file=fopen(path,"w"); CHECK(file); fputs("q3d=0\nq3d_v2=1\n",file); fclose(file); atomic_store(&g_loaded,0);
+      fg_supported=1; display_hz=120; CHECK(dm_fgen_level()==DM_FGEN_OFF); CHECK(!dm_fg_setting());   // 缺省关 | default off
+      CHECK(graphics_key(K_FGEN)); CHECK(!strcmp(k_keys[K_FGEN],"fgen_level")); CHECK(!strcmp(k_keys[K_FPSHUD],"fps_hud")); CHECK(!strcmp(k_keys[K_UPSCALE],"upscale")); CHECK(!strcmp(k_keys[K_RES],"render_res")); CHECK(!strcmp(k_keys[K_RTLVL],"rt_level"));
+      atomic_store(&g_pend[K_FGEN],DM_FGEN_SMOOTH); CHECK(!dm_fg_setting()); CHECK(enhanced_settings_dirty());   // 应用前不生效 | not before Apply
+      dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==60); CHECK(dm_fg_setting());
+      file=fopen(path,"r"); CHECK(file); char text[4096]={0}; fread(text,1,sizeof text-1,file); fclose(file); CHECK(strstr(text,"fgen_level=2\n"));
+      atomic_store(&g_loaded,0); CHECK(dm_fgen_level()==DM_FGEN_SMOOTH); CHECK(dm_fg_setting());
+      fg_supported=0; CHECK(!fg_row_ok()); CHECK(!dm_fg_setting()); fg_supported=1;               // 设备不支持 | unsupported device
+      display_hz=60; CHECK(!fg_row_ok()); CHECK(!dm_fg_setting()); display_hz=0; CHECK(!fg_row_ok()); CHECK(!dm_fg_setting()); display_hz=120; CHECK(fg_row_ok());   // 屏幕不到 120 Hz / 还没窗口 | screen under 120 Hz / no window yet
+      graphics_select_fps(0); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==30); CHECK(!dm_fg_setting());   // 30 帧档不可用 | not at 30
+      CHECK(dm_fgen_level()==DM_FGEN_SMOOTH);                                                      // 存着的档位不清掉 | the saved level is kept
+      graphics_select_fps(2); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==120); CHECK(!dm_fg_setting());   // 120 档到顶 | 120 is at the top
+      CHECK(fg_reason(DM_FGEN_SMOOTH,1,90,0,0)==FG_CAPPED);   // 高刷档 90（RC2 84c04ac2）同样不开 | the 90 high-refresh stop is excluded too
+      graphics_select_fps(1); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fg_setting());
+      CHECK(fg_reason(DM_FGEN_SMOOTH,1,60,0,0)==FG_ON); CHECK(fg_reason(DM_FGEN_SMOOTH,1,60,1,0)==FG_RT); CHECK(fg_reason(DM_FGEN_SMOOTH,1,60,0,1)==FG_HOT); CHECK(fg_reason(DM_FGEN_SMOOTH,1,30,0,0)==FG_ECO30); CHECK(fg_reason(DM_FGEN_SMOOTH,1,120,0,0)==FG_CAPPED);
+      CHECK(fg_reason(DM_FGEN_OFF,1,60,0,0)==FG_OFF); CHECK(fg_reason(DM_FGEN_SMOOTH,0,60,0,0)==FG_UNSUPPORTED); CHECK(fg_reason(DM_FGEN_ECO,1,60,0,0)==FG_ECO_CLOSED);
+      // 温控门：≥ 2 立刻停，回落满冷却才恢复；-1（未读）不算热 | thermal gate: stops at once at >= 2, resumes after the cooldown; -1 (unread) is not hot
+      { double hu=0; CHECK(!fg_hot_step(0,2,100,60,&hu)); CHECK(!fg_hot_step(-1,2,100,60,&hu)); CHECK(fg_hot_step(2,2,100,60,&hu)); CHECK(fg_hot_step(1,2,159,60,&hu)); CHECK(!fg_hot_step(1,2,160,60,&hu)); CHECK(fg_hot_step(3,2,170,60,&hu)); CHECK(fg_hot_step(0,2,229,60,&hu)); CHECK(!fg_hot_step(0,2,231,60,&hu));
+        hu=0; CHECK(!fg_hot_step(2,3,300,60,&hu)); CHECK(fg_hot_step(3,3,301,60,&hu)); CHECK(FG_HOT_LEVEL==2); }
+      // 分享摘要键：状态行带 fg= | share summary key: the state line carries fg=
+      { char logp[1100]; snprintf(logp,sizeof logp,"%s/log.txt",directory); fg_supported=0; int saved_err=dup(2); CHECK(saved_err>=0); CHECK(freopen(logp,"w",stderr)); CHECK(!dm_fg_setting()); fg_supported=1; CHECK(dm_fg_setting()); fflush(stderr); dup2(saved_err,2); close(saved_err);
+        file=fopen(logp,"r"); CHECK(file); char t2[8192]={0}; fread(t2,1,sizeof t2-1,file); fclose(file); unlink(logp); CHECK(strstr(t2,"帧生成：状态 fg=0 关")); CHECK(strstr(t2,"帧生成：状态 fg=1 开")); }
+      dm_custom_on_uimsg("OptionsPanelMessage","ResetToDefaults",NULL); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fgen_level()==DM_FGEN_OFF); CHECK(!dm_fg_setting());
+      fg_supported=0; display_hz=0; }
+    // DM_TEST_FG 时间表 | DM_TEST_FG schedule
+    CHECK(fg_schedule("1",0)==1); CHECK(fg_schedule("0@0,1@30,0@60",29)==0); CHECK(fg_schedule("0@0,1@30,0@60",30)==1); CHECK(fg_schedule("0@0,1@30,0@60",61)==0);
+    CHECK(fg_schedule("1@20",0)==1); CHECK(fg_schedule("",0)==-1); CHECK(fg_schedule("2",0)==-1); CHECK(fg_schedule("1@-1",0)==-1); CHECK(fg_schedule("1;0@5",0)==-1);
     unlink(path); rmdir(directory); printf("PASS render profiles: %d migration/persistence checks\n",checks); return 0;
 }

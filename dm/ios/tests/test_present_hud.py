@@ -41,7 +41,7 @@ class RateHint(unittest.TestCase):
         self.assertIn('[worker work]', off)
         # 二审 R03：不得固定 60 Hz；定时器频率跟随目标帧率 30 / 60 / 120，并在目标变化时重设 | second review R03: no fixed 60 Hz; the timer follows the 30 / 60 / 120 target and is re-armed on change
         self.assertNotRegex(off, r'1\.0 / 60\b')
-        self.assertIn('mtl_fps_target()', off)
+        self.assertIn('mtl_display_fps()', off)   # 显示帧率：AI 帧生成生效时 = 渲染帧率 × 2 | display rate: render rate x 2 while AI frame generation is in effect
         self.assertRegex(off, r'f == 30 \? 30 : f == 120 \? 120 : 60')
         self.assertRegex(off, r'if \(hz != cur_hz\).*dispatch_source_set_timer', 're-arm on change')
         self.assertIn('dispatch_get_main_queue()', off)

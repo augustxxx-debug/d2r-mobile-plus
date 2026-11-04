@@ -92,7 +92,7 @@ int main(void) {
     { static const char *const ks[] = { DM_TF_SETTING_FLAGS, DM_TF_SETTING_LEVELS, DM_TF_S_FPS_SELECTED, DM_TF_S_FPS_EFFECTIVE, DM_TF_S_UPSCALE_SELECTED, DM_TF_S_UPSCALE_EFFECTIVE, DM_TF_S_RT_SHADOW_SET, DM_TF_S_RT_SHADOW_EFF, DM_TF_S_RT_AO, DM_TF_S_FRAMEGEN, DM_TF_S_INPUT_MODE, DM_TF_S_PAD_TYPE, DM_TF_S_LANG, DM_TF_S_FONT, DM_TF_S_DIFFICULTY };
       CHECK(sizeof ks / sizeof *ks == 31);
       const char *st = strstr(j, "\"settings\":{"); CHECK(st != NULL); for (size_t i = 0; st && i < sizeof ks / sizeof *ks; i++) CHECK(has(st, ks[i])); }
-    CHECK(strstr(j, "\"fps_selected\":120") && strstr(j, "\"fps_effective\":120") && strstr(j, "\"upscale_selected\":\"quality\"") && strstr(j, "\"upscale_effective\":\"balanced\"") && strstr(j, "\"rt_shadow_set\":\"on\"") && strstr(j, "\"rt_shadow_eff\":\"unsupported\"") && strstr(j, "\"framegen\":null") && strstr(j, "\"input_mode\":\"touch\"") && strstr(j, "\"pad_type\":\"none\"") && strstr(j, "\"lang\":1") && strstr(j, "\"font\":\"lxgw\""));
+    CHECK(strstr(j, "\"fps_selected\":120") && strstr(j, "\"fps_effective\":120") && strstr(j, "\"upscale_selected\":\"quality\"") && strstr(j, "\"upscale_effective\":\"balanced\"") && strstr(j, "\"rt_shadow_set\":\"on\"") && strstr(j, "\"rt_shadow_eff\":\"unsupported\"") && strstr(j, "\"framegen\":1") && strstr(j, "\"input_mode\":\"touch\"") && strstr(j, "\"pad_type\":\"none\"") && strstr(j, "\"lang\":1") && strstr(j, "\"font\":\"lxgw\""));
     // 脱敏：外壳给什么脏值都进不来；设备码不合格就不生成 | scrubbing: no dirty value from the shell gets in; a bad device code generates nothing
     { dm_tele_device_t keep = f_dev;
       f_dev.model = "/Users/someone/Augustus' iPhone"; f_dev.locale = "zh_CN/../../Users/someone"; f_dev.app_version = "1.0 (Bob's)"; f_dev.build = "abc"; f_dev.source_revision = "Paladin"; f_dev.os_version = "iPhone OS 27"; f_dev.channel = "http://x"; f_dev.soc = "a\"b"; f_dev.gpu_driver = "/var/mobile/x"; f_dev.pack_source = "somewhere";
@@ -271,8 +271,8 @@ int main(void) {
       f_dev.model = "1234567890123456789012345678901234567890XYZ"; CHECK(dm_telemetry_build_launch(1, 1000, j, sizeof j) && strstr(j, "\"model\":\"1234567890123456789012345678901234567890\""));
       f_dev.model = "\xe5\x8d\x8e\xe4\xb8\xba,,,"; CHECK(dm_telemetry_build_launch(1, 1000, j, sizeof j) && strstr(j, "\"model\":\"unknown\"")); f_dev.model = NULL; CHECK(dm_telemetry_build_launch(1, 1000, j, sizeof j) && strstr(j, "\"model\":\"unknown\""));
       // C10：安卓超分与 iCloud 固定无能力值；iOS 不变 | Android upscaling and iCloud are fixed no-capability values; iOS unchanged
-      f_dev.model = "AYN Thor"; CHECK(dm_telemetry_build_launch(1, 1000, j, sizeof j) && strstr(j, "\"upscale_selected\":\"off\"") && strstr(j, "\"upscale_effective\":\"off\"") && strstr(j, "\"icloud\":0"));
-      f_dev = keep; CHECK(dm_telemetry_build_launch(1, 1000, j, sizeof j) && strstr(j, "\"upscale_selected\":\"quality\"") && strstr(j, "\"icloud\":1") && strstr(j, "\"model\":\"iPhone18,3\"")); }
+      f_dev.model = "AYN Thor"; CHECK(dm_telemetry_build_launch(1, 1000, j, sizeof j) && strstr(j, "\"upscale_selected\":\"off\"") && strstr(j, "\"upscale_effective\":\"off\"") && strstr(j, "\"icloud\":0") && strstr(j, "\"framegen\":0"));   // 安卓帧生成固定 0 | Android frame generation fixed 0
+      f_dev = keep; CHECK(dm_telemetry_build_launch(1, 1000, j, sizeof j) && strstr(j, "\"upscale_selected\":\"quality\"") && strstr(j, "\"icloud\":1") && strstr(j, "\"framegen\":1") && strstr(j, "\"model\":\"iPhone18,3\"")); }
       // 回执太长截断 = 坏 JSON = 无效 | a truncated answer is bad JSON, invalid
       wipe(); launch(0, 1000); t = go_send(1, 1001, 0); { static char longr[REPLY_MAX + 100]; memset(longr, ' ', sizeof longr); longr[0] = '{'; longr[sizeof longr - 2] = '}'; longr[sizeof longr - 1] = 0; http(f_tok, 200, longr, 0); } dm_telemetry_tick(t, 1010, 1); dm_telemetry_state(&q, 0, &at); CHECK(q == 1 && at == 1); }
     // 外壳一直没回话：看门狗 | the shell never answers: watchdog

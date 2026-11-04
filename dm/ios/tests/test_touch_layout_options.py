@@ -42,13 +42,15 @@ def host_variant():   # VOICE_ROW 恒为 1（voice 行不再跟 MOVIE_FFMPEG 走
     return re.sub(r'(?m)^#.*\n', '', keep)
 host = host_variant()
 keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
-assert sorted(key for key in keys if key not in ('eco_fps', 'q3d', 'bright_level', 'fps_hud', 'upscale', 'render_res', 'rt_level')) == sorted([key for key, _ in layout._CUSTOM_ALL] + list(layout._GAME_KEYS)), keys   # 图形页七键（含显示帧数、画面加亮、光追档位）不在系统 / 游戏页 | the seven Graphics-tab keys are not System / Gameplay rows
+assert sorted(key for key in keys if key not in ('eco_fps', 'q3d', 'fgen_level', 'bright_level', 'fps_hud', 'upscale', 'render_res', 'rt_level')) == sorted([key for key, _ in layout._CUSTOM_ALL] + list(layout._GAME_KEYS)), keys   # 图形页八键（含显示帧数、画面加亮、AI 帧生成、光追档位）不在系统 / 游戏页 | the eight Graphics-tab keys are not System / Gameplay rows
 assert keys[-5:] == ['bright_level', 'fps_hud', 'upscale', 'render_res', 'rt_level'] and keys[-8:-5] == ['belt_refill', 'tel_stats', 'auto_crash']   # 末五键 = 图形页 K_BRIGHT / K_FPSHUD / K_UPSCALE / K_RES / K_RTLVL，之前是 K_TELSTATS / K_AUTOCRASH | last five keys = Graphics-tab K_BRIGHT .. K_RTLVL, preceded by K_TELSTATS / K_AUTOCRASH
+assert keys[keys.index('free_tp') + 1] == 'fgen_level' and keys.index('fgen_level') == int(re.search(r'#define K_FGEN (\d+)', host_src)[1])   # 帧生成档位插在 free_tp 后：前面写死的下标、后面 NK - n 的下标都不动 | fgen_level follows free_tp: fixed indices before and NK - n ones after stay put
 assert keys[0] == 'lang' and keys[1] == 'voice'   # 配音行在语言行之后（缺省包也有）| voice follows language on every build
 for name in ('TouchCustom_voice', 'TouchCustom_voice_zh', 'TouchCustom_voice_Text'): assert name in nodes, name   # 触屏系统页真的摆出了配音单选（两个勾选框）| the touch System page really lays out the voice radio (both checkboxes)
 defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
 assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
 assert defaults[keys.index('free_tp')] == 1   # 免费回城缺省开（用户 2026-10-30，RC2 起） | free town portal on by default (user 2026-10-30, from RC2)
+assert defaults[keys.index('fgen_level')] == 0   # AI 帧生成缺省关（实验性）| AI frame generation off by default (experimental)
 assert defaults[keys.index('bright_level')] == 2   # 画面加亮缺省「中」（用户方案 C，B098 中 = 上限 2；审计 r1 P2-6） | brightening defaults to mid (plan C, B098 mid = cap 2; audit r1 P2-6)
 # 平台限制：DM_TARGET=android 的自定义页没有 icloud 行，其余行序不变（宿主 dm_custom.c custom_row 在没有 iCloud 的平台同样跳过）| per-platform: under DM_TARGET=android the Custom page has no icloud row, the other rows keep their order (the host's custom_row skips it likewise)
 os.environ['DM_TARGET'] = 'android'; layout = importlib.reload(layout)
@@ -109,16 +111,17 @@ assert g_nodes['TouchGraphicsRes']['fields']['onUpdateMessage'].endswith('SetD2R
 assert g_nodes['TouchGraphicsResText']['fields']['text'] == '@dmGraphicsResAuto'
 _res_y = g_nodes['TouchGraphicsResRow']['fields']['rect']['y']; _hint = g_nodes['TouchGraphicsApplyHint']['fields']['rect']
 _rows_y = [_res_y, g_nodes['TouchGraphicsBrightRow']['fields']['rect']['y'], g_nodes['TouchGraphicsFpsHudRow']['fields']['rect']['y'], g_nodes['TouchGraphicsFpsText']['fields']['rect']['y'],
+           g_nodes['TouchGraphicsFrameGenRow']['fields']['rect']['y'],
            g_nodes['TouchGraphicsUpscaleText']['fields']['rect']['y'], g_nodes['TouchGraphicsProfileRow']['fields']['rect']['y'], g_nodes['TouchGraphicsRtRow']['fields']['rect']['y']]
 # 布局初始 y 与宿主全部可见（Apple）时的排法逐行一致（审计 r1 P2-5 补回）：这张表 t_graphics_gate 用 graphics_row_y 核宿主那一侧，两边任一侧漂了都会红
 # The layout's initial y matches the host's all-visible (Apple) packing row by row (audit r1 P2-5, restored): t_graphics_gate checks the host side of the same table with graphics_row_y, so drift on either side fails
-GRAPHICS_ALL_VISIBLE_Y = [180, 360, 720, 900, 1260, 1440, 1800]   # 分辨率 / 加亮 | 显示帧数 / 帧率 | 超分开关 / 档位 | 光追档位（每换一组多一行标题）| resolution / brightening | fps hud / fps | upscale / profile | rt level (one heading row per group)
+GRAPHICS_ALL_VISIBLE_Y = [180, 360, 720, 900, 1080, 1440, 1620, 1980]   # 分辨率 / 加亮 | 显示帧数 / 帧率 / AI 帧生成 | 超分开关 / 档位 | 光追档位（每换一组多一行标题）| resolution / brightening | fps hud / fps | upscale / profile | rt level (one heading row per group)
 assert _rows_y == GRAPHICS_ALL_VISIBLE_Y, _rows_y
 _gate = (root / 'host/tests/t_graphics_gate.c').read_text(encoding='utf-8')
-assert 'static const int want[7] = { %s };' % ', '.join(map(str, GRAPHICS_ALL_VISIBLE_Y)) in _gate   # 同一张表 | the same table
-assert [g_nodes[h]['fields']['rect']['y'] for h in ('TouchOptHeadFrame', 'TouchOptHeadUpscale', 'TouchOptHeadRt')] == [GRAPHICS_ALL_VISIBLE_Y[2] - 180, GRAPHICS_ALL_VISIBLE_Y[4] - 180, GRAPHICS_ALL_VISIBLE_Y[6] - 180]   # 组标题在组首行上一行（宿主 graphics_row_y - 180）| headings one row above the group's first row
-assert g_nodes['TouchGraphicsFps']['fields']['rect']['y'] == _rows_y[3] + 55 and g_nodes['TouchGraphicsUpscale']['fields']['rect']['y'] == _rows_y[4] + 55
-assert g_nodes['TouchGraphicsFpsNote']['fields']['rect']['y'] == _rows_y[3] + 116 and g_nodes['TouchGraphicsUpscaleNoHw']['fields']['rect']['y'] == _rows_y[4] + 116   # 宿主 y + 116 | host y + 116
+assert 'static const int want[8] = { %s };' % ', '.join(map(str, GRAPHICS_ALL_VISIBLE_Y)) in _gate   # 同一张表 | the same table
+assert [g_nodes[h]['fields']['rect']['y'] for h in ('TouchOptHeadFrame', 'TouchOptHeadUpscale', 'TouchOptHeadRt')] == [GRAPHICS_ALL_VISIBLE_Y[2] - 180, GRAPHICS_ALL_VISIBLE_Y[5] - 180, GRAPHICS_ALL_VISIBLE_Y[7] - 180]   # 组标题在组首行上一行（宿主 graphics_row_y - 180）| headings one row above the group's first row
+assert g_nodes['TouchGraphicsFps']['fields']['rect']['y'] == _rows_y[3] + 55 and g_nodes['TouchGraphicsUpscale']['fields']['rect']['y'] == _rows_y[5] + 55
+assert g_nodes['TouchGraphicsFpsNote']['fields']['rect']['y'] == _rows_y[3] + 116 and g_nodes['TouchGraphicsUpscaleNoHw']['fields']['rect']['y'] == _rows_y[5] + 116   # 宿主 y + 116 | host y + 116
 assert _hint['y'] == _rows_y[-1] + 180 and 'graphics_row_y(all_vis, nv - 1) + 180' in (root / 'host/dm_custom.c').read_text(encoding='utf-8')
 assert g_nodes['TouchGraphicsRows']['fields']['rect']['height'] >= _hint['y'] + _hint['height']
 # 光追档位（实验性）：一行四档滑块，方案 C「光线追踪」组里唯一一行，缺省摆在超分档位行之后（宿主按可见行数挪），说明再往下；三行副文同款 28 号说明灰、在行内、不压滑块，宿主三选一显示；灰色文字给没有硬件光追的机器 | ray-tracing level (experimental): one four-position slider row, after the profile row by default (moved by the host per visible rows), the hint below; three subtexts in the same 28 pt grey, inside the row, clear of the slider, the host shows one; the grey caption is for machines without hardware ray tracing
@@ -129,6 +132,16 @@ assert g_nodes['TouchGraphicsRtText']['fields']['text'] == '@dmGraphicsRtLevelOf
 for _n, _k in (('TouchGraphicsRtNote', '@dmGraphicsRtLevelNote'), ('TouchGraphicsRtHighNote', '@dmGraphicsRtLevelHighNote'), ('TouchGraphicsRtNoHw', '@dmGraphicsRtLevelNoHw')):
     _f = g_nodes[_n]['fields']; assert _f['text'] == _k and _f['style/pointSize'] == 28 and _f['style/fontColor'] == '$FontColorLightGray' and _f['style/spacing'] == '$ReducedSpacing', _f
     assert _f['rect']['y'] >= 80 and _f['rect']['y'] + _f['rect']['height'] <= 150 and _f['rect']['x'] + _f['rect']['width'] <= g_nodes['TouchGraphicsRtLevel']['fields']['rect']['x'], _f['rect']
+# AI 帧生成（实验性）：「帧率」组里帧率滑块下一行；勾选框 + 标签 + 副文都在行容器里（副文 §2.6：28 号、说明灰、$ReducedSpacing，在手柄选中框内、不压勾选框）；宿主置灰 / 改写副文
+# AI frame generation (experimental): the row under the frame-rate slider in the Frame group; checkbox + caption + subtext in the row container (subtext §2.6, inside the controller frame, clear of the checkbox); the host greys it / rewrites the subtext
+assert g_nodes['TouchGraphicsFrameGen']['type'] == 'ToggleButtonWidget' and g_nodes['TouchGraphicsFrameGenText']['fields']['text'] == '@dmGraphicsFrameGen'
+_fgn = g_nodes['TouchGraphicsFrameGenNote']['fields']
+assert _fgn['text'] == '@dmIosGraphicsFrameGenNote' and _fgn['style/pointSize'] == 28 and _fgn['style/fontColor'] == '$FontColorLightGray' and _fgn['style/spacing'] == '$ReducedSpacing', _fgn
+assert _fgn['rect']['y'] >= 80 and _fgn['rect']['y'] + _fgn['rect']['height'] <= 150 and _fgn['rect']['x'] + _fgn['rect']['width'] <= g_nodes['TouchGraphicsFrameGen']['fields']['rect']['x'], _fgn['rect']
+assert {c['name'] for c in g_nodes['TouchGraphicsFrameGenRow']['children']} == {'TouchGraphicsFrameGen', 'TouchGraphicsFrameGenText', 'TouchGraphicsFrameGenNote'}
+assert g_nodes['TouchGraphicsFpsNote']['fields']['rect']['y'] + g_nodes['TouchGraphicsFpsNote']['fields']['rect']['height'] <= _rows_y[4]   # 帧率行副文不压帧生成行 | the frame-rate subtext stays above the frame-generation row
+# 安卓没有帧插值：帧生成整行不进布局，键名 / 文案键也不进（§2.8）| Android has no frame interpolation: the row, its widget names and text keys are absent (§2.8)
+assert 'TouchGraphicsFrameGen' not in _and_out and 'GraphicsFrameGen' not in _and_out, 'frame generation must not be in the Android layout'
 # 安卓没有 Metal 光追：布局整行不出现（§2.8）| Android has no Metal ray tracing: the row is absent from its layout (§2.8)
 assert 'TouchGraphicsRt' not in _and_out and 'dmGraphicsRtLevel' not in _and_out and 'TouchOptHeadRt' not in _and_out and 'dmOptGrpRt' not in _and_out   # 光追组标题也不进（§2.8）| nor the ray-tracing group heading
 # 120 帧档不给高画质（用户 2026-10-29）：档位行里一行副文（28 号、说明灰、$ReducedSpacing，CLAUDE.md §2.6），宿主只在 120 帧格选着时显示；在档位文字下方、行内，不压下一行
@@ -215,8 +228,11 @@ assert 'row_id == ROW_FPS' in _custom and 'row_id == ROW_FPSHUD' in _custom and 
 # Ray-tracing row (experimental) comes last: controller row 4; visible rows are packed and the selection frame follows the visible index; with the profile row hidden the ray-tracing row and the hint each move up one slot (matching the layout defaults 900 / 1080)
 # 可见行由 graphics_rows_pack 紧挨着排（f705573 起：安卓藏分辨率 / 超分行时后面的行上移），行号取 vis[selected]；说明行接在最后一个可见行下面；全部可见时说明在 180 × 7 = 1260
 # Visible rows are packed by graphics_rows_pack (since f705573: with the resolution / upscale rows hidden on Android the later rows move up), row_id = vis[selected]; the hint follows the last visible row; with everything visible the hint sits at 180 × 7 = 1260
-assert 'enum { ROW_RES, ROW_BRIGHT, ROW_FPSHUD, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT }' in _custom
-assert 'int row_id = vis[selected];' in _custom and 'graphics_rows_pack(res_ok, up_show, prof_on, rt_show, vis)' in _custom
+assert 'enum { ROW_RES, ROW_BRIGHT, ROW_FPSHUD, ROW_FPS, ROW_FG, ROW_UPSCALE, ROW_PROFILE, ROW_RT }' in _custom
+assert 'int row_id = vis[selected];' in _custom and 'graphics_rows_pack(res_ok, up_show, prof_on, rt_show, fg_show, vis)' in _custom
+# AI 帧生成行（手柄）：A 只在可切时改待定值（置灰时 fg = 0）；行按 graphics_rows_pack 的 fg_show 进可见行，跟布局一样在帧率组 | frame-generation row (controller): A changes the pending value only when switchable (fg = 0 when greyed); the row joins the visible rows via fg_show, in the Frame group as in the layout
+assert 'row_id == ROW_FG && fg' in _custom and 'fg_pad_press(fg_edit, pending_value(K_FGEN))' in _custom and 'fg_touch_toggle(fg_edit, TOGGLED(fg), pending_value(K_FGEN))' in _custom and 'if (fg && !fg_edit) { set_toggle_grey(fg); fg = 0; }' in _custom and 'case ROW_FG: if (fgrow) move_ours_y(fgrow, y); break;' in _custom
+assert 'row <= ROW_FG ? 1' in _custom   # 帧生成属「帧率」组 | frame generation belongs to the Frame group
 assert 'case ROW_RT: if (rtrow) move_ours_y(rtrow, y); break;' in _custom and 'case ROW_FPSHUD: move_ours_y(find_w(sp, "TouchGraphicsFpsHudRow", 0), y); break;' in _custom
 assert 'move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), graphics_row_y(all_vis, nv - 1) + 180)' in _custom
 print('PASS Graphics rows: render resolution first, host controller rows in the same order')
@@ -277,7 +293,8 @@ for _target in (None, 'android'):
     assert _tab['rt_level'] == ('gfx', 'Rt', 'apple') and [k for k, (_, g, _p) in _tab.items() if g == 'Rt'] == ['rt_level'], _tab
     assert _tab['tel_stats'] == ('sys', 'Privacy', 'all') and _tab['auto_crash'] == ('sys', 'Privacy', 'all')
     assert _tab['belt_refill'] == ('game', 'Loot', 'all') and _tab['pot_pick'][1] == 'Loot'
-    assert not {'rt_level', 'tel_stats', 'auto_crash', 'belt_refill'} & layout._OPT_PENDING and 'rt_shadow' not in _tab and 'rt_ao' not in _tab
+    assert not {'rt_level', 'tel_stats', 'auto_crash', 'belt_refill', 'fgen_level'} & layout._OPT_PENDING and 'rt_shadow' not in _tab and 'rt_ao' not in _tab
+    assert _tab['fgen_level'] == ('gfx', 'Frame', 'apple') and 'fgen' not in _tab   # 帧生成键名照分支实际的 fgen_level（旧占位 fgen 去掉）| the frame-generation key is the branch's real fgen_level (the old fgen placeholder is gone)
     assert layout._CUSTOM_KEYS[-2:] == ('tel_stats', 'auto_crash') and 'belt_refill' in layout._GAME_KEYS, (layout._CUSTOM_KEYS, layout._GAME_KEYS)
     assert ('Privacy', layout._CUSTOM_Y[[k for k, _ in layout._CUSTOM_ALL].index('tel_stats')] - layout._CUSTOM_LINE_H) in layout._CUSTOM_HEADS, layout._CUSTOM_HEADS   # 隐私组标题在统计行上一行 | the Privacy heading sits one row above the statistics row
 os.environ.pop('DM_TARGET', None); layout = importlib.reload(layout)

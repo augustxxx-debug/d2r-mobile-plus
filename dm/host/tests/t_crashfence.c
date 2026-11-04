@@ -100,6 +100,21 @@ int main(void) {
     CHECK(dm_custom_get("rt_level") == 2); CHECK(dm_custom_get("eco_fps") == FPS_120); CHECK(dm_custom_get("upscale") == 1);
     read_settings(text, sizeof text); CHECK(!strstr(text, "exp_off_backup")); CHECK(strstr(text, "rt_shadow=1\n"));
     CHECK(exp_restore_pending() == 0);   // 备份用完 | the backup is used up
+    // 12b. 第 4 项 AI 帧生成（fgen_level）：同一套规则——自动关前记原档位、已有备份不覆盖、图形页打开时预选、应用清备份、放弃保留；备份行四项顺序固定；旧名 fgen:1 / rt_shadow:1 照迁
+    // 12b. The 4th entry, AI frame generation (fgen_level): the same rules - the level recorded before the automatic off, an existing backup kept, pre-selected when the Graphics tab opens, cleared on Apply, kept on Discard; four entries in a fixed order; old names fgen:1 / rt_shadow:1 still migrate
+    dm_crashfence_clean("优雅退出"); write_settings("eco_fps=2\nrt_shadow=1\nupscale=1\nfgen_level=2\nq3d=0\nq3d_v2=1\n");
+    setenv("DM_TEST_CRASH_MARK", "2", 1); restart(); dm_crashfence_start(); unsetenv("DM_TEST_CRASH_MARK");
+    CHECK(dm_custom_get("fgen_level") == 0); read_settings(text, sizeof text); CHECK(strstr(text, "exp_off_backup=eco_fps:2,rt_level:2,upscale:1,fgen_level:2\n")); CHECK(strstr(text, "fgen_level=0\n"));
+    setenv("DM_TEST_CRASH_MARK", "2", 1); restart(); dm_crashfence_start(); unsetenv("DM_TEST_CRASH_MARK");   // 第二轮自动关：值已是关，备份不被覆盖成 0 | a second automatic pass: values already off, the backup is not overwritten with 0
+    read_settings(text, sizeof text); CHECK(strstr(text, "exp_off_backup=eco_fps:2,rt_level:2,upscale:1,fgen_level:2\n"));
+    atomic_store(&g_loaded, 0); load_once(); CHECK(exp_restore_pending() == 4); CHECK(atomic_load(&g_pend[K_FGEN]) == 2);
+    dm_custom_on_uimsg("OptionsPanelMessage", "CancelChanges", NULL); CHECK(dm_custom_get("fgen_level") == 0); read_settings(text, sizeof text); CHECK(strstr(text, "fgen_level:2"));   // 放弃：还关着、备份还在 | Discard: still off, backup kept
+    CHECK(exp_restore_pending() == 4); dm_custom_on_uimsg("OptionsPanelMessage", "AcceptChanges", NULL);
+    CHECK(dm_custom_get("fgen_level") == 2 && dm_custom_get("rt_level") == 2); read_settings(text, sizeof text); CHECK(!strstr(text, "exp_off_backup")); CHECK(strstr(text, "fgen_level=2\n"));
+    write_settings("fgen_level=0\nq3d_v2=1\nexp_off_backup=rt_shadow:1,fgen:1\n"); atomic_store(&g_loaded, 0); load_once();   // 旧包的两个旧名 | the two old names from older packages
+    CHECK(exp_restore_pending() == 2 && atomic_load(&g_pend[K_RTLVL]) == 2 && atomic_load(&g_pend[K_FGEN]) == 2); dm_custom_on_uimsg("OptionsPanelMessage", "CancelChanges", NULL);
+    write_settings("fgen_level=1\nupscale=0\nq3d_v2=1\n"); atomic_store(&g_loaded, 0); CHECK(dm_custom_safe_mode(what, sizeof what) == 1 && strstr(what, "AI 帧生成"));   // 省电档 1 也算开着 | the reserved level 1 counts as on too
+    read_settings(text, sizeof text); CHECK(strstr(text, "exp_off_backup=fgen_level:1\n"));
     // 13. 只有一部分开着：只备份开着的那几项 | 13. Only some were on: only those are backed up
     write_settings("eco_fps=0\nrt_shadow=1\nupscale=0\nq3d=0\nq3d_v2=1\n"); atomic_store(&g_loaded, 0);
     CHECK(dm_custom_safe_mode(what, sizeof what) == 1); read_settings(text, sizeof text); CHECK(strstr(text, "exp_off_backup=rt_level:2\n"));

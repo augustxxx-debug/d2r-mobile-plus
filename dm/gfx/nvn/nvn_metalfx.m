@@ -75,6 +75,13 @@
     return _pipeline && _sampler ? self : nil;
 }
 - (NSArray<id<MTLResource>> *)resources { return @[_scaled]; }
+- (id<MTLTexture>)scaledTexture { return _scaled; }
+- (BOOL)encodeScaleOnly:(id)commandBuffer input:(id<MTLTexture>)input contentWidth:(NSUInteger)width contentHeight:(NSUInteger)height {
+    if (!commandBuffer || !input || input.width != _width || input.height != _height || input.pixelFormat != _inputFormat || !width || !height || width > _width || height > _height) return NO;
+    _scaler.colorTexture = input; _scaler.inputContentWidth = width; _scaler.inputContentHeight = height; _scaler.outputTexture = _scaled;
+    [_scaler encodeToCommandBuffer:commandBuffer];
+    return YES;
+}
 - (BOOL)matchesInput:(id<MTLTexture>)input output:(id<MTLTexture>)output {
     return input.width == _width && input.height == _height && input.pixelFormat == _inputFormat && output.width == _outWidth && output.height == _outHeight && output.pixelFormat == _outputFormat;
 }

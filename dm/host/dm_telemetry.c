@@ -194,7 +194,10 @@ static void settings_json(jb *b, int android) {   // 安卓没有超分与 iClou
     // rt_level 取代了 rt_shadow / rt_ao（RC2 并线）：协议字段不变——设置 = 档位非关，生效 = 生效档位非关；AO 跟高档走，DM_RT_AO 钉住时按它 | rt_level replaced rt_shadow / rt_ao (RC2 merge): protocol fields unchanged - set = level not off, effective = effective level not off; AO follows High, DM_RT_AO pins it
     int rt_set = dm_custom_get("rt_level") != 0, rt_lvl = dm_rt_level_setting(), rt_on = rt_lvl > 0; const char *ao = getenv("DM_RT_AO"); int ao_on = ao ? *ao == '1' && rt_on : rt_lvl == 3;
     J_STR(b, DM_TF_S_RT_SHADOW_SET, rt_set ? "on" : "off"); J_STR(b, DM_TF_S_RT_SHADOW_EFF, rt_on ? "on" : rt_set ? "unsupported" : "off"); J_INT(b, DM_TF_S_RT_AO, ao_on);
-    jf(b, ",\"%s\":null", DM_TF_S_FRAMEGEN);   // 帧生成还没并进来 | frame generation is not merged yet
+    // 帧生成（协议只有一个字段 framegen，服务端取值 0 / 1 / null，字段名不改）：报「选了没有」= 设置档 fgen_level 非关；生效状态随温控 / 帧率 / 光追时刻在变，启动那一刻的值没有统计意义，看分享摘要「帧生成：状态」。
+    // 安卓没有帧生成：固定 0（同超分 / iCloud 的无能力值，P-000 C10；跨端带过来的档位不算）| frame generation (the protocol has one field, framegen, 0 / 1 / null on the service; name unchanged): reports "selected" = the fgen_level setting not off;
+    // the effective state moves with heat / frame rate / ray tracing, so its value at launch means little (see the share summary). Android has no frame generation: fixed 0 (a no-capability value like upscaling / iCloud, P-000 C10; a level carried over from another platform does not count)
+    J_INT(b, DM_TF_S_FRAMEGEN, !android && dm_custom_get("fgen_level") != 0);
     J_STR(b, DM_TF_S_INPUT_MODE, dm_padmode_current() ? "pad" : "touch"); J_STR(b, DM_TF_S_PAD_TYPE, dm_padmode_pad_type());
     J_INT(b, DM_TF_S_LANG, dm_lang_group());
     dm_tele_device_t d; memset(&d, 0, sizeof d); if (g_shell && g_shell->device) g_shell->device(&d);

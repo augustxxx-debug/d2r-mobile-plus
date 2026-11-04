@@ -37,7 +37,7 @@ Both features below are in development and **expected to open for testing in ear
 | Free Town Portal | Options → Custom, on by default: the touch portal button and the skill-tree portal skill consume no tome or scroll; off is the original game | Implemented; on-by-default not yet checked on a device |
 | 3D brightening | The upstream brightening of dark levels now stops at 2× exposure by default on every platform (it was 4× in caves on iOS), and its highlight protection is monotonic, so bright caves such as the Act 5 ice caves no longer show banded, negative-looking ice with colored speckle. Caves look one step darker than in earlier iOS builds; a planned brightness setting will offer "High" (4×) | Implemented (B098); Mac host screenshots and unit tests, not yet checked on a device |
 
-These are changes on top of upstream commit [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). The branch adds experimental MetalFX spatial upscaling; it does not introduce multiplayer or frame generation. Upstream performance measurements and platform support claims are not new benchmarks for this fork.
+These are changes on top of upstream commit [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit/195ae11dc70f1ba7735c6063e1ed81102e1dbf52). The branch adds experimental MetalFX spatial upscaling and experimental AI frame generation (off by default); it does not introduce multiplayer. Upstream performance measurements and platform support claims are not new benchmarks for this fork.
 
 ## MetalFX spatial upscaling (experimental)
 
@@ -61,6 +61,16 @@ Auto samples system state at most once per second. Reductions take effect at the
 The frame-timing controller retains its 3-second post-change hold, approximately 30-second clean recovery, and approximately 90-second recovery after a failed upward step. Auto cap changes retain any further reduction imposed by frame timing; recovering the cap does not reset actual resolution. The game thread receives one final absolute target, avoiding transient cap/level mismatches. Low Power Mode refers to the system switch, not battery percentage. Local state-sequence and production-controller tests cover these timing rules; device stutter and power measurements for this change remain pending.
 
 Ratios apply separately to width and height, not energy savings. Only 3D color is upscaled, retaining the original mask; subsequent UI composition retains its resolution.
+
+### AI frame generation (experimental)
+
+**Options → Graphics** has a row **AI frame generation (experimental)** in the Frame Rate group, under the frame-rate slider, off by default. It can be switched on iPhones that support MetalFX frame interpolation, with a screen of at least 120 Hz and a memory tier that allows the high-refresh stop; elsewhere the row is greyed with a note saying why. The Android build has no such row. It takes effect on Apply, no restart needed. The game keeps rendering 60 frames; one interpolated frame is presented before each real frame, so the screen shows 120.
+
+- Interpolation runs on the 3D picture at its own size; the result then goes through the same upscaling as real frames. Menus, HUD and text are never interpolated.
+- Motion comes from the game's camera only: moving units and spell effects have no motion vectors, so they may show a double image. Latency grows by about half a real frame plus the interpolation time.
+- Combination with other settings: it works only at the **60 FPS** stop (at 30 FPS it is unavailable; at the high-refresh stop the screen is already at its limit; the setting is kept, the row's note says why, and it applies again at 60). It has no effect while **ray tracing** is on (any level above Off). MetalFX upscaling profiles are unaffected.
+- It stops on its own at thermal state Serious or above and resumes after 60 seconds below; it also stops if rendering stays under 45 FPS for three windows in a row while interpolating, loading hitches excluded (120 seconds, doubling on repeats), and while the app's memory margin is under 500 MB or after a system memory warning, releasing its textures and interpolator (about 116 MB at Eco on iPhone Duo). The same objects are released in the background, and the crash fence turns it off together with the other experimental features.
+- The share-diagnostics summary carries a `帧生成：状态 fg=0|1` line with the reason.
 
 ### 120 FPS (experimental)
 
