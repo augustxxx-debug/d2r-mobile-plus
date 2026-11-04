@@ -4,7 +4,9 @@
 
 本日志仅记录 **D2R Mobile Plus** 相对上游基线的改动，不重复上游版本历史。条目描述实现状态；“未发布”不代表已提供二进制发行版。
 
-## [未发布]
+## [1.0.0 RC2] - 2026-11-05
+
+本次发布 iOS 版；安卓与联机另发。
 
 RC2 把 iOS 线和安卓线合成一棵树，两端的包出自同一个提交。
 
@@ -238,4 +240,4 @@ RC2 把 iOS 线和安卓线合成一棵树，两端的包出自同一个提交�
 - `main` 保留上游基线；`codex/plus` 承载增强预览。
 - 仅发布源码与文档。游戏衍生资源、本地诊断、存档、签名材料及商业字体文件不入库。
 
-[未发布]: https://github.com/augustxxx-debug/d2r-mobile-plus/compare/main...codex/plus
+[1.0.0 RC2]: https://github.com/augustxxx-debug/d2r-mobile-plus/compare/main...codex/plus

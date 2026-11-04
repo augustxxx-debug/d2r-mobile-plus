@@ -4,7 +4,9 @@
 
 This changelog records changes introduced by **D2R Mobile Plus** relative to its upstream baseline. It does not restate the upstream release history. Entries describe implementation status; an unreleased entry is not a published binary release.
 
-## [Unreleased]
+## [1.0.0 RC2] - 2026-11-05
+
+This release ships the iOS build; Android and co-op ship separately.
 
 RC2 merges the iOS and Android lines: one tree, and both packages come from the same commit.
 
@@ -239,4 +241,4 @@ Baseline: upstream [`195ae11`](https://github.com/jhaizhou-ops/d2r-mobile/commit
 - `main` retains the upstream baseline; `codex/plus` carries the enhancement preview.
 - Only source and documentation are published. Game-derived resources, local diagnostics, saves, signing material and commercial font files are excluded.
 
-[Unreleased]: https://github.com/augustxxx-debug/d2r-mobile-plus/compare/main...codex/plus
+[1.0.0 RC2]: https://github.com/augustxxx-debug/d2r-mobile-plus/compare/main...codex/plus
