@@ -8,9 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "dm_pan.h"
-// 渠道卡片上限：布局 touch_layout.py 的 CO_CH_ROWS 与这里同一个数（Python 测试核对两边）
-// Channel-card limit: CO_CH_ROWS in touch_layout.py is the same number (the Python test checks both sides)
-#define DM_COMMUNITY_CHANNEL_ROWS 3
 int dm_community_manifest(const char *json, size_t len);   // 外壳每次拉完清单调（任意线程）：json / len = 原文（NULL = 这次没拉到）。返回 1 有字段（已写缓存）/ 0 无字段或清单结构坏（入口不显示，缓存已删）/ -1 没拉到，或给了渠道但全不合规，空串也算（沿用缓存；要撤下渠道就省略键，撤下入口就省略 community 或给 community: {}） | called by the shell after every fetch (any thread): json / len = raw text (NULL = fetch failed). Returns 1 field present (cache written) / 0 absent or a malformed manifest (entry hidden, cache deleted) / -1 not fetched, or channels given but all invalid, empty strings included (cache kept; to withdraw a channel omit its key, to withdraw the entry omit community or give community: {})
 void dm_community_load(void);                              // 宿主入口调一次（可重入）：读缓存；测试局另认 DM_TEST_COMMUNITY=<清单文件> | called once at host entry (idempotent): read the cache; test runs also honor DM_TEST_COMMUNITY=<manifest file>
 int dm_community_value(int lang_group, char *out, size_t n);   // 按语言组（DM_LG_*）选要显示 / 复制的值：0 没有 / 1 群号 / 2 链接。中文：群号，没有群号才给链接；其他语言只给链接。链接 = 官网（清单 site），没有官网时中文先用国内镜像、再退回 GitHub；其他语言退回 GitHub | the value to show / copy for a language group (DM_LG_*): 0 none / 1 group number / 2 link. Chinese: the number, the link only without one; other languages: the link only. The link = the website (manifest site), else the mainland mirror for Chinese, else GitHub

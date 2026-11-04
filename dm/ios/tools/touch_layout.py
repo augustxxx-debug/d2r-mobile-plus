@@ -339,66 +339,38 @@ def _safe(anchor):
             + ''.join(_upd_text('TouchSafeDesc%d' % k, 99999, 99999, 1700, 36, (232, 228, 214), 'center', a) for k in range(3))
             + _btn('TouchSafeOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchSafeOk', x=99999, anchor=anchor))
 _SAFE = _safe(True); _SAFE_PAD = _safe(False)
-# 社区入口的游戏内提示框（dm/host/dm_community.c）：与崩溃围栏提示框同一套做法——边框 15 片（自己一套切片 Ztouch_comm）+ 标题 + 渠道卡片 0–3 张（标签 / 值 / 各自的小「复制」）
-# + 网盘 0–4 行（图标方框 + 首字 / 名称 / 「打开」/ 提取码 / 「复制」）+ 免费声明 + 分隔线 + 页脚两行 + 「确定」；确认态换内容，多一颗「取消」与一行正文。
-# 全部屏外起步、字空着，不带锚点：挂在暂停菜单面板（两份）、前端主菜单（手柄版 pad_ribbon / 触屏版）与自定义页面板末尾，
-# 这些面板都按屏宽一半锚定且带主机档缩放，宿主按面板矩形与缩放算出整屏居中的位置。复制走外壳剪贴板回调
-# In-game notice box of the community entry (dm/host/dm_community.c): same approach as the crash-fence box - 15 frame tiles (its own slices Ztouch_comm) + title + 0-3 channel cards (label / value / own small Copy)
-# + 0-4 cloud-drive rows (icon square + first glyph / name / Open / code / Copy) + free notice + divider + two footer lines + "OK"; the confirm state swaps the content and adds a Cancel and one body line.
-# All start off screen with empty text and carry no anchor: hung at the end of the pause menu panel (both), the front-end main menu (controller pad_ribbon / touch) and the Custom page panel,
-# which are anchored at half the screen width and carry the console-profile scale; the host computes the screen-centered position from the panel's rect and scale. Copy goes through the shell's clipboard callback
+# 社区入口的游戏内提示框（dm/host/dm_community.c）：与崩溃围栏提示框同一套做法——边框 15 片（自己一套切片 Ztouch_comm）+ 标题 + 渠道卡片 0–2 张（标签 / 值 / 各自的小「复制」）
+# + 免费声明 + 分隔线 + 页脚两行 + 「确定」（RC1.1 重构，控件清单见下面 _community）。全部屏外起步、字空着，不带锚点：挂在暂停菜单面板（两份）、前端主菜单（手柄版 pad_ribbon / 触屏版）与自定义页面板末尾，
+# 这些面板都按屏宽一半锚定且带主机档缩放，宿主按面板矩形与缩放算出整屏居中的位置。点「确定」/ 手柄 B 收起；复制走外壳剪贴板回调
+# In-game notice box of the community entry (dm/host/dm_community.c): same approach as the crash-fence box - 15 frame tiles (its own slices Ztouch_comm) + title + 0-2 channel cards (label / value / own small Copy)
+# + free notice + divider + two footer lines + "OK" (RC1.1 redesign, widget list in _community below). All start off screen with empty text and carry no anchor: hung at the end of the pause menu panel (both), the front-end main menu (controller pad_ribbon / touch) and the Custom page panel,
+# which are anchored at half the screen width and carry the console-profile scale; the host computes the screen-centered position from the panel's rect and scale. OK / controller B dismisses; copy goes through the shell's clipboard callback
 def _co_text(name, size, color, align='center', width=1700, height=60):   # 提示框文字行：原版色票 + ReducedSpacing（同 _upd_text 的其余字段） | a text line of the box: original colour token + ReducedSpacing (otherwise as _upd_text)
     return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": %d, "height": %d }, "text": "", '
             '"style": { "pointSize": %d, "fontColor": "%s", "alignment": { "h": "%s", "v": "center" }, "spacing": "$ReducedSpacing", "dropShadow": "$DefaultDropShadow" } } },\n') % (name, width, height, size, color, align)
-def _co_line(name, file):   # 线条片（卡片边框 / 手柄焦点框 / 网盘图标方框）：我们自己的单色单帧切片，宿主 co_line 改绘制尺寸 | line slice (card border / controller focus frame / drive icon square): our own one-colour slice, sized by the host's co_line
+def _co_line(name, file):   # 线条片（卡片边框 / 手柄焦点框）：我们自己的单色单帧切片，宿主 co_line 改绘制尺寸 | line slice (card border / controller focus frame): our own one-colour slice, sized by the host's co_line
     return '        { "type": "ImageWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "width": 4, "height": 4 }, "filename": "Ztouch_comm/%s" } },\n' % (name, file)
 def _co_copy(k):   # 每行渠道自己的小「复制」：原版前端小按钮 366×92 × 0.8 = 293×74，字由上面叠的文字框写（宿主换成「已复制 / 复制失败」2 秒） | each row's small Copy: the original small front-end button × 0.8; its text is the box on top (Copied / Copy failed for 2 s)
     return ('        { "type": "ButtonWidget", "name": "TouchCommCopy%d", "fields": { "rect": { "x": 99999, "y": 99999, "scale": 0.8 }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonSmall", '
             '"onClickMessage": "PanelManager:ClosePanel:TouchCommCopy%d", "sound": "cursor_menu_select_hd", "pressedFrame": 1, "disabledFrame": 2, "hoveredFrame": 3 } },\n' % (k, k)
             + _co_text('TouchCommCopyText%d' % k, 28, '$LightButtonTextColor', width=293, height=60))
-CO_CH_ROWS = 3   # 渠道卡上限：与 dm_community.h 的 DM_COMMUNITY_CHANNEL_ROWS 同一个数（tests/test_community_layout.py 核对） | channel-card limit, same as DM_COMMUNITY_CHANNEL_ROWS in dm_community.h
-CO_PAN_ROWS = 4  # 网盘行上限：dm_pan.h 的 DM_PAN_MAX（最多 4 条） | cloud-drive rows, DM_PAN_MAX in dm_pan.h (at most 4)
-# 网盘图标首字的色票（全用原版已有色票，不写 RGB）：宿主把对应色票控件的字色抄到 TouchCommPanIcon<n>（dm_community.c）
-# Colour tokens for the drive icon glyph (all existing original tokens, no RGB): the host copies the matching swatch's colour onto TouchCommPanIcon<n> (dm_community.c)
-CO_PAN_INK = (('Quark', '$FontColorWhite'), ('Baidu', '$FontColorBeige'), ('Aliyun', '$FontColorGreen'), ('P123', '$FontColorGoldYellow'), ('Generic', '$FontColorLightGray'))
-def _co_pan_btn(name, msg, text):   # 网盘行的「打开」：原版前端小按钮 × 0.8，字直接写在按钮上（不随状态变） | a drive row's Open: the original small front-end button × 0.8, text on the button (never changes)
-    return ('        { "type": "ButtonWidget", "name": "%s", "fields": { "rect": { "x": 99999, "y": 99999, "scale": 0.8 }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonSmall", '
-            '"textString": "%s", "textColor": "$LightButtonTextColor", "text/style": "$StyleFEButtonText", "onClickMessage": "%s", "sound": "cursor_menu_select_hd", "pressedFrame": 1, "disabledFrame": 2, "hoveredFrame": 3 } },\n') % (name, text, msg)
-def _co_pan(n):   # 第 n 行网盘：图标方框四条线 + 首字 / 名称 / 「打开」/ 提取码 / 「复制」（复制钮的字另叠一个文字框，宿主换成「已复制 / 复制失败」）
-    pre = 'TouchCommPan'
-    return (''.join(_co_line('%sBox%d%s' % (pre, n, e), 'rule_h' if e in 'TB' else 'rule_v') for e in 'TBLR')
-            + _co_text('%sIcon%d' % (pre, n), 36, '$FontColorLightGold', 'center', 72, 60)
-            + _co_text('%sName%d' % (pre, n), 36, '$FontColorLightGold', 'left', 400, 100)
-            + _co_pan_btn('TouchCommPanOpen%d' % n, 'PanelManager:ClosePanel:TouchCommPanOpen%d' % n, '@dmCommunityPanOpen')
-            + _co_text('%sCode%d' % (pre, n), 28, '$FontColorLightGray', 'left', 280, 60)
-            + ('        { "type": "ButtonWidget", "name": "TouchCommPanCopy%d", "fields": { "rect": { "x": 99999, "y": 99999, "scale": 0.8 }, "filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonSmall", '
-               '"onClickMessage": "PanelManager:ClosePanel:TouchCommPanCopy%d", "sound": "cursor_menu_select_hd", "pressedFrame": 1, "disabledFrame": 2, "hoveredFrame": 3 } },\n' % (n, n))
-            + _co_text('%sCopyText%d' % (pre, n), 28, '$LightButtonTextColor', 'center', 293, 60))
-def _co_pan_ink():   # 五张色票样片（屏外、字空）：宿主从它们的字色（+0xbc）抄到图标首字 | five colour swatches (off screen, empty): the host copies their text colour (+0xbc) onto the icon glyph
-    return ''.join(_co_text('TouchCommPanInk%s' % nm, 36, col, 'center', 72, 60) for nm, col in CO_PAN_INK)
-# 社区 / 关于弹窗（RC1.1 重构，用户 2026-10-30「同意 很好」；RC2 网盘行，用户 2026-11-04）：边框 15 片 + 标题 48 → 渠道卡 0–3 行（细边框 + 标签 28 LightGray / 值 36 LightGold /
-# 各自的小「复制」）→ 网盘 0–4 行 → 免费声明 28 GoldYellow → 分隔线 → 页脚两行 28 LightGray（版本 + 制作；特别鸣谢）→ 一颗「确定」；确认态另有一颗「取消」与一行正文；
-# 手柄焦点框（金色线条片）。全部屏外起步、字空着，宿主按渠道 / 网盘行数摆位（dm_community.c co_geom_pans）
-# Community / About box (RC1.1 redesign; RC2 drive rows, user 2026-11-04): 15 frame tiles + title 48 → 0-3 channel cards (thin border + label 28 LightGray / value 36 LightGold /
-# own small Copy) → 0-4 drive rows → free notice 28 GoldYellow → divider → two footer lines 28 LightGray (version + maker; special thanks) → one OK; the confirm state adds a Cancel and one body line;
-# controller focus frame (gold line slices). All start off screen with empty text; the host lays them out by row counts (co_geom_pans in dm_community.c)
+# 社区 / 关于弹窗（RC1.1 重构，用户 2026-10-30「同意 很好」；设计说明 dm-work/run/xpline/design/）：边框 15 片 + 标题 48 → 渠道卡片两行（细边框 + 标签 28 LightGray / 值 36 LightGold /
+# 各自的小「复制」）→ 免费声明 28 GoldYellow → 分隔线 → 页脚两行 28 LightGray（版本 + 制作；特别鸣谢）→ 一颗「确定」；手柄焦点框（金色线条片）。全部屏外起步、字空着，宿主按渠道行数摆位（dm_community.c co_geom）
+# Community / About box (RC1.1 redesign): 15 frame tiles + title 48 → two channel cards (thin border + label 28 LightGray / value 36 LightGold / own small Copy) → free notice 28 GoldYellow
+# → divider → two footer lines 28 LightGray (version + maker; special thanks) → one OK; controller focus frame (gold line slices). All start off screen with empty text; the host lays them out by row count
 def _community():
     return (''.join('        { "type": "ImageWidget", "name": "TouchCommTile%d%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 52, "height": 24 }, "filename": "Ztouch_comm/tile%d%d" } },\n' % (r, c, r, c) for r in range(5) for c in range(3))
             + _co_text('TouchCommTitle', 48, '$FontColorGoldYellow')
             + ''.join(''.join(_co_line('TouchCommCard%d%s' % (k, e), 'rule_h' if e in 'TB' else 'rule_v') for e in 'TBLR')
                       + _co_text('TouchCommLabel%d' % k, 28, '$FontColorLightGray', 'left', 260, 100)
                       + _co_text('TouchCommValue%d' % k, 36, '$FontColorLightGold', 'left', 844, 100)
-                      + _co_copy(k) for k in range(CO_CH_ROWS))
-            + ''.join(_co_pan(n) for n in range(CO_PAN_ROWS))
-            + _co_pan_ink()
-            + _co_text('TouchCommConfirmText', 36, '$FontColorLightGold', 'center', 1560, 120)
+                      + _co_copy(k) for k in range(2))
             + _co_text('TouchCommFree', 28, '$FontColorGoldYellow')   # 免费声明（dmLoadCommFree，同加载页） | free notice (dmLoadCommFree, as the loading page)
             # 声明与页脚之间的分隔线：原版设置页分节同一张图 PauseMenu\\Divider，原尺寸（共享精灵，不改尺寸），宿主按图宽居中 | divider: the original settings-section image, native size, centred by the host
             + '        { "type": "ImageWidget", "name": "TouchCommDivider", "fields": { "rect": { "x": 99999, "y": 99999 }, "filename": "PauseMenu\\\\Divider" } },\n'
             + _co_text('TouchCommFoot0', 28, '$FontColorLightGray', 'left', 880) + _co_text('TouchCommFoot0R', 28, '$FontColorLightGray', 'right', 880)
             + _co_text('TouchCommFoot1', 28, '$FontColorLightGray', 'left', 1480)
             + _btn('TouchCommOk', 99999, '@dmConfirm', 'PanelManager:ClosePanel:TouchCommOk', x=99999, anchor=False)
-            + _btn('TouchCommCancel', 99999, '@dmCommunityCancel', 'PanelManager:ClosePanel:TouchCommCancel', x=99999, anchor=False)
             + ''.join(_co_line('TouchCommFocus%s' % e, 'focus_h' if e in 'TB' else 'focus_v') for e in 'TBLR'))
 # 存档管理的通用列表框（dm/host/dm_savemgr.c）：边框 15 片 + 标题 48 + 副文 28 + 6 行（主文 36 / 状态 28）+ 页码 + 备注行 28 + 两颗按钮（字是上面叠的文字框）+ 手柄焦点框 4 条。
 # 跟社区提示框一起挂（同一组面板，直接子控件、画在最上层），全部屏外起步、字空着；建角页单独挂一份（INSERT，无角色时的导入入口）。
@@ -422,7 +394,7 @@ def pad_charcreate(s):   # 手柄版职业选择页走原版布局（gen_romfs_o
 INSERT['controller/console/charactercreatepanelhd.json'] = (INSERT['controller/console/charactercreatepanelhd.json'][0], INSERT['controller/console/charactercreatepanelhd.json'][1] + _SAVEBOX)
 _COMM = _community() + _SAVEBOX
 _COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(Touch(?:Comm|Save)\w+)"', _COMM))
-assert _COMM_STUB.count('\n') == 97 + 42   # 边框 15 片、标题、三行渠道（边框 4 + 标签 + 值 + 复制钮 + 钮上的字）× 3、四行网盘（方框 4 + 首字 + 名称 + 打开 + 提取码 + 复制钮 + 钮上的字）× 4、五张色票、确认正文、免费声明、分隔线、页脚 3、确定、取消、焦点框 4 | 15 tiles, title, 3 × (4 border + label + value + copy + its text), 4 × (4 box + glyph + name + Open + code + copy + its text), 5 swatches, confirm body, free, divider, 3 footer, OK, Cancel, 4 focus
+assert _COMM_STUB.count('\n') == 42 + 42   # 边框 15 片、标题、两行渠道（边框 4 + 标签 + 值 + 复制钮 + 钮上的字）× 2、免费声明、分隔线、页脚 3、确定、焦点框 4 | 15 tiles, title, 2 × (4 border + label + value + copy + its text), free, divider, 3 footer, OK, 4 focus
 # 「上传诊断报告」提示框（dm/host/dm_diagup.c）：与社区入口提示框同一套做法——边框 15 片（自己一套切片 Ztouch_diag）+ 标题 + 正文两行（36 号）+ 副文一行（28 号，§2.6）
 # + 六颗原版前端按钮（上传 / 重试 / 导出到本地 / 复制编号 / 取消 / 关闭，宿主按状态露出至多三颗）。全部屏外起步、字空着、不带锚点，挂在暂停菜单面板（两份）末尾、社区框之后（画在最上层）；
 # 点「分享诊断日志」且构建配了上传地址时由宿主打开，没配就不出现（原导出链路不变）
