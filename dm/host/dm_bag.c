@@ -85,6 +85,7 @@ static void pad_nav(uint64_t root, uint64_t panel, uint64_t grid, int held) {
 
 void dm_bag_set_opp(int v); int dm_bag_opp_of(uint64_t root); uint32_t dm_bag_take_sell(void); int dm_bag_take_trade_note(void); int dm_bag_take_full(void); int dm_bag_take_restore_fail(void);
 const char *dm_str(uint8_t *b, const char *key); void dm_game_notice_ui(uint8_t *main_base, const char *text); uint64_t dm_bag_cli_item(uint8_t *b, uint32_t id);
+#ifdef DM_QA_BUILD
 // QA 入口（CLAUDE.md §2.9）：DM_TEST_UI=<帧>:<identifier>:hover;…，帧从物品栏打开起算；identifier = CharmTabs@0/1 或 grid@x,y。找不到控件日志报红，脚本判失败。玩家不设这个环境变量。
 // QA entry (CLAUDE.md §2.9): DM_TEST_UI=<frame>:<identifier>:hover;..., frames counted from the inventory opening; identifier = CharmTabs@0/1 or grid@x,y. A missing widget logs red and fails the script. Players never set this variable.
 static void ui_test(uint64_t panel, uint64_t grid) {
@@ -99,6 +100,9 @@ static void ui_test(uint64_t panel, uint64_t grid) {
         { static int once; if (!once++) LOG("DM_TEST_UI：网格左上 %d,%d，比例 %.3f；命中 右上 %d 左下 %d 右下 %d", x0, y0, k, HIT(grid, x0 + (int)(1127 * k), y0 + (int)(49 * k)), HIT(grid, x0 + (int)(49 * k), y0 + (int)(637 * k)), HIT(grid, x0 + (int)(1127 * k), y0 + (int)(637 * k))); }
         int x = x0 + (int)(u * k), y = y0 + (int)(v * k); if (dm_ui_hover_now(x, y)) { LOG("DM_TEST_UI：帧 %d %s → %d,%d", f, kind[i] ? "grid" : "CharmTabs", x, y); at[i] = 0; } }
 }
+#else   // 玩家包不带脚本驱动入口（CLAUDE.md §2.9；安卓出包检查 libdm.so 不得有 DM_TEST_UI） | player packages carry no scripted driver entry (the Android packaging check rejects DM_TEST_UI in libdm.so)
+static void ui_test(uint64_t panel, uint64_t grid) { (void)panel; (void)grid; }
+#endif
 // 游戏主线程每帧（dm_pouch.c ui_pump）；box = 物品栏里我们的容器 TouchPouchBox，它的可见位不代表面板开着，面板开着看面板自己的 +0x50 / +0x51。
 // Game main thread every frame (ui_pump in dm_pouch.c); box = our container TouchPouchBox in the inventory, whose visible bit does not mean the panel is open; that is the panel's own +0x50 / +0x51.
 void dm_bag_ui(uint8_t *b, uint64_t inv_panel, uint64_t box, uint64_t pl) {
