@@ -204,14 +204,21 @@ int main(void) {
               for (const unsigned char *c = (const unsigned char *)s; *c; ) { if (*c < 0x80) { est += 0.55; c++; } else if (*c < 0xe0) { est += 0.6; c += 2; } else { est += 1.0; c += 3; } }
               est *= pts[q]; if (est > L1.bar.w) printf("  宽度：组 %d 键 %s 估 %.0f > %.0f\n", gs[k], ks[q], est, L1.bar.w); CHECK(est <= L1.bar.w); } }
           dm_loadpage_ui_set_group(-1); }
-        // 关字标（安卓，PLUS 图标背景）：不画字标、文字字标为空；图标外框落在安全区顶与标题之间、在内容宽内；有没有页脚进度组位置不变；iOS（开）不受影响
-        // wordmark off (Android, PLUS icon background): no wordmark image, empty text wordmark; the icon box sits between the safe top and the title, within the content width; the progress group does not move with or without a footer; on (iOS) unaffected
-        { dm_lp_screen scr2[2] = { thor, oppo }; dm_loadpage_set_wordmark(0);
-          for (int k = 0; k < 2; k++) { dm_lp_layout A, B; double W = scr2[k].w;
+        // 关字标（两端，PLUS 图标背景）：不画字标、文字字标为空；背景按图标外框**等比**缩放（两轴同一系数）、图边自然留底色；
+        // 图标外框落在安全区顶与标题之间、在内容宽内；有没有页脚进度组位置不变；iPhone 17 Pro 竖 / 横、Duo 内屏、安卓两种屏都查
+        // wordmark off (both platforms, PLUS icon background): no wordmark image, empty text wordmark; the background is scaled to the icon box with a **uniform** factor on both axes;
+        // the icon box sits between the safe top and the title, within the content width; the progress group does not move with or without a footer; checked on iPhone 17 Pro portrait /
+        // landscape, Duo inner and the two Android screens
+        { dm_lp_screen scr2[5] = { thor, oppo, { 402, 874, 0, 59, 0, 34 }, { 874, 402, 59, 0, 59, 21 }, { 951, 669, 0, 0, 0, 0 } }; dm_loadpage_set_wordmark(0);
+          for (int k = 0; k < 5; k++) { dm_lp_layout A, B; double W = scr2[k].w;
             dm_loadpage_begin(two, 2, w_two, 14000); dm_loadpage_community(NULL, NULL, NULL); dm_loadpage_layout(&scr2[k], &A);
             dm_loadpage_community("1129913678", NULL, "https://d2rplus.augustusplay.com/"); dm_loadpage_layout(&scr2[k], &B);
             CHECK(A.logo.w == 0 && A.logo_name == NULL && NEAR(A.title.y, B.title.y) && NEAR(A.bg_dst.y, B.bg_dst.y) && NEAR(A.bg_dst.h, B.bg_dst.h));
-            double iy0 = B.bg_dst.y + B.bg_dst.h * 0.030, iy1 = B.bg_dst.y + B.bg_dst.h * 0.824, ix0 = B.bg_dst.x + B.bg_dst.w * 0.274, ix1 = B.bg_dst.x + B.bg_dst.w * 0.727;
+            // 等比：两轴同一个缩放系数；宽方向多拉 1.3 倍时这两行报红（审计 P2-2 变异 M3） | uniform: both axes share one scale factor; stretching the width 1.3× fails these two lines (audit P2-2 mutation M3)
+            CHECK(B.bg_dst.w > 0 && B.bg_dst.h > 0 && fabs(B.bg_dst.w / B.bg_dst.h - (double)B.bg_w / B.bg_h) < 1e-6);
+            CHECK(fabs(B.bg_dst.w / B.bg_w - B.bg_dst.h / B.bg_h) < 1e-6);
+            const double *ib = B.landscape ? k_icon_land : k_icon_port;   // 竖图用竖屏的图标外框 | the portrait image uses the portrait icon box
+            double iy0 = B.bg_dst.y + B.bg_dst.h * ib[1], iy1 = B.bg_dst.y + B.bg_dst.h * ib[3], ix0 = B.bg_dst.x + B.bg_dst.w * ib[0], ix1 = B.bg_dst.x + B.bg_dst.w * ib[2];
             CHECK(iy0 >= scr2[k].inset_t + 28 - 0.5 && iy1 <= B.title.y - 18 + 0.5); CHECK(ix0 >= scr2[k].inset_l + 28 - 0.5 && ix1 <= W - scr2[k].inset_r - 28 + 0.5);
             CHECK(iy1 - iy0 > 120);   // 图标别缩得太小 | the icon must not shrink too far
             CHECK(B.bg_src.w == B.bg_w && B.bg_src.h == B.bg_h);

@@ -42,6 +42,54 @@ static unsigned char *png_pixels(const char *path, size_t *W, size_t *H) {
     if (c) { CGContextDrawImage(c, CGRectMake(0, 0, *W, *H), img); CGContextRelease(c); }
     CGColorSpaceRelease(cs); CGImageRelease(img); return buf;
 }
+// 图四角与指定点的 RGB（0..255）；角点取内缩 2 像素（与视图 / 安卓同规则） | RGB (0..255) of the four corners and of a point; corners sit 2 px in (same rule as the view / Android)
+static void corners_rgb(const unsigned char *px, size_t W, size_t H, int out[3]) {
+    size_t xs[2] = { W > 4 ? 2 : 0, W > 4 ? W - 3 : W - 1 }, ys[2] = { H > 4 ? 2 : 0, H > 4 ? H - 3 : H - 1 };
+    int sum[3] = { 0, 0, 0 };
+    for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) { const unsigned char *p = px + (ys[b] * W + xs[a]) * 4; for (int i = 0; i < 3; i++) sum[i] += p[i]; }
+    for (int i = 0; i < 3; i++) out[i] = sum[i] / 4;
+}
+static void pixel_rgb(const unsigned char *px, size_t W, size_t H, size_t x, size_t y, int out[3]) {
+    if (x >= W) x = W - 1; if (y >= H) y = H - 1;
+    const unsigned char *p = px + (y * W + x) * 4; for (int i = 0; i < 3; i++) out[i] = p[i];
+}
+// P2-1 源码闸门：出图测试走的是画函数，绕开了 iOS 视图本身。直接读视图源码，钉住 initWithFrame 里「关字标 + 不解码字标图」这几行，
+// 并把截图开关传的 logo 钉在视图的 self.logo 上——把它们改回去（审计变异 M1）这里就报红
+// P2-1 source gate: the render test goes through the draw function and bypasses the iOS view itself. This reads the view source and pins the lines in initWithFrame
+// (wordmark off + no wordmark decode) and the logo the screenshot switch passes, so restoring them (audit mutation M1) turns this red
+static char *read_all(const char *path) {
+    FILE *f = fopen(path, "rb"); if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long sz = ftell(f); if (sz < 0) { fclose(f); return NULL; }
+    rewind(f); char *b = malloc((size_t)sz + 1); if (!b) { fclose(f); return NULL; }
+    size_t got = fread(b, 1, (size_t)sz, f); fclose(f); b[got] = 0; return b;
+}
+static int gate_ios_view(void) {
+    const char *cand[] = { "../../ios/Sources/dm_loadpage_cg.m", "../ios/Sources/dm_loadpage_cg.m", "dm/ios/Sources/dm_loadpage_cg.m" };
+    char *src = NULL; const char *used = NULL;
+    for (unsigned i = 0; i < sizeof cand / sizeof *cand && !src; i++) { src = read_all(cand[i]); if (src) used = cand[i]; }
+    if (!src) { fprintf(stderr, "【红】找不到 iOS 视图源码 dm_loadpage_cg.m（P2-1 闸门）\n"); return 1; }
+    int fails = 0;
+#define GATE(cond, msg) do { if (!(cond)) { fprintf(stderr, "【红】iOS 视图源码闸门（P2-1，%s）：%s\n", used, msg); fails++; } } while (0)
+    char *a = strstr(src, "- (instancetype)initWithFrame"), *b = a ? strstr(a + 1, "\n- (") : NULL;
+    GATE(a != NULL && b != NULL, "找不到完整的 initWithFrame（闸门失效，需同步改这里）");
+    if (a && b) { char save = *b; *b = 0;
+        GATE(strstr(a, "dm_loadpage_set_wordmark(0)") != NULL, "initWithFrame 里没有 dm_loadpage_set_wordmark(0)（iOS 会重新画出金色字标）");
+        GATE(strstr(a, "self.logo = NULL") != NULL, "initWithFrame 里没有 self.logo = NULL（iOS 会解码字标图）");
+        GATE(strstr(a, "dm_loadpage_logo_name") == NULL && strstr(a, "loadpage_logo") == NULL, "initWithFrame 又去取 / 解码字标图了");
+        GATE(strstr(a, "self.logo = dm_loadpage_cg_image") == NULL, "initWithFrame 又在解码字标图（self.logo = dm_loadpage_cg_image）");
+        *b = save; }
+    char *v = strstr(src, "void dm_loadpage_view_shot"), *ve = v ? strstr(v + 1, "\n#endif") : NULL;
+    GATE(v != NULL && ve != NULL, "找不到 dm_loadpage_view_shot（截图开关可能绕开了视图）");
+    if (v && ve) { char save = *ve; *ve = 0;
+        GATE(strstr(v, "p.logo") != NULL, "dm_loadpage_view_shot 没有把视图的 self.logo 传下去");
+        GATE(strstr(v, "dm_loadpage_logo_name") == NULL && strstr(v, "loadpage_logo") == NULL, "dm_loadpage_view_shot 又去取字标图了");
+        *ve = save; }
+#undef GATE
+    free(src);
+    if (!fails) printf("  iOS 视图源码闸门（P2-1）：initWithFrame 关字标、不解码字标图 ✓\n");
+    return fails;
+}
 // 字标框内的金色像素数（r ≥ 170、g ≥ 110、b ≤ 100，且红多于绿多于蓝）：金色字标会填满一大片，图标自身的暗铜字远少于它
 // gold pixels inside the wordmark box (r ≥ 170, g ≥ 110, b ≤ 100, red > green > blue): a gold wordmark fills a large patch; the icon's own dark copper lettering is far sparser
 static long gold_pixels(const unsigned char *px, size_t W, size_t H, dm_lp_rect box, double scale) {
@@ -70,7 +118,7 @@ int main(int argc, char **argv) {
         { "iphone17pro_land_874x402", { 874, 402, 59, 0, 59, 21 }, 3 },
         { "android_20x9_873x393", { 873, 393, 0, 0, 0, 0 }, 2400.0 / 873 },
     };
-    int fails = 0; char path[1024];
+    int fails = gate_ios_view(); char path[1024];
     // 新背景：两张都应是 App 图标美术——中心（图标）明显亮于四角（四周渐隐到黑），且只有横 / 竖各一张 | new background: both are the App icon art - the centre (the icon) is clearly brighter than the four corners (edges fade to black), one landscape and one portrait
     for (int i = 0; i < 2; i++) {
         int bw, bh; const char *bgn = dm_loadpage_bg_name(i ? 402 : 951, i ? 874 : 669, &bw, &bh);
@@ -103,13 +151,24 @@ int main(int argc, char **argv) {
       else { fprintf(stderr, "【红】读不回渲染出的 PNG\n"); fails++; }
       free(p1); free(p2); unlink(onpath); }
     for (unsigned i = 0; i < sizeof shots / sizeof *shots; i++) {
-        int bw, bh; const char *bgn = dm_loadpage_bg_name(shots[i].s.w, shots[i].s.h, &bw, &bh);
-        snprintf(path, sizeof path, "%s/%s", argv[1], bgn); CGImageRef bg = dm_loadpage_cg_image(path);
-        if (!bg) { fprintf(stderr, "【红】背景图读不到：%s\n", path); fails++; continue; }
+        int bw, bh; const char *bgn = dm_loadpage_bg_name(shots[i].s.w, shots[i].s.h, &bw, &bh); char srcpath[1024];
+        snprintf(srcpath, sizeof srcpath, "%s/%s", argv[1], bgn); CGImageRef bg = dm_loadpage_cg_image(srcpath);
+        if (!bg) { fprintf(stderr, "【红】背景图读不到：%s\n", srcpath); fails++; continue; }
         if ((int)CGImageGetWidth(bg) != bw || (int)CGImageGetHeight(bg) != bh) { fprintf(stderr, "【红】%s 实际 %zux%zu ≠ 布局假定 %dx%d\n", bgn, CGImageGetWidth(bg), CGImageGetHeight(bg), bw, bh); fails++; }
         snprintf(path, sizeof path, "%s/loadpage_%s_%s_37.png", argv[2], shots[i].name, lang);
         int ok = dm_loadpage_cg_png(path, bg, NULL, &shots[i].s, shots[i].scale, now); CGImageRelease(bg);   // 字标图不传：关字标 | no wordmark image: wordmark off
-        printf("%s %s\n", ok ? "✓" : "✗", path); if (!ok) fails++;
+        printf("%s %s\n", ok ? "✓" : "✗", path); if (!ok) { fails++; continue; }
+        // P2-3 接缝：底色必须等于背景图四角的平均色；查屏幕上方两角（下方有渐暗底板）。写死 (5,4,3) 与图边 (8,2,0) 差 3，会报红
+        // P2-3 seam: the base must equal the mean of the image corners; check the two top corners (the bottom is under the darkening plate). The old hard-coded (5,4,3) differs from the image edge (8,2,0) by 3 and fails
+        size_t SW, SH, OW, OH; unsigned char *sp = png_pixels(srcpath, &SW, &SH), *op = png_pixels(path, &OW, &OH);
+        if (sp && op) { int c[3], p[3], bad = 0; corners_rgb(sp, SW, SH, c);
+            size_t pt[2][2] = { { OW > 4 ? 2 : 0, OH > 4 ? 2 : 0 }, { OW > 4 ? OW - 3 : OW - 1, OH > 4 ? 2 : 0 } };
+            for (int q = 0; q < 2; q++) { pixel_rgb(op, OW, OH, pt[q][0], pt[q][1], p);
+                if (abs(p[0] - c[0]) > 2 || abs(p[1] - c[1]) > 2 || abs(p[2] - c[2]) > 2) bad = 1; }
+            printf("  底色接缝 %s：图四角 %d,%d,%d；屏上角 %d,%d,%d\n", shots[i].name, c[0], c[1], c[2], p[0], p[1], p[2]);
+            if (bad) { fprintf(stderr, "【红】%s 的底色与背景图四角平均色接不上（P2-3 矩形接缝）\n", path); fails++; } }
+        else { fprintf(stderr, "【红】读不回底色检查用的 PNG\n"); fails++; }
+        free(sp); free(op);
     }
     return fails ? 1 : 0;
 }

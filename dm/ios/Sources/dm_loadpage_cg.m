@@ -14,6 +14,7 @@
 #import <Foundation/Foundation.h>
 #include <TargetConditionals.h>
 #include <mach/mach_time.h>
+#include <stdlib.h>
 
 uint64_t dm_loadpage_now_ms(void) {   // 单调毫秒（两端同一口径） | monotonic milliseconds (same on both sides)
     static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
@@ -24,6 +25,30 @@ CGImageRef dm_loadpage_cg_image(const char *path) {   // 解码包内的背景 J
     CFURLRef u = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)path, (CFIndex)strlen(path), false); if (!u) return NULL;
     CGImageSourceRef src = CGImageSourceCreateWithURL(u, NULL); CFRelease(u); if (!src) return NULL;
     CGImageRef img = CGImageSourceCreateImageAtIndex(src, 0, NULL); CFRelease(src); return img;
+}
+// 取背景图一个像素的 RGB（0..255）：裁出 1×1 再画进 1×1 位图，不依赖解码后的数据布局（JPEG 可能是 3 / 4 通道） | RGB (0..255) of one image pixel: crop 1x1 and draw it into a 1x1 bitmap, so the decoded data layout (JPEG may be 3 or 4 channels) does not matter
+static int lp_pixel_rgb(CGImageRef img, size_t x, size_t y, unsigned char out[3]) {
+    CGImageRef one = CGImageCreateWithImageInRect(img, CGRectMake((CGFloat)x, (CGFloat)y, 1, 1));
+    if (!one) return 0;
+    unsigned char *px = calloc(16, 1); if (!px) { CGImageRelease(one); return 0; } px[3] = 255;   // Core Graphics 要求位图行距按 16 字节对齐（bytesPerRow = 0 会建不出上下文） | Core Graphics wants the bitmap row pitch 16-byte aligned (bytesPerRow = 0 fails to create the context)
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB(); int ok = 0;
+    CGContextRef c = CGBitmapContextCreate(px, 1, 1, 8, 16, cs, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+    if (c) { CGContextSetInterpolationQuality(c, kCGInterpolationNone); CGContextDrawImage(c, CGRectMake(0, 0, 1, 1), one); out[0] = px[0]; out[1] = px[1]; out[2] = px[2]; ok = 1; CGContextRelease(c); }
+    CGColorSpaceRelease(cs); CGImageRelease(one); free(px); return ok;
+}
+// 底色 = 背景图四角的平均色（与安卓 LoadPageView 同一规则：四角各取内缩 2 像素的一点，各通道整数平均）。关字标时背景按图标外框缩放、不铺满屏，
+// 图边与底色接上才看不出矩形接缝（审计 P2-3；写死的 (5,4,3) 与图边 (8,2,0) 对不上，横屏时图标外围有一圈暗红矩形）
+// base colour = mean of the four image corners (the same rule as Android's LoadPageView: one pixel 2 in from each corner, integer mean per channel). With the wordmark off the
+// image is scaled to the icon box and no longer fills the screen; its edges meet the base only if the colours match (audit P2-3: the hard-coded (5,4,3) disagreed with the image edge
+// (8,2,0), showing a dark-red rectangle around the icon in landscape)
+static void lp_base_rgb(CGImageRef bg, double out[3]) {
+    size_t w = CGImageGetWidth(bg), h = CGImageGetHeight(bg);
+    if (!w || !h) { out[0] = 0.02; out[1] = 0.015; out[2] = 0.01; return; }
+    size_t ix = w > 4 ? 2 : 0, iy = h > 4 ? 2 : 0, xs[2] = { ix, w - 1 - ix }, ys[2] = { iy, h - 1 - iy };
+    unsigned sum[3] = { 0, 0, 0 }; int n = 0;
+    for (int a = 0; a < 2; a++) for (int b = 0; b < 2; b++) { unsigned char p[3]; if (lp_pixel_rgb(bg, xs[a], ys[b], p)) { sum[0] += p[0]; sum[1] += p[1]; sum[2] += p[2]; n++; } }
+    if (!n) { out[0] = 0.02; out[1] = 0.015; out[2] = 0.01; return; }
+    for (int i = 0; i < 3; i++) out[i] = (sum[i] / n) / 255.0;
 }
 static void set_rgb(CGContextRef c, unsigned rgb, double a, int stroke) {
     CGFloat r = ((rgb >> 16) & 255) / 255.0, g = ((rgb >> 8) & 255) / 255.0, b = (rgb & 255) / 255.0;
@@ -80,7 +105,9 @@ void dm_loadpage_cg_flip(CGContextRef c, double h) { CGContextTranslateCTM(c, 0,
 // 整页：scr 为逻辑点尺寸与安全区；bg 可为 NULL | the whole page: scr in logical points with safe insets; bg may be NULL
 void dm_loadpage_cg_draw(CGContextRef c, CGImageRef bg, CGImageRef logo, const dm_lp_screen *scr, uint64_t now_ms) {
     dm_lp_layout L; dm_loadpage_layout(scr, &L); dm_lp_text T; dm_loadpage_text(&T, now_ms);
-    CGContextSetRGBFillColor(c, 0.02, 0.015, 0.01, 1); CGContextFillRect(c, CGRectMake(0, 0, scr->w, scr->h));
+    if (bg) { double base[3]; lp_base_rgb(bg, base); CGContextSetRGBFillColor(c, base[0], base[1], base[2], 1); }   // 底色 = 图四角平均色（P2-3） | base = mean of the image corners (P2-3)
+    else CGContextSetRGBFillColor(c, 0.02, 0.015, 0.01, 1);
+    CGContextFillRect(c, CGRectMake(0, 0, scr->w, scr->h));
     if (bg) {   // cover 裁切：从图里取 bg_src 那块，画满 bg_dst（CGContextDrawImage 按左下原点画，局部翻一次） | cover crop: take bg_src from the image, draw it over bg_dst (CGContextDrawImage assumes a bottom-left origin; flip locally)
         double sx = (double)CGImageGetWidth(bg) / L.bg_w, sy = (double)CGImageGetHeight(bg) / L.bg_h;   // 图的实际像素与布局假定的尺寸不同（换过图）也照样裁对 | the real pixel size may differ from the one the layout assumes (replaced image): still cropped right
         CGImageRef part = CGImageCreateWithImageInRect(bg, CGRectMake(L.bg_src.x * sx, L.bg_src.y * sy, L.bg_src.w * sx, L.bg_src.h * sy));
@@ -147,7 +174,7 @@ int dm_loadpage_cg_png(const char *path, CGImageRef bg, CGImageRef logo, const d
     self.dir = dir;
     // 静音开关：玩家上次的选择（偏好 DMLoadPageMuted，缺省有声音）；透明按钮压在右上角的图标上，位置取公共布局 | mute toggle: the player's last choice (preference DMLoadPageMuted, sound on by default); a transparent button over the top-right icon, placed by the shared layout
     dm_loadpage_set_muted([NSUserDefaults.standardUserDefaults boolForKey:@"DMLoadPageMuted"]);
-    self.muteBtn = [UIButton buttonWithType:UIButtonTypeCustom]; [self.muteBtn addTarget:self action:@selector(muteTap) forControlEvents:UIControlEventTouchUpInside]; [self addSubview:self.muteBtn]; [self muteLabel];
+    self.muteBtn = [UIButton buttonWithType:UIButtonTypeCustom]; self.muteBtn.accessibilityIdentifier = @"dm.loadpage.mute"; [self.muteBtn addTarget:self action:@selector(muteTap) forControlEvents:UIControlEventTouchUpInside]; [self addSubview:self.muteBtn]; [self muteLabel];   // §2.9：原生控件必须能被自动化驱动 | §2.9: native controls must be drivable by automation
     __weak DmLoadPageView *w = self;
     self.timer = [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *t) { DmLoadPageView *v = w; if (!v) { [t invalidate]; return; } [v tick]; }];
     [self tick];

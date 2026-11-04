@@ -47,6 +47,7 @@ run: \
 	$(B)/t_hud_dead \
 	$(B)/t_i18n \
 	$(B)/t_loadpage \
+	$(B)/t_loadpage_render \
 	$(B)/t_manifest \
 	$(B)/t_loadpage_race \
 	$(B)/t_minimap_lift \
@@ -146,6 +147,7 @@ run: \
 	$(B)/t_bright_lut ../../gfx/nvn/nvn_mtl.m ../../gfx/vulkan/engine/xbg_bright_lut.comp
 	$(B)/t_update_appear
 	$(B)/t_loadpage
+	mkdir -p $(B)/loadpage_render && $(B)/t_loadpage_render ../../assets/loadpage $(B)/loadpage_render zh
 	$(B)/t_manifest
 	TSAN_OPTIONS=halt_on_error=1 $(B)/t_loadpage_race > /dev/null
 	$(B)/t_custom_scroll
