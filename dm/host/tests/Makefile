@@ -143,6 +143,8 @@ run: \
 	$(B)/t_options_android
 	$(B)/t_padmode_pure
 	$(PY) test_padmode_focus.py
+	$(PY) test_b114_focus_bounds.py   # B114：任务日志左摇杆、角色页起始焦点 | quest log stick, character page starting focus
+	DM_MAIN_ORIG=$(B)/main.orig.bin $(PY) test_b099_b100_merc_pad.py   # B099 / B100：手柄佣兵页 | controller mercenary page
 	$(B)/t_custom_readlog
 	$(B)/t_custom_readlog_movie
 	$(B)/t_crashfence 2>/dev/null

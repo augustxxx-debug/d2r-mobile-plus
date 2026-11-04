@@ -37,7 +37,7 @@ void dm_world_walk(float nx, float ny) { walks++; walk_x = nx; walk_y = ny; } un
 uint64_t dm_padmode_legend_click(float nx, float ny) { (void)nx; (void)ny; return 0; } int dm_padmode_hud_click(float nx, float ny, uint64_t *b) { (void)nx; (void)ny; if (test_hud) *b = DM_BTN_A; return test_hud; } int dm_padmode_legend_has(uint32_t g) { (void)g; return 0; } int dm_game_paused(void) { return test_paused; }
 int dm_shop_open(void) { return 0; }   // 商人页（dm_actions.c）的桩：没开 | stub for the vendor page (dm_actions.c): not open
 int dm_padmode_current(void) { return 0; }   // 手柄 / 触屏模式（dm_padmode.c）的桩：触屏 | Stub for controller / touch mode (dm_padmode.c): touch
-void dm_padmode_stick_as_dpad(void) {}
+void dm_padmode_stick_as_dpad(void) {} void dm_padmode_stick_as_dpad4(void) {}
 void dm_diff_tip(int n) { (void)n; }   // 难度说明提示（dm_padmode.c）：触点单测不带提示框 | the difficulty tip (dm_padmode.c): the touch unit test has no notice box
 #include "../dm_notice_pair.h"
 const dm_notice_pair *dm_game_notice_pair_for(const char *text, size_t len) { (void)text; (void)len; return NULL; }   // 两级提示绑定表（dm_bossrush.c）：触点单测没有 | two-level tip binding (dm_bossrush.c): none in the touch unit test
@@ -239,6 +239,8 @@ void dm_item_compare(int on) { (void)on; }
 void dm_held_stow(void) {}
 int dm_held_stow_result(void) { return -1; }
 int dm_held_pending(void) { return 0; }
+int dm_held_unid(void) { return 0; }   // B099 桩 | B099 stub
+void dm_game_notice_ui(uint8_t *b, const char *t) { (void)b; (void)t; }
 void uimsg_emit(const char *cat, const char *act, const char *arg) { (void)cat; (void)act; (void)arg; }
 void dm_item_identify_free(unsigned id) { (void)id; }   // 免费鉴定（dm_actions.c）的桩 | stub for free identify (dm_actions.c)
 int dm_runeword_long_press(const void *ci) { (void)ci; return 0; }   // 符文之语助手（dm_runeword.c）的桩 | stub for the runeword helper (dm_runeword.c)

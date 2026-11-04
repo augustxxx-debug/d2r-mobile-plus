@@ -10,6 +10,7 @@
 #include "dm_hud.h"
 #include "dm_actions.h"
 #include "dm_cursor_item.h"
+#include "dm_pad_merc.h"
 #include "dm_i18n.h"
 #include <stdatomic.h>
 #include <stdio.h>
@@ -152,6 +153,7 @@ static uint64_t modal_any(uint64_t root, int with_bind, const char **name) {
 int dm_ui_modal_active(uint64_t root) { return root && modal_any(root,1,NULL)!=0; }
 static uint64_t ui_find(uint64_t w, const char *name, int dep);
 static uint64_t ui_panel(uint64_t root, const char *name);   // 只扫界面根的直接子控件（定义在后面） | Scans only the direct children of the UI root (defined later)
+static int root_panel_shown(uint64_t root, const char *name);   // 定义在后面 | defined later
 static int free_cursor_page(module_t *m) {
     static uint64_t at = UINT64_MAX; static int yes; static const char *whyp = ""; uint64_t fr = dm_guest_frame(); if (fr == at) return yes;
     // 有自由光标 = 开着的面板里有物品区 / 技能图标 / 属性「+」，并且上面没有盖着模态的一层（数量框、确认框、交易结果提示）：
@@ -1538,7 +1540,7 @@ static void ui_target_pump(module_t *m, uint64_t fr) {   // 主线程，每帧 |
       atomic_store(&g_hover_unid, c && ui.unid && (c == DM_ITEM_AT_INVENTORY || c == DM_ITEM_AT_STASH || c == DM_ITEM_AT_CUBE || c == DM_ITEM_AT_EQUIP) ? ui.id : 0);
       // 手柄模式：光标停在未鉴定物品上按住 A 0.5 秒 = 免费鉴定（触屏是双击）。原版 A = 短按捡起、按住使用，未鉴定的装备没有「使用」；
       // 这时接管 A：短按照旧还给原版（替玩家按一下），按住才鉴定。手上拿着东西时不接管（A 是放下 / 交换）。
-      // 提示：原版对未鉴定装备的提示条只有「A 捡起」，把它取的那条串换成「捡起（按住鉴定）」（dm_padmode.c 的换串小表，离开这件物品就换回）
+      // 提示：原版对未鉴定装备的提示条只有「A 捡起」，把它取的那条串换成「捡起(按住鉴定)」（照原版格式串的半角括号，B101；dm_padmode.c 的换串小表，离开这件物品就换回）
       // Controller mode: with the cursor resting on an unidentified item, holding A for 0.5 seconds = free identify (on touch it is a double tap).
       // In the original game A = short press to pick up, hold to use, and unidentified equipment has no "use";
       // here A is taken over: a short press is handed back to the original game as before (pressed once for the player), and only a hold identifies.
@@ -1552,7 +1554,18 @@ static void ui_target_pump(module_t *m, uint64_t fr) {   // 主线程，每帧 |
             if (held && t0 && !fired && now - t0 >= 500000000ull) { fired = 1; atomic_store(&g_ident_req, hu); LOG("免费鉴定：手柄按住 A 0.5 秒，光标下未鉴定物品 id %u → 鉴定", hu); }
             if (!held && t0) { if (!fired) { dm_padmode_page_pulse(DM_BTN_A); LOG("免费鉴定：手柄短按 A → 还给原版（捡起）"); } t0 = 0; } }
         else t0 = 0; }
-      uint32_t rq = atomic_exchange(&g_ident_req, 0); if (rq) { void dm_item_identify_free(uint32_t); dm_item_identify_free(rq); } }
+      uint32_t rq = atomic_exchange(&g_ident_req, 0); if (rq) { void dm_item_identify_free(uint32_t); dm_item_identify_free(rq); }
+      // 手柄模式手上拿着未鉴定物品、焦点在佣兵装备格上按 A（B099）：原版不让佣兵穿未鉴定的（dm_cursor_item.c dm_held_unid，原版四格同样），提示条本来就没有「A 放置」，
+      // 按下去什么也不发生、玩家不知道为什么。规则不改：收下这一下 A（原版也不会放），弹一句「佣兵不能穿未鉴定的物品」。触屏拖放走原版红色「不可放置」，不在这里
+      // Controller mode, an unidentified item in hand, A with the focus on a mercenary equipment cell (B099): the game never lets the mercenary wear unidentified items (dm_held_unid,
+      // the original four cells too), the legend has no "A Place" and pressing A silently does nothing. The rule stays: that A is taken (the game would not place it either) and a
+      // notice "Mercenaries cannot wear unidentified items" is shown. Touch drag and drop shows the original red "cannot place" and is not handled here
+      { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); uint64_t root = 0; memcpy(&root, m->base + 0x2f05458, 8);
+        uint64_t fm = root ? *(uint64_t *)(root + 0xd0) : 0, hov = fm ? *(uint64_t *)(fm + 0x178) : 0; const char *hn = hov ? *(const char **)(hov + 8) : NULL;
+        uint64_t mp = hn && !strncmp(hn, "slot_", 5) && dm_padmode_current() && root_panel_shown(root, "HirelingInventoryPanel") ? ui_panel(root, "HirelingInventoryPanel") : 0;
+        if (mp && ui_has(mp, hov, 0) && dm_held_unid() && (dm_padmode_page_keys(DM_BTN_A) & DM_BTN_A)) {
+            const char *dm_str(uint8_t *, const char *); void dm_game_notice_ui(uint8_t *, const char *); dm_game_notice_ui(m->base, dm_str(m->base, "dmMercNoUnid"));
+            static int lg; if (lg++ < 20) LOG("手柄佣兵页：手上是未鉴定物品，%s 上的 A 不放（原版佣兵不穿未鉴定的），提示一句", hn); } } }
     if (dm_ui_panel_state() & DM_PS_BANK) { dm_cursor_item_info ci; atomic_store(&g_cur_stack_id, dm_cursor_item(&ci) && ci.container == DM_ITEM_AT_INVENTORY ? ci.id : 0); } else atomic_store(&g_cur_stack_id, 0);   // 刚单击的这件是不是魔盒（开着箱子时双击魔盒 = 打开，前端据此分流） | Whether the item just tapped is the cube (with the stash open, double tap on the cube = open; the front end branches on this)
     if (tap && !tg && dm_vendor_repair_mode()) { dm_cursor_item_info ri; if (dm_cursor_item(&ri)) { dm_item_repair(ri.id); LOG("界面修理：修理态下单击 %s（id %u）→ 修理", ri.code, ri.id); } }   // 商人页修理态（点了修理钮）：单击物品 = 修它；退出仍是再点修理钮（原版） | Vendor page repair mode (the repair button was tapped): single tap on an item = repair it; exiting is still tapping the repair button again (as in the original game)
     if (!tg) { check_at = 0; return; }
@@ -2947,6 +2960,79 @@ static uint64_t ui_panel(uint64_t root, const char *name) {
     for (uint64_t j = 0; j < n; j++) { uint64_t p = *(uint64_t *)(ch + 8 * j); const char *nm = p ? (const char *)*(uint64_t *)(p + 8) : NULL; if (nm && !strcmp(nm, name)) return p; }
     return 0;
 }
+// 手柄佣兵页两处焦点（B100）。游戏主线程每帧（ui_panel_state_pump），只在手柄模式：
+// ① 副手格（slot_left_arm）、右戒格（slot_right_hand）按上：布局里写的是 up = 头盔格 / 躯干格（merc_slots.py NAV），原版不认——目标格不整个在上面、或与起始格左右不重叠（dm_pad_up_dropped，p4_upedges 七条逐条实测），
+//    原版焦点导航弃了这条，按几何往上找到顶部页签条（实测 FOCUS 1394,44）。这里收下这一下「上」，把光标放到头盔格中心（坐标 = 副手格在屏上的左上角 + 两格布局坐标之差 × 面板缩放，
+//    左上角拿副手格自己的命中函数从光标往左上量，同 dm_bag.c 量网格；光标停在副手格里不一定在中心，实测偏下 60 像素），落点先用头盔格的命中函数核过才收这一下。别的格、别的方向照旧归原版。
+// ② 手上拿着物品时页签条上的 A：原版直接换页（物品留在光标上被带到别的页，如选项页），这里收下不交——同大背包页签（dm_bag.c）。
+//    换页仍可用 L / R（原版本来就许拿着物品换页，物品不丢）；这里只拦「焦点在顶部页签条上按 A」这一种，焦点在别处的 A 照常是放下 / 交换。
+// Two focus spots on the controller mercenary page (B100). Game main thread every frame (ui_panel_state_pump), controller mode only:
+// (1) Up on the off-hand (slot_left_arm) and right ring (slot_right_hand) cells: the layout says up = helm / torso (merc_slots.py NAV) but the game drops it -- the target is not wholly above or does not overlap horizontally (dm_pad_up_dropped, all seven edges measured in p4_upedges); for the helm, its bottom edge is below the off-hand cell's top edge
+//     (same row; the helm is not "above"), so the original navigation discards that entry and searches upwards geometrically, reaching the top tab bar (measured FOCUS 1394,44).
+//     Here that Up is taken and the cursor is put at the helm cell's centre (the off-hand cell's top-left on screen + the layout difference × panel scale; the top-left is measured with the
+//     off-hand cell's own hit test walking up-left from the cursor, as dm_bag.c measures the grid -- the cursor is not always at the cell centre, measured 60 px low), and Up is taken only after
+//     the spot passes the helm cell's hit test. Other cells and directions stay with the game.
+// (2) A on the tab bar with an item in hand: the game switches page (the item rides along on the cursor, e.g. onto the options page); here it is taken and not passed on, as on the
+//     large bag's tabs (dm_bag.c). L / R still switch pages (the game allows that with an item in hand, nothing is lost); only "A with the focus on the top tab bar" is held back,
+//     an A anywhere else is still put down / swap as before
+#define PM_HIT(w, px, py) (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)(w) + 0x48))((w), (uint64_t)(uint32_t)(px) | ((uint64_t)(uint32_t)(py) << 32)) & 1)
+static void ui_pad_merc_pump(module_t *m, uint64_t root) {
+    int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); if (!m || !root || !dm_padmode_current()) return;
+    uint64_t fm = *(uint64_t *)(root + 0xd0), hov = fm ? *(uint64_t *)(fm + 0x178) : 0; const char *hn = hov ? *(const char **)(hov + 8) : NULL; if (!hn) return;
+    // 布局里写了「上」、原版却弃掉的边（dm_pad_up_dropped；merc_slots.py NAV，test_b099_b100_merc_pad.py 拿真布局核这张表与 NAV 一致） | layout "up" entries the game drops (checked against NAV on the real layout by the test)
+    static const struct { const char *from, *to; } k_up[] = { { "slot_left_arm", "slot_head" }, { "slot_right_hand", "slot_torso" } };
+    int held = dm_held_size(NULL, NULL), e = -1; for (int i = 0; i < (int)(sizeof k_up / sizeof k_up[0]); i++) if (!strcmp(hn, k_up[i].from)) e = i;
+    if (!held && e < 0) return;   // 先用便宜的条件筛：每帧整树找控件只在可能用上时做 | cheap filters first: the whole-tree lookups only run when they can matter
+    if (modal_any(root, 1, NULL)) return;
+    if (held) { uint64_t tabs = ui_find(root, "UISwitcherTabs", 0);
+        if (dm_pad_tab_a_take(1, held, tabs && *(uint8_t *)(tabs + 0x50) && ui_has(tabs, hov, 0), 0)) {
+            if (dm_padmode_page_keys(DM_BTN_A) & DM_BTN_A) { static int lg; if (lg++ < 20) LOG("手柄页签：手上有物品，页签上的 A 不换页（物品留在手上，换页用 L / R）"); }
+            return; } }
+    if (e < 0 || !root_panel_shown(root, "HirelingInventoryPanel")) return;
+    uint64_t mp = ui_panel(root, "HirelingInventoryPanel"), dst = mp ? ui_find(mp, k_up[e].to, 0) : 0; if (!dst || !ui_has(mp, hov, 0)) return;
+    const int32_t *a = (const int32_t *)(hov + 0x70), *h = (const int32_t *)(dst + 0x70); if (!dm_pad_up_dropped(a, h)) return;   // 布局改得原版自己认了：不接 | the layout changed so the game honours it: not taken
+    double k = *(float *)(mp + 0x80) * *(int32_t *)(m->base + 0x211da3c) / 2160.0;
+    int cx = *(int32_t *)(m->base + 0x2d128f8), cy = *(int32_t *)(m->base + 0x2d128fc);
+    if (!PM_HIT(hov, cx, cy)) return;   // 光标不在起始格上（焦点刚换、光标还没跟上）：这一拍不接，「上」照常归原版 | cursor not on the start cell yet: not taken this frame
+    int x0 = cx, y0 = cy; while (x0 > 1 && PM_HIT(hov, x0 - 2, cy)) x0 -= 2; while (y0 > 1 && PM_HIT(hov, cx, y0 - 2)) y0 -= 2;   // 起始格在屏上的左上角（同 dm_bag.c 量网格） | the start cell's top-left on screen (as dm_bag.c measures the grid)
+    int tx, ty; dm_pad_slot_jump(x0, y0, a, h, k, &tx, &ty);
+    if (!PM_HIT(dst, tx, ty)) { static int lg; if (lg++ < 8) LOG("手柄佣兵页：%s 按上，算出的 %s 落点 %d,%d 不在格上，不接（照原版）", hn, k_up[e].to, tx, ty); return; }   // 落点核过才声明「上」 | Up is declared only once the spot checks out
+    if (!(dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) return;
+    dm_ui_hover_now(tx, ty); static int lg; if (lg++ < 20) LOG("手柄佣兵页：%s 按上 → %s（%d,%d → %d,%d）", hn, k_up[e].to, cx, cy, tx, ty);
+}
+// 控件在屏上的中心（屏幕像素）：拿它自己的命中函数在全屏上粗扫（步长 = 屏高 / 60），再在命中框四边各细扫一步。一次按键才调一次（约 6 千次命中调用），不每帧调。0 = 没找到
+// A widget's centre on screen (screen pixels): a coarse scan of the whole screen with its own hit test (step = screen height / 60), then each edge of the hit box refined by one step.
+// Called once per key press (about 6 thousand hit calls), never every frame. 0 = not found
+static int ui_hit_center(module_t *m, uint64_t w, int *cx, int *cy) {
+    int W = *(int32_t *)(m->base + 0x211da38), H = *(int32_t *)(m->base + 0x211da3c), st = H / 60, x0 = W, y0 = H, x1 = -1, y1 = -1; if (W <= 0 || H <= 0 || st < 2) return 0;
+    for (int y = st / 2; y < H; y += st) for (int x = st / 2; x < W; x += st) if (PM_HIT(w, x, y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < 0) return 0;
+    while (x0 > 0 && PM_HIT(w, x0 - 1, (y0 + y1) / 2)) x0--; while (x1 < W - 1 && PM_HIT(w, x1 + 1, (y0 + y1) / 2)) x1++;
+    while (y0 > 0 && PM_HIT(w, (x0 + x1) / 2, y0 - 1)) y0--; while (y1 < H - 1 && PM_HIT(w, (x0 + x1) / 2, y1 + 1)) y1++;
+    *cx = (x0 + x1) / 2; *cy = (y0 + y1) / 2; return PM_HIT(w, *cx, *cy);
+}
+// 手柄角色页起始焦点（B114）：原版布局里四个「+」（StrengthPointButton → Dex → Vitality → Energy）有自己的十字键焦点链，但从别的页按 L / R 切过来时页里没有起始焦点，
+// 十字键下什么也不做、金框不在屏上（实测 p2_base：连按四下下都没有焦点）。这里：角色页是最上一页、焦点不在某个「+」上、看得见的「+」至少一个时收下「下」，
+// 把光标放到第一个看得见的「+」中心，之后走原版自己的链。有属性点才有「+」；没有就不接（原版也没有可停的）。左摇杆照旧是自由光标（「+」与属性说明都靠它指，原版设计，不改）
+// Starting focus on the controller character page (B114): the original layout chains the four "+" buttons (Strength → Dex → Vitality → Energy) for the D-pad, but arriving from another page with
+// L / R leaves no starting focus, so D-pad down does nothing and no gold frame is on screen (measured p2_base: four downs, still no focus). Here: with the character page on top, the focus not on
+// a "+" and at least one "+" visible, Down is taken and the cursor goes to the first visible "+"; the original chain takes over from there. The "+" buttons exist only with unspent points; without
+// them nothing is taken (the game has nothing to stop on either). The left stick stays a free cursor (both the "+" and the stat tooltips are pointed at with it -- the original design, unchanged)
+static void ui_pad_charstats_pump(module_t *m, uint64_t root) {
+    int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); void dm_padmode_page_pulse(uint64_t);
+    if (!m || !root || !dm_padmode_current() || !root_panel_shown(root, "CharacterStatsPanel") || modal_any(root, 1, NULL)) return;
+    static const char *const btn[] = { "StrengthPointButton", "DexPointButton", "VitalityPointButton", "EnergyPointButton" };
+    uint64_t fm = *(uint64_t *)(root + 0xd0), hov = fm ? *(uint64_t *)(fm + 0x178) : 0; const char *hn = hov ? *(const char **)(hov + 8) : NULL;
+    for (unsigned i = 0; hn && i < 4; i++) if (!strcmp(hn, btn[i])) return;   // 已在链上：原版自己走 | already on the chain: the game walks it
+    uint64_t cp = ui_panel(root, "CharacterStatsPanel"), lu = cp ? ui_find(cp, "LevelUpInfo", 0) : 0, first = 0;   // 「+」都在 LevelUpInfo 下，没有属性点时整块藏起 | the "+" buttons live under LevelUpInfo, hidden as a whole without points
+#define PM_VIS(w) ((w) && *(uint8_t *)((w) + 0x50) && *(uint8_t *)((w) + 0x51))
+    for (unsigned i = 0; PM_VIS(lu) && !first && i < 4; i++) { uint64_t b = ui_find(lu, btn[i], 0); if (PM_VIS(b)) first = b; }
+#undef PM_VIS
+    if (!first || !(dm_padmode_page_keys(DM_BTN_DOWN) & DM_BTN_DOWN)) return;
+    int x, y; static int lg;
+    if (!ui_hit_center(m, first, &x, &y) || !dm_ui_hover_now(x, y)) { dm_padmode_page_pulse(DM_BTN_DOWN); if (lg++ < 8) LOG("手柄角色页：「+」在屏上找不到落点，这一下「下」还给原版"); return; }
+    if (lg++ < 20) LOG("手柄角色页：没有起始焦点，十字键下 → %s（%d,%d）", *(const char **)(first + 8), x, y);
+}
 static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 | game main thread, every frame
     void uimsg_emit(const char *, const char *, const char *);
     // 手柄暂停菜单左摇杆移焦点（B071）：只在暂停菜单是最上面一页时。选项页 / 编年史 / 消息记录盖在它上面时它还算开着，确认框等模态框的输入归框
@@ -2956,6 +3042,13 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
         int top = !modal_any(root, 1, NULL); for (unsigned i = 0; top && i < sizeof over / sizeof over[0]; i++) top = !root_panel_shown(root, over[i]);
         void dm_padmode_stick_as_dpad(void); if (top) dm_padmode_stick_as_dpad();
     }
+    // 手柄任务日志左摇杆移焦点（B114，同 B071）：原版十字键在任务格（3 × 2）之间走，左摇杆却是自由光标——推出任务格金框就没了（FOCUSLOST）。
+    // 任务日志是最上一页时四个方向都当十字键交给原版；模态框开着时输入归框。换幕是 ZL / ZR（页签条），不靠摇杆
+    // Left stick moves the focus in the controller quest log (B114, like B071): the D-pad walks the quests (3 × 2), but the stick is a free cursor that loses the gold frame once off the quests.
+    // While the quest log is the top page all four directions go to the game as D-pad; a modal keeps its own input. Acts switch with ZL / ZR (tab bar), not the stick
+    if (root_panel_shown(root, "QuestLogPanelExpansion") && !modal_any(root, 1, NULL)) { void dm_padmode_stick_as_dpad4(void); dm_padmode_stick_as_dpad4(); }
+    ui_pad_charstats_pump(main_module(), root);   // 手柄角色页：没有起始焦点时十字键下 → 第一个「+」（B114） | controller character page: D-pad down with no starting focus → the first "+" (B114)
+    ui_pad_merc_pump(main_module(), root);   // 手柄佣兵页：副手格按上、拿着物品时页签上的 A（B100） | controller mercenary page: Up on the off-hand cell, A on the tabs with an item in hand (B100)
     int st = (root_panel_shown(root, "BankExpansionLayout") ? DM_PS_BANK : 0) | (dm_shop_open() ? DM_PS_VENDOR : 0)   // 商人页：游戏自己的商店状态（dm_actions.c 每帧读） | vendor page: the game's own shop state (read every frame by dm_actions.c)
            | (root_panel_shown(root, "YouDiedModal") ? DM_PS_DEAD : 0) | (root_panel_shown(root, "ImbueItemsPanel") ? DM_PS_IMBUE : 0) | (root_panel_shown(root, "HoradricCubeLayout") ? DM_PS_CUBE : 0);
     if (st & DM_PS_BANK) { uint64_t bk = ui_panel(root, "BankExpansionLayout"), tabs = bk ? ui_find(bk, "BankTabs", 0) : 0; if (tabs && TAB_SEL(tabs) == 5) st |= DM_PS_VAULT; }   // 第六页「编年史」：双击存入走 ui_use_pump，不发原版「按住 Y」（那一页游戏当魔盒页，会送进魔盒） | the sixth page 「编年史」(Chronicle): double-tap deposit goes through ui_use_pump and does not send the original 「按住 Y」(Hold Y) (the game treats that page as the cube page and would send the item into the cube)
@@ -3009,7 +3102,9 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 //     手柄模式与切换事务进行中不跑；在途的请求由切换清理作废（dm_ui_cache_mode_leave）。
 //   两种模式都跑：ui_target_pump（鉴定目标，含手柄按住 A）、ui_item_pump（命中查询，宿主自己也问）、ui_ptr_pump（指针事件，宿主合成的点击也走）、
 //     ui_window_edges_pump（屏幕边缘定位，两种输入共用） / ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_trove_tabs_pump / ui_minimap_pump / ui_map_pump / ui_map_geom_pump / ui_map_center（屏幕几何，与输入方式无关）、ui_boss_pct_pump、ui_npcdlg_pump、
-//     ui_widestash_pump、mv_audit_pump、ui_pages_pump（含手柄 L / R 翻页）、ui_watch_pump、ui_panel_heal、ui_panel_state_pump、rs_pump（一键重开，在前端泵里调）
+//     ui_widestash_pump、mv_audit_pump、ui_pages_pump（含手柄 L / R 翻页）、ui_watch_pump、ui_panel_heal、ui_panel_state_pump、rs_pump（一键重开，在前端泵里调）、
+//     ui_pad_merc_pump（手柄佣兵页副手格按上 / 拿着物品时页签上的 A，B100；由 ui_panel_state_pump 每帧调，函数里先判手柄模式，触屏模式直接返回，不留跨帧状态）、
+//     ui_pad_charstats_pump（手柄角色页没有起始焦点时十字键下 → 第一个「+」，B114；同上，由 ui_panel_state_pump 调、先判手柄模式）
 // 物品说明框停靠（观测门 OBS_TOOLTIP，挂在说明框面板的「提交一条说明」函数入口 main+0xb0d560(面板, 文字, 目标矩形左上 x2, 目标矩形宽高 x3, 样式, 文字 2)）。
 // 说明框是即时式的：悬停着的控件每帧重新提交、画完就清，宿主在自己的时机读面板里的记录数一直是 0，所以只能在提交那一刻改输入。
 // 原版把框摆在目标矩形（被点的那一格）正下 / 正上方：长说明（暗金、符文之语，十几行）盖住腰带、戒指、背包中间几列和「存放」钮，要点被盖住的格子得先点别处。

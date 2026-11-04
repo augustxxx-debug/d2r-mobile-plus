@@ -312,8 +312,10 @@ void dm_padmode_page_pulse(uint64_t mask) { atomic_store(&g_pg_pulse, mask); ato
 static _Atomic uint64_t g_pg_stick;   // 左摇杆折算出的方向键位 | direction bits derived from the left stick
 // 原版菜单把左摇杆当方向键（B071，dm_stick_nav.h）：菜单在屏上时每帧声明（游戏主线程），3 帧不声明就失效。和上面的页接管不同：方向键照常归原版（按住连发也是原版的），不进页的按下沿
 // The left stick as D-pad for an original menu (B071, dm_stick_nav.h): declared every frame while the menu is up (game main thread), lapses after 3 frames. Unlike the page takeover above, the D-pad stays the game's (including its own hold-repeat) and nothing goes to a page's press edges
-static _Atomic uint64_t g_nav_frame = UINT64_MAX, g_nav_keys;
+static _Atomic uint64_t g_nav_frame = UINT64_MAX, g_nav4_frame = UINT64_MAX, g_nav_keys;
 void dm_padmode_stick_as_dpad(void) { atomic_store(&g_nav_frame, dm_guest_frame()); }
+// 四个方向都交（B114 任务日志：原版十字键在任务格间走，左摇杆却是自由光标，推出任务格金框就没了） | all four directions (B114 quest log: the D-pad walks the quests, the stick is a free cursor that loses the frame)
+void dm_padmode_stick_as_dpad4(void) { uint64_t f = dm_guest_frame(); atomic_store(&g_nav4_frame, f); atomic_store(&g_nav_frame, f); }
 void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
     static dm_stick_nav nav; const uint64_t V = DM_BTN_UP | DM_BTN_DOWN, H = DM_BTN_LEFT | DM_BTN_RIGHT;
     uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
@@ -325,7 +327,8 @@ void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
     if (!g_cur || !lx || !ly) { dm_stick_nav_reset(&nav); eat = 0; nav_hold = 0; atomic_store(&g_nav_keys, 0); atomic_store(&g_pg_stick, 0); return; }
     uint64_t d = dm_stick_nav_dirs(&nav, *lx, *ly);   // 公共折算（dm_stick_nav.h） | shared conversion
     atomic_store(&g_pg_stick, d);
-    { uint64_t nf = atomic_load(&g_nav_frame), out = 0; int want = nf != UINT64_MAX && dm_guest_frame() - nf <= 3 && !m;   // 页接管时归页 | a page's takeover wins
+    { uint64_t nf = atomic_load(&g_nav_frame), n4 = atomic_load(&g_nav4_frame), out = 0; int want = nf != UINT64_MAX && dm_guest_frame() - nf <= 3 && !m;   // 页接管时归页 | a page's takeover wins
+      if (want && n4 != UINT64_MAX && dm_guest_frame() - n4 <= 3) want = 2;   // 四个方向都交（B114） | all four directions (B114)
       if (dm_stick_nav_as_dpad(&nav_hold, want, d, &out)) { atomic_store(&g_nav_keys, out); *lx = *ly = 0; return; }
       atomic_store(&g_nav_keys, 0); }
     dm_stick_nav_withhold(dm_stick_nav_take(&eat, d, m & (V | H)), lx, ly);   // 只扣声明了的方向（审计 P1-1）与推着期间页收过的方向（P1-1 补） | withhold the declared directions (audit P1-1) and those the page took while held (follow-up)
@@ -345,7 +348,7 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
 }
 // 编年史仓库页开着时（手柄模式）把原版「按住 Y」那半句提示的字换成我们实际做的事：原版在储藏箱各页对背包物品的提示是「丢弃（按住移动到私人储藏箱）」，
 // 第六页上按住 Y 被我们接管成存入编年史仓库（dm_vault_ui.c）。这半句只写「存入」：原版那条本来就超宽、在限宽里滚动（截图对照），写短到不滚，人就在编年史页上。换法同上面的手柄 / 触屏说法：只换当前语言串表里这个键的串指针，离开那一页换回
-// 同一个换法现在有两条（一张小表）：编年史页的「存入」，和光标停在未鉴定物品上时把「捡起」换成「捡起（按住鉴定）」（手柄按住 A = 免费鉴定，dm_cursor.c；
+// 同一个换法现在有两条（一张小表）：编年史页的「存入」，和光标停在未鉴定物品上时把「捡起」换成「捡起(按住鉴定)」（半角括号、不比原版「捡起(按住装备)」宽：再宽就在提示条的限宽里滚动，看着像截断，B101）（手柄按住 A = 免费鉴定，dm_cursor.c；
 // 原版对未鉴定装备只提示「A 捡起」，往提示条里加条目会被原版每帧按光标下的物品重建盖掉，所以换它取的那条串）
 // While the Chronicle vault page is open (controller mode), replace the text of the original "hold Y" half of the hint with what we actually do:
 // on every stash page the original hint for an inventory item is "Drop (hold to move to private stash)",
@@ -371,7 +374,7 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
 // pl / ja / pt have the original's own "Compare" / "Pick Up", and English there would be a step back, so the original stays (the hint lacks "hold", the behavior
 // is unchanged). "Deposit" is still swapped in every language: the Chronicle page is our own page and the original half-sentence (hold to move to private stash) is wrong there
 enum { HINT_VAULT, HINT_IDENT, HINT_CMP, NHINT };
-static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[48]; } g_hint[NHINT] = {
+static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[96]; } g_hint[NHINT] = {   // ours：俄文「Взять (держать — опознать)」48 字节，原先 48 的缓冲截掉了末尾「)」（B101 实测） | ours: the Russian text is 48 bytes; the old 48-byte buffer dropped the final ")" (measured in B101)
     { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" }, { "ControllerPromptItemPickUpFromInventory", "dmPadLegIdentify" },
     { "ControllerPromptItemCompare", "dmPadLegCompare" } };   // [0]「按住 Y」那半句、[1]「捡起」、[2]「比较」（手柄模式常换） | [0] the "hold Y" half of the sentence, [1] "Pick Up", [2] "Compare" (always in controller mode)
 void dm_padmode_vault_hint(int on) { atomic_store(&g_hint[HINT_VAULT].on, on ? 3 : 0); }   // 游戏主线程，页在屏上时每帧调（3 帧不调就算离开） | Game main thread; called every frame while the page is on screen (3 frames without a call counts as having left)
