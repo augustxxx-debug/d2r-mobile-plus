@@ -189,21 +189,25 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private static volatile String genLogText;     // 已脱敏的 gen_log 全文，「分享诊断日志」打包用 | the scrubbed gen_log text, packed by "Share Diagnostics"
     private static volatile boolean genShareOpen;  // 分享面板开着：回来时的 onResume 不清失败、不重新生成 | the share sheet is open: the onResume on return keeps the failure and does not regenerate
     private static volatile long genStartMs = Long.MAX_VALUE;   // 这次生成开始的时刻：分享只附这之后写的步骤日志 | when this generation started: sharing attaches only step logs written since
+    private static volatile boolean genRetryOffered;   // 熔断页上要显示「再试一次」| the breaker page offers "Try again"
+    private static volatile File genRetryBase;         // 点「再试一次」时重新生成用的资源目录 | the resource base used to generate again from "Try again"
     private final android.os.Handler genHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
-    // 熔断（P2-4）：同一版本最多自动生成 2 次。生成返回成功、但 contentReady 仍判不齐时，以前会立刻再生成，没有上限；
-    // 第 3 次不再空跑，落到失败页并给「分享诊断日志」入口。
-    // Circuit breaker (P2-4): at most 2 automatic builds per version. When a build returns success but contentReady still rejects the result, the old
-    // code started another build at once with no limit; the third start no longer runs and lands on the failure page with the "Share Diagnostics" entry.
-    static final int GEN_TRIES_MAX = 2;
+    // 熔断（P2-4 返工）：只数「连续失败」——同一版本连续 2 次生成结束后内容仍不齐才拦；生成成功（StartupDecision 判为可启动）或玩家在熔断页点
+    // 「再试一次」就清零重新计数，升级版本也自然重置。计数只在一次生成真正跑完后记，不再每次开跑就加。
+    // Circuit breaker (P2-4 rework): only *consecutive* failures count -- 2 build rounds for this version that finish with the content still incomplete
+    // block the next one; a successful build (StartupDecision says bootable) or the player's "Try again" on the breaker page clears the chain, and a new
+    // version resets it. The count is recorded when a round really finishes, not when it starts.
     private boolean generationLimitReached() {
         android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE);
-        return sp.getLong("gen_tries_for", 0) == BuildConfig.VERSION_CODE && sp.getInt("gen_tries", 0) >= GEN_TRIES_MAX;
+        return StartupDecision.generationLimitReached(BuildConfig.VERSION_CODE, sp.getLong("gen_tries_for", 0), sp.getInt("gen_tries", 0));
     }
-    private void countGenerationStart() {
-        android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE);
-        int n = sp.getLong("gen_tries_for", 0) == BuildConfig.VERSION_CODE ? sp.getInt("gen_tries", 0) : 0;
-        sp.edit().putLong("gen_tries_for", BuildConfig.VERSION_CODE).putInt("gen_tries", n + 1).commit();
+    // 一次生成真正跑完：内容齐全 → 清零；否则连续失败 +1 | one generation round really finished: ready content clears the chain, otherwise +1
+    private static void recordGenerationOutcome(Context c, boolean ready) {
+        android.content.SharedPreferences sp = c.getSharedPreferences("dm_regen", MODE_PRIVATE);
+        int n = StartupDecision.genTriesNext(ready ? StartupDecision.GenOutcome.READY : StartupDecision.GenOutcome.FAILED,
+                BuildConfig.VERSION_CODE, sp.getLong("gen_tries_for", 0), sp.getInt("gen_tries", 0));
+        sp.edit().putLong("gen_tries_for", BuildConfig.VERSION_CODE).putInt("gen_tries", n).commit();
     }
 
     private boolean generatorAvailable() {
@@ -211,24 +215,28 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         try (InputStream in = getAssets().open("dmgen/runtime.txt")) { return true; } catch (IOException e) { return false; }
     }
 
-    private void showGenScreen(String title, String body, String hint) { showGenScreen(title, body, hint, false); }
-    private void showGenScreen(String title, String body, String hint, boolean share) {
+    private void showGenScreen(String title, String body, String hint, boolean share, boolean retry) {
         android.widget.LinearLayout box = new android.widget.LinearLayout(this);
         box.setOrientation(android.widget.LinearLayout.VERTICAL); box.setPadding(64, 48, 64, 48);
         box.setGravity(android.view.Gravity.CENTER_VERTICAL);
         // 三层：标题 / 正文 / 副文，字号 24 / 18 / 14（相邻比 1.29–1.33，同 CLAUDE 文案原则的层级） | three levels: title / body / sub at 24 / 18 / 14 (neighbouring ratio 1.29-1.33)
         TextView t = new TextView(this); t.setTextSize(24); t.setText(title); box.addView(t);
         TextView b = new TextView(this); b.setTextSize(18); b.setText(body); b.setPadding(0, 24, 0, 0); box.addView(b);
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = 32;
         if (share) {   // 失败页：「分享诊断日志」（触屏点按钮；手柄 A 见 dispatchKeyEvent）| failure screen: "Share Diagnostics" (tap the button; controller A, see dispatchKeyEvent)
             android.widget.Button btn = new android.widget.Button(this); btn.setText(R.string.dmAndroidGenShare); btn.setAllCaps(false); btn.setOnClickListener(v -> shareGenLog());
-            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.topMargin = 32; box.addView(btn, lp); btn.requestFocus();
+            box.addView(btn, lp); btn.requestFocus();
             hint = getString(R.string.dmAndroidGenShareHint);
+        }
+        if (retry) {   // 熔断页：「再试一次」清零连续失败计数并重开一轮，避免永久卡死（P2-4 返工）| breaker page: "Try again" clears the consecutive-failure count and starts a new round
+            android.widget.Button btn = new android.widget.Button(this); btn.setText(R.string.dmAndroidGenRetry); btn.setAllCaps(false); btn.setOnClickListener(v -> retryGeneration());
+            box.addView(btn, lp); btn.requestFocus();
         }
         if (hint != null) { TextView h = new TextView(this); h.setTextSize(14); h.setText(hint); h.setPadding(0, 24, 0, 0); box.addView(h); }
         setContentView(box);
     }
-    private void showGenFailure() { String t = genFailTitle != null ? genFailTitle : getString(R.string.dmAndroidGenFailed); showGenScreen(t, genFailure, null, genLogText != null); }
+    private void showGenFailure() { String t = genFailTitle != null ? genFailTitle : getString(R.string.dmAndroidGenFailed); showGenScreen(t, genFailure, null, genLogText != null, genRetryOffered); }
 
     // 分享生成失败的诊断：zip 里是 gen_log.txt（结论在第一屏）+ logs/ 下各步骤的完整日志，都按 gen_log 的规则脱敏，经 DiagProvider 交给系统分享面板（缺陷台账 B026）
     // share the generation failure diagnostics: a zip with gen_log.txt (the verdict on the first screen) + every step's full log under logs/, all scrubbed by the gen_log
@@ -302,14 +310,16 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // base = Download/S2X/D2R Mobile（玩家放 ExeFS 与 data 的地方），runtime = files/dm | base = Download/S2X/D2R Mobile (where the player puts ExeFS and data), runtime = files/dm
     private void generate(File base, File runtime) {
         genHandler.removeCallbacks(genPoll);
+        genRetryBase = base;
         if (genFailure != null) { showGenFailure(); return; }
         // 不带生成器的包（精简版 / 资源包）：内容不全也修不好。给专门说明，不再说「重新打开会接着生成」，也不进加载页空等（P2-2）
         // A package without the generator (slim build / resource-only pack) cannot be fixed by generating. Show a dedicated explanation, never say
         // "reopen to continue", and do not wait on the loading page (P2-2)
         if (!generatorAvailable()) { genFailTitle = getString(R.string.dmAndroidGenFailed); genFailure = getString(R.string.dmAndroidGenNoGenerator); genLogText = null; showGenFailure(); return; }
-        // 熔断：第 3 次不再进加载页空跑（只在真正要开新一轮时判；重建界面接回现有生成不计数）| circuit breaker: the third start does not
-        // enter the loading page (checked only for a new round; reattaching a recreated Activity to the running build does not count)
+        // 熔断：连续 2 次失败后不再进加载页空跑（只在真正要开新一轮时判；重建界面接回现有生成不算）| circuit breaker: after 2 consecutive
+        // failures the next start does not enter the loading page (checked only for a new round; reattaching to the running build does not count)
         if (!generating && generationLimitReached()) { failGenerationLimit(base); return; }
+        genRetryOffered = false;   // 真开新一轮：熔断页已翻篇 | a real new round: the breaker page is gone
         showLoadPage();   // 阶段状态在原生侧（静态），Activity 重建时只换一个新视图接上 | stage state lives natively (static); a recreated Activity just attaches a new view
         if (generating) { genHandler.post(genPoll); return; }   // Activity 重建：生成线程还在跑，只接回界面 | the Activity was recreated: the generation thread is still running; only reattach the screen
         // 资源目录与 startHost 同一条规则（缺省 data，没有就沿用早先的 Download/data） | resource directory by the same rule as startHost (data by default, else the earlier Download/data)
@@ -325,7 +335,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (BuildConfig.DEBUG && getIntent().hasExtra("dmTestFreeBytes")) free = getIntent().getLongExtra("dmTestFreeBytes", free);
         if (free < PackGenerator.SPACE_NEEDED) { String f = android.text.format.Formatter.formatShortFileSize(this, free);
             failEarly(base, data, getString(R.string.dmAndroidGenFailSpace), getString(R.string.dmAndroidGenNoSpace, f), String.format(Locale.ROOT, "剩余空间 %s，生成需要约 %d GB（缓存 + 中间产物 + 成品）", f, PackGenerator.SPACE_NEEDED >> 30)); return; }
-        countGenerationStart();   // 真开跑才计次：缺文件 / 空间不够的早停不算一次 | count only a real run: an early stop for missing files / space does not count
+        // 这里不再计次：计数只在一轮真正跑完、按内容是否齐全记（P2-4 返工）| no count here: it is recorded when a round really finishes,
+        // from whether the content is now complete (P2-4 rework)
         generating = true; genState.reset(); genLogText = null; genFailTitle = null; genStartMs = System.currentTimeMillis() - 2000;
         LoadPageView.begin(GEN_STAGES, PackGenerator.LOAD_WEIGHTS_MS); genHandler.post(genPoll);
         final File dataDir = data; final String nativeDir = getApplicationInfo().nativeLibraryDir;
@@ -374,6 +385,10 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             }
             genFailTitle = title;
             genFailure = failure;
+            // 一轮真正跑完才记账：生成成功且 StartupDecision 判为可启动 → 清零；失败或内容仍不齐 → 连续失败 +1（P2-4 返工）
+            // record only when a round really finished: a build that succeeded with StartupDecision-ready content clears the chain; a failure or
+            // still-incomplete content adds a consecutive failure (P2-4 rework)
+            recordGenerationOutcome(app, failure == null && StartupDecision.contentReady(runtime, BuildConfig.DM_PRODUCT));
             generating = false;
         }, "dm-generate").start();
     }
@@ -406,20 +421,36 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         return c.getString(id);
     }
 
-    // 熔断页（P2-4）：同一版本已经自动生成 2 次仍未就绪。写一份带结论的 gen_log 并给分享入口，不再第三次空跑。
-    // Circuit-breaker page (P2-4): two automatic builds for this version still did not leave ready content. Write a gen_log with a verdict and offer
-    // the share entry instead of a third pointless run.
+    // 熔断页（P2-4 返工）：同一版本连续 2 次生成后内容仍不齐。写一份带结论的 gen_log 并给分享入口，不再第三次空跑；
+    // 同时给「再试一次」——玩家修好失败原因（补文件 / 腾空间）后点它，计数清零并重新生成，不会永久卡死。
+    // Circuit-breaker page (P2-4 rework): two consecutive builds for this version still left the content incomplete. Write a gen_log with a verdict and
+    // offer the share entry instead of a third pointless run; also offer "Try again" -- after the player fixes the cause (adds files / frees space) a tap
+    // clears the count and generates again, so the page is never a dead end.
     private void failGenerationLimit(File base) {
         File data = new File(base, "data"), earlier = new File(base.getParentFile().getParentFile(), "data");
         if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
-        String title = getString(R.string.dmAndroidGenFailed), reason = getString(R.string.dmAndroidGenLimit, GEN_TRIES_MAX);
+        String title = getString(R.string.dmAndroidGenFailed), reason = getString(R.string.dmAndroidGenLimit, StartupDecision.GEN_TRIES_MAX);
         genState.reset(); genState.summary.add(reason); genStartMs = Long.MAX_VALUE;   // 没开始新一轮：不附步骤日志 | no new run: no step logs
         String nativeDir = getApplicationInfo().nativeLibraryDir;
         String text = PackGenerator.scrubLog(PackGenerator.genLog(title, reason, genState.summary, envReport(this, getFilesDir(), base, null),
-                PackGenerator.listInputs(new File(base, "ExeFS"), data), "（没有开始生成：同一版本已自动生成 " + GEN_TRIES_MAX + " 次）\n"),
+                PackGenerator.listInputs(new File(base, "ExeFS"), data), "（没有开始生成：同一版本已连续生成失败 " + StartupDecision.GEN_TRIES_MAX + " 次）\n"),
                 new File(nativeDir).getParentFile().getParent(), getFilesDir().getParent(), getPackageName());
         try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) { o.write(text.getBytes(StandardCharsets.UTF_8)); } catch (IOException ignored) {}
+        genRetryBase = base; genRetryOffered = true;
         genFailTitle = title; genFailure = reason; genLogText = text; showGenFailure();
+    }
+
+    // 熔断页的「再试一次」：清零本版的连续失败计数并重新生成（P2-4 返工）| "Try again" on the breaker page: clear this build's consecutive-failure
+    // count and generate again (P2-4 rework)
+    private void retryGeneration() {
+        File base = genRetryBase;
+        if (base == null) return;
+        android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE);
+        int n = StartupDecision.genTriesNext(StartupDecision.GenOutcome.RETRY, BuildConfig.VERSION_CODE,
+                sp.getLong("gen_tries_for", 0), sp.getInt("gen_tries", 0));
+        sp.edit().putLong("gen_tries_for", BuildConfig.VERSION_CODE).putInt("gen_tries", n).commit();
+        genRetryOffered = false; genFailure = null; genFailTitle = null; genLogText = null;
+        generate(base, new File(getFilesDir(), "dm"));
     }
 
     // 开始生成之前就停下（缺 main / sdk / build_manifest、空间不够）：同样写 gen_log（结论 + 环境 + 输入文件）并给「分享诊断日志」| stopped before generating (missing
@@ -652,6 +683,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             showStartError(getString(R.string.dmAndroidStartFailed, result)); return;
         }
         started = true;
+        recordGenerationOutcome(this, true);   // 真正启动成功 = 这一版内容可用：连续失败链清零（导入修好的路径也覆盖）| a real boot means this build's content works: clear the consecutive-failure chain (also after the player fixed it by importing)
         touchOverlay.setInputEnabled(true);
         nativeFocus(3);
         modeHandler.removeCallbacks(modePoll); modeHandler.post(modePoll);
@@ -839,8 +871,11 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // 加载页上的手柄（§2.7）：切到手柄模式；页脚显示时 A 键 = 复制群号 / 链接 | controller on the loading page (§2.7): switch to controller mode; with the footer shown, A = copy the number / link
         if (!started && (generating || importing || loadPageDemo) && loadPage != null && loadPage.isAttachedToWindow() && loadPage.padKey(e)) return true;
         if (!started && (generating || importing || loadPageDemo) && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) return true;
-        // 生成失败页（§2.7）：手柄 A 松开 = 分享诊断日志（触屏点按钮）| generation failure screen (§2.7): controller A on release = Share Diagnostics (touch taps the button)
-        if (!started && !generating && genFailure != null && genLogText != null && e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A) { if (e.getAction() == android.view.KeyEvent.ACTION_UP) shareGenLog(); return true; }
+        // 生成失败页（§2.7）：手柄 A 松开 = 分享诊断日志；熔断页上 A = 「再试一次」（触屏点按钮）
+        // generation failure screen (§2.7): controller A on release = Share Diagnostics; on the breaker page A = "Try again" (touch taps the button)
+        if (!started && !generating && genFailure != null && genLogText != null && e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A) {
+            if (e.getAction() == android.view.KeyEvent.ACTION_UP) { if (genRetryOffered) retryGeneration(); else shareGenLog(); }
+            return true; }
         if (started && (e.getAction() == android.view.KeyEvent.ACTION_DOWN || e.getAction() == android.view.KeyEvent.ACTION_UP)) {
             android.view.InputDevice d = e.getDevice(); int vendor = d != null ? d.getVendorId() : 0, product = d != null ? d.getProductId() : 0;
             if (nativePadKey(e.getDeviceId(), vendor, product, e.getSource(), e.getKeyCode(), e.getAction() == android.view.KeyEvent.ACTION_DOWN)) return true;

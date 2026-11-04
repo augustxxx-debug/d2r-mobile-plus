@@ -11,10 +11,11 @@ import java.nio.file.Files;
 //
 // 覆盖：本版内容齐全、旧不配套导入包 + 齐全运行目录（P0-1）、配套导入包、缺六件程序任一件（M3）、缺 .xgs（M5）、缺 overlay（M2）、缺 derived.tsv、
 // 版本记录缺失 / 不符、换上没做完（install.pending / import.part，N1 / N7）、内外部运行目录规则（N6）、生成中（N5）、产物代号解析（N2）、
-// 导入在删 import.part 前被杀后的恢复（P2-1）。
+// 导入在删 import.part 前被杀后的恢复（P2-1），以及生成熔断只数连续失败、成功 / 再试一次 / 升级版本清零（P2-4 返工）。
 // Covers: ready content, an incompatible old import pack with ready runtime (P0-1), a matching import pack, each missing program file (M3), no .xgs (M5),
 // no overlay (M2), no derived.tsv, missing / wrong version record, unfinished install (install.pending / import.part, N1 / N7), the internal/external
-// runtime rule (N6), generation in progress (N5), product parsing (N2), and recovery when the import was killed before deleting import.part (P2-1).
+// runtime rule (N6), generation in progress (N5), product parsing (N2), recovery when the import was killed before deleting import.part (P2-1), and the
+// generation breaker counting consecutive failures only, cleared by success / "Try again" / a new version (P2-4 rework).
 public class StartupDecisionTest {
     static final String PRODUCT = "3.3.94012-r44";
     static int cases;
@@ -182,6 +183,37 @@ public class StartupDecisionTest {
             equal(StartupDecision.Action.GENERATE, decide(null, p21b, null, PRODUCT, false));
             File p21old = source("p2-1/old-source", "3.3.94012-r43");
             equal(StartupDecision.Action.GENERATE, decide(p21old, p21b, null, PRODUCT, false));
+
+            // P2-4 返工：熔断只数「连续失败」；生成成功 / 「再试一次」清零；升级版本自然重置
+            // P2-4 rework: the breaker counts consecutive failures only; a ready build / "Try again" clears it; a new version resets it
+            final long ver = 10203L;
+            StartupDecision.GenOutcome READY = StartupDecision.GenOutcome.READY, FAILED = StartupDecision.GenOutcome.FAILED, RETRY = StartupDecision.GenOutcome.RETRY;
+            // 成功后清零：之前连续失败 2 次，本轮内容齐全 → 计数归零、不熔断 | success clears: 2 failures before, this round is ready -> 0, no breaker
+            equal(0, StartupDecision.genTriesNext(READY, ver, ver, 2));
+            equal(false, StartupDecision.generationLimitReached(ver, ver, 0));
+            // 连续失败两次熔断（上限仍是 2）| two consecutive failures trip the breaker (cap still 2)
+            equal(1, StartupDecision.genTriesNext(FAILED, ver, ver, 0));
+            equal(2, StartupDecision.genTriesNext(FAILED, ver, ver, 1));
+            equal(true, StartupDecision.generationLimitReached(ver, ver, 2));
+            equal(false, StartupDecision.generationLimitReached(ver, ver, 1));
+            // 失败、成功、失败：中间成功过一次就重新计数，不熔断 | failure, success, failure: the success resets, so no breaker
+            equal(1, StartupDecision.genTriesNext(FAILED, ver, ver, 0));
+            equal(0, StartupDecision.genTriesNext(READY, ver, ver, 1));
+            equal(1, StartupDecision.genTriesNext(FAILED, ver, ver, 0));
+            equal(false, StartupDecision.generationLimitReached(ver, ver, 1));
+            // 「再试一次」：清零并重新计数；再失败两次才重新熔断 | "Try again" clears and recounts; two fresh failures trip it again
+            equal(0, StartupDecision.genTriesNext(RETRY, ver, ver, 2));
+            equal(false, StartupDecision.generationLimitReached(ver, ver, 0));
+            equal(1, StartupDecision.genTriesNext(FAILED, ver, ver, 0));
+            equal(false, StartupDecision.generationLimitReached(ver, ver, 1));
+            equal(2, StartupDecision.genTriesNext(FAILED, ver, ver, 1));
+            equal(true, StartupDecision.generationLimitReached(ver, ver, 2));
+            // 升级版本（versionCode 变了）：旧计数作废，不熔断；失败从 1 起，成功仍归零 | a new version discards the old count: no breaker; a failure starts at 1, a success is still 0
+            final long newer = ver + 1;
+            equal(false, StartupDecision.generationLimitReached(newer, ver, 2));
+            equal(1, StartupDecision.genTriesNext(FAILED, newer, ver, 2));
+            equal(0, StartupDecision.genTriesNext(READY, newer, ver, 2));
+            equal(0, StartupDecision.genTriesNext(RETRY, newer, ver, 2));
 
             System.out.println("StartupDecision OK (" + cases + " cases)");
         } finally {
