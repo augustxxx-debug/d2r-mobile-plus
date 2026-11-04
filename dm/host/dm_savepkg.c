@@ -413,10 +413,12 @@ static int foreign_root(const char *in, char *root, size_t n) {
     for (size_t i = 0; i < sizeof k / sizeof *k; i++) { pth p; snprintf(p, sizeof p, "%s%s", in, k[i]); if (has_saves(p)) { strlcpy(root, p, n); return 1; } }
     return 0;
 }
+// 看着像存档的扩展名，不分大小写：2 = .d2s，1 = .d2i，0 = 都不是 | a save-looking extension, any case: 2 = .d2s, 1 = .d2i, 0 = neither
+static int save_ext(const char *nm, size_t L) { return L > 4 && !strcasecmp(nm + L - 4, ".d2s") ? 2 : L > 4 && !strcasecmp(nm + L - 4, ".d2i") ? 1 : 0; }
 static int foreign_zip(zf *z, const char *tree) {
     char prefix[512] = ""; int have = 0, have_save = 0;
     for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; if (strstr(nm, "..") || nm[0] == '/' || strchr(nm, '\\')) return DM_PKG_E_PATH; if (coop_path(nm)) { LOG("存档管理：包里有联机角色标记，整包拒绝"); return DM_PKG_E_COOP; } }
-    for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; if (zip_junk(nm)) continue; size_t L = strlen(nm); int up = L > 4 && !strcmp(nm + L - 4, ".d2s") ? 2 : L > 4 && !strcmp(nm + L - 4, ".d2i") ? 1 : 0; if (!up) continue; char t[512]; strlcpy(t, nm, sizeof t); char *sl = strrchr(t, '/'); if (!sl && up == 2) continue; if (sl) *sl = 0; else t[0] = 0;
+    for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; if (zip_junk(nm)) continue; size_t L = strlen(nm); int up = save_ext(nm, L); if (!up) continue; char t[512]; strlcpy(t, nm, sizeof t); char *sl = strrchr(t, '/'); if (!sl && up == 2) continue; if (sl) *sl = 0; else t[0] = 0;
         if (up == 1 && t[0]) { const char *par = strrchr(t, '/'); par = par ? par + 1 : t; if (is_stash_name(par)) up = 2; } if (up == 2) { char *s2 = strrchr(t, '/'); if (s2) *s2 = 0; else t[0] = 0; } if (t[0]) strlcat(t, "/", sizeof t);
         if (test_dir_path(t)) continue;   // 只认叫 save 的目录：save.test / save.work 里的存档不进来（与文件夹入口同一条规则）| only the directory named save: saves under save.test / save.work stay out (same rule as the folder entry)
         // 根的选法：有叫 save 的就用它（多个 save 取最短），没有才取最短前缀（审计 T1 P2-2）| choosing the root: one named save wins (the shortest of several), otherwise the shortest prefix
@@ -425,7 +427,8 @@ static int foreign_zip(zf *z, const char *tree) {
     if (!have) return DM_PKG_E_NOTOURS;
     size_t pl = strlen(prefix); int cnt = 0; long long total = 0;
     // 每个看着像存档的条目（.d2s / .d2i，测试 / 工作目录里的除外）都得在根下、而且认得出是角色或仓库，否则整包拒绝：不静默丢（审计 T1 P2-2）| every entry that looks like a save (.d2s / .d2i, outside test / work directories) must sit under the root and be recognised as a character or stash, or the whole package is refused: nothing is dropped silently
-    for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; size_t L = strlen(nm); if (zip_junk(nm) || !(L > 4 && (!strcmp(nm + L - 4, ".d2s") || !strcmp(nm + L - 4, ".d2i")))) continue; const char *sl = strrchr(nm, '/'); if (!sl && !strcmp(nm + L - 4, ".d2s")) continue;
+    // 扩展名不分大小写地认；大写写法（.D2S / .D2I）本游戏和上游都不产出、校验也认不出主档，path_class 本来就按小写认，所以根下的大写写法也落到「认不出」；ZIP 根目录下的裸 .d2s 没有角色目录，也当认不出（单个角色走单文件入口）（审计 T1 bbb5130f）| extensions are matched in any case; upper-case forms are produced by neither this game nor upstream and validation would not take them as the main file, and path_class matches lower case only, so under the root they fall to unrecognised; a bare .d2s at the ZIP root has no character directory and counts as unrecognised too (a single character goes through the single-file entry)
+    for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; size_t L = strlen(nm); if (zip_junk(nm) || !save_ext(nm, L)) continue; const char *sl = strrchr(nm, '/');
         int skip = 0; for (const char *q = nm; sl && q < sl && !skip; ) { const char *e2 = strchr(q, '/'); skip = test_dir_seg(q, (size_t)(e2 - q)); q = e2 + 1; } if (skip) continue;
         char unit[64]; int c = strncmp(nm, prefix, pl) ? -1 : dm_savepkg_path_class(nm + pl, unit, sizeof unit); if (c == PC_CHAR || c == PC_STASH) continue;
         LOG("存档管理：ZIP 里有不在 %s 下或认不出的存档（%s），整包拒绝", prefix[0] ? prefix : "根目录", nm); return DM_PKG_E_PATH; }

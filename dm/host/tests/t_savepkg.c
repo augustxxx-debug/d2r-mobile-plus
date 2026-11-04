@@ -358,6 +358,7 @@ static void t_coop_origin(void) {
 }
 // 终审 T1 P2-1 / P2-2：直接选 save.test / save.work 目录本身不收；ZIP 有叫 save 的根就用它，根以外还有存档就整包拒绝，不静默丢角色
 // Final audit T1 P2-1 / P2-2: picking save.test / save.work itself is refused; a ZIP uses the root named save, and saves outside the root refuse the whole package instead of being dropped silently
+static int save_ext_is_i(const char *n) { size_t L = strlen(n); return L > 4 && !strcasecmp(n + L - 4, ".d2i"); }
 static void t_foreign_edges(void) {
     char in[1024], w[1024], o[1100]; int part = 0; dm_pkg_view v; P(w, "fe/work");
     mk_char("fe/Documents/save.test", "Testy", 1, 3, 0, 1); mk_char("fe/Documents/save.work", "Worky", 1, 3, 0, 1); mk_char("fe/Documents/SAVE.TEST", "Testy", 1, 3, 0, 1); mk_char("fe/Documents/save", "Alice", 1, 30, 0, 100); mk_char("fe/pick/p1-123", "Testy", 1, 3, 0, 1);
@@ -387,6 +388,12 @@ static void t_foreign_edges(void) {
     { ent z[2] = { { .name = "save/Alice/Alice.d2s", .d = a, .n = (uint32_t)an }, { .name = "save/Alice/old/Alice.d2s", .d = a, .n = (uint32_t)an } }; mkzip("fe/z7.zip", z, 2, 0); P(in, "fe/z7.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_PATH, "根下认不出的存档（角色目录里的旧副本）：拒绝"); }
     { ent z[2] = { { .name = "save/Alice/Alice.d2s", .d = a, .n = (uint32_t)an }, { .name = "save/SharedStashSoftCoreV2.d2i", .d = (const uint8_t *)"\x55\xaa\x55\xaastash", .n = 9 } }; mkzip("fe/z8.zip", z, 2, 0); P(in, "fe/z8.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "save/ 里角色 + 仓库：照常收");
       char s[1024]; P(s, "fe8/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0 && v.nchars == 1 && v.nstash == 1, "角色和仓库都在 [%d/%d]", v.nchars, v.nstash); dm_savepkg_view_free(&v); }
+    // 增量终审 bbb5130f：ZIP 根目录的裸 .d2s、根外或根下的大写 .D2S / .D2I 都整包拒绝，不静默丢 | incremental audit bbb5130f: a bare .d2s at the ZIP root and upper-case .D2S / .D2I outside or under the root refuse the whole package
+    { const uint8_t *st9 = (const uint8_t *)"\x55\xaa\x55\xaastash"; const char *nm2[][2] = { { "save/SharedStashSoftCoreV2.d2i", "Ghost.d2s" }, { "save/SharedStashSoftCoreV2.d2i", "lost/Ghost/Ghost.D2S" }, { "save/Alice/Alice.d2s", "lost/SharedStashSoftCoreV2.D2I" }, { "save/Alice/Alice.d2s", "save/Bobby/Bobby.D2S" }, { "save/Alice/Alice.d2s", "save/SharedStashSoftCoreV2.D2i" }, { "save/Alice/Alice.d2s", "GHOST.D2S" } };
+      for (size_t k = 0; k < sizeof nm2 / sizeof *nm2; k++) { ent z[2] = { { .name = nm2[k][0], .d = strstr(nm2[k][0], ".d2i") ? st9 : a, .n = strstr(nm2[k][0], ".d2i") ? 9 : (uint32_t)an }, { .name = nm2[k][1], .d = save_ext_is_i(nm2[k][1]) ? st9 : b, .n = save_ext_is_i(nm2[k][1]) ? 9 : (uint32_t)bn } }; mkzip("fe/zc.zip", z, 2, 0); P(in, "fe/zc.zip"); dm_savepkg_rmtree(w); int r = dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part); CHECK(r == DM_PKG_E_PATH && !strcmp(o, in), "%s + %s：整包拒绝 [%d]", nm2[k][0], nm2[k][1], r); } }
+    { ent z[1] = { { .name = "Ghost.d2s", .d = b, .n = (uint32_t)bn } }; mkzip("fe/zr.zip", z, 1, 0); P(in, "fe/zr.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS && !strcmp(o, in), "只有根目录裸 .d2s 的 ZIP：拒绝（单个角色走单文件入口）"); }
+    { ent z[1] = { { .name = "lost/Ghost/Ghost.D2S", .d = b, .n = (uint32_t)bn } }; mkzip("fe/zu.zip", z, 1, 0); P(in, "fe/zu.zip"); int r = dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part); CHECK(r == DM_PKG_E_PATH, "只有大写 .D2S 的 ZIP：明确拒绝，不当成「不是存档」[%d]", r); }
+    { ent z[2] = { { .name = "save/Alice/Alice.d2s", .d = a, .n = (uint32_t)an }, { .name = "save.test/Ghost/Ghost.D2S", .d = b, .n = (uint32_t)bn } }; mkzip("fe/zt.zip", z, 2, 0); P(in, "fe/zt.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "save.test 里的大写条目照旧排除，save 照常收"); }
     free(a); free(b); dm_savepkg_rmtree(w);
 }
 // 上游 ZIP 的数量 / 总量预算：解压中实时生效，停下时盘上不超（审计 P2-5，变异 M1b 曾存活）| an upstream ZIP's count and total budgets act during extraction and nothing past them reaches the disk
