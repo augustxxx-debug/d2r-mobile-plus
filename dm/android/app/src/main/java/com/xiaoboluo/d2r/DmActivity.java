@@ -144,15 +144,24 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         return null;
     }
 
-    // true = 可以接着启动；false = 正在导入或已显示错误
-    // true = startup can continue; false = importing, or an error is shown
+    // nativeStart 的「换一份内容就能修好」返回码（jni_android.c）：缺程序 / 着色器 / 触屏资源（缺失或不配套）。
+    // 缺数据（-2）与缺 build 配置（-5）是玩家资源目录的问题，生成修不好，不在这里重开进程（P2-1）。
+    // nativeStart's "a regenerated pack can fix it" codes (jni_android.c): program / shaders / touch resources (missing or mismatched).
+    // Missing data (-2) and build configuration (-5) are the player's resource directory and generation cannot fix them, so they do not relaunch here (P2-1).
+    static boolean contentMissing(int code) { return code == -3 || code == -4 || code == -9 || code == -10; }
+
+    // true = 可以接着启动；false = 正在导入 / 生成或已显示加载页、失败页
+    // true = startup can continue; false = importing / generating, or the loading / failure page is shown
     private boolean ensureImported(File source) {
         if (importing) return false;
         File runtime = new File(getFilesDir(), "dm");
-        String want = readText(new File(source, "pack_info.txt")), have = readText(new File(runtime, "pack_info.txt"));
-        if (want != null && !want.equals(have)) {
-            String product = packProduct(want);
-            if (!BuildConfig.DM_PRODUCT.equals(product)) { showStartError(getString(R.string.dmAndroidImportVersion, product)); return false; }
+        File ext = getExternalFilesDir(null);
+        // 判定全在 StartupDecision（javac 可单测）：不配套的旧导入包不会再触发生成（P0-1），换上一半的内容不进启动（P1-1）
+        // The decision lives in StartupDecision (unit-testable with javac): an incompatible old import pack no longer triggers generation (P0-1), and
+        // half-installed content does not boot (P1-1)
+        StartupDecision.Action action = StartupDecision.decide(source, runtime, ext == null ? null : new File(ext, "dm"), BuildConfig.DM_PRODUCT, generating);
+        if (action == StartupDecision.Action.GENERATE) { generate(source.getParentFile(), runtime); return false; }
+        if (action == StartupDecision.Action.IMPORT) {
             importing = true;
             // 加载页（LoadPageView，核心在 dm/host/dm_loadpage.c）：单阶段「导入」，进度按字节报，页面自己算速度与剩余时间 | the loading page (LoadPageView, core in dm/host/dm_loadpage.c): the single stage "import", progress in bytes, the page computes speed and ETA itself
             showLoadPage();
@@ -170,19 +179,6 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             }, "dm-import").start();
             return false;
         }
-        // 没有导入包、也没导入过，或导入的是给别的版本做的：App 带了生成器（-PdmGenRuntime 出的包）就在手机上用玩家自己的游戏文件现做，不用电脑。
-        // 开发时直接推进来的（有 out/main.patched.bin、没有 pack_info.txt）不动
-        // No import pack and nothing imported, or what was imported was made for another version: when the App carries the generator (built with -PdmGenRuntime)
-        // it makes the pack on the phone from the player's own game files, without a computer. Files pushed directly during development (out/main.patched.bin, no pack_info.txt) are left alone;
-        // an unfinished swap of a generated pack (install.pending / import.part left over) is not a push and is generated again (fourth audit A4-04)
-        String product = packProduct(have);
-        File ext = getExternalFilesDir(null);
-        boolean pushed = PackGenerator.pushedByDeveloper(have, runtime, ext == null ? null : new File(ext, "dm"));
-        if (generating || (want == null && !pushed && !BuildConfig.DM_PRODUCT.equals(product) && generatorAvailable())) { generate(source.getParentFile(), runtime); return false; }
-        // 已导入的是给别的版本做的（App 升级了、导入包没重做）：同样要重做导入包。开发时直接推进来的没有 pack_info.txt，不核
-        // The imported pack was made for another version (the app was updated, the pack was not remade): it has to be remade too.
-        // Files pushed directly during development have no pack_info.txt and are not checked
-        if (have != null && !BuildConfig.DM_PRODUCT.equals(product)) { showStartError(getString(R.string.dmAndroidImportVersion, product)); return false; }
         return true;
     }
 
@@ -198,6 +194,21 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private static volatile boolean genShareOpen;  // 分享面板开着：回来时的 onResume 不清失败、不重新生成 | the share sheet is open: the onResume on return keeps the failure and does not regenerate
     private static volatile long genStartMs = Long.MAX_VALUE;   // 这次生成开始的时刻：分享只附这之后写的步骤日志 | when this generation started: sharing attaches only step logs written since
     private final android.os.Handler genHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    // 熔断（P2-4）：同一版本最多自动生成 2 次。生成返回成功、但 contentReady 仍判不齐时，以前会立刻再生成，没有上限；
+    // 第 3 次不再空跑，落到失败页并给「分享诊断日志」入口。
+    // Circuit breaker (P2-4): at most 2 automatic builds per version. When a build returns success but contentReady still rejects the result, the old
+    // code started another build at once with no limit; the third start no longer runs and lands on the failure page with the "Share Diagnostics" entry.
+    static final int GEN_TRIES_MAX = 2;
+    private boolean generationLimitReached() {
+        android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE);
+        return sp.getLong("gen_tries_for", 0) == BuildConfig.VERSION_CODE && sp.getInt("gen_tries", 0) >= GEN_TRIES_MAX;
+    }
+    private void countGenerationStart() {
+        android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE);
+        int n = sp.getLong("gen_tries_for", 0) == BuildConfig.VERSION_CODE ? sp.getInt("gen_tries", 0) : 0;
+        sp.edit().putLong("gen_tries_for", BuildConfig.VERSION_CODE).putInt("gen_tries", n + 1).commit();
+    }
 
     private boolean generatorAvailable() {
         if (!new File(getApplicationInfo().nativeLibraryDir, "libdmgen_py.so").canExecute()) return false;
@@ -296,6 +307,13 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private void generate(File base, File runtime) {
         genHandler.removeCallbacks(genPoll);
         if (genFailure != null) { showGenFailure(); return; }
+        // 不带生成器的包（精简版 / 资源包）：内容不全也修不好。给专门说明，不再说「重新打开会接着生成」，也不进加载页空等（P2-2）
+        // A package without the generator (slim build / resource-only pack) cannot be fixed by generating. Show a dedicated explanation, never say
+        // "reopen to continue", and do not wait on the loading page (P2-2)
+        if (!generatorAvailable()) { genFailTitle = getString(R.string.dmAndroidGenFailed); genFailure = getString(R.string.dmAndroidGenNoGenerator); genLogText = null; showGenFailure(); return; }
+        // 熔断：第 3 次不再进加载页空跑（只在真正要开新一轮时判；重建界面接回现有生成不计数）| circuit breaker: the third start does not
+        // enter the loading page (checked only for a new round; reattaching a recreated Activity to the running build does not count)
+        if (!generating && generationLimitReached()) { failGenerationLimit(base); return; }
         showLoadPage();   // 阶段状态在原生侧（静态），Activity 重建时只换一个新视图接上 | stage state lives natively (static); a recreated Activity just attaches a new view
         if (generating) { genHandler.post(genPoll); return; }   // Activity 重建：生成线程还在跑，只接回界面 | the Activity was recreated: the generation thread is still running; only reattach the screen
         File data = PackGenerator.gameData(base);   // 资源目录与 startHost 同一条规则 | resource directory by the same rule as startHost
@@ -309,6 +327,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (BuildConfig.DEBUG && getIntent().hasExtra("dmTestFreeBytes")) free = getIntent().getLongExtra("dmTestFreeBytes", free);
         if (free < PackGenerator.SPACE_NEEDED) { String f = android.text.format.Formatter.formatShortFileSize(this, free);
             failEarly(base, data, getString(R.string.dmAndroidGenFailSpace), getString(R.string.dmAndroidGenNoSpace, f), String.format(Locale.ROOT, "剩余空间 %s，生成需要约 %d GB（缓存 + 中间产物 + 成品）", f, PackGenerator.SPACE_NEEDED >> 30)); return; }
+        countGenerationStart();   // 真开跑才计次：缺文件 / 空间不够的早停不算一次 | count only a real run: an early stop for missing files / space does not count
         generating = true; genState.reset(); genLogText = null; genFailTitle = null; genStartMs = System.currentTimeMillis() - 2000;
         LoadPageView.begin(GEN_STAGES, PackGenerator.LOAD_WEIGHTS_MS); genHandler.post(genPoll);
         final File dataDir = data; final String nativeDir = getApplicationInfo().nativeLibraryDir;
@@ -387,6 +406,22 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             default: id = R.string.dmAndroidGenStepPrepare;
         }
         return c.getString(id);
+    }
+
+    // 熔断页（P2-4）：同一版本已经自动生成 2 次仍未就绪。写一份带结论的 gen_log 并给分享入口，不再第三次空跑。
+    // Circuit-breaker page (P2-4): two automatic builds for this version still did not leave ready content. Write a gen_log with a verdict and offer
+    // the share entry instead of a third pointless run.
+    private void failGenerationLimit(File base) {
+        File data = new File(base, "data"), earlier = new File(base.getParentFile().getParentFile(), "data");
+        if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
+        String title = getString(R.string.dmAndroidGenFailed), reason = getString(R.string.dmAndroidGenLimit, GEN_TRIES_MAX);
+        genState.reset(); genState.summary.add(reason); genStartMs = Long.MAX_VALUE;   // 没开始新一轮：不附步骤日志 | no new run: no step logs
+        String nativeDir = getApplicationInfo().nativeLibraryDir;
+        String text = PackGenerator.scrubLog(PackGenerator.genLog(title, reason, genState.summary, envReport(this, getFilesDir(), base, null),
+                PackGenerator.listInputs(new File(base, "ExeFS"), data), "（没有开始生成：同一版本已自动生成 " + GEN_TRIES_MAX + " 次）\n"),
+                new File(nativeDir).getParentFile().getParent(), getFilesDir().getParent(), getPackageName());
+        try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) { o.write(text.getBytes(StandardCharsets.UTF_8)); } catch (IOException ignored) {}
+        genFailTitle = title; genFailure = reason; genLogText = text; showGenFailure();
     }
 
     // 开始生成之前就停下（缺 main / sdk / build_manifest、空间不够）：同样写 gen_log（结论 + 环境 + 输入文件）并给「分享诊断日志」| stopped before generating (missing
@@ -608,20 +643,24 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
         if (result < 0) {
             // 触屏资源缺失 / 与这版不配套（App 升级后覆盖层的输入变了）：带生成器的包把已生成内容标成过期、重启进程，重启后自动在加载页重新生成。
-            // 每个版本只自动重试一次，再不行才显示原提示（免得循环）
+            // 每个版本只自动重试一次，再不行就看下面的「没有可用内容」分支
             // Touch overlay missing / not matching this version (the overlay inputs changed with an app update): a package with the generator marks the generated content stale and restarts
-            // the process, which then regenerates it on the loading page. At most one automatic retry per version; after that the original message shows (no loop)
+            // the process, which then regenerates it on the loading page. At most one automatic retry per version; after that the "no usable content" branch below applies
             if ((result == -9 || result == -10) && regenerateAfterUpdate()) return;
-            int resource = switch (result) {
-                case -2 -> R.string.dmAndroidMissingData;
-                case -3 -> R.string.dmAndroidMissingModules;
-                case -4 -> R.string.dmAndroidMissingShaders;
-                case -5 -> R.string.dmAndroidMissingConfig;
-                case -9 -> R.string.dmAndroidMissingOverlay;
-                case -10 -> R.string.dmAndroidInvalidOverlay;
-                default -> 0;
-            };
-            showStartError(resource == 0 ? getString(R.string.dmAndroidStartFailed, result) : getString(resource)); return;
+            // 缺游戏数据（-2）/ 缺 build 配置（-5）：玩家资源目录的问题，生成修不好，也不白重开一次进程；直接告诉玩家文件该放哪（P2-1）
+            // Missing game data (-2) / build configuration (-5): the player's resource directory, which generation cannot fix; do not relaunch for
+            // nothing, just tell the player where the file goes (P2-1)
+            if (result == -2 || result == -5) { showStartError(getString(result == -2 ? R.string.dmAndroidMissingData : R.string.dmAndroidMissingConfig)); return; }
+            // 没有可用游戏内容（缺程序 / 着色器 / 触屏资源）：不再停在旧版「电脑端导入」提示上，换一个干净进程重来；
+            // 下次启动在加载原生库之前由 ensureImported 看运行目录的实际内容：不全就进加载页由手机端生成，齐全就再试一次启动。
+            // 每个版本只这样重开一次（整包重做很慢，也防止「生成成功但原生仍说缺」时来回重开）；之后落到通用启动失败页。
+            // No usable game content (missing program / shaders / touch resources): never the legacy computer-import prompt;
+            // relaunch a clean process. Before the native library loads, ensureImported re-checks the runtime directory: incomplete content goes to the
+            // loading page and is generated on the phone, complete content gets one more boot attempt. At most one such relaunch per version (a full
+            // rebuild is slow, and it also stops a "generation succeeded but the native layer still says missing" loop); after that the generic
+            // start-failure page shows.
+            if (contentMissing(result) && !generating && relaunchForMissingContent()) return;
+            showStartError(getString(R.string.dmAndroidStartFailed, result)); return;
         }
         started = true;
         touchOverlay.setInputEnabled(true);
@@ -637,10 +676,28 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         catch (IOException e) { android.util.Log.w("dm", "触屏资源与这版不配套，标记过期失败：" + e); return false; }
         sp.edit().putLong("overlay_regen_for", BuildConfig.VERSION_CODE).commit();
         android.util.Log.i("dm", "触屏资源与这版 App 不配套（App 升级过）：已标记过期，重启后自动重新生成");
+        relaunchClean();   // 原生库已加载，生成要在加载之前做：换一个干净进程 | the native library is loaded and generation must run before that: start a clean process
+        return true;
+    }
+
+    // 原生启动时说「没有可用游戏内容」：本进程的库已加载（derived.tsv 在库加载时读进表），不能再在这里生成；
+    // 每个版本只重开一次，下次启动前 ensureImported 按运行目录的实际内容决定进加载页还是直接启动。
+    // The native boot says "no usable game content": this process has already loaded the library (derived.tsv is read into tables at load time), so a pack
+    // cannot be generated here. At most one relaunch per version; before the next launch ensureImported decides from the actual runtime directory whether
+    // to enter the loading page or boot directly.
+    private boolean relaunchForMissingContent() {
+        android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE);
+        if (sp.getLong("content_regen_for", 0) == BuildConfig.VERSION_CODE) return false;
+        sp.edit().putLong("content_regen_for", BuildConfig.VERSION_CODE).commit();
+        android.util.Log.i("dm", "启动时没有可用游戏内容：换一个干净进程，下次启动前在加载页重做");
+        relaunchClean();
+        return true;
+    }
+
+    private void relaunchClean() {
         Intent i = getPackageManager().getLaunchIntentForPackage(getPackageName());
         if (i != null) { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK); startActivity(i); }
-        finishAffinity(); Runtime.getRuntime().exit(0);   // 原生库已加载，生成要在加载之前做：换一个干净进程 | the native library is loaded and generation must run before that: start a clean process
-        return true;
+        finishAffinity(); Runtime.getRuntime().exit(0);
     }
 
     private void showStartError(String message) {
