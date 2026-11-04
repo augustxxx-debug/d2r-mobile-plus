@@ -28,7 +28,7 @@ def _qty_widgets():
     t += ('            { "type": "NineTileImageWidget", "name": "TouchQtyBg", "fields": { "rect": { "x": %d, "y": 0, "width": 560, "height": 340 }, "filename": "PANEL/TooltipBorder/TooltipBorder", "backgroundColor": [0.0, 0.0, 0.0, 0.92], "tileScale": 1.0 } },\n'
           '            { "type": "TextBoxWidget", "name": "TouchQtyTitle", "fields": { "rect": { "x": %d, "y": 0, "width": 520, "height": 60 }, "text": "", '
           '"style": { "fontColor": "$FontColorLightGold", "pointSize": "$TooltipFontSize", "spacing": "$ReducedSpacing", "alignment": { "h": "center", "v": "center" } } } },\n') % (TIP, TIP)
-    for n, key in (('TouchQtyOne', '@dmStackOne'), ('TouchQtyHalf', '@dmStackHalf'), ('TouchQtyAll', '@dmStackAll'), ('TouchQtySellOne', '@dmStackSellOne'), ('TouchQtySellHalf', '@dmStackSellHalf'), ('TouchQtySellAll', '@dmStackSellAll')):
+    for n, key in (('TouchQtyOne', '@dmStackOne'), ('TouchQtyHalf', '@dmStackHalf'), ('TouchQtyAll', '@dmStackAll'), ('TouchQtySellOne', '@dmStackSellOne'), ('TouchQtySellHalf', '@dmStackSellHalf'), ('TouchQtySellAll', '@dmStackSellAll'), ('TouchQtyBuyOne', '@dmStackBuyOne'), ('TouchQtyBuyTen', '@dmStackBuyTen'), ('TouchQtyBuyFull', '@dmStackBuyFull')):
         t += ('            { "type": "ButtonWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": 0, "width": 700, "scale": 0.74 }, "filename": "FrontEnd/HD/Final/FrontEnd_ButtonSmall", "hoveredFrame": 1, '
               '"textString": "%s", "textColor": "$LightButtonTextColor", "text/style": "$StyleFEButtonText", "onClickMessage": "PanelManager:ClosePanel:%s" } },\n') % (n, TIP, key, n)
     return t

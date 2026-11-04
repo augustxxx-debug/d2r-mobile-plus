@@ -180,6 +180,22 @@ int main(void) {
       CHECK(e == 0 && dmstk_box_eat(&e, X, 0, K) == 0); // 框外第一次按 X（开框的按住 X）不被误扣
     }
 
+
+    // 买入数量框（11-04 用户定进 RC2）：三个按钮名、三档要几瓶、按金币封顶（阿卡拉 hp1 单价 27，实跑 bq1：9381 → 9354）
+    // Buy box: the three button names, how many each mode wants, capped by gold (Akara hp1 at 27 each, real run bq1: 9381 -> 9354)
+    CHECK(!strcmp(dmstk_box_name(DMSTK_SET_BUY, 1), "TouchQtyBuyOne") && !strcmp(dmstk_box_name(DMSTK_SET_BUY, 2), "TouchQtyBuyTen") && !strcmp(dmstk_box_name(DMSTK_SET_BUY, 3), "TouchQtyBuyFull"));
+    CHECK(dmstk_box_choice("TouchQtyBuyOne") == 1 && dmstk_box_choice("TouchQtyBuyTen") == 2 && dmstk_box_choice("TouchQtyBuyFull") == 3);
+    CHECK(!strcmp(dmstk_box_name(DMSTK_SET_SELL, 2), "TouchQtySellHalf") && !strcmp(dmstk_box_name(DMSTK_SET_SPLIT, 3), "TouchQtyAll"));   // 旧两组不变 | the old two sets unchanged
+    CHECK(dmstk_buy_want(1) == 1 && dmstk_buy_want(2) == 10 && dmstk_buy_want(3) == 99 && dmstk_buy_want(0) == 0);
+    CHECK(dmstk_buy_total(1, 9354, 27) == 1);
+    CHECK(dmstk_buy_total(10, 9354, 27) == 10);
+    CHECK(dmstk_buy_total(99, 9354, 27) == 99);          // 9354 / 27 = 346 瓶够
+    CHECK(dmstk_buy_total(99, 270, 27) == 11);           // 只剩 270 金币：原版 1 瓶 + 10 瓶
+    CHECK(dmstk_buy_total(10, 26, 27) == 1);             // 钱不够第二瓶
+    CHECK(dmstk_buy_total(10, 9354, 0) == 1);            // 单价认不出（原版没买成 / 免费）：不加
+    CHECK(dmstk_buy_total(500, 1000000, 1) == 99);       // 不超过一叠
+    CHECK(dmstk_buy_total(0, 9354, 27) == 0);
+
     printf("t_stack_rule: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }
