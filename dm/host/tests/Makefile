@@ -404,7 +404,7 @@ $(B)/t_fps_hud: t_fps_hud.c ../dm_fps_hud.h | $(B)
 
 $(B)/t_pouch_name: t_pouch_name.c ../dm_pouch_name.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_pouch_name.c
-$(B)/t_pouch_notice: t_pouch_notice.c ../dm_pouch.c ../dm_widget.h ../hle.h | $(B)
+$(B)/t_pouch_notice: t_pouch_notice.c ../dm_pouch.c ../dm_pouch_name.h ../dm_widget.h ../hle.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_pouch_notice.c
 
 $(B)/t_notice_geometry: t_notice_geometry.c ../dm_notice_geometry.h | $(B)
