@@ -111,6 +111,7 @@ run: \
 	python3 native_write_scan.py --selftest ..
 	python3 widget_cache_scan.py --selftest ..
 	python3 mode_scan.py ../..
+	python3 test_b109_pouch_icon.py
 	python3 ../../ios/tools/dm_i18n.py --check
 	python3 test_literal_scan.py
 	python3 ../../i18n/scan_literals.py
