@@ -219,7 +219,10 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         try (InputStream in = getAssets().open("dmgen/runtime.txt")) { return true; } catch (IOException e) { return false; }
     }
 
+    // 失败页 / 熔断页上的两个按钮（每次重画页面时重设；手柄 A 按当前焦点分发，见 dispatchKeyEvent 与 GenScreenKeys）| the two buttons on the failure / breaker page (reset on every redraw; controller A follows the current focus, see dispatchKeyEvent and GenScreenKeys)
+    private android.widget.Button genShareBtn, genRetryBtn;
     private void showGenScreen(String title, String body, String hint, boolean share, boolean retry) {
+        genShareBtn = null; genRetryBtn = null;
         android.widget.LinearLayout box = new android.widget.LinearLayout(this);
         box.setOrientation(android.widget.LinearLayout.VERTICAL); box.setPadding(64, 48, 64, 48);
         box.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -230,12 +233,12 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         lp.topMargin = 32;
         if (share) {   // 失败页：「分享诊断日志」（触屏点按钮；手柄 A 见 dispatchKeyEvent）| failure screen: "Share Diagnostics" (tap the button; controller A, see dispatchKeyEvent)
             android.widget.Button btn = new android.widget.Button(this); btn.setText(R.string.dmAndroidGenShare); btn.setAllCaps(false); btn.setOnClickListener(v -> shareGenLog());
-            box.addView(btn, lp); btn.requestFocus();
+            box.addView(btn, lp); btn.requestFocus(); genShareBtn = btn;
             hint = getString(R.string.dmAndroidGenShareHint);
         }
         if (retry) {   // 熔断页：「再试一次」清零连续失败计数并重开一轮，避免永久卡死（P2-4 返工）| breaker page: "Try again" clears the consecutive-failure count and starts a new round
             android.widget.Button btn = new android.widget.Button(this); btn.setText(R.string.dmAndroidGenRetry); btn.setAllCaps(false); btn.setOnClickListener(v -> retryGeneration());
-            box.addView(btn, lp); btn.requestFocus();
+            box.addView(btn, lp); btn.requestFocus(); genRetryBtn = btn;
         }
         if (hint != null) { TextView h = new TextView(this); h.setTextSize(14); h.setText(hint); h.setPadding(0, 24, 0, 0); box.addView(h); }
         setContentView(box);
@@ -899,10 +902,16 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // 加载页上的手柄（§2.7）：切到手柄模式；页脚显示时 A 键 = 复制群号 / 链接 | controller on the loading page (§2.7): switch to controller mode; with the footer shown, A = copy the number / link
         if (!started && (generating || importing || loadPageDemo) && loadPage != null && loadPage.isAttachedToWindow() && loadPage.padKey(e)) return true;
         if (!started && (generating || importing || loadPageDemo) && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) return true;
-        // 生成失败页（§2.7）：手柄 A 松开 = 分享诊断日志；熔断页上 A = 「再试一次」（触屏点按钮）
-        // generation failure screen (§2.7): controller A on release = Share Diagnostics; on the breaker page A = "Try again" (touch taps the button)
+        // 生成失败页（§2.7）：手柄 A 松开 = 触发当前有焦点的按钮（十字键照系统焦点在「分享诊断日志」/「再试一次」间移动）；都没焦点时熔断页 = 再试一次，否则 = 分享（GenScreenKeys）。触屏点按钮不变
+        // generation failure screen (§2.7): controller A on release activates the focused button (the D-pad moves the system focus between Share Diagnostics / Try again);
+        // with neither focused, the breaker page means Try again and otherwise Share (GenScreenKeys). Touch taps are unchanged
         if (!started && !generating && genFailure != null && genLogText != null && e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A) {
-            if (e.getAction() == android.view.KeyEvent.ACTION_UP) { if (genRetryOffered) retryGeneration(); else shareGenLog(); }
+            if (e.getAction() == android.view.KeyEvent.ACTION_UP) {
+                android.view.View f = getCurrentFocus();
+                int focused = f != null && f == genShareBtn ? GenScreenKeys.SHARE : f != null && f == genRetryBtn ? GenScreenKeys.RETRY : GenScreenKeys.NONE;
+                int t = GenScreenKeys.aTarget(focused, genShareBtn != null, genRetryBtn != null || genRetryOffered);
+                if (t == GenScreenKeys.RETRY) retryGeneration(); else if (t == GenScreenKeys.SHARE) shareGenLog();
+            }
             return true; }
         if (started && (e.getAction() == android.view.KeyEvent.ACTION_DOWN || e.getAction() == android.view.KeyEvent.ACTION_UP)) {
             android.view.InputDevice d = e.getDevice(); int vendor = d != null ? d.getVendorId() : 0, product = d != null ? d.getProductId() : 0;
