@@ -164,6 +164,22 @@ int main(void) {
         CHECK(p.cell[23].q == 28 && p.cell[23].x == 11 && p.cell[23].y == 1);
     }
 
+
+    // 数量框吃键（dmstk_box_eat）：框开着全扣；选档那一下框收起，按着的键继续扣到松开，松开后照常（11-04 整机验收 pvy1 / pvyh2）
+    // Box key eating: all withheld while open; the key that chose a mode stays withheld after the box closes until released, then normal again
+    { const uint64_t A = 1, B = 2, X = 4, Y = 8, K = A | B | X | Y, L = 16; uint64_t e = 0;
+      CHECK(dmstk_box_eat(&e, A, 1, K) == K);          // 框开着按 A：选「拆 1 / 卖 1」，A 不给游戏
+      CHECK(dmstk_box_eat(&e, A, 0, K) == A);          // 框已收起、A 还按着：继续扣（原先这一帧游戏拿起剩下那叠）
+      CHECK(dmstk_box_eat(&e, A | L, 0, K) == A);      // 别的键不受影响
+      CHECK(dmstk_box_eat(&e, 0, 0, K) == 0);          // 松开：不再扣
+      CHECK(dmstk_box_eat(&e, A, 0, K) == 0);          // 之后新按的 A 照常给游戏
+      e = 0; CHECK(dmstk_box_eat(&e, Y, 1, K) == K);   // Y 选「拆半 / 卖半」
+      for (int f = 0; f < 6; f++) CHECK(dmstk_box_eat(&e, Y, 0, K) == Y);   // 真人按 Y 约 6 帧：一直扣（原先第 2 帧起走原版 Y，剩下的半叠没了）
+      CHECK(dmstk_box_eat(&e, 0, 0, K) == 0);
+      e = 0; CHECK(dmstk_box_eat(&e, 0, 1, K) == K);   // 框开着没按键：照旧全扣，什么也没记
+      CHECK(e == 0 && dmstk_box_eat(&e, X, 0, K) == 0); // 框外第一次按 X（开框的按住 X）不被误扣
+    }
+
     printf("t_stack_rule: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

@@ -40,7 +40,7 @@ int dm_cursor_item(dm_cursor_item_info *out) {
     else if (vt == 0x2089fa0) out->container = DM_ITEM_AT_EQUIP;
     else if (vt == 0x20892f8) out->container = DM_ITEM_AT_STASH;
     else if (*(uint32_t *)(w + 0x5c8) == 1) out->container = DM_ITEM_AT_SHOP;
-    else switch (*(uint8_t *)(w + 0x630)) { case 0: out->container = DM_ITEM_AT_INVENTORY; break; case 3: out->container = DM_ITEM_AT_CUBE; break; case 4: out->container = DM_ITEM_AT_STASH; break; default: out->container = DM_ITEM_AT_TRADE; }
+    else out->container = dm_item_container_of_page(*(uint8_t *)(w + 0x630));
     int (*is_type)(uint64_t, int) = (void *)(b + 0x574bc0);   // 类型号 = 物品类型表行号：9 药水（实测 hp5 属于 0x9 / 0x34 / 0x4d：药水 / 杂物 / 治疗药水）、0x16 卷轴、0x12 书 | Type number = row number in the item type table: 9 potion (measured: hp5 belongs to 0x9 / 0x34 / 0x4d: potion / miscellaneous / healing potion), 0x16 scroll, 0x12 book
     out->potion = is_type(item, 9) != 0; out->scroll = is_type(item, 0x16) != 0; out->book = is_type(item, 0x12) != 0;
     // 类型上可放腰带：物品表记录（步长 0x1c0）+0x12e 主类型 → 类型表（步长 0xe8）+0x17，与 main+0x3c1b28 前半段同一读法
