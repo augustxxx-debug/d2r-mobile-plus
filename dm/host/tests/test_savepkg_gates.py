@@ -66,6 +66,11 @@ if 'dm_savepkg_wrap_foreign_from(g_job_arg, g_job_from' not in s: fail('校验�
 pi = i[i.index('didPickDocumentsAtURLs'):i.index('documentPickerWasCancelled')]
 if pi.index('dm_savepkg_is_coop_root(') > pi.index('copyItemAtURL'): fail('iOS 要在拷贝之前判联机')
 if 'dm_savemgr_picked_from(out.fileSystemRepresentation, ' not in pi: fail('iOS 没把原路径交给宿主')
+# 终审 T1 P2-5：iOS 拷贝 / 协调失败报 !io，不当取消（out 为 nil 会走取消）| a failed iOS copy or coordination reports !io instead of passing as a cancel (a nil out is a cancel)
+if 'else { NSLog(@"save pick copy: %@", e); out = @"!io"; }' not in pi: fail('iOS 拷贝失败要报 !io')
+if 'if (!out) { NSLog(@"save pick coordinate: %@", ce); out = @"!io"; }' not in pi: fail('iOS 协调失败要报 !io')
+if not pi.index('if (!out) {') < pi.index('dm_savemgr_picked_from('): fail('iOS 要先补 !io 再交给宿主')
+if 'dm_savemgr_picked(NULL)' in pi: fail('iOS 选中以后不能走取消')
 # P1-1 c：两端外壳串行拷、每次一个新目录 | both shells copy one at a time into a new directory each pick
 if 'dispatch_async(pick_queue()' not in pi or 'DISPATCH_QUEUE_SERIAL' not in i or 'NSUUID.UUID.UUIDString' not in pi: fail('iOS 选文件的拷贝要串行、每次一个新目录')
 if 'dispatch_get_global_queue' in pi: fail('iOS 选文件不能再走并发队列')

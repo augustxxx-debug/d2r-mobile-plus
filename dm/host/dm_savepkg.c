@@ -395,21 +395,31 @@ static int has_saves(const char *dir) {
     closedir(d); return found;
 }
 // 选的可能是存档根，也可能是它的上级（App 的 Documents、拷出来的 files）；只认叫 save 的那一个，save.test、save.work、联机根都不进 | the pick may be the save root or a parent of it; only the one named save is entered, never save.test, save.work or the co-op root
+// 测试 / 工作目录名：save.test、*.work 都不是玩家的存档仓库 | test / work directory names: save.test and *.work are never the player's save repository
+static int test_dir_seg(const char *sg, size_t L) { return (L == 9 && !strncasecmp(sg, "save.test", 9)) || (L > 5 && !strncasecmp(sg + L - 5, ".work", 5)); }
+// 路径的最后一段（去掉结尾的 /；安卓 SAF 文档 ID 的 primary: 前缀也当分隔）| the last segment of a path (trailing slashes dropped; the primary: prefix of an Android SAF document id also separates)
+static int test_dir_path(const char *p) { if (!p || !p[0]) return 0; size_t L = strlen(p); while (L > 1 && p[L - 1] == '/') L--; size_t b = L; while (b && p[b - 1] != '/' && p[b - 1] != ':') b--; return test_dir_seg(p + b, L - b); }
 static int foreign_root(const char *in, char *root, size_t n) {
     static const char *const k[] = { "", "/save", "/Documents/save", "/files/save" };
     for (size_t i = 0; i < sizeof k / sizeof *k; i++) { pth p; snprintf(p, sizeof p, "%s%s", in, k[i]); if (has_saves(p)) { strlcpy(root, p, n); return 1; } }
     return 0;
 }
 static int foreign_zip(zf *z, const char *tree) {
-    char prefix[512] = ""; int have = 0;
+    char prefix[512] = ""; int have = 0, have_save = 0;
     for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; if (strstr(nm, "..") || nm[0] == '/' || strchr(nm, '\\')) return DM_PKG_E_PATH; if (coop_path(nm)) { LOG("存档管理：包里有联机角色标记，整包拒绝"); return DM_PKG_E_COOP; } }
     for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; if (zip_junk(nm)) continue; size_t L = strlen(nm); int up = L > 4 && !strcmp(nm + L - 4, ".d2s") ? 2 : L > 4 && !strcmp(nm + L - 4, ".d2i") ? 1 : 0; if (!up) continue; char t[512]; strlcpy(t, nm, sizeof t); char *sl = strrchr(t, '/'); if (!sl && up == 2) continue; if (sl) *sl = 0; else t[0] = 0;
         if (up == 1 && t[0]) { const char *par = strrchr(t, '/'); par = par ? par + 1 : t; if (is_stash_name(par)) up = 2; } if (up == 2) { char *s2 = strrchr(t, '/'); if (s2) *s2 = 0; else t[0] = 0; } if (t[0]) strlcat(t, "/", sizeof t);
-        { char seg[128]; strlcpy(seg, t, sizeof seg); size_t sl2 = strlen(seg); if (sl2 && seg[sl2 - 1] == '/') seg[sl2 - 1] = 0; const char *sg = strrchr(seg, '/'); sg = sg ? sg + 1 : seg;
-          if (!strcasecmp(sg, "save.test") || (strlen(sg) > 5 && !strcasecmp(sg + strlen(sg) - 5, ".work"))) continue; }   // 只认叫 save 的目录：save.test / save.work 里的存档不进来（与文件夹入口同一条规则）| only the directory named save: saves under save.test / save.work stay out (same rule as the folder entry)
-        if (!have || strlen(t) < strlen(prefix)) { strlcpy(prefix, t, sizeof prefix); have = 1; } }
+        if (test_dir_path(t)) continue;   // 只认叫 save 的目录：save.test / save.work 里的存档不进来（与文件夹入口同一条规则）| only the directory named save: saves under save.test / save.work stay out (same rule as the folder entry)
+        // 根的选法：有叫 save 的就用它（多个 save 取最短），没有才取最短前缀（审计 T1 P2-2）| choosing the root: one named save wins (the shortest of several), otherwise the shortest prefix
+        size_t tl = strlen(t), sb = tl ? tl - 1 : 0; while (sb && t[sb - 1] != '/') sb--; int sv = tl >= 5 && tl - sb == 5 && !strncasecmp(t + sb, "save/", 5);
+        if (!have || sv > have_save || (sv == have_save && tl < strlen(prefix))) { strlcpy(prefix, t, sizeof prefix); have = 1; have_save = sv; } }
     if (!have) return DM_PKG_E_NOTOURS;
     size_t pl = strlen(prefix); int cnt = 0; long long total = 0;
+    // 每个看着像存档的条目（.d2s / .d2i，测试 / 工作目录里的除外）都得在根下、而且认得出是角色或仓库，否则整包拒绝：不静默丢（审计 T1 P2-2）| every entry that looks like a save (.d2s / .d2i, outside test / work directories) must sit under the root and be recognised as a character or stash, or the whole package is refused: nothing is dropped silently
+    for (int i = 0; i < z->n; i++) { const char *nm = z->e[i].name; size_t L = strlen(nm); if (zip_junk(nm) || !(L > 4 && (!strcmp(nm + L - 4, ".d2s") || !strcmp(nm + L - 4, ".d2i")))) continue; const char *sl = strrchr(nm, '/'); if (!sl && !strcmp(nm + L - 4, ".d2s")) continue;
+        int skip = 0; for (const char *q = nm; sl && q < sl && !skip; ) { const char *e2 = strchr(q, '/'); skip = test_dir_seg(q, (size_t)(e2 - q)); q = e2 + 1; } if (skip) continue;
+        char unit[64]; int c = strncmp(nm, prefix, pl) ? -1 : dm_savepkg_path_class(nm + pl, unit, sizeof unit); if (c == PC_CHAR || c == PC_STASH) continue;
+        LOG("存档管理：ZIP 里有不在 %s 下或认不出的存档（%s），整包拒绝", prefix[0] ? prefix : "根目录", nm); return DM_PKG_E_PATH; }
     for (int i = 0; i < z->n; i++) { zr *e = &z->e[i]; if (zip_junk(e->name) || strncmp(e->name, prefix, pl)) continue; const char *rem = e->name + pl; char unit[64]; int c = dm_savepkg_path_class(rem, unit, sizeof unit); if (c != PC_CHAR && c != PC_STASH) continue;
         if (++cnt > MAX_FILES || (total += e->usize) > MAX_TOTAL) return DM_PKG_E_LIMIT; int err = 0; uint8_t *d = zf_read(z, e, MAX_FILE, &err); if (!d) return err ? err : DM_PKG_E_IO; pth t; snprintf(t, sizeof t, "%s/%s", tree, rem); struct stat ts; if (!lstat(t, &ts)) { free(d); LOG("存档管理：包里有同名角色，整包拒绝"); return DM_PKG_E_DUP; } int bad = mkdirs_for(t) || write_new(t, d, e->usize); free(d); if (bad) return DM_PKG_E_IO; }
     return cnt ? DM_PKG_OK : DM_PKG_E_NOTOURS;
@@ -420,7 +430,8 @@ int dm_savepkg_wrap_foreign_from(const char *in, const char *origin, const char 
     *partial = 0; strlcpy(out, in, n); if (origin && origin[0] && (origin[0] == '/' ? coop_root(origin) : coop_path(origin))) { LOG("存档管理：选的东西来自联机存档，不能导入"); return DM_PKG_E_COOP; }
     struct stat st; if (stat(in, &st)) return DM_PKG_E_IO; if (coop_root(in)) { LOG("存档管理：联机存档根不能导入"); return DM_PKG_E_COOP; }
     pth root, tree; snprintf(tree, sizeof tree, "%s/tree", work); size_t L = strlen(in); int rc = DM_PKG_OK;
-    if (S_ISDIR(st.st_mode)) { if (!foreign_root(in, root, sizeof root)) return DM_PKG_E_NOTOURS; rm_tree(work); }
+    if (S_ISDIR(st.st_mode)) { pth rp; if (test_dir_path(in) || (realpath(in, rp) && test_dir_path(rp)) || test_dir_path(origin)) { LOG("存档管理：选的是 save.test / save.work，不是存档仓库"); return DM_PKG_E_NOTOURS; }   // 直接选测试 / 工作目录本身也不收，与 ZIP 同一条规则；安卓拷进新目录后名字没了，看原路径（审计 T1 P2-1）| picking save.test / save.work itself is refused too, as in the ZIP; on Android the copy loses the name, so the original path is checked
+        if (!foreign_root(in, root, sizeof root)) return DM_PKG_E_NOTOURS; rm_tree(work); }
     else if (L > 4 && (!strcasecmp(in + L - 4, ".d2s") || !strcasecmp(in + L - 4, ".d2i"))) { rm_tree(work); strlcpy(root, tree, sizeof root); size_t bn = 0; uint8_t *b = read_all(in, MAX_FILE, &bn); if (!b) return DM_PKG_E_IO; pth t; const char *base = strrchr(in, '/'); base = base ? base + 1 : in;
         if (!strcasecmp(in + L - 4, ".d2s")) { dm_pkg_char c; memset(&c, 0, sizeof c); if (!dm_savepkg_parse_d2s(b, bn, &c) || !dm_savepkg_name_ok(c.name)) { free(b); return DM_PKG_E_NOTOURS; } snprintf(t, sizeof t, "%s/%s/%s.d2s", tree, c.name, c.name); }
         else { char stem[256]; strlcpy(stem, base, sizeof stem); stem[strlen(stem) - 4] = 0; if (!is_stash_name(stem) || bn < 4 || rd32(b) != 0xaa55aa55) { free(b); return DM_PKG_E_NOTOURS; } snprintf(t, sizeof t, "%s/%s.d2i", tree, stem); }

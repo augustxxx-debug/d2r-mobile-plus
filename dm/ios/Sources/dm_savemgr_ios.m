@@ -38,8 +38,9 @@ static dispatch_queue_t pick_queue(void) { static dispatch_queue_t q; static dis
         __block NSString *out = nil; NSError *ce = nil; [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateReadingItemAtURL:u options:NSFileCoordinatorReadingWithoutChanges error:&ce byAccessor:^(NSURL *r) {
             if ((origin && dm_savepkg_is_coop_root(origin.fileSystemRepresentation)) || (r.path && dm_savepkg_is_coop_root(r.path.fileSystemRepresentation))) { out = @"!coop"; return; }   // 选的和协调后的地址都按宿主同一个判定先看一遍，不拷 | both the picked and the coordinated URL go through the host's own check first; nothing is copied
             NSURL *from = r; NSURL *sv = [r URLByAppendingPathComponent:@"save" isDirectory:YES]; BOOL dir = NO; if ([fm fileExistsAtPath:sv.path isDirectory:&dir] && dir) from = sv;
-            if (pick_too_big(from)) { out = @"!limit"; return; } NSString *to = [base stringByAppendingPathComponent:from.lastPathComponent]; NSError *e = nil; if ([fm copyItemAtURL:from toURL:[NSURL fileURLWithPath:to] error:&e]) out = to; else NSLog(@"save pick copy: %@", e); }];
-        if (scoped) [u stopAccessingSecurityScopedResource]; dm_savemgr_picked_from(out.fileSystemRepresentation, out ? origin.fileSystemRepresentation : NULL); });
+            if (pick_too_big(from)) { out = @"!limit"; return; } NSString *to = [base stringByAppendingPathComponent:from.lastPathComponent]; NSError *e = nil; if ([fm copyItemAtURL:from toURL:[NSURL fileURLWithPath:to] error:&e]) out = to; else { NSLog(@"save pick copy: %@", e); out = @"!io"; } }];
+        if (!out) { NSLog(@"save pick coordinate: %@", ce); out = @"!io"; }   // 拷贝或协调失败不是取消：宿主给读写失败提示（审计 T1 P2-5）；取消只走系统的取消回调 | a failed copy or coordination is not a cancel: the host shows the read/write failure; a cancel only comes from the system cancel callback
+        if (scoped) [u stopAccessingSecurityScopedResource]; dm_savemgr_picked_from(out.fileSystemRepresentation, [out hasPrefix:@"!"] ? NULL : origin.fileSystemRepresentation); });
 }
 - (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)c { (void)c; dm_savemgr_picked(NULL); }
 @end
