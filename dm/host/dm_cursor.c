@@ -1200,6 +1200,49 @@ static int slider_part_hit(uint64_t page, int x, int y, uint64_t base, int vh) {
             if (!slack) break; }
     return 0;
 }
+// B144：设置页列表滚动时原版焦点金框不跟着列表裁剪——焦点行滚出列表可见区后，金框照原位置画在标题 / 页签上（高比例屏露在界面上方，用户 Duo 截图）。
+// 金框每帧按「当前焦点控件」重新定位并绘制，不看金框 / FocusManager 的可见位，矩形也每帧重算（Mac 实测），只发输入消息也清不掉（悬停 / 点空白 / 点分组标题）。
+// 这是「不写原版控件 / 状态」规则的唯一例外（B144，用户 11-05 授权，口径来自 OMP）：只在触屏模式、只在设置页四个页签、只在「焦点控件在页面滚动列表（ScrollView）里、
+// 而金框中心不在列表可见区里」时，把 FocusManager 的焦点指针（+0x190）置空——空焦点是原版合法状态（切手柄版时原版自己就会经过，dm_padmode.c focus_restore_once 只补空焦点）。
+// 滚回 / 点任意行由游戏自己重新给焦点；切到手柄模式时焦点还空着，就把清掉的那一行放回（还在设置页列表里才放），手柄十字键 / A 照常；不改别的原版状态。写焦点指针只在 focus_clip_clear / focus_clip_put
+// B144: the original focus frame is not clipped with a settings page list -- once the focused row scrolls out of the visible part of the list the frame is still drawn at that position
+// over the title / tabs (on a tall screen above the UI, the user's Duo screenshot). The frame is positioned and drawn every frame from "the current focused widget" and ignores the visible
+// flags of the frame and of FocusManager, its rect is recomputed every frame (measured on Mac), and input messages cannot clear it (hover / tapping blank space / a section title).
+// The single exception to the "do not write original widgets / state" rule (B144, user authorisation 11-05 relayed by OMP): only in touch mode, only on the four settings tabs, and only
+// while "the focused widget is in the page's scroll list (ScrollView) but the frame's centre is outside the visible part of the list" is FocusManager's focus pointer (+0x190) cleared --
+// an empty focus is a legal original state (the game passes through it itself when switching to the controller layout; focus_restore_once in dm_padmode.c only fills an empty focus).
+// Scrolling back / tapping a row lets the game give focus again by itself; on switching to controller mode with the focus still empty the cleared row is put back (only while it is still
+// in the settings list), so the D-pad / A work as usual; no other original state changes. The focus pointer is written only in focus_clip_clear / focus_clip_put
+static dm_wref g_fc_row;   // 清掉焦点时的那一行（切手柄时放回） | the row whose focus was cleared (put back on switching to the controller)
+static int focus_clip_fm_ok(uint64_t fm) { const char *nm = fm ? (const char *)*(uint64_t *)(fm + 8) : NULL; if (nm && !strcmp(nm, "FocusManager")) return 1; static int lg; if (lg++ < 4) LOG("【红】B144：不是 FocusManager（%s），不写焦点", nm ? nm : "?"); return 0; }
+static void focus_clip_clear(uint64_t fm) { if (focus_clip_fm_ok(fm) && *(uint64_t *)(fm + 0x190)) *(uint64_t *)(fm + 0x190) = 0; }
+static void focus_clip_put(uint64_t fm, uint64_t w) { if (focus_clip_fm_ok(fm) && w && !*(uint64_t *)(fm + 0x190)) *(uint64_t *)(fm + 0x190) = w; }
+// 纯判断（t_focus_clip.c）：要不要清焦点 | pure decision (t_focus_clip.c): whether to clear the focus
+int dm_focus_clip_want(int touch_mode, int settings_page, int focus_in_list, int frame_in_view) { return touch_mode && settings_page && focus_in_list && !frame_in_view; }
+static uint64_t focus_clip_list(uint64_t root, uint64_t w) {   // w 在可见设置页的滚动列表里 → 那个 ScrollView，否则 0 | w in a visible settings page's scroll list -> that ScrollView, else 0
+    static const char *const pages[] = { "SoundOptionsPanel", "3PlusGraphicsOptionsPanel", "GameplayOptionsPanel", "OnlineGameOptionsPanel", "VideoOptionsPanel" };
+    for (unsigned i = 0; w && i < sizeof pages / sizeof pages[0]; i++) {
+        uint64_t pg = ui_panel(root, pages[i]); if (!pg || !*(uint8_t *)(pg + 0x50)) continue;
+        uint64_t v = ui_find(pg, "ScrollView", 0); if (!v || !*(uint8_t *)(v + 0x50)) continue;
+        for (uint64_t a = w; a; a = *(uint64_t *)(a + 0x30)) if (a == v) return v; }
+    return 0;
+}
+static void focus_clip_pump(uint64_t root, int vh) {
+    int dm_padmode_current(void), dm_padmode_busy(void); if (dm_padmode_busy()) return;
+    uint64_t fm = *(uint64_t *)(root + 0xd0), fw = fm ? *(uint64_t *)(fm + 0x190) : 0, ind = fm ? ui_find(fm, "FocusIndicator", 0) : 0;
+    uint64_t st = ui_panel(root, "SettingsPanel"); int settings = st && *(uint8_t *)(st + 0x50), touch = !dm_padmode_current();
+    uint64_t saved = dm_wref_get(&g_fc_row);
+    if (saved && (!settings || touch == 0 || fw)) {   // 手柄模式下焦点还空着：放回清掉的那一行；离开设置页 / 已有新焦点：不再记 | controller mode with an empty focus: put the row back; settings left / a new focus: forget it
+        if (settings && !touch && !fw && focus_clip_list(root, saved)) { focus_clip_put(fm, saved); LOG("B144：切到手柄模式，焦点放回清掉的那一行"); }
+        dm_wref_set(&g_fc_row, 0); saved = 0; }
+    if (!settings || !touch || !fw || !ind || vh <= 0) return;
+    uint64_t sv = focus_clip_list(root, fw); if (!sv) return;
+    int32_t *r = (int32_t *)(ind + 0x70); int cx = (int)((r[0] + r[2] / 2) * (int64_t)vh / 2160), cy = (int)((r[1] + r[3] / 2) * (int64_t)vh / 2160);   // 金框中心：布局单位（2160 高）→ 画面像素 | frame centre: layout units (2160 high) -> pixels
+    uint64_t xy = (uint64_t)(uint32_t)cx | ((uint64_t)(uint32_t)cy << 32);
+    if (!(((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)ind + 0x48))(ind, xy) & 1)) { static int lg; if (lg++ < 2) LOG("B144：金框坐标换算对不上（布局 %d,%d %dx%d → 画面 %d,%d），不判", r[0], r[1], r[2], r[3], cx, cy); return; }   // 换算对不上：保守，不动 | conversion mismatch: conservative, do nothing
+    int in_view = ((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)sv + 0x48))(sv, xy) & 1;
+    if (dm_focus_clip_want(touch, settings, 1, in_view)) { dm_wref_set(&g_fc_row, fw); focus_clip_clear(fm); LOG("B144：焦点行滚出设置页列表可见区 → 清掉焦点（金框不再画在列表外）"); }
+}
 static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size_t hn) {   // 12 任务页慢点按按钮；其余分类保持原样 | 12 quest-page button with relaxed tap timing; other classifications are unchanged
     if (g_cls_out) { g_cls_out = 0; const char *on = "";
         if (modal_top(m, root, &on)) { snprintf(hit, hn, "模态框外 %s", on); g_modal_name = on; return 9; }
@@ -3151,7 +3194,8 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 //     ui_window_edges_pump（屏幕边缘定位，两种输入共用） / ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_trove_tabs_pump / ui_minimap_pump / ui_map_pump / ui_map_geom_pump / ui_map_center（屏幕几何，与输入方式无关）、ui_boss_pct_pump、ui_npcdlg_pump、
 //     ui_widestash_pump、mv_audit_pump、ui_pages_pump（含手柄 L / R 翻页）、ui_watch_pump、ui_panel_heal、ui_panel_state_pump、rs_pump（一键重开，在前端泵里调）、
 //     ui_pad_merc_pump（手柄佣兵页副手格按上 / 拿着物品时页签上的 A，B100；由 ui_panel_state_pump 每帧调，函数里先判手柄模式，触屏模式直接返回，不留跨帧状态）、
-//     ui_pad_charstats_pump（手柄角色页没有起始焦点时十字键下 → 第一个「+」，B114；同上，由 ui_panel_state_pump 调、先判手柄模式）
+//     ui_pad_charstats_pump（手柄角色页没有起始焦点时十字键下 → 第一个「+」，B114；同上，由 ui_panel_state_pump 调、先判手柄模式）、
+//     focus_clip_pump（B144：触屏下清掉滚出设置页列表的焦点，切到手柄模式时要在手柄模式里放回那一行，所以两种模式都跑；切换进行中直接返回）
 // 物品说明框停靠（观测门 OBS_TOOLTIP，挂在说明框面板的「提交一条说明」函数入口 main+0xb0d560(面板, 文字, 目标矩形左上 x2, 目标矩形宽高 x3, 样式, 文字 2)）。
 // 说明框是即时式的：悬停着的控件每帧重新提交、画完就清，宿主在自己的时机读面板里的记录数一直是 0，所以只能在提交那一刻改输入。
 // 原版把框摆在目标矩形（被点的那一格）正下 / 正上方：长说明（暗金、符文之语，十几行）盖住腰带、戒指、背包中间几列和「存放」钮，要点被盖住的格子得先点别处。
@@ -3256,7 +3300,7 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
                 else fix = 0; }
             if (th) { ui_auto_key(th); tnext = fr + 8; } } } }
     { module_t *pm = main_module(); uint64_t proot = 0; if (pm) { memcpy(&proot, pm->base + 0x2f05458, 8); int32_t pw = *(int32_t *)(pm->base + 0x211da38), phh = *(int32_t *)(pm->base + 0x211da3c);
-        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_window_edges_pump(proot); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_trove_tabs_pump(pm, proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm, proot); ui_map_geom_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot, 0); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); ui_widestash_pump(proot); mv_audit_pump(proot, fr); ui_pages_pump(pm, proot); } } }
+        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; focus_clip_pump(proot, phh);   /* B144 */ { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_window_edges_pump(proot); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_trove_tabs_pump(pm, proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm, proot); ui_map_geom_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot, 0); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); ui_widestash_pump(proot); mv_audit_pump(proot, fr); ui_pages_pump(pm, proot); } } }
     if (atomic_load(&g_fe_name_open) && atomic_load(&g_ut_phase) == 2) {   // 起名页：点输入框（底板 / 文本框）= 重新弹系统键盘，不发鼠标点击 | naming page: tapping the input box (backplate / text box) = pop up the system keyboard again, no mouse click is sent
         module_t *nm = main_module(); uint64_t nroot = 0; if (nm) memcpy(&nroot, nm->base + 0x2f05458, 8); uint64_t pn = nroot ? ui_find(nroot, "CharacterCreateNamePanel", 0) : 0;
         if (pn && nm) { int32_t w = *(int32_t *)(nm->base + 0x211da38), h = *(int32_t *)(nm->base + 0x211da3c); uint64_t v = atomic_load(&g_ut_xy);
