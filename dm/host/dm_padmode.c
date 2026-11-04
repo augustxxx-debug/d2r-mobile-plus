@@ -227,8 +227,10 @@ void dm_padmode_page_pulse(uint64_t mask) { atomic_store(&g_pg_pulse, mask); ato
 static _Atomic uint64_t g_pg_stick;   // 左摇杆折算出的方向键位 | direction bits derived from the left stick
 // 原版菜单把左摇杆当方向键（B071，dm_stick_nav.h）：菜单在屏上时每帧声明（游戏主线程），3 帧不声明就失效。和上面的页接管不同：方向键照常归原版（按住连发也是原版的），不进页的按下沿
 // The left stick as D-pad for an original menu (B071, dm_stick_nav.h): declared every frame while the menu is up (game main thread), lapses after 3 frames. Unlike the page takeover above, the D-pad stays the game's (including its own hold-repeat) and nothing goes to a page's press edges
-static _Atomic uint64_t g_nav_frame = UINT64_MAX, g_nav_keys;
+static _Atomic uint64_t g_nav_frame = UINT64_MAX, g_nav4_frame = UINT64_MAX, g_nav_keys;
 void dm_padmode_stick_as_dpad(void) { atomic_store(&g_nav_frame, dm_guest_frame()); }
+// 四个方向都交（B114 任务日志：原版十字键在任务格间走，左摇杆却是自由光标，推出任务格金框就没了） | all four directions (B114 quest log: the D-pad walks the quests, the stick is a free cursor that loses the frame)
+void dm_padmode_stick_as_dpad4(void) { uint64_t f = dm_guest_frame(); atomic_store(&g_nav4_frame, f); atomic_store(&g_nav_frame, f); }
 void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
     static dm_stick_nav nav; const uint64_t V = DM_BTN_UP | DM_BTN_DOWN, H = DM_BTN_LEFT | DM_BTN_RIGHT;
     uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
@@ -240,7 +242,8 @@ void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
     if (!g_cur || !lx || !ly) { dm_stick_nav_reset(&nav); eat = 0; nav_hold = 0; atomic_store(&g_nav_keys, 0); atomic_store(&g_pg_stick, 0); return; }
     uint64_t d = dm_stick_nav_dirs(&nav, *lx, *ly);   // 公共折算（dm_stick_nav.h） | shared conversion
     atomic_store(&g_pg_stick, d);
-    { uint64_t nf = atomic_load(&g_nav_frame), out = 0; int want = nf != UINT64_MAX && dm_guest_frame() - nf <= 3 && !m;   // 页接管时归页 | a page's takeover wins
+    { uint64_t nf = atomic_load(&g_nav_frame), n4 = atomic_load(&g_nav4_frame), out = 0; int want = nf != UINT64_MAX && dm_guest_frame() - nf <= 3 && !m;   // 页接管时归页 | a page's takeover wins
+      if (want && n4 != UINT64_MAX && dm_guest_frame() - n4 <= 3) want = 2;   // 四个方向都交（B114） | all four directions (B114)
       if (dm_stick_nav_as_dpad(&nav_hold, want, d, &out)) { atomic_store(&g_nav_keys, out); *lx = *ly = 0; return; }
       atomic_store(&g_nav_keys, 0); }
     dm_stick_nav_withhold(dm_stick_nav_take(&eat, d, m & (V | H)), lx, ly);   // 只扣声明了的方向（审计 P1-1）与推着期间页收过的方向（P1-1 补） | withhold the declared directions (audit P1-1) and those the page took while held (follow-up)

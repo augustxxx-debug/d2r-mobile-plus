@@ -52,7 +52,9 @@ else:
 # Controller mercenary page (dm_cursor.c +2, B099 / B100): one in ui_pad_merc_pump (Up on the off-hand cell -> helm cell, A on the tabs with an item in hand does not switch page), one in
 #   ui_target_pump (A on a mercenary cell holding an unidentified item -> notice). Both decide every frame and take only that frame's keys (dm_padmode_page_keys); widgets are found by name each
 #   frame, no address is cached and no state crosses frames, so after a mode switch the next frame simply stops taking keys -- no enter / leave hook needed
-PADMODE = {'host/dm_bag.c': 1, 'host/dm_savemgr.c': 2, 'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_diagup.c': 1, 'host/dm_telebox.c': 2, 'host/dm_telemetry.c': 1, 'host/dm_cursor.c': 11, 'host/dm_custom.c': 4, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
+# 手柄角色页（dm_cursor.c +1 处，B114）：ui_pad_charstats_pump 没有起始焦点时收十字键下、把光标放到第一个「+」；同上每帧现判、不留跨帧状态，不用进 / 出钩子
+# Controller character page (dm_cursor.c +1, B114): ui_pad_charstats_pump takes D-pad down with no starting focus and puts the cursor on the first "+"; decided every frame, no state, no hooks
+PADMODE = {'host/dm_bag.c': 1, 'host/dm_savemgr.c': 2, 'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_diagup.c': 1, 'host/dm_telebox.c': 2, 'host/dm_telemetry.c': 1, 'host/dm_cursor.c': 12, 'host/dm_custom.c': 4, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
 # 「进入恐惧区域」入口（dm_padmode.c 1 处，方案 C）：手柄 A 在我们自己的入口钮上时由宿主发原版设置页的切页消息（dm_ui_send）。只在手柄模式发—
 # 这一句在 diff_pump 的 on_row 分支里，而 on_row 在触屏模式 / 弹窗开着时被强制清零；触屏点这颗钮由游戏自己按 onClickMessage 发同一条消息，不走宿主。
 # 控件每帧按名字现找，不缓存地址，切换重建后新控件同样能发，不用进 / 出钩子

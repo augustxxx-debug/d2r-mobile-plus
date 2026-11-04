@@ -2990,6 +2990,39 @@ static void ui_pad_merc_pump(module_t *m, uint64_t root) {
     if (!(dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) return;
     dm_ui_hover_now(tx, ty); static int lg; if (lg++ < 20) LOG("手柄佣兵页：副手格按上 → 头盔格（%d,%d → %d,%d）", cx, cy, tx, ty);
 }
+// 控件在屏上的中心（屏幕像素）：拿它自己的命中函数在全屏上粗扫（步长 = 屏高 / 60），再在命中框四边各细扫一步。一次按键才调一次（约 6 千次命中调用），不每帧调。0 = 没找到
+// A widget's centre on screen (screen pixels): a coarse scan of the whole screen with its own hit test (step = screen height / 60), then each edge of the hit box refined by one step.
+// Called once per key press (about 6 thousand hit calls), never every frame. 0 = not found
+static int ui_hit_center(module_t *m, uint64_t w, int *cx, int *cy) {
+    int W = *(int32_t *)(m->base + 0x211da38), H = *(int32_t *)(m->base + 0x211da3c), st = H / 60, x0 = W, y0 = H, x1 = -1, y1 = -1; if (W <= 0 || H <= 0 || st < 2) return 0;
+    for (int y = st / 2; y < H; y += st) for (int x = st / 2; x < W; x += st) if (PM_HIT(w, x, y)) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 < 0) return 0;
+    while (x0 > 0 && PM_HIT(w, x0 - 1, (y0 + y1) / 2)) x0--; while (x1 < W - 1 && PM_HIT(w, x1 + 1, (y0 + y1) / 2)) x1++;
+    while (y0 > 0 && PM_HIT(w, (x0 + x1) / 2, y0 - 1)) y0--; while (y1 < H - 1 && PM_HIT(w, (x0 + x1) / 2, y1 + 1)) y1++;
+    *cx = (x0 + x1) / 2; *cy = (y0 + y1) / 2; return PM_HIT(w, *cx, *cy);
+}
+// 手柄角色页起始焦点（B114）：原版布局里四个「+」（StrengthPointButton → Dex → Vitality → Energy）有自己的十字键焦点链，但从别的页按 L / R 切过来时页里没有起始焦点，
+// 十字键下什么也不做、金框不在屏上（实测 p2_base：连按四下下都没有焦点）。这里：角色页是最上一页、焦点不在某个「+」上、看得见的「+」至少一个时收下「下」，
+// 把光标放到第一个看得见的「+」中心，之后走原版自己的链。有属性点才有「+」；没有就不接（原版也没有可停的）。左摇杆照旧是自由光标（「+」与属性说明都靠它指，原版设计，不改）
+// Starting focus on the controller character page (B114): the original layout chains the four "+" buttons (Strength → Dex → Vitality → Energy) for the D-pad, but arriving from another page with
+// L / R leaves no starting focus, so D-pad down does nothing and no gold frame is on screen (measured p2_base: four downs, still no focus). Here: with the character page on top, the focus not on
+// a "+" and at least one "+" visible, Down is taken and the cursor goes to the first visible "+"; the original chain takes over from there. The "+" buttons exist only with unspent points; without
+// them nothing is taken (the game has nothing to stop on either). The left stick stays a free cursor (both the "+" and the stat tooltips are pointed at with it -- the original design, unchanged)
+static void ui_pad_charstats_pump(module_t *m, uint64_t root) {
+    int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); void dm_padmode_page_pulse(uint64_t);
+    if (!m || !root || !dm_padmode_current() || !root_panel_shown(root, "CharacterStatsPanel") || modal_any(root, 1, NULL)) return;
+    static const char *const btn[] = { "StrengthPointButton", "DexPointButton", "VitalityPointButton", "EnergyPointButton" };
+    uint64_t fm = *(uint64_t *)(root + 0xd0), hov = fm ? *(uint64_t *)(fm + 0x178) : 0; const char *hn = hov ? *(const char **)(hov + 8) : NULL;
+    for (unsigned i = 0; hn && i < 4; i++) if (!strcmp(hn, btn[i])) return;   // 已在链上：原版自己走 | already on the chain: the game walks it
+    uint64_t cp = ui_panel(root, "CharacterStatsPanel"), lu = cp ? ui_find(cp, "LevelUpInfo", 0) : 0, first = 0;   // 「+」都在 LevelUpInfo 下，没有属性点时整块藏起 | the "+" buttons live under LevelUpInfo, hidden as a whole without points
+#define PM_VIS(w) ((w) && *(uint8_t *)((w) + 0x50) && *(uint8_t *)((w) + 0x51))
+    for (unsigned i = 0; PM_VIS(lu) && !first && i < 4; i++) { uint64_t b = ui_find(lu, btn[i], 0); if (PM_VIS(b)) first = b; }
+#undef PM_VIS
+    if (!first || !(dm_padmode_page_keys(DM_BTN_DOWN) & DM_BTN_DOWN)) return;
+    int x, y; static int lg;
+    if (!ui_hit_center(m, first, &x, &y) || !dm_ui_hover_now(x, y)) { dm_padmode_page_pulse(DM_BTN_DOWN); if (lg++ < 8) LOG("手柄角色页：「+」在屏上找不到落点，这一下「下」还给原版"); return; }
+    if (lg++ < 20) LOG("手柄角色页：没有起始焦点，十字键下 → %s（%d,%d）", *(const char **)(first + 8), x, y);
+}
 static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 | game main thread, every frame
     void uimsg_emit(const char *, const char *, const char *);
     // 手柄暂停菜单左摇杆移焦点（B071）：只在暂停菜单是最上面一页时。选项页 / 编年史 / 消息记录盖在它上面时它还算开着，确认框等模态框的输入归框
@@ -2999,6 +3032,12 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
         int top = !modal_any(root, 1, NULL); for (unsigned i = 0; top && i < sizeof over / sizeof over[0]; i++) top = !root_panel_shown(root, over[i]);
         void dm_padmode_stick_as_dpad(void); if (top) dm_padmode_stick_as_dpad();
     }
+    // 手柄任务日志左摇杆移焦点（B114，同 B071）：原版十字键在任务格（3 × 2）之间走，左摇杆却是自由光标——推出任务格金框就没了（FOCUSLOST）。
+    // 任务日志是最上一页时四个方向都当十字键交给原版；模态框开着时输入归框。换幕是 ZL / ZR（页签条），不靠摇杆
+    // Left stick moves the focus in the controller quest log (B114, like B071): the D-pad walks the quests (3 × 2), but the stick is a free cursor that loses the gold frame once off the quests.
+    // While the quest log is the top page all four directions go to the game as D-pad; a modal keeps its own input. Acts switch with ZL / ZR (tab bar), not the stick
+    if (root_panel_shown(root, "QuestLogPanelExpansion") && !modal_any(root, 1, NULL)) { void dm_padmode_stick_as_dpad4(void); dm_padmode_stick_as_dpad4(); }
+    ui_pad_charstats_pump(main_module(), root);   // 手柄角色页：没有起始焦点时十字键下 → 第一个「+」（B114） | controller character page: D-pad down with no starting focus → the first "+" (B114)
     ui_pad_merc_pump(main_module(), root);   // 手柄佣兵页：副手格按上、拿着物品时页签上的 A（B100） | controller mercenary page: Up on the off-hand cell, A on the tabs with an item in hand (B100)
     int st = (root_panel_shown(root, "BankExpansionLayout") ? DM_PS_BANK : 0) | (dm_shop_open() ? DM_PS_VENDOR : 0)   // 商人页：游戏自己的商店状态（dm_actions.c 每帧读） | vendor page: the game's own shop state (read every frame by dm_actions.c)
            | (root_panel_shown(root, "YouDiedModal") ? DM_PS_DEAD : 0) | (root_panel_shown(root, "ImbueItemsPanel") ? DM_PS_IMBUE : 0) | (root_panel_shown(root, "HoradricCubeLayout") ? DM_PS_CUBE : 0);
@@ -3054,7 +3093,8 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 //   两种模式都跑：ui_target_pump（鉴定目标，含手柄按住 A）、ui_item_pump（命中查询，宿主自己也问）、ui_ptr_pump（指针事件，宿主合成的点击也走）、
 //     ui_window_edges_pump（屏幕边缘定位，两种输入共用） / ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_trove_tabs_pump / ui_minimap_pump / ui_map_pump / ui_map_geom_pump / ui_map_center（屏幕几何，与输入方式无关）、ui_boss_pct_pump、ui_npcdlg_pump、
 //     ui_widestash_pump、mv_audit_pump、ui_pages_pump（含手柄 L / R 翻页）、ui_watch_pump、ui_panel_heal、ui_panel_state_pump、rs_pump（一键重开，在前端泵里调）、
-//     ui_pad_merc_pump（手柄佣兵页副手格按上 / 拿着物品时页签上的 A，B100；由 ui_panel_state_pump 每帧调，函数里先判手柄模式，触屏模式直接返回，不留跨帧状态）
+//     ui_pad_merc_pump（手柄佣兵页副手格按上 / 拿着物品时页签上的 A，B100；由 ui_panel_state_pump 每帧调，函数里先判手柄模式，触屏模式直接返回，不留跨帧状态）、
+//     ui_pad_charstats_pump（手柄角色页没有起始焦点时十字键下 → 第一个「+」，B114；同上，由 ui_panel_state_pump 调、先判手柄模式）
 // 物品说明框停靠（观测门 OBS_TOOLTIP，挂在说明框面板的「提交一条说明」函数入口 main+0xb0d560(面板, 文字, 目标矩形左上 x2, 目标矩形宽高 x3, 样式, 文字 2)）。
 // 说明框是即时式的：悬停着的控件每帧重新提交、画完就清，宿主在自己的时机读面板里的记录数一直是 0，所以只能在提交那一刻改输入。
 // 原版把框摆在目标矩形（被点的那一格）正下 / 正上方：长说明（暗金、符文之语，十几行）盖住腰带、戒指、背包中间几列和「存放」钮，要点被盖住的格子得先点别处。

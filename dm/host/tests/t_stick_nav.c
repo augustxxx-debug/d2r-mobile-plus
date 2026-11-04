@@ -73,6 +73,14 @@ int main(void) {
       CHECK(dm_stick_nav_as_dpad(&h, 0, DM_BTN_UP, &o) == 1 && o == 0);
       CHECK(dm_stick_nav_as_dpad(&h, 1, DM_BTN_UP, &o) == 1 && o == 0);
       CHECK(dm_stick_nav_as_dpad(&h, 1, 0, &o) == 1 && o == 0); }
+    { uint64_t h = 0, o = 0;   // want = 2（任务日志，B114）：四个方向都交方向键，摇杆清零 | want = 2 (quest log, B114): all four directions as D-pad, stick zeroed
+      CHECK(dm_stick_nav_as_dpad(&h, 2, DM_BTN_LEFT, &o) == 1 && o == DM_BTN_LEFT);
+      CHECK(dm_stick_nav_as_dpad(&h, 2, 0, &o) == 1 && o == 0);
+      CHECK(dm_stick_nav_as_dpad(&h, 2, DM_BTN_RIGHT, &o) == 1 && o == DM_BTN_RIGHT);
+      CHECK(dm_stick_nav_as_dpad(&h, 2, 0, &o) == 1 && o == 0);
+      CHECK(dm_stick_nav_as_dpad(&h, 2, DM_BTN_DOWN, &o) == 1 && o == DM_BTN_DOWN);
+      CHECK(dm_stick_nav_as_dpad(&h, 2, 0, &o) == 1 && o == 0);
+      CHECK(dm_stick_nav_as_dpad(&h, 1, DM_BTN_RIGHT, &o) == 1 && o == 0); }   // want = 1 照旧不交左右 | want = 1 still drops left / right
     printf("t_stick_nav: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }

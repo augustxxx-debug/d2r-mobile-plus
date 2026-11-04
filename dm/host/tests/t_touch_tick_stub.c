@@ -18,7 +18,7 @@ void dm_num_set(int n) { (void)n; }
 void dm_actions_pump(void) {}
 uint64_t dm_swapskill_filter(uint64_t b) { return b; }   // 副手组技能（dm_actions.c）：不压键 | swap-set skill (dm_actions.c): does not suppress keys
 uint64_t dm_runeword_pad_filter(uint64_t b) { return b; }   // 手柄模式符文之语清单（dm_runeword.c）：不吃键 | Runeword list in controller mode (dm_runeword.c): swallow no buttons
-void dm_padmode_stick_as_dpad(void) {}
+void dm_padmode_stick_as_dpad(void) {} void dm_padmode_stick_as_dpad4(void) {}
 void dm_padmode_page_stick(int32_t *lx, int32_t *ly) { (void)lx; (void)ly; }   // 页接管摇杆（B006b）：这些单测不带页，不动 | page stick takeover: no page in these tests
 void dm_padmode_page_rstick(int32_t *ry) { (void)ry; }   // 页接管右摇杆跳组：同上，不动 | page right-stick group jump: likewise, does nothing
 void dm_diff_tip(int n) { (void)n; }   // 难度说明提示（dm_padmode.c）：这些单测不带页 | the difficulty tip (dm_padmode.c): no page in these tests
