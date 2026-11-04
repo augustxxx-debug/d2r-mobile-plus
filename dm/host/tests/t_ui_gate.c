@@ -37,7 +37,7 @@ int main(void) {
     // B158：真正发点击处也判设置页盖层（模态框不在时）| B158: the click path judges the settings cover too (when no modal)
     EQ(strstr(s, "if (!modal_top(m, root, &mn0) && settings_cover(m, root, x, y))") != NULL, 1, "B158：点击路径过 settings_cover | B158: click path goes through settings_cover");
     // B157：任务日志里点页签 / X 不再判成空处 | B157: in the quest log taps on tabs / the X are no longer judged empty space
-    { char *q = strstr(s, "static int quest_log_tap(module_t *m, uint64_t root, int x, int y) {"), *qe = q ? strstr(q, "\n}\n") : 0, *c = q ? strstr(q, "if (ql_close(root, x, y)) return 0;") : 0, *t = q ? strstr(q, "if (ql_tab(m, root, x, y, &d, &top))") : 0, *sn = q ? strstr(q, "ui_snap(m, root, &sx, &sy) ? 1 : 2") : 0;
+    { char *q = strstr(s, "static int quest_log_tap(module_t *m, uint64_t root, int x, int y) {"), *qe = q ? strstr(q, "\n}\n") : 0, *c = q ? strstr(q, "on_close = ql_close(root, x, y)") : 0, *t = q ? strstr(q, "int r = dm_ql_decide(on_close, exact, wide, on_ctl);") : 0, *sn = q ? strstr(q, "ui_snap(m, root, &sx, &sy) ? 1 : 2") : 0;
       EQ(q && c && t && sn && c < sn && t < sn && sn < qe ? 1 : 0, 1, "B157：quest_log_tap 先认 X / 页签再判空处 | B157: quest_log_tap checks the X / tabs before empty space");
       EQ(strstr(s, "else if (qt == 3) {") && strstr(strstr(s, "else if (qt == 3) {"), "dm_ui_tab_go();") ? 1 : 0, 1, "B157：qt == 3 切页签 | B157: qt == 3 switches tabs"); }
     free(s);
