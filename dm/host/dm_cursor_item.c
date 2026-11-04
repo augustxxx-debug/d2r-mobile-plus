@@ -97,3 +97,4 @@ int dm_item_targeting(void) {
     uint8_t *b = main_base(); if (!b) return 0;
     return *(uint32_t *)(b + 0x2d12928) == 5 && *(uint64_t *)(b + 0x2d12920) ? (int)*(uint32_t *)(b + 0x2d12930) + 1 : 0;
 }
+void dm_cursor_item_size(uint8_t *b, uint64_t item, int *w, int *h) { item_size(b, item, w, h); }

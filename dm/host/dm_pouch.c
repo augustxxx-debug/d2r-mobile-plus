@@ -148,7 +148,7 @@ static void pouch_hook(const char *wd) {   // 提交前钩子（写盘线程，�
     }
     pthread_mutex_unlock(&g_umu);
 }
-__attribute__((constructor)) static void pouch_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[2] = pouch_hook; }
+__attribute__((constructor)) static void pouch_hook_install(void) { extern void (*g_dm_pre_commit_hook[6])(const char *); g_dm_pre_commit_hook[2] = pouch_hook; }
 
 // 收进囊：背包里的这件符文 / 宝石（服务端物品）→ 写位流 → 摘下 → 通知 → 释放；记一条「收」（持 g_umu 调）
 // Stow into the pouch: this rune / gem in the inventory (server item) -> write bitstream -> remove -> notify -> free; record one "stow" entry (called holding g_umu)
@@ -446,17 +446,21 @@ static void ui_pump(void) {
     // All of the pouch widgets are inserted into the inventory layout (pouch_layout.py): first get the inventory panel (a direct child of the UI root, dm_widget.h), then search inside it; when the inventory is not open, the whole UI tree is not scanned
     uint64_t root = *(uint64_t *)(B + 0x2f05458), inv = root ? dm_ui_top(root, "PlayerInventoryExpansionLayout") : 0, boxw = inv ? find_w(inv, "TouchPouchBox", 3) : 0;
     if (dm_ui_top_chk_on()) { uint64_t old = root ? find_w(root, "TouchPouchBox", 2) : 0; if (old != boxw) { static int k; if (k++ < 20) LOG("【红】百宝囊对拍：TouchPouchBox 新找法 %#llx、旧找法 %#llx", (unsigned long long)boxw, (unsigned long long)old); } }
-    if (!boxw) return;
+    if (!boxw) { void dm_stack_panel_closed(void); dm_stack_panel_closed(); return; }
     int gp = dm_custom_get("gem_pick"), sb = dm_custom_get("store_btn");
-    w_move(find_w(boxw, "TouchPouch", 1), gp ? 222 : 99999, 1294); w_move(find_w(boxw, "TouchPouchIcon", 1), gp ? 246 : 99999, 1310); w_move(find_w(boxw, "TouchPouchCount", 1), gp ? 350 : 99999, 1294);
+    w_move(find_w(boxw, "TouchPouch", 1), gp ? 222 : 99999, 1294); w_move(find_w(boxw, "TouchPouchIcon", 1), gp ? 259 : 99999, 1306); w_move(find_w(boxw, "TouchPouchCount", 1), gp ? 350 : 99999, 1294);
     w_move(find_w(boxw, "TouchStore", 1), sb ? 916 : 99999, 1323);
     static int shown = -1; int gen = atomic_load(&g_ugen); if (gen != shown) { char n[16]; snprintf(n, sizeof n, "%d", atomic_load(&g_ucount)); w_text(find_w(boxw, "TouchPouchCount", 1), n); shown = gen; if (g_tip) tip_show(root, 1); }
     if (atomic_exchange(&g_pouch_tap, 0)) tip_show(root, !g_tip);
     if (g_tip) tip_show(root, 1);   // 文字控件量尺寸要晚一两帧（fitToText）：开着时每帧对齐 | Text widgets measure their size a frame or two late (fitToText): align every frame while open
+    { void dm_bag_ui(uint8_t *, uint64_t, uint64_t, uint64_t); dm_bag_ui(B, inv, boxw, cli_player()); }   // 大背包图标条（dm_bag.c） | Large-bag strip (dm_bag.c)
+    { void dm_stack_ui(uint8_t *, uint64_t, uint64_t); dm_stack_ui(B, boxw, cli_player()); }   // 药水叠数与拆分框（dm_stack.c） | Potion counts and the split box (dm_stack.c)
 }
 
 void dm_pouch_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c）：我们的两个按钮发 ClosePanel:TouchPouch / TouchStore | UI message callback (diag.c): our two buttons send ClosePanel:TouchPouch / TouchStore
+    { void dm_stack_on_uimsg(const char *, const char *, const char *); dm_stack_on_uimsg(cat, act, arg); }
     if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return;
+    { void dm_bag_on_uimsg(const char *); dm_bag_on_uimsg(arg); }
     if (!strcmp(arg, "TouchPouch")) atomic_store(&g_pouch_tap, 1);
     else if (!strcmp(arg, "TouchStore") || !strcmp(arg, "TouchPadStore")) atomic_store(&g_store_req, 1);   // TouchPadStore = 手柄版暂停菜单的「存放」行（touch_layout.py pad_pause） | TouchPadStore = the "Deposit" row of the controller pause menu (touch_layout.py pad_pause)
 }
@@ -464,6 +468,7 @@ void dm_pouch_step(uint8_t *b) {   // 游戏主线程每帧（dm_world.c） | ev
     if (!b) return; B = b; uint64_t fr = dm_guest_frame();
     atomic_store(&g_stash_open, (dm_ui_panel_state() & 1) != 0);   // 储藏箱开着：服务端拍把囊里的放进高级仓库 | Stash open: the server tick moves what is in the pouch into the advanced stash
     ui_pump();
+    { void dm_stack_test(uint8_t *, uint64_t, uint64_t); uint64_t p = cli_player(); if (p) dm_stack_test(b, p, fr); }
     uint64_t pl = cli_player(); if (!pl) { memset(g_pk, 0, sizeof g_pk); memset(g_gnd, 0, sizeof g_gnd); g_ist = -1; return; }
     uint32_t pm = *(uint32_t *)(pl + 0xc); if (pm == 0 || pm == 17) return;   // 死亡中 / 已死 | Dying / dead
     uint64_t inv = *(uint64_t *)(pl + 0x90); if (!inv || *(uint32_t *)inv != 0x01020304) return;

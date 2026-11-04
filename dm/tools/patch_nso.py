@@ -50,6 +50,10 @@ PATCH_OFF = (len(IMG) + 0xFFFF) & ~0xFFFF
 # Networking cuts (excluded scope: Battle.net / online play): taken from a community offline fix (LFS Mod Offline Fix for v2228224, which differs from the official 94012 main in only these 7 words).
 # Measured: the system service layer (nifm offline / DNS black hole / account service) cannot get around it: the game itself sends Battle.net requests directly and allows offline play according to the "last online" time.
 CUTS = {'db0507f36b84200ac05f75d76ed5026f': [
+    # 物品栏快照（0x64890c，搬动 / 拿放 / 买卖都先做）只认页 0、3、4（0x566270），护身符页 5 有物品时快照失败，所有搬动都被拒。循环里跳过页 5（宿主 dm_bag.c 自己管这一页）
+    # The inventory snapshot (0x64890c, taken before every move / pickup / trade) accepts only pages 0, 3 and 4 (0x566270), so an item on charm page 5 fails it and every move is refused. Its loop now skips page 5 (the host's dm_bag.c manages that page)
+    (0x64903c, '02000014', '1f150071', '快照循环：b 0x649044 → cmp w8,#5（w8 = 物品页号）'),
+    (0x649040, 'e81f8052', '80040054', '快照循环：mov w8,#0xff → b.eq 0x6490d0（页 5 跳到取下一件）；循环里的都是物品，走不到原来的 0xff'),
     # （放进所有产物共用的基础改写）：游戏显存分配器预算 260 MB → 512 MB
     # (Placed in the base rewrite shared by all build outputs): game video memory allocator budget 260 MB → 512 MB
     (0x8524c4, '0808a2d2', '0800a4d2', '显存分配器初始化配置：mov x8,#0x10400000（260 MB）→ mov x8,#0x20000000（512 MB），随后 movk #0xa0,lsl48 与 str [sp,#0x238] 不变；'

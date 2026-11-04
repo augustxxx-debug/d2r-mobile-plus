@@ -255,9 +255,9 @@ int dm_blobs_have(const dm_blob *bl, int nb, const uint8_t *bits, int len); int 
 // Previously only this character's .d2s was checked: if the player dragged the item into the shared stash / personal stash pages 2–5 / the Chronicle vault before the next save, the list was never crossed off and another copy was returned on every entry (duplication; later the personal stash dedup removed the item with the same bytes)
 static uint64_t char_h(const char *wd) { char p[1400]; uint8_t *d; size_t n; snprintf(p, sizeof p, "%s/%s/%s.d2s", wd, g_char, g_char); uint64_t h = file_blob(p, &d, &n) ? dm_fnv64(d, n) : 0; free(d); return h; }   // 本角色档整份指纹，读不到 0 | Fingerprint of this character's whole file; 0 if it cannot be read
 static int proof_blobs(const char *wd, dm_blob *bl, int max) {
-    int nb = dm_save_blobs(wd, g_stash, bl, max - 3); char p[1400]; uint8_t *d; size_t n;
-    const char *ext[2] = { "swpage", "swpouch" };
-    for (int k = 0; k < 2 && nb < max; k++) { snprintf(p, sizeof p, "%s/%s/%s.%s", wd, g_char, g_char, ext[k]); if (file_blob(p, &d, &n)) { bl[nb].d = d; bl[nb].n = n; nb++; } else free(d); }
+    int nb = dm_save_blobs(wd, g_stash, bl, max - 4); char p[1400]; uint8_t *d; size_t n;
+    const char *ext[3] = { "swpage", "swpouch", "swcharm" };
+    for (int k = 0; k < 3 && nb < max; k++) { snprintf(p, sizeof p, "%s/%s/%s.%s", wd, g_char, g_char, ext[k]); if (file_blob(p, &d, &n)) { bl[nb].d = d; bl[nb].n = n; nb++; } else free(d); }
     if (nb < max && g_stash[0]) { snprintf(p, sizeof p, "%s/%s.swvault", wd, g_stash); if (file_blob(p, &d, &n)) { bl[nb].d = d; bl[nb].n = n; nb++; } else free(d); }
     return nb; }
 // 进局核清单：有自己身份的件（简单物品字节相同认不出是哪一件，不判）已经在上面这些文件里 = 以前还过、证明没划掉，划掉不再还
@@ -297,7 +297,7 @@ static void cm_hook(const char *wd) {
     }
     pthread_mutex_unlock(&g_mu);
 }
-__attribute__((constructor)) static void cm_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[4] = cm_hook; }
+__attribute__((constructor)) static void cm_hook_install(void) { extern void (*g_dm_pre_commit_hook[6])(const char *); g_dm_pre_commit_hook[4] = cm_hook; }
 
 // ---- 服务端拍（diag.c hud_tick；不在局内 player 为 0）
 // ---- Server tick (diag.c hud_tick; player is 0 when not in game)

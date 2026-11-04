@@ -310,6 +310,7 @@ static void hand_guard(module_t *m) {
 }
 static void cursor_apply(uint64_t *buttons, int32_t *lx, int32_t *ly) {
     hand_guard(main_module());
+    { void dm_stack_pad(uint64_t *, uint64_t); struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); dm_stack_pad(buttons, (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec); }   // 手柄按住 X 拆分药水叠（dm_stack.c） | Hold X on a controller to split a potion stack (dm_stack.c)
     static uint64_t prev_a;
     uint64_t a_now = *buttons & DM_BTN_A, a_edge = a_now && !prev_a;
     prev_a = a_now;
@@ -1313,6 +1314,7 @@ int dm_ui_item_at_now(float nx, float ny) {   // 只许游戏主线程调（Mac 
     module_t *m = main_module(); if (!m) return 0; uint64_t root = 0; memcpy(&root, m->base + 0x2f05458, 8);
     int32_t w = *(int32_t *)(m->base + 0x211da38), h = *(int32_t *)(m->base + 0x211da3c); if (!root || w <= 0 || h <= 0) return 0;
     { int dm_vault_ui_tip_gate(int, int); if ((dm_ui_panel_state() & DM_PS_VAULT) && dm_vault_ui_tip_gate((int)(nx * w), (int)(ny * h))) return 6; }
+    { int dm_stack_box_gate(int, int); if (dm_stack_box_gate((int)(nx * w), (int)(ny * h))) return 6; }   // 拆分框开着（dm_stack.c） | Split box open (dm_stack.c)
     { int dm_pouch_tip_gate(int, int); if (dm_pouch_tip_gate((int)(nx * w), (int)(ny * h))) return 6; }   // 百宝囊清单开着：点框外只收清单（dm_pouch.c）   // 同 ui_item_pump：编年史说明框外只收框 | Pouch list open: a tap outside the box only dismisses the list (dm_pouch.c)   // same as ui_item_pump: outside the chronicle tooltip only dismisses the box
     char hit[40]; g_cls_out = UI_OUT(nx, ny); int r = ui_classify(m, root, (int)(nx * w), (int)(ny * h), hit, sizeof hit);
     if (r == 9) return 6;
@@ -1605,6 +1607,7 @@ static void ui_long_pump(void) {   // 主线程：按游戏自己的悬停对象
         return; }
     if (ci.container == DM_ITEM_AT_STASH && ci.stack > 0) { void dm_stash_take(int); dm_stash_take(3); LOG("界面长按：高级仓库里的一叠 %s（%d 件）→ 取 3 件到背包", ci.code, ci.stack); return; }   // 原版手柄「按住 = 移动 3 个」，件数不变 | The original controller's "hold = move 3"; the count is unchanged
     if (!strcmp(ci.code, "box") && ci.container == DM_ITEM_AT_INVENTORY && (dm_ui_panel_state() & DM_PS_BANK)) { atomic_store(&g_cube_side_req, 1); LOG("界面长按：储藏箱开着，魔盒（id %u）→ 并排打开", ci.id); return; }   // 与双击同一个入口（魔盒并排） | the same entry as the double-tap (cube side by side)
+    { int dm_stack_open(const dm_cursor_item_info *); if (dm_stack_open(&ci)) return; }   // 药水叠长按 = 拆分框；单瓶照旧进腰带 | Long press on a potion stack = split box; a single bottle goes to the belt as before
     if (ci.container == DM_ITEM_AT_INVENTORY && ci.belt_room) { dm_belt_put(ci.id); LOG("界面长按：背包里的 %s（id %u）→ 腰带", ci.code, ci.id); }
     else if (dm_runeword_long_press(&ci)) { g_fb_nudge = 1; LOG("界面长按：%s → 符文之语清单（光标送停靠点，不挂说明框）", ci.code); }   // 匹配的带孔底材（dm_runeword.c 判）。光标还停在底材上会挂出原版说明框、压住清单第二行：同兜底装上后那条路，下一帧送到屏幕左缘停靠点 | A matching socketed base (judged by dm_runeword.c). With the cursor still on the base the original game's tooltip box would show and cover the second row of the list: same path as after a fallback equip, send it to the parking point at the left edge of the screen on the next frame
     else LOG("界面长按：%s（id %u，位置 %d，可进腰带 %d，腰带有位 %d）不动", ci.code, ci.id, ci.container, ci.beltable, ci.belt_room);
@@ -1645,6 +1648,7 @@ static void ui_item_pump(uint64_t root, int width, int height) {
         if (r == 5 && g_press_stack && dm_wref_get(&g_slot) && *(uint64_t *)(dm_wref_get(&g_slot) + 8) && !strcmp((const char *)*(uint64_t *)(dm_wref_get(&g_slot) + 8), "horadriccube_grid")) r = 11;   // 11 = 从成叠格拖出、物品图落在这一页下方的魔盒格上（前端：1 件进魔盒，不是取到背包）。g_slot = 刚才落点分类命中的物品区控件 | 11 = dragged out of a stacked slot with the item image landing on the Horadric Cube slot below this page (front end: 1 item goes into the Cube, not taken to the backpack). g_slot = the item-area widget hit by the drop-point classification just now
         snprintf(hit, sizeof hit, "拖放落点类 %d", r); atomic_store(&g_iq_res, r); atomic_store(&g_drop_last, r); atomic_store(&g_iq_done, seq);
         if (hit_log_ok(hit)) LOG("界面命中：(%d,%d) → %s", x, y, hit); return; }
+    { int dm_stack_box_gate(int, int); if (dm_stack_box_gate(x, y)) { r = 6; atomic_store(&g_iq_res, r); atomic_store(&g_iq_done, seq); return; } }   // 拆分框开着（dm_stack.c） | Split box open (dm_stack.c)
     { int dm_pouch_tip_gate(int, int); if (dm_pouch_tip_gate(x, y)) { r = 6; atomic_store(&g_iq_res, r); atomic_store(&g_iq_done, seq); return; } }   // 百宝囊清单开着：点框外只收清单（dm_pouch.c） | Pouch list open: a tap outside the box only dismisses the list (dm_pouch.c)
     { int dm_vault_ui_tip_gate(int, int); if ((dm_ui_panel_state() & DM_PS_VAULT) && dm_vault_ui_tip_gate(x, y)) { r = 6; atomic_store(&g_iq_res, r); atomic_store(&g_iq_done, seq); return; } }   // 编年史说明框开着：点框外 = 只收框（dm_vault_ui.c），同点模态框外 | Chronicle tooltip open: a tap outside the box = only dismiss the box (dm_vault_ui.c), same as tapping outside a modal
     r = ui_classify(main_module(), root, x, y, hit, sizeof hit);

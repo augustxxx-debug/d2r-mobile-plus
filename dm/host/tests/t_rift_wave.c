@@ -3,7 +3,7 @@
 // Guardian delayed-wave regression (public repository, ported as is from hubeiqiao with the dm prefix replaced by dm): includes the real dm_rift.c and checks the town return, return, and settlement boundaries using tick counts from the log; does not call original game entries.
 // Scene: at tick 21843 the first wave is all down and a second wave is scheduled 75 ticks later; the player has already returned to town (level 109), and tick 21918 is the due time. Expected: no spawn while in town / another level / loading (0) and the pending state stays unchanged; spawn only after returning to this Rift level.
 #include "../dm_rift.c"
-void (*g_dm_pre_commit_hook[5])(const char *);
+void (*g_dm_pre_commit_hook[6])(const char *);
 uint64_t dm_fs_commit_count(void) { return 0; }
 static int checks, fails;
 #define CHECK(c) do { checks++; if (!(c)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #c); } } while (0)

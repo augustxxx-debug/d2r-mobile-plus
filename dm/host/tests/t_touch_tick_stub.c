@@ -101,3 +101,4 @@ void dm_runeword_list_close(void) {}
 int dm_test_game_paused;
 void dm_game_notice_ui_pump(void) {}
 uint64_t dm_padmode_legend_click(float nx, float ny) { (void)nx; (void)ny; return 0; } int dm_padmode_hud_click(float nx, float ny, uint64_t *b) { (void)nx; (void)ny; (void)b; return 0; } int dm_padmode_legend_has(uint32_t g) { (void)g; return 0; } int dm_game_paused(void) { return dm_test_game_paused; }   // Native pause state is controlled by the HID regression, without a game image.
+int dm_stack_box_gate(int x, int y) { (void)x; (void)y; return 0; } int dm_stack_open(const void *ci) { (void)ci; return 0; } void dm_stack_pad(uint64_t *buttons, uint64_t now_ns) { (void)buttons; (void)now_ns; }   // 药水拆分框（dm_stack.c）：给空桩 | potion split box (dm_stack.c): empty stubs

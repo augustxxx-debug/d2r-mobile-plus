@@ -36,6 +36,8 @@ RC2 merges the iOS and Android lines: one tree, and both packages come from the 
 - **Skill counts stay on the icon** (B011, both platforms): in the skill tree's item skills and the skill binding box, a Tome's charges or a throwing potion's count sit at the icon's top left, as on the bottom bar, instead of dropping below the icon onto the button prompt.
 - **Confirmation boxes fit their text** (B070): the Hardcore warning and other confirmation boxes use the same layout in touch and controller mode, in a box one size taller with body text at size 36. In controller mode the text no longer runs onto the buttons.
 - **Controller: the selection frame on the language row covers 한국어** (B087): on Options → Custom the frame used to end just after the last checkbox, leaving the Korean label outside it.
+- **Potions stack, up to 99** (user, 2026-10-31): picked-up potions of a kind merge and inventory cells show the count; a sip takes off just 1 and the count survives save and load; the belt refills one bottle at a time without opening the inventory (can be turned off under Options → Custom). Touch long press or holding X on a controller splits 1 / half / all; with a lone stack in the cube Transmute splits it in half, two stacks of a kind merge, and other recipes split stacks into single bottles first. **Saves cannot be rolled back**: an older version reading a new save keeps only 1 bottle per stack.
+- Selling a potion stack to a vendor now asks how many: sell 1, half or all (controller A / Y / X, or tap a button). Selling 1 or half needs one free cell; co-op guests do not get this box yet and still sell the whole stack. The personal stash page also shows stack counts.
 
 ## [1.0.0-rc1.2] - 2026-10-30
 

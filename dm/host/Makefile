@@ -44,6 +44,7 @@ SRC=\
 	romfs_validate.c \
 	dm_actions.c \
 	dm_autobuff.c \
+	dm_bag.c \
 	dm_beltauto.c \
 	dm_bossrush.c \
 	dm_bright.c \
@@ -74,6 +75,7 @@ SRC=\
 	dm_rift.c \
 	dm_rift_ui.c \
 	dm_runeword.c \
+	dm_stack.c \
 	dm_rwlv_core.c \
 	dm_savemgr.c \
 	dm_savepkg.c \

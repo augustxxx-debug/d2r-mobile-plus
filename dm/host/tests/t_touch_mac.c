@@ -49,6 +49,7 @@ int dm_vault_ui_over(int x, int y) { (void)x; (void)y; return 0; }
 int dm_vault_ui_tip_gate(int x, int y) { (void)x; (void)y; return 0; }
 int dm_pouch_tip_gate(int x, int y) { (void)x; (void)y; return 0; }
 int dm_vault_ui_blocks(int x, int y) { (void)x; (void)y; return 0; }
+int dm_stack_box_gate(int x, int y) { (void)x; (void)y; return 0; } int dm_stack_open(const void *ci) { (void)ci; return 0; } void dm_stack_pad(uint64_t *buttons, uint64_t now_ns) { (void)buttons; (void)now_ns; }   // 药水拆分框（dm_stack.c）：给空桩 | potion split box (dm_stack.c): empty stubs
 int dm_vault_ui_tap(int x, int y) { (void)x; (void)y; return 0; }
 int dm_vault_ui_drag(int phase, int x, int y) { (void)phase; (void)x; (void)y; return 0; }
 uint32_t dm_swapskill_itemsig(void) { return 0; }   // 副手组技能当前武器组（dm_actions.c）的桩：读不到 | stub for the current weapon set of the swap-set skill (dm_actions.c): cannot be read
