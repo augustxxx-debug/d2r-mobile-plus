@@ -1555,12 +1555,16 @@ def _opt_heading(name, text_key, y):
 # 行名下面一行副文（CLAUDE.md §2.6：28 号、说明灰、$ReducedSpacing）：文字上移，副文也进手柄金框，同光追 AO 行 | one subtext line under the row name (28 pt, description grey, $ReducedSpacing): caption moved up so it fits the controller frame, like the AO row
 _OPT_NOTES = frozenset(('auto_mana', 'merc_pot', 'auto_buff', 'free_tp', 'pot_pick', 'gem_pick', 'loot_filter', 'item_notes', 'map_mark', 'icloud'))
 _NOTE_STYLE = '{ "fontColor": "$FontColorLightGray", "pointSize": 28, "spacing": "$ReducedSpacing", "alignment": { "v": "center" } }'
-def _opt_note(name, text_key, x, y, w=1270): return '        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": 60 }, "text": "@%s", "style": %s } },\n' % (name, x, y, w, text_key, _NOTE_STYLE)
+# 「重启后生效」提示（B151）：橙色（原版色票 $FontColorOrange）、28 号；宿主只在当前值 ≠ 启动值时露出（dm_custom.c restart_pending），没改不显示
+# "Applies after restart" hint (B151): orange (original token $FontColorOrange), 28 pt; the host shows it only while the current value differs from the launch value (restart_pending in dm_custom.c)
+_RESTART_NOTES = frozenset(('item_notes', 'icloud'))
+_RESTART_STYLE = '{ "fontColor": "$FontColorOrange", "pointSize": 28, "spacing": "$ReducedSpacing", "alignment": { "v": "center" } }'
+def _opt_note(name, text_key, x, y, w=1270, style=None): return '        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": 60 }, "text": "@%s", "style": %s } },\n' % (name, x, y, w, text_key, style or _NOTE_STYLE)
 def _custom_toggle_row(i, key, label, y=None):
     y, h = _CUSTOM_Y[i] if y is None else y, _CUSTOM_LINE_H
     if key in _OPT_NOTES:   # 「存放」按钮两种模式都在屏上（REQ12），不再挂「仅触屏」副文 | the Deposit button is on screen in both modes (REQ12), no "touch only" note any more
         extra = ''
-        if key in _OPT_NOTES: extra += _opt_note('TouchCustom_%s_Note' % key, _custom_key(key) + 'Note', 0, y + 88)
+        if key in _OPT_NOTES: extra += _opt_note('TouchCustom_%s_Note' % key, _custom_key(key) + 'Note', 0, y + 88, style=_RESTART_STYLE if key in _RESTART_NOTES else None)
         if key == 'icloud': extra += _opt_note('TouchCustom_icloud_NoAcct', 'dmCustomIcloudNoAcct', 0, y + 88)
         return _custom_toggle_row_core(y, 140, key, label, h) + extra
     return _custom_toggle_row_core(y, h, key, label, h)
@@ -1622,6 +1626,10 @@ def _custom_q3d_row(i, setting="q3d", y=None):
         yy = y + k * h
         out += text(nm + '_Label', yy + 10, 100, key, False) + text(nm + '_Hint', yy + 100, 70, key + 'Hint', True) + box(nm, yy + 15)
     if setting == 'touch_swap_above': out += _opt_note(prefix + '_Pad', 'dmOptTouchOnly', 900, y + 30, 380)
+    # 配音：橙色「重启游戏后生效」放在第一项标签那一行的右侧空白（标签字短，勾选框在 x=1315）；宿主按 restart_pending 显隐
+    # Voice: the orange restart hint sits in the free space right of the first choice's label (short label, checkbox at x=1315); shown by the host via restart_pending
+    if setting == 'voice': out += ('        { "type": "TextBoxWidget", "name": "%s_Restart", "fields": { "rect": { "x": 640, "y": %d, "width": 650, "height": 100 }, "text": "@dmCustomRestartHint", '
+                                   '"style": { "fontColor": "$FontColorOrange", "pointSize": 28, "spacing": "$ReducedSpacing", "alignment": { "h": "right", "v": "center" } } } },\n') % (prefix, y + 10)
     return out
 def _custom_page(text):
     if '"name": "VideoOptionsPanel"' not in text or '"name": "OptionsTable"' not in text: raise SystemExit('touch_layout：主机版视频页不是原样（原版布局变了？），自定义页没换')
@@ -1798,7 +1806,7 @@ def _graphics_page(text):
     # 内存档位 1 / 0（用户 2026-10-29）：启动预留按启动时的分辨率档缩小，调高要重启才生效——分辨率文字下方一行同款副文，宿主按 res_raise_needs_restart 显示
     # Memory tiers 1 / 0 (user 2026-10-29): the startup reserve is shrunk to the launch resolution level, so raising it needs a restart - the same subtext under the resolution caption, shown by the host via res_raise_needs_restart
     res_note = label('TouchGraphicsResNote', 'dmGraphicsResRestartNote', 0, 116, 1000, 60)
-    res_note['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
+    res_note['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorOrange', 'style/spacing': '$ReducedSpacing'})   # B151：与其他「重启后生效」同一套橙色 | B151: same orange as the other restart hints
     res_row = {'type': 'Widget', 'name': 'TouchGraphicsResRow', 'fields': {
         'rect': {'x': 0, 'y': 180, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsResText', 'dmGraphicsResAuto', 0, 0, 1000, 180), res_note,

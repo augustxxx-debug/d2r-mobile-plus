@@ -85,6 +85,7 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_foldl
 	python3 test_options_table.py
 	python3 test_touch_layout_language.py
 	python3 test_community_entry.py
+	python3 test_restart_hint.py   # B151：重启后生效提示（橙色、28 号、按启动值显隐） | B151: restart hints (orange, 28 pt, shown by launch value)
 	python3 test_community_layout.py   # 社区框：渠道卡张数与宿主一致、宿主找的控件都在、网盘行已撤（B154） | community box: card count matches host, host widget names present, drive rows gone (B154)
 	python3 test_difficulty_row.py
 	python3 test_desecrated_entry.py   # 「进入恐惧区域」入口（方案 C §3.2）| the Terror Zones entry (plan C 3.2)

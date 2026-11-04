@@ -107,6 +107,7 @@ run: \
 	$(B)/t_widget \
 	$(B)/t_stack_rule \
 	$(B)/t_cursor_item_page \
+	$(B)/t_restart_hint \
 	$(B)/t_bag_rule \
 	$(B)/t_store_padfocus
 	python3 native_write_scan.py --selftest ..
@@ -213,6 +214,7 @@ run: \
 	$(B)/t_widget
 	$(B)/t_stack_rule
 	$(B)/t_cursor_item_page
+	$(B)/t_restart_hint
 	$(B)/t_bag_rule
 	$(B)/t_store_padfocus
 	$(B)/t_doorspot
@@ -242,6 +244,8 @@ $(B)/t_widget: t_widget.c ../dm_widget.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_widget.c
 $(B)/t_stack_rule: t_stack_rule.c ../dm_stack_rule.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_stack_rule.c
+$(B)/t_restart_hint: t_restart_hint.c ../dm_restart_hint.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_restart_hint.c
 $(B)/t_cursor_item_page: t_cursor_item_page.c ../dm_cursor_item.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_cursor_item_page.c
 $(B)/t_bag_rule: t_bag_rule.c ../dm_bag_rule.h | $(B)
