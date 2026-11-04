@@ -128,7 +128,7 @@ int main(void) {
     { const char *on = "eco_fps=2\nrt_shadow=1\nupscale=1\nq3d=0\nq3d_v2=1\n", *left = "streak=2\ntest=1\nhist=00\ncause=0:0\n"; FILE *f;
       write_settings(on); atomic_store(&g_loaded, 0); f = fopen(marker, "w"); fputs(left, f); fclose(f);
       setenv("DM_WATCH", "90", 1); restart(); CHECK(dm_crashfence_start() == 2); CHECK(marker_streak() == 2);
-      CHECK(dm_custom_get("eco_fps") == FPS_120); CHECK(dm_custom_get("rt_shadow") == 1); CHECK(dm_custom_get("upscale") == 1); CHECK(dm_crashfence_notice_take() == 0);
+      CHECK(dm_custom_get("eco_fps") == FPS_120); CHECK(dm_custom_get("rt_level") == 2); CHECK(dm_custom_get("upscale") == 1); CHECK(dm_crashfence_notice_take() == 0);
       read_settings(text, sizeof text); CHECK(!strcmp(text, on));
       dm_crashfence_clean("优雅退出"); CHECK(marker_streak() == 2); CHECK(g_streak == 2);   // 测试局正常结束：残留不清（N10-01） | a test run ending normally keeps the leftover (N10-01)
       restart(); CHECK(dm_crashfence_start() == 2); CHECK(marker_streak() == 2);              // 再来一局测试局：仍是 2，不加 | another test run: still 2, no increment
