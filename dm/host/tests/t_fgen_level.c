@@ -153,11 +153,15 @@ int main(int argc, char **argv) {
     read_settings(text, sizeof text); CHECK(strstr(text, "fgen_level=0\n")); CHECK(strstr(text, "fgen_level:2"));
     exp_restore_pending(); CHECK(pending_value(K_FGEN) == DM_FGEN_SMOOTH);
     dm_custom_on_uimsg("OptionsPanelMessage", "AcceptChanges", NULL); CHECK(dm_fgen_level() == DM_FGEN_SMOOTH); CHECK(atomic_load(&g_bak[3]) == -1);
-    // 档位 1（省电，枚举保留）走围栏也照样备份、关掉、能恢复回 1 | level 1 (power saving, reserved enum) is backed up, turned off and restored to 1 just the same
+    // 档位 1（省电，枚举保留）走围栏也照样备份、关掉；预选不恢复成 1（见下）| level 1 (power saving, reserved enum) is backed up and turned off just the same; pre-selection does not bring 1 back (below)
     write_settings("fgen_level=1\nupscale=0\n"); (void)dm_fgen_level();
     { char what[256]; CHECK(dm_custom_safe_mode(what, sizeof what) == 1); }
-    CHECK(atomic_load(&g_bak[3]) == DM_FGEN_ECO); exp_restore_pending(); CHECK(pending_value(K_FGEN) == DM_FGEN_ECO);
-    dm_custom_on_uimsg("OptionsPanelMessage", "AcceptChanges", NULL); CHECK(dm_fgen_level() == DM_FGEN_ECO); CHECK(!dm_fg_setting());
+    // 预选按界面两态归一（审计 P2-3）：备份里的 1 按 0（等于当前的关，不预选），不升成 2；应用清掉备份、档位停在 0 | pre-selection is normalised to the page's two states (audit P2-3): a backed-up 1 reads as 0 (equal to the current off, not pre-selected), never 2; Apply clears the backup and the level stays 0
+    CHECK(atomic_load(&g_bak[3]) == DM_FGEN_ECO); CHECK(exp_restore_pending() == 0); CHECK(pending_value(K_FGEN) == DM_FGEN_OFF);
+    dm_custom_on_uimsg("OptionsPanelMessage", "AcceptChanges", NULL); CHECK(dm_fgen_level() == DM_FGEN_OFF); CHECK(atomic_load(&g_bak[3]) == -1); CHECK(!dm_fg_setting());
+    write_settings("fgen_level=0\nexp_off_backup=eco_fps:2,fgen_level:1\n"); (void)dm_fgen_level();   // 混着别的项：别的照预选，帧生成那项不预选 | mixed with another entry: that one pre-selects, frame generation does not
+    CHECK(exp_restore_pending() == 1 && pending_value(K_FPS) == FPS_120 && pending_value(K_FGEN) == DM_FGEN_OFF); dm_custom_on_uimsg("OptionsPanelMessage", "CancelChanges", NULL);
+    write_settings("fgen_level=0\nexp_off_backup=fgen_level:3\n"); (void)dm_fgen_level(); CHECK(exp_restore_pending() == 0 && pending_value(K_FGEN) == DM_FGEN_OFF);   // 保留档 3 读盘已归 0 | the reserved 3 already reads as 0
     // 9. 安卓壳：档位设置照读（设置文件跨端互通、不改写），但一律按关生效；图形页没有这一行（方案 C 平台层，§2.8）
     // 9. Android shell: the level is still parsed (the settings file is shared across platforms and is not rewritten) but always takes effect as off; the Graphics page has no such row (plan C platform layer, §2.8)
     platform_apple = 0; write_settings("fgen_level=2\n");

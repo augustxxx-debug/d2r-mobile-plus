@@ -858,10 +858,17 @@ static void touch_ui_message(const char *cat,const char *act,const char *arg) {
 - (void)tick:(CADisplayLink *)l;
 - (void)work;
 @end
+// 刷新率表态（纯函数，test_present_hud 编出来逐项核，审计 P2-2）：disp = 显示帧率（mtl_display_fps，帧生成生效时 = 渲染 × 倍数），render = 渲染帧率（mtl_fps_target）。
+// 换成显示帧率是帧生成必需的：渲染 60、显示 120 时表态还按 60，ProMotion 屏停在 60 Hz，插值帧根本上不了屏。30 → 30；≥ 120 → 120；
+// 40（量测档，120 Hz 的三分之一）与帧生成带出来的非 60 显示帧率（40×2 = 80、30×3 = 90）→ 120；其余（含没有帧生成时的 90）→ 60，与基线一致
+// Rate declaration (pure; test_present_hud compiles and checks it, audit P2-2): disp = the display rate (mtl_display_fps, render x multiple while frame generation is in effect), render = the render rate.
+// The display rate is required by frame generation: rendering 60 and showing 120 with a 60 declaration keeps a ProMotion screen at 60 Hz and the interpolated frames never reach it. 30 -> 30; >= 120 -> 120;
+// 40 (measurement, a third of 120 Hz) and the non-60 display rates frame generation produces (40x2 = 80, 30x3 = 90) -> 120; everything else (90 without frame generation included) -> 60, as the baseline
+static int dm_rate_hint_hz(int disp, int render) { return disp == 30 ? 30 : disp >= 120 || disp == 40 || (disp != render && disp != 60) ? 120 : 60; }
 @implementation DmRateHint
 - (void)tick:(CADisplayLink *)l {
-    extern int mtl_display_fps(void);   // 显示帧率：帧生成生效时 = 渲染帧率 × 2 | display rate: render rate x 2 while frame generation is in effect
-    { static int last = -1; int f = mtl_display_fps(); if (f != last) { last = f; l.preferredFrameRateRange = f == 30 ? CAFrameRateRangeMake(30, 30, 30) : f == 120 || f == 40 || f == 80 || f == 90 ? CAFrameRateRangeMake(120, 120, 120) : CAFrameRateRangeMake(60, 60, 60); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
+    extern int mtl_display_fps(void), mtl_fps_target(void);   // 显示帧率：帧生成生效时 = 渲染帧率 × 2 | display rate: render rate x 2 while frame generation is in effect
+    { static int last = -1; int f = mtl_display_fps(), hz = dm_rate_hint_hz(f, mtl_fps_target()); if (hz != last) { last = hz; l.preferredFrameRateRange = CAFrameRateRangeMake(hz, hz, hz); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
     [self work];
 }
 // 驱动方式：1 = 刷新率表态显示链接（缺省），2 = DM_RATE_HINT=0 时的定时器；每 30 秒记一行实际 work 频率，便于实验报告核对（二审 R03）
