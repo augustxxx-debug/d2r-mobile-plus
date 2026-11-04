@@ -981,9 +981,30 @@ static _Atomic uint64_t g_qt_dn, g_qt_xy, g_qt_stop_at;
 // ControllerOverlay's Background (measured with the cover probe) and also count as empty space of the quest log. Outside the frame no panel covers the point (ControllerOverlay has no visible leaf there); tapping outside the frame to close the panel goes another way and is not touched here
 // 右上角 X（TouchClose）不是可点控件类型、就近吸附认不出：按下判类时记下的「落在 X 上」（g_close_down）就不归这里，照常点
 // The top-right X (TouchClose) is not a clickable widget type and nearest-snap does not recognize it: a press recorded as landing on the X when it was classified (g_close_down) is left alone and clicked as usual
+// B157：顶部页签条与右上角 X 不算任务日志的空处。原先这两处判成 2（空处，不发给游戏）：按下判类没走过的注入点按（Mac 宿主触点、界面回归），
+// 点页签 / X 都被吞，任务日志开着就出不来。这里自己认：点在页签上 = 3（调用方照判类的走法切页签），点在 X 上 = 0（照常点）
+// B157: the top tab bar and the top-right X are not empty space of the quest log. They used to be judged 2 (empty, not sent to the game): for injected taps that never
+// went through press classification (Mac host touches, UI regression) taps on the tabs / X were swallowed and the open quest log could not be left. Recognized here:
+// on a tab = 3 (the caller switches tabs the way classification does), on the X = 0 (clicked as usual)
+static _Atomic int g_tab_delta, g_tab_top;   // 定义在后面（页签切换） | defined later (tab switching)
+static int ql_tab(module_t *m, uint64_t root, int x, int y, int *d, int *top) {
+    uint64_t rch = *(uint64_t *)(root + 0x58), rn = *(uint64_t *)(root + 0x60); int32_t vh = *(int32_t *)(m->base + 0x211da3c); if (!rch || rn > 256 || vh <= 0) return 0;
+    static const int off[5] = { 0, 45, -45, 90, -90 };   // 同 ui_classify0：页签条上下各放宽到 90 单位 | as in ui_classify0: the tab bar widened by 90 units up and down
+    for (int i = 0; i < 5; i++) { int yy = y + off[i] * vh / 2160; if (yy < 0 || yy >= vh) continue; int tl = ui_top_cover(m, root, x, yy); if (tl < 0) tl = 0;
+        for (int k = (int)rn - 1; k >= tl; k--) if (tab_walk(*(uint64_t *)(rch + 8 * k), (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)yy << 32), 1, (uint64_t)m->base + 0x20ba3a8, d, top)) return 1; }
+    return 0;
+}
+static int ql_close(uint64_t root, int x, int y) {   // 点在可见的 TouchClose（右上角 X）上 | on a visible TouchClose (the top-right X)
+    uint64_t xy = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32), ch = *(uint64_t *)(root + 0x58), n = *(uint64_t *)(root + 0x60); if (!ch || n > 256) return 0;
+    for (uint64_t i = 0; i < n; i++) { uint64_t p = *(uint64_t *)(ch + 8 * i); if (!p || !*(uint8_t *)(p + 0x50)) continue; uint64_t c = ui_find(p, "TouchClose", 1);
+        if (c && *(uint8_t *)(c + 0x50) && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)c + 0x48))(c, xy) & 1)) return 1; }
+    return 0;
+}
 static int quest_log_tap(module_t *m, uint64_t root, int x, int y) {
     uint64_t qp = ui_find(root, "QuestLogPanelExpansion", 1); if (!qp || !*(uint8_t *)(qp + 0x50)) return 0;
     uint64_t cd = atomic_load(&g_close_down); if (cd && dm_guest_frame() - cd < 60) return 0;
+    if (ql_close(root, x, y)) return 0;
+    { int d = 0, top = 0; if (ql_tab(m, root, x, y, &d, &top)) { atomic_store(&g_tab_delta, d); atomic_store(&g_tab_top, top); return 3; } }
     int t = ui_top_cover(m, root, x, y); if (t < 0) return 0;
     uint64_t ch = *(uint64_t *)(root + 0x58), tp = *(uint64_t *)(ch + 8 * t); if (!tp) return 0;
     const char *nm = *(uint64_t *)(tp + 8) ? (const char *)*(uint64_t *)(tp + 8) : "";
@@ -1243,6 +1264,21 @@ static void focus_clip_pump(uint64_t root, int vh) {
     int in_view = ((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)sv + 0x48))(sv, xy) & 1;
     if (dm_focus_clip_want(touch, settings, 1, in_view)) { dm_wref_set(&g_fc_row, fw); focus_clip_clear(fm); LOG("B144：焦点行滚出设置页列表可见区 → 清掉焦点（金框不再画在列表外）"); }
 }
+// 设置页盖着的暂停菜单按钮（B143 起由 dm_ui_gate 定拦不拦）：判类与真正发点击（B158）共用 | pause menu button covered by the settings page (since B143 dm_ui_gate decides whether it blocks): shared by classification and the actual click (B158)
+static int settings_cover(module_t *m, uint64_t root, int x, int y) {
+    int cover = 0;
+    { uint64_t st = ui_panel(root, "SettingsPanel"), xy = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32);
+      static const char *const pages[] = { "SoundOptionsPanel", "3PlusGraphicsOptionsPanel", "GameplayOptionsPanel", "OnlineGameOptionsPanel", "VideoOptionsPanel" };   // 与页签同序，查找不依赖顺序 | same order as the tabs; lookup does not depend on order
+      int page_hit = 0;
+      if (st && *(uint8_t *)(st + 0x50)) for (unsigned i = 0; i < sizeof pages / sizeof pages[0] && !page_hit; i++) {
+          uint64_t page = ui_panel(root, pages[i]);
+          page_hit = page && *(uint8_t *)(page + 0x50) && (click_walk(page, xy, 1, (uint64_t)m->base) || slider_part_hit(page, x, y, (uint64_t)m->base, *(int32_t *)(m->base + 0x211da3c)));
+      }
+      if (st && *(uint8_t *)(st + 0x50) && !click_walk(st, xy, 1, (uint64_t)m->base) && !page_hit) {   // 设置页自己可点的控件照常；点在它的底板 / 列表空处时，游戏会把这一下交给底下的暂停菜单按钮 | The settings page's own clickable widgets work as usual; when the tap is on its backing / empty list space, the game would hand this tap to the pause menu button underneath
+          static const char *const pl[] = { "PauseLayoutGarden", "PauseLayout" };
+          for (int i = 0; i < 2; i++) { uint64_t pw = ui_panel(root, pl[i]); if (pw && *(uint8_t *)(pw + 0x50) && click_walk(pw, xy, 1, (uint64_t)m->base)) { cover = 1; break; }   /* 11：这一下不点下去，但从这里起手上下拖照常滚设置页的列表（自定义页各行的文字不是可点控件，玩家多半就在文字上滑） | 11: this tap is not pressed down, but a vertical drag starting here still scrolls the settings page list as usual (the text of the rows on the Custom page is not a clickable widget, and players mostly swipe right on the text) */ } } }
+    return cover;
+}
 static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size_t hn) {   // 12 任务页慢点按按钮；其余分类保持原样 | 12 quest-page button with relaxed tap timing; other classifications are unchanged
     if (g_cls_out) { g_cls_out = 0; const char *on = "";
         if (modal_top(m, root, &on)) { snprintf(hit, hn, "模态框外 %s", on); g_modal_name = on; return 9; }
@@ -1256,17 +1292,7 @@ static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size
     // 原先设置页开着时把暂停菜单整层设成不可见、关了写回——那是写原版控件，违反不写原版控件的规则，改成这里只在命中时挡
     // The settings page covers the pause menu, yet the pause menu's buttons still receive clicks (the game's dispatch does not look at who is on top): on a pause menu button and not on a clickable widget of the settings page = covered, do not click (same as "on a button covered by an upper panel").
     // Previously, while the settings page was open the whole pause menu layer was set invisible and written back on close - that is writing to the original game's widgets, violating the no-writes-to-original-widgets rule; changed to blocking here only on a hit
-    int cover = 0;   // 点在被设置页盖住的暂停菜单按钮上；拦不拦由下面 dm_ui_gate 定（模态框优先，B143） | on a pause menu button covered by the settings page; whether it blocks is decided by dm_ui_gate below (modal first, B143)
-    { uint64_t st = ui_panel(root, "SettingsPanel"), xy = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32);
-      static const char *const pages[] = { "SoundOptionsPanel", "3PlusGraphicsOptionsPanel", "GameplayOptionsPanel", "OnlineGameOptionsPanel", "VideoOptionsPanel" };   // 与页签同序，查找不依赖顺序 | same order as the tabs; lookup does not depend on order
-      int page_hit = 0;
-      if (st && *(uint8_t *)(st + 0x50)) for (unsigned i = 0; i < sizeof pages / sizeof pages[0] && !page_hit; i++) {
-          uint64_t page = ui_panel(root, pages[i]);
-          page_hit = page && *(uint8_t *)(page + 0x50) && (click_walk(page, xy, 1, (uint64_t)m->base) || slider_part_hit(page, x, y, (uint64_t)m->base, *(int32_t *)(m->base + 0x211da3c)));
-      }
-      if (st && *(uint8_t *)(st + 0x50) && !click_walk(st, xy, 1, (uint64_t)m->base) && !page_hit) {   // 设置页自己可点的控件照常；点在它的底板 / 列表空处时，游戏会把这一下交给底下的暂停菜单按钮 | The settings page's own clickable widgets work as usual; when the tap is on its backing / empty list space, the game would hand this tap to the pause menu button underneath
-          static const char *const pl[] = { "PauseLayoutGarden", "PauseLayout" };
-          for (int i = 0; i < 2; i++) { uint64_t pw = ui_panel(root, pl[i]); if (pw && *(uint8_t *)(pw + 0x50) && click_walk(pw, xy, 1, (uint64_t)m->base)) { cover = 1; break; }   /* 11：这一下不点下去，但从这里起手上下拖照常滚设置页的列表（自定义页各行的文字不是可点控件，玩家多半就在文字上滑） | 11: this tap is not pressed down, but a vertical drag starting here still scrolls the settings page list as usual (the text of the rows on the Custom page is not a clickable widget, and players mostly swipe right on the text) */ } } }
+    int cover = settings_cover(m, root, x, y);   // 点在被设置页盖住的暂停菜单按钮上；拦不拦由下面 dm_ui_gate 定（模态框优先，B143） | on a pause menu button covered by the settings page; whether it blocks is decided by dm_ui_gate below (modal first, B143)
     const char *mn = ""; uint64_t mp = modal_top(m, root, &mn); int in_modal = 0;
     if (mp) { uint64_t xy = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32), fn = *(uint64_t *)(*(uint64_t *)mp + 0x48);
         // 「在框里」：框自己有边界且点在里面，或点中它的某个可见叶子 / 可点控件（确认框的「应用 / 放弃」按钮只有后一种认得到——
@@ -3374,8 +3400,15 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
     }
     // 任务日志（#198，见 g_qt_arm）：按下之前分类。空处：对白播着就改点正在播的任务（挪过去后照常先悬停两帧），否则不点
     // Quest log (#198, see g_qt_arm): classify before the press. Empty space: while a dialogue plays, retarget to the quest being played (after moving it hovers two frames first as usual), otherwise no click
+    // B158：真正发点击前再判一次「设置页盖着的暂停菜单按钮」。按下判类（前端问命中）挡得住，但不经判类的点击（注入、宿主合成）原先照发，
+    // 点在选项页列表空白处 = 点到底下的「保存并退出」，直接存档退出。模态框开着时由模态框管（同 dm_ui_gate）
+    // B158: judge "pause menu button covered by the settings page" again right before the click is sent. Press classification (the front end asking for a hit) blocks it, but clicks
+    // that skip classification (injected, host-synthesized) used to go through: tapping blank space in the options list = tapping "Save and Exit" underneath, saving and quitting at once.
+    // While a modal is open the modal decides (as in dm_ui_gate)
+    if (ph == 2) { const char *mn0 = ""; if (!modal_top(m, root, &mn0) && settings_cover(m, root, x, y)) { int e = 2; atomic_compare_exchange_strong(&g_ut_phase, &e, 0); LOG("界面点击：(%d,%d) 在设置页盖着的暂停菜单按钮上 → 不点（B158）", x, y); return; } }
     if (ph == 2) { int qt = quest_log_tap(m, root, x, y); atomic_store(&g_qt_arm, qt == 1);
         if (qt == 1) { atomic_store(&g_qt_sel, 0); atomic_store(&g_qt_fin, 0); atomic_store(&g_qt_dn, r); }
+        else if (qt == 3) { int e = 2; atomic_compare_exchange_strong(&g_ut_phase, &e, 0); LOG("任务日志：点在页签上 (%d,%d) → 切页签（B157）", x, y); dm_ui_tab_go(); return; }
         else if (qt == 2) { uint64_t q = atomic_load(&g_qt_xy);
             if (atomic_load(&g_qt_speech) && q && q != r) { atomic_store(&g_ut_xy, q); LOG("任务日志：对白播着时点了空处 (%d,%d) → 改点正在播的任务（停对白、保留目标）", x, y); return; }
             int e = 2; atomic_compare_exchange_strong(&g_ut_phase, &e, 0); LOG("任务日志：点了空处 (%d,%d) → 不发给游戏（原版会取消选中、目标清空）", x, y); return; } }

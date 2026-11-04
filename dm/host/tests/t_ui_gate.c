@@ -21,7 +21,7 @@ int main(void) {
     FILE *f = fopen("../dm_cursor.c", "rb"); if (!f) { puts("FAIL 读不到 ../dm_cursor.c"); return 1; }
     fseek(f, 0, SEEK_END); long n = ftell(f); rewind(f); char *s = malloc(n + 1); fread(s, 1, n, f); s[n] = 0; fclose(f);
     char *fn = strstr(s, "static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size_t hn) {");
-    char *st = fn ? strstr(fn, "ui_panel(root, \"SettingsPanel\")") : 0, *gate = fn ? strstr(fn, "dm_ui_gate(mp != 0, in_modal, cover)") : 0;
+    char *st = fn ? strstr(fn, "int cover = settings_cover(m, root, x, y);") : 0, *gate = fn ? strstr(fn, "dm_ui_gate(mp != 0, in_modal, cover)") : 0;
     char *mt = fn ? strstr(fn, "modal_top(m, root, &mn)") : 0;
     EQ(fn && st && gate && mt ? 1 : 0, 1, "ui_classify 里找到设置页那道、modal_top 与 dm_ui_gate 调用 | found the settings gate, modal_top and dm_ui_gate in ui_classify");
     if (st && gate && mt) {
@@ -31,7 +31,15 @@ int main(void) {
         EQ(strstr(st, "return 9") == 0, 1, "模态框那段到 dm_ui_gate 之间没有直接 return 9 | no direct return 9 before dm_ui_gate");
         *gate = save;
     }
-    EQ(st && strstr(st, "slider_part_hit(page, x, y, (uint64_t)m->base, *(int32_t *)(m->base + 0x211da3c))") && strstr(st, "slider_part_hit(page, x, y, (uint64_t)m->base, *(int32_t *)(m->base + 0x211da3c))") < (gate ? gate : st) ? 1 : 0, 1, "B145：设置页那道认滑块箭头（slider_part_hit）| B145: the settings gate accepts slider arrows");
+    { char *sc = strstr(s, "static int settings_cover(module_t *m, uint64_t root, int x, int y) {"), *se = sc ? strstr(sc, "\n}\n") : 0;
+      EQ(sc && se && strstr(sc, "slider_part_hit(page, x, y, (uint64_t)m->base, *(int32_t *)(m->base + 0x211da3c))") && strstr(sc, "slider_part_hit(page, x, y,") < se ? 1 : 0, 1, "B145：设置页那道（settings_cover）认滑块箭头 | B145: the settings gate (settings_cover) accepts slider arrows");
+      { char sv = se ? *se : 0; if (se) *se = 0; int no11 = sc && !strstr(sc, "return 11"); if (se) *se = sv; EQ(no11, 1, "settings_cover 只报 cover、不自己 return 11 | settings_cover only reports cover"); } }
+    // B158：真正发点击处也判设置页盖层（模态框不在时）| B158: the click path judges the settings cover too (when no modal)
+    EQ(strstr(s, "if (!modal_top(m, root, &mn0) && settings_cover(m, root, x, y))") != NULL, 1, "B158：点击路径过 settings_cover | B158: click path goes through settings_cover");
+    // B157：任务日志里点页签 / X 不再判成空处 | B157: in the quest log taps on tabs / the X are no longer judged empty space
+    { char *q = strstr(s, "static int quest_log_tap(module_t *m, uint64_t root, int x, int y) {"), *qe = q ? strstr(q, "\n}\n") : 0, *c = q ? strstr(q, "if (ql_close(root, x, y)) return 0;") : 0, *t = q ? strstr(q, "if (ql_tab(m, root, x, y, &d, &top))") : 0, *sn = q ? strstr(q, "ui_snap(m, root, &sx, &sy) ? 1 : 2") : 0;
+      EQ(q && c && t && sn && c < sn && t < sn && sn < qe ? 1 : 0, 1, "B157：quest_log_tap 先认 X / 页签再判空处 | B157: quest_log_tap checks the X / tabs before empty space");
+      EQ(strstr(s, "else if (qt == 3) {") && strstr(strstr(s, "else if (qt == 3) {"), "dm_ui_tab_go();") ? 1 : 0, 1, "B157：qt == 3 切页签 | B157: qt == 3 switches tabs"); }
     free(s);
     if (fails) { printf("t_ui_gate: %d FAIL\n", fails); return 1; }
     puts("PASS B143 ui gate: modal first (inside = carry on, outside = 9), settings cover 11 only without a modal; ui_classify goes through dm_ui_gate");
