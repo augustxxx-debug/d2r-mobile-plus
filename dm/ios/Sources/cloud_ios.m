@@ -39,7 +39,28 @@ static dispatch_queue_t g_q;
 static uint64_t now_ms(void) { return (uint64_t)([NSDate date].timeIntervalSince1970 * 1000); }
 
 // 选项页系统页：没登录 iCloud 或这个包没有 iCloud 权限（免费签名）时这一行置灰（dm_custom.c）。ubiquityIdentityToken 同步、不访问网络 | System page: the row is greyed when not signed in to iCloud or this build lacks the entitlement (free signing). ubiquityIdentityToken is synchronous and does no network I/O
-int dm_icloud_available(void) { return NSFileManager.defaultManager.ubiquityIdentityToken != nil; }
+// B021（c0140d6 移植进方案 C）：只看 ubiquityIdentityToken 不能保证认出「签名不含 iCloud 权限」的包（免费 Apple ID 签名），所以先读签名权限：
+// 明确没有 iCloud 容器权限 = 不可用（置灰 + 副文「未登录 iCloud，或这个安装包不支持 iCloud」），有或读不到再看登录。权限进程内不变，只读一次。
+// 测试开关 DM_TEST_ICLOUD_AVAIL=0|1：不探，直接当作这个结果（Mac 宿主 / 真机验置灰）
+// B021 (c0140d6 ported onto plan C): the identity token alone does not reliably catch a build signed without the iCloud entitlement (free Apple ID), so the signing
+// entitlements are read first: no iCloud container entitlement = unavailable (greyed, note "not signed in to iCloud, or this build does not support iCloud"); present or unknown = then the
+// sign-in check. Entitlements do not change within a process, read once. Test switch DM_TEST_ICLOUD_AVAIL=0|1: no probe, taken as this result
+#include <dlfcn.h>
+static int icloud_entitled(void) {   // 1 有 / 0 没有 / -1 不知道 | 1 yes / 0 no / -1 unknown
+    void *sec = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY); if (!sec) return -1;
+    void *(*create)(CFAllocatorRef) = (void *(*)(CFAllocatorRef))dlsym(sec, "SecTaskCreateFromSelf");
+    CFTypeRef (*copy)(void *, CFStringRef, CFErrorRef *) = (CFTypeRef (*)(void *, CFStringRef, CFErrorRef *))dlsym(sec, "SecTaskCopyValueForEntitlement");
+    if (!create || !copy) return -1;
+    void *task = create(NULL); if (!task) return -1;
+    int has = 0; CFStringRef keys[2] = { CFSTR("com.apple.developer.icloud-container-identifiers"), CFSTR("com.apple.developer.ubiquity-container-identifiers") };
+    for (int k = 0; k < 2 && !has; k++) { CFTypeRef v = copy(task, keys[k], NULL); if (v) { has = CFGetTypeID(v) == CFArrayGetTypeID() ? CFArrayGetCount((CFArrayRef)v) > 0 : 1; CFRelease(v); } }
+    CFRelease((CFTypeRef)task); return has;
+}
+int dm_icloud_available(void) {
+    const char *t = getenv("DM_TEST_ICLOUD_AVAIL"); if (t && *t) return atoi(t) != 0;
+    static int ent = -2; if (ent == -2) { ent = icloud_entitled(); LOG("iCloud：签名权限 %s", ent > 0 ? "含 iCloud 容器" : ent == 0 ? "不含 iCloud（免费签名？）→ 系统页这一行置灰" : "读不到，按登录状态判"); }
+    return ent != 0 && NSFileManager.defaultManager.ubiquityIdentityToken != nil;
+}
 // 云端某个单位的包是否已在本机（iCloud 里没下载的文件是占位：旧系统是「.<名>.icloud」，新系统是同名但下载状态不是「最新」）
 // Whether a given unit's package in the cloud is already on this device (undownloaded files in iCloud are placeholders: on older systems ".<name>.icloud", on newer systems the same name with a download status other than "current")
 static int pack_ready(const char *unit) {
