@@ -1,4 +1,8 @@
 // Drive the production present-interval entry, not a copied controller.
+// B147：动态 3D 分辨率缺省关，本测试驱动的是开着的控制器，开关由测试给（DM_DYN3D_TEST_HOOK）| B147: Dynamic 3D resolution is off by default; this test drives the controller switched on, supplying the switch itself
+#define DM_DYN3D_TEST_HOOK 1
+static int test_dyn3d = 1;
+int dm_dyn3d_setting(void) { return test_dyn3d; }
 #ifndef HLE_OE_SOURCE
 #define HLE_OE_SOURCE "../hle_oe.c"
 #endif
@@ -60,6 +64,13 @@ int main(int argc,char **argv) {
     test_fx_auto=0;test_fx_hint=.75f;sample(16.666667);assert(fabsf(actual()-.75f)<1e-4f);
     test_fx_hint=.85f;dm_3d_quality_mode_set(1);sample(16.666667);assert(fabsf(actual()-.85f)<1e-4f);
     test_fx_auto=1;test_fx_hint=.80f;dm_3d_quality_mode_set(0);sample(16.666667);assert(fabsf(actual()-.80f)<1e-4f);
+    // B147 ②：开着时掉帧降下去，图形页关掉动态 3D 分辨率的下一帧就回到设置值，之后再掉帧也不降 | B147 ②: on, drops lower it; switching it off on the Graphics page returns to the configured value on the next frame, and later drops do not lower it
+    for (int i=0;i<10000 && actual()>.60f+1e-4f;i++) sample(33.333333);
+    assert(actual()<.80f-1e-4f);
+    test_dyn3d=0;sample(16.666667);assert(fabsf(actual()-.80f)<1e-4f);
+    for (int i=0;i<3000;i++) sample(33.333333);
+    assert(fabsf(actual()-.80f)<1e-4f);
+    test_dyn3d=1;
     puts("PASS production scale handoff: thermal/recovery retain actual downgrade; recovery steps slowly; explicit profile changes reset");
     return 0;
 }

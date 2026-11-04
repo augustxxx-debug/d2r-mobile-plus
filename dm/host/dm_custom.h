@@ -23,7 +23,10 @@ int dm_3d_profile_get(void);
 int dm_render_res_level(void);   // 渲染分辨率档位（键 render_res，缺省 0）：0 自动 / 1 省电 / 2 均衡 / 3 原生；iOS 前端 front_game_res 按 dm_res_cap.h 的像素预算缩小整帧输出尺寸 | Render resolution level (key render_res, default 0): 0 Auto / 1 Eco / 2 Balanced / 3 Native; the iOS front end's front_game_res shrinks the whole-frame output size to the pixel budget in dm_res_cap.h
 int dm_render_res_rt_drop(void);   // 光追开时启动即降一档（启动第一次被问时定，整局不变）：1 = 降 | one tier down when RT is on at startup (decided on the first call, fixed for the run): 1 = drop
 int dm_custom_loaded(void);   // 设置文件读到了没有：iOS 前端在算启动预留前查（十四审 Q14-01 / 02）| whether the settings file has been read: the iOS front end checks it before computing the startup reserve (review 14 Q14-01 / 02)
-int dm_fps_thermal_capped(void);   // 高刷档（90 / 120）此刻因过热（温控 ≥ 2）暂按 60：图形页说明与分享摘要读 | the high-refresh stop (90 / 120) is running at 60 right now because of heat (thermal >= 2): read by the Graphics note and the share summary
+int dm_fps_thermal_capped(void);   // B147 起恒 0（帧率不再按温控退回；分享摘要字段保留）| always 0 from B147 (the rate no longer falls back on heat; the share-summary field stays)
+int dm_thermal_eff(void);           // 温控档位 0–3（−1 未知），含测试开关 DM_TEST_THERMAL | thermal state 0-3 (-1 unknown), DM_TEST_THERMAL included
+int dm_thermal_hint_step(int *shown, int thermal);   // 过热提示：第一次到 ≥ 2 返回 1，之后 0 | overheating tip: 1 the first time it reaches >= 2, then 0
+int dm_dyn3d_setting(void);         // 动态 3D 分辨率（键 dyn3d，缺省关）：hle_oe.c 每帧读 | Dynamic 3D resolution (key dyn3d, off by default): read every frame by hle_oe.c
 #define DM_FPS_CAPTION_MAX 160   // 图形页帧率第三格文案「帧率：高刷 %d（实验性）」展开后的缓冲；六语最长俄语约 72 字节，t_fps_caption 核 | buffer for the expanded third-stop caption; the longest of six languages (Russian) is about 72 bytes, checked by t_fps_caption
 int dm_high_hz(int max_hz);
 int dm_fps_high_hz(void);   // 本机高刷档的帧率 = dm_high_hz(屏幕最高刷新率)，0 = 不开放 / 屏幕还不知道（遥测报选定帧率用）| this machine's high-refresh rate, 0 = not offered / screen unknown (for the telemetry selected rate)   // 纯函数：屏幕最高刷新率 < 89 → 0（不开放）/ 89–118 → 90 / ≥ 119 → 120（144 等封顶 120）| pure function: screen max < 89 -> 0 (not offered) / 89-118 -> 90 / >= 119 -> 120 (144 etc. cap at 120)

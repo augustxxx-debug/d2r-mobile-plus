@@ -77,9 +77,9 @@ int main(int argc, char **argv) {
     CHECK(!strcmp(k_keys[K_FGEN], "fgen_level")); CHECK(k_def[K_FGEN] == DM_FGEN_OFF);
     // 插进 fgen_level 之后每个 K_* 宏仍指向它名字的键（前面写死的、后面 NK - n 倒数的都核）| after inserting fgen_level every K_* macro still names its key (both the fixed and the NK - n ones)
     { static const struct { int k; const char *name; } km[] = { { K_VOICE, "voice" }, { K_MERC, "merc_pot" }, { K_ICLOUD, K_ICLOUD_KEY }, { K_FPS, "eco_fps" }, { K_Q3D, "q3d" }, { K_TOUCH_SWAP, "touch_swap_above" },
-          { K_FGEN, "fgen_level" }, { K_TELSTATS, "tel_stats" }, { K_AUTOCRASH, "auto_crash" }, { K_BRIGHT, "bright_level" }, { K_FPSHUD, "fps_hud" }, { K_UPSCALE, "upscale" }, { K_RES, "render_res" }, { K_RTLVL, "rt_level" } };
+          { K_FGEN, "fgen_level" }, { K_DYN3D, "dyn3d" }, { K_TELSTATS, "tel_stats" }, { K_AUTOCRASH, "auto_crash" }, { K_BRIGHT, "bright_level" }, { K_FPSHUD, "fps_hud" }, { K_UPSCALE, "upscale" }, { K_RES, "render_res" }, { K_RTLVL, "rt_level" } };
       for (unsigned i = 0; i < sizeof km / sizeof *km; i++) CHECK(km[i].k >= 0 && km[i].k < NK && !strcmp(k_keys[km[i].k], km[i].name));
-      CHECK((int)(sizeof k_def / sizeof *k_def) == NK && k_def[key_index("belt_refill")] == 1 && k_def[key_index("free_tp")] == 1 && k_def[K_BRIGHT] == 2);
+      CHECK((int)(sizeof k_def / sizeof *k_def) == NK && k_def[key_index("belt_refill")] == 1 && k_def[key_index("free_tp")] == 1 && k_def[K_BRIGHT] == 2 && k_def[K_DYN3D] == 0);
       CHECK(!strcmp(k_bak_name[BAK_FGEN], "fgen_level") && N_BAK == 4 && !strcmp(k_bak_name[1], "rt_level")); }
     write_settings("");
     CHECK(dm_fgen_level() == DM_FGEN_OFF); CHECK(dm_custom_get("fgen_level") == 0); CHECK(!dm_fg_setting());

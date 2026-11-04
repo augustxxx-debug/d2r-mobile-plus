@@ -316,9 +316,12 @@ static int rts_on(void) {
         { const char *ao = getenv("DM_RT_AO"), *ar = getenv("DM_RT_AO_RADIUS"), *as = getenv("DM_RT_AO_STRENGTH"), *an = getenv("DM_RT_AO_RAYS");
           g_rts.ao_pin = ao ? atoi(ao) != 0 : -1; g_rts.ao_on = g_rts.ao_pin > 0; g_rts.ao_radius = ar ? (float)atof(ar) : RTS_AO_RADIUS; if (!(g_rts.ao_radius > 0 && g_rts.ao_radius <= 2000)) g_rts.ao_radius = RTS_AO_RADIUS;
           g_rts.ao_strength = as ? (float)atof(as) : 0.6f; if (!(g_rts.ao_strength >= 0 && g_rts.ao_strength <= 1)) g_rts.ao_strength = 0.6f; g_rts.ao_rays = an ? atoi(an) : 4; if (g_rts.ao_rays < 1 || g_rts.ao_rays > 16) g_rts.ao_rays = 4; }
-        // 自动降档：缺省开（DM_RT_AUTO=0 关）；DM_RT_LEVEL=<0–3> 钉住档位（同时关掉自动） | automatic downgrade: on by default (DM_RT_AUTO=0 turns it off); DM_RT_LEVEL=<0–3> pins a level (and turns automatic off)
+        // 自动降档：B149 起缺省关（用户 2026-11-04：按玩家选的档位跑，点光阴影 / AO 不再被运行中自动关掉）；DM_RT_AUTO=1 打开（实验对比用）；DM_RT_LEVEL=<0–3> 钉住档位（同时关掉自动）。
+        // 系统内存告警降档（rts 内存那一节）与 GPU 挂起保护的暂停不归这里管，照旧：那两条防的是被系统结束进程与 GPU 卡死
+        // automatic downgrade: off by default from B149 (user 2026-11-04: run at the player's chosen level; point-light shadows / AO are no longer switched off mid-run); DM_RT_AUTO=1 turns it on (for comparisons); DM_RT_LEVEL=<0–3> pins a level (and turns automatic off).
+        // The memory-warning downgrade (the rts memory section) and the GPU-hang protection pause are not governed here and stay: they guard against the process being killed and the GPU hanging
         { const char *ae = getenv("DM_RT_AUTO"), *le = getenv("DM_RT_LEVEL"); g_rts.lvl_pin = le ? atoi(le) : -1; if (g_rts.lvl_pin > RTS_LVL_MAX) g_rts.lvl_pin = RTS_LVL_MAX;
-          g_rts.auto_on = g_rts.lvl_pin < 0 && (ae ? atoi(ae) != 0 : 1); rts_gov_init(&g_rts.gov, RTS_LVL_MAX); if (g_rts.lvl_pin > 0) g_rts.gov.lvl = g_rts.lvl_pin; rts_lvl_update(); }   // 缺省 2 盏（评审：先 1–2 盏重要灯） | 2 by default (review: 1–2 important lights first)
+          g_rts.auto_on = g_rts.lvl_pin < 0 && (ae ? atoi(ae) != 0 : 0); rts_gov_init(&g_rts.gov, RTS_LVL_MAX); if (g_rts.lvl_pin > 0) g_rts.gov.lvl = g_rts.lvl_pin; rts_lvl_update(); }   // 缺省 2 盏（评审：先 1–2 盏重要灯） | 2 by default (review: 1–2 important lights first)
         // 前缀与宿主 dm_rt_shadow_setting 的「光追阴影：生效」同一个：钉住时不走宿主那条，分享诊断日志的摘要照样取得到 | same prefix as "光追阴影：生效" in the host dm_rt_shadow_setting: when pinned that path is skipped, and the share-diagnostics summary still finds the line
         if (e) MLOG("光追阴影：生效 %s（测试开关 DM_RT_SHADOW=%s 钉住%s）", atoi(e) && g_rts.gate ? "开" : "关", e, g_rts.gate ? "" : "，机器不可用，仍不生效");
     }
@@ -669,7 +672,7 @@ static void rts_frame_begin(uint64_t f) {
               (unsigned long long)g_rts.n_alpha_rt_draws, (unsigned long long)wtot, o ? wb : "无",
               atomic_load(&g_rts_alpha_st) == 2 ? "可用" : atomic_load(&g_rts_alpha_st) == 1 ? "在编" : atomic_load(&g_rts_alpha_st) == -2 ? "关" : "无", g_rts.alpha_nfs, g_rts.n_var_loaded, g_rts.n_var_missing, (unsigned long long)g_rts.n_exp_lost, (unsigned long long)g_rts.n_instanced); }
         { char b[160]; MLOG("光追降档：第 %llu 帧 当前第 %d 档（%s）%s；光追 GPU 均值 %.2f ms（%llu 帧）、整帧 GPU 均值 %.2f ms；累计降 %llu 次、升 %llu 次、不计建网格 / 开局的帧 %llu；降档器 光追 %.2f、整帧 %.2f、预算 %.2f、样本 %d、最高档 %d、超预算已持续 %.1f 秒、距上次换档 %.1f 秒", (unsigned long long)g_rts.n_frames, g_rts.gov.lvl,
-              g_rts.auto_on ? "自动" : g_rts.lvl_pin >= 0 ? "DM_RT_LEVEL 钉住" : "自动关（DM_RT_AUTO=0）", rts_lvl_desc(b, sizeof b), g_rts.rt_n ? g_rts.rt_sum / g_rts.rt_n : 0, (unsigned long long)g_rts.rt_n, g_rts.fr_n ? g_rts.fr_sum / g_rts.fr_n : 0,
+              g_rts.auto_on ? "自动" : g_rts.lvl_pin >= 0 ? "DM_RT_LEVEL 钉住" : "自动关（缺省，B149：按玩家档位跑）", rts_lvl_desc(b, sizeof b), g_rts.rt_n ? g_rts.rt_sum / g_rts.rt_n : 0, (unsigned long long)g_rts.rt_n, g_rts.fr_n ? g_rts.fr_sum / g_rts.fr_n : 0,
               (unsigned long long)g_rts.n_lvl_down, (unsigned long long)g_rts.n_lvl_up, (unsigned long long)g_rts.n_gov_skip, g_rts.gov.rt, g_rts.gov.fr, 1000.0 / (mtl_pace_hz() > 0 ? mtl_pace_hz() : 60), g_rts.gov.n, g_rts.gov.max_lvl, g_rts.gov.t_over >= 0 ? rts_now() - g_rts.gov.t_over : -1.0, rts_now() - g_rts.gov.t_change); g_rts.rt_sum = g_rts.fr_sum = 0; g_rts.rt_n = g_rts.fr_n = 0; }
         { char mb[480] = ""; size_t o = 0;   // 上一帧的阴影图各是什么、怎么处理（这时表还是上一帧的） | what each of the previous frame's shadow maps was and how it was handled (the table still belongs to the previous frame here)
           for (int i = 0; i < g_rts.nsmap && o + 1 < sizeof mb; i++) { typeof(g_rts.smap[0]) *e = &g_rts.smap[i]; float d[3] = {0, 0, 0}; if (e->has_l) rts_sun_from_lvp(e->l, d);

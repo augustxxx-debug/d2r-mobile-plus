@@ -23,8 +23,9 @@ int main(void) {
     CHECK(PF_HERE == PF_ANDROID);
     { int up = 1, rt = 1; graphics_plat_rows(&up, &rt); CHECK(up == 0 && rt == 0); }   // 安卓不出 MetalFX 行、光追行 | no MetalFX or ray-tracing rows on Android
     CHECK(!fg_platform_ok() && opt_page(key_index("fgen_level")) == -1);   // 安卓没有 AI 帧生成这一行，决策层也不编（§2.8，审计 P2-1）；键还在（存盘对齐）| no AI frame generation row and no decision layer on Android (§2.8, audit P2-1); the key stays (settings alignment)
-    int vis[8]; int up = 0, rt = 0; graphics_plat_rows(&up, &rt); int n = graphics_rows_pack(dm_render_res_supported(), up, 0, rt, 0, vis);
-    CHECK(n == 4 && vis[0] == ROW_RES && vis[1] == ROW_BRIGHT && vis[2] == ROW_FPSHUD && vis[3] == ROW_FPS);   // 分辨率 / 加亮 / 显示帧数 / 帧率 | resolution / brightening / show frame rate / frame rate
+    int vis[9]; int up = 0, rt = 0; graphics_plat_rows(&up, &rt); int n = graphics_rows_pack(dm_render_res_supported(), up, 0, rt, 0, vis);
+    CHECK(n == 5 && vis[0] == ROW_RES && vis[1] == ROW_BRIGHT && vis[2] == ROW_DYN3D && vis[3] == ROW_FPSHUD && vis[4] == ROW_FPS);   // 分辨率 / 加亮 / 动态 3D 分辨率（B147，两端都有）/ 显示帧数 / 帧率 | resolution / brightening / Dynamic 3D resolution (B147, both platforms) / show frame rate / frame rate
+    CHECK(row_on_page(K_DYN3D, PG_GFX) && k_def[K_DYN3D] == 0);   // 安卓同样有这一行、缺省关 | Android has the row too, off by default
     for (int i = 0; i < NK; i++) { const char *k = k_keys[i];
         if (!strcmp(k, "upscale") || !strcmp(k, "q3d") || !strcmp(k, "rt_level") || !strcmp(k, "fgen_level") || !strcmp(k, "icloud") || !strcmp(k, "drop_haptic"))
             CHECK(!row_on_page(i, PG_GFX) && !row_on_page(i, PG_GAME) && !row_on_page(i, PG_SYS)); }
