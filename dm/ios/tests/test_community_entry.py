@@ -273,14 +273,14 @@ class Host(unittest.TestCase):
     def test_host_wiring(self):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
         for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_community_input_gate(uint64_t *bt', 'atomic_exchange(&g_md_ev, 0)', 'dm_update_label()', '"dmAboutVersion"',
-                  '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : ch[row] == DM_CH_SITE ? "官网" : "GitHub"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
+                  '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : ch[row] == DM_CH_SITE ? "官网" : ch[row] == DM_CH_MIRROR ? "国内镜像" : "GitHub"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
                   '"TouchAboutRow"', '"dmCreditsSpecial"', '"dmCreditsMaker"', 'k_maker_default[] = { "Augustus" }', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)
         self.assertNotIn('credits_render', c); self.assertNotIn('TouchCredit', c)   # RC1.1 B008：自定义页鸣谢块删了 | B008: the Custom page credits block is gone
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss
         self.assertNotIn('co_text(b, de[2], dm_str(b, "dmCommunityAbout"))', c)   # 社区框不再写「关于」子标题 | the community box no longer writes the About sub-title
-        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 42 + 42)   # 社区框 42 + 存档管理列表框 42 | community box 42 + save-management list box 42
+        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 50 + 42)   # 社区框 50（42 + 第三张渠道卡 8：3a730854 起宿主收三张；网盘行 B154 已撤）+ 存档管理列表框 42 | community box 50 (42 + third channel card 8; drive rows removed in B154) + save-management list box 42
         self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))

@@ -358,13 +358,14 @@ def _co_copy(k):   # 每行渠道自己的小「复制」：原版前端小按�
 # 各自的小「复制」）→ 免费声明 28 GoldYellow → 分隔线 → 页脚两行 28 LightGray（版本 + 制作；特别鸣谢）→ 一颗「确定」；手柄焦点框（金色线条片）。全部屏外起步、字空着，宿主按渠道行数摆位（dm_community.c co_geom）
 # Community / About box (RC1.1 redesign): 15 frame tiles + title 48 → two channel cards (thin border + label 28 LightGray / value 36 LightGold / own small Copy) → free notice 28 GoldYellow
 # → divider → two footer lines 28 LightGray (version + maker; special thanks) → one OK; controller focus frame (gold line slices). All start off screen with empty text; the host lays them out by row count
+CO_CH_ROWS = 3   # 渠道卡上限：与 dm/host/dm_community.c 的 CO_ROWS 同一个数（3a730854 起宿主收三张：QQ 群 / 官网 / 镜像 / GitHub 里挑三，tests/test_community_layout.py 核对） | channel-card limit, the same number as CO_ROWS in dm/host/dm_community.c (the host takes three since 3a730854; pinned by tests/test_community_layout.py)
 def _community():
     return (''.join('        { "type": "ImageWidget", "name": "TouchCommTile%d%d", "fields": { "rect": { "x": 99999, "y": 99999, "width": 52, "height": 24 }, "filename": "Ztouch_comm/tile%d%d" } },\n' % (r, c, r, c) for r in range(5) for c in range(3))
             + _co_text('TouchCommTitle', 48, '$FontColorGoldYellow')
             + ''.join(''.join(_co_line('TouchCommCard%d%s' % (k, e), 'rule_h' if e in 'TB' else 'rule_v') for e in 'TBLR')
                       + _co_text('TouchCommLabel%d' % k, 28, '$FontColorLightGray', 'left', 260, 100)
                       + _co_text('TouchCommValue%d' % k, 36, '$FontColorLightGold', 'left', 844, 100)
-                      + _co_copy(k) for k in range(2))
+                      + _co_copy(k) for k in range(CO_CH_ROWS))
             + _co_text('TouchCommFree', 28, '$FontColorGoldYellow')   # 免费声明（dmLoadCommFree，同加载页） | free notice (dmLoadCommFree, as the loading page)
             # 声明与页脚之间的分隔线：原版设置页分节同一张图 PauseMenu\\Divider，原尺寸（共享精灵，不改尺寸），宿主按图宽居中 | divider: the original settings-section image, native size, centred by the host
             + '        { "type": "ImageWidget", "name": "TouchCommDivider", "fields": { "rect": { "x": 99999, "y": 99999 }, "filename": "PauseMenu\\\\Divider" } },\n'
@@ -394,7 +395,7 @@ def pad_charcreate(s):   # 手柄版职业选择页走原版布局（gen_romfs_o
 INSERT['controller/console/charactercreatepanelhd.json'] = (INSERT['controller/console/charactercreatepanelhd.json'][0], INSERT['controller/console/charactercreatepanelhd.json'][1] + _SAVEBOX)
 _COMM = _community() + _SAVEBOX
 _COMM_STUB = ''.join('        { "type": "%s", "name": "%s" },\n' % (ty, nm) for ty, nm in re.findall(r'"type": "(\w+)", "name": "(Touch(?:Comm|Save)\w+)"', _COMM))
-assert _COMM_STUB.count('\n') == 42 + 42   # 边框 15 片、标题、两行渠道（边框 4 + 标签 + 值 + 复制钮 + 钮上的字）× 2、免费声明、分隔线、页脚 3、确定、焦点框 4 | 15 tiles, title, 2 × (4 border + label + value + copy + its text), free, divider, 3 footer, OK, 4 focus
+assert _COMM_STUB.count('\n') == 50 + 42   # 边框 15 片、标题、三行渠道（边框 4 + 标签 + 值 + 复制钮 + 钮上的字）× 3、免费声明、分隔线、页脚 3、确定、焦点框 4 | 15 tiles, title, 2 × (4 border + label + value + copy + its text), free, divider, 3 footer, OK, 4 focus
 # 「上传诊断报告」提示框（dm/host/dm_diagup.c）：与社区入口提示框同一套做法——边框 15 片（自己一套切片 Ztouch_diag）+ 标题 + 正文两行（36 号）+ 副文一行（28 号，§2.6）
 # + 六颗原版前端按钮（上传 / 重试 / 导出到本地 / 复制编号 / 取消 / 关闭，宿主按状态露出至多三颗）。全部屏外起步、字空着、不带锚点，挂在暂停菜单面板（两份）末尾、社区框之后（画在最上层）；
 # 点「分享诊断日志」且构建配了上传地址时由宿主打开，没配就不出现（原导出链路不变）
