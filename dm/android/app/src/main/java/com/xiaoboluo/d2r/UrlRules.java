@@ -9,8 +9,13 @@ import java.net.URI;
 final class UrlRules {
     private UrlRules() {}
 
+    // 四家网盘的分享前缀，与 dm/host/dm_pan.h 的 dm_pan_url_ok 同一张白名单（test_community_entry.py 核两边一致）；mirror / github / site / http / javascript: 都不在里面
+    // the four drives' share prefixes, the same whitelist as dm_pan_url_ok in dm/host/dm_pan.h (test_community_entry.py checks both agree); mirror / github / site / http / javascript: are not in it
+    static final String[] PAN_PREFIXES = {"https://pan.quark.cn/s/", "https://pan.baidu.com/s/", "https://www.alipan.com/s/", "https://www.aliyundrive.com/s/", "https://www.123pan.com/s/"};
     static boolean openable(String url) {
         if (url == null || url.isEmpty()) return false;
+        boolean listed = false; for (String p : PAN_PREFIXES) if (url.startsWith(p) && url.length() > p.length()) { listed = true; break; }
+        if (!listed) return false;
         try {
             URI u = new URI(url);
             if (!"https".equalsIgnoreCase(u.getScheme())) return false;

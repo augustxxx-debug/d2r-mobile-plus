@@ -460,6 +460,9 @@ void dm_community_open_about(void) {   // 主菜单「关于」行：只有版�
 void dm_community_copy_init(int (*cb)(const char *)) { g_copy = cb; }
 unsigned dm_community_copy_count(void) { return atomic_load(&g_copies); }
 void dm_community_open_init(int (*cb)(const char *url)) { g_open = cb; }
+// 外壳打开前的第二道复核（iOS / Mac 调）：https 且是四家网盘之一的分享前缀（dm_pan.h，generic 同一张白名单）；mirror / github / site / http / javascript: 一律 0
+// second check in the shells before opening (iOS / Mac call it): https on one of the four drives' share prefixes (dm_pan.h, the generic whitelist); mirror / github / site / http / javascript: are all 0
+int dm_community_url_openable(const char *url) { return url && dm_pan_url_ok(DM_PAN_GENERIC, url); }
 // 打开外部链接的唯一入口（网盘卡下一张卡接上界面后用）：取第 idx 条网盘，打开前用 dm_pan_open_allowed 做最终判定——方案 https、仍是所属网盘的前缀、主机名非空；
 // 越界 / 没登记回调 / 不合规一律返回 0 并记一行【红】，不调回调。github / site / mirror 仍只复制，不经这里。
 // The only way to open an external link (the cloud-drive cards will call it from the next card): take drive idx and run dm_pan_open_allowed as the final check -- https scheme, still the

@@ -33,7 +33,7 @@ void dm_update_fail(int kind);
 void dm_update_site(const char *host);
 int dm_community_manifest(const char *json, size_t len);   // dm/host/dm_community.c：同一份版本文件里的 community 字段（群号 / 仓库地址） | the community field (group number / repository address) of the same version file
 void dm_community_copy_init(int (*cb)(const char *text));
-void dm_community_open_init(int (*cb)(const char *url));
+void dm_community_open_init(int (*cb)(const char *url)); int dm_community_url_openable(const char *url);
 
 static NSString *g_url; static int g_own; static _Atomic int g_inflight;
 
@@ -138,7 +138,7 @@ static int ios_copy(const char *s) {
 // Open a cloud-drive link in the system browser (dm_community.c): called on the game thread, handed to UIApplication on the main thread; https with a non-empty host only (re-checked after NSURL parsing), otherwise a red log line and 0
 static int ios_open(const char *s) {
     NSString *t = @(s ?: ""); NSURL *u = [NSURL URLWithString:t];
-    if (!u || ![u.scheme isEqualToString:@"https"] || u.host.length == 0) { plog("【红】社区入口：打开网盘失败（iOS：不是 https 或没有主机名）"); return 0; }
+    if (!dm_community_url_openable(s) || !u || ![u.scheme isEqualToString:@"https"] || u.host.length == 0) { plog("【红】社区入口：打开网盘失败（iOS：不在网盘白名单 / 不是 https / 没有主机名）"); return 0; }
     // 异步交主线程：openURL:options:completionHandler: 没有返回值；游戏线程不同步等主线程（防死锁），提交即返回 1 | async to the main thread: the call returns nothing, and the game thread never waits on the main thread (no deadlock); 1 = submitted
     dispatch_async(dispatch_get_main_queue(), ^{ [UIApplication.sharedApplication openURL:u options:@{} completionHandler:^(BOOL done) { if (!done) plog("【红】社区入口：系统没打开网盘链接"); }]; });
     return 1;

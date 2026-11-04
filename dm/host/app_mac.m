@@ -104,7 +104,8 @@ static int mac_copy(const char *s) {
 // activates = NO, like open -g, so it does not steal the foreground (CLAUDE.md §2); returns 1 once submitted (the system reports the result asynchronously, not awaited here).
 static int mac_open(const char *s) {
     NSString *t = @(s ?: ""); NSURL *u = [NSURL URLWithString:t];
-    if (!u || ![u.scheme isEqualToString:@"https"] || u.host.length == 0) { LOG("【红】社区入口：打开网盘失败（Mac：不是 https 或没有主机名）"); return 0; }
+    int dm_community_url_openable(const char *);
+    if (!dm_community_url_openable(s) || !u || ![u.scheme isEqualToString:@"https"] || u.host.length == 0) { LOG("【红】社区入口：打开网盘失败（Mac：不在网盘白名单 / 不是 https / 没有主机名）"); return 0; }
     // 异步交主线程（游戏线程不同步等主线程，防死锁），提交即返回 1 | async to the main thread (the game thread never waits on it: no deadlock); 1 = submitted
     dispatch_async(dispatch_get_main_queue(), ^{ NSWorkspaceOpenConfiguration *c = [NSWorkspaceOpenConfiguration configuration]; c.activates = NO;   // 不抢前台 | no foreground steal
         [NSWorkspace.sharedWorkspace openURL:u configuration:c completionHandler:nil]; });
