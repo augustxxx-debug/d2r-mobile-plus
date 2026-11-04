@@ -231,7 +231,7 @@ static _Atomic int g_mem_tier_file = -1, g_mem_notice;
 // "Applies after restart" hints (B151, user 11-04): the values read at launch are recorded once (fixed for the run); when an item that needs a restart has a current value (including one not yet applied)
 //   different from the launch value, an orange hint (original token $FontColorOrange, 28 pt) appears under its row; changing back hides it, unchanged shows nothing. Items: voice, item notes, iCloud,
 //   a higher render resolution under low memory (res_raise_needs_restart), and ray tracing crossing on / off (the one-tier render-resolution drop is decided at launch, dm_render_res_rt_drop is fixed for the run)
-static int g_boot_v[NK], g_boot_ok;
+static int g_boot_v[NK], g_boot_ok; static void test_pend_apply(void);
 static _Atomic int g_boot_res = -1, g_boot_q3d = -1;   // 文件里记的档位（-1 没有）、低内存提示已确认过 | tier recorded in the file (-1 none), low-memory notice already confirmed
 static int mem_tier_of(int limit_mb) { return limit_mb < 0 || limit_mb >= 3200 ? 2 : limit_mb >= 2600 ? 1 : 0; }
 static int mem_tier_env(void) { const char *e = getenv("DM_MEM_TIER"); return e && e[0] >= '0' && e[0] <= '2' && !e[1] ? e[0] - '0' : -1; }
@@ -1165,6 +1165,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
       if (note) { int mem = fps_ok && fps_mem_capped();
           if (mem) graphics_text(note, dm_str(main_base(), "dmGraphicsFps120MemNote"));
           ui_show_ours(note, mem); } }
+    test_pend_apply();
     { uint64_t note = find_w(sp, "TouchGraphicsResNote", 0); int raise = res_ok && res_raise_needs_restart(), rt = res_ok && rt_drop_restart();
       if (note) { int k = raise ? 1 : rt ? 2 : 0; if (k) graphics_text(note, dm_str(main_base(), k == 1 ? "dmGraphicsResRestartNote" : "dmGraphicsRtResRestart")); ui_show_ours(note, k != 0); } }   // 页重建后字回到布局缺省，所以每帧写（graphics_text 字没变不写） | the page rebuild resets the text to the layout default, so write every frame (graphics_text skips unchanged text)
     uint64_t vt = *(uint64_t *)sp; int valid = 0;
@@ -1202,13 +1203,16 @@ static int g_icloud_probes;   // 单测核调用次数 | call count for the unit
 static int icloud_available_throttled(int fresh) { static int ok = 1, n; if (fresh || n <= 0) { ok = dm_icloud_available(); g_icloud_probes++; n = 60; } n--; return ok; }
 #endif
 static int touch_only_row(int i) { return i == K_TOUCH_SWAP; }
-static void restart_hints(uint64_t sp, int page) {   // 配音 / 物品注释两行的「重启后生效」（iCloud 在 sync_toggles 里跟账号状态一起判） | voice / item notes restart hints (iCloud is judged in sync_toggles with the account state)
-    static int k_in = -2; if (k_in == -2) k_in = key_idx("item_notes");
+static void test_pend_apply(void) {
     // 测试开关 DM_TEST_PEND=<键>=<值>|!（! = 启动值取反）[,…]（截「重启后生效」提示用）：第一次进这两页时当作玩家点选了这些值（只进待应用 g_pend，不点「应用」、不写文件）
     // Test switch DM_TEST_PEND=<key>=<value>[,...] (for screenshots of the restart hints): on the first visit to these pages, act as if the player picked these values (pending g_pend only, no Apply, no file write)
-    { static int done; const char *e = done ? NULL : getenv("DM_TEST_PEND"); done = 1;
+  { static int done; const char *e = done ? NULL : getenv("DM_TEST_PEND"); done = 1;
       if (e) { char buf[200]; strlcpy(buf, e, sizeof buf); for (char *sv, *t = strtok_r(buf, ",", &sv); t; t = strtok_r(NULL, ",", &sv)) { char *eq = strchr(t, '='); if (!eq) continue; *eq = 0; int i = key_idx(t);
           if (i >= 0) { int nv = eq[1] == '!' ? !g_boot_v[i] : atoi(eq + 1); atomic_store(&g_pend[i], nv); LOG("自定义设置：测试开关 DM_TEST_PEND %s → %d（启动值 %d，当作玩家点选、没应用）", t, nv, g_boot_v[i]); } else LOG("【红】DM_TEST_PEND：没有键 %s", t); } } }
+}
+static void restart_hints(uint64_t sp, int page) {   // 配音 / 物品注释两行的「重启后生效」（iCloud 在 sync_toggles 里跟账号状态一起判） | voice / item notes restart hints (iCloud is judged in sync_toggles with the account state)
+    static int k_in = -2; if (k_in == -2) k_in = key_idx("item_notes");
+    test_pend_apply();
     if (page == PG_SYS && row_on_page(K_VOICE, page)) { uint64_t w = find_w(sp, "TouchCustom_voice_Restart", 0); if (w) ui_show_ours(w, restart_pending(K_VOICE)); }
     if (k_in >= 0 && row_on_page(k_in, page)) { uint64_t w = find_w(sp, "TouchCustom_item_notes_Note", 0); if (w) ui_show_ours(w, restart_pending(k_in)); }
 }
