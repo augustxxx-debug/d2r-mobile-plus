@@ -1557,11 +1557,10 @@ _NOTE_STYLE = '{ "fontColor": "$FontColorLightGray", "pointSize": 28, "spacing":
 def _opt_note(name, text_key, x, y, w=1270): return '        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": 60 }, "text": "@%s", "style": %s } },\n' % (name, x, y, w, text_key, _NOTE_STYLE)
 def _custom_toggle_row(i, key, label, y=None):
     y, h = _CUSTOM_Y[i] if y is None else y, _CUSTOM_LINE_H
-    if key in _OPT_NOTES or key == 'store_btn':
+    if key in _OPT_NOTES:   # 「存放」按钮两种模式都在屏上（REQ12），不再挂「仅触屏」副文 | the Deposit button is on screen in both modes (REQ12), no "touch only" note any more
         extra = ''
         if key in _OPT_NOTES: extra += _opt_note('TouchCustom_%s_Note' % key, _custom_key(key) + 'Note', 0, y + 88)
         if key == 'icloud': extra += _opt_note('TouchCustom_icloud_NoAcct', 'dmCustomIcloudNoAcct', 0, y + 88)
-        if key == 'store_btn': extra += _opt_note('TouchCustom_store_btn_Pad', 'dmOptTouchOnly', 0, y + 88)
         return _custom_toggle_row_core(y, 140, key, label, h) + extra
     return _custom_toggle_row_core(y, h, key, label, h)
 def _custom_toggle_row_core(y, th, key, label, h):
