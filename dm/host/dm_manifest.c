@@ -10,7 +10,7 @@
 typedef struct {
     const char *p, *e;
     dm_manifest m;
-    int n_build, n_version, n_note, n_urgent, n_render, n_comm, n_qq, n_gh, n_site;   // 出现次数（查重复） | occurrences (to catch duplicates)
+    int n_build, n_version, n_note, n_urgent, n_render, n_comm, n_qq, n_gh, n_site, n_mirror;   // 出现次数（查重复） | occurrences (to catch duplicates)
     const char *bad;                                                         // 第一条语义错（类型 / 取值），NULL = 没有 | the first semantic error (type / value), NULL = none
 } mp_t;
 
@@ -51,7 +51,7 @@ static int boolean(mp_t *j, int depth, int *out, const char *why) {
     if (lit(j, "true")) { *out = 1; return 1; } if (lit(j, "false")) { *out = 0; return 1; }
     bad(j, why); return value(j, depth, 0);
 }
-// 不许转义的短字符串字段（version / qq_group / github） | short string fields that may not contain escapes (version / qq_group / github)
+// 不许转义的短字符串字段（version / qq_group / github / mirror） | short string fields that may not contain escapes (version / qq_group / github / mirror)
 static int plain(mp_t *j, int depth, char *out, size_t n, const char *why_type, const char *why_long) {
     if (j->p >= j->e || *j->p != '"') { bad(j, why_type); return value(j, depth, 0); }
     int esc = 0, over = 0; if (!str(j, out, n, &esc, &over)) return 0;
@@ -78,6 +78,7 @@ static int object(mp_t *j, int depth, int ctx) {   // ctx：0 别处 / 1 根对�
         else if (ctx == 2 && !strcmp(key, "qq_group")) { j->n_qq++; ok = plain(j, depth + 1, j->m.qq, sizeof j->m.qq, "qq_group 不是不带转义的字符串", "qq_group 超过 12 位"); }
         else if (ctx == 2 && !strcmp(key, "github")) { j->n_gh++; ok = plain(j, depth + 1, j->m.github, sizeof j->m.github, "github 不是不带转义的字符串", "github 超过 160 个字符"); }
         else if (ctx == 2 && !strcmp(key, "site")) { j->n_site++; ok = plain(j, depth + 1, j->m.site, sizeof j->m.site, "site 不是不带转义的字符串", "site 太长（上限见 dm_site.h）"); }
+        else if (ctx == 2 && !strcmp(key, "mirror")) { j->n_mirror++; ok = plain(j, depth + 1, j->m.mirror, sizeof j->m.mirror, "mirror 不是不带转义的字符串", "mirror 超过 160 个字符"); }
         else ok = value(j, depth + 1, 0);
         if (!ok) return 0;
         ws(j); if (j->p >= j->e) return 0;
@@ -103,6 +104,12 @@ static int gh_ok(const char *s) {   // 同 dm_community.c | same as dm_community
     for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (!(isalnum(c) || strchr("-._~:/?#[]@!$&'()*+,;=%", c))) return 0; }
     return 1;
 }
+static int gitee_ok(const char *s) {   // 同 dm_community.c | same as dm_community.c
+    static const char pre[] = "https://gitee.com/"; size_t n = strlen(s);
+    if (n <= sizeof pre - 1 || n > DM_MANIFEST_GH_MAX || strncmp(s, pre, sizeof pre - 1)) return 0;
+    for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (!(isalnum(c) || strchr("-._~:/?#[]@!$&'()*+,;=%", c))) return 0; }
+    return 1;
+}
 static int ver_ok(const char *s) { if (!*s) return 0; for (; *s; s++) if (!isalnum((unsigned char)*s) && !strchr(".+-", *s)) return 0; return 1; }
 static int fail(char *why, size_t n, const char *fmt, ...) { if (why && n) { va_list a; va_start(a, fmt); vsnprintf(why, n, fmt, a); va_end(a); } return 0; }
 
@@ -114,13 +121,14 @@ int dm_manifest_parse(const char *json, size_t len, dm_manifest *out, char *why,
     mp_t j; memset(&j, 0, sizeof j); j.p = json; j.e = json + len; ws(&j);
     int ok = j.p < j.e && *j.p == '{' && object(&j, 1, 1); if (ok) { ws(&j); ok = j.p == j.e; }
     if (!ok) return fail(why, why_n, "JSON 语法错（第 %zu 字节附近），或根不是对象", (size_t)(j.p - json));
-    if (j.n_build > 1 || j.n_version > 1 || j.n_note > 1 || j.n_urgent > 1 || j.n_render > 1 || j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1) return fail(why, why_n, "有重复的键");
+    if (j.n_build > 1 || j.n_version > 1 || j.n_note > 1 || j.n_urgent > 1 || j.n_render > 1 || j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1 || j.n_mirror > 1) return fail(why, why_n, "有重复的键");
     if (j.bad) return fail(why, why_n, "%s", j.bad);
     if (!j.n_build || !j.n_note || !j.n_urgent) return fail(why, why_n, "缺必填字段（build / note / urgent）");
     if (j.n_version && !ver_ok(j.m.version)) return fail(why, why_n, "version 只许数字、字母与 .+-，且不能为空");
     if (j.n_qq && !qq_ok(j.m.qq)) return fail(why, why_n, "qq_group 须是 5–12 位数字");
     if (j.n_gh && !gh_ok(j.m.github)) return fail(why, why_n, "github 须以 https://github.com/ 开头、只含 URL 字符");
     if (j.n_site && !dm_site_ok(j.m.site)) return fail(why, why_n, "site 须为 https:// + 主机名 + 可选路径，不带端口、@ ? #，不超过 %d 字符", DM_SITE_MAX);
+    if (j.n_mirror && !gitee_ok(j.m.mirror)) return fail(why, why_n, "mirror 须以 https://gitee.com/ 开头、只含 URL 字符");
     if (out) *out = j.m;
     return 1;
 }

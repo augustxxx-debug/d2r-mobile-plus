@@ -33,14 +33,14 @@ uint64_t dm_wref_get(dm_wref *r) { return r ? r->w : 0; }
 void dm_ui_top_chk(uint64_t r, const char *n, uint64_t g) { (void)r; (void)n; (void)g; }
 static int checks, fails;
 static int t_rect_hit(uint64_t w, uint64_t xy) { int32_t *r = (int32_t *)(uintptr_t)(w + 0x70); int x = (int32_t)(uint32_t)xy, y = (int32_t)(xy >> 32); return x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3]; }   // 假控件的命中判断（虚表 +0x48） | fake widgets' hit test (vtable +0x48)
-static int chs(int lg, char *first) { int c[2]; int n = dm_community_channels(lg, c); first[0] = n ? (char)c[0] : 0; return n; }   // 渠道行数，first[0] = 第一行渠道 | channel rows; first[0] = the first row's channel
+static int chs(int lg, char *first) { int c[3]; int n = dm_community_channels(lg, c); first[0] = n ? (char)c[0] : 0; return n; }   // 渠道行数，first[0] = 第一行渠道 | channel rows; first[0] = the first row's channel
 static int t_recalcs; static void t_recalc(uint64_t w) { (void)w; t_recalcs++; }   // 假控件虚表 +0x10（重算）：只计数 | fake widget vtable +0x10 (recompute): counts only
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
 static char dir[64], cache[128], logp[128];
 static int copies; static char copied[256];
 static int copy_ok(const char *s) { copies++; snprintf(copied, sizeof copied, "%s", s); return 1; }
 static int copy_bad(const char *s) { (void)s; return 0; }
-static void restart(void) { g_qq[0] = g_gh[0] = g_site[0] = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0); }
+static void restart(void) { g_qq[0] = g_gh[0] = g_site[0] = g_mirror[0] = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0); }
 static char *log_text(void) { static char t[16384]; fflush(stderr); FILE *f = fopen(logp, "r"); size_t n = f ? fread(t, 1, sizeof t - 1, f) : 0; t[n] = 0; if (f) fclose(f); return t; }
 static void log_reset(void) { fflush(stderr); if (ftruncate(fileno(stderr), 0) == 0) rewind(stderr); }   // 截断并回到文件头（只重开文件会从旧偏移接着写、前面留一段空洞） | truncate and rewind (reopening alone keeps writing at the old offset, leaving a hole at the front)
 static int cache_has(const char *s) { FILE *f = fopen(cache, "r"); char t[512] = {0}; if (!f) return 0; fread(t, 1, sizeof t - 1, f); fclose(f); return strstr(t, s) != NULL; }
@@ -213,15 +213,15 @@ int main(void) {
       n = credits_all(k_maker_default, 1, k_special_default, 1, th, 1, ", ", "", ln, 2, &tr); CHECK(n == 2 && tr && strstr(ln[1].text, "…"));
       n = credits_all(NULL, 0, k_special_default, 1, NULL, 0, ", ", "", ln, CR_LINES, &tr); CHECK(n == 1 && ln[0].kind == 1);   // 没有制作名单：不出那一行 | no maker list: no line
       CHECK(!strstr(log_text(), "Augustus")); }   // 名字不进日志（日志只记行数 / 人数） | the name never goes to the log (counts only)
-    // 21. 社区 / 关于弹窗（RC1.1 重构）的纵向排版：渠道 0–2 行，卡片高 100、行距 120 不重叠；免费声明在卡片下、分隔线在声明与页脚之间；页脚两行；
-    //     末行文字下沿到「确定」顶 = CO_GAP；框高 = 按钮顶 + 115 + 45，按行数算（2 / 1 / 0 行 → 802 / 682 / 562）；横向 标签列 | 值列 | 小「复制」三列不重叠
-    // 21. Vertical layout of the redesigned box: 0-2 channel rows, cards 100 high at 120 pitch without overlap; free notice under the cards, divider between it and the footer; two footer lines;
-    //     last text bottom to OK top = CO_GAP; height = button top + 115 + 45 by row count (802 / 682 / 562); horizontally label | value | small Copy do not overlap
+    // 21. 社区 / 关于弹窗（RC1.1 重构；RC2 第三行）的纵向排版：渠道 0–3 行，卡片高 100、行距 120 不重叠；免费声明在卡片下、分隔线在声明与页脚之间；页脚两行；
+    //     末行文字下沿到「确定」顶 = CO_GAP；框高 = 按钮顶 + 115 + 45，按行数算（3 / 2 / 1 / 0 行 → 922 / 802 / 682 / 562）；横向 标签列 | 值列 | 小「复制」三列不重叠
+    // 21. Vertical layout of the redesigned box (RC1.1; RC2 third row): 0-3 channel rows, cards 100 high at 120 pitch without overlap; free notice under the cards, divider between it and the footer; two footer lines;
+    //     last text bottom to OK top = CO_GAP; height = button top + 115 + 45 by row count (922 / 802 / 682 / 562); horizontally label | value | small Copy do not overlap
     for (int n = 0; n <= CO_ROWS; n++) { co_geom_t g = co_geom(n); int bottom = 100;   // 标题文字框 40–100 | title box 40-100
         for (int k = 0; k < n; k++) { CHECK(g.card_y[k] >= bottom + 20); bottom = g.card_y[k] + 100; }
         CHECK(g.free_y >= bottom + 20); CHECK(g.div_y > g.free_y + 60 && g.foot_y[0] > g.div_y); CHECK(g.foot_y[1] == g.foot_y[0] + 48);
         CHECK(g.btn_y - (g.foot_y[1] + 30 + 14) == CO_GAP); CHECK(g.h == g.btn_y + 115 + 45); }
-    CHECK(co_geom(2).h == 802 && co_geom(1).h == 682 && co_geom(0).h == 562 && co_geom(5).h == 802);
+    CHECK(co_geom(3).h == 922 && co_geom(2).h == 802 && co_geom(1).h == 682 && co_geom(0).h == 562 && co_geom(5).h == 922);
     CHECK(40 + CO_LABEL_W <= CO_CARD_W / 2 + CO_VALUE_X - 20);                                    // 标签列右缘在值列左边 | label column ends left of the value column
     CHECK(CO_VALUE_X + CO_VALUE_W + 30 == CO_CARD_W / 2 - 30 - CO_BTN_W && CO_VALUE_W >= 800);     // 值列到小按钮留 30 | value column ends 30 left of the small button
     // 截断：按 §2.6 估宽超了列宽就截断加「…」，复制不受影响 | truncation: over the column by the §2.6 estimate → cut with "…"; copy unaffected
@@ -263,7 +263,7 @@ int main(void) {
       CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus"));   // 退回 GitHub | falls back to GitHub
       CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(!cache_has("site="));
       static const char *const s3 = "{\"community\": {\"site\": \"https://a.example\", \"site\": \"https://b.example\"}}";
-      log_reset(); CHECK(dm_community_manifest(s3, strlen(s3)) == 0); CHECK(strstr(log_text(), "site 重复")); CHECK(!dm_community_available());
+      log_reset(); CHECK(dm_community_manifest(s3, strlen(s3)) == 0); CHECK(strstr(log_text(), "site / mirror 重复")); CHECK(!dm_community_available());
       static const char *const s4 = "{\"community\": {\"site\": \"https://d2rplus.example.com/path\"}}";   // 只有官网：外文显示、中文也显示链接 | site only: every language shows it
       CHECK(dm_community_manifest(s4, strlen(s4)) == 1); CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 2 && !strcmp(v, "https://d2rplus.example.com/path"));
       CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_SITE && chs(DM_LG_ZH, lb) == 1 && lb[0] == DM_CH_SITE);   // 只有官网：中外文都是一行官网 | website only: one website row in every language
@@ -279,8 +279,8 @@ int main(void) {
       log_reset(); CHECK(dm_community_manifest(s8, strlen(s8)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB);
       // RC1.1 弹窗重构 / 补审 Q11.1-06：渠道行——中文 [QQ 群, 官网, GitHub] 取前两个有值的，外文 [官网, GitHub]；显示值去 https:// 与末尾 /、GitHub 只留仓库名；每行的「复制」复制那一行的完整值
       // RC1.1 box redesign / follow-up Q11.1-06: channel rows -- Chinese the first two of [QQ, website, GitHub], other languages [website, GitHub]; shown values trimmed, GitHub as repo name; each row's Copy copies that row's full value
-      { CHECK(dm_community_manifest(s1, strlen(s1)) == 1); int c[2]; char full[200], shown[200];
-        CHECK(dm_community_channels(DM_LG_ZH, c) == 2 && c[0] == DM_CH_QQ && c[1] == DM_CH_SITE);                 // 中文：群号 + 官网（Q11.1-06：中文看得到官网） | Chinese: number + website
+      { CHECK(dm_community_manifest(s1, strlen(s1)) == 1); int c[3]; char full[200], shown[200];
+        CHECK(dm_community_channels(DM_LG_ZH, c) == 3 && c[0] == DM_CH_QQ && c[1] == DM_CH_SITE && c[2] == DM_CH_GITHUB);   // 中文：群号 + 官网 + GitHub 三张（RC2 上限 3） | Chinese: number + website + GitHub, three cards (RC2 limit 3)
         CHECK(dm_community_channels(DM_LG_EN, c) == 2 && c[0] == DM_CH_SITE && c[1] == DM_CH_GITHUB);             // 外文：官网 + GitHub，不显示群号 | other languages: website + GitHub, no number
         CHECK(dm_community_channels(DM_LG_KO, c) == 2 && c[0] == DM_CH_SITE);
         CHECK(dm_community_channel_value(DM_CH_SITE, full, sizeof full, shown, sizeof shown) && !strcmp(full, "https://d2rplus.example.com/") && !strcmp(shown, "d2rplus.example.com"));
@@ -332,6 +332,33 @@ int main(void) {
         restart(); dm_community_load(); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_SITE); }
       FILE *f = fopen(cache, "w"); fputs("qq_group=1129913678\ngithub=https://github.com/example/d2r-mobile-plus\n", f); fclose(f);   // 旧缓存（RC1 写的） | an RC1 cache
       restart(); dm_community_load(); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); }
+    // 22b. community.mirror（国内镜像，gitee；RC2 任务卡）：中文渠道按 群号 → 官网 → 国内镜像 → GitHub 取前三张卡；外文不出镜像卡；
+    //      显示值 gitee.com/<owner>/<repo>、复制完整地址；无效镜像只丢这一项、不清有效 github；缓存 mirror= 读回；没有镜像的显示与原先完全一致（上一段的 s1 / s10 已覆盖）
+    // 22b. community.mirror (mainland gitee mirror, RC2 card): Chinese cards take the first three of QQ -> website -> mirror -> GitHub; other languages have no mirror card;
+    //      shown value gitee.com/<owner>/<repo>, Copy keeps the full URL; an invalid mirror drops only that key and leaves a valid github alone; the mirror= cache line reads back;
+    //      without a mirror the display is exactly as before (s1 / s10 in the previous block already cover it)
+    { static const char *const m1 = "{\"community\": {\"qq_group\": \"1129913678\", \"github\": \"https://github.com/example/d2r-mobile-plus\", \"site\": \"https://d2rplus.example.com/\", \"mirror\": \"https://gitee.com/example/d2r-mobile-plus\"}}";
+      int c[3]; char lb[200], full[200], shown[200];
+      log_reset(); CHECK(dm_community_manifest(m1, strlen(m1)) == 1); CHECK(strstr(log_text(), "国内镜像=https://gitee.com/example/d2r-mobile-plus"));
+      CHECK(dm_community_channels(DM_LG_ZH, c) == 3 && c[0] == DM_CH_QQ && c[1] == DM_CH_SITE && c[2] == DM_CH_MIRROR);   // 中文：三张卡，GitHub 排第四不上 | Chinese: three cards, GitHub is fourth and left out
+      CHECK(dm_community_channels(DM_LG_EN, c) == 2 && c[0] == DM_CH_SITE && c[1] == DM_CH_GITHUB);                      // 外文：没有镜像卡 | other languages: no mirror card
+      CHECK(dm_community_channel_value(DM_CH_MIRROR, full, sizeof full, shown, sizeof shown) && !strcmp(full, "https://gitee.com/example/d2r-mobile-plus") && !strcmp(shown, "gitee.com/example/d2r-mobile-plus"));
+      CHECK(cache_has("mirror=https://gitee.com/example/d2r-mobile-plus\n"));
+      restart(); dm_community_load(); CHECK(strstr(log_text(), "国内镜像=https://gitee.com/example/d2r-mobile-plus")); CHECK(dm_community_channels(DM_LG_ZH, c) == 3 && c[2] == DM_CH_MIRROR);   // 缓存 mirror= 读回 | the mirror= cache line reads back
+      dm_community_copy_init(copy_ok); atomic_store(&g_show, 2); copies = 0; t_group = DM_LG_ZH;   // 复制的仍是完整地址（第三行） | Copy still takes the full URL (third row)
+      dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCopy2"); CHECK(!strcmp(copied, "https://gitee.com/example/d2r-mobile-plus")); CHECK(strstr(log_text(), "复制 国内镜像"));
+      static const char *const m2 = "{\"community\": {\"qq_group\": \"1129913678\", \"github\": \"https://github.com/example/d2r-mobile-plus\", \"mirror\": \"https://gitee.com/example/d2r-mobile-plus\"}}";
+      CHECK(dm_community_manifest(m2, strlen(m2)) == 1); CHECK(dm_community_channels(DM_LG_ZH, c) == 3 && c[0] == DM_CH_QQ && c[1] == DM_CH_MIRROR && c[2] == DM_CH_GITHUB);   // 没有官网：群号 + 镜像 + GitHub
+      CHECK(dm_community_channels(DM_LG_EN, c) == 1 && c[0] == DM_CH_GITHUB);
+      static const char *const m3 = "{\"community\": {\"github\": \"https://github.com/example/d2r-mobile-plus\", \"mirror\": \"https://github.com/a/b\"}}";   // 无效镜像：只丢这一项 | invalid mirror: only this key is dropped
+      log_reset(); CHECK(dm_community_manifest(m3, strlen(m3)) == 1); CHECK(strstr(log_text(), "另一项格式坏")); CHECK(!strstr(log_text(), "国内镜像=")); CHECK(!cache_has("mirror="));
+      CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 2 && !strcmp(v, "https://github.com/example/d2r-mobile-plus")); CHECK(chs(DM_LG_EN, lb) == 1 && lb[0] == DM_CH_GITHUB); CHECK(chs(DM_LG_ZH, lb) == 1 && lb[0] == DM_CH_GITHUB);
+      static const char *const m4 = "{\"community\": {\"mirror\": \"https://gitee.com/a\", \"mirror\": \"https://gitee.com/b\"}}";   // 重复 = 格式错，入口不显示 | duplicate = format error, no entry
+      log_reset(); CHECK(dm_community_manifest(m4, strlen(m4)) == 0); CHECK(strstr(log_text(), "mirror 重复"));
+      static const char *const m5 = "{\"community\": {\"mirror\": \"https://gitee.com/example/d2r-mobile-plus\"}}";   // 只有镜像：中文可用、外文不显示 | mirror only: Chinese uses it, other languages do not
+      CHECK(dm_community_manifest(m5, strlen(m5)) == 1); CHECK(dm_community_value(DM_LG_ZH, v, sizeof v) == 2 && !strcmp(v, "https://gitee.com/example/d2r-mobile-plus")); CHECK(dm_community_value(DM_LG_EN, v, sizeof v) == 0);
+      CHECK(chs(DM_LG_ZH, lb) == 1 && lb[0] == DM_CH_MIRROR && chs(DM_LG_EN, lb) == 0);
+      atomic_store(&g_show, 0); t_group = DM_LG_ZH; }
     // 23. RC1.1（用户 Duo 真机 80c0882「加入社群讨论都歪到哪」）：入口先藏后显（新安装首启：清单还没到）时放回挪走前的 x，不放回写死的值——
     //     触屏首页「加入社区讨论」布局里居中 x −235，旧代码放回旧并排版式的 20（往右歪约 255）；还没挪过（home = 99999）就不动
     // 23. RC1.1 (user on the Duo, 80c0882: the Join button was off-centre): an entry hidden then shown (fresh install's first run, manifest not yet in) returns to its x before the move,
@@ -421,8 +448,9 @@ int main(void) {
       CHECK(co_tap_zone(&g, 1600, 310) == 0 && co_tap_zone(&g, 1600, 311) == 1);    // 两行之间不留缝 | no gap between rows
       CHECK(co_tap_zone(&g, 1600, 430) == 1 && co_tap_zone(&g, 1600, 431) == -1);   // 第二行下沿 + 10 | row two's bottom edge + 10
       CHECK(co_tap_zone(&g, 140, 250) == -1 && co_tap_zone(&g, 1880, 250) == -1);   // 框外左右 | left / right of the box
-      CHECK(co_tap_zone(&g, 1010, 800) == 2 && co_tap_zone(&g, 1010, 760 + 115 + 50) == 2 && co_tap_zone(&g, 775 - 60, 800) == 2 && co_tap_zone(&g, 1010, 760 - 50) == 2);   // 确定及四周 | OK and around it
+      CHECK(co_tap_zone(&g, 1010, 800) == 3 && co_tap_zone(&g, 1010, 760 + 115 + 50) == 3 && co_tap_zone(&g, 775 - 60, 800) == 3 && co_tap_zone(&g, 1010, 760 - 50) == 3);   // 确定及四周 | OK and around it
       CHECK(co_tap_zone(&g, 775 - 70, 800) == -1 && co_tap_zone(&g, 1010, 940) == -1);   // 再远：吞掉 | further: swallowed
+      { co_tapgeo_t g3 = g; g3.n = 3; g3.card_y[2] = 440; CHECK(co_tap_zone(&g3, 1600, 500) == 2 && co_tap_zone(&g3, 1600, 550) == 2 && co_tap_zone(&g3, 1600, 551) == -1); }   // 第三行 | third row
       g.n = 1; CHECK(co_tap_zone(&g, 1600, 380) == -1);                             // 只有一行渠道 | one channel row only
       g.valid = 0; CHECK(co_tap_zone(&g, 1010, 800) == -1); CHECK(co_tap_zone(NULL, 1, 1) == -1);
       // 用户真机日志（17 Pro，主菜单，游戏窗口 2468×1134，框中心 2350、顶 679、2 行）：四下都点在第一张卡片上沿上方 3–34 单位——现在都算第 1 行复制
@@ -430,7 +458,7 @@ int main(void) {
       co_tapgeo_t h = { 1, 1134, 0, 0, 2, 2350 - 860, 2350 + 860, { 679 + 130, 679 + 250 }, 2350 - 235, 679 + 642, 470, 115, 1.0f };
       CHECK(co_tap_zone(&h, 1560, 423) == 0 && co_tap_zone(&h, 1578, 411) == 0 && co_tap_zone(&h, 1564, 407) == 0 && co_tap_zone(&h, 1570, 412) == 0);
       CHECK(co_tap_zone(&h, 1799, 489) == -1);                                      // 框右边以外（框右沿约 1694 像素） | right of the box (its right edge is about 1694 px)
-      CHECK(co_tap_zone(&h, (int)(2350 * 1134 / 2160.0), (int)((679 + 642 + 57) * 1134 / 2160.0)) == 2);   // 「确定」正中 | OK's centre
+      CHECK(co_tap_zone(&h, (int)(2350 * 1134 / 2160.0), (int)((679 + 642 + 57) * 1134 / 2160.0)) == 3);   // 「确定」正中 | OK's centre
     }
     // 15. 没有 UI（单测没有游戏模块）：每帧泵不崩 | 15. No UI (no game module in the unit test): the per-frame pump does not crash
     atomic_store(&g_show, 1); dm_community_pump(); dm_community_pump(); atomic_store(&g_show, 0);
@@ -444,7 +472,7 @@ int main(void) {
       for (size_t i = 0; i < sizeof k_site_cases / sizeof *k_site_cases; i++) E01_ONE(k_site_cases[i].site, k_site_cases[i].ok);
       for (size_t i = 0; i < sizeof k_site_long / sizeof *k_site_long; i++) { site_contract_long(l, sizeof l, k_site_long[i].len); E01_ONE(l, k_site_long[i].ok); }
       // 别的「唯一无效渠道」形状：转义、不是字符串、空串、群号 / GitHub 不合规 | other invalid sole channels: escape, non-string, empty, bad number / GitHub
-      static const char *const keep[] = { "{\"community\":{\"qq_group\":\"1234\\u0035678\"}}", "{\"community\":{\"github\":\"https://github.com/a\\/b\"}}", "{\"community\":{\"qq_group\":123456}}", "{\"community\":{\"site\":42}}", "{\"community\":{\"site\":\"\"}}", "{\"community\":{\"qq_group\":\"12\"}}", "{\"community\":{\"github\":\"https://example.com/x\"}}" };
+      static const char *const keep[] = { "{\"community\":{\"qq_group\":\"1234\\u0035678\"}}", "{\"community\":{\"github\":\"https://github.com/a\\/b\"}}", "{\"community\":{\"qq_group\":123456}}", "{\"community\":{\"site\":42}}", "{\"community\":{\"site\":\"\"}}", "{\"community\":{\"qq_group\":\"12\"}}", "{\"community\":{\"github\":\"https://example.com/x\"}}", "{\"community\":{\"mirror\":\"https://github.com/a/b\"}}" };
       for (size_t i = 0; i < sizeof keep / sizeof *keep; i++) { E01_SEED(); log_reset(); CHECK(dm_community_manifest(keep[i], strlen(keep[i])) == -1); CHECK(dm_community_available()); CHECK(cache_has(old_cache)); CHECK(strstr(log_text(), "沿用缓存")); }
       // 没有旧值时入口仍不显示 | with no old value the entry stays hidden
       unlink(cache); restart(); dm_community_load(); CHECK(dm_community_manifest("{\"community\":{\"site\":\"https://example.com:443/\"}}", 49) == -1); CHECK(!dm_community_available());

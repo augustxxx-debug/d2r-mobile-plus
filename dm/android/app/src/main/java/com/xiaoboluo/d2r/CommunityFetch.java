@@ -33,10 +33,10 @@ final class CommunityFetch {
     static final int MAX_BYTES = 4096, ROUNDS = 3, TIMEOUT_MS = 10000, TOTAL_MS = 15000;   // 单次请求连接 / 读各 10 秒，整次最多 15 秒（慢速滴灌也不卡住换源，六审 Q6-04） | 10 s connect / read each, 15 s per request in all (a slow drip cannot hold up the next source, sixth review Q6-04)
 
     interface Http { Response get(String url) throws IOException; }
-    // 校验结果同 LoadPageView.manifest：{ "1" / "0", 原因, 群号, 链接, build, 官网 } | validation result as LoadPageView.manifest: { "1" / "0", reason, group number, link, build, site }
+    // 校验结果同 LoadPageView.manifest：{ "1" / "0", 原因, 群号, 链接, build, 官网, 国内镜像 } | validation result as LoadPageView.manifest: { "1" / "0", reason, group number, link, build, site, mainland mirror }
     interface Validator { String[] check(byte[] body); }
     interface Log { void line(String s); }
-    interface Sink { void community(String qq, String github, String site, String from); }
+    interface Sink { void community(String qq, String github, String site, String mirror, String from); }
     interface Sleeper { void sleep(long ms) throws InterruptedException; }
     static final class Response { final int code; final byte[] body; Response(int code, byte[] body) { this.code = code; this.body = body; } }
 
@@ -73,7 +73,7 @@ final class CommunityFetch {
                 String[] v = validator.check(body);
                 if (!"1".equals(v[0])) { log.line("社区信息：" + tag + " 清单不合规（" + v[1] + "），换下一个"); continue; }
                 writeCache(body);
-                log.line("社区信息：" + tag + " 取到合法清单（build " + v[4] + "），官网" + (site(v).isEmpty() ? "无" : "有") + "、群号" + (v[2].isEmpty() ? "无" : "有") + "、GitHub " + (v[3].isEmpty() ? "无" : "有"));
+                log.line("社区信息：" + tag + " 取到合法清单（build " + v[4] + "），官网" + (site(v).isEmpty() ? "无" : "有") + "、群号" + (v[2].isEmpty() ? "无" : "有") + "、GitHub " + (v[3].isEmpty() ? "无" : "有") + "、国内镜像" + (mirror(v).isEmpty() ? "无" : "有"));
                 deliver(sink, v, host(url));
                 return "source" + (i + 1);
             }
@@ -89,7 +89,8 @@ final class CommunityFetch {
         return "none";
     }
     private static String site(String[] v) { return v.length > 5 ? v[5] : ""; }
-    private static void deliver(Sink sink, String[] v, String from) { if (!v[2].isEmpty() || !v[3].isEmpty() || !site(v).isEmpty()) sink.community(v[2], v[3], site(v), from); }
+    private static String mirror(String[] v) { return v.length > 6 ? v[6] : ""; }
+    private static void deliver(Sink sink, String[] v, String from) { if (!v[2].isEmpty() || !v[3].isEmpty() || !site(v).isEmpty() || !mirror(v).isEmpty()) sink.community(v[2], v[3], site(v), mirror(v), from); }
 
     private void writeCache(byte[] body) {
         if (cache == null) return;

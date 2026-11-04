@@ -895,6 +895,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCommunityLabelQq", "QQ 群", "QQ", "QQ", "QQ", "QQ", "QQ" },
     { "dmCommunityLabelSite", "官网", "Website", "Sitio web", "Sitio web", "Сайт", "웹사이트" },
     { "dmCommunityLabelGithub", "GitHub", "GitHub", "GitHub", "GitHub", "GitHub", "GitHub" },
+    { "dmCommunityLabelMirror", "国内镜像", "Mirror (China)", "Espejo (China)", "Espejo (China)", "Зеркало (Китай)", "중국 미러" },
     { "dmCommunityCopy", "复制", "Copy", "Copiar", "Copiar", "Копировать", "복사" },
     { "dmCommunityCopyFailShort", "复制失败", "Failed", "Error", "Error", "Ошибка", "실패" },
     { "dmLoadCommFree", "本软件免费，付费购买均为倒卖", "This app is free. If you paid for it, it was resold", "Esta app es gratis; si pagaste por ella, es reventa", "Esta app es gratis; si pagaste por ella, es reventa", "Приложение бесплатно; платные копии — перепродажа", "이 앱은 무료이며, 유료 판매는 모두 재판매입니다" },
@@ -1035,6 +1036,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmLoadCommCopied", "已复制", "Copied", "Copiado", "Copiado", "Скопировано", "복사됨" },
     { "dmLoadCommCopyFail", "复制失败", "Copy failed", "Error al copiar", "Error al copiar", "Ошибка", "복사 실패" },
     { "dmLoadCommPrefer", "qq", "github", "github", "github", "github", "github" },
+    { "dmLoadCommPrefix", "官方免费渠道：", "Official free channels:", "Canales oficiales gratis:", "Canales oficiales gratis:", "Бесплатные каналы:", "공식 무료 채널:" },
 #if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndGraphicsApplyHint", "点“应用”生效，无需重启。\n“默认”恢复全部 Plus 选项，保留语言及配音。", "Apply without restarting.\nDefaults resets all Plus options; language and voice stay unchanged.", "Aplica sin reiniciar.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.", "Aplica sin reiniciar.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.", "Применяется без перезапуска.\nСброс восстанавливает все настройки Plus; язык и озвучка сохраняются.", "재시작 없이 적용됩니다.\n기본값은 모든 Plus 옵션을 초기화하며 언어와 음성은 유지합니다." },
 #endif

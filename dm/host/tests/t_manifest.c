@@ -64,6 +64,20 @@ int main(void) {
     CHECK(no("{" BASE ", \"community\": {\"site\": \"http://example.org/\"}}")); CHECK(no("{" BASE ", \"community\": {\"site\": \"https://\"}}"));
     CHECK(no("{" BASE ", \"community\": {\"site\": \"https://a b/\"}}")); CHECK(no("{" BASE ", \"community\": {\"site\": \"https:\\/\\/a\"}}"));
     CHECK(no("{" BASE ", \"community\": {\"site\": 1}}")); CHECK(no("{" BASE ", \"community\": {\"site\": \"https://a.example/\", \"site\": \"https://b.example/\"}}"));
+    // community.mirror（国内镜像，gitee）：同 github 规则，前缀换 https://gitee.com/ | community.mirror (mainland mirror, gitee): the github rule with the gitee prefix
+    CHECK(ok("{" BASE ", \"community\": {\"mirror\": \"https://gitee.com/augustxxx-debug/d2r-mobile-plus\"}}"));
+    { const char *s = "{" BASE ", \"community\": {\"mirror\": \"https://gitee.com/augustxxx-debug/d2r-mobile-plus\"}}"; CHECK(dm_manifest_parse(s, strlen(s), &m, why, sizeof why) == 1 && !strcmp(m.mirror, "https://gitee.com/augustxxx-debug/d2r-mobile-plus")); }
+    CHECK(no("{" BASE ", \"community\": {\"mirror\": \"https://github.com/a/b\"}}"));   // 必须是 gitee 前缀 | must carry the gitee prefix
+    CHECK(no("{" BASE ", \"community\": {\"mirror\": \"http://gitee.com/a/b\"}}")); CHECK(no("{" BASE ", \"community\": {\"mirror\": \"https://gitee.com/\"}}"));
+    CHECK(no("{" BASE ", \"community\": {\"mirror\": \"https://gitee.com.evil.example/a\"}}")); CHECK(no("{" BASE ", \"community\": {\"mirror\": \"https://gitee.com/a b\"}}"));
+    CHECK(no("{" BASE ", \"community\": {\"mirror\": \"https://gitee.com/a\\/b\"}}"));   // 转义整份拒 | an escape rejects the whole manifest
+    CHECK(no("{" BASE ", \"community\": {\"mirror\": \"https://gitee.com/a\", \"mirror\": \"https://gitee.com/b\"}}"));
+    { char s[400]; snprintf(s, sizeof s, "{" BASE ", \"community\": {\"mirror\": \"https://gitee.com/%0143d\"}}", 0); CHECK(no(s)); }   // 18 + 143 = 161 字符 | 161 characters
+    { char s[400]; snprintf(s, sizeof s, "{" BASE ", \"community\": {\"mirror\": \"https://gitee.com/%0142d\"}}", 0); CHECK(ok(s)); }   // 160 字符 | 160 characters
+    // android.url：客户端不认这个键（不解析、不显示），任意内容都当未知键忽略，且不影响别的字段 | android.url is not a key we know (not parsed, not shown); any content is ignored as an unknown key and leaves other fields alone
+    { const char *s = "{" BASE ", \"community\": {\"qq_group\": \"12345\", \"github\": \"https://github.com/a/b\", \"mirror\": \"https://gitee.com/a/b\"}, \"android\": {\"url\": \"https://d2rplus.augustusplay.com/d2r/x.apk\"}}";
+      CHECK(dm_manifest_parse(s, strlen(s), &m, why, sizeof why) == 1 && !strcmp(m.qq, "12345") && !strcmp(m.github, "https://github.com/a/b") && !strcmp(m.mirror, "https://gitee.com/a/b") && m.build == 1793254654); }
+    { const char *s = "{" BASE ", \"android\": {\"url\": \"https://evil.example/x.apk\"}}"; CHECK(dm_manifest_parse(s, strlen(s), &m, why, sizeof why) == 1 && !m.qq[0] && !m.github[0] && !m.site[0] && !m.mirror[0] && !strcmp(m.note, "1.0.0 RC1")); }
     CHECK(ok("{" BASE ", \"community\": {\"qq_group\": \"12345\", \"discord\": \"x\", \"min_build\": 3}, \"min_build\": 5}"));   // 未知键忽略 | unknown keys ignored
     // 重复键 | duplicate keys
     CHECK(no("{" BASE ", \"build\": 2}")); CHECK(no("{" BASE ", \"urgent\": true}"));

@@ -166,7 +166,7 @@ int main(void) {
         dm_loadpage_begin(two, 2, w_two, 0); dm_loadpage_set(0, 0.3, NULL, 10);
         dm_loadpage_layout(&thor, &L0); CHECK(L0.comm == 0 && !dm_loadpage_community_shown()); CHECK(!strcmp(dm_loadpage_copy_value(), ""));
         dm_loadpage_text(&t, 20); CHECK(!t.comm1[0] && !t.comm2[0] && !t.copy[0]); CHECK(!dm_loadpage_hit_copy(&L0, L0.sub.x + 10, L0.sub.y + 5));
-        dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus", NULL);
+        dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus", NULL, NULL);
         CHECK(dm_loadpage_community_shown()); CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678"));
         dm_lp_screen scr[2] = { thor, oppo };
         for (int k = 0; k < 2; k++) { dm_loadpage_layout(&scr[k], &L1); double W = scr[k].w, H = scr[k].h;
@@ -183,21 +183,26 @@ int main(void) {
         CHECK(dm_loadpage_pad_mode() == 0); dm_loadpage_pad(1); CHECK(dm_loadpage_pad_mode() == 1); dm_loadpage_pad(0); CHECK(dm_loadpage_pad_mode() == 0);
         dm_loadpage_ui_set_group(DM_LG_EN); CHECK(!strcmp(dm_loadpage_copy_value(), "https://github.com/augustxxx-debug/d2r-mobile-plus"));
         dm_loadpage_text(&t, 7000); CHECK(!strcmp(t.copy, "Copy link") && strstr(t.comm1, "QQ group 1129913678 · GitHub"));
-        dm_loadpage_community("1129913678", NULL, NULL); CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678")); dm_loadpage_text(&t, 7000); CHECK(!strcmp(t.copy, "Copy number") && !strstr(t.comm1, "GitHub"));
-        dm_loadpage_ui_set_group(-1); dm_loadpage_community("", "https://github.com/a/b", ""); CHECK(!strcmp(dm_loadpage_copy_value(), "https://github.com/a/b"));
+        dm_loadpage_community("1129913678", NULL, NULL, NULL); CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678")); dm_loadpage_text(&t, 7000); CHECK(!strcmp(t.copy, "Copy number") && !strstr(t.comm1, "GitHub"));
+        dm_loadpage_ui_set_group(-1); dm_loadpage_community("", "https://github.com/a/b", "", NULL); CHECK(!strcmp(dm_loadpage_copy_value(), "https://github.com/a/b"));
         dm_loadpage_text(&t, 7000); CHECK(!strcmp(t.comm1, "官方免费渠道：GitHub") && !strcmp(t.copy, "复制链接"));
         dm_loadpage_begin(two, 2, w_two, 8000); CHECK(dm_loadpage_community_shown());   // begin 不清 | begin keeps it
         dm_loadpage_fail("x", 8100); CHECK(dm_loadpage_community_shown());
         dm_loadpage_begin(two, 2, w_two, 9000); dm_loadpage_finish(9100); CHECK(!dm_loadpage_community_shown()); dm_loadpage_layout(&thor, &L1); CHECK(L1.comm == 0);
         dm_loadpage_copied(1, 0, 9200); dm_loadpage_text(&t, 9300); CHECK(!t.copy[0]);   // 不显示时复制不记 | no copy recorded when hidden
-        dm_loadpage_begin(two, 2, w_two, 9400); dm_loadpage_community(NULL, NULL, NULL); CHECK(!dm_loadpage_community_shown());
+        dm_loadpage_begin(two, 2, w_two, 9400); dm_loadpage_community(NULL, NULL, NULL, NULL); CHECK(!dm_loadpage_community_shown());
         // 有官网（用户 10-29）：显示官网（去 https:// 与结尾斜杠）+ 群号，复制群号（各语言都是）；只有官网时显示并复制官网 | with a site (user 10-29): site + number shown, the number is copied (every language); a site alone is shown and copied
-        dm_loadpage_begin(two, 2, w_two, 9500); dm_loadpage_community("1129913678", "https://github.com/a/b", "https://d2rplus.augustusplay.com/");
+        dm_loadpage_begin(two, 2, w_two, 9500); dm_loadpage_community("1129913678", "https://github.com/a/b", "https://d2rplus.augustusplay.com/", NULL);
         CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678")); dm_loadpage_text(&t, 9600);
         CHECK(!strcmp(t.comm1, "官方免费渠道：官网 d2rplus.augustusplay.com · QQ 群 1129913678")); CHECK(!strcmp(t.copy, "复制群号"));
         dm_loadpage_ui_set_group(DM_LG_EN); CHECK(!strcmp(dm_loadpage_copy_value(), "1129913678")); dm_loadpage_text(&t, 9600); CHECK(!strcmp(t.copy, "Copy number") && strstr(t.comm1, "d2rplus.augustusplay.com · QQ group 1129913678")); dm_loadpage_ui_set_group(-1);
-        dm_loadpage_copied(1, 0, 9700); dm_loadpage_community(NULL, NULL, "https://x.example/"); CHECK(dm_loadpage_community_shown()); dm_loadpage_text(&t, 12000); CHECK(!strcmp(t.comm1, "官方免费渠道：官网 x.example"));
+        dm_loadpage_copied(1, 0, 9700); dm_loadpage_community(NULL, NULL, "https://x.example/", NULL); CHECK(dm_loadpage_community_shown()); dm_loadpage_text(&t, 12000); CHECK(!strcmp(t.comm1, "官方免费渠道：官网 x.example"));
         CHECK(!strcmp(dm_loadpage_copy_value(), "https://x.example/") && !strcmp(t.copy, "复制官网"));
+        // 国内镜像（RC2）：中文页脚在官网之后多一项「国内镜像」（最多三项），外文没有这一项；没有镜像时与上面完全一致 | mainland mirror (RC2): the Chinese footer gains a "国内镜像" item after the website (at most three), other languages do not; without a mirror it is exactly as above
+        dm_loadpage_ui_set_group(DM_LG_ZH); dm_loadpage_community("1129913678", "https://github.com/a/b", "https://d2rplus.augustusplay.com/", "https://gitee.com/augustxxx-debug/d2r-mobile-plus");
+        dm_loadpage_text(&t, 12500); CHECK(!strcmp(t.comm1, "官方免费渠道：QQ 群 1129913678 · 官网 d2rplus.augustusplay.com · 国内镜像 gitee.com/augustxxx-debug/d2r-mobile-plus"));
+        dm_loadpage_ui_set_group(DM_LG_EN); dm_loadpage_text(&t, 12500); CHECK(!strstr(t.comm1, "Mirror") && strstr(t.comm1, "QQ group 1129913678"));
+        dm_loadpage_ui_set_group(-1); dm_loadpage_community(NULL, NULL, NULL, NULL);
         // 提示页（权限）：三层字、无百分数、不画条、标题整宽、不放音乐、不显示页脚；begin 清掉提示 | notice page (permission): three levels, no percent, no bar, full-width title, no music, no footer; begin clears it
         dm_loadpage_prompt("dmLoadPermTitle", "用来读取 X", "dmLoadPermHint"); CHECK(dm_loadpage_prompting() && dm_loadpage_state() == DM_LP_IDLE);
         dm_loadpage_text(&t, 13000); CHECK(!strcmp(t.title, "需要「所有文件访问」权限") && !strcmp(t.body, "用来读取 X") && strstr(t.sub, "打开系统设置") && !t.percent[0] && !t.comm1[0]);
@@ -216,8 +221,8 @@ int main(void) {
         // landscape, Duo inner and the two Android screens
         { dm_lp_screen scr2[5] = { thor, oppo, { 402, 874, 0, 59, 0, 34 }, { 874, 402, 59, 0, 59, 21 }, { 951, 669, 0, 0, 0, 0 } }; dm_loadpage_set_wordmark(0);
           for (int k = 0; k < 5; k++) { dm_lp_layout A, B; double W = scr2[k].w;
-            dm_loadpage_begin(two, 2, w_two, 14000); dm_loadpage_community(NULL, NULL, NULL); dm_loadpage_layout(&scr2[k], &A);
-            dm_loadpage_community("1129913678", NULL, "https://d2rplus.augustusplay.com/"); dm_loadpage_layout(&scr2[k], &B);
+            dm_loadpage_begin(two, 2, w_two, 14000); dm_loadpage_community(NULL, NULL, NULL, NULL); dm_loadpage_layout(&scr2[k], &A);
+            dm_loadpage_community("1129913678", NULL, "https://d2rplus.augustusplay.com/", NULL); dm_loadpage_layout(&scr2[k], &B);
             CHECK(A.logo.w == 0 && A.logo_name == NULL && NEAR(A.title.y, B.title.y) && NEAR(A.bg_dst.y, B.bg_dst.y) && NEAR(A.bg_dst.h, B.bg_dst.h));
             // 等比：两轴同一个缩放系数；宽方向多拉 1.3 倍时这两行报红（审计 P2-2 变异 M3） | uniform: both axes share one scale factor; stretching the width 1.3× fails these two lines (audit P2-2 mutation M3)
             CHECK(B.bg_dst.w > 0 && B.bg_dst.h > 0 && fabs(B.bg_dst.w / B.bg_dst.h - (double)B.bg_w / B.bg_h) < 1e-6);
@@ -229,10 +234,10 @@ int main(void) {
             CHECK(B.bg_src.w == B.bg_w && B.bg_src.h == B.bg_h);
             dm_loadpage_text(&t, 14100); CHECK(t.brand[0] == 0); }
           dm_loadpage_set_wordmark(1); dm_loadpage_layout(&thor, &L1); CHECK(L1.logo.w > 0 && L1.logo_name != NULL); dm_loadpage_text(&t, 14200); CHECK(t.brand[0] != 0);
-          dm_loadpage_community(NULL, NULL, NULL); }
+          dm_loadpage_community(NULL, NULL, NULL, NULL); }
         // 六套文字：第一行估宽（拉丁 / 西里尔 0.55 个字号、汉字 / 韩文 1.0 个字号）放得进 OPPO 的行宽，按钮字放得进 108 点（左右各留 6 点，手柄 A 图标另占一个字号 + 6 点）
         // six text sets: the first line's estimated width (Latin / Cyrillic 0.55 em, CJK / Hangul 1.0 em) fits OPPO's line width; button labels fit 128 pt (the controller A glyph takes 22 more)
-        dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus", "https://d2rplus.augustusplay.com/"); dm_loadpage_layout(&oppo, &L1);
+        dm_loadpage_community("1129913678", "https://github.com/augustxxx-debug/d2r-mobile-plus", "https://d2rplus.augustusplay.com/", NULL); dm_loadpage_layout(&oppo, &L1);
         int groups[5] = { DM_LG_ZH, DM_LG_EN, DM_LG_ES, DM_LG_RU, DM_LG_KO };
         for (int k = 0; k < 5; k++) { dm_loadpage_ui_set_group(groups[k]);
             const char *keys[6] = { "dmLoadCommQqGh", "dmLoadCommFree", "dmLoadCommSiteQq", "dmLoadCommCopyQq", "dmLoadCommCopyGh", "dmLoadCommCopySite" };
@@ -241,7 +246,7 @@ int main(void) {
                 est *= L1.comm_pt; double room = q < 3 ? L1.comm1.w : L1.copy.w - 12 - (L1.comm_pt + 6);
                 if (est > room) printf("  宽度：组 %d 键 %s 估 %.0f > %.0f\n", groups[k], keys[q], est, room);
                 CHECK(est <= room); } }
-        dm_loadpage_ui_set_group(-1); dm_loadpage_community(NULL, NULL, NULL);
+        dm_loadpage_ui_set_group(-1); dm_loadpage_community(NULL, NULL, NULL, NULL);
     }
 
     // 11. 大屏适配（B139 返工）：静态尺寸（字号 / 边距 / 间距 / 页脚 / 条高 / 静音钮）按安全内容高缩放——长边 1000 点 / dp 以内保持手持原值，

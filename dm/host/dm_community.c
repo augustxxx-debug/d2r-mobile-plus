@@ -1,22 +1,22 @@
 // 社区入口，接口见 dm_community.h。
 // 清单字段（版本文件里与 build / note / urgent 并列）：  "community": { "qq_group": "1129913678", "github": "https://github.com/<fork>/d2r-mobile-plus" }
-//   qq_group：5–12 位数字；github：以 https://github.com/ 开头、≤ 160 个 URL 字符；site 见下。三项都可省；一项不合规就当这一项没有并记红；给了渠道但全不合规 = 这份清单没带来可用的值，记红并沿用旧值与缓存（外审 RC2-E-01）；一项都没给 = 当无字段。
+//   qq_group：5–12 位数字；github：以 https://github.com/ 开头、≤ 160 个 URL 字符；site 见下；mirror：可选，以 https://gitee.com/ 开头、≤ 160 个 URL 字符（中文界面的国内镜像）。都可省；一项不合规就当这一项没有并记红；给了渠道但全不合规 = 这份清单没带来可用的值，记红并沿用旧值与缓存（外审 RC2-E-01）；一项都没给 = 当无字段。
 //   site（项目官网，用户 2026-10-29；RC1.1 审计后定）：https:// + 主机名 + 可选 /路径、不带端口、≤ 60 字符（dm_site.h，与加载页同一份）；有它时渠道卡片多一张官网卡（中文排在群号后、外文排第一，见 dm_community_channels），链接一项（dm_community_value）取官网；没有官网退回 github、与 RC1 同值。旧客户端忽略它。
 //   解析在这里用 C 做（严格的最小 JSON 解析器，十一审 Q11-01：整段必须是合法根对象，只认根对象直接子级 community 及其直接子级；语法错 / 重复 / 嵌套同名 / 转义都当格式错），外壳只把原文交过来；单测 t_community.c 覆盖有 / 无 / 坏 / 缓存回退与这些坏形状。
 // 缓存 community.txt（与 sw_custom.txt 同目录）：一行一个「键=值」，先写临时文件再换名；清单明确没有字段时删掉（旧值不留）。
-// 画面（用户：「不要用原生的弹窗，用游戏内弹窗」；RC1.1 重构，用户 2026-10-30）：边框 15 片 TouchCommTile + 标题 + 渠道卡片 0–2 行（标签 / 值 / 各自的小「复制」）+ 免费声明 + 分隔线 + 页脚两行（版本 + 制作；特别鸣谢）+ 一颗「确定」，
+// 画面（用户：「不要用原生的弹窗，用游戏内弹窗」；RC1.1 重构，用户 2026-10-30）：边框 15 片 TouchCommTile + 标题 + 渠道卡片 0–3 行（标签 / 值 / 各自的小「复制」）+ 免费声明 + 分隔线 + 页脚两行（版本 + 制作；特别鸣谢）+ 一颗「确定」，
 //   布局 touch_layout.py _community，挂在暂停菜单面板（两份）和自定义页面板末尾，平时在屏外、字空着；这里每帧在游戏主线程写字、按面板矩形与缩放算出居中位置。
-//   触屏点按钮；手柄焦点链 复制₁ → 复制₂ → 确定（上下移、A 触发、B 收起）；Mac 鼠标点按钮或键盘同手柄。复制走外壳登记的剪贴板回调，按钮字变「已复制 / 复制失败」2 秒（游戏内文字，不用系统弹窗）。
+//   触屏点按钮；手柄焦点链 复制₁ → 复制₂ → 复制₃ → 确定（上下移、A 触发、B 收起）；Mac 鼠标点按钮或键盘同手柄。复制走外壳登记的剪贴板回调，按钮字变「已复制 / 复制失败」2 秒（游戏内文字，不用系统弹窗）。
 // 日志固定前缀（分享诊断日志摘要取最后一行）：「社区入口：清单有字段 / 清单无字段 / 清单拉取失败」「社区入口：已显示」「社区入口：复制 群号 / 官网 / GitHub」。
 // Community entry; the interface is in dm_community.h.
 // Manifest field (next to build / note / urgent in the version file):  "community": { "qq_group": "1129913678", "github": "https://github.com/<fork>/d2r-mobile-plus" }
-//   qq_group: 5-12 digits; github: starts with https://github.com/, at most 160 URL characters; site: see below. All three are optional; an invalid one counts as absent and is logged red; channels given but all invalid = this manifest brings nothing usable, logged red and the old values and cache are kept (external review RC2-E-01); none given = no field.
+//   qq_group: 5-12 digits; github: starts with https://github.com/, at most 160 URL characters; site: see below; mirror: optional, starts with https://gitee.com/, at most 160 URL characters (the mainland mirror shown in the Chinese UI). All are optional; an invalid one counts as absent and is logged red; channels given but all invalid = this manifest brings nothing usable, logged red and the old values and cache are kept (external review RC2-E-01); none given = no field.
 //   site (project website, user 2026-10-29; settled after the RC1.1 review): https:// + host + optional /path, no port, at most 60 characters (dm_site.h, shared with the loading page); when present it adds a website card (after the QQ card in Chinese, first in other languages, see dm_community_channels) and the link (dm_community_value) is the website; otherwise github, the same value as RC1. Older clients ignore it.
 //   Parsing is done here in C (a strict minimal JSON parser, Q11-01: the whole text must be a valid root object; only the root object's direct child community and its direct children count; syntax errors / duplicates / nested same-name keys / escapes are format errors); the shells only hand over the raw text; t_community.c covers present / absent / malformed / cache fallback and these bad shapes.
 // Cache community.txt (next to sw_custom.txt): one "key=value" per line, written to a temporary file then renamed; deleted when the manifest explicitly has no field (no stale value is kept).
-// Picture (user: "do not use a native popup, use an in-game one"; RC1.1 redesign, user 2026-10-30): 15 frame tiles + title + 0-2 channel cards (label / value / own small Copy) + free notice + divider + two footer lines (version + maker; special thanks) + one OK,
+// Picture (user: "do not use a native popup, use an in-game one"; RC1.1 redesign, user 2026-10-30): 15 frame tiles + title + 0-3 channel cards (label / value / own small Copy) + free notice + divider + two footer lines (version + maker; special thanks) + one OK,
 //   layout touch_layout.py _community, hung at the end of the pause menu panel (both) and the Custom page panel, off screen with empty text; here, every frame on the game main thread, the text is written and the centered position computed from the panel's rect and scale.
-//   Touch taps the buttons; controller focus chain Copy1 → Copy2 → OK (up / down, A activates, B dismisses); the Mac clicks or uses the controller keys. Copy goes through the shell's clipboard callback; the button reads Copied / Copy failed for 2 s (in-game text).
+//   Touch taps the buttons; controller focus chain Copy1 → Copy2 → Copy3 → OK (up / down, A activates, B dismisses); the Mac clicks or uses the controller keys. Copy goes through the shell's clipboard callback; the button reads Copied / Copy failed for 2 s (in-game text).
 // Fixed log prefixes (the share-log summary takes the last line): "社区入口：清单有字段 / 清单无字段 / 清单拉取失败", "社区入口：已显示", "社区入口：复制 群号 / 官网 / GitHub".
 #include "dm_community.h"
 #include "dm_custom.h"
@@ -41,8 +41,8 @@
 #define QQ_MAX 12
 #define GH_MAX 160
 #define MANIFEST_MAX 4096   // 外壳也按 4096 字节封顶（dm_update.m） | the shells cap at 4096 bytes too (dm_update.m)
-static pthread_mutex_t g_cm_mu = PTHREAD_MUTEX_INITIALIZER;   // 护 g_qq / g_gh（清单从网络线程来，泵在游戏主线程读） | guards g_qq / g_gh (the manifest arrives on a network thread; the pump reads on the game main thread)
-static char g_qq[QQ_MAX + 1], g_gh[GH_MAX + 1], g_site[GH_MAX + 1];   // g_site：项目官网（清单 community.site，用户 2026-10-29） | g_site: the project website (manifest community.site)
+static pthread_mutex_t g_cm_mu = PTHREAD_MUTEX_INITIALIZER;   // 护 g_qq / g_gh / g_site / g_mirror（清单从网络线程来，泵在游戏主线程读） | guards g_qq / g_gh / g_site / g_mirror (the manifest arrives on a network thread; the pump reads on the game main thread)
+static char g_qq[QQ_MAX + 1], g_gh[GH_MAX + 1], g_site[GH_MAX + 1], g_mirror[GH_MAX + 1];   // g_site：项目官网（清单 community.site，用户 2026-10-29）；g_mirror：国内镜像（community.mirror） | g_site: the project website; g_mirror: the mainland mirror (community.mirror)
 static _Atomic int g_loaded_cm;
 static _Atomic int g_show, g_ack, g_copied;   // g_show：0 不显示 / 1 要显示 / 2 显示着；g_copied：0 / 1 已复制 / -1 复制失败 | g_show: 0 none / 1 pending / 2 shown; g_copied: 0 / 1 copied / -1 failed
 static _Atomic int g_copied_row; static _Atomic uint64_t g_copied_at;   // 哪一行的「复制」刚按过、何时（按钮字变「已复制 / 复制失败」2 秒） | which row's Copy was just pressed and when (the button reads Copied / Copy failed for 2 s)
@@ -113,27 +113,33 @@ static int gh_ok(const char *s) {
     for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (!(isalnum(c) || strchr("-._~:/?#[]@!$&'()*+,;=%", c))) return 0; }
     return 1;
 }
+static int gitee_ok(const char *s) {   // 规则同 gh_ok，前缀换 gitee；同 dm_manifest.c | same rule as gh_ok with the gitee prefix; same as dm_manifest.c
+    static const char pre[] = "https://gitee.com/"; size_t n = strlen(s);
+    if (n <= sizeof pre - 1 || n > GH_MAX || strncmp(s, pre, sizeof pre - 1)) return 0;
+    for (size_t i = 0; i < n; i++) { unsigned char c = (unsigned char)s[i]; if (!(isalnum(c) || strchr("-._~:/?#[]@!$&'()*+,;=%", c))) return 0; }
+    return 1;
+}
 // 官网（用户 2026-10-29：「关于弹窗里网址改成新的官网」）：地址只从清单 / 缓存来，代码里不写死；合同与加载页共用（dm_site.h），超了当这一项没有（退回 GitHub）
 // The website: only from the manifest / cache, never hard-coded; the contract is shared with the loading page (dm_site.h); invalid = absent (GitHub fallback)
-static void set_values(const char *qq, const char *gh, const char *site) { pthread_mutex_lock(&g_cm_mu); snprintf(g_qq, sizeof g_qq, "%s", qq ? qq : ""); snprintf(g_gh, sizeof g_gh, "%s", gh ? gh : ""); snprintf(g_site, sizeof g_site, "%s", site ? site : ""); pthread_mutex_unlock(&g_cm_mu); }
-static void get_values(char *qq, char *gh, char *site) { pthread_mutex_lock(&g_cm_mu); memcpy(qq, g_qq, sizeof g_qq); memcpy(gh, g_gh, sizeof g_gh); if (site) memcpy(site, g_site, sizeof g_site); pthread_mutex_unlock(&g_cm_mu); }
-static int cache_write(const char *qq, const char *gh, const char *site) {
+static void set_values(const char *qq, const char *gh, const char *site, const char *mirror) { pthread_mutex_lock(&g_cm_mu); snprintf(g_qq, sizeof g_qq, "%s", qq ? qq : ""); snprintf(g_gh, sizeof g_gh, "%s", gh ? gh : ""); snprintf(g_site, sizeof g_site, "%s", site ? site : ""); snprintf(g_mirror, sizeof g_mirror, "%s", mirror ? mirror : ""); pthread_mutex_unlock(&g_cm_mu); }
+static void get_values(char *qq, char *gh, char *site, char *mirror) { pthread_mutex_lock(&g_cm_mu); memcpy(qq, g_qq, sizeof g_qq); memcpy(gh, g_gh, sizeof g_gh); if (site) memcpy(site, g_site, sizeof g_site); if (mirror) memcpy(mirror, g_mirror, sizeof g_mirror); pthread_mutex_unlock(&g_cm_mu); }
+static int cache_write(const char *qq, const char *gh, const char *site, const char *mirror) {
     char p[1100], t[1120]; if (!cache_path(p, sizeof p)) return 0;
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); if (!f) return 0;
-    int ok = 1; if (qq[0]) ok &= fprintf(f, "qq_group=%s\n", qq) > 0; if (gh[0]) ok &= fprintf(f, "github=%s\n", gh) > 0; if (site[0]) ok &= fprintf(f, "site=%s\n", site) > 0;
+    int ok = 1; if (qq[0]) ok &= fprintf(f, "qq_group=%s\n", qq) > 0; if (gh[0]) ok &= fprintf(f, "github=%s\n", gh) > 0; if (site[0]) ok &= fprintf(f, "site=%s\n", site) > 0; if (mirror && mirror[0]) ok &= fprintf(f, "mirror=%s\n", mirror) > 0;
     ok = fclose(f) == 0 && ok; return ok && rename(t, p) == 0;
 }
 static void cache_delete(void) { char p[1100]; if (cache_path(p, sizeof p)) unlink(p); }
 
 // ---- 严格的最小 JSON 解析（十一审 Q11-01）：整段输入必须是一个合法的 JSON 根对象（对象 / 数组 / 字符串 / 数字 / true / false / null 全按语法验），
-// 只认根对象的直接子级 "community"（必须是对象）和它的直接子级 "qq_group" / "github" / "site"（必须是不带转义的字符串）；嵌套更深的同名键一律忽略；
-// 重复的 community / qq_group / github / site 当格式错。语法错、尾逗号、非对象根、根后有多余内容 = 格式错。深度上限 16 层，不递归到栈爆
+// 只认根对象的直接子级 "community"（必须是对象）和它的直接子级 "qq_group" / "github" / "site" / "mirror"（必须是不带转义的字符串）；嵌套更深的同名键一律忽略；
+// 重复的 community / qq_group / github / site / mirror 当格式错。语法错、尾逗号、非对象根、根后有多余内容 = 格式错。深度上限 16 层，不递归到栈爆
 // Strict minimal JSON parsing (Q11-01): the whole input must be one valid JSON root object (object / array / string / number / true / false / null all validated);
-// only the root object's direct child "community" (must be an object) and its direct children "qq_group" / "github" / "site" (must be strings without escapes) are honored; deeper same-name keys are ignored;
-// a duplicate community / qq_group / github / site is a format error. Syntax error, trailing comma, non-object root, trailing content = format error. Depth capped at 16
+// only the root object's direct child "community" (must be an object) and its direct children "qq_group" / "github" / "site" / "mirror" (must be strings without escapes) are honored; deeper same-name keys are ignored;
+// a duplicate community / qq_group / github / site / mirror is a format error. Syntax error, trailing comma, non-object root, trailing content = format error. Depth capped at 16
 #define CR_NAME_MAX 32   // 鸣谢名字上限（字节） | credit name limit (bytes)
 #define CR_MAX 24        // 两份名单合计上限 | both lists together
-typedef struct { const char *p, *e; char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; int n_comm, n_qq, n_gh, n_site, bad_type, too_long;
+typedef struct { const char *p, *e; char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1], mirror[GH_MAX + 1]; int n_comm, n_qq, n_gh, n_site, n_mirror, bad_type, too_long;
     char cr[CR_MAX][CR_NAME_MAX + 1]; int n_cr, n_special, n_thanks, n_credits, bad_credits; int n_tel, tel_bad, tel_has, tel_on; long long tel_until; char tel_reason[33]; } jp_t;   // credits：RC1 只解析、去重、计数进日志，不渲染不缓存（RC2 覆盖静态缺省） | credits: RC1 only parses, dedupes and logs counts; not rendered or cached (RC2 overrides the static default)
 static void js_ws(jp_t *j) { while (j->p < j->e && (*j->p == ' ' || *j->p == '\t' || *j->p == '\n' || *j->p == '\r')) j->p++; }
 static int js_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
@@ -186,12 +192,13 @@ static int js_object(jp_t *j, int depth, int ctx) {
     if (depth > 16 || j->p >= j->e || *j->p != '{') return 0; j->p++; js_ws(j);
     if (j->p < j->e && *j->p == '}') { j->p++; return 1; }
     for (;;) { char key[24]; int kesc = 0, kover = 0;
-        if (!js_string(j, key, sizeof key, &kesc, &kover)) return 0; if (kesc || kover) key[0] = 0;   // 带转义 / 超长的键不会是我们认的任何一个（community / qq_group / github / site / credits / special / thanks） | an escaped / long key is never one of ours (community / qq_group / github / site / credits / special / thanks)
+        if (!js_string(j, key, sizeof key, &kesc, &kover)) return 0; if (kesc || kover) key[0] = 0;   // 带转义 / 超长的键不会是我们认的任何一个（community / qq_group / github / site / mirror / credits / special / thanks） | an escaped / long key is never one of ours (community / qq_group / github / site / mirror / credits / special / thanks)
         js_ws(j); if (j->p >= j->e || *j->p != ':') return 0; j->p++; js_ws(j);
         if (ctx == 1 && !strcmp(key, "community")) { j->n_comm++;
             if (j->p < j->e && *j->p == '{') { if (!js_object(j, depth + 1, 2)) return 0; } else { j->bad_type = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
-        else if (ctx == 2 && (!strcmp(key, "qq_group") || !strcmp(key, "github") || !strcmp(key, "site"))) { int gh = key[0] == 'g', st = key[0] == 's'; if (gh) j->n_gh++; else if (st) j->n_site++; else j->n_qq++;
-            if (j->p < j->e && *j->p == '"') { int esc = 0, over = 0; char *out = gh ? j->gh : st ? j->site : j->qq; size_t n = gh ? sizeof j->gh : st ? sizeof j->site : sizeof j->qq;
+        else if (ctx == 2 && (!strcmp(key, "qq_group") || !strcmp(key, "github") || !strcmp(key, "site") || !strcmp(key, "mirror"))) { int gh = !strcmp(key, "github"), st = !strcmp(key, "site"), mi = !strcmp(key, "mirror");
+            if (gh) j->n_gh++; else if (st) j->n_site++; else if (mi) j->n_mirror++; else j->n_qq++;
+            if (j->p < j->e && *j->p == '"') { int esc = 0, over = 0; char *out = gh ? j->gh : st ? j->site : mi ? j->mirror : j->qq; size_t n = gh ? sizeof j->gh : st ? sizeof j->site : mi ? sizeof j->mirror : sizeof j->qq;
                 if (!js_string(j, out, n, &esc, &over)) return 0; if (esc || over) { out[0] = 0; j->too_long |= over; j->bad_type |= esc; } }
             else { j->bad_type = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
         else if (ctx == 1 && !strcmp(key, "credits")) { j->n_credits++;
@@ -227,42 +234,43 @@ static int js_parse(jp_t *j, const char *json, size_t len, size_t *at) {
     int ok = j->p < j->e && *j->p == '{' && js_object(j, 1, 1); if (ok) { js_ws(j); ok = j->p == j->e; }
     *at = (size_t)(j->p - json); return ok;
 }
-static void drop_values(void) { set_values("", "", ""); cache_delete(); }   // 格式错 / 无字段：清内存与缓存 | malformed / absent: clear memory and cache
+static void drop_values(void) { set_values("", "", "", ""); cache_delete(); }   // 格式错 / 无字段：清内存与缓存 | malformed / absent: clear memory and cache
 
 static void tel_apply(const jp_t *j) { if (j->n_tel > 1 || j->tel_bad || (j->n_tel && !j->tel_has)) { dm_crashreport_switch_no_fetch(); return; } dm_crashreport_switch(j->n_tel && j->tel_has, j->tel_on, j->tel_until, j->tel_reason); }   // 坏字段不动缓存 | a bad field leaves the cache alone
 // 只取总开关（安卓自动上报前现拉的清单：不动社区入口的值） | the server switch only (the manifest Android fetches before an automatic report; community values untouched)
 int dm_community_telemetry_only(const char *json, size_t len) { if (!json || len > MANIFEST_MAX) { dm_crashreport_switch_no_fetch(); return 0; } jp_t j; size_t at; if (!js_parse(&j, json, len, &at)) { dm_crashreport_switch_no_fetch(); return 0; } tel_apply(&j); return 1; }
 int dm_community_manifest(const char *json, size_t len) {
-    char qq[QQ_MAX + 1] = "", gh[GH_MAX + 1] = "", site[GH_MAX + 1] = ""; get_values(qq, gh, site);
-    if (!json) { dm_crashreport_switch_no_fetch(); LOG("社区入口：清单拉取失败，沿用缓存（群号 %s，链接 %s，官网 %s）", qq[0] ? "有" : "无", gh[0] ? "有" : "无", site[0] ? "有" : "无"); return -1; }
+    char qq[QQ_MAX + 1] = "", gh[GH_MAX + 1] = "", site[GH_MAX + 1] = "", mirror[GH_MAX + 1] = ""; get_values(qq, gh, site, mirror);
+    if (!json) { dm_crashreport_switch_no_fetch(); LOG("社区入口：清单拉取失败，沿用缓存（群号 %s，链接 %s，官网 %s%s%s）", qq[0] ? "有" : "无", gh[0] ? "有" : "无", site[0] ? "有" : "无", mirror[0] ? "，国内镜像 " : "", mirror[0] ? "有" : ""); return -1; }
     if (len > MANIFEST_MAX) { dm_crashreport_switch_no_fetch(); drop_values(); LOG("【红】社区入口：清单格式错（超过 %d 字节），入口不显示（缓存已清）", MANIFEST_MAX); return 0; }
     jp_t j; size_t at; if (!js_parse(&j, json, len, &at)) { dm_crashreport_switch_no_fetch(); drop_values(); LOG("【红】社区入口：清单格式错（JSON 语法：第 %zu 字节附近），入口不显示（缓存已清）", at); return 0; }
     tel_apply(&j);
     if (j.n_comm == 0) { drop_values(); LOG("社区入口：清单无字段，入口不显示（缓存已清）"); return 0; }
-    if (j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1) { drop_values(); LOG("【红】社区入口：清单格式错（community / qq_group / github / site 重复），入口不显示（缓存已清）"); return 0; }
-    int given = j.n_qq || j.n_gh || j.n_site;   // 给了渠道键（值合不合规另算） | channel keys are present (valid or not)
+    if (j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1 || j.n_mirror > 1) { drop_values(); LOG("【红】社区入口：清单格式错（community / qq_group / github / site / mirror 重复），入口不显示（缓存已清）"); return 0; }
+    int given = j.n_qq || j.n_gh || j.n_site || j.n_mirror;   // 给了渠道键（值合不合规另算） | channel keys are present (valid or not)
     if (j.bad_type && !given) { drop_values(); LOG("【红】社区入口：清单格式错（community 不是对象），入口不显示（缓存已清）"); return 0; }
-    if (j.qq[0] && !qq_ok(j.qq)) j.qq[0] = 0; if (j.gh[0] && !gh_ok(j.gh)) j.gh[0] = 0; if (j.site[0] && !dm_site_ok(j.site)) j.site[0] = 0;
-    int bad = (j.n_qq && !j.qq[0]) + (j.n_gh && !j.gh[0]) + (j.n_site && !j.site[0]);   // 给了键但没留下值，空串也算 | a key given with no value left, an empty string included
-    if (!j.qq[0] && !j.gh[0] && !j.site[0]) {
+    if (j.qq[0] && !qq_ok(j.qq)) j.qq[0] = 0; if (j.gh[0] && !gh_ok(j.gh)) j.gh[0] = 0; if (j.site[0] && !dm_site_ok(j.site)) j.site[0] = 0; if (j.mirror[0] && !gitee_ok(j.mirror)) j.mirror[0] = 0;
+    int bad = (j.n_qq && !j.qq[0]) + (j.n_gh && !j.gh[0]) + (j.n_site && !j.site[0]) + (j.n_mirror && !j.mirror[0]);   // 给了键但没留下值，空串也算 | a key given with no value left, an empty string included
+    if (!j.qq[0] && !j.gh[0] && !j.site[0] && !j.mirror[0]) {
         // 唯一的渠道无效不能清掉有效的旧缓存（外审 RC2-E-01）：只有 community 明确不带渠道才算撤下入口 | an invalid sole channel must not clear a good old cache (external review RC2-E-01): only a community with no channels withdraws the entry
-        if (given) { LOG("【红】社区入口：清单格式错（%d 项不合规：群号须 5–12 位数字，链接须 https://github.com/ 开头，官网须 https:// + 主机名 + 可选路径、不带端口与 @ ? #、不超过 %d 字符，都不带转义），沿用缓存（群号 %s，链接 %s，官网 %s）", bad, DM_SITE_MAX, qq[0] ? "有" : "无", gh[0] ? "有" : "无", site[0] ? "有" : "无"); return -1; }
+        if (given) { LOG("【红】社区入口：清单格式错（%d 项不合规：群号须 5–12 位数字，链接须 https://github.com/ 开头，官网须 https:// + 主机名 + 可选路径、不带端口与 @ ? #、不超过 %d 字符，国内镜像须 https://gitee.com/ 开头、只含 URL 字符，都不带转义），沿用缓存（群号 %s，链接 %s，官网 %s%s%s）", bad, DM_SITE_MAX, qq[0] ? "有" : "无", gh[0] ? "有" : "无", site[0] ? "有" : "无", mirror[0] ? "，国内镜像 " : "", mirror[0] ? "有" : ""); return -1; }
         drop_values(); LOG("社区入口：清单 community 没有渠道，入口不显示（缓存已清）"); return 0; }
-    set_values(j.qq, j.gh, j.site); int wr = cache_write(j.qq, j.gh, j.site);
+    set_values(j.qq, j.gh, j.site, j.mirror); int wr = cache_write(j.qq, j.gh, j.site, j.mirror);
     if (j.n_credits > 1 || j.bad_credits) LOG("【红】社区入口：清单 credits 字段格式坏（%s），忽略（RC1 只计数不渲染）", j.n_credits > 1 ? "重复" : "须是 { special: [名字…], thanks: [名字…] }，名字 ≤ 32 字节、不带转义、合计 ≤ 24");
-    LOG("社区入口：清单有字段 群号=%s 链接=%s 官网=%s%s%s credits=特别 %d / 鸣谢 %d", j.qq[0] ? j.qq : "无", j.gh[0] ? j.gh : "无", j.site[0] ? j.site : "无", bad ? "（另一项格式坏，已忽略）" : "", wr ? "" : "【红】缓存写不进设置目录", j.bad_credits || j.n_credits > 1 ? 0 : j.n_special, j.bad_credits || j.n_credits > 1 ? 0 : j.n_thanks);
+    LOG("社区入口：清单有字段 群号=%s 链接=%s 官网=%s%s%s%s%s credits=特别 %d / 鸣谢 %d", j.qq[0] ? j.qq : "无", j.gh[0] ? j.gh : "无", j.site[0] ? j.site : "无", j.mirror[0] ? " 国内镜像=" : "", j.mirror[0] ? j.mirror : "", bad ? "（另一项格式坏，已忽略）" : "", wr ? "" : "【红】缓存写不进设置目录", j.bad_credits || j.n_credits > 1 ? 0 : j.n_special, j.bad_credits || j.n_credits > 1 ? 0 : j.n_thanks);
     return 1;
 }
 static void cache_read(void) {
     char p[1100]; if (!cache_path(p, sizeof p)) { LOG("社区入口：没有设置目录，不读缓存"); return; }
     FILE *f = fopen(p, "r"); if (!f) { LOG("社区入口：没有缓存，入口不显示（等清单）"); return; }
-    char ln[256], qq[QQ_MAX + 1] = "", gh[GH_MAX + 1] = "", site[GH_MAX + 1] = "";
+    char ln[256], qq[QQ_MAX + 1] = "", gh[GH_MAX + 1] = "", site[GH_MAX + 1] = "", mirror[GH_MAX + 1] = "";
     while (fgets(ln, sizeof ln, f)) { size_t n = strcspn(ln, "\r\n"); ln[n] = 0;
         if (!strncmp(ln, "qq_group=", 9) && qq_ok(ln + 9)) snprintf(qq, sizeof qq, "%s", ln + 9);
         else if (!strncmp(ln, "github=", 7) && gh_ok(ln + 7)) snprintf(gh, sizeof gh, "%s", ln + 7);
-        else if (!strncmp(ln, "site=", 5) && dm_site_ok(ln + 5)) snprintf(site, sizeof site, "%s", ln + 5); }
-    fclose(f); set_values(qq, gh, site);
-    LOG("社区入口：缓存 群号=%s 链接=%s 官网=%s", qq[0] ? qq : "无", gh[0] ? gh : "无", site[0] ? site : "无");
+        else if (!strncmp(ln, "site=", 5) && dm_site_ok(ln + 5)) snprintf(site, sizeof site, "%s", ln + 5);
+        else if (!strncmp(ln, "mirror=", 7) && gitee_ok(ln + 7)) snprintf(mirror, sizeof mirror, "%s", ln + 7); }
+    fclose(f); set_values(qq, gh, site, mirror);
+    LOG("社区入口：缓存 群号=%s 链接=%s 官网=%s%s%s", qq[0] ? qq : "无", gh[0] ? gh : "无", site[0] ? site : "无", mirror[0] ? " 国内镜像=" : "", mirror[0] ? mirror : "");
 }
 void dm_community_load(void) {
     if (atomic_exchange(&g_loaded_cm, 1)) return;
@@ -272,28 +280,28 @@ void dm_community_load(void) {
         LOG("社区入口：测试开关 DM_TEST_COMMUNITY 读清单（%zu 字节）", n); dm_community_manifest(f ? buf : NULL, n); return; }
     cache_read();
 }
-// 链接一项：有官网用官网（用户 2026-10-29），没有退回 GitHub（旧清单 / 旧缓存） | the link: the website when there is one (user, 2026-10-29), else GitHub (older manifests / caches)
+// 链接一项：有官网用官网（用户 2026-10-29），没有退回 GitHub（旧清单 / 旧缓存）；中文在 GitHub 之前先用国内镜像 | the link: the website when there is one (user, 2026-10-29), else GitHub (older manifests / caches); Chinese prefers the mainland mirror over GitHub
 int dm_community_value(int lang_group, char *out, size_t n) {
-    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; get_values(qq, gh, site); int k = 0; const char *v = "";
-    if (lang_group == DM_LG_ZH && qq[0]) { k = 1; v = qq; } else if (site[0]) { k = 2; v = site; } else if (gh[0]) { k = 2; v = gh; }
+    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1], mirror[GH_MAX + 1]; get_values(qq, gh, site, mirror); int k = 0; const char *v = "";
+    if (lang_group == DM_LG_ZH && qq[0]) { k = 1; v = qq; } else if (site[0]) { k = 2; v = site; } else if (lang_group == DM_LG_ZH && mirror[0]) { k = 2; v = mirror; } else if (gh[0]) { k = 2; v = gh; }
     if (out && n) snprintf(out, n, "%s", v);
     return k;
 }
-// 渠道（RC1.1 弹窗重构，用户 2026-10-30「同意 很好」；补审 Q11.1-06：中文也要看得到官网）：框里最多两行渠道卡片——
-//   中文按 [QQ 群, 官网, GitHub] 取前两个有值的，其他语言按 [官网, GitHub]（不显示群号）。显示值：群号原样、官网去掉 https:// 与末尾 /、GitHub 只显示仓库名；复制的永远是完整内容
-// Channels (RC1.1 box redesign, user 2026-10-30; follow-up review Q11.1-06: Chinese must see the website too): at most two channel cards --
-//   Chinese takes the first two present of [QQ group, website, GitHub], other languages [website, GitHub] (no QQ). Shown value: the number as is, the website without https:// and the
-//   trailing /, GitHub as the repository name only; copy always takes the full value
-int dm_community_channels(int lang_group, int out[2]) {
-    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; get_values(qq, gh, site); int n = 0;
-    const int order_zh[3] = { DM_CH_QQ, DM_CH_SITE, DM_CH_GITHUB }, order_xx[2] = { DM_CH_SITE, DM_CH_GITHUB };
-    const int *o = lang_group == DM_LG_ZH ? order_zh : order_xx; int no = lang_group == DM_LG_ZH ? 3 : 2;
-    for (int i = 0; i < no && n < 2; i++) if ((o[i] == DM_CH_QQ && qq[0]) || (o[i] == DM_CH_SITE && site[0]) || (o[i] == DM_CH_GITHUB && gh[0])) out[n++] = o[i];
+// 渠道（RC1.1 弹窗重构，用户 2026-10-30「同意 很好」；补审 Q11.1-06：中文也要看得到官网；RC2：中文多一张国内镜像卡）：框里最多三行渠道卡片——
+//   中文按 [QQ 群, 官网, 国内镜像, GitHub] 取前三个有值的，其他语言按 [官网, GitHub]（不显示群号与镜像）。显示值：群号原样、官网 / 镜像去掉 https:// 与末尾 /、GitHub 只显示仓库名；复制的永远是完整内容
+// Channels (RC1.1 box redesign, user 2026-10-30; follow-up review Q11.1-06: Chinese must see the website too; RC2: one more mainland-mirror card in Chinese): at most three channel cards --
+//   Chinese takes the first three present of [QQ group, website, mainland mirror, GitHub], other languages [website, GitHub] (no QQ, no mirror). Shown value: the number as is, the website / mirror
+//   without https:// and the trailing /, GitHub as the repository name only; copy always takes the full value
+int dm_community_channels(int lang_group, int out[3]) {
+    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1], mirror[GH_MAX + 1]; get_values(qq, gh, site, mirror); int n = 0;
+    const int order_zh[4] = { DM_CH_QQ, DM_CH_SITE, DM_CH_MIRROR, DM_CH_GITHUB }, order_xx[2] = { DM_CH_SITE, DM_CH_GITHUB };
+    const int *o = lang_group == DM_LG_ZH ? order_zh : order_xx; int no = lang_group == DM_LG_ZH ? 4 : 2;
+    for (int i = 0; i < no && n < 3; i++) if ((o[i] == DM_CH_QQ && qq[0]) || (o[i] == DM_CH_SITE && site[0]) || (o[i] == DM_CH_MIRROR && mirror[0]) || (o[i] == DM_CH_GITHUB && gh[0])) out[n++] = o[i];
     return n;
 }
 int dm_community_channel_value(int ch, char *full, size_t nf, char *shown, size_t ns) {   // 完整值（复制用）与显示值；没有返回 0 | full value (for copy) and shown value; 0 when absent
-    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1]; get_values(qq, gh, site);
-    const char *v = ch == DM_CH_QQ ? qq : ch == DM_CH_SITE ? site : ch == DM_CH_GITHUB ? gh : ""; if (!v[0]) { if (full && nf) full[0] = 0; if (shown && ns) shown[0] = 0; return 0; }
+    char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1], mirror[GH_MAX + 1]; get_values(qq, gh, site, mirror);
+    const char *v = ch == DM_CH_QQ ? qq : ch == DM_CH_SITE ? site : ch == DM_CH_MIRROR ? mirror : ch == DM_CH_GITHUB ? gh : ""; if (!v[0]) { if (full && nf) full[0] = 0; if (shown && ns) shown[0] = 0; return 0; }
     if (full && nf) snprintf(full, nf, "%s", v);
     if (shown && ns) { const char *a = v; size_t L = strlen(v);
         if (ch != DM_CH_QQ) { a = v + strlen("https://"); L = strlen(a); if (L > 1 && a[L - 1] == '/') L--; }
@@ -326,6 +334,7 @@ int dm_community_fit(char *s, size_t cap, int pt, int maxw) {
     if (cut + 4 <= cap) memcpy(s + cut, "\xe2\x80\xa6", 4); else s[cut] = 0;   // 「…」+ NUL | "…" + NUL
     return 1;
 }
+static const char *co_ch_key(int ch) { return ch == DM_CH_QQ ? "dmCommunityLabelQq" : ch == DM_CH_SITE ? "dmCommunityLabelSite" : ch == DM_CH_MIRROR ? "dmCommunityLabelMirror" : "dmCommunityLabelGithub"; }
 int dm_community_available(void) { return dm_community_value(dm_lang_group(), NULL, 0) != 0; }
 void dm_community_open(int from) {   // from：1 暂停菜单 / 2 主菜单 / 3 自定义页按钮 / 4 自定义页手柄 A | from: 1 pause menu / 2 main menu / 3 Custom page button / 4 Custom page controller A
     if (!dm_community_available()) { LOG("【红】社区入口：点了「加入社区讨论」（%s）但当前语言没有可显示的值", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页"); return; }
@@ -340,11 +349,11 @@ unsigned dm_community_copy_count(void) { return atomic_load(&g_copies); }
 int dm_community_shown(void) { return atomic_load(&g_show) == 2 || dm_savemgr_modal(); }
 static uint64_t co_now(void) { return clock_gettime_nsec_np(CLOCK_MONOTONIC); }
 static void do_copy(int by, int row) {   // by：1 点按钮 / 2 手柄 A；row：第几行渠道 | by: 1 button / 2 controller A; row: channel row
-    int ch[2], n = dm_community_channels(dm_lang_group(), ch); char v[GH_MAX + 1] = "";
+    int ch[3], n = dm_community_channels(dm_lang_group(), ch); char v[GH_MAX + 1] = "";
     atomic_store(&g_copied_row, row); atomic_store(&g_copied_at, co_now());
     if (row < 0 || row >= n || !dm_community_channel_value(ch[row], v, sizeof v, NULL, 0)) { atomic_store(&g_copied, -1); LOG("【红】社区入口：复制失败（第 %d 行没有可复制的值）", row + 1); return; }
     int ok = g_copy ? g_copy(v) : 0;
-    if (ok) { atomic_fetch_add(&g_copies, 1); atomic_store(&g_copied, 1); LOG("社区入口：复制 %s %s（%s）", ch[row] == DM_CH_QQ ? "群号" : ch[row] == DM_CH_SITE ? "官网" : "GitHub", v, by == 2 ? "手柄 A" : "点按钮"); }
+    if (ok) { atomic_fetch_add(&g_copies, 1); atomic_store(&g_copied, 1); LOG("社区入口：复制 %s %s（%s）", ch[row] == DM_CH_QQ ? "群号" : ch[row] == DM_CH_SITE ? "官网" : ch[row] == DM_CH_MIRROR ? "国内镜像" : "GitHub", v, by == 2 ? "手柄 A" : "点按钮"); }   // 日志标签按渠道内联，避免上屏字面量闸门误判（日志本身不上屏） | log labels inline by channel so the on-screen literal gate does not mistake them (logs never reach the screen)
     else { atomic_store(&g_copied, -1); LOG("【红】社区入口：复制失败（%s；%s）", g_copy ? "剪贴板回调返回失败" : "外壳没登记剪贴板回调", by == 2 ? "手柄 A" : "点按钮"); }
 }
 void dm_community_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c 转来，游戏主线程） | UI message callback (forwarded from diag.c, game main thread)
@@ -353,7 +362,7 @@ void dm_community_on_uimsg(const char *cat, const char *act, const char *arg) { 
     else if (!strcmp(arg, "TouchCommunityFe")) dm_community_open(2);    // 主菜单行 | main-menu row
     else if (!strcmp(arg, "TouchCommunityOpt")) dm_community_open(3);   // 自定义页「查看」 | Custom page View
     else if (!strcmp(arg, "TouchAbout")) dm_community_open_about();      // 主菜单「关于」 | main-menu About
-    else if (!strncmp(arg, "TouchCommCopy", 13) && (!arg[13] || ((arg[13] == '0' || arg[13] == '1') && !arg[14])) && atomic_load(&g_show) == 2) do_copy(1, arg[13] ? arg[13] - '0' : 0);   // 各行的小「复制」（不带行号 = 第一行） | each row's Copy (no index = row 1)
+    else if (!strncmp(arg, "TouchCommCopy", 13) && (!arg[13] || ((arg[13] >= '0' && arg[13] <= '2') && !arg[14])) && atomic_load(&g_show) == 2) do_copy(1, arg[13] ? arg[13] - '0' : 0);   // 各行的小「复制」（不带行号 = 第一行） | each row's Copy (no index = row 1)
     else if (!strcmp(arg, "TouchCommOk") && atomic_load(&g_show) == 2) atomic_store(&g_ack, 1);   // 1 点按钮 / 2 手柄 B（只进日志） | 1 button / 2 controller B (log only)
 }
 
@@ -447,13 +456,13 @@ void co_origin(uint64_t p, int xr, int *ox, int *oy, float *s) {
     if (!(ax >= 0 && ax <= 1)) ax = 0; if (!(ay >= 0 && ay <= 1)) ay = 0; if (!(sc > 0.05f && sc < 10)) sc = 1;
     *ox = (int)(ax * xr) + r[0]; *oy = (int)(ay * 2160) + r[1]; *s = sc;
 }
-// 社区 / 关于弹窗（RC1.1 重构，用户 2026-10-30「同意 很好」，设计说明 dm-work/run/xpline/design/）：自上而下 标题 48 → 渠道卡片 0–2 行（标签 28 / 值 36 / 各自的小「复制」）
+// 社区 / 关于弹窗（RC1.1 重构，用户 2026-10-30「同意 很好」，设计说明 dm-work/run/xpline/design/）：自上而下 标题 48 → 渠道卡片 0–3 行（标签 28 / 值 36 / 各自的小「复制」）
 // → 免费声明 28 → 分隔线 → 页脚两行 28（版本 + 制作；特别鸣谢）→ 一颗「确定」。纵向（框内面板单位，自框顶算）按渠道行数 n 排：卡片高 100、行距 120，各段间距照 §2.6 层级；
-// 末行文字下沿到按钮顶 CO_GAP，框高 = 按钮顶 + 按钮高 115 + 下边距 45（n = 2 / 1 / 0 → 802 / 682 / 562）。纯「关于」框（主菜单「关于」行，现无入口）= 同一结构、0 行渠道，原先 Q11.1-04 的字号错位随之消失
-// Community / About box (RC1.1 redesign): title 48 → 0-2 channel cards (label 28 / value 36 / own small Copy) → free notice 28 → divider → two footer lines 28 (version + maker; special thanks) → one OK.
-// Vertical layout by channel count n: card 100 high, 120 pitch; last text bottom to button top CO_GAP; box height = button top + 115 + 45 (802 / 682 / 562). The About-only box (no entry now) is the same structure with 0 channel rows, which also removes the Q11.1-04 size mismatch
+// 末行文字下沿到按钮顶 CO_GAP，框高 = 按钮顶 + 按钮高 115 + 下边距 45（n = 3 / 2 / 1 / 0 → 922 / 802 / 682 / 562）。纯「关于」框（主菜单「关于」行，现无入口）= 同一结构、0 行渠道，原先 Q11.1-04 的字号错位随之消失
+// Community / About box (RC1.1 redesign): title 48 → 0-3 channel cards (label 28 / value 36 / own small Copy) → free notice 28 → divider → two footer lines 28 (version + maker; special thanks) → one OK.
+// Vertical layout by channel count n: card 100 high, 120 pitch; last text bottom to button top CO_GAP; box height = button top + 115 + 45 (922 / 802 / 682 / 562). The About-only box (no entry now) is the same structure with 0 channel rows, which also removes the Q11.1-04 size mismatch
 #define CO_GAP 60
-#define CO_ROWS 2
+#define CO_ROWS 3
 #define CO_CARD_W 1480
 #define CO_BTN_W 293   // 原版前端小按钮 366×92 × 0.8（0.7 时俄文「Скопировано」贴满按钮） | the original small front-end button 366×92 × 0.8 (at 0.7 the Russian "Copied" filled it edge to edge)
 #define CO_BTN_H 74
@@ -468,9 +477,12 @@ static co_geom_t co_geom(int n) {
     g.btn_y = g.foot_y[1] + 30 + 28 / 2 + CO_GAP; g.h = g.btn_y + 115 + 45;
     return g;
 }
-static const char *const k_co_names[] = { "TouchCommTitle", "TouchCommLabel0", "TouchCommLabel1", "TouchCommValue0", "TouchCommValue1", "TouchCommCopy0", "TouchCommCopy1",
-    "TouchCommCopyText0", "TouchCommCopyText1", "TouchCommCard0T", "TouchCommCard0B", "TouchCommCard0L", "TouchCommCard0R", "TouchCommCard1T", "TouchCommCard1B", "TouchCommCard1L", "TouchCommCard1R",
+static const char *const k_co_names[] = { "TouchCommTitle", "TouchCommLabel0", "TouchCommLabel1", "TouchCommLabel2", "TouchCommValue0", "TouchCommValue1", "TouchCommValue2",
+    "TouchCommCopy0", "TouchCommCopy1", "TouchCommCopy2", "TouchCommCopyText0", "TouchCommCopyText1", "TouchCommCopyText2",
+    "TouchCommCard0T", "TouchCommCard0B", "TouchCommCard0L", "TouchCommCard0R", "TouchCommCard1T", "TouchCommCard1B", "TouchCommCard1L", "TouchCommCard1R",
+    "TouchCommCard2T", "TouchCommCard2B", "TouchCommCard2L", "TouchCommCard2R",
     "TouchCommFree", "TouchCommDivider", "TouchCommFoot0", "TouchCommFoot0R", "TouchCommFoot1", "TouchCommOk", "TouchCommFocusT", "TouchCommFocusB", "TouchCommFocusL", "TouchCommFocusR" };
+static int co_row2(const char *nm) { size_t n = strlen(nm); return (n && nm[n - 1] == '2') || strstr(nm, "Card2") != NULL; }   // 第三行控件（布局未更新时可以缺） | third-row widgets (may be missing on an older layout)
 #define CO_NNAMES (int)(sizeof k_co_names / sizeof *k_co_names)
 static void co_hide_all(uint8_t *b, uint64_t p) {
     for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); uint64_t t = co_find(p, nm, 0); if (t) { int32_t *r = (int32_t *)(t + 0x70); r[0] = r[1] = 99999; } }   // 边框片挪出屏幕（尺寸不动） | tiles off screen (size unchanged)
@@ -531,10 +543,10 @@ const char *dm_update_label(void);   // dm_update.c：显示版本「1.0.0+N · 
 // Mac host screenshot: the computed button centres match the picture)
 typedef struct { int valid, vh, ox, oy, n, bx0, bx1, card_y[CO_ROWS], ok_x, ok_y, ok_w, ok_h; float s; } co_tapgeo_t;
 static co_tapgeo_t g_tapgeo;
-static int co_tap_zone(const co_tapgeo_t *g, int x, int y) {   // 返回 0 / 1 = 第几行「复制」，2 = 「确定」，-1 = 都不是 | 0 / 1 = that row's Copy, 2 = OK, -1 = none
+static int co_tap_zone(const co_tapgeo_t *g, int x, int y) {   // 返回 0 / 1 / 2 = 第几行「复制」，3 = 「确定」，-1 = 都不是 | 0 / 1 / 2 = that row's Copy, 3 = OK, -1 = none
     if (!g || !g->valid || g->vh <= 0 || !(g->s > 0.05f)) return -1;
     float u = (float)x * 2160 / g->vh, v = (float)y * 2160 / g->vh, lx = (u - g->ox) / g->s, ly = (v - g->oy) / g->s;
-    if (lx >= g->ok_x - 60 && lx <= g->ok_x + g->ok_w + 60 && ly >= g->ok_y - 50 && ly <= g->ok_y + g->ok_h + 50) return 2;
+    if (lx >= g->ok_x - 60 && lx <= g->ok_x + g->ok_w + 60 && ly >= g->ok_y - 50 && ly <= g->ok_y + g->ok_h + 50) return 3;
     if (lx < g->bx0 || lx > g->bx1) return -1;
     for (int k = 0; k < g->n && k < CO_ROWS; k++) if (ly >= g->card_y[k] - (k ? 10 : 70) && ly <= g->card_y[k] + 110) return k;
     return -1;
@@ -549,11 +561,11 @@ void dm_community_ui_tap(uint64_t root, int x, int y) {
     atomic_fetch_add(&g_sw_touch, 1);
     int which = 0; uint64_t p = root ? co_host(root, &which) : 0; if (!p || atomic_load(&g_show) != 2) return;
     uint64_t xy = (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)y << 32;
-    static const char *const nm[3] = { "TouchCommCopy0", "TouchCommCopy1", "TouchCommOk" };
-    for (int k = 0; k < 3; k++) { uint64_t w = co_find(p, nm[k], 0); if (!w || ((int32_t *)(w + 0x70))[0] == 99999) continue;
-        if (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, xy) & 1) { LOG("社区入口：弹窗开着时点按 (%d,%d) → %s", x, y, k == 2 ? "确定" : k ? "第 2 行复制" : "第 1 行复制"); if (k < 2) do_copy(1, k); else atomic_store(&g_ack, 1); return; } }
+    static const char *const nm[4] = { "TouchCommCopy0", "TouchCommCopy1", "TouchCommCopy2", "TouchCommOk" };
+    for (int k = 0; k < 4; k++) { uint64_t w = co_find(p, nm[k], 0); if (!w || ((int32_t *)(w + 0x70))[0] == 99999) continue;
+        if (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, xy) & 1) { LOG("社区入口：弹窗开着时点按 (%d,%d) → %s", x, y, k == 3 ? "确定" : k == 2 ? "第 3 行复制" : k ? "第 2 行复制" : "第 1 行复制"); if (k < 3) do_copy(1, k); else atomic_store(&g_ack, 1); return; } }
     { int z = co_tap_zone(&g_tapgeo, x, y);   // 放宽的命中区（B058） | the widened hit areas (B058)
-      if (z >= 0) { LOG("社区入口：弹窗开着时点按 (%d,%d) → %s（按卡片 / 按钮周围的放宽区）", x, y, z == 2 ? "确定" : z ? "第 2 行复制" : "第 1 行复制"); if (z < 2) do_copy(1, z); else atomic_store(&g_ack, 1); return; } }
+      if (z >= 0) { LOG("社区入口：弹窗开着时点按 (%d,%d) → %s（按卡片 / 按钮周围的放宽区）", x, y, z == 3 ? "确定" : z == 2 ? "第 3 行复制" : z ? "第 2 行复制" : "第 1 行复制"); if (z < 3) do_copy(1, z); else atomic_store(&g_ack, 1); return; } }
     LOG("社区入口：弹窗开着时点按 (%d,%d) → 没点在按钮上，吞掉", x, y);
 }
 void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
@@ -598,15 +610,16 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
               else if (st == 2) { atomic_store(&g_show, 0); LOG("社区入口：所在面板已关，提示框作废"); }
               return; }
     wait = 0;
-    int all = 1; for (int k = 0; k < CO_NNAMES; k++) all &= co_find(p, k_co_names[k], 0) != 0;
+    int have2 = co_find(p, "TouchCommLabel2", 0) != 0;   // 布局更新前没有第三行控件：照旧只显示两行 | before the layout update there is no third row: show two rows as before
+    int all = 1; for (int k = 0; k < CO_NNAMES; k++) { if (!have2 && co_row2(k_co_names[k])) continue; all &= co_find(p, k_co_names[k], 0) != 0; }
     uint64_t tl[15]; for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); tl[k] = co_find(p, nm, 0); all &= tl[k] != 0; }
     if (!all) { atomic_store(&g_show, 0); LOG("【红】社区入口：%s 里的提示框控件不全，不显示", k_hosts[which]); return; }
 #define W(nm) co_find(p, nm, 0)
-    int ch[CO_ROWS], n = mode == 1 ? dm_community_channels(dm_lang_group(), ch) : 0;
+    int ch[CO_ROWS], n = mode == 1 ? dm_community_channels(dm_lang_group(), ch) : 0; if (!have2 && n > CO_ROWS - 1) n = CO_ROWS - 1;
     if (mode == 1 && !n) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：没有可显示的值了，提示框收起"); return; }
     static int foc; if (st == 1) foc = 0;   // 缺省焦点：第一行「复制」（没有渠道行时是「确定」） | default focus: row 1's Copy (OK when there are no rows)
     if (foc > n) foc = n;
-    if (st == 2) { uint64_t ev = atomic_exchange(&g_md_ev, 0); if (!pad) ev = 0;   // 键已在取手柄处闸门截下（dm_community_input_gate），这里只用；触屏模式不走焦点 | keys were taken at the controller gate; touch mode does not use focus   // 手柄：焦点链 复制₁ → 复制₂ → 确定（上下移、不循环），A 触发、B 收起 | controller focus chain, A activates, B dismisses
+    if (st == 2) { uint64_t ev = atomic_exchange(&g_md_ev, 0); if (!pad) ev = 0;   // 键已在取手柄处闸门截下（dm_community_input_gate），这里只用；触屏模式不走焦点 | keys were taken at the controller gate; touch mode does not use focus   // 手柄：焦点链 复制₁ → 复制₂ → 复制₃ → 确定（上下移、不循环），A 触发、B 收起 | controller focus chain Copy1 → Copy2 → Copy3 → OK, A activates, B dismisses
         if ((ev & DM_BTN_UP) && foc > 0) foc--; if ((ev & DM_BTN_DOWN) && foc < n) foc++;
         if (ev & DM_BTN_A) { if (foc < n) do_copy(2, foc); else atomic_store(&g_ack, 3); }
         if (ev & DM_BTN_B) atomic_store(&g_ack, 2); }
@@ -634,7 +647,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
         if (k >= n || !dm_community_channel_value(ch[k], full, sizeof full, shown, sizeof shown)) { co_place(lb, 99999, 99999); co_place(vl, 99999, 99999); co_place(cp, 99999, 99999); co_place(ct, 99999, 99999); co_rect_hide(p, nm); continue; }
         int top = y0 + gm_.card_y[k]; dm_community_fit(shown, sizeof shown, 36, CO_VALUE_W);
         co_rect_lines(b, p, nm, "rule_h", "rule_v", cl, top, CO_CARD_W, 100, 2);
-        co_text(b, lb, dm_str(b, ch[k] == DM_CH_QQ ? "dmCommunityLabelQq" : ch[k] == DM_CH_SITE ? "dmCommunityLabelSite" : "dmCommunityLabelGithub")); co_place(lb, cl + 40, top);
+        co_text(b, lb, dm_str(b, co_ch_key(ch[k]))); co_place(lb, cl + 40, top);
         co_text(b, vl, shown); co_place(vl, cx + CO_VALUE_X, top);
         co_place(cp, bx, top + (100 - CO_BTN_H) / 2); co_place(ct, bx, top + (100 - CO_BTN_H) / 2 + 2);
         co_text(b, ct, recent && crow == k ? dm_str(b, cst > 0 ? "dmCommunityCopied" : "dmCommunityCopyFailShort") : dm_str(b, "dmCommunityCopy")); }
@@ -650,6 +663,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     else co_rect_hide(p, "TouchCommFocus");
 #undef W
     if (st == 1) { atomic_store(&g_show, 2); int32_t *pr = (int32_t *)(p + 0x70);
-        LOG("社区入口：已显示（%s，%s，%s，渠道 %d 行%s%s，版本%s，鸣谢 %d 行；面板 %s 锚 %.2f/%.2f 矩形 %d,%d %dx%d 缩放 %.2f → 框中心 %d 顶 %d 高 %d）", atomic_load(&g_from) == 1 ? "暂停菜单" : atomic_load(&g_from) == 2 ? "主菜单" : "自定义页", mode == 2 ? "关于框" : pad ? "手柄模式，焦点链 复制 → 确定" : "触屏 / 鼠标点按钮", mode == 2 ? "版本 + 鸣谢" : "社区", n, n < 1 ? "" : ch[0] == DM_CH_QQ ? "：群号" : ch[0] == DM_CH_SITE ? "：官网" : "：GitHub", n < 2 ? "" : ch[1] == DM_CH_SITE ? " + 官网" : " + GitHub", ver[0] ? "有" : "无", ncr,
+        char chdesc[80] = ""; for (int k = 0; k < n; k++) { size_t L = strlen(chdesc); snprintf(chdesc + L, sizeof chdesc - L, "%s%s", k ? " + " : ": ", dm_ui(co_ch_key(ch[k]))); }   // 日志内渠道名走中英表，不写死上屏字面量 | channel names in the log come from the string table instead of on-screen literals
+        LOG("社区入口：已显示（%s，%s，%s，渠道 %d 行%s，版本%s，鸣谢 %d 行；面板 %s 锚 %.2f/%.2f 矩形 %d,%d %dx%d 缩放 %.2f → 框中心 %d 顶 %d 高 %d）", atomic_load(&g_from) == 1 ? "暂停菜单" : atomic_load(&g_from) == 2 ? "主菜单" : "自定义页", mode == 2 ? "关于框" : pad ? n >= 3 ? "手柄模式，焦点链 复制₁ → 复制₂ → 复制₃ → 确定" : "手柄模式，焦点链 复制 → 确定" : "触屏 / 鼠标点按钮", mode == 2 ? "版本 + 鸣谢" : "社区", n, chdesc, ver[0] ? "有" : "无", ncr,
             k_hosts[which], *(float *)(p + 0x48), *(float *)(p + 0x4c), pr[0], pr[1], pr[2], pr[3], s, cx, y0, H); }
 }

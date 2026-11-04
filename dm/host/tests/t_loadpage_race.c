@@ -28,7 +28,7 @@ static void *importer(void *a) {
 static void *community(void *a) {
     (void)a;
     for (int i = 0; i < ROUNDS; i++) {
-        if (i & 1) dm_loadpage_community("1129913678", "https://github.com/a/b", "https://d2rplus.augustusplay.com/"); else dm_loadpage_community(NULL, "https://github.com/c/d", NULL);
+        if (i & 1) dm_loadpage_community("1129913678", "https://github.com/a/b", "https://d2rplus.augustusplay.com/", "https://gitee.com/a/b"); else dm_loadpage_community(NULL, "https://github.com/c/d", NULL, NULL);
         dm_loadpage_copied(i & 2, i & 4, (uint64_t)i); dm_loadpage_pad(i & 8);
     }
     return NULL;
