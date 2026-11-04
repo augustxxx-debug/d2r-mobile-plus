@@ -132,6 +132,11 @@ int main(void) {
     dm_loadpage_begin(two, 2, w_two, 0); CHECK(dm_loadpage_muted() == 1 && dm_loadpage_music_wanted() == 0);
     CHECK(dm_loadpage_toggle_muted() == 0 && dm_loadpage_music_wanted() == 1);
     dm_loadpage_fail("x", 1); CHECK(dm_loadpage_music_wanted() == 0); dm_loadpage_set_muted(0);
+    // 记住玩家的选择：平台启动时用 set_muted 告诉核心；begin / finish 都不改它，静音时完成也不放 | remember the player's choice: the platform tells the core with set_muted at start; begin / finish leave it alone and a muted page stays silent when done
+    dm_loadpage_set_muted(1); dm_loadpage_begin(two, 2, w_two, 0); CHECK(dm_loadpage_muted() == 1 && dm_loadpage_music_wanted() == 0);
+    dm_loadpage_finish(1); CHECK(dm_loadpage_muted() == 1 && dm_loadpage_music_wanted() == 0);
+    dm_loadpage_begin(two, 2, w_two, 2); CHECK(dm_loadpage_muted() == 1 && dm_loadpage_music_wanted() == 0);
+    dm_loadpage_set_muted(0); CHECK(dm_loadpage_muted() == 0 && dm_loadpage_music_wanted() == 1);
     dm_loadpage_layout(&duo, &L); CHECK(NEAR(L.mute.x + L.mute.w, 951 - 28) && NEAR(L.mute.y, 22) && L.mute.w == 40 && L.mute.y + L.mute.h <= L.logo.y && L.brand.x + L.brand.w <= L.mute.x);
     CHECK(dm_loadpage_hit_mute(&L, L.mute.x + 20, L.mute.y + 20) && dm_loadpage_hit_mute(&L, L.mute.x - 10, L.mute.y - 10) && !dm_loadpage_hit_mute(&L, L.mute.x - 20, L.mute.y + 20) && !dm_loadpage_hit_mute(&L, 475, 400));
     dm_loadpage_layout(&ip, &L); CHECK(NEAR(L.mute.x + L.mute.w, 402 - 28) && L.mute.y >= 59 - 6 && L.mute.y + L.mute.h <= L.logo.y);   // iPhone 竖屏：在灵动岛下方 | iPhone portrait: below the island

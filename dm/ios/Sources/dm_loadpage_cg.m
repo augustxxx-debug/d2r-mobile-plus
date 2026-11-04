@@ -136,12 +136,14 @@ int dm_loadpage_cg_png(const char *path, CGImageRef bg, CGImageRef logo, const d
 - (instancetype)initWithFrame:(CGRect)f {
     if (!(self = [super initWithFrame:f])) return nil;
     self.opaque = YES; self.contentMode = UIViewContentModeRedraw; self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    // 背景是 App 图标美术（带 MOBILE PLUS），不再画金色字标（用户 2026-10-29，与安卓同一个开关）；布局把图标按外框等比放进安全区顶与进度组之间
+    // The background is the App icon art (reads MOBILE PLUS), so no gold wordmark (user 2026-10-29, the same switch as Android); the layout fits the icon box uniformly between the safe top and the progress group
+    dm_loadpage_set_wordmark(0);
     NSString *dir = [NSBundle.mainBundle.resourcePath stringByAppendingPathComponent:@"loadpage"];
     CGRect b = UIScreen.mainScreen.bounds; const char *name = dm_loadpage_bg_name(b.size.width, b.size.height, NULL, NULL);
     self.bg = dm_loadpage_cg_image([dir stringByAppendingPathComponent:@(name)].fileSystemRepresentation);
     if (!self.bg) fprintf(stderr, "[dm] 【红】加载页：背景图 %s 读不到（包里没有 loadpage/ 目录？），画黑底\n", name);
-    self.logo = dm_loadpage_cg_image([dir stringByAppendingPathComponent:@(dm_loadpage_logo_name(NULL, NULL))].fileSystemRepresentation);
-    if (!self.logo) fprintf(stderr, "[dm] 【红】加载页：字标图读不到，退回文字字标\n");
+    self.logo = NULL;   // 关字标：不解码金色字标图，也不画 | wordmark off: the gold wordmark image is neither decoded nor drawn
     self.dir = dir;
     // 静音开关：玩家上次的选择（偏好 DMLoadPageMuted，缺省有声音）；透明按钮压在右上角的图标上，位置取公共布局 | mute toggle: the player's last choice (preference DMLoadPageMuted, sound on by default); a transparent button over the top-right icon, placed by the shared layout
     dm_loadpage_set_muted([NSUserDefaults.standardUserDefaults boolForKey:@"DMLoadPageMuted"]);

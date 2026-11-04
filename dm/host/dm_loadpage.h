@@ -120,12 +120,13 @@ int dm_loadpage_hit_copy(const dm_lp_layout *L, double x, double y);   // 点在
 void dm_loadpage_cover(double iw, double ih, double dw, double dh, double fx, double fy, dm_lp_rect *src);
 const char *dm_loadpage_bg_name(double w, double h, int *bg_w, int *bg_h);   // 横 / 竖两张里选一张 | pick one of the landscape / portrait images
 const char *dm_loadpage_logo_name(int *w, int *h);                          // 字标图文件名与像素尺寸 | wordmark file name and pixel size
-// 字标开关（缺省开 = iOS 现状：页面中部画金色字标图，背景按 cover 铺满）。关（安卓，用户 2026-10-29「加载页背景换成我们游戏 logo」）：
+// 字标开关（缺省开 = 旧的苹果端画法：页面中部画金色字标图，背景按 cover 铺满）。关（两端现在都用，用户 2026-10-29「加载页背景换成我们游戏 logo」）：
 // 背景图是 App 图标美术（图标已带 MOBILE PLUS），不画字标图也不画文字字标；背景按图标外框等比放在「安全区顶」与进度组之间、水平居中，
-// 进度组固定按「有页脚」的位置排（清单晚到时图标不跳）。iOS RC2 并线时再决定关不关
-// Wordmark switch (default on = iOS today: the gold wordmark image mid-page, the background cover-filled). Off (Android, user 2026-10-29 "use our game logo as the loading page background"):
-// the background is the App icon art (which already reads MOBILE PLUS), so neither the wordmark image nor the text wordmark is drawn; the background is scaled to fit its icon box
-// between the top of the safe area and the progress group, centred horizontally, and the progress group always sits where it does with a footer (no jump when the manifest arrives late)
+// 进度组固定按「有页脚」的位置排（清单晚到时图标不跳）。iOS 的视图与安卓的 LoadPageView 启动时都调 set_wordmark(0)
+// Wordmark switch (default on = the old Apple side look: the gold wordmark image mid-page, the background cover-filled). Off (both platforms now use it, user 2026-10-29
+// "use our game logo as the loading page background"): the background is the App icon art (which already reads MOBILE PLUS), so neither the wordmark image nor the text wordmark is drawn;
+// the background is scaled to fit its icon box between the top of the safe area and the progress group, centred horizontally, and the progress group always sits where it does with a footer
+// (no jump when the manifest arrives late). The iOS view and Android's LoadPageView both call set_wordmark(0) at start
 void dm_loadpage_set_wordmark(int on);
 const char *dm_loadpage_music_name(void);                                  // 循环音乐文件名（包内 loadpage/ 目录） | loop music file name (loadpage/ in the package)
 // 静音开关（页面右上角）：缺省有声音（用户 2026-10-29：右上角给开关，缺省放音乐）；平台记住玩家的选择，启动时用 set_muted 告诉核心。begin 不改它

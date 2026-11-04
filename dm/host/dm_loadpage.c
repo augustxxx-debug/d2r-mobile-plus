@@ -242,8 +242,8 @@ static void community_text(dm_lp_text *t, uint64_t now_ms) {
 }
 
 // ---- 素材与布局 ----
-// 两张背景：横 2048×1152、竖 1152×2048（dm/assets/loadpage/，自绘，生成脚本 dm/tools/gen_loadpage_art.py）。焦点 (0.5, 0.58)：火光在画面中下
-// Two backgrounds: landscape 2048×1152, portrait 1152×2048 (dm/assets/loadpage/, self-drawn, generator dm/tools/gen_loadpage_art.py). Focus (0.5, 0.58): the fire glow sits centre-low
+// 两张背景：横 2048×1152、竖 1152×2048（dm/assets/loadpage/，App 图标的合成画面：图标居中、四周渐隐到黑、底部压暗，用户 2026-10-29）。焦点 (0.5, 0.58)：火光在画面中下
+// Two backgrounds: landscape 2048×1152, portrait 1152×2048 (dm/assets/loadpage/, composites of the App icon art: icon centred, edges fading to black, bottom darkened; user 2026-10-29). Focus (0.5, 0.58): the fire glow sits centre-low
 #define LP_BG_LAND "loadpage_bg_land.jpg"
 #define LP_BG_PORT "loadpage_bg_port.jpg"
 #define LP_FOCUS_X 0.5
