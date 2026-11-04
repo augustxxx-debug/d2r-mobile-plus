@@ -3123,6 +3123,64 @@ static void ui_pad_charstats_pump(module_t *m, uint64_t root) {
     if (!ui_hit_center(m, first, &x, &y) || !dm_ui_hover_now(x, y)) { dm_padmode_page_pulse(DM_BTN_DOWN); if (lg++ < 8) LOG("手柄角色页：「+」在屏上找不到落点，这一下「下」还给原版"); return; }
     if (lg++ < 20) LOG("手柄角色页：没有起始焦点，十字键下 → %s（%d,%d）", *(const char **)(first + 8), x, y);
 }
+// 手柄进面板的起始焦点（B159 任务日志、B160 技能树）：从别的页按 R / L 切过来（实测 ui_regress 9c3c1dff：物品栏 → R → 技能树、选项 → R → 任务日志）时，
+// 焦点管理器里的焦点（[界面根 + 0xd0] + 0x190）还停在上一页的控件上——那一页已经藏起，金框不在屏上（FOCUSLOST）；任务日志连十字键都走不回来，技能树要按一下方向键才出。
+// 从角色页按 L 进任务日志时原版自己把焦点放在幕页签条（Tabs）当前那一幕上（p2_fix2 实测 FOCUS 1014,246）。这里统一：手柄模式、两页之一刚成为最上一页（无模态）、
+// 焦点不在这一页里看得见的控件上时，把光标放到这一页的「起始控件」中心（布局里 focusOnMouseOver，悬停即得焦点）：候选按序试，放下后隔几帧核焦点进没进这一页，没进再试下一个：
+//   任务日志：幕页签条当前那一幕（Tabs 的 Image<选中号>）→ 当前幕第一个看得见的任务格；技能树：当前技能页签（Tab<当前页>）→ 当前页第一个看得见的技能格。
+// 只在进页后 60 帧内做、焦点一进这一页就停，之后的十字键 / 摇杆都归原版（任务日志摇杆仍按 B114 当四向十字键）。原版自己已给了焦点的进入路径一律不动
+// Starting focus when a controller page opens (B159 quest log, B160 skill tree): arriving with R / L from another page (measured in ui_regress 9c3c1dff: inventory → R → skill tree,
+// options → R → quest log) leaves the focus manager's focus ([UI root + 0xd0] + 0x190) on a widget of the previous page, which is now hidden, so the gold frame is off screen (FOCUSLOST);
+// in the quest log even the D-pad cannot bring it back, and the skill tree needs one direction press. Arriving at the quest log with L from the character page the game itself focuses the
+// current act on the act tab bar (Tabs; measured p2_fix2 FOCUS 1014,246). Unified here: in controller mode, when one of these two pages has just become the top page (no modal) and the focus is
+// not on a visible widget of that page, the cursor is put at the centre of the page's starting widget (focusOnMouseOver in the layout: hovering gives focus). Candidates are tried in order;
+// a few frames after each the focus is checked, and the next candidate is tried if it did not land on the page:
+//   quest log: the current act on the act tab bar (Tabs' Image<selected>) → the first visible quest of the current act; skill tree: the current skill tab (Tab<current>) → its first visible skill.
+// Only within 60 frames of entering, stopping as soon as the focus is on the page; later D-pad / stick input belongs to the game (the quest log stick stays a four-way D-pad as in B114).
+// Entry paths where the game already gave the page the focus are left untouched
+#define EF_VIS(w) ((w) && *(uint8_t *)((w) + 0x50) && *(uint8_t *)((w) + 0x51))
+static uint64_t ef_first(uint64_t w, const char *pre, int dep) {   // 树序第一个看得见、名字以 pre 开头的控件 | first visible widget in tree order whose name starts with pre
+    if (!w || dep > 6 || !*(uint8_t *)(w + 0x50)) return 0; const char *nm = *(const char **)(w + 8);
+    if (nm && !strncmp(nm, pre, strlen(pre)) && EF_VIS(w)) return w;
+    uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
+    for (uint64_t i = 0; i < n; i++) { uint64_t r = ef_first(*(uint64_t *)(ch + 8 * i), pre, dep + 1); if (r) return r; }
+    return 0;
+}
+static uint64_t ef_candidate(uint64_t p, int page, int k) {   // page 0 任务日志 / 1 技能树；k 第几个候选 | page 0 quest log / 1 skill tree; k = candidate index
+    char nm[16];
+    if (page == 0) {
+        uint64_t tabs = ui_find(p, "Tabs", 0); int sel = tabs ? TAB_SEL(tabs) : -1;
+        if (k == 0) { if (sel < 0 || sel > 9) return 0; snprintf(nm, sizeof nm, "Image%d", sel); uint64_t c = bd_child(tabs, nm); return EF_VIS(c) ? c : 0; }
+        if (k == 1) { for (int t = 0; t < 5; t++) { snprintf(nm, sizeof nm, "Tab%d", t); uint64_t tw = bd_child(p, nm); if (EF_VIS(tw)) return ef_first(tw, "Quest", 0); } }
+        return 0;
+    }
+    int cur = bd_tab_cur(p); if (cur < 0 || cur > 3) return 0; snprintf(nm, sizeof nm, "Tab%d", cur); uint64_t tw = bd_child(p, nm); if (!EF_VIS(tw)) return 0;
+    if (k == 0) return tw;
+    if (k == 1) return ef_first(tw, "SkillButton", 0);
+    return 0;
+}
+static void ui_pad_entry_focus_pump(module_t *m, uint64_t root) {
+    int dm_padmode_current(void), dm_padmode_busy(void); static int last = -1, k, done; static uint64_t since, tried_at;
+    static const char *const pn[2] = { "QuestLogPanelExpansion", "SkillsTreePanel" };
+    if (!m || !root || !dm_padmode_current()) { last = -1; return; }
+    if (dm_padmode_busy()) return;   // 模式切换进行中：界面在重建，不量不放 | mode switch in progress: the UI is being rebuilt
+    int page = -1; for (int i = 0; i < 2 && page < 0; i++) if (root_panel_shown(root, pn[i])) page = i;
+    if (page < 0) { last = -1; return; }
+    uint64_t fr = dm_guest_frame();
+    if (page != last) { last = page; since = fr; k = 0; done = 0; tried_at = 0; }
+    if (done || modal_any(root, 1, NULL)) return;
+    if (fr - since > 60) { done = 1; return; }
+    uint64_t p = ui_panel(root, pn[page]), fm = *(uint64_t *)(root + 0xd0), f = fm ? *(uint64_t *)(fm + 0x190) : 0;
+    if (p && f && ui_has(p, f, 0) && EF_VIS(f)) { done = 1; if (tried_at) { static int lg; if (lg++ < 20) LOG("手柄进页起始焦点：%s 焦点到 %s", pn[page], *(const char **)(f + 8)); } return; }   // 焦点已在这一页（先按指针核它还挂在本页树上再读它：上一页卸载后焦点指针可能悬空） | focus is already on the page (checked by pointer against the page tree before it is read: it may dangle once the previous page unloads)
+    if (tried_at && fr - tried_at < 4) return;   // 等上一次悬停生效 | wait for the last hover to take effect
+    if (!p || k > 1) { done = 1; static int lg; if (lg++ < 8) LOG("手柄进页起始焦点：%s 候选都没让焦点进页，交还原版", pn[page]); return; }
+    uint64_t c = ef_candidate(p, page, k); int x, y;
+    if (!c || !ui_hit_center(m, c, &x, &y)) { if (fr - since > 20) { k++; tried_at = 0; } return; }   // 布局还没排好就下一帧再量 | layout not ready yet: measure again next frame
+    if (!dm_ui_hover_now(x, y)) return;
+    tried_at = fr; k++;
+    static int lg; if (lg++ < 20) LOG("手柄进页起始焦点：%s 焦点不在本页（%s）→ 光标放到 %s（%d,%d）", pn[page], f ? *(const char **)(f + 8) : "无", *(const char **)(c + 8), x, y);
+}
+#undef EF_VIS
 static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 | game main thread, every frame
     void uimsg_emit(const char *, const char *, const char *);
     // 手柄暂停菜单左摇杆移焦点（B071）：只在暂停菜单是最上面一页时。选项页 / 编年史 / 消息记录盖在它上面时它还算开着，确认框等模态框的输入归框
@@ -3138,6 +3196,7 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
     // While the quest log is the top page all four directions go to the game as D-pad; a modal keeps its own input. Acts switch with ZL / ZR (tab bar), not the stick
     if (root_panel_shown(root, "QuestLogPanelExpansion") && !modal_any(root, 1, NULL)) { void dm_padmode_stick_as_dpad4(void); dm_padmode_stick_as_dpad4(); }
     ui_pad_charstats_pump(main_module(), root);   // 手柄角色页：没有起始焦点时十字键下 → 第一个「+」（B114） | controller character page: D-pad down with no starting focus → the first "+" (B114)
+    ui_pad_entry_focus_pump(main_module(), root);   // 手柄进任务日志 / 技能树：焦点留在上一页时放到本页起始控件（B159 / B160） | controller quest log / skill tree entry: focus left on the previous page goes to the page's starting widget (B159 / B160)
     ui_pad_merc_pump(main_module(), root);   // 手柄佣兵页：副手格按上、拿着物品时页签上的 A（B100） | controller mercenary page: Up on the off-hand cell, A on the tabs with an item in hand (B100)
     int st = (root_panel_shown(root, "BankExpansionLayout") ? DM_PS_BANK : 0) | (dm_shop_open() ? DM_PS_VENDOR : 0)   // 商人页：游戏自己的商店状态（dm_actions.c 每帧读） | vendor page: the game's own shop state (read every frame by dm_actions.c)
            | (root_panel_shown(root, "YouDiedModal") ? DM_PS_DEAD : 0) | (root_panel_shown(root, "ImbueItemsPanel") ? DM_PS_IMBUE : 0) | (root_panel_shown(root, "HoradricCubeLayout") ? DM_PS_CUBE : 0);
@@ -3195,6 +3254,7 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 //     ui_widestash_pump、mv_audit_pump、ui_pages_pump（含手柄 L / R 翻页）、ui_watch_pump、ui_panel_heal、ui_panel_state_pump、rs_pump（一键重开，在前端泵里调）、
 //     ui_pad_merc_pump（手柄佣兵页副手格按上 / 拿着物品时页签上的 A，B100；由 ui_panel_state_pump 每帧调，函数里先判手柄模式，触屏模式直接返回，不留跨帧状态）、
 //     ui_pad_charstats_pump（手柄角色页没有起始焦点时十字键下 → 第一个「+」，B114；同上，由 ui_panel_state_pump 调、先判手柄模式）、
+//     ui_pad_entry_focus_pump（手柄进任务日志 / 技能树时焦点还在上一页 → 放到本页起始控件，B159 / B160；同上，由 ui_panel_state_pump 调、先判手柄模式）、
 //     focus_clip_pump（B144：触屏下清掉滚出设置页列表的焦点，切到手柄模式时要在手柄模式里放回那一行，所以两种模式都跑；切换进行中直接返回）
 // 物品说明框停靠（观测门 OBS_TOOLTIP，挂在说明框面板的「提交一条说明」函数入口 main+0xb0d560(面板, 文字, 目标矩形左上 x2, 目标矩形宽高 x3, 样式, 文字 2)）。
 // 说明框是即时式的：悬停着的控件每帧重新提交、画完就清，宿主在自己的时机读面板里的记录数一直是 0，所以只能在提交那一刻改输入。

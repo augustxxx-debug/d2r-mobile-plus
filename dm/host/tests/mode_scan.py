@@ -59,7 +59,11 @@ else:
 #   frame, no address is cached and no state crosses frames, so after a mode switch the next frame simply stops taking keys -- no enter / leave hook needed
 # 手柄角色页（dm_cursor.c +1 处，B114）：ui_pad_charstats_pump 没有起始焦点时收十字键下、把光标放到第一个「+」；同上每帧现判、不留跨帧状态，不用进 / 出钩子
 # Controller character page (dm_cursor.c +1, B114): ui_pad_charstats_pump takes D-pad down with no starting focus and puts the cursor on the first "+"; decided every frame, no state, no hooks
-PADMODE = {'host/dm_stack.c': 1, 'host/dm_bag.c': 1, 'host/dm_savemgr.c': 2, 'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_diagup.c': 1, 'host/dm_telebox.c': 2, 'host/dm_telemetry.c': 1, 'host/dm_cursor.c': 13, 'host/dm_custom.c': 4, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1, 'host/dm_pouch.c': 1}
+# 手柄进页起始焦点（dm_cursor.c +1 处，B159 / B160）：ui_pad_entry_focus_pump 在任务日志 / 技能树刚成为最上一页、焦点还在上一页时把光标放到本页起始控件。
+# 跨帧只留「哪一页、进页那一帧、试到第几个候选」，触屏模式（及页关掉）一进来就清零，切回手柄模式重新按「刚进页」算，不用进 / 出钩子
+# Controller page-entry focus (dm_cursor.c +1, B159 / B160): ui_pad_entry_focus_pump puts the cursor on the page's starting widget when the quest log / skill tree has just become the top page
+# with the focus still on the previous page. The only cross-frame state is which page, the entry frame and the candidate index; touch mode (or the page closing) clears it at once, no hooks
+PADMODE = {'host/dm_stack.c': 1, 'host/dm_bag.c': 1, 'host/dm_savemgr.c': 2, 'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_diagup.c': 1, 'host/dm_telebox.c': 2, 'host/dm_telemetry.c': 1, 'host/dm_cursor.c': 14, 'host/dm_custom.c': 4, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1, 'host/dm_pouch.c': 1}
 # 「进入恐惧区域」入口（dm_padmode.c 1 处，方案 C）：手柄 A 在我们自己的入口钮上时由宿主发原版设置页的切页消息（dm_ui_send）。只在手柄模式发—
 # 这一句在 diff_pump 的 on_row 分支里，而 on_row 在触屏模式 / 弹窗开着时被强制清零；触屏点这颗钮由游戏自己按 onClickMessage 发同一条消息，不走宿主。
 # 控件每帧按名字现找，不缓存地址，切换重建后新控件同样能发，不用进 / 出钩子
