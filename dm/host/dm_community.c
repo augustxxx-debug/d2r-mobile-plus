@@ -25,7 +25,6 @@
 #include "dm_input.h"
 #include "dm_widget.h"
 #include "dm_notice_geometry.h"
-#include "dm_pan.h"
 #include "dm_site.h"
 #include "dm_cursor.h"
 #include "dm_stick_nav.h"
@@ -42,9 +41,8 @@
 #define QQ_MAX 12
 #define GH_MAX 160
 #define MANIFEST_MAX 4096   // 外壳也按 4096 字节封顶（dm_update.m） | the shells cap at 4096 bytes too (dm_update.m)
-static pthread_mutex_t g_cm_mu = PTHREAD_MUTEX_INITIALIZER;   // 护 g_qq / g_gh / g_site / g_mirror / g_pans（清单从网络线程来，泵在游戏主线程读） | guards the values (the manifest arrives on a network thread; the pump reads on the game main thread)
+static pthread_mutex_t g_cm_mu = PTHREAD_MUTEX_INITIALIZER;   // 护 g_qq / g_gh / g_site / g_mirror（清单从网络线程来，泵在游戏主线程读） | guards g_qq / g_gh / g_site / g_mirror (the manifest arrives on a network thread; the pump reads on the game main thread)
 static char g_qq[QQ_MAX + 1], g_gh[GH_MAX + 1], g_site[GH_MAX + 1], g_mirror[GH_MAX + 1];   // g_site：项目官网（清单 community.site，用户 2026-10-29）；g_mirror：国内镜像（community.mirror） | g_site: the project website; g_mirror: the mainland mirror (community.mirror)
-static dm_pan_entry g_pans[DM_PAN_MAX]; static int g_n_pans;   // 网盘（community.pans；规则见 dm_pan.h） | cloud drives (community.pans; rules in dm_pan.h)
 static _Atomic int g_loaded_cm;
 static _Atomic int g_show, g_ack, g_copied;   // g_show：0 不显示 / 1 要显示 / 2 显示着；g_copied：0 / 1 已复制 / -1 复制失败 | g_show: 0 none / 1 pending / 2 shown; g_copied: 0 / 1 copied / -1 failed
 static _Atomic int g_copied_row; static _Atomic uint64_t g_copied_at;   // 哪一行的「复制」刚按过、何时（按钮字变「已复制 / 复制失败」2 秒） | which row's Copy was just pressed and when (the button reads Copied / Copy failed for 2 s)
@@ -125,18 +123,10 @@ static int gitee_ok(const char *s) {   // 规则同 gh_ok，前缀换 gitee；�
 // The website: only from the manifest / cache, never hard-coded; the contract is shared with the loading page (dm_site.h); invalid = absent (GitHub fallback)
 static void set_values(const char *qq, const char *gh, const char *site, const char *mirror) { pthread_mutex_lock(&g_cm_mu); snprintf(g_qq, sizeof g_qq, "%s", qq ? qq : ""); snprintf(g_gh, sizeof g_gh, "%s", gh ? gh : ""); snprintf(g_site, sizeof g_site, "%s", site ? site : ""); snprintf(g_mirror, sizeof g_mirror, "%s", mirror ? mirror : ""); pthread_mutex_unlock(&g_cm_mu); }
 static void get_values(char *qq, char *gh, char *site, char *mirror) { pthread_mutex_lock(&g_cm_mu); memcpy(qq, g_qq, sizeof g_qq); memcpy(gh, g_gh, sizeof g_gh); if (site) memcpy(site, g_site, sizeof g_site); if (mirror) memcpy(mirror, g_mirror, sizeof g_mirror); pthread_mutex_unlock(&g_cm_mu); }
-static void set_pans(const dm_pan_entry *p, int n) { if (n < 0) n = 0; if (n > DM_PAN_MAX) n = DM_PAN_MAX; pthread_mutex_lock(&g_cm_mu); g_n_pans = n; if (n) memcpy(g_pans, p, (size_t)n * sizeof *p); pthread_mutex_unlock(&g_cm_mu); }
-static int get_pans(dm_pan_entry out[DM_PAN_MAX]) { pthread_mutex_lock(&g_cm_mu); int n = g_n_pans; if (out) memcpy(out, g_pans, (size_t)n * sizeof *out); pthread_mutex_unlock(&g_cm_mu); return n; }
-// 缓存一行一个「键=值」；没有网盘时与旧版逐字节相同 | one "key=value" per line; byte-for-byte the old file when there are no cloud drives
-static int cache_write(const char *qq, const char *gh, const char *site, const char *mirror, const dm_pan_entry *pans, int n_pans) {
+static int cache_write(const char *qq, const char *gh, const char *site, const char *mirror) {
     char p[1100], t[1120]; if (!cache_path(p, sizeof p)) return 0;
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); if (!f) return 0;
     int ok = 1; if (qq[0]) ok &= fprintf(f, "qq_group=%s\n", qq) > 0; if (gh[0]) ok &= fprintf(f, "github=%s\n", gh) > 0; if (site[0]) ok &= fprintf(f, "site=%s\n", site) > 0; if (mirror && mirror[0]) ok &= fprintf(f, "mirror=%s\n", mirror) > 0;
-    for (int i = 0; pans && i < n_pans && i < DM_PAN_MAX; i++) {
-        ok &= fprintf(f, "pan%d_name=%s\n", i, pans[i].name) > 0;
-        ok &= fprintf(f, "pan%d_icon=%s\n", i, dm_pan_icon_key(pans[i].icon)) > 0;
-        ok &= fprintf(f, "pan%d_url=%s\n", i, pans[i].url) > 0;
-        if (pans[i].code[0]) ok &= fprintf(f, "pan%d_code=%s\n", i, pans[i].code) > 0; }
     ok = fclose(f) == 0 && ok; return ok && rename(t, p) == 0;
 }
 static void cache_delete(void) { char p[1100]; if (cache_path(p, sizeof p)) unlink(p); }
@@ -150,7 +140,6 @@ static void cache_delete(void) { char p[1100]; if (cache_path(p, sizeof p)) unli
 #define CR_NAME_MAX 32   // 鸣谢名字上限（字节） | credit name limit (bytes)
 #define CR_MAX 24        // 两份名单合计上限 | both lists together
 typedef struct { const char *p, *e; char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1], mirror[GH_MAX + 1]; int n_comm, n_qq, n_gh, n_site, n_mirror, bad_type, too_long;
-    dm_pan_entry pans[DM_PAN_MAX]; int n_pans, pan_n, pan_extra, pan_bad, bad_pans;   // pans：键出现次数 / 收下条数 / 第 5 条起丢弃数 / 坏条目数 / 整个键坏 | key occurrences / accepted / dropped past 4 / bad entries / the whole key bad
     char cr[CR_MAX][CR_NAME_MAX + 1]; int n_cr, n_special, n_thanks, n_credits, bad_credits; int n_tel, tel_bad, tel_has, tel_on; long long tel_until; char tel_reason[33]; } jp_t;   // credits：RC1 只解析、去重、计数进日志，不渲染不缓存（RC2 覆盖静态缺省） | credits: RC1 only parses, dedupes and logs counts; not rendered or cached (RC2 overrides the static default)
 static void js_ws(jp_t *j) { while (j->p < j->e && (*j->p == ' ' || *j->p == '\t' || *j->p == '\n' || *j->p == '\r')) j->p++; }
 static int js_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
@@ -199,49 +188,6 @@ static int js_names(jp_t *j, int depth, int which) {
         else { j->bad_credits = 1; if (!js_value(j, depth + 1, 0)) return 0; }
         js_ws(j); if (j->p >= j->e) return 0; if (*j->p == ']') { j->p++; return 1; } if (*j->p != ',') return 0; j->p++; js_ws(j); }
 }
-// community.pans 的一条（规则全在 dm_pan.h）：name / icon / url 必须有且合规，code 可选、不合规只丢 code；坏条目不报语法错、直接不要
-// One community.pans entry (all rules in dm_pan.h): name / icon / url are required and must pass; code is optional and an invalid one is just dropped; a bad entry is skipped, not a syntax error
-static int js_pan_entry(jp_t *j, int depth, dm_pan_entry *out, int *valid) {
-    if (depth > 16 || j->p >= j->e || *j->p != '{') return 0; j->p++; js_ws(j);
-    char name[DM_PAN_NAME_MAX + 1] = "", icon[16] = "", url[DM_PAN_URL_MAX + 1] = "", code[DM_PAN_CODE_MAX + 1] = "";
-    int hn = 0, hi = 0, hu = 0, hc = 0, dup = 0, bad_e = 0;
-    if (j->p < j->e && *j->p == '}') { j->p++; *valid = 0; return 1; }
-    for (;;) { char key[24]; int kesc = 0, kover = 0;
-        if (!js_string(j, key, sizeof key, &kesc, &kover)) return 0; if (kesc || kover) key[0] = 0;
-        js_ws(j); if (j->p >= j->e || *j->p != ':') return 0; j->p++; js_ws(j);
-        int is_name = !strcmp(key, "name"), is_icon = !strcmp(key, "icon"), is_url = !strcmp(key, "url"), is_code = !strcmp(key, "code");
-        if (is_name || is_icon || is_url || is_code) {
-            int *cnt = is_name ? &hn : is_icon ? &hi : is_url ? &hu : &hc; if (++*cnt > 1) dup = 1;
-            char *o = is_name ? name : is_icon ? icon : is_url ? url : code;
-            size_t on = is_name ? sizeof name : is_icon ? sizeof icon : is_url ? sizeof url : sizeof code;
-            if (j->p < j->e && *j->p == '"') { int esc = 0, over = 0; if (!js_string(j, o, on, &esc, &over)) return 0;
-                if (esc || over) { o[0] = 0; if (!is_icon && !is_code) bad_e = 1; } }
-            else { if (!js_value(j, depth + 1, 0)) return 0; if (is_name || is_url) bad_e = 1; }   // icon 非字符串 / code 非字符串：当没给 | a non-string icon / code counts as absent
-        } else if (!js_value(j, depth + 1, 0)) return 0;
-        js_ws(j); if (j->p >= j->e) return 0;
-        if (*j->p == '}') { j->p++; break; }
-        if (*j->p != ',') return 0; j->p++; js_ws(j); }
-    dm_pan_icon ic = dm_pan_icon_of(icon);
-    if (dup || bad_e || !hn || !hi || !hu || !dm_pan_name_ok(name) || !dm_pan_url_ok(ic, url)) *valid = 0;
-    else { memset(out, 0, sizeof *out); snprintf(out->name, sizeof out->name, "%s", name); out->icon = ic; snprintf(out->url, sizeof out->url, "%s", url); if (hc && dm_pan_code_ok(code)) snprintf(out->code, sizeof out->code, "%s", code); *valid = 1; }
-    return 1;
-}
-// community.pans：必须是数组（不是数组 = 整个键忽略，渠道照常）；元素必须是对象（否则整个键忽略）；第 5 条起只验语法、不要
-// community.pans: must be an array (not an array = the whole key is ignored, channels unaffected); elements must be objects (otherwise the whole key is ignored); the 5th on is parsed for syntax only and dropped
-static int js_pans(jp_t *j, int depth) {
-    if (depth > 16 || j->p >= j->e || *j->p != '[') { j->bad_pans = 1; return js_value(j, depth, 0); }
-    j->p++; js_ws(j);
-    if (j->p < j->e && *j->p == ']') { j->p++; return 1; }
-    int idx = 0;
-    for (;;) {
-        if (j->p < j->e && *j->p == '{') { dm_pan_entry e; memset(&e, 0, sizeof e); int valid = 0;
-            if (!js_pan_entry(j, depth + 1, &e, &valid)) return 0;
-            if (idx < DM_PAN_MAX) { if (valid) j->pans[j->pan_n++] = e; else j->pan_bad++; }
-            else j->pan_extra++; }
-        else { j->bad_pans = 1; if (!js_value(j, depth + 1, 0)) return 0; }
-        idx++; js_ws(j); if (j->p >= j->e) return 0;
-        if (*j->p == ']') { j->p++; return 1; } if (*j->p != ',') return 0; j->p++; js_ws(j); }
-}
 static int js_object(jp_t *j, int depth, int ctx) {
     if (depth > 16 || j->p >= j->e || *j->p != '{') return 0; j->p++; js_ws(j);
     if (j->p < j->e && *j->p == '}') { j->p++; return 1; }
@@ -250,7 +196,6 @@ static int js_object(jp_t *j, int depth, int ctx) {
         js_ws(j); if (j->p >= j->e || *j->p != ':') return 0; j->p++; js_ws(j);
         if (ctx == 1 && !strcmp(key, "community")) { j->n_comm++;
             if (j->p < j->e && *j->p == '{') { if (!js_object(j, depth + 1, 2)) return 0; } else { j->bad_type = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
-        else if (ctx == 2 && !strcmp(key, "pans")) { j->n_pans++; if (!js_pans(j, depth + 1)) return 0; }
         else if (ctx == 2 && (!strcmp(key, "qq_group") || !strcmp(key, "github") || !strcmp(key, "site") || !strcmp(key, "mirror"))) { int gh = !strcmp(key, "github"), st = !strcmp(key, "site"), mi = !strcmp(key, "mirror");
             if (gh) j->n_gh++; else if (st) j->n_site++; else if (mi) j->n_mirror++; else j->n_qq++;
             if (j->p < j->e && *j->p == '"') { int esc = 0, over = 0; char *out = gh ? j->gh : st ? j->site : mi ? j->mirror : j->qq; size_t n = gh ? sizeof j->gh : st ? sizeof j->site : mi ? sizeof j->mirror : sizeof j->qq;
@@ -289,7 +234,7 @@ static int js_parse(jp_t *j, const char *json, size_t len, size_t *at) {
     int ok = j->p < j->e && *j->p == '{' && js_object(j, 1, 1); if (ok) { js_ws(j); ok = j->p == j->e; }
     *at = (size_t)(j->p - json); return ok;
 }
-static void drop_values(void) { set_values("", "", "", ""); set_pans(NULL, 0); cache_delete(); }   // 格式错 / 无字段：清内存与缓存 | malformed / absent: clear memory and cache
+static void drop_values(void) { set_values("", "", "", ""); cache_delete(); }   // 格式错 / 无字段：清内存与缓存 | malformed / absent: clear memory and cache
 
 static void tel_apply(const jp_t *j) { if (j->n_tel > 1 || j->tel_bad || (j->n_tel && !j->tel_has)) { dm_crashreport_switch_no_fetch(); return; } dm_crashreport_switch(j->n_tel && j->tel_has, j->tel_on, j->tel_until, j->tel_reason); }   // 坏字段不动缓存 | a bad field leaves the cache alone
 // 只取总开关（安卓自动上报前现拉的清单：不动社区入口的值） | the server switch only (the manifest Android fetches before an automatic report; community values untouched)
@@ -301,58 +246,31 @@ int dm_community_manifest(const char *json, size_t len) {
     jp_t j; size_t at; if (!js_parse(&j, json, len, &at)) { dm_crashreport_switch_no_fetch(); drop_values(); LOG("【红】社区入口：清单格式错（JSON 语法：第 %zu 字节附近），入口不显示（缓存已清）", at); return 0; }
     tel_apply(&j);
     if (j.n_comm == 0) { drop_values(); LOG("社区入口：清单无字段，入口不显示（缓存已清）"); return 0; }
-    if (j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1 || j.n_mirror > 1 || j.n_pans > 1) { drop_values(); LOG("【红】社区入口：清单格式错（community / qq_group / github / site / mirror 重复（含 pans）），入口不显示（缓存已清）"); return 0; }
+    if (j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1 || j.n_mirror > 1) { drop_values(); LOG("【红】社区入口：清单格式错（community / qq_group / github / site / mirror 重复），入口不显示（缓存已清）"); return 0; }
     int given = j.n_qq || j.n_gh || j.n_site || j.n_mirror;   // 给了渠道键（值合不合规另算） | channel keys are present (valid or not)
-    int given_pans = j.n_pans > 0, pans_ok = !j.bad_pans;   // pans 键给了 / 形状合规（不是数组或元素不是对象 = 整个键忽略） | the pans key is present / its shape is valid
-    if (j.bad_type && !given && !given_pans) { drop_values(); LOG("【红】社区入口：清单格式错（community 不是对象），入口不显示（缓存已清）"); return 0; }
+    if (j.bad_type && !given) { drop_values(); LOG("【红】社区入口：清单格式错（community 不是对象），入口不显示（缓存已清）"); return 0; }
     if (j.qq[0] && !qq_ok(j.qq)) j.qq[0] = 0; if (j.gh[0] && !gh_ok(j.gh)) j.gh[0] = 0; if (j.site[0] && !dm_site_ok(j.site)) j.site[0] = 0; if (j.mirror[0] && !gitee_ok(j.mirror)) j.mirror[0] = 0;
     int bad = (j.n_qq && !j.qq[0]) + (j.n_gh && !j.gh[0]) + (j.n_site && !j.site[0]) + (j.n_mirror && !j.mirror[0]);   // 给了键但没留下值，空串也算 | a key given with no value left, an empty string included
     if (!j.qq[0] && !j.gh[0] && !j.site[0] && !j.mirror[0]) {
         // 唯一的渠道无效不能清掉有效的旧缓存（外审 RC2-E-01）：只有 community 明确不带渠道才算撤下入口 | an invalid sole channel must not clear a good old cache (external review RC2-E-01): only a community with no channels withdraws the entry
         if (given) { LOG("【红】社区入口：清单格式错（%d 项不合规：群号须 5–12 位数字，链接须 https://github.com/ 开头，官网须 https:// + 主机名 + 可选路径、不带端口与 @ ? #、不超过 %d 字符，国内镜像须 https://gitee.com/ 开头、只含 URL 字符，都不带转义），沿用缓存（群号 %s，链接 %s，官网 %s%s%s）", bad, DM_SITE_MAX, qq[0] ? "有" : "无", gh[0] ? "有" : "无", site[0] ? "有" : "无", mirror[0] ? "，国内镜像 " : "", mirror[0] ? "有" : ""); return -1; }
-        if (given_pans) {   // 只有 pans：渠道 = 明确没有（清掉旧渠道），网盘照存；形状坏 / 条目全坏 → 沿用旧缓存；明确空数组 = 清掉 | pans only: channels are explicitly absent, pans are stored; a bad key / all entries bad keeps the old cache; an explicitly empty array clears
-            if (!pans_ok || (j.pan_n == 0 && j.pan_bad)) { LOG("【红】社区入口：清单 pans %s，沿用缓存", !pans_ok ? "须是数组且元素为对象" : "没有可用的条目"); return -1; }
-            if (j.pan_n == 0) { drop_values(); LOG("社区入口：清单 community 没有渠道也没有网盘，入口不显示（缓存已清）"); return 0; }
-            set_values("", "", "", ""); set_pans(j.pans, j.pan_n); int wr = cache_write("", "", "", "", j.pans, j.pan_n);
-            if (j.pan_bad || j.pan_extra) LOG("【红】社区入口：清单 pans 有 %d 条不合规、%d 条超出 4 条上限，已丢弃", j.pan_bad, j.pan_extra);
-            LOG("社区入口：清单有字段（只有网盘 %d 个）%s", j.pan_n, wr ? "" : "【红】缓存写不进设置目录");
-            return 1; }
         drop_values(); LOG("社区入口：清单 community 没有渠道，入口不显示（缓存已清）"); return 0; }
-    set_values(j.qq, j.gh, j.site, j.mirror); set_pans(pans_ok ? j.pans : NULL, pans_ok ? j.pan_n : 0);
-    int wr = cache_write(j.qq, j.gh, j.site, j.mirror, pans_ok ? j.pans : NULL, pans_ok ? j.pan_n : 0);
+    set_values(j.qq, j.gh, j.site, j.mirror); int wr = cache_write(j.qq, j.gh, j.site, j.mirror);
     if (j.n_credits > 1 || j.bad_credits) LOG("【红】社区入口：清单 credits 字段格式坏（%s），忽略（RC1 只计数不渲染）", j.n_credits > 1 ? "重复" : "须是 { special: [名字…], thanks: [名字…] }，名字 ≤ 32 字节、不带转义、合计 ≤ 24");
     LOG("社区入口：清单有字段 群号=%s 链接=%s 官网=%s%s%s%s%s credits=特别 %d / 鸣谢 %d", j.qq[0] ? j.qq : "无", j.gh[0] ? j.gh : "无", j.site[0] ? j.site : "无", j.mirror[0] ? " 国内镜像=" : "", j.mirror[0] ? j.mirror : "", bad ? "（另一项格式坏，已忽略）" : "", wr ? "" : "【红】缓存写不进设置目录", j.bad_credits || j.n_credits > 1 ? 0 : j.n_special, j.bad_credits || j.n_credits > 1 ? 0 : j.n_thanks);
-    if (given_pans) {   // 网盘另有日志，不改上面那行（没有 pans 时逐字节不变） | separate log for pans; the line above stays byte-for-byte without pans
-        if (!pans_ok) LOG("【红】社区入口：清单 pans 须是数组且元素为对象，整项已忽略");
-        else if (j.pan_bad || j.pan_extra) LOG("【红】社区入口：清单 pans 网盘 %d 个，另丢 %d 条不合规、%d 条超出 4 条上限（第 5 条起丢弃）", j.pan_n, j.pan_bad, j.pan_extra);
-        else LOG("社区入口：清单 网盘=%d", j.pan_n); }
     return 1;
 }
 static void cache_read(void) {
     char p[1100]; if (!cache_path(p, sizeof p)) { LOG("社区入口：没有设置目录，不读缓存"); return; }
     FILE *f = fopen(p, "r"); if (!f) { LOG("社区入口：没有缓存，入口不显示（等清单）"); return; }
     char ln[256], qq[QQ_MAX + 1] = "", gh[GH_MAX + 1] = "", site[GH_MAX + 1] = "", mirror[GH_MAX + 1] = "";
-    char pn[DM_PAN_MAX][DM_PAN_NAME_MAX + 1] = {{0}}, pi[DM_PAN_MAX][16] = {{0}}, pu[DM_PAN_MAX][DM_PAN_URL_MAX + 1] = {{0}}, pc[DM_PAN_MAX][DM_PAN_CODE_MAX + 1] = {{0}};
-    while (fgets(ln, sizeof ln, f)) { size_t n = strcspn(ln, "\r\n"); ln[n] = 0; int used = 0;
+    while (fgets(ln, sizeof ln, f)) { size_t n = strcspn(ln, "\r\n"); ln[n] = 0;
         if (!strncmp(ln, "qq_group=", 9) && qq_ok(ln + 9)) snprintf(qq, sizeof qq, "%s", ln + 9);
         else if (!strncmp(ln, "github=", 7) && gh_ok(ln + 7)) snprintf(gh, sizeof gh, "%s", ln + 7);
         else if (!strncmp(ln, "site=", 5) && dm_site_ok(ln + 5)) snprintf(site, sizeof site, "%s", ln + 5);
-        else if (!strncmp(ln, "mirror=", 7) && gitee_ok(ln + 7)) snprintf(mirror, sizeof mirror, "%s", ln + 7);
-        else for (int i = 0; i < DM_PAN_MAX && !used; i++) { char k[16]; int L;   // 网盘行：先原样收下，读完再按 dm_pan.h 逐字段校验 | pan lines: collected raw, validated per field after the read
-            snprintf(k, sizeof k, "pan%d_name=", i); L = (int)strlen(k); if (!strncmp(ln, k, (size_t)L)) { snprintf(pn[i], sizeof pn[i], "%s", ln + L); used = 1; continue; }
-            snprintf(k, sizeof k, "pan%d_icon=", i); L = (int)strlen(k); if (!strncmp(ln, k, (size_t)L)) { snprintf(pi[i], sizeof pi[i], "%s", ln + L); used = 1; continue; }
-            snprintf(k, sizeof k, "pan%d_url=", i); L = (int)strlen(k); if (!strncmp(ln, k, (size_t)L)) { snprintf(pu[i], sizeof pu[i], "%s", ln + L); used = 1; continue; }
-            snprintf(k, sizeof k, "pan%d_code=", i); L = (int)strlen(k); if (!strncmp(ln, k, (size_t)L)) { snprintf(pc[i], sizeof pc[i], "%s", ln + L); used = 1; continue; } } }
+        else if (!strncmp(ln, "mirror=", 7) && gitee_ok(ln + 7)) snprintf(mirror, sizeof mirror, "%s", ln + 7); }
     fclose(f); set_values(qq, gh, site, mirror);
-    dm_pan_entry ps[DM_PAN_MAX]; int np = 0;
-    for (int i = 0; i < DM_PAN_MAX; i++) {   // 读回时逐字段再过 dm_pan.h：name / url 坏 = 丢这一条，icon 认不出 = generic，code 坏 = 只丢 code | re-validate: a bad name / url drops the entry, an unknown icon is generic, a bad code is dropped
-        if (!dm_pan_name_ok(pn[i])) continue;
-        dm_pan_icon ic = dm_pan_icon_of(pi[i]);
-        if (!dm_pan_url_ok(ic, pu[i])) continue;
-        memset(&ps[np], 0, sizeof ps[np]); snprintf(ps[np].name, sizeof ps[np].name, "%s", pn[i]); ps[np].icon = ic; snprintf(ps[np].url, sizeof ps[np].url, "%s", pu[i]); if (dm_pan_code_ok(pc[i])) snprintf(ps[np].code, sizeof ps[np].code, "%s", pc[i]); np++; }
-    set_pans(ps, np);
     LOG("社区入口：缓存 群号=%s 链接=%s 官网=%s%s%s", qq[0] ? qq : "无", gh[0] ? gh : "无", site[0] ? site : "无", mirror[0] ? " 国内镜像=" : "", mirror[0] ? mirror : "");
-    if (np) LOG("社区入口：缓存 网盘=%d", np);   // 没有网盘时日志与旧版逐字节相同 | byte-for-byte the old log when there are no cloud drives
 }
 void dm_community_load(void) {
     if (atomic_exchange(&g_loaded_cm, 1)) return;
@@ -417,7 +335,6 @@ int dm_community_fit(char *s, size_t cap, int pt, int maxw) {
     return 1;
 }
 static const char *co_ch_key(int ch) { return ch == DM_CH_QQ ? "dmCommunityLabelQq" : ch == DM_CH_SITE ? "dmCommunityLabelSite" : ch == DM_CH_MIRROR ? "dmCommunityLabelMirror" : "dmCommunityLabelGithub"; }
-int dm_community_pans(dm_pan_entry out[DM_PAN_MAX]) { return get_pans(out); }
 int dm_community_available(void) { return dm_community_value(dm_lang_group(), NULL, 0) != 0; }
 void dm_community_open(int from) {   // from：1 暂停菜单 / 2 主菜单 / 3 自定义页按钮 / 4 自定义页手柄 A | from: 1 pause menu / 2 main menu / 3 Custom page button / 4 Custom page controller A
     if (!dm_community_available()) { LOG("【红】社区入口：点了「加入社区讨论」（%s）但当前语言没有可显示的值", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页"); return; }
