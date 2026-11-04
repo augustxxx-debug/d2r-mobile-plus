@@ -41,12 +41,24 @@ VISIBLE_DP = 72             # 启动器通常显示的窗口（预览按它裁�
 DP_PX = 4                   # xxxhdpi
 LAYER_PX = LAYER_DP * DP_PX                     # 432
 SAFE_RADIUS_PX = SAFE_DIAMETER_DP * DP_PX / 2   # 132
-FEATHER_PX = 3 * DP_PX                          # 12：安全圆内侧的羽化带
+FEATHER_PX = 2 * DP_PX                          # 8：安全圆内侧的羽化带（2dp，比 3dp 让 PLUS 再大一点）
 CONTENT_LUMINANCE_THRESHOLD = 18                # 低于它的暗雾算背景
 VISIBLE_PX = VISIBLE_DP * DP_PX                 # 288
 
 # PLUS 字样在原图中的大致范围（任务卡给的坐标），测试用它检查映射后不被裁。
 PLUS_BOX_SOURCE = (270, 860, 760, 940)
+# 必须完整落在安全圆（羽化带以内）的要点：PLUS 四角、MOBILE 四角、纹章外环的顶 / 左 / 右。外环之外的尖刺是装饰，交给安全圆羽化淡出。
+# 真机奥丁 60aac2e3：按「最远亮像素」（外圈尖刺，半径约 520）定缩放时 PLUS 太小；改按这些要点定缩放，并把图案中心下移到让上下要点等距，约大 22%。
+# Points that must sit fully inside the safe circle (inside the feather): the PLUS and MOBILE corners and the top / left / right of the emblem ring. The spikes beyond the ring
+# are decoration and fade out at the safe circle. Thor 60aac2e3: scaling by the farthest bright pixel (the outer spikes, radius ~520) left PLUS too small; scaling by these points
+# with the artwork centre moved down so the top and bottom points are equidistant makes it about 22% larger.
+MOBILE_BOX_SOURCE = (175, 750, 860, 830)
+RING_POINTS_SOURCE = ((512, 130), (110, 470), (915, 470))
+def key_points_source():
+    pts = []
+    for x0, y0, x1, y1 in (PLUS_BOX_SOURCE, MOBILE_BOX_SOURCE):
+        pts += [(x0, y0), (x1, y0), (x0, y1), (x1, y1)]
+    return pts + list(RING_POINTS_SOURCE)
 
 PREVIEW_SHAPES = (
     ("circle", "preview_circle.png"),
@@ -61,15 +73,18 @@ class Layout:
     scale: float                # 连续缩放比（原图 px → 输出 px）
     side: int                   # 缩放后整幅图的边长（px）
     draw_scale: float           # 取整后的实际绘制比 = side / 原图边长
-    offset: int                 # 缩放图在 432 画布上的左上角
+    offset: int                 # 缩放图在 432 画布上的左上角 x
+    offset_y: int = -1          # 左上角 y（-1 = 同 offset，居中）
+
+    def oy(self) -> int:
+        return self.offset if self.offset_y < 0 else self.offset_y
 
     def map_point(self, x_src: float, y_src: float, src_size: int = 1024) -> tuple[float, float]:
         """原图像素中心（索引坐标）→ 输出画布像素中心（索引坐标）。"""
         c = (src_size - 1) / 2.0
-        scaled_center = self.offset + (self.side - 1) / 2.0
         return (
-            scaled_center + (x_src - c) * self.draw_scale,
-            scaled_center + (y_src - c) * self.draw_scale,
+            self.offset + (self.side - 1) / 2.0 + (x_src - c) * self.draw_scale,
+            self.oy() + (self.side - 1) / 2.0 + (y_src - c) * self.draw_scale,
         )
 
 
@@ -107,10 +122,21 @@ def measure_content_radius(img: Image.Image) -> float:
 
 
 def layout_for(img: Image.Image) -> Layout:
-    content_radius = measure_content_radius(img)
-    scale = (SAFE_RADIUS_PX - FEATHER_PX) / content_radius
-    side = max(1, round(img.width * scale))
-    return Layout(content_radius, scale, side, side / img.width, (LAYER_PX - side) // 2)
+    content_radius = measure_content_radius(img)   # 只记进报告（外圈尖刺），不再拿它定缩放 | reported only (the outer spikes); no longer sets the scale
+    pts = [(x * img.width / 1024.0, y * img.height / 1024.0) for x, y in key_points_source()]
+    cx = (img.width - 1) / 2.0
+    # 图案中心（原图坐标）竖直方向取让要点最远距离最小的那一行 | the artwork centre row that minimises the farthest key point
+    best_cy, best_d = None, None
+    for cy10 in range(int(img.height * 0.40 * 10), int(img.height * 0.70 * 10)):
+        cy = cy10 / 10.0
+        d = max(math.hypot(x - cx, y - cy) for x, y in pts)
+        if best_d is None or d < best_d: best_cy, best_d = cy, d
+    scale = (SAFE_RADIUS_PX - FEATHER_PX) / best_d
+    side = max(1, round(img.width * scale)); draw = side / img.width
+    canvas_c = (LAYER_PX - 1) / 2.0
+    ox = round(canvas_c - (side - 1) / 2.0)
+    oy = round(canvas_c - (best_cy - (img.height - 1) / 2.0) * draw - (side - 1) / 2.0)
+    return Layout(content_radius, scale, side, draw, ox, oy)
 
 
 def radial_alpha_mask() -> Image.Image:
@@ -133,10 +159,20 @@ def radial_alpha_mask() -> Image.Image:
     return Image.frombytes("L", (LAYER_PX, LAYER_PX), bytes(data))
 
 
+def paste_clipped(layer: Image.Image, img: Image.Image, x: int, y: int) -> None:
+    """把 img 贴到 layer 的 (x, y)，超出画布的部分裁掉（缩放图可能比 432 画布大、偏移可为负）。"""
+    sx0, sy0 = max(0, -x), max(0, -y)
+    sx1, sy1 = min(img.width, LAYER_PX - x), min(img.height, LAYER_PX - y)
+    if sx1 <= sx0 or sy1 <= sy0: return
+    part = img.crop((sx0, sy0, sx1, sy1))
+    if part.mode == "RGBA" and layer.mode == "RGBA": layer.alpha_composite(part, (x + sx0, y + sy0))
+    else: layer.paste(part, (x + sx0, y + sy0))
+
+
 def build_foreground(img: Image.Image, layout: Layout) -> Image.Image:
     scaled = img.convert("RGBA").resize((layout.side, layout.side), Image.LANCZOS)
     layer = Image.new("RGBA", (LAYER_PX, LAYER_PX), (0, 0, 0, 0))
-    layer.alpha_composite(scaled, (layout.offset, layout.offset))
+    paste_clipped(layer, scaled, layout.offset, layout.oy())
     layer.putalpha(ImageChops.multiply(layer.getchannel("A"), radial_alpha_mask()))
     return layer
 
@@ -149,7 +185,7 @@ def build_monochrome(img: Image.Image, layout: Layout, background: tuple[int, in
     lut = [max(0, min(255, round((v - low) * 255.0 / (255.0 - low)))) for v in range(256)]
     silhouette = scaled.convert("L").point(lut)
     alpha = Image.new("L", (LAYER_PX, LAYER_PX), 0)
-    alpha.paste(silhouette, (layout.offset, layout.offset))
+    paste_clipped(alpha, silhouette, layout.offset, layout.oy())
     layer = Image.new("RGBA", (LAYER_PX, LAYER_PX), (255, 255, 255, 0))
     layer.putalpha(ImageChops.multiply(alpha, radial_alpha_mask()))
     return layer
@@ -249,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"background: #{background[0]:02X}{background[1]:02X}{background[2]:02X}")
     print(f"content radius: {layout.content_radius_src:.1f}px -> scale {layout.draw_scale:.5f} "
-          f"({layout.side}px square, offset {layout.offset})")
+          f"({layout.side}px square, offset {layout.offset},{layout.oy()})")
     print(f"foreground: {foreground_path}")
     print(f"monochrome: {monochrome_path}")
     print(f"color: {color_path}")
