@@ -28,6 +28,26 @@ final class StartupDecision {
 
     enum Action { BOOT, IMPORT, GENERATE }
 
+    // 生成熔断（P2-4 返工）：只数「连续失败」——一次生成结束而内容仍不齐就 +1；生成成功（内容齐全、可启动）或玩家点「再试一次」清零；
+    // 升级到新版本（versionCode 变了）旧计数一律作废，从 0 起。上限仍是 2 次连续失败。
+    // Generation circuit breaker (P2-4 rework): only *consecutive* failures count -- one build that finishes with the content still incomplete adds 1;
+    // a successful build (content complete and bootable) or the player's "Try again" clears it; a new version code discards the old count and starts
+    // from 0. The cap is still 2 consecutive failures.
+    static final int GEN_TRIES_MAX = 2;
+
+    enum GenOutcome { READY, FAILED, RETRY }
+
+    // 一次生成结束后这一版的新计数 | the new count for this build after one generation round
+    static int genTriesNext(GenOutcome outcome, long versionCode, long countedFor, int tries) {
+        if (outcome != GenOutcome.FAILED) return 0;            // 成功 / 再试一次：清零 | success / try again: clear
+        return (countedFor == versionCode ? tries : 0) + 1;    // 别的版本的旧计数不算 | counts from another version do not carry over
+    }
+
+    // 熔断只拦本版的连续失败链；升级后自然放行 | the breaker only blocks this build's consecutive-failure chain; a new version is free again
+    static boolean generationLimitReached(long versionCode, long countedFor, int tries) {
+        return countedFor == versionCode && tries >= GEN_TRIES_MAX;
+    }
+
     static String readText(File f) {
         try { return new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8); } catch (IOException e) { return null; }
     }

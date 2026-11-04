@@ -173,26 +173,46 @@ class NoLegacyPrompt(unittest.TestCase):
         self.assertIn('showGenFailure()', early)
 
     def test_generation_has_a_per_version_circuit_breaker(self):
-        # P2-4：同一版本最多自动生成 2 次；第 3 次不再进加载页，落到失败页并给「分享诊断日志」入口（写出带结论的 gen_log）。
-        # P2-4: at most two automatic builds per version; the third does not enter the loading page but lands on the failure page with the
-        # "Share Diagnostics" entry (a gen_log with a verdict is written).
-        self.assertIn('static final int GEN_TRIES_MAX = 2;', self.code)
+        # P2-4 返工：熔断只数「连续失败」（上限 2）；生成成功且 StartupDecision 判为可启动就清零；熔断页给「再试一次」；升级版本自然重置。
+        # P2-4 rework: the breaker counts consecutive failures only (cap 2); a build that succeeds with StartupDecision-ready content clears it;
+        # the breaker page offers "Try again"; a new version resets it.
+        self.assertIn('static final int GEN_TRIES_MAX = 2;', self.decision)
+        pure = method_body(self.decision, 'static boolean generationLimitReached(long versionCode, long countedFor, int tries)')
+        self.assertIn('countedFor == versionCode', pure)
+        self.assertIn('tries >= GEN_TRIES_MAX', pure)
+        nxt = method_body(self.decision, 'static int genTriesNext(GenOutcome outcome, long versionCode, long countedFor, int tries)')
+        self.assertIn('if (outcome != GenOutcome.FAILED) return 0;', nxt)          # 成功 / 再试一次清零 | success / try again clears
+        self.assertIn('(countedFor == versionCode ? tries : 0) + 1', nxt)          # 升级版本从 1 起 | a new version starts at 1
         limit = method_body(self.code, 'private boolean generationLimitReached()')
-        self.assertIn('getLong("gen_tries_for", 0) == BuildConfig.VERSION_CODE', limit)
-        self.assertIn('getInt("gen_tries", 0) >= GEN_TRIES_MAX', limit)
-        count = method_body(self.code, 'private void countGenerationStart()')
-        self.assertIn('putLong("gen_tries_for", BuildConfig.VERSION_CODE)', count)
-        self.assertIn('putInt("gen_tries", n + 1)', count)
+        self.assertIn('StartupDecision.generationLimitReached(BuildConfig.VERSION_CODE', limit)
+        record = method_body(self.code, 'private static void recordGenerationOutcome(Context c, boolean ready)')
+        self.assertIn('StartupDecision.genTriesNext(ready ? StartupDecision.GenOutcome.READY : StartupDecision.GenOutcome.FAILED', record)
+        self.assertIn('putInt("gen_tries", n)', record)
+        # 旧行为（一开跑就加一、整文件没有清零路径）不许回来 | the old behaviour (count on start, never cleared) must not return
+        self.assertNotIn('countGenerationStart', self.code)
+        self.assertNotIn('putInt("gen_tries", n + 1)', self.code)
         gen = method_body(self.code, 'private void generate(File base, File runtime)')
-        # 先判熔断再计数；Activity 重建接回正在跑的生成不计次 | test the limit before counting; reattaching to a running build does not count
-        self.assertLess(gen.index('generationLimitReached()'), gen.index('countGenerationStart()'))
-        self.assertIn('failGenerationLimit(base)', gen)
         self.assertIn('!generating && generationLimitReached()', gen)
+        self.assertIn('failGenerationLimit(base)', gen)
+        # 一轮真正跑完才记账：内容齐全（StartupDecision 可启动）才清零，失败 / 仍不齐计一次连续失败
+        # recorded when a round really finishes: ready (StartupDecision says bootable) clears, a failure / still-incomplete adds one
+        self.assertIn('recordGenerationOutcome(app, failure == null && StartupDecision.contentReady(runtime, BuildConfig.DM_PRODUCT))', gen)
+        self.assertLess(gen.index('recordGenerationOutcome(app'), gen.rindex('generating = false'))
         breaker = method_body(self.code, 'private void failGenerationLimit(File base)')
         self.assertIn('R.string.dmAndroidGenLimit', breaker)
         self.assertIn('gen_log.txt', breaker)
         self.assertIn('genLogText = text', breaker)
+        self.assertIn('genRetryOffered = true', breaker)
         self.assertIn('showGenFailure()', breaker)
+        # 「再试一次」：清零计数并重新生成 | "Try again": clear the count and generate again
+        retry = method_body(self.code, 'private void retryGeneration()')
+        self.assertIn('StartupDecision.GenOutcome.RETRY', retry)
+        self.assertIn('generate(base, new File(getFilesDir(), "dm"))', retry)
+        self.assertIn('genFailure = null', retry)
+        self.assertIn('R.string.dmAndroidGenRetry', self.code)
+        # 真正启动成功也清零（玩家用导入修好的路径）| a real boot also clears (the path where the player fixed it by importing)
+        start = method_body(self.code, 'private void startHost()')
+        self.assertIn('recordGenerationOutcome(this, true)', start)
 
     def test_generation_failure_does_not_loop(self):
         # 生成失败只停在文字失败页：轮询看到 genFailure 就 showGenFailure 后 return，不再 postDelayed；失败路径不重开进程、不再次生成。

@@ -984,6 +984,9 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
 #if defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmAndroidGenLimit", "这个版本已自动生成 %d 次，内容仍未准备好。请点下面的「分享诊断日志」，发到 QQ 群或 GitHub。", "This build has tried to prepare the game content %d times, but it is still not ready. Tap \"Share Diagnostics\" below and send the log to the QQ group or GitHub.", "Esta versión ya ha intentado preparar el contenido del juego %d veces y sigue sin estar listo. Toca «Compartir diagnóstico» y envía el registro al grupo de QQ o a GitHub.", "Esta versión ya ha intentado preparar el contenido del juego %d veces y sigue sin estar listo. Toca «Compartir diagnóstico» y envía el registro al grupo de QQ o a GitHub.", "Эта сборка уже %d раз пыталась подготовить содержимое игры, но оно так и не готово. Нажмите «Поделиться диагностикой» ниже и отправьте журнал в группу QQ или на GitHub.", "이 빌드는 게임 콘텐츠를 %d번 준비했지만 아직 준비되지 않았습니다. 아래의 \"진단 로그 공유\"를 눌러 QQ 그룹이나 GitHub에 로그를 보내 주세요." },
 #endif
+#if defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmAndroidGenRetry", "再试一次", "Try again", "Reintentar", "Reintentar", "Повторить", "다시 시도" },
+#endif
     { "dmLoadStageDownload", "正在下载游戏内容", "Downloading game content", "Descargando el contenido del juego", "Descargando el contenido del juego", "Загрузка игрового содержимого", "게임 콘텐츠 다운로드 중" },
     { "dmLoadStageImport", "正在导入游戏内容", "Importing game content", "Importando el contenido del juego", "Importando el contenido del juego", "Импорт игрового содержимого", "게임 콘텐츠 가져오는 중" },
     { "dmLoadStagePatch", "正在处理游戏文件", "Processing game files", "Procesando los archivos del juego", "Procesando los archivos del juego", "Обработка файлов игры", "게임 파일 처리 중" },
