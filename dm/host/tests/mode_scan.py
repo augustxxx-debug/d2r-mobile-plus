@@ -47,8 +47,15 @@ else:
 # 存档管理面板（dm_savemgr.c 2 处）：同社区框——每帧按当前模式摆入口和焦点框，弹窗开着时手柄键由闸门截给面板；来回切模式只换焦点框显隐，没有要清理的状态，不用进 / 出钩子 | save-management panel (2 places): as the community box -- entries and the focus frame follow the current mode each frame; a switch only shows or hides the focus frame, nothing to clean up, no enter / leave hooks
 # 上传诊断报告提示框（dm_diagup.c 1 处）：同社区入口提示框——每帧按名字现找控件、不缓存地址；手柄模式接管 A 主操作 / X 导出 / B 关闭、副文换成按键说明，状态机本身与模式无关 | diagnostic upload box (dm_diagup.c, 1): as the community box - widgets looked up by name every frame, no cached address; controller mode takes over A / X / B and swaps the secondary line for the key legend; the state machine itself is mode-independent
 # 统计告知框（dm_telebox.c 2 处）：同上传诊断报告提示框，每帧按名字现找控件；手柄模式接管 A / B，副文下面多一行按键说明 | statistics notice (dm_telebox.c, 2): as the diagnostic upload box, widgets found by name every frame; controller mode takes over A / B and adds the key legend line
-PADMODE = {'host/dm_bag.c': 1, 'host/dm_savemgr.c': 2, 'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_diagup.c': 1, 'host/dm_telebox.c': 2, 'host/dm_telemetry.c': 1, 'host/dm_cursor.c': 9, 'host/dm_custom.c': 3, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
-AUTOKEY = {'host/dm_cursor.c': 39, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
+PADMODE = {'host/dm_bag.c': 1, 'host/dm_savemgr.c': 2, 'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_diagup.c': 1, 'host/dm_telebox.c': 2, 'host/dm_telemetry.c': 1, 'host/dm_cursor.c': 9, 'host/dm_custom.c': 4, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
+# 「进入恐惧区域」入口（dm_padmode.c 1 处，方案 C）：手柄 A 在我们自己的入口钮上时由宿主发原版设置页的切页消息（dm_ui_send）。只在手柄模式发—
+# 这一句在 diff_pump 的 on_row 分支里，而 on_row 在触屏模式 / 弹窗开着时被强制清零；触屏点这颗钮由游戏自己按 onClickMessage 发同一条消息，不走宿主。
+# 控件每帧按名字现找，不缓存地址，切换重建后新控件同样能发，不用进 / 出钩子
+# 「Terror Zones」 entry (dm_padmode.c, 1, plan C): with controller A on our own entry button the host sends the original settings page's switch-tab message (dm_ui_send).
+# It only fires in controller mode -- the statement sits in diff_pump's on_row branch, and on_row is forced to 0 in touch mode / while a modal is up; a touch tap on that
+# button is sent by the game itself through onClickMessage, not by the host. Widgets are looked up by name every frame and no address is cached, so after a switch
+# rebuild the new widgets can send it too, no enter / leave hook needed
+AUTOKEY = {'host/dm_cursor.c': 39, 'host/dm_padmode.c': 1, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
 def count(pat, skip_defs):
     out = {}
     for f in sorted(glob.glob(os.path.join(root, 'host', '*.c')) + glob.glob(os.path.join(root, 'ios', 'Sources', '*.m')) + glob.glob(os.path.join(root, 'ios', 'Sources', '*.c'))):

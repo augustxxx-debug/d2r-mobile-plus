@@ -33,6 +33,7 @@
 // The read-only data segment is writable by the host (loader.c only seals the code region and the patch region); the original value of each string is
 // verified one by one, and nothing is written on a mismatch (wrong game version).
 #include "dm_stick_nav.h"
+#include "dm_padmode_pure.h"
 #include "dm_custom_scroll.h"
 #include "hle.h"
 #include "dm_hud.h"
@@ -244,6 +245,11 @@ void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
       atomic_store(&g_nav_keys, 0); }
     dm_stick_nav_withhold(dm_stick_nav_take(&eat, d, m & (V | H)), lx, ly);   // 只扣声明了的方向（审计 P1-1）与推着期间页收过的方向（P1-1 补） | withhold the declared directions (audit P1-1) and those the page took while held (follow-up)
 }
+// 右摇杆上下（方案 C 游戏页跳组，主会话 11-01：局内 LB / RB 翻外层页签，不抢）：页声明 g_rs_frame 期间扣下右摇杆竖直量（探针：原版选项页对它无反应），推过一半算一次，回到四分之一内复位
+// Right stick up / down (plan C group jumps on the Gameplay page; LB / RB flip the outer tabs in a run, so they stay): while a page declares it, the vertical axis is withheld (probe: the original options pages ignore it), a push past half counts once and resets inside a quarter
+static _Atomic uint64_t g_rs_frame; static _Atomic int g_rs_ev;
+void dm_padmode_page_rstick(int32_t *ry) { static int held; if (!ry || !g_cur || dm_guest_frame() - atomic_load(&g_rs_frame) > 3) { held = 0; return; }
+    int v = *ry; *ry = 0; if (!held && (v > 16383 || v < -16383)) { held = 1; atomic_store(&g_rs_ev, v > 0 ? -1 : 1); } else if (held && v < 8192 && v > -8192) held = 0; }
 uint64_t dm_padmode_page_filter(uint64_t bt) {
     static uint64_t prev, eat; uint64_t vb = bt | atomic_load(&g_pg_stick), down = vb & ~prev; prev = vb;   // 摇杆折出的方向位只用来算页的按下沿 / 按着，不交给游戏 | stick-derived bits only feed the page's edges / held state, never the game
     uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
@@ -504,6 +510,19 @@ static void diff_set_text(uint8_t *b, uint64_t w, const char *t) {   // 只写�
     size_t L = strlen(t); if (rd8(w + 0x90) == L && !memcmp((const void *)(uintptr_t)rd8(w + 0x88), t, L)) return;
     ((void (*)(uint64_t, const char *, uint64_t))(b + 0x136e5c))(w + 0x88, t, L); ((void (*)(uint64_t))(b + 0xadc434))(w);
 }
+// 触屏底栏难度格的说明（B034 / B035，用户 2026-10-30）：用原版提示框，不挡操作；选择条展开时一句副文，选中一档时正文 + 副文。秘境恢复档位不走这里
+// The touch difficulty cell's explanation (B034 / B035): shown in the original notice box, which does not block; one subtext line when the selector opens, body + subtext when a level is picked. Rift level restores do not come through here
+static _Atomic int g_diff_tip = -1;
+void dm_diff_tip(int n) { atomic_store(&g_diff_tip, n); }
+static void diff_tip_pump(uint8_t *b) {
+    // 测试开关 DM_TEST_DIFF_TIP=<帧>[:<档>][,<帧>[:<档>]…]（最多 4 个，档 0 = 选择条刚展开）；DM_TEST_NATIVE_NOTICE=<帧>[,<帧>…]：到帧直接调原版通知（不经我们的泵、不记两级提示），扮演原版自己的系统提示
+    // test switches DM_TEST_DIFF_TIP=<frame>[:<level>][,...] (up to 4; level 0 = selector just opened); DM_TEST_NATIVE_NOTICE=<frame>[,...]: at that frame call the original notice directly (not through our pump, no two-level record), standing in for the game's own system notices
+    { static int n = -1, k; static long at[4], v[4]; if (n < 0) { n = 0; const char *e = getenv("DM_TEST_DIFF_TIP"); for (const char *q = e; q && *q && n < 4; ) { char *c; at[n] = strtol(q, &c, 10); v[n] = *c == ':' ? strtol(c + 1, &c, 10) : 3; n++; q = strchr(q, ','); if (q) q++; } }
+      if (k < n && (long)dm_guest_frame() >= at[k]) { LOG("测试 DM_TEST_DIFF_TIP：帧 %llu 发难度说明 %ld", (unsigned long long)dm_guest_frame(), v[k]); dm_diff_tip((int)v[k]); k++; } }
+    { static int n = -1, k; static long at[4]; if (n < 0) { n = 0; const char *e = getenv("DM_TEST_NATIVE_NOTICE"); for (const char *q = e; q && *q && n < 4; ) { at[n++] = strtol(q, NULL, 10); q = strchr(q, ','); if (q) q++; } }
+      if (k < n && (long)dm_guest_frame() >= at[k]) { void dm_game_notice_native_test(uint8_t *, const char *); k++; LOG("测试 DM_TEST_NATIVE_NOTICE：帧 %llu 直接调原版通知", (unsigned long long)dm_guest_frame()); dm_game_notice_native_test(b, "TEST native system notice: no grey second line here"); } }
+    int n = atomic_exchange(&g_diff_tip, -1); if (n < 0) return; void dm_game_notice_ui_pair(uint8_t *, const char *, const char *);
+    dm_diff_tip_send(b, n, dm_str(b, "dmDiffTipBody"), dm_str(b, "dmDiffTipSub"), dm_game_notice_ui_pair); }   // 正文 36 号主色、副文 28 号浅灰两级（B035，dm_padmode_pure.h） | 36 pt primary body plus 28 pt light-grey subtext (B035, dm_padmode_pure.h)
 static void diff_pump(uint8_t *b, uint64_t frame) {
     uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), gp = root ? dm_ui_top(root, "GameplayOptionsPanel") : 0;
     if (!gp || !*(uint8_t *)(uintptr_t)(gp + 0x50)) { g_diff_w.w = 0; g_diff_last = -1; return; }
@@ -533,20 +552,52 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
     // A = +1 level (back to 1 after 8), taking effect at once like the other rows; Down = the focus goes back to the row it came from; Up does nothing.
     // The focus moved elsewhere (page rebuilt, a touch on another row) counts as leaving the row. If the table was scrolled down, the original scroll area is made to scroll back to the
     // top by itself (as on the Custom page: wheel notches, reading only, never writing original widgets)
+    // 进页时原版把缺省焦点放到表格第一行，滚动区跟着滚过了 Plus 行：触屏这边没有焦点链，让原版滚动区滚回顶（发滚轮，只读不写原版控件）
+    // On entry the game's default focus on the table's first row scrolls the view past the Plus rows: touch has no focus chain, so wheel the original scroll view back to the top (reading only, never writing original widgets)
+    if (!pad && g_diff_home) { uint64_t rows = pm_find(gp, "TouchDiffRows", 0), view = rows ? rd8(rows + 0x30) : 0, sv = view ? rd8(view + 0x30) : 0; static uint64_t at;
+        if (frame > g_diff_home) g_diff_home = 0; else if (sv && frame - at >= 2 && *(int32_t *)(uintptr_t)(view + 0x74) < 0) { void dm_ui_wheel_on(uint64_t, int); at = frame; dm_ui_wheel_on(sv, 1); } }
+    // 方案 C：难度行之后还有 Plus 勾选行（dm_custom.c dm_custom_game_stops）：同一套焦点交接，上下在这些停靠点之间走，末行再下才回表格；A 翻勾选
+    // Plan C: Plus checkbox rows follow the difficulty row (dm_custom_game_stops): same focus hand-over, Up / Down walk these stops, Down on the last one returns to the table; A flips the checkbox
     { static int on_row, last_dir, last_off = -1; static uint64_t wheel_at; static char back_nm[64]; uint64_t fm = rd8(root + 0xd0), F = fm ? rd8(fm + 0x190) : 0;
+      int dm_custom_game_stops(unsigned long long, unsigned long long *, int); void dm_custom_game_press(unsigned long long); void dm_ui_send(const char *, const char *, const char *);   // dm_ui_send：dm_cursor.c，往界面根发一条原版界面消息（只许游戏主线程调） | dm_ui_send: dm_cursor.c, sends one original UI message to the UI root (game main thread only)
+      // 停靠点：难度滑块 → 「进入恐惧区域」入口钮（方案 C：原版设置页从页签拿掉后，那个开关只剩这一条路进去）→ Plus 行 / 折叠钮 | stops: difficulty slider -> the 「Terror Zones」 entry button (plan C: with the original settings page gone from the tabs this is its only way in) -> Plus rows / fold buttons
+      unsigned long long st[33]; st[0] = w; st[1] = pm_find(gp, "TouchDesecratedOpen", 0); int ns = 2 + dm_custom_game_stops(gp, st + 2, 31), si = -1; for (int k = 0; k < ns; k++) if (st[k] && st[k] == F) si = k;
+      int rs = 0; if (pad && fm && !dm_ui_modal_active(root)) { atomic_store(&g_rs_frame, frame); rs = atomic_exchange(&g_rs_ev, 0); void dm_padmode_legend(int, const char *); dm_padmode_legend(4, dm_str(b, "dmPadLegGroups")); }
+      // 跳组：Plus 这边跳到相邻的分组折叠钮；原版表格（探针 2）里跳到相邻小组的第一行 | group jump: on the Plus side to the adjacent fold button; inside the original table to the first row of the adjacent subgroup
+      if (rs) { int to = -1; for (int k = si + rs; si >= 0 && k > 0 && k < ns && to < 0; k += rs) { const char *nm = st[k] ? (const char *)rd8(st[k] + 8) : NULL; if (nm && !strncmp(nm, "TouchFold", 9)) to = k; }
+          if (si >= 0 && rs < 0 && to < 0) to = 0;
+          if (to >= 0) { *(uint64_t *)(uintptr_t)(fm + 0x190) = st[to]; F = st[to]; si = to; on_row = 1; last_dir = 0; last_off = -1; LOG("选项页：右摇杆跳组 → %s", (const char *)rd8(st[to] + 8)); }
+          else if (pm_find(gp, "TouchTableHolder", 0) && *(uint8_t *)(uintptr_t)(pm_find(gp, "TouchTableHolder", 0) + 0x50)) {   // 原版表格那组收起时没有可跳的 | nothing to jump to while the original table's group is collapsed
+              uint64_t tb = pm_find(gp, "OptionsTable", 0), ch = tb ? rd8(tb + 0x58) : 0, n = tb ? rd8(tb + 0x60) : 0, heads[12]; int nh = 0, cur = -1;
+              for (uint64_t i = 0; ch && i + 1 < n && i < 64 && nh < 12; i++) { uint64_t r = rd8(ch + 8 * i), kids = r ? rd8(r + 0x58) : 0; if (!r || !*(uint8_t *)(uintptr_t)(r + 0x50) || !kids) continue;
+                  uint64_t first = rd8(kids); if (first && pm_find(first, "Divider", 0)) { uint64_t nx = 0; for (uint64_t j = i + 1; j < n && j < 64 && !nx; j++) { uint64_t q = rd8(ch + 8 * j); if (q && *(uint8_t *)(uintptr_t)(q + 0x50) && rd8(q + 0x60) > 1) nx = rd8(rd8(q + 0x58) + 8); } if (nx) heads[nh++] = nx; } }
+              for (int k = 0; k < nh && F; k++) { uint64_t row = rd8(heads[k] + 0x30); if (row && pm_find(tb, (const char *)rd8(F + 8), 0) == F) { int32_t a = *(int32_t *)(uintptr_t)(row + 0x74), c = *(int32_t *)(uintptr_t)(rd8(F + 0x30) + 0x74); if (c >= a) cur = k; } }
+              int nxt = cur + rs; if (si >= 0 && rs > 0) nxt = 0;
+              if (nxt >= 0 && nxt < nh) { *(uint64_t *)(uintptr_t)(fm + 0x190) = heads[nxt]; F = heads[nxt]; si = -1; on_row = 0; LOG("选项页：右摇杆跳到原版小组第 %d 组", nxt + 1); }
+              else if (si < 0 && rs < 0 && ns > 1) { for (int k = ns - 1; k > 0; k--) { const char *nm = (const char *)rd8(st[k] + 8); if (nm && !strncmp(nm, "TouchFold", 9)) { *(uint64_t *)(uintptr_t)(fm + 0x190) = st[k]; F = st[k]; si = k; on_row = 1; last_dir = 0; last_off = -1; break; } } } } }
       if (!pad || !fm || dm_ui_modal_active(root)) on_row = 0;
-      else if (on_row && F != w) { on_row = 0; LOG("游戏难度：手柄焦点离开难度行（被改到 %s）", F ? (const char *)rd8(F + 8) : "-"); }
+      else if (on_row && si < 0) { on_row = 0; LOG("游戏难度：手柄焦点离开难度行（被改到 %s）", F ? (const char *)rd8(F + 8) : "-"); }
       else if (on_row) {
           uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A);
-          if (ev & DM_BTN_DOWN) { uint64_t tb = pm_find(gp, "OptionsTable", 0), bw = tb && back_nm[0] ? pm_find(tb, back_nm, 0) : 0;   // 按名字在这页的表格里找回那一行（页重建过指针会变，B064） | find that row again by name in this page's table (pointers change when the page is rebuilt, B064)
-              if (bw) *(uint64_t *)(uintptr_t)(fm + 0x190) = bw;
-              on_row = 0; LOG("游戏难度：手柄焦点下移回 %s", bw ? back_nm : "-（表格里找不到）"); }
-          else if (shown && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A))) {
+          uint64_t tb = 0, hd = 0; if (ev & DM_BTN_DOWN) { tb = pm_find(gp, "OptionsTable", 0); hd = pm_find(gp, "TouchTableHolder", 0); }   // 按名字在这页的表格里找回那一行（页重建过指针会变，B064） | find that row again by name in this page's table (pointers change when the page is rebuilt, B064)
+          int down = (ev & DM_BTN_DOWN) ? dm_pm_down_target(si, ns, si + 1 < ns && st[si + 1], hd && *(uint8_t *)(uintptr_t)(hd + 0x50), tb && back_nm[0]) : -1;
+          if (down == DM_PM_DOWN_NEXT) { *(uint64_t *)(uintptr_t)(fm + 0x190) = st[++si]; last_dir = 0; last_off = -1; }
+          else if ((ev & DM_BTN_UP) && si > 0 && st[si - 1] && (si > 1 || shown)) {   // 局外不上到难度行（B066） | outside a run, not up onto the difficulty row (B066)
+            *(uint64_t *)(uintptr_t)(fm + 0x190) = st[--si]; last_dir = 0; last_off = -1; }
+          else if (si == 1 && (ev & DM_BTN_A)) { dm_ui_send("SettingsPanelMessage", "CheckChanges", "OnlineGameOptionsPanel"); LOG("恐惧区域入口：手柄 A → 打开原版「游戏设定」页（开关自己读写设置）"); }
+          else if (si > 1 && (ev & DM_BTN_A)) dm_custom_game_press(st[si]);
+          else if (down >= 0) { uint64_t bw = 0;
+              // 原版表格那一组收起时它是藏着的：焦点不往里走，留在末个停靠点（dm_pm_down_target）| while the original table's group is collapsed it is hidden: the focus stays on the last stop (dm_pm_down_target)
+              if (down == DM_PM_DOWN_TABLE) bw = pm_find(tb, back_nm, 0);
+              if (bw) { *(uint64_t *)(uintptr_t)(fm + 0x190) = bw; on_row = 0; LOG("游戏难度：手柄焦点下移回 %s", back_nm); }
+              else LOG("游戏难度：原版表格组收起，焦点留在 %s（不往藏起来的行里走）", st[si] ? (const char *)rd8(st[si] + 8) : "-"); }
+          else if (si == 0 && shown && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A))) {
               int n = (ev & DM_BTN_A) ? shown % 8 + 1 : shown + ((ev & DM_BTN_RIGHT) ? 1 : -1);
               if (n >= 1 && n <= 8 && n != shown) { dm_hud_request_players(n); g_diff_pend = n; LOG("游戏难度：选项页手柄 %d → %d 档（下一拍生效）", shown, n); shown = n; setv = dm_hud_slider_value(0, 7, n); } }
           uint64_t rows = pm_find(gp, "TouchDiffRows", 0), view = rows ? rd8(rows + 0x30) : 0, sv = view ? rd8(view + 0x30) : 0;   // +0x30 = 父控件 | +0x30 = parent widget
-          if (on_row && sv && frame - wheel_at >= 4) { int off = -*(int32_t *)(uintptr_t)(view + 0x74), vh = *(int32_t *)(uintptr_t)(sv + 0x7c); if (vh <= 0) vh = 1260;
-              int dir = dm_custom_scroll_step(0, 460, off, vh, last_dir, last_off); if (dir) { void dm_ui_wheel_on(uint64_t, int); wheel_at = frame; last_dir = dir; last_off = off; dm_ui_wheel_on(sv, dir); } } }
+          if (on_row && sv && frame - wheel_at >= 2) { int off = -*(int32_t *)(uintptr_t)(view + 0x74), vh = *(int32_t *)(uintptr_t)(sv + 0x7c); if (vh <= 0) vh = 1260;
+              int top = 0, bot = 460; if (si > 0) { const char *snm = (const char *)rd8(st[si] + 8); top = snm && (!strncmp(snm, "TouchFold", 9) || !strncmp(snm, "TouchDesecratedOpen", 19)) ? -30 : -55; for (uint64_t a = st[si]; a && a != view; a = rd8(a + 0x30)) top += *(int32_t *)(uintptr_t)(a + 0x74); bot = top + 180; }   // 行上下沿（内容坐标）：勾选框在行内 55，入口钮在行内 30、逐级加父容器的 y | row edges (content coordinates): the checkbox sits 55 into the row, the entry button 30, adding each parent's y
+              int dir = dm_custom_scroll_step(top, bot, off, vh, last_dir, last_off); if (dir) { void dm_ui_wheel_on(uint64_t, int); wheel_at = frame; last_dir = dir; last_off = off; dm_ui_wheel_on(sv, dir); } } }
       else { uint64_t tb = pm_find(gp, "OptionsTable", 0), ch = tb ? rd8(tb + 0x58) : 0, n = tb ? rd8(tb + 0x60) : 0, first = 0;
           for (uint64_t i = 1; ch && i < n && i < 64 && !first; i++) { uint64_t r = rd8(ch + 8 * i); if (r && *(uint8_t *)(uintptr_t)(r + 0x50)) first = r; }   // 第 0 行是分节标题「游戏选项」 | row 0 is the "Gameplay Options" section header
           const char *fn = F ? (const char *)rd8(F + 8) : NULL; int in_first = first && fn && pm_find(first, fn, 0) == F;
@@ -561,15 +612,15 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
           // 焦点已经在难度行的滑块上、行处理却没开（触屏模式下关掉了，切回手柄后焦点指针还留在滑块上；B064 Mac 实测）：接回来，否则金框在难度行、左右 / A / 下却交给了原版
           // the focus is already on the difficulty slider but the row handler is off (it was switched off in touch mode and the pointer stayed on the slider after switching back; B064,
           // measured on the Mac host): take it back over, otherwise the gold frame sits on the row while Left / Right / A / Down go to the original game
-          if (F == w) { on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; g_diff_home = 0; LOG("游戏难度：焦点已在难度行，接回手柄行处理（回到 %s）", back_nm[0] ? back_nm : "-"); }
+          if (si >= 0) { on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; g_diff_home = 0; LOG("游戏难度：焦点已在难度行，接回手柄行处理（回到 %s）", back_nm[0] ? back_nm : "-"); }
           int in_page = fn && pm_find(gp, fn, 0) == F;
           if (g_diff_home && (frame > g_diff_home || !shown || (in_page && !in_first))) g_diff_home = 0;
           if (g_diff_home && in_first) { g_diff_home = 0; snprintf(back_nm, sizeof back_nm, "%s", fn); *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：进页缺省焦点放到难度行（原版给的是 %s）", fn); }
-          // 局外这一行不可调（主菜单进的选项页），首行按上也不进它，同上面缺省焦点（B066：427328d 只挡了缺省焦点那条路）；不声明上键，原版照旧（第一行按上不动）
-          // outside a run (options opened from the main menu) the row cannot be changed, so Up on the first row does not enter it either, like the default focus above
-          // (B066: 427328d only blocked the default-focus path); Up is not declared, so the original keeps it (Up on the first row does nothing)
-          else if (shown && in_first && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
-              snprintf(back_nm, sizeof back_nm, "%s", fn); *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：手柄焦点上移到难度行（从 %s）", fn); } } }
+          // 方案 C：首行按上进 Plus 停靠点的末个（局外 Plus 行照样可调）；局外难度行不可调，再往上也不进它（B066：427328d 只挡了缺省焦点那条路，见下面停靠点上移）
+          // plan C: Up on the first row enters the last Plus stop (Plus rows can be changed outside a run too); outside a run the difficulty row cannot be changed, so walking further up
+          // does not enter it either (B066: 427328d only blocked the default-focus path; see the stop walk above). With no stop to go to, Up is not declared and the original keeps it
+          else if (in_first && st[ns - 1] && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
+              snprintf(back_nm, sizeof back_nm, "%s", fn); *(uint64_t *)(uintptr_t)(fm + 0x190) = st[ns - 1]; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：手柄焦点上移到难度行（从 %s）", fn); } } }
     if (setv >= 0 && setv != v) ((void (*)(uint64_t, int, int, int))(b + 0xad7028))(w, setv, 0, 0);
     g_diff_last = *(int32_t *)(uintptr_t)(w + 0x5c4);
     // 滑块自己不显示数字：行名写「游戏难度：N」；说明行局外写「进入游戏后可调整」，局内两种模式同一句（RC1.1 B015 起手柄也走焦点链，不再有「按 Y」那句）
@@ -591,7 +642,7 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
       if (at > 0 && frame >= (uint64_t)at) { at = 0; dm_padmode_lang_reset(); } }
     { uint64_t tc = atomic_exchange(&g_test_cur, 0); if (tc >> 63) { int dm_ui_hover_now(int, int); int W = *(int32_t *)(b + 0x211da38), H = *(int32_t *)(b + 0x211da3c), x = (int)(((tc >> 16) & 0xffff) / 65535.0 * W), y = (int)((tc & 0xffff) / 65535.0 * H);
         int ok = dm_ui_hover_now(x, y); LOG("测试 padcur：手柄光标放到 (%d,%d) → %d", x, y, ok); } }
-    diff_pump(b, frame);
+    diff_tip_pump(b); diff_pump(b, frame);
     legend_pump(b, frame);
     if (g_have) hint_pump();
     void dm_oe_ui_opmode(int m); int dm_opmode(void);

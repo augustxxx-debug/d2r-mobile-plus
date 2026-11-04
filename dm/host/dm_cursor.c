@@ -2,6 +2,7 @@
 #include "dm_cursor.h"
 #include "dm_widget.h"
 #include "dm_notice_geometry.h"
+#include "dm_notice_pair.h"
 #include "dm_custom.h"
 #include "dm.h"
 #include "dm_uiscreen.h"
@@ -2231,8 +2232,9 @@ static void note_dock_restore(uint64_t root, const char *why) {   // 只许游�
 // c6d8f0(text, style[0xa4], maxPixelSize, float scale). Reuse the same
 // font/style and explicit floating-point argument used by native rendering;
 // fitToText with wrapping changes height, but keeps the maximum rectangle width.
+static unsigned g_notice_width_calls;   // 量了几次字宽（单测核：不用两级提示时每帧只量 Prompt 一个） | how many text widths were asked for (unit test: without a two-level tip only Prompt is measured per frame)
 static int ui_notice_text_width(module_t *m,uint64_t prompt,int limit) {
-    int fallback=*(int32_t *)(prompt+0x78);
+    int fallback=*(int32_t *)(prompt+0x78); g_notice_width_calls++;
     if (!dm_widget_is(m->base,prompt,DM_VT_TEXT) || limit<600 || limit>4000) return fallback;
     uint64_t length=*(uint64_t *)(prompt+0x90); const char *text=*(const char **)(prompt+0x88);
     if (!text || !length || length>4096 || *(int32_t *)(prompt+0xb0)!=14) return fallback;
@@ -2243,31 +2245,79 @@ static int ui_notice_text_width(module_t *m,uint64_t prompt,int limit) {
     uint64_t hash=14695981039346656037ull;
     for (uint64_t i=0;i<length;i++) { hash^=(unsigned char)text[i];hash*=1099511628211ull; }
     for (unsigned i=0;i<sizeof style;i++) { hash^=style[i];hash*=1099511628211ull; }
-    static uint64_t last_hash,last_prompt; static float last_scale; static int last_limit,last_width;
-    if (last_prompt==prompt && last_hash==hash && last_scale==scale && last_limit==limit) return last_width;
+    // 三格缓存，按「字 + 样式」的哈希、比例、上限认（字宽只由这几样决定，不存控件指针）：两级提示在屏上时正文 / 副文 / Prompt 各占一格，
+    // 不会互相挤掉、每帧重复调原生度量（审计 r2 P1-4）
+    // three-entry cache keyed by the hash of text + style, scale and limit (the width depends on nothing else; no widget pointer is kept): while a two-level tip is up
+    // body / subtext / Prompt each keep an entry instead of evicting each other and re-running native measurement every frame (audit r2 P1-4)
+    static struct { uint64_t hash; float scale; int limit,width; } cache[3]; static unsigned victim;
+    for (unsigned k=0;k<3;k++) if (cache[k].hash==hash && cache[k].scale==scale && cache[k].limit==limit && cache[k].width) return cache[k].width;
     uint64_t max=(uint32_t)((limit-128)*scale) | ((uint64_t)(uint32_t)(776*scale)<<32);
     uint64_t size=((uint64_t (*)(const char *,const void *,const uint64_t *,float))(m->base+0xc6d8f0))(text,style,&max,scale);
     float units=(uint32_t)size/scale;
     int width=units>0 && units<9998 ? (int)ceilf(units)+2 : fallback;
     if (getenv("DM_TEST_NOTICE_GEOM")) LOG("通知文字度量：%llu 字节，原生像素 %u x %u，比例 %.4f → 布局宽 %d（上限 %d）",(unsigned long long)length,(unsigned)size,(unsigned)(size>>32),scale,width,limit);
-    last_hash=hash;last_prompt=prompt;last_scale=scale;last_limit=limit;last_width=width;
+    unsigned slot=victim; victim=(victim+1)%3;
+    cache[slot].hash=hash;cache[slot].scale=scale;cache[slot].limit=limit;cache[slot].width=width;
     return width;
 }
-static void ui_notice_prompt_center(uint64_t note,uint64_t prompt) {
+// B035 两级提示（dm_notice_pair.h）：原版 Prompt 此刻显示的字正是某条两级提示交给原版的那串时，正文 / 副文由布局里我们的两个控件画——
+// TouchNoticeBody（$StyleNotification 改 36 号、$ReducedSpacing，主色）与 TouchNoticeSub（28 号、$FontColorLightGray、$ReducedSpacing），Prompt 让到屏外。
+// 其余任何通知（原版系统提示、别的 Plus 通知）：两个控件的字清空、挪到屏外，Prompt 的样式、位置、框高都按原版，也不多做字形度量。
+// 写字只许我们自己的控件（名字 TouchNotice 开头、文字框类）；单测把它换成记录函数（t_notice_widgets）
+// B035 two-level tip (dm_notice_pair.h): while the native Prompt shows exactly the text a two-level tip handed to the original notice, the body / subtext are drawn
+// by our two layout widgets -- TouchNoticeBody ($StyleNotification at 36 pt, $ReducedSpacing, primary colour) and TouchNoticeSub (28 pt, $FontColorLightGray,
+// $ReducedSpacing) -- and Prompt moves off screen. Any other notice (original system notices, other Plus notices): both widgets are cleared and parked, Prompt keeps
+// the original style, position and frame height, and no extra glyph measurement runs. Text is only written to our own widgets (name starting TouchNotice, text box
+// class); the unit test swaps the writer for a recorder (t_notice_widgets)
+const dm_notice_pair *dm_game_notice_pair_for(const char *text, size_t len);   // dm_bossrush.c
+static void ui_notice_set_text_native(module_t *m,uint64_t w,const char *t,size_t n) {
+    ((void *(*)(uint64_t,const char *,uint64_t))(m->base+0x136e5c))(w+0x88,t,n); ((void (*)(uint64_t))(m->base+0xadc434))(w);   // 改字后让原版重排（同 dm_update.c set_text） | assign then let the original re-lay out (as set_text in dm_update.c)
+}
+static void (*ui_notice_set_text)(module_t *,uint64_t,const char *,size_t)=ui_notice_set_text_native;
+static int ui_notice_own_text(module_t *m,uint64_t w,const char *want) {   // 字和要的不一样才写；返回 1 = 是我们的文字控件 | writes only when the text differs; returns 1 = it is our text widget
+    const char *nm=w?*(const char **)(w+8):NULL;
+    if (!nm || strncmp(nm,"TouchNotice",11) || !dm_widget_is(m->base,w,DM_VT_TEXT)) return 0;
+    size_t n=strlen(want); uint64_t have=*(uint64_t *)(w+0x90); const char *cur=*(const char **)(w+0x88);
+    if (have!=n || (n && (!cur || memcmp(cur,want,n)))) ui_notice_set_text(m,w,want,n);
+    return 1;
+}
+// 摆 Prompt（和两级提示时我们的两个控件）的纵向位置；返回内容高度（0 = 没摆），*two = 1 表示这一帧是两级提示、*body / *sub 是那两个控件
+// places Prompt (and, for a two-level tip, our two widgets) vertically; returns the content height (0 = not placed), *two = 1 means this frame shows a two-level tip, *body / *sub are those widgets
+static int ui_notice_prompt_center(uint64_t note,uint64_t prompt,int *two,uint64_t *body,uint64_t *sub) {
     module_t *m=main_module(); uint64_t border=prompt?*(uint64_t *)(prompt+0x30):0;
-    if (!m || !border || *(uint64_t *)(border+0x30)!=note || !ui_find(border,"TouchNoticeTile00",0) || !dm_widget_is(m->base,prompt,DM_VT_TEXT)) return;
+    *two=0; *body=*sub=0;
+    if (!m || !border || *(uint64_t *)(border+0x30)!=note || !ui_find(border,"TouchNoticeTile00",0) || !dm_widget_is(m->base,prompt,DM_VT_TEXT)) return 0;
     const char *name=*(const char **)(border+8);
     int height=*(int32_t *)(prompt+0x7c);
-    if (!name || strcmp(name,"NotificationBorder") || height<1 || height>776) return;
-    int32_t *rect=(int32_t *)(prompt+0x70); rect[1]=(244-height)/2;
+    if (!name || strcmp(name,"NotificationBorder") || height<1 || height>776) return 0;
+    uint64_t bw=ui_find(note,"TouchNoticeBody",0), sw=ui_find(note,"TouchNoticeSub",0); const dm_notice_pair *pr=NULL;
+    { const char *txt=*(const char **)(prompt+0x88); uint64_t len=*(uint64_t *)(prompt+0x90); if (bw && sw && txt && len && len<4096) pr=dm_game_notice_pair_for(txt,(size_t)len); }
+    int okb=bw && ui_notice_own_text(m,bw,pr?pr->body:""), oks=sw && ui_notice_own_text(m,sw,pr?pr->sub:"");   // 不是两级提示：清空（已是空串就不写） | not a two-level tip: clear (no write when already empty)
+    int bh=okb && pr && *pr->body ? *(int32_t *)(bw+0x7c) : 0, sh=oks && pr ? *(int32_t *)(sw+0x7c) : 0;
+    int32_t *rect=(int32_t *)(prompt+0x70);
+    if (!pr || !okb || !oks || sh<1 || sh>776 || bh<0 || bh>776 || (*pr->body && !bh)) {   // 原版行为：只有 Prompt | original behaviour: Prompt only
+        rect[1]=(244-height)/2;
+        if (okb) { int32_t *r=(int32_t *)(bw+0x70); r[0]=99999; r[1]=99999; }   // 不用：屏外 | unused: off screen
+        if (oks) { int32_t *r=(int32_t *)(sw+0x70); r[0]=99999; r[1]=99999; }
+        return height;
+    }
+    int total=bh+sh+(bh?8:0), top=(244-total)/2;
+    int32_t *rb=(int32_t *)(bw+0x70), *rs=(int32_t *)(sw+0x70);
+    if (bh) { rb[0]=rect[0]; rb[1]=top; rb[2]=rect[2]; } else { rb[0]=99999; rb[1]=99999; }   // 正文为空（选择条刚展开）：只有副文那一行 | empty body (selector just opened): the subtext line only
+    rs[0]=rect[0]; rs[1]=top+(bh?bh+8:0); rs[2]=rect[2];   // 正文下面 8 | 8 units under the body
+    rect[1]=99999;   // 同一串字由我们的 36 号正文控件画，Prompt 让到屏外 | the same text is drawn by our 36 pt body widget, Prompt steps off screen
+    *two=1; *body=bh?bw:0; *sub=sw;
+    return total;
 }
 // Native font measurement covers Latin, Cyrillic and CJK without per-language guesses.
 static int ui_notice_frame_fit(uint64_t note) {
     uint64_t prompt=ui_find(note,"Prompt",0); module_t *m=main_module();
     if (!prompt || !m || !ui_find(note,"TouchNoticeTile00",0)) return 244;
-    int limit=*(int32_t *)(note+0x78);
-    ui_notice_prompt_center(note,prompt);
-    int rects[15][4],height=dm_notice_geometry(ui_notice_text_width(m,prompt,limit),*(int32_t *)(prompt+0x7c),limit,rects);
+    int limit=*(int32_t *)(note+0x78), two=0; uint64_t body=0,sub=0;
+    int content=ui_notice_prompt_center(note,prompt,&two,&body,&sub), rects[15][4], height;
+    if (!two) height=dm_notice_geometry(ui_notice_text_width(m,prompt,limit),*(int32_t *)(prompt+0x7c),limit,rects);   // 原版：只量 Prompt | original: measure Prompt only
+    else { int pw=body?ui_notice_text_width(m,body,limit):0, sw=ui_notice_text_width(m,sub,limit); height=dm_notice_geometry(pw>sw?pw:sw,content,limit,rects); }
+    if (getenv("DM_TEST_NOTICE_GEOM")) { static int lg; static int was=-1; if (was!=two && lg++<40) LOG("通知排版：%s，内容高 %d，框高 %d", two?"两级提示（正文 / 副文由 TouchNoticeBody / TouchNoticeSub 画）":"原版单段（副文控件清空、屏外）",content,height); was=two; }
     if (!height) return 244;
     for (int row=0;row<5;row++) for (int col=0;col<3;col++) {
         char name[32]; snprintf(name,sizeof name,"TouchNoticeTile%d%d",row,col);

@@ -176,7 +176,8 @@ static void requests(void) {
         float nx = tc.mouse_click_x / width, ny = tc.mouse_click_y / height;
         dm_ui_touch(0,nx,ny); dm_ui_touch(2,nx,ny);
     }
-    if (tc.diff_request) { dm_hud_request_players(tc.diff_request); tc.diff_request = 0; }
+    { static int was; if (tc.diff_open && !was) dm_diff_tip(0); was = tc.diff_open; }
+    if (tc.diff_request) { dm_diff_tip(tc.diff_request); dm_hud_request_players(tc.diff_request); tc.diff_request = 0; }
     if (tc.belt_request) {
         int br = tc.belt_request; tc.belt_request = 0;
         if (br == 1 || br == 2) dm_belt_expand(br == 1);

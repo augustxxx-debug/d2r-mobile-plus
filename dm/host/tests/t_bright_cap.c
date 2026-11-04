@@ -21,5 +21,8 @@ int main(void) {
     check(dm_bright_cap_logk(0.0, 2.0) == 0.0, "k=1 (out of a run) unchanged");
     check(fabs(dm_bright_cap_logk(log(4.0), 4.0) - log(4.0)) < 1e-12, "cap 4 = original rule");
     check(dm_bright_cap_logk(log(3.0), 1.0) == 0.0, "cap 1 = never brighten");
+    // 图形页四档 | the Graphics page's four levels
+    check(dm_bright_level_cap(0) == 1.0 && dm_bright_level_cap(1) == 1.4 && dm_bright_level_cap(2) == 2.0 && dm_bright_level_cap(3) == 4.0, "levels off / low / mid / high");
+    check(dm_bright_level_cap(-1) == DM_BRIGHT_MAX_DEFAULT && dm_bright_level_cap(4) == DM_BRIGHT_MAX_DEFAULT, "bad level: default cap");
     printf("PASS t_bright_cap: %d checks\n", checks); return 0;
 }

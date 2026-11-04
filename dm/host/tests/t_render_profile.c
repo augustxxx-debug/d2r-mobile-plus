@@ -50,7 +50,8 @@ int main(void) {
     CHECK(dm_3d_profile_get()==2);
     graphics_select_profile(-1); graphics_select_profile(4);
     CHECK(atomic_load(&g_pend[K_Q3D])==-1);
-    for (int row=0;row<NK-N_GFX;row++) CHECK(!graphics_key(custom_key_at(row)));
+    // 系统页的每一行都不是图形页的键（两页互斥，行号按 custom_rows() 取） | no System-page row is a Graphics key (the pages are disjoint; walk the rows via custom_rows())
+    for (int row=0;row<custom_rows();row++) CHECK(!graphics_key(custom_key_at(row)));
     // 渲染分辨率档位 render_res：读盘范围 0–3、非法回 0；应用才生效并通知游戏重读；放弃不通知；默认回 0 | Render resolution level: parsed 0–3, invalid falls back to 0; only Apply takes effect and notifies the game; Discard does not notify; Defaults return to 0
     { const char *rs[]={"render_res=2\n","render_res=3\n","render_res=4\n","render_res=-1\n","render_res=1x\n","render_res=0\n",""}; const int re[]={2,3,0,0,0,0,0};
       for (unsigned i=0;i<sizeof rs/sizeof *rs;i++) { FILE *file=fopen(path,"w"); CHECK(file); fputs("q3d=0\nq3d_v2=1\n",file); fputs(rs[i],file); fclose(file);

@@ -82,9 +82,11 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_foldl
 	python3 test_touch_layout_options.py
 	python3 test_options_divider_rows.py
 	python3 test_skill_quantity_rect.py
+	python3 test_options_table.py
 	python3 test_touch_layout_language.py
 	python3 test_community_entry.py
 	python3 test_difficulty_row.py
+	python3 test_desecrated_entry.py   # 「进入恐惧区域」入口（方案 C §3.2）| the Terror Zones entry (plan C 3.2)
 	python3 test_padmode_compare_hint.py   # B014：手柄提示条「比较（按住）」 | B014: controller legend "Compare (hold)"
 	python3 test_telemetry_notice_layout.py   # 统计告知框：布局控件、六语字宽、接线与隐私（dm_telebox.c） | statistics notice: widgets, six-language widths, wiring and privacy
 	python3 test_diag_upload_layout.py   # 上传诊断报告提示框：布局控件、文案键、宿主接线（dm_diagup.c） | diagnostic upload box: widgets, text keys, host wiring

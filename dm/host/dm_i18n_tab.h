@@ -77,17 +77,19 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmRwHint", "先移到个人仓库或背包", "Move out of shared stash first", "Sácalo antes del alijo compartido", "Sácalo antes del Arcón compartido", "Сначала выньте из общего тайника", "먼저 공유 창고에서 꺼내세요" },
     { "dmRwGo", "一键合成", "Craft", "Crear", "Crear", "Создать", "합성" },
     { "dmPauseShareLog", "分享诊断日志", "Share Diagnostics", "Compartir diagnóstico", "Compartir diagnóstico", "Поделиться диагностикой", "진단 로그 공유" },
-    { "dmCustomAutoMana", "自动喝药（生命 <50%、法力 <30%）", "Auto-drink (Life 50%, Mana 30%)", "Beber auto. (Vida 50%, Maná 30%)", "Beber auto. (Vida 50%, Maná 30%)", "Автозелье (жизнь <50%, мана <30%)", "자동 물약 (생명 <50%, 마나 <30%)" },
-    { "dmCustomMercPot", "佣兵自动喂药（生命 <50%，多耗药）", "Auto-feed Merc at Life <50%", "Curar mercenario si vida <50%", "Curar mercenario si vida <50%", "Зелье наёмнику при жизни <50%", "용병 자동 물약 (생명 <50%)" },
+    { "dmCustomAutoMana", "自动喝药", "Auto-Drink Potions", "Beber pociones auto.", "Beber pociones auto.", "Автозелья", "자동 물약" },
+    { "dmCustomMercPot", "佣兵自动喂药", "Auto-Feed Mercenary", "Curar mercenario auto.", "Curar mercenario auto.", "Зелья наёмнику", "용병 자동 물약" },
     { "dmCustomDropLight", "高价值掉落光柱", "Light beam on valuable drops", "Haz de luz en botín valioso", "Haz de luz en botín valioso", "Луч света на ценных дропах", "고가치 드롭 광기둥" },
-    { "dmCustomMapMark", "小地图标注出入口、小站与任务终点", "Automap: exits, waypoints, quests", "Mapa: salidas, transportadores, búsquedas", "Automapa: salidas, traslocadores, gestas", "Карта: выходы, точки пути, квесты", "자동맵: 출구, 웨이포인트, 퀘스트" },
-    { "dmCustomItemNotes", "物品注释与旧译名（重启后生效）", "Item notes (Chinese/Spanish only, restart)", "Notas de objetos (reinicia)", "Notas de objetos (reinicia)", "Пометки к предметам (кит./исп., рестарт)", "아이템 주석 (중/스페인어, 재시작)" },
+    { "dmCustomMapMark", "小地图标注", "Automap Markers", "Marcas en el mapa", "Marcas en el mapa", "Метки на карте", "자동 지도 표시" },
+    { "dmCustomItemNotes", "物品注释与旧译名", "Item Notes", "Notas de objetos", "Notas de objetos", "Пометки к предметам", "아이템 주석" },
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmCustomIcloud", "iCloud 同步存档（重启后生效）", "iCloud save sync (after restart)", "Sincronía iCloud (tras reiniciar)", "Sincronía iCloud (tras reiniciar)", "Синхронизация iCloud (рестарт)", "iCloud 저장 동기화 (재시작 후)" },
+    { "dmCustomIcloud", "iCloud 同步存档", "iCloud Save Sync", "Sincronía iCloud", "Sincronía iCloud", "Синхронизация iCloud", "iCloud 저장 동기화" },
 #endif
-    { "dmCustomPotPick", "腰带有空位时自动拾取能放进去的药水", "Auto-pick potions into belt", "Recoger pociones al cinturón", "Recolectar pociones al cinturón", "Зелья в пояс автоматически", "벨트에 물약 자동 줍기" },
+    { "dmCustomPotPick", "自动拾取药水", "Auto-Pick Potions", "Recoger pociones auto.", "Recoger pociones auto.", "Автоподбор зелий", "물약 자동 줍기" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomDropHaptic", "高价值物品掉落时震动", "Vibrate on valuable drops", "Vibrar con botín valioso", "Vibrar con botín valioso", "Вибрация на ценных дропах", "고가치 드롭 시 진동" },
-    { "dmCustomGemPick", "符文与宝石自动拾取（直接进高级仓库）", "Auto-stash runes & gems", "Runas y gemas al alijo", "Runas y gemas al Arcón", "Руны и камни в хранилище", "룬·보석 자동 창고 보관" },
+#endif
+    { "dmCustomGemPick", "自动收符文与宝石", "Auto-Stash Runes & Gems", "Runas y gemas al alijo", "Runas y gemas al alijo", "Руны и камни в хранилище", "룬·보석 자동 보관" },
     { "dmCustomStoreBtn", "背包「存放」按钮", "Inventory Deposit button", "Botón Depositar en inventario", "Botón Depositar en inventario", "Кнопка «Внести» в инвентаре", "가방 '보관' 버튼" },
     { "dmCustomBeltRefill", "腰带有空位时从背包补药", "Auto-refill belt from inventory", "Rellenar cinturón desde inventario", "Rellenar cinturón desde inventario", "Пополнять пояс из инвентаря", "벨트 빈칸 자동 보충" },
     { "dmCustomEcoFps", "省电模式（30 帧）", "Power saver (30 fps)", "Modo ahorro (30 fps)", "Modo ahorro (30 fps)", "Экономия (30 fps)", "절전 모드 (30 fps)" },
@@ -95,9 +97,9 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCustomQ3dSmoothHint", "掉帧时自动降低 3D 画面清晰度", "Lowers 3D resolution when frames drop", "Baja la resolución 3D si caen los fotogramas", "Baja la resolución 3D si caen los fotogramas", "Снижает 3D-разрешение при просадке FPS", "프레임 하락 시 3D 해상도 자동 낮춤" },
     { "dmCustomQ3dQuality", "画质优先", "Quality first", "Calidad primero", "Calidad primero", "Качество важнее", "화질 우선" },
     { "dmCustomQ3dQualityHint", "始终保持设定的 3D 清晰度", "Always keeps the set 3D resolution", "Mantiene siempre la resolución 3D elegida", "Mantiene siempre la resolución 3D elegida", "Всегда держит заданное 3D-разрешение", "설정한 3D 해상도 항상 유지" },
-    { "dmCustomLootFilter", "掉落过滤（噩梦起自动隐藏杂物）", "Loot Filter (auto, Nightmare+)", "Filtro de botín (auto, Pesadilla+)", "Filtro de botín (auto, Pesadilla+)", "Фильтр лута (авто, Кошмар+)", "루트 필터 (악몽부터 자동)" },
-    { "dmCustomAutoBuff", "自动补上增益技能（站着不动时）", "Auto-recast buffs when idle", "Renovar mejoras al estar quieto", "Renovar mejoras al estar quieto", "Автоперекаст бафов в покое", "대기 중 버프 자동 재시전" },
-    { "dmCustomFreeTp", "免费回城（不扣回城书和卷轴）", "Free Town Portal (no tome/scroll)", "Portal gratis (sin tomo/pergamino)", "Portal gratis (sin tomo/pergamino)", "Бесплатный портал (без книги/свитка)", "무료 마을 포탈 (책·주문서 소모 없음)" },
+    { "dmCustomLootFilter", "掉落过滤", "Loot Filter", "Filtro de botín", "Filtro de botín", "Фильтр лута", "루트 필터" },
+    { "dmCustomAutoBuff", "自动补增益技能", "Auto-Recast Buffs", "Renovar mejoras auto.", "Renovar mejoras auto.", "Автобафы", "버프 자동 재시전" },
+    { "dmCustomFreeTp", "免费回城", "Free Town Portal", "Portal gratis", "Portal gratis", "Бесплатный портал", "무료 마을 포탈" },
     { "dmFreeTpNoScroll", "没有回城书或回城卷轴", "No Town Portal tome or scroll", "No tienes tomo ni pergamino de portal", "No tienes tomo ni pergamino de portal", "Нет книги или свитка портала", "마을 포탈 책이나 주문서가 없습니다" },
     { "dmCustomLang", "语言", "Language", "Idioma", "Idioma", "Язык", "언어" },
     { "dmCustomLangZh", "中文", "中文", "中文", "中文", "中文", "中文" },
@@ -114,9 +116,20 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCustomVoiceZhHint", "对话与过场使用中文语音；下次启动生效", "Chinese dialogue and cutscenes; applies after restart", "Diálogos y escenas en chino; se aplica al reiniciar", "Diálogos y escenas en chino; se aplica al reiniciar", "Китайские диалоги и ролики; после перезапуска", "대화와 시네마틱에 중국어 음성; 재시작 후 적용" },
     { "dmCustomVoiceEn", "English voice", "English voice", "Voz en inglés", "Voz en inglés", "Английская озвучка", "영어 음성" },
     { "dmCustomVoiceEnHint", "对话与过场使用英文语音；下次启动生效", "English dialogue and cutscenes; applies after restart", "Diálogos y escenas en inglés; se aplica al reiniciar", "Diálogos y escenas en inglés; se aplica al reiniciar", "Английские диалоги и ролики; после перезапуска", "대화와 시네마틱에 영어 음성; 재시작 후 적용" },
-    { "dmTabGameSettings", "游戏设定", "Settings", "Ajustes", "Config.", "Опции", "설정" },
     { "dmTabGraphics", "图形", "Graphics", "Gráficos", "Gráficos", "Графика", "그래픽" },
-    { "dmGraphicsTitle", "图形设置", "Graphics", "Gráficos", "Gráficos", "Графика", "그래픽" },
+    { "dmOptGrpDisplay", "画面", "Display", "Imagen", "Imagen", "Изображение", "화면" },
+    { "dmOptGrpFrame", "帧率", "Frame Rate", "Fotogramas", "Fotogramas", "Частота кадров", "프레임" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmOptGrpUpscale", "超分", "Upscaling", "Escalado", "Escalado", "Масштабирование", "업스케일링" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmOptGrpRt", "光线追踪", "Ray Tracing", "Trazado de rayos", "Trazado de rayos", "Трассировка лучей", "레이 트레이싱" },
+#endif
+    { "dmGraphicsBrightOff", "画面加亮：关", "Dark Area Boost: Off", "Realce de zonas oscuras: no", "Realce de zonas oscuras: no", "Усиление тёмных зон: выкл.", "어두운 곳 밝게: 끔" },
+    { "dmGraphicsBrightLow", "画面加亮：低", "Dark Area Boost: Low", "Realce de zonas oscuras: bajo", "Realce de zonas oscuras: bajo", "Усиление тёмных зон: низкое", "어두운 곳 밝게: 낮음" },
+    { "dmGraphicsBrightMid", "画面加亮：中", "Dark Area Boost: Medium", "Realce de zonas oscuras: medio", "Realce de zonas oscuras: medio", "Усиление тёмных зон: среднее", "어두운 곳 밝게: 중간" },
+    { "dmGraphicsBrightHigh", "画面加亮：高", "Dark Area Boost: High", "Realce de zonas oscuras: alto", "Realce de zonas oscuras: alto", "Усиление тёмных зон: высокое", "어두운 곳 밝게: 높음" },
+    { "dmGraphicsBrightNote", "调整暗处亮度，不影响白天场景", "Adjusts dark areas; daytime scenes stay the same", "Ajusta las zonas oscuras; las escenas de día no cambian", "Ajusta las zonas oscuras; las escenas de día no cambian", "Настраивает тёмные места; дневные сцены не меняются", "어두운 곳의 밝기를 조절합니다. 낮 장면은 그대로입니다" },
     { "dmGraphicsFrameRate", "帧率：30 FPS 省电（关闭为 60 FPS）", "Frame rate: 30 FPS power saving (off: 60 FPS)", "Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)", "Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)", "Частота: 30 FPS экономия (выкл.: 60 FPS)", "프레임: 30 FPS 절전 (끔: 60 FPS)" },
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsUpscaling", "MetalFX 空间超分（实验性）", "MetalFX upscaling (experimental)", "Superresolución MetalFX (experimental)", "Superresolución MetalFX (experimental)", "Апскейлинг MetalFX (эксперимент)", "MetalFX 업스케일링 (실험적)" },
@@ -143,9 +156,43 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmLowMemTitle", "已自动降低画质", "Graphics lowered automatically", "Calidad gráfica reducida", "Calidad gráfica reducida", "Графика снижена автоматически", "화질을 자동으로 낮췄습니다" },
     { "dmLowMemMsg", "本机可用内存偏小，\n已自动降低画质，不开放 120 帧。\n可在选项的「图形」页调整。", "This device has less memory available,\nso graphics were lowered and 120 FPS is off.\nYou can change this on the Graphics tab in Options.", "Este dispositivo tiene poca memoria,\nasí que se redujo la calidad y no hay 120 FPS.\nPuedes cambiarlo en la pestaña Gráficos de Opciones.", "Este dispositivo tiene poca memoria,\nasí que se redujo la calidad y no hay 120 FPS.\nPuedes cambiarlo en la pestaña Gráficos de Opciones.", "На этом устройстве мало памяти,\nпоэтому графика снижена, 120 FPS недоступны.\nЭто можно изменить на вкладке «Графика» в настройках.", "이 기기는 사용 가능한 메모리가 적어\n화질을 낮추고 120 FPS를 껐습니다.\n옵션의 그래픽 탭에서 바꿀 수 있습니다." },
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmGraphicsApplyHint", "MetalFX 空间超分仅处理 3D 画面，UI 保持清晰。\n点“应用”生效，无需重启；切换时可能短暂停顿。\n“默认”全局恢复游戏设定、图形与自定义，保留语言及配音。", "MetalFX upscales 3D only; UI stays sharp.\nApply without restarting; switching may briefly pause.\nDefaults resets game options, Graphics and Custom; language and voice stay unchanged.", "MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.", "MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.", "MetalFX масштабирует только 3D; интерфейс остаётся чётким.\nПрименяется без перезапуска; возможна короткая пауза.\nСброс восстанавливает настройки игры, графику и свои настройки; язык и озвучка сохраняются.", "MetalFX는 3D만 업스케일링하며 UI는 선명하게 유지됩니다.\n재시작 없이 적용되며 전환 시 잠시 멈출 수 있습니다.\n기본값은 게임, 그래픽과 사용자 설정을 초기화하며 언어와 음성은 유지합니다." },
+    { "dmGraphicsApplyHint", "MetalFX 空间超分仅处理 3D 画面，UI 保持清晰。\n点“应用”生效，无需重启；切换时可能短暂停顿。\n“默认”恢复全部 Plus 选项，保留语言及配音。", "MetalFX upscales 3D only; UI stays sharp.\nApply without restarting; switching may briefly pause.\nDefaults resets all Plus options; language and voice stay unchanged.", "MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.", "MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.", "MetalFX масштабирует только 3D; интерфейс остаётся чётким.\nПрименяется без перезапуска; возможна короткая пауза.\nСброс восстанавливает все настройки Plus; язык и озвучка сохраняются.", "MetalFX는 3D만 업스케일링하며 UI는 선명하게 유지됩니다.\n재시작 없이 적용되며 전환 시 잠시 멈출 수 있습니다.\n기본값은 모든 Plus 옵션을 초기화하며 언어와 음성은 유지합니다." },
 #endif
-    { "dmTabCustom", "自定义", "Custom", "Extras", "Extras", "Своё", "사용자" },
+    { "dmTabSystem", "系统", "System", "Sistema", "Sistema", "Система", "시스템" },
+    { "dmOptGrpLang", "语言", "Language", "Idioma", "Idioma", "Язык", "언어" },
+    { "dmOptGrpSaves", "存档", "Saves", "Partidas", "Partidas", "Сохранения", "저장" },
+    { "dmOptGrpPrivacy", "隐私", "Privacy", "Privacidad", "Privacidad", "Конфиденциальность", "개인정보" },
+    { "dmOptGrpCombat", "战斗与补给", "Combat & Supplies", "Combate y suministros", "Combate y suministros", "Бой и припасы", "전투 및 보급" },
+    { "dmOptGrpLoot", "拾取与掉落", "Pickup & Drops", "Recogida y botín", "Recogida y botín", "Подбор и добыча", "획득 및 드롭" },
+    { "dmOptGrpUi", "显示与按键", "Display & Controls", "Pantalla y controles", "Pantalla y controles", "Отображение и управление", "표시 및 조작" },
+    { "dmCustomAutoManaNote", "生命低于 50%、法力低于 30% 时", "When Life is below 50%, or Mana below 30%", "Con vida bajo 50%, o maná bajo 30%", "Con vida bajo 50%, o maná bajo 30%", "Когда жизнь ниже 50%, или мана ниже 30%", "생명 50% 또는 마나 30% 미만일 때" },
+    { "dmCustomMercPotNote", "佣兵生命低于 50% 时，会多耗药", "When its Life is below 50%; uses more potions", "Con su vida bajo 50%; gasta más pociones", "Con su vida bajo 50%; gasta más pociones", "Когда его жизнь ниже 50%; расход зелий выше", "용병 생명 50% 미만일 때, 물약을 더 씁니다" },
+    { "dmCustomAutoBuffNote", "站着不动时", "While standing still", "Al estar quieto", "Al estar quieto", "Когда стоишь на месте", "가만히 있을 때" },
+    { "dmCustomFreeTpNote", "不扣回城书和卷轴", "Uses no tome or scroll", "No gasta tomo ni pergamino", "No gasta tomo ni pergamino", "Без траты книги и свитка", "책과 두루마리를 쓰지 않습니다" },
+    { "dmCustomPotPickNote", "腰带有空位时", "When the belt has room", "Si hay sitio en el cinturón", "Si hay sitio en el cinturón", "Когда в поясе есть место", "벨트에 자리가 있을 때" },
+    { "dmCustomGemPickNote", "直接进高级仓库", "Go straight to the advanced stash", "Van directo al alijo avanzado", "Van directo al alijo avanzado", "Сразу в расширенное хранилище", "고급 창고로 바로 들어갑니다" },
+    { "dmCustomLootFilterNote", "噩梦起自动隐藏杂物", "Hides junk automatically from Nightmare on", "Oculta lo inútil desde Pesadilla", "Oculta lo inútil desde Pesadilla", "Скрывает мусор начиная с Кошмара", "악몽부터 잡템을 자동으로 숨깁니다" },
+    { "dmCustomItemNotesNote", "重启后生效", "Chinese and Spanish only; applies after restart", "Se aplica al reiniciar", "Se aplica al reiniciar", "Только кит. и исп.; после перезапуска", "중국어·스페인어 전용, 재시작 후 적용" },
+    { "dmCustomMapMarkNote", "出入口、小站与任务终点", "Exits, waypoints and quest targets", "Salidas, transportadores y misiones", "Salidas, transportadores y misiones", "Выходы, точки пути и квесты", "출구, 웨이포인트, 퀘스트 목표" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmCustomIcloudNote", "重启后生效", "Applies after restart", "Se aplica al reiniciar", "Se aplica al reiniciar", "После перезапуска", "재시작 후 적용" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmCustomIcloudNoAcct", "未登录 iCloud，或这个安装包不支持 iCloud", "Not signed in to iCloud, or this build does not support it", "Sin sesión en iCloud, o esta versión no lo admite", "Sin sesión en iCloud, o esta versión no lo admite", "Нет входа в iCloud, или сборка его не поддерживает", "iCloud 로그인이 없거나 이 빌드가 지원하지 않습니다" },
+#endif
+    { "dmOptTouchOnly", "仅触屏", "Touch only", "Solo táctil", "Solo táctil", "Только сенсор", "터치 전용" },
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsUpscaleNoHw", "本机不支持", "Not supported on this device", "No compatible con este dispositivo", "No compatible con este dispositivo", "Не поддерживается на этом устройстве", "이 기기에서 지원하지 않습니다" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsRtNoHw", "本机不支持", "Not supported on this device", "No compatible con este dispositivo", "No compatible con este dispositivo", "Не поддерживается на этом устройстве", "이 기기에서 지원하지 않습니다" },
+#endif
+    { "dmOptGrpOrig", "更多选项", "More Options", "Más opciones", "Más opciones", "Другие настройки", "추가 옵션" },
+    { "dmOptFold", "展开 / 收起", "Show / Hide", "Mostrar / Ocultar", "Mostrar / Ocultar", "Показать / Скрыть", "펼치기 / 접기" },
+    { "dmOptDesecrated", "进入恐惧区域", "Terror Zones", "Zonas de terror", "Zonas de terror", "Зоны ужаса", "공포 구역" },
+    { "dmOptDesecratedNote", "只在创建新游戏时生效", "Applies to new games only", "Solo en partidas nuevas", "Solo en partidas nuevas", "Только для новых игр", "새 게임에만 적용" },
+    { "dmOptDesecratedOpen", "打开", "Open", "Abrir", "Abrir", "Открыть", "열기" },
+    { "dmPadLegGroups", "上下：跳组", "Up / Down: Groups", "Arriba / abajo: grupos", "Arriba / abajo: grupos", "Вверх / вниз: группы", "위 / 아래: 그룹" },
     { "dmChronRunewords", "符文之语", "Runewords", "P. rúnicas", "P. rúnicas", "Руны", "룬워드" },
     { "dmVaultPart0", "头盔", "Helms", "Yelmos", "Yelmos", "Шлемы", "투구" },
     { "dmVaultPart1", "盔甲", "Armor", "Armadura", "Armadura", "Броня", "갑옷" },
@@ -543,7 +590,9 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmPadLegCompare", "比较（按住）", "Compare (hold)", "Comparar (mantén)", "Comparar (mantén)", "Сравнить (держать)", "길게 눌러 비교" },
     { "dmDiffSection", "难度", "Difficulty", "Dificultad", "Dificultad", "Сложность", "난이도" },
     { "dmDiffRow", "游戏难度", "Game Difficulty", "Dificultad de la partida", "Dificultad de partida", "Сложность игры", "게임 난이도" },
-    { "dmDiffRowNote", "相当于同局人数 1–8 档，改了立刻生效", "Same as 1–8 players in the game; takes effect at once", "Equivale a 1–8 jugadores en la partida; surte efecto al instante", "Equivale a 1–8 jugadores en la partida; surte efecto al instante", "Как при 1–8 игроках в игре; действует сразу", "같은 게임에 1–8명이 있는 것과 같으며 바로 적용됩니다" },
+    { "dmDiffRowNote", "人数越高怪物越强、经验和掉落越多，改了立刻生效", "More players: tougher monsters, more XP and drops. Takes effect at once", "Más jugadores: monstruos más duros, más EXP y botín. Efecto inmediato", "Más jugadores: monstruos más duros, más EXP y botín. Efecto inmediato", "Больше игроков: монстры сильнее, больше опыта и добычи. Сразу", "인원이 많을수록 몬스터가 강해지고 경험치와 드롭이 늘어납니다. 즉시 적용" },
+    { "dmDiffTipBody", "游戏难度 %d：相当于同局 %d 人", "Game Difficulty %d: same as %d players", "Dificultad %d: como %d jugadores", "Dificultad %d: como %d jugadores", "Сложность %d: как %d игроков", "게임 난이도 %d: %d인과 같음" },
+    { "dmDiffTipSub", "人数越高怪物越强、经验和掉落越多，按自己的生存能力平衡", "More players: tougher monsters, more XP and drops. Balance it to what you can survive", "Más jugadores: monstruos más duros, más EXP y botín. Equilíbralo a tu medida", "Más jugadores: monstruos más duros, más EXP y botín. Equilíbralo a tu medida", "Больше игроков: монстры сильнее, больше опыта и добычи. Выбирай по силам", "인원이 많을수록 몬스터가 강해지고 경험치와 드롭이 늘어납니다. 생존력에 맞게 조절하세요" },
     { "dmDiffOutOfRun", "进入游戏后可调整", "Available once you are in a game", "Disponible al entrar en una partida", "Disponible al entrar en una partida", "Доступно после входа в игру", "게임에 들어간 뒤 조절할 수 있습니다" },
     { "dmDiffRowValue", "游戏难度：%d", "Game Difficulty: %d", "Dificultad de la partida: %d", "Dificultad de partida: %d", "Сложность игры: %d", "게임 난이도: %d" },
     { "dmRiftGamAfterEn", "通关本层后", "After This Level", "Tras este nivel", "Tras este nivel", "После уровня", "이 층 이후" },
@@ -984,7 +1033,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmLoadCommCopyFail", "复制失败", "Copy failed", "Error al copiar", "Error al copiar", "Ошибка", "복사 실패" },
     { "dmLoadCommPrefer", "qq", "github", "github", "github", "github", "github" },
 #if defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmAndGraphicsApplyHint", "点“应用”生效，无需重启。\n“默认”全局恢复游戏设定、图形与自定义，保留语言及配音。", "Apply without restarting.\nDefaults resets game options, Graphics and Custom; language and voice stay unchanged.", "Aplica sin reiniciar.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.", "Aplica sin reiniciar.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.", "Применяется без перезапуска.\nСброс восстанавливает настройки игры, графику и свои настройки; язык и озвучка сохраняются.", "재시작 없이 적용됩니다.\n기본값은 게임, 그래픽과 사용자 설정을 초기화하며 언어와 음성은 유지합니다." },
+    { "dmAndGraphicsApplyHint", "点“应用”生效，无需重启。\n“默认”恢复全部 Plus 选项，保留语言及配音。", "Apply without restarting.\nDefaults resets all Plus options; language and voice stay unchanged.", "Aplica sin reiniciar.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.", "Aplica sin reiniciar.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.", "Применяется без перезапуска.\nСброс восстанавливает все настройки Plus; язык и озвучка сохраняются.", "재시작 없이 적용됩니다.\n기본값은 모든 Plus 옵션을 초기화하며 언어와 음성은 유지합니다." },
 #endif
     { "dmSaveMgrRow", "存档管理", "Save Management", "Gestión de partidas", "Gestión de partidas", "Управление сохранениями", "저장 관리" },
     { "dmSaveMgrOpen", "打开", "Open", "Abrir", "Abrir", "Открыть", "열기" },

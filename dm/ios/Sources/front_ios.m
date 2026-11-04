@@ -245,7 +245,8 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     dm_input_set(_controls.buttons,_controls.lx,_controls.ly,_controls.rx,_controls.ry);
     if (_controls.belt_request) { int br=_controls.belt_request; _controls.belt_request=0;   // 腰带展开 / 收起 / 喝上面几排的药（dm_actions.c） | Belt expand / collapse / drink a potion from the upper rows (dm_actions.c)
         if (br==1 || br==2) dm_belt_expand(br==1); else dm_belt_use(br&0xf, br>>4&0xf); }   // 腰带点按一律给玩家喝 | belt taps always go to the player
-    if (_controls.diff_request) { dm_hud_request_players(_controls.diff_request); _controls.diff_request=0; }   // 难度选择条选中档位：宿主下一拍走原版 /players 路径 | Difficulty selector strip picked a level: the host takes the original game's /players path on the next tick
+    { static int was; if (_controls.diff_open && !was) dm_diff_tip(0); was=_controls.diff_open; }
+    if (_controls.diff_request) { dm_diff_tip(_controls.diff_request); dm_hud_request_players(_controls.diff_request); _controls.diff_request=0; }   // 难度选择条选中档位：宿主下一拍走原版 /players 路径 | Difficulty selector strip picked a level: the host takes the original game's /players path on the next tick
     uint64_t publishEnd=(diagnostic || _controls.portal_pending)?now_ns():0;
     if(_controls.portal_pending && _modifierPublishEpoch!=_controls.gesture_epoch) {
         _modifierPublishEpoch=_controls.gesture_epoch;_modifierPublishEndNS=publishEnd;

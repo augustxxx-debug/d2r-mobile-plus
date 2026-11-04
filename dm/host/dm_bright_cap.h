@@ -17,4 +17,6 @@ static inline double dm_bright_max_parse(const char *e, int *bad) {
     if (end == e || *end || !(v >= 1.0 && v <= 4.0)) { *bad = 1; return DM_BRIGHT_MAX_DEFAULT; }
     return v;
 }
+// 图形页「画面加亮」四档（dm_custom.c bright_level）→ 上限：关 1 / 低 1.4 / 中 2（缺省）/ 高 4 | the Graphics page's four brightening levels -> cap: off 1 / low 1.4 / mid 2 (default) / high 4
+static inline double dm_bright_level_cap(int level) { static const double k[4] = { 1.0, 1.4, 2.0, 4.0 }; return level >= 0 && level < 4 ? k[level] : DM_BRIGHT_MAX_DEFAULT; }
 static inline double dm_bright_cap_logk(double target_logk, double max_k) { double c = log(max_k); return target_logk > c ? c : target_logk; }

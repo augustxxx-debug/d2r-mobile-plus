@@ -84,14 +84,16 @@ class GameplayPage(unittest.TestCase):
         sv, blk, tab = out.find('"name": "ScrollView"'), out.find('"name": "TouchDiffRows"'), out.find('"name": "OptionsTable"')
         self.assertTrue(0 <= sv < blk < tab, (where, sv, blk, tab))   # 我们的一块在滚动区里、原版表格之前 | our block is inside the scroll view, before the original table
         self.has(out, r'"name": "TouchDiffRows", "fields": \{ "rect": \{ "x": 0, "y": 0, "width": 1730, "height": %d \}' % touch_layout.DIFF_H, where)
-        self.has(out, r'"name": "OptionsTable",\s*"fields": \{ "rect": \{ "x": 0, "y": %d \},' % touch_layout.DIFF_H, where)   # 原版表格整体下移 | the original table moves down
-        block = out[blk:tab]
+        self.has(out, r'"name": "TouchTableHolder", "fields": \{ "rect": \{ "x": 0, "y": %d,' % (touch_layout.DIFF_H + touch_layout._game_h()), where)   # 原版表格整体下移 | the original table moves down
+        block = out[blk:out.find('"name": "TouchGrp', blk) if '"name": "TouchGrp' in out[blk:tab] else tab]
         self.has(block, r'"name": "TouchDiffTitle", "fields": \{ "rect": \{ "x": 0, "y": 0, "width": 1730, "height": 180 \}, "text": "@dmDiffSection", "style": "\$StyleSettingsTitle"', where)
         self.has(block, r'"name": "Divider"', where)
         self.has(block, r'"name": "TouchDiffText", "fields": \{ "rect": \{ "x": 0, "y": 180, "width": 1000, "height": 180 \}, "text": "@dmDiffRow", "style": "\$StyleSettingsText"', where)
         self.has(block, r'"type": "SettingsSliderWidget", "name": "TouchDiffSlider", "fields": \{ "rect": \{ "x": 1110, "y": 235, "width": 480, "height": 72 \}', where)   # 同图形页滑块的摆法 | placed like the Graphics page sliders
         self.has(block, r'"name": "TouchDiffNote", "fields": \{ "rect": \{ "x": 0, "y": 360, "width": 1670, "height": 100 \}, "text": "@dmDiffRowNote", "style": \{ "fontColor": "\$FontColorLightGray", "pointSize": 28, "spacing": "\$ReducedSpacing"', where)   # §2.6 副文 | secondary text
-        self.assertTrue('onClickMessage' not in block and 'tooltipString' not in block, where)
+        self.assertTrue('tooltipString' not in block, where)
+        # 我们的入口钮是块里唯一带消息的控件（发原版设置页的切页消息，不复制原版控件）| our entry button is the block's only widget with a message (it sends the original settings page's switch-tab message and does not copy an original widget)
+        self.assertEqual(re.findall(r'"onClickMessage": "([^"]*)"', block), ['SettingsPanelMessage:CheckChanges:OnlineGameOptionsPanel'], where)
         for keep in ('"name": "Row Offline"', '"name": "Row OfflineDifficultyScaling"', '"name": "Row OfflineSettingsEffectNote"', '@OfflineHeader', '@OfflineSettingsEffectNote'):
             self.assertTrue(keep in out, (where, keep))   # 原版三行原样（原版自己藏） | the original three rows untouched (the game hides them itself)
 
@@ -129,8 +131,14 @@ class Host(unittest.TestCase):
         self.assertTrue('TouchPadDiff' not in pm and 'dmPadDiffLine' not in pm)   # 暂停菜单难度行的宿主代码删掉 | host code of the pause-menu difficulty row removed
         for s in ('"GameplayOptionsPanel"', '"TouchDiffSlider"', '"TouchDiffNote"', 'DM_VT_SLIDER', 'dm_hud_request_players(', 'dm_hud_slider_players(', 'dm_hud_slider_value(', '游戏难度：',
                   '"TouchDiffText"', '"dmDiffRowValue"', '"dmDiffRowNote"', '"dmDiffOutOfRun"', 'diff_pump(b, frame);',
-                  '"OptionsTable"', '"TouchDiffRows"', 'fm + 0x190) = w', 'dm_custom_scroll_step(0, 460'): self.assertTrue(s in pm, s)   # B015 焦点链：表格第一行按上进难度行、滚回顶 | B015 focus chain
+                  '"OptionsTable"', '"TouchDiffRows"', 'fm + 0x190) = w', 'dm_custom_scroll_step(top, bot'): self.assertTrue(s in pm, s)   # B015 焦点链：表格第一行按上进难度行、滚回顶 | B015 focus chain
         self.assertTrue('dm_padmode_page_keys(DM_BTN_Y)' not in pm and 'dmDiffRowNotePad' not in pm)   # 不再接管 Y | Y is no longer taken over
+        # 调用点（纯函数在 dm_padmode_pure.h，由 t_padmode_pure / t_notice_dispatch 单测）：按下键要看原版表格那组可见没有；难度说明要把副文交出去（审计 r2 P1-2 / P1-3）
+        # call sites (the pure functions live in dm_padmode_pure.h, unit-tested by t_padmode_pure / t_notice_dispatch): Down must check the original table group is visible; the tip must hand over the subtext (audit r2 P1-2 / P1-3)
+        self.assertIn('hd = pm_find(gp, "TouchTableHolder", 0)', pm)
+        self.assertIn('dm_pm_down_target(si, ns, si + 1 < ns && st[si + 1], hd && *(uint8_t *)(uintptr_t)(hd + 0x50), tb && back_nm[0])', pm)
+        self.assertIn('if (down == DM_PM_DOWN_TABLE) bw = pm_find(tb, back_nm, 0);', pm)
+        self.assertIn('dm_diff_tip_send(b, n, dm_str(b, "dmDiffTipBody"), dm_str(b, "dmDiffTipSub"), dm_game_notice_ui_pair)', pm)
         self.assertTrue('"OfflineDifficultyScaling"' not in pm)   # 不碰原版藏着的那颗滑块 | never touches the original hidden slider
         hud = (DM / 'host' / 'dm_hud.h').read_text(encoding='utf-8')
         self.assertTrue('int dm_hud_slider_players(int lo, int hi, int v);' in hud and 'int dm_hud_slider_value(int lo, int hi, int n);' in hud)

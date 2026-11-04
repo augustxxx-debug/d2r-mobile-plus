@@ -1397,8 +1397,8 @@ GRAPHICS_LAYOUT = '3plusgraphicsoptionspanelhd.json'
 # 打开选项的落点与焦点不变；自定义（我们加的杂项）放最后。两张表一一对应，宿主按面板名找页，不依赖位置
 # Tab order: Audio / Graphics / Gameplay / Game Settings / Custom. Graphics follows Audio (user, 2026-10-27: adjusting picture and frame rate is the most common reason to open Options);
 # the first tab stays the native Audio, so where Options opens and its focus are unchanged; Custom (our miscellany) stays last. The two tables correspond one to one; the host finds pages by panel name, not position
-_SETTINGS_LABELS = ('@Audio', '@dmTabGraphics', '@Gameplay', '@dmTabGameSettings', '@dmTabCustom')
-_SETTINGS_PANELS = ('SoundOptionsPanel', GRAPHICS_PANEL, 'GameplayOptionsPanel', 'OnlineGameOptionsPanel', 'VideoOptionsPanel')
+_SETTINGS_LABELS = ('@Audio', '@dmTabGraphics', '@Gameplay', '@dmTabSystem')
+_SETTINGS_PANELS = ('SoundOptionsPanel', GRAPHICS_PANEL, 'GameplayOptionsPanel', 'VideoOptionsPanel')
 
 def _settings_tabs(text):
     """Preserve the native settings destination and add a distinct Graphics panel."""
@@ -1414,13 +1414,13 @@ def _settings_tabs(text):
         def extend_frames(m):
             frames = [int(x) for x in re.findall(r'-?\d+', m[2])]
             if not frames or len(frames) > 5: raise SystemExit('Unexpected settings artwork ' + key)
-            return m[1] + json.dumps(frames + [frames[-1]] * (5 - len(frames)))
+            return m[1] + json.dumps((frames + [frames[-1]] * len(_SETTINGS_LABELS))[:len(_SETTINGS_LABELS)])
         text, n = re.subn(pattern, extend_frames, text)
         if n != 1: raise SystemExit('Expected one settings ' + key)
     if re.search(r'"tabCount"\s*:', text):
-        text = re.sub(r'("tabCount"\s*:)\s*\d+', r'\g<1> 5', text)
+        text = re.sub(r'("tabCount"\s*:)\s*\d+', r'\g<1> %d' % len(_SETTINGS_LABELS), text)
     else:
-        text = text.replace('"textStrings":', '"tabCount": 5, "textStrings":', 1)
+        text = text.replace('"textStrings":', '"tabCount": %d, "textStrings":' % len(_SETTINGS_LABELS), 1)
     # Keep native tab artwork/hit rectangles. The stock wrapping style splits
     # Gameplay's final letter onto a second line with the five-tab layout.
     # A local text-style override leaves every other menu's font unchanged.
@@ -1465,8 +1465,27 @@ def _drop_rows(*rows):
 # Custom reuses the native Video destination; Graphics uses a new layout and
 # leaves the native Game Settings destination intact. The host owns only our controls.
 # 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
-# 平台限制：DM_TARGET=android（d2rm_android.py 传）不出 icloud 行（安卓没有 iCloud；宿主 dm_custom.c custom_row 同样跳过，行号对齐） | per-platform: DM_TARGET=android (passed by d2rm_android.py) omits the icloud row (no iCloud on Android; the host's dm_custom.c custom_row skips it too, so row numbers agree)
-_CUSTOM_KEYS = (('voice',) if os.environ.get('MOVIE_FFMPEG') == '1' else ()) + ('auto_mana', 'merc_pot', 'drop_light', 'map_mark', 'item_notes') + (() if os.environ.get('DM_TARGET') == 'android' else ('icloud',)) + ('pot_pick', 'drop_haptic', 'gem_pick', 'store_btn', 'loot_filter', 'auto_buff', 'touch_swap_above', 'free_tp', 'belt_refill', 'tel_stats', 'auto_crash')   # fps_hud 显示帧数已搬到图形页第二行（用户 2026-10-28）| fps_hud Show frame rate moved to Graphics row 2 (user 2026-10-28)
+# 选项页「键 → 页 / 组 / 平台」表（RC2 方案 C，用户 2026-10-30）：与宿主 dm_custom.c 的 k_opts 同一张，test_options_table.py 逐行比对。平台只分 apple（iOS，Mac 实验室宿主算同类）/ android / all（DM_TARGET=android 由 d2rm_android.py 传）。
+# 顺序 = 页内显示顺序。_OPT_PENDING = 代码还没并入的键：占位不出行，并入时从这里删掉
+# Options "key -> page / group / platform" table (RC2 plan C, user 2026-10-30): the same table as k_opts in the host's dm_custom.c, compared line by line by test_options_table.py. Platform is apple (iOS, with the Mac lab host) / android / all (DM_TARGET=android is passed by d2rm_android.py).
+# Order = display order within a page. _OPT_PENDING = keys whose code is not merged yet: they hold a place and get no row; remove them here when merging. Rows sit on their own pages
+_OPT_TABLE = (
+    ('render_res', 'gfx', 'Display', 'all'), ('bright_level', 'gfx', 'Display', 'all'),
+    ('fps_hud', 'gfx', 'Frame', 'all'), ('eco_fps', 'gfx', 'Frame', 'all'), ('dyn_refresh', 'gfx', 'Frame', 'all'), ('fgen', 'gfx', 'Frame', 'apple'),
+    ('upscale', 'gfx', 'Upscale', 'apple'), ('q3d', 'gfx', 'Upscale', 'apple'),
+    ('rt_level', 'gfx', 'Rt', 'apple'),   # RC2 光追档位一行取代 rt_shadow / rt_ao 两个开关 | RC2's one ray-tracing level row replaces the rt_shadow / rt_ao switches
+    ('lang', 'sys', 'Lang', 'all'), ('voice', 'sys', 'Lang', 'all'),
+    ('icloud', 'sys', 'Saves', 'apple'),
+    ('tel_stats', 'sys', 'Privacy', 'all'), ('auto_crash', 'sys', 'Privacy', 'all'),
+    ('auto_mana', 'game', 'Combat', 'all'), ('merc_pot', 'game', 'Combat', 'all'), ('auto_buff', 'game', 'Combat', 'all'), ('free_tp', 'game', 'Combat', 'all'),
+    ('pot_pick', 'game', 'Loot', 'all'), ('gem_pick', 'game', 'Loot', 'all'), ('belt_refill', 'game', 'Loot', 'all'), ('loot_filter', 'game', 'Loot', 'all'), ('drop_light', 'game', 'Loot', 'all'), ('drop_haptic', 'game', 'Loot', 'apple'),
+    ('item_notes', 'game', 'Ui', 'all'), ('map_mark', 'game', 'Ui', 'all'), ('store_btn', 'game', 'Ui', 'all'), ('touch_swap_above', 'game', 'Ui', 'all'),
+)
+_OPT_PENDING = frozenset(('dyn_refresh', 'fgen'))   # rt_level / tel_stats / auto_crash / belt_refill 已随 RC2 并入（方案 C × rt_level 移植） | merged with RC2 (plan C x rt_level port)
+def _opt_here(plat): return plat != ('apple' if os.environ.get('DM_TARGET') == 'android' else 'android')
+_CUSTOM_KEYS = tuple(k for k, page, _, plat in _OPT_TABLE if page == 'sys' and k != 'lang' and k not in _OPT_PENDING and _opt_here(plat) and (k != 'voice' or os.environ.get('MOVIE_FFMPEG') == '1'))   # 系统页（VideoOptionsPanel） | System page
+_GAME_KEYS = tuple(k for k, page, _, plat in _OPT_TABLE if page == 'game' and k not in _OPT_PENDING and _opt_here(plat))   # 游戏页原版表格之前的 Plus 行 | Plus rows before the original table on the Gameplay page
+_OPT_GROUP = {k: g for k, _, g, _ in _OPT_TABLE}
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
 # The text lives in the Chinese-English string table (dmCustom<key name in camel case> in dm/i18n/ui_text.tsv); layouts write @key and follow the
 # original game's language (English version); row height is assigned by the number of Chinese lines, and English must have the same number of lines
@@ -1481,21 +1500,27 @@ _CUSTOM_ROWS = tuple((k, '@' + _custom_key(k)) for k in _CUSTOM_KEYS)
 # 但它不动滚动区里别的控件——各行包在一个容器 TouchCustomRows 里、挂在原版滚动区 ScrollView 下，内容多高原版就滚多高、滚出列表框的由原版裁掉
 # （和别的选项页同一套滚动：拖动、滚动条、滚轮）。原先各行直接钉在面板上、不在滚动区里，列表框只有 1260 高，11 行把行高压到了 98。
 # 尺寸取自同一控件树里表格排出来的值：行高 180；文字 1000×180；勾选框在行内 x 1315、70×70 垂直居中。标题行 180（下面的分隔金线按 180 行高摆）。
-# 第一行是语言开关（宿主键表里也排第一），之后是 _CUSTOM_KEYS 各行；加行 = 往 _CUSTOM_KEYS 加键（宿主 dm_custom.c 的 k_keys 同序加）
+# 第一行是语言开关（宿主键表里也排第一），之后是 _CUSTOM_KEYS 各行；加行 = 往 _OPT_TABLE 加键（宿主 dm_custom.c 的 k_keys、k_opts 同时加）
 # The video page's class hides any table row it does not recognize as a whole row (widget tree: our rows have +0x50 = 0, and only the header rows without checkboxes stay visible), so the rows do not go into the table;
 # but it does not touch other widgets in the scroll area -- the rows are wrapped in a container TouchCustomRows hung under the original scroll area ScrollView, so the original game scrolls as far as the content is tall and clips whatever scrolls out of the list box
 # (the same scrolling as the other option pages: drag, scrollbar, wheel). Previously the rows were pinned directly on the panel, outside the scroll area; the list box is only 1260 high, and 11 rows squeezed the row height down to 98.
 # Dimensions are taken from the values the table lays out in the same widget tree: row height 180; text 1000×180; checkbox at x 1315 within the row, 70×70, vertically centered. Header row 180 (the gold divider line below it is placed for a 180 row height).
-# The first row is the language switch (also first in the host's key table), followed by the rows of _CUSTOM_KEYS; adding a row = adding a key to _CUSTOM_KEYS (and to k_keys in the host's dm_custom.c in the same order)
+# The first row is the language switch (also first in the host's key table), followed by the rows of _CUSTOM_KEYS; adding a row = adding a key to _OPT_TABLE (and to k_keys and k_opts in the host's dm_custom.c in the same order)
 _CUSTOM_TITLE_H, _CUSTOM_LINE_H = 180, 180
 _CUSTOM_ALL = (('lang', '@dmCustomLang'),) + _CUSTOM_ROWS
 _CUSTOM_TEST_ROWS = int(os.environ.get('DM_CUSTOM_TEST_ROWS', '0'))   # 测试（造现场）：末尾多摆这么多行假行，验更多行时的滚动；产品不设 | test (test setup): append this many dummy rows at the end, to verify scrolling with more rows; not set in the product
 # 超分五档、语音和换组位置两档；每项保留标题与说明的空间。
 # Upscaling has five choices; voice and swap position have two, each with room for a title and hint.
 _CUSTOM_Q3D_H = 2 * _CUSTOM_LINE_H
-_CUSTOM_ROW_H = [(5 * _CUSTOM_LINE_H if k == 'q3d' else _CUSTOM_Q3D_H if k in ('voice', 'touch_swap_above') else _CUSTOM_LINE_H) for k, _ in _CUSTOM_ALL] + [_CUSTOM_LINE_H] * _CUSTOM_TEST_ROWS
-_CUSTOM_Y = [_CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H[:i]) for i in range(len(_CUSTOM_ROW_H))]
-_CUSTOM_H = _CUSTOM_TITLE_H + sum(_CUSTOM_ROW_H)
+_CUSTOM_ROW_H = [(_CUSTOM_Q3D_H if k == 'voice' else _CUSTOM_LINE_H) for k, _ in _CUSTOM_ALL]
+# 系统页：换组的地方多一行分组标题（语言组的标题就是页顶那行）| System page: one heading row where the group changes (the language group's heading is the page's top row)
+_CUSTOM_Y, _CUSTOM_HEADS = [], []
+_y = _CUSTOM_TITLE_H
+for _i, (_k, _) in enumerate(_CUSTOM_ALL):
+    if _i and _OPT_GROUP[_k] != _OPT_GROUP[_CUSTOM_ALL[_i - 1][0]]: _CUSTOM_HEADS.append((_OPT_GROUP[_k], _y)); _y += _CUSTOM_LINE_H
+    _CUSTOM_Y.append(_y); _y += _CUSTOM_ROW_H[_i]
+_CUSTOM_Y += [_y + _CUSTOM_LINE_H * n for n in range(_CUSTOM_TEST_ROWS)]
+_CUSTOM_H = _y + _CUSTOM_LINE_H * _CUSTOM_TEST_ROWS
 # 末尾的「关于」组（社区入口 dm_community.c）：分节标题「关于」+ 一行「社区讨论 …… [查看]」（原版前端中号按钮，发空操作消息 ClosePanel:TouchCommunityOpt，宿主当信号收、打开提示框）。
 # 整组包在容器 TouchAboutRow 里，和各行同在滚动区、跟着滚；社区行单独包在子容器 TouchAboutCommunityRow 里（名字以 Row 结尾：dm_custom.c indent_rows 只往这种容器里找一层，标签才随各行右移 40、手柄选中框落在 +10，十二审 Q12-01），没有可显示的值时宿主把它的 x 挪出屏幕（y 不动：滚动区按子控件范围算内容高度），标题与鸣谢行照常。手柄模式十字键能选到社区行、A 打开（dm_custom.c）。
 # 原先组里还有一块「鸣谢」子块（子标题 + 制作 / 特别鸣谢名单），与社区行点开的提示框页脚（版本 + 制作 + 特别鸣谢）重复，RC1.1 B008 删掉（用户 Duo 反馈）：
@@ -1523,8 +1548,23 @@ def _custom_about():
             + _btn('TouchCommunityOpt', 30, '@dmCommunityOpen', 'PanelManager:ClosePanel:TouchCommunityOpt', x=1110, anchor=False).replace('\n        ', '\n                ')
             + '            ] },\n'
             + '        ] },\n')
-def _custom_toggle_row(i, key, label):
-    y, h = _CUSTOM_Y[i], _CUSTOM_LINE_H
+def _opt_heading(name, text_key, y):
+    return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d }, "text": "@%s", "style": "$StyleSettingsTitle" }, "children": [\n'
+            '            { "type": "ImageWidget", "name": "%sDivider", "fields": { "rect": "$OptionsDividerRect", "filename": "PauseMenu\\\\Divider" } } ] },\n') % (name, y, _CUSTOM_LINE_H, text_key, name)
+# 行名下面一行副文（CLAUDE.md §2.6：28 号、说明灰、$ReducedSpacing）：文字上移，副文也进手柄金框，同光追 AO 行 | one subtext line under the row name (28 pt, description grey, $ReducedSpacing): caption moved up so it fits the controller frame, like the AO row
+_OPT_NOTES = frozenset(('auto_mana', 'merc_pot', 'auto_buff', 'free_tp', 'pot_pick', 'gem_pick', 'loot_filter', 'item_notes', 'map_mark', 'icloud'))
+_NOTE_STYLE = '{ "fontColor": "$FontColorLightGray", "pointSize": 28, "spacing": "$ReducedSpacing", "alignment": { "v": "center" } }'
+def _opt_note(name, text_key, x, y, w=1270): return '        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": 60 }, "text": "@%s", "style": %s } },\n' % (name, x, y, w, text_key, _NOTE_STYLE)
+def _custom_toggle_row(i, key, label, y=None):
+    y, h = _CUSTOM_Y[i] if y is None else y, _CUSTOM_LINE_H
+    if key in _OPT_NOTES or key == 'store_btn':
+        extra = ''
+        if key in _OPT_NOTES: extra += _opt_note('TouchCustom_%s_Note' % key, _custom_key(key) + 'Note', 0, y + 88)
+        if key == 'icloud': extra += _opt_note('TouchCustom_icloud_NoAcct', 'dmCustomIcloudNoAcct', 0, y + 88)
+        if key == 'store_btn': extra += _opt_note('TouchCustom_store_btn_Pad', 'dmOptTouchOnly', 0, y + 88)
+        return _custom_toggle_row_core(y, 140, key, label, h) + extra
+    return _custom_toggle_row_core(y, h, key, label, h)
+def _custom_toggle_row_core(y, th, key, label, h):
     return ('        { "type": "TextBoxWidget", "name": "TouchCustom_%s_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "%s", "style": "$StyleSettingsText", "style/options/newlineHandling": "standard" } },\n'
             '        { "type": "ToggleButtonWidget", "name": "TouchCustom_%s", "fields": {\n'
             '            "rect": { "x": 1315, "y": %d, "width": 70, "height": 70 }, "sound": "cursor_menu_select_hd",\n'
@@ -1532,7 +1572,7 @@ def _custom_toggle_row(i, key, label):
             '            "filename": "Lobby\\\\CreateGame\\\\CreateGame_AdvancedCheckbox",\n'
             '            "untoggledFrame": 0, "untoggledPressedFrame": 1, "untoggledHoveredFrame": 3, "untoggledDisabledFrame": 2,\n'
             '            "toggledFrame": 4, "toggledPressedFrame": 5, "toggledHoveredFrame": 6,\n'
-            '            "onClickMessage": "PanelManager:ClosePanel:TouchCustom_%s" } },\n') % (key, y, h, label, key, y + (h - 70) // 2, key)
+            '            "onClickMessage": "PanelManager:ClosePanel:TouchCustom_%s" } },\n') % (key, y, th, label, key, y + (h - 70) // 2, key)
 # 语言开关（第一行，普通行）：五项单选「中文 / English / Español / Русский / 한국어」，下次启动生效（宿主 dm_custom.c 的 lang、hle_fs.c settings_lang_apply）。
 # 「重启游戏后生效」那句先放在屏外，勾选与当前语言不一致时宿主挪到这一行文字的下半（横坐标取标签的）
 _CUSTOM_LANG_HINT = ''.join('        { "type": "TextBoxWidget", "name": "TouchCustomLangHint%s", "fields": { "rect": { "x": 99999, "y": %d, "width": 1400, "height": 60 }, "text": "@dmCustomLangHint%s", "style": "$StyleSettingsText", "style/fontFace": "BlizzardGlobal" } },\n'
@@ -1562,9 +1602,9 @@ def _custom_lang_row():
 # Upscaling stores five mutually exclusive q3d profiles; voice and swap position retain two choices.
 # 空标签框覆盖整行，供手柄焦点框使用；每项说明容纳两行小字。
 # An empty label spans the row for controller focus; each hint accommodates two lines of small text.
-def _custom_q3d_row(i, setting="q3d"):
+def _custom_q3d_row(i, setting="q3d", y=None):
     prefix = "TouchCustom_" + setting
-    y = _CUSTOM_Y[i]; h = _CUSTOM_LINE_H
+    y = _CUSTOM_Y[i] if y is None else y; h = _CUSTOM_LINE_H
     def text(name, yy, hh, key, small): return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": 0, "y": %d, "width": 1200, "height": %d }, "text": "@%s", "style": %s } },\n'
                                                 % (name, yy, hh, key, '{ "fontColor": "$FontColorGray", "pointSize": 30, "alignment": { "h": "left", "v": "center" } }' if small else '"$StyleSettingsText"'))
     def box(name, yy): return ('        { "type": "ToggleButtonWidget", "name": "%s", "fields": {\n'
@@ -1581,11 +1621,12 @@ def _custom_q3d_row(i, setting="q3d"):
     for k, (key, nm) in enumerate(choices):
         yy = y + k * h
         out += text(nm + '_Label', yy + 10, 100, key, False) + text(nm + '_Hint', yy + 100, 70, key + 'Hint', True) + box(nm, yy + 15)
+    if setting == 'touch_swap_above': out += _opt_note(prefix + '_Pad', 'dmOptTouchOnly', 900, y + 30, 380)
     return out
 def _custom_page(text):
     if '"name": "VideoOptionsPanel"' not in text or '"name": "OptionsTable"' not in text: raise SystemExit('touch_layout：主机版视频页不是原样（原版布局变了？），自定义页没换')
     title = ('{ "type": "TableRowWidget", "name": "Row TouchCustomTitle", "children": [\n'
-             '    { "type": "TextBoxWidget", "name": "TouchCustomTitle", "fields": { "text": "@KeyBindingTypeCustom", "style": "$StyleSettingsTitle" }, "children": [\n'
+             '    { "type": "TextBoxWidget", "name": "TouchCustomTitle", "fields": { "text": "@dmOptGrpLang", "style": "$StyleSettingsTitle" }, "children": [\n'
              '        { "type": "ImageWidget", "name": "Divider", "fields": { "rect": "$OptionsDividerRect", "filename": "PauseMenu\\\\Divider" } },\n'
              '    ] },\n'
              '] },\n')
@@ -1596,6 +1637,7 @@ def _custom_page(text):
            + title + '            ] },\n'
            + '            { "type": "Widget", "name": "TouchCustomRows", "fields": { "rect": { "x": 0, "y": 0, "width": 1500, "height": %d } }, "children": [\n' % (_CUSTOM_H + _SAVES_H + _ABOUT_H)
            + _custom_lang_row() + ''.join((_custom_q3d_row(i, k) if k in ('voice', 'q3d', 'touch_swap_above') else _custom_toggle_row(i, k, l)) for i, (k, l) in enumerate(_CUSTOM_ALL) if i) + _CUSTOM_LANG_HINT
+           + ''.join(_opt_heading('TouchOptHead' + g, 'dmOptGrp' + g, y) for g, y in _CUSTOM_HEADS)
            + ''.join('        { "type": "TextBoxWidget", "name": "TouchCustomTest%d_Text", "fields": { "rect": { "x": 0, "y": %d, "width": 1000, "height": %d }, "text": "@KeyBindingTypeCustom", "style": "$StyleSettingsText" } },\n'
                      % (n, _CUSTOM_Y[len(_CUSTOM_ALL) + n], _CUSTOM_LINE_H) for n in range(_CUSTOM_TEST_ROWS)) + _custom_saves() + _custom_about() +
            # 手柄模式的选中框（同符文之语清单 TouchRwSel）：框住十字键选中的那一行，宿主摆（dm_custom.c）；触屏模式一直在屏外（只把 x 挪出去、y 留在内容范围内：滚动区按子控件的范围算内容高度，y 放到 99999 会把可滚范围撑到十万）。和各行在同一个容器里，跟着滚
@@ -1724,7 +1766,7 @@ def _graphics_page(text):
             'untoggledFrame': 0, 'untoggledPressedFrame': 1, 'untoggledHoveredFrame': 3, 'untoggledDisabledFrame': 2,
             'toggledFrame': 4, 'toggledPressedFrame': 5, 'toggledHoveredFrame': 6,
             'onClickMessage': 'PanelManager:ClosePanel:' + name}}
-    title = label('TouchGraphicsTitle', 'dmGraphicsTitle', 0, 0, 1730, 180)
+    title = label('TouchGraphicsTitle', 'dmOptGrpDisplay', 0, 0, 1730, 180)
     title['fields']['style'] = '$StyleSettingsTitle'
     title['children'] = [{'type': 'ImageWidget', 'name': 'Divider', 'fields': {
         'rect': '$OptionsDividerRect', 'filename': 'PauseMenu\\Divider'}}]
@@ -1738,10 +1780,10 @@ def _graphics_page(text):
     profile_note['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
     # 内存档位（用户 2026-10-29）：屏幕撑得住 120、只因本机内存上限不开放 120 帧时，帧率文字下方一行同款副文；宿主跟着帧率行挪（y + 116）、按 fps_mem_capped 显示
     # Memory tier (user 2026-10-29): when the screen could do 120 but this device's memory limit forbids it, the same subtext style under the frame-rate caption; the host moves it with the frame-rate row (y + 116) and shows it via fps_mem_capped
-    fps_note = label('TouchGraphicsFpsNote', 'dmGraphicsFps120MemNote', 0, 540 + 116, 1000, 60)
+    fps_note = label('TouchGraphicsFpsNote', 'dmGraphicsFps120MemNote', 0, 900 + 116, 1000, 60)
     fps_note['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
     profile = {'type': 'Widget', 'name': 'TouchGraphicsProfileRow', 'fields': {
-        'rect': {'x': 0, 'y': 900, 'width': 1730, 'height': 180}}, 'children': [
+        'rect': {'x': 0, 'y': 1440, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsProfileText', 'dmGraphicsProfileAuto', 0, 0, 1000, 180), profile_note,
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsProfile', 'fields': {
             'rect': {'x': 1110, 'y': 55, 'width': 480, 'height': 72},
@@ -1779,7 +1821,7 @@ def _graphics_page(text):
     rt_off = label('TouchGraphicsRtTextOff', 'dmGraphicsRtLevelNone', 0, 0, 1090, 140)
     rt_off['fields']['style/fontColor'] = '$FontColorLightGray'
     rt_row = {'type': 'Widget', 'name': 'TouchGraphicsRtRow', 'fields': {
-        'rect': {'x': 0, 'y': 1080, 'width': 1730, 'height': 180}}, 'children': [
+        'rect': {'x': 0, 'y': 1800, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsRtText', 'dmGraphicsRtLevelOff', 0, 0, 1090, 140), rt_off,
         rt_note('TouchGraphicsRtNote', 'dmGraphicsRtLevelNote'), rt_note('TouchGraphicsRtHighNote', 'dmGraphicsRtLevelHighNote'), rt_note('TouchGraphicsRtNoHw', 'dmGraphicsRtLevelNoHw'),
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsRtLevel', 'fields': {
@@ -1790,25 +1832,53 @@ def _graphics_page(text):
             'onUpdateMessage': 'OptionsPanelMessage:SetD2RRtLevel',
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}}]}
+    # 行内副文（CLAUDE.md §2.6：28 号、说明灰、$ReducedSpacing）：文字上移、副文也进手柄选中框（框下沿约在行内 150，放 116 会被框线压住）；画面加亮行用 | in-row subtext (§2.6): caption moved up so the subtext also fits the controller frame (its lower edge is near 150 in the row; at 116 the line ran through the text); used by the brightening row
+    def sub_note(name, key):
+        n = label(name, key, 0, 88, 1290, 60)
+        n['fields'].update({'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})
+        return n
     # 显示帧数（fps_hud，缺省开；原在自定义页末行，用户 2026-10-28 要求放图形页第二行）：一行勾选框，宿主 dm_graphics_ui_pump 读写 TouchGraphicsFpsHud
     # Show frame rate (fps_hud, on by default; was the last Custom row, moved to Graphics row 2 at the user's request on 2026-10-28): one checkbox row, read and written by the host's dm_graphics_ui_pump via TouchGraphicsFpsHud
     fpshud_row = {'type': 'Widget', 'name': 'TouchGraphicsFpsHudRow', 'fields': {
-        'rect': {'x': 0, 'y': 360, 'width': 1730, 'height': 180}}, 'children': [
+        'rect': {'x': 0, 'y': 720, 'width': 1730, 'height': 180}}, 'children': [
         label('TouchGraphicsFpsHudText', 'dmCustomFpsHud', 0, 0, 1000, 180), toggle('TouchGraphicsFpsHud', 0)]}
+    # 画面加亮（dm_bright.c 的曝光上限）：四档滑块，文字上移、副文进手柄选中框（sub_note）| brightening (the exposure cap in dm_bright.c): four-stop slider, caption moved up so the subtext fits the controller frame (sub_note)
+    bright_note = sub_note('TouchGraphicsBrightNote', 'dmGraphicsBrightNote')
+    bright_row = {'type': 'Widget', 'name': 'TouchGraphicsBrightRow', 'fields': {
+        'rect': {'x': 0, 'y': 360, 'width': 1730, 'height': 180}}, 'children': [
+        label('TouchGraphicsBrightText', 'dmGraphicsBrightMid', 0, 0, 1000, 140), bright_note,
+        {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsBright', 'fields': {
+            'rect': {'x': 1110, 'y': 55, 'width': 480, 'height': 72},
+            'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',
+            'focusIndicatorFilename': '$OptionsSliderFocusIndicatorFilename', 'isHorizontal': True, 'increment': 1,
+            'indicatorFilepath': 'PauseMenu\\HorizontalIndicator', 'background': '$SettingsSliderBackground',
+            'onUpdateMessage': 'OptionsPanelMessage:SetD2RBrightness',
+            'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
+            'valueText': '$SettingsSliderValueFields'}}]}
+    def head(name, key, y):   # 分组标题，宿主按可见行摆 y、没行就藏 | group heading; the host sets its y from the visible rows and hides it when empty
+        h = label(name, key, 0, y, 1730, 180); h['fields']['style'] = '$StyleSettingsTitle'
+        h['children'] = [{'type': 'ImageWidget', 'name': name + 'Divider', 'fields': {'rect': '$OptionsDividerRect', 'filename': 'PauseMenu\\Divider'}}]
+        return h
+    # 初始 y = 宿主全部可见（Apple）时 graphics_row_y 摆的位置（每换一组多一行标题）：显示 180 / 360，帧率组标题 540、720 / 900，超分组标题 1080、1260 / 1440，光追组标题 1620、1800（只一行 rt_level；安卓整组不进布局），说明 1980。
+    # 宿主每帧照可见行重摆，这里对齐只是让第一帧不跳；两边同一张表由 t_graphics_gate 与 test_touch_layout_options.py 各核一侧（审计 r1 P2-5）
+    # Initial y = where the host's graphics_row_y places rows with everything visible (Apple; one heading row per group change): display 180 / 360, frame heading 540, 720 / 900,
+    # upscale heading 1080, 1260 / 1440, ray-tracing heading 1620, 1800 (the one rt_level row; not in the Android layout), hint 1980. The host re-places visible rows every frame; matching here only keeps the first frame
+    # still. The same table is checked on each side by t_graphics_gate and test_touch_layout_options.py (audit r1 P2-5)
+    up_nohw = rt_note('TouchGraphicsUpscaleNoHw', 'dmGraphicsUpscaleNoHw'); up_nohw['fields']['rect']['y'] = 1260 + 116   # 宿主跟着超分行摆（y + 116） | the host moves it with the upscale row (y + 116)
     rows = {'type': 'Widget', 'name': 'TouchGraphicsRows', 'fields': {
-        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 1760}}, 'children': [title, res_row, fpshud_row,
-        label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 540, 1000, 180), fps_note,
+        'rect': {'x': 0, 'y': 0, 'width': 1730, 'height': 2300}}, 'children': [title, head('TouchOptHeadFrame', 'dmOptGrpFrame', 540), head('TouchOptHeadUpscale', 'dmOptGrpUpscale', 1080), res_row, bright_row, fpshud_row,
+        label('TouchGraphicsFpsText', 'dmGraphicsFrameRate60', 0, 900, 1000, 180), fps_note,
         {'type': 'SettingsSliderWidget', 'name': 'TouchGraphicsFps', 'fields': {
-            'rect': {'x': 1110, 'y': 595, 'width': 480, 'height': 72},
+            'rect': {'x': 1110, 'y': 955, 'width': 480, 'height': 72},
             'focusIndicatorPadding': '$OptionsSliderFocusIndicatorPadding',
             'focusIndicatorFilename': '$OptionsSliderFocusIndicatorFilename', 'isHorizontal': True, 'increment': 1,
             'indicatorFilepath': 'PauseMenu\\HorizontalIndicator', 'background': '$SettingsSliderBackground',
             'onUpdateMessage': 'OptionsPanelMessage:SetD2RFrameRate',
             'leftButton': '$SettingsSliderLeftButtonFields', 'rightButton': '$SettingsSliderRightButtonFields',
             'valueText': '$SettingsSliderValueFields'}},
-        label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 720, 1000, 180), toggle('TouchGraphicsUpscale', 720),
+        label('TouchGraphicsUpscaleText', 'dmGraphicsUpscaling', 0, 1260, 1000, 180), toggle('TouchGraphicsUpscale', 1260), up_nohw,
         # 说明文案按平台分：安卓没有 MetalFX，用中性文案 dmAndGraphicsApplyHint | Hint text per platform: Android has no MetalFX, so it uses the neutral dmAndGraphicsApplyHint
-        profile] + ([] if os.environ.get('DM_TARGET') == 'android' else [rt_row]) + [label('TouchGraphicsApplyHint', 'dmAndGraphicsApplyHint' if os.environ.get('DM_TARGET') == 'android' else 'dmGraphicsApplyHint', 0, 1260, 1670, 300),
+        profile] + ([] if os.environ.get('DM_TARGET') == 'android' else [head('TouchOptHeadRt', 'dmOptGrpRt', 1620), rt_row]) + [label('TouchGraphicsApplyHint', 'dmAndGraphicsApplyHint' if os.environ.get('DM_TARGET') == 'android' else 'dmGraphicsApplyHint', 0, 1980, 1670, 300),
         {'type': 'NineTileImageWidget', 'name': 'TouchGraphicsSel', 'fields': {
             'rect': {'x': 99999, 'y': 0, 'width': 1700, 'height': 180}, 'backgroundColor': [0, 0, 0, 0],
             'filename': 'Controller/PANEL/ControllerSelector/ControllerSelectorBorder', 'tileScale': 0.5}}]}
@@ -1859,7 +1929,50 @@ PAD_ROOT = {
 # Same as the Graphics page: the original panel registers only the rows of its own table and rows added to the table are not shown, so our widgets sit beside the table; touch taps the slider's end arrows,
 # and the original controller focus navigation only walks the original table -- the host's dm_padmode.c diff_pump hands the focus to our slider on Up from the table's first row (RC1.1 B015; Left / Right / A change the level, Down goes back), and writes "Game Difficulty: N" into the label.
 # Text levels per §2.6: section title = the original settings title style, row label = settings text style, note = secondary text 28 pt $FontColorLightGray + $ReducedSpacing; controller / touch pages alike
-DIFF_H = 480
+DIFF_H = 660   # 480（标题 / 难度行 / 说明）+ 180（「进入恐惧区域」入口行） | 480 (title / difficulty row / note) + 180 (the Terror Zones entry row)
+# 「进入恐惧区域」入口（方案 C §3.2；落地清单第 6 节的回退方案）：方案 C 把原版「游戏设定」页从页签里拿掉之后，原版离线恐惧区域开关
+# （OfflineDesecratedZonesEnabled，消息 OptionsPanelMessage:SetOfflineDesecratedZonesEnabled）在界面上就没有入口了。这一行不复制原版控件、也不自己存值：
+# 「打开」发原版设置页的切页消息，原版页里那颗开关照它自己的路径读写设置（只在创建新游戏时生效），值不进 sw_custom.txt。
+# 触屏 / 手柄两份页同一块；手柄焦点链（dm_padmode.c diff_pump）把这一行接在难度行之后、Plus 行之前。
+# The 「Terror Zones」 entry (plan C section 3.2; the fallback in item 6 of the landing checklist): with the original 「Game Settings」 page gone from the tabs, the
+# original offline Terror Zones switch (OfflineDesecratedZonesEnabled, message OptionsPanelMessage:SetOfflineDesecratedZonesEnabled) has no way in. This row neither
+# copies the original widget nor keeps a value of its own: 「Open」 sends the original settings page's switch-tab message, and the switch inside that page reads and
+# writes the setting along its own path (it only affects games started afterwards). The value never enters sw_custom.txt.
+# Touch and controller pages share the block; the controller focus chain (dm_padmode.c diff_pump) puts this row right after the difficulty row and before the Plus rows.
+DESECRATED_Y = 480
+def _desecrated_row():
+    return ('    { "type": "Widget", "name": "TouchDesecratedRow", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": 180 } }, "children": [\n'
+            '        { "type": "TextBoxWidget", "name": "TouchDesecratedText", "fields": { "rect": { "x": 0, "y": 0, "width": 1000, "height": 140 }, "text": "@dmOptDesecrated", "style": "$StyleSettingsText" } },\n'
+            % DESECRATED_Y
+            + _opt_note('TouchDesecratedNote', 'dmOptDesecratedNote', 0, 88, 1000)
+            + _btn('TouchDesecratedOpen', 30, '@dmOptDesecratedOpen', 'SettingsPanelMessage:CheckChanges:OnlineGameOptionsPanel', x=1110, anchor=False)
+            + '    ] },\n')
+# 游戏页的 Plus 行（方案 C）：原版表格之前，难度行之后，按组摆。每组一个容器 TouchGrp<组>（标题 + 行，行坐标相对组），将来折叠时整组挪动 / 收起；
+# 原版表格包进我们自己的容器 TouchTableHolder（探针 1 实测：原版焦点、滚动、点击都认，挪容器不算写原版控件）。行控件名与系统页同一套 TouchCustom_<键>
+# Plus rows on the Gameplay page (plan C): before the original table, after the difficulty row, by group. Each group is a container TouchGrp<group> (heading + rows, row coordinates relative to the group), to be moved / collapsed as a whole when folding;
+# the original table goes inside our own container TouchTableHolder (probe 1: the original focus, scrolling and taps all accept it, and moving the container is not writing an original widget). Row widgets use the same TouchCustom_<key> names as the System page
+# 折叠钮：发空操作消息，宿主当信号收（同社区钮）| fold button: a no-op message the host takes as a signal (like the community button)
+def _fold_btn(g): return _btn('TouchFold' + g, 30, '@dmOptFold', 'PanelManager:ClosePanel:TouchFold' + g, x=1110, anchor=False)
+def _game_groups():
+    groups = []
+    for k in _GAME_KEYS:
+        if not groups or groups[-1][0] != _OPT_GROUP[k]: groups.append((_OPT_GROUP[k], []))
+        groups[-1][1].append(k)
+    return groups
+def _game_row_h(k): return _CUSTOM_Q3D_H if k == 'touch_swap_above' else _CUSTOM_LINE_H
+def _game_h(): return sum(_CUSTOM_LINE_H + sum(_game_row_h(k) for k in keys) for _, keys in _game_groups()) + _CUSTOM_LINE_H
+def _game_rows():
+    out, gy = '', 0
+    for g, keys in _game_groups():
+        h = _CUSTOM_LINE_H + sum(_game_row_h(k) for k in keys); y, rows = _CUSTOM_LINE_H, ''
+        for k in keys:
+            rows += _custom_q3d_row(0, k, y) if k == 'touch_swap_above' else _custom_toggle_row(0, k, '@' + _custom_key(k), y)
+            y += _game_row_h(k)
+        out += ('{ "type": "Widget", "name": "TouchGrp%s", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (g, DIFF_H + gy, h)
+                + _opt_heading('TouchGrp%sTitle' % g, 'dmOptGrp' + g, 0) + _fold_btn(g) + rows + '] },\n')
+        gy += h
+    return (out + '{ "type": "Widget", "name": "TouchGrpOrig", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": %d } }, "children": [\n' % (DIFF_H + gy, _CUSTOM_LINE_H)
+            + _opt_heading('TouchGrpOrigTitle', 'dmOptGrpOrig', 0) + _fold_btn('Orig') + '] },\n')
 def _diff_row(fn):
     def g(text):
         text, n = fn(text)
@@ -1876,8 +1989,10 @@ def _diff_row(fn):
                  '"leftButton": "$SettingsSliderLeftButtonFields", "rightButton": "$SettingsSliderRightButtonFields", "valueText": "$SettingsSliderValueFields" } },\n'
                  '    { "type": "TextBoxWidget", "name": "TouchDiffNote", "fields": { "rect": { "x": 0, "y": 360, "width": 1670, "height": 100 }, "text": "@dmDiffRowNote", '
                  '"style": { "fontColor": "$FontColorLightGray", "pointSize": 28, "spacing": "$ReducedSpacing", "alignment": { "v": "center" }, "options": { "lineWrap": true, "newlineHandling": "standard" } } } },\n'
-                 '] },\n') % DIFF_H
-        text = text[:m.start()] + block + text[m.start():m.end()] + ' "rect": { "x": 0, "y": %d },' % DIFF_H + text[m.end():]
+                 ) % DIFF_H + _desecrated_row() + '] },\n'
+        e = _block_end(text, m.start())
+        text = (text[:m.start()] + block + _game_rows() + '{ "type": "Widget", "name": "TouchTableHolder", "fields": { "rect": { "x": 0, "y": %d, "width": 1730, "height": 100 } }, "children": [\n' % (DIFF_H + _game_h())
+                + text[m.start():e + 1] + ' ] }' + text[e + 1:])
         return text, n + 2
     return g
 PRESENT['gameplayoptionspanelhd.json'] = _diff_row(PRESENT['gameplayoptionspanelhd.json'])

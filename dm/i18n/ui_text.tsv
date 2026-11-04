@@ -73,15 +73,15 @@ dmBlissDesc	暗金 ×5、套装 ×3、符文 ×5；Boss 永远按首次击败掉
 dmRwHint	先移到个人仓库或背包	Move out of shared stash first	Sácalo antes del alijo compartido	Sácalo antes del Arcón compartido	Сначала выньте из общего тайника	먼저 공유 창고에서 꺼내세요	符文之语清单：底材在共享仓库时的灰字
 dmRwGo	一键合成	Craft	Crear		Создать	합성	符文之语清单每行 / 详情页的合成按钮
 dmPauseShareLog	分享诊断日志	Share Diagnostics	Compartir diagnóstico		Поделиться диагностикой	진단 로그 공유	暂停菜单按钮
-dmCustomAutoMana	自动喝药（生命 <50%、法力 <30%）	Auto-drink (Life 50%, Mana 30%)	Beber auto. (Vida 50%, Maná 30%)		Автозелье (жизнь <50%, мана <30%)	자동 물약 (생명 <50%, 마나 <30%)	自定义页开关（touch_layout.py _CUSTOM_ROWS；中英行数必须相同）
-dmCustomMercPot	佣兵自动喂药（生命 <50%，多耗药）	Auto-feed Merc at Life <50%	Curar mercenario si vida <50%		Зелье наёмнику при жизни <50%	용병 자동 물약 (생명 <50%)	自定义页开关
+dmCustomAutoMana	自动喝药	Auto-Drink Potions	Beber pociones auto.		Автозелья	자동 물약	自定义页开关（touch_layout.py _CUSTOM_ROWS；中英行数必须相同）
+dmCustomMercPot	佣兵自动喂药	Auto-Feed Mercenary	Curar mercenario auto.		Зелья наёмнику	용병 자동 물약	自定义页开关
 dmCustomDropLight	高价值掉落光柱	Light beam on valuable drops	Haz de luz en botín valioso		Луч света на ценных дропах	고가치 드롭 광기둥	自定义页开关
-dmCustomMapMark	小地图标注出入口、小站与任务终点	Automap: exits, waypoints, quests	Mapa: salidas, transportadores, búsquedas	Automapa: salidas, traslocadores, gestas	Карта: выходы, точки пути, квесты	자동맵: 출구, 웨이포인트, 퀘스트	自定义页开关；英文用原版词 keybinds[CfgAutoMap]「Automap」、objects[Waypoint]
-dmCustomItemNotes	物品注释与旧译名（重启后生效）	Item notes (Chinese/Spanish only, restart)	Notas de objetos (reinicia)		Пометки к предметам (кит./исп., рестарт)	아이템 주석 (중/스페인어, 재시작)	自定义页开关（英文下注释不显示）
-dmCustomIcloud	iCloud 同步存档（重启后生效）	iCloud save sync (after restart)	Sincronía iCloud (tras reiniciar)		Синхронизация iCloud (рестарт)	iCloud 저장 동기화 (재시작 후)	自定义页开关
-dmCustomPotPick	腰带有空位时自动拾取能放进去的药水	Auto-pick potions into belt	Recoger pociones al cinturón	Recolectar pociones al cinturón	Зелья в пояс автоматически	벨트에 물약 자동 줍기	自定义页开关
+dmCustomMapMark	小地图标注	Automap Markers	Marcas en el mapa		Метки на карте	자동 지도 표시	自定义页开关；英文用原版词 keybinds[CfgAutoMap]「Automap」、objects[Waypoint]
+dmCustomItemNotes	物品注释与旧译名	Item Notes	Notas de objetos		Пометки к предметам	아이템 주석	自定义页开关（英文下注释不显示）
+dmCustomIcloud	iCloud 同步存档	iCloud Save Sync	Sincronía iCloud		Синхронизация iCloud	iCloud 저장 동기화	自定义页开关
+dmCustomPotPick	自动拾取药水	Auto-Pick Potions	Recoger pociones auto.		Автоподбор зелий	물약 자동 줍기	自定义页开关
 dmCustomDropHaptic	高价值物品掉落时震动	Vibrate on valuable drops	Vibrar con botín valioso		Вибрация на ценных дропах	고가치 드롭 시 진동	自定义页开关
-dmCustomGemPick	符文与宝石自动拾取（直接进高级仓库）	Auto-stash runes & gems	Runas y gemas al alijo	Runas y gemas al Arcón	Руны и камни в хранилище	룬·보석 자동 창고 보관	自定义页开关
+dmCustomGemPick	自动收符文与宝石	Auto-Stash Runes & Gems	Runas y gemas al alijo		Руны и камни в хранилище	룬·보석 자동 보관	自定义页开关
 dmCustomStoreBtn	背包「存放」按钮	Inventory Deposit button	Botón Depositar en inventario		Кнопка «Внести» в инвентаре	가방 '보관' 버튼	自定义页开关
 dmCustomBeltRefill	腰带有空位时从背包补药	Auto-refill belt from inventory	Rellenar cinturón desde inventario		Пополнять пояс из инвентаря	벨트 빈칸 자동 보충	自定义页开关
 dmCustomEcoFps	省电模式（30 帧）	Power saver (30 fps)	Modo ahorro (30 fps)		Экономия (30 fps)	절전 모드 (30 fps)	自定义页开关
@@ -89,9 +89,9 @@ dmCustomQ3dSmooth	流畅优先	Smoothness first	Fluidez primero		Плавнос�
 dmCustomQ3dSmoothHint	掉帧时自动降低 3D 画面清晰度	Lowers 3D resolution when frames drop	Baja la resolución 3D si caen los fotogramas		Снижает 3D-разрешение при просадке FPS	프레임 하락 시 3D 해상도 자동 낮춤	流畅优先下面的说明小字
 dmCustomQ3dQuality	画质优先	Quality first	Calidad primero		Качество важнее	화질 우선	自定义页「3D 画质」单选的第二项（q3d=1）
 dmCustomQ3dQualityHint	始终保持设定的 3D 清晰度	Always keeps the set 3D resolution	Mantiene siempre la resolución 3D elegida		Всегда держит заданное 3D-разрешение	설정한 3D 해상도 항상 유지	画质优先下面的说明小字
-dmCustomLootFilter	掉落过滤（噩梦起自动隐藏杂物）	Loot Filter (auto, Nightmare+)	Filtro de botín (auto, Pesadilla+)		Фильтр лута (авто, Кошмар+)	루트 필터 (악몽부터 자동)	自定义页开关；Loot Filter 是原版过滤器的英文名
-dmCustomAutoBuff	自动补上增益技能（站着不动时）	Auto-recast buffs when idle	Renovar mejoras al estar quieto		Автоперекаст бафов в покое	대기 중 버프 자동 재시전	自定义页开关
-dmCustomFreeTp	免费回城（不扣回城书和卷轴）	Free Town Portal (no tome/scroll)	Portal gratis (sin tomo/pergamino)		Бесплатный портал (без книги/свитка)	무료 마을 포탈 (책·주문서 소모 없음)	自定义页开关（free_tp，dm_freetp.c；缺省开，用户 2026-10-30：开着时回城钮与技能树里的回城技能不扣书和卷轴；RT 两种设置下都不接管）
+dmCustomLootFilter	掉落过滤	Loot Filter	Filtro de botín		Фильтр лута	루트 필터	自定义页开关；Loot Filter 是原版过滤器的英文名
+dmCustomAutoBuff	自动补增益技能	Auto-Recast Buffs	Renovar mejoras auto.		Автобафы	버프 자동 재시전	自定义页开关
+dmCustomFreeTp	免费回城	Free Town Portal	Portal gratis		Бесплатный портал	무료 마을 포탈	自定义页开关（free_tp，dm_freetp.c；缺省开，用户 2026-10-30：开着时回城钮与技能树里的回城技能不扣书和卷轴；RT 两种设置下都不接管）
 dmFreeTpNoScroll	没有回城书或回城卷轴	No Town Portal tome or scroll	No tienes tomo ni pergamino de portal		Нет книги или свитка портала	마을 포탈 책이나 주문서가 없습니다	免费回城关着时点回城钮、身上没有可用的回城书 / 卷轴的系统提示（dm_freetp.c，一行正文）
 dmCustomLang	语言	Language	Idioma		Язык	언어	自定义页语言那一行的标签：每种界面写自己语言的一个词（四个选项一排放不下两个词）
 dmCustomLangZh	中文	中文	中文		中文	中文	语言行的选项一（两种界面都写「中文」，同上用全球字体）
@@ -108,9 +108,16 @@ dmCustomVoiceZh	中文配音	Chinese voice	Voz en chino		Китайская оз
 dmCustomVoiceZhHint	对话与过场使用中文语音；下次启动生效	Chinese dialogue and cutscenes; applies after restart	Diálogos y escenas en chino; se aplica al reiniciar		Китайские диалоги и ролики; после перезапуска	대화와 시네마틱에 중국어 음성; 재시작 후 적용	中文配音下面的说明小字
 dmCustomVoiceEn	English voice	English voice	Voz en inglés		Английская озвучка	영어 음성	自定义页「配音」单选第二项（voice=1）
 dmCustomVoiceEnHint	对话与过场使用英文语音；下次启动生效	English dialogue and cutscenes; applies after restart	Diálogos y escenas en inglés; se aplica al reiniciar		Английские диалоги и ролики; после перезапуска	대화와 시네마틱에 영어 음성; 재시작 후 적용	英文配音下面的说明小字
-dmTabGameSettings	游戏设定	Settings	Ajustes	Config.	Опции	설정	触屏设置页第三个子页签（原版英文 Game Settings 放不进页签；中文取原版串原文）
 dmTabGraphics	图形	Graphics	Gráficos	Gráficos	Графика	그래픽	图形设置页签
-dmGraphicsTitle	图形设置	Graphics	Gráficos	Gráficos	Графика	그래픽	图形页标题
+dmOptGrpDisplay	画面	Display	Imagen		Изображение	화면	图形页分组标题 | Graphics page group heading
+dmOptGrpFrame	帧率	Frame Rate	Fotogramas		Частота кадров	프레임	图形页分组标题 | Graphics page group heading
+dmOptGrpUpscale	超分	Upscaling	Escalado		Масштабирование	업스케일링	图形页分组标题（iOS）| Graphics page group heading (iOS)
+dmOptGrpRt	光线追踪	Ray Tracing	Trazado de rayos		Трассировка лучей	레이 트레이싱	图形页分组标题（iOS）| Graphics page group heading (iOS)
+dmGraphicsBrightOff	画面加亮：关	Dark Area Boost: Off	Realce de zonas oscuras: no		Усиление тёмных зон: выкл.	어두운 곳 밝게: 끔	图形页画面加亮行 | Graphics brightening row
+dmGraphicsBrightLow	画面加亮：低	Dark Area Boost: Low	Realce de zonas oscuras: bajo		Усиление тёмных зон: низкое	어두운 곳 밝게: 낮음	图形页画面加亮行 | Graphics brightening row
+dmGraphicsBrightMid	画面加亮：中	Dark Area Boost: Medium	Realce de zonas oscuras: medio		Усиление тёмных зон: среднее	어두운 곳 밝게: 중간	图形页画面加亮行 | Graphics brightening row
+dmGraphicsBrightHigh	画面加亮：高	Dark Area Boost: High	Realce de zonas oscuras: alto		Усиление тёмных зон: высокое	어두운 곳 밝게: 높음	图形页画面加亮行 | Graphics brightening row
+dmGraphicsBrightNote	调整暗处亮度，不影响白天场景	Adjusts dark areas; daytime scenes stay the same	Ajusta las zonas oscuras; las escenas de día no cambian		Настраивает тёмные места; дневные сцены не меняются	어두운 곳의 밝기를 조절합니다. 낮 장면은 그대로입니다	图形页画面加亮行副文 | Graphics brightening subtext
 dmGraphicsFrameRate	帧率：30 FPS 省电（关闭为 60 FPS）	Frame rate: 30 FPS power saving (off: 60 FPS)	Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)	Fotogramas: 30 FPS ahorro (desactivado: 60 FPS)	Частота: 30 FPS экономия (выкл.: 60 FPS)	프레임: 30 FPS 절전 (끔: 60 FPS)	帧率开关说明
 dmGraphicsUpscaling	MetalFX 空间超分（实验性）	MetalFX upscaling (experimental)	Superresolución MetalFX (experimental)	Superresolución MetalFX (experimental)	Апскейлинг MetalFX (эксперимент)	MetalFX 업스케일링 (실험적)	MetalFX 独立开关；实验性功能，六套文本都带「实验性」标记（用户 2026-10-27）
 dmGraphicsUpscaleProfile	MetalFX 档位：自动 → 省电 → 均衡 → 高画质	MetalFX profile: Auto → Eco → Balanced → Quality	Perfil MetalFX: Auto → Ahorro → Equilibrado → Calidad	Perfil MetalFX: Auto → Ahorro → Equilibrado → Calidad	Профиль MetalFX: авто → экономия → баланс → качество	MetalFX 프로필: 자동 → 절전 → 균형 → 고화질	四档滑块说明
@@ -124,8 +131,34 @@ dmGraphicsFps120HotNote	手机发热，暂按 60 帧，降温后自动回到 120
 dmGraphicsResRestartNote	本机内存偏小：调高分辨率需重启游戏生效	Low memory: higher resolution applies after restart	Poca memoria: más resolución tras reiniciar	Poca memoria: más resolución tras reiniciar	Мало памяти: выше разрешение — после перезапуска	메모리 부족: 해상도 올리기는 재시작 후 적용	图形页渲染分辨率行下的副文（28 号说明灰）：内存 1 / 0 档、选了比启动时高的档时显示（启动预留已按启动档缩小，dm_custom.c res_raise_needs_restart）
 dmLowMemTitle	已自动降低画质	Graphics lowered automatically	Calidad gráfica reducida	Calidad gráfica reducida	Графика снижена автоматически	화질을 자동으로 낮췄습니다	内存 0 档主菜单一次性提示的标题（借崩溃围栏提示框 dm_crashfence.c）
 dmLowMemMsg	本机可用内存偏小，\n已自动降低画质，不开放 120 帧。\n可在选项的「图形」页调整。	This device has less memory available,\nso graphics were lowered and 120 FPS is off.\nYou can change this on the Graphics tab in Options.	Este dispositivo tiene poca memoria,\nasí que se redujo la calidad y no hay 120 FPS.\nPuedes cambiarlo en la pestaña Gráficos de Opciones.	Este dispositivo tiene poca memoria,\nasí que se redujo la calidad y no hay 120 FPS.\nPuedes cambiarlo en la pestaña Gráficos de Opciones.	На этом устройстве мало памяти,\nпоэтому графика снижена, 120 FPS недоступны.\nЭто можно изменить на вкладке «Графика» в настройках.	이 기기는 사용 가능한 메모리가 적어\n화질을 낮추고 120 FPS를 껐습니다.\n옵션의 그래픽 탭에서 바꿀 수 있습니다.	内存 0 档主菜单一次性提示的正文：三行（提示框每行一个文字框，按 \n 拆），行数六语一致；不用 → 箭头（拉丁 / 西里尔游戏字体没有，会退回系统字体）
-dmGraphicsApplyHint	MetalFX 空间超分仅处理 3D 画面，UI 保持清晰。\n点“应用”生效，无需重启；切换时可能短暂停顿。\n“默认”全局恢复游戏设定、图形与自定义，保留语言及配音。	MetalFX upscales 3D only; UI stays sharp.\nApply without restarting; switching may briefly pause.\nDefaults resets game options, Graphics and Custom; language and voice stay unchanged.	MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.	MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.	MetalFX масштабирует только 3D; интерфейс остаётся чётким.\nПрименяется без перезапуска; возможна короткая пауза.\nСброс восстанавливает настройки игры, графику и свои настройки; язык и озвучка сохраняются.	MetalFX는 3D만 업스케일링하며 UI는 선명하게 유지됩니다.\n재시작 없이 적용되며 전환 시 잠시 멈출 수 있습니다.\n기본값은 게임, 그래픽과 사용자 설정을 초기화하며 언어와 음성은 유지합니다.	Graphics page help and apply semantics
-dmTabCustom	自定义	Custom	Extras		Своё	사용자	选项页第四个页签「自定义」（touch_layout.py 页签条）：原版 KeyBindingTypeCustom 的西语 Personalizar 放不进页签，换我们的短词；中英与原版同字
+dmGraphicsApplyHint	MetalFX 空间超分仅处理 3D 画面，UI 保持清晰。\n点“应用”生效，无需重启；切换时可能短暂停顿。\n“默认”恢复全部 Plus 选项，保留语言及配音。	MetalFX upscales 3D only; UI stays sharp.\nApply without restarting; switching may briefly pause.\nDefaults resets all Plus options; language and voice stay unchanged.	MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.	MetalFX mejora solo el 3D; la interfaz sigue nítida.\nAplica sin reiniciar; el cambio puede causar una breve pausa.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.	MetalFX масштабирует только 3D; интерфейс остаётся чётким.\nПрименяется без перезапуска; возможна короткая пауза.\nСброс восстанавливает все настройки Plus; язык и озвучка сохраняются.	MetalFX는 3D만 업스케일링하며 UI는 선명하게 유지됩니다.\n재시작 없이 적용되며 전환 시 잠시 멈출 수 있습니다.\n기본값은 모든 Plus 옵션을 초기화하며 언어와 음성은 유지합니다.	Graphics page help and apply semantics
+dmTabSystem	系统	System	Sistema		Система	시스템	选项页签（方案 C）| options tab (plan C)
+dmOptGrpLang	语言	Language	Idioma		Язык	언어	系统页分组标题 | System page group heading
+dmOptGrpSaves	存档	Saves	Partidas		Сохранения	저장	系统页分组标题 | System page group heading
+dmOptGrpPrivacy	隐私	Privacy	Privacidad		Конфиденциальность	개인정보	系统页分组标题：设备与使用统计、自动上报崩溃（RC2 并入方案 C）| System page group heading: statistics and automatic crash reports
+dmOptGrpCombat	战斗与补给	Combat & Supplies	Combate y suministros		Бой и припасы	전투 및 보급	游戏页分组标题 | Gameplay page group heading
+dmOptGrpLoot	拾取与掉落	Pickup & Drops	Recogida y botín		Подбор и добыча	획득 및 드롭	游戏页分组标题 | Gameplay page group heading
+dmOptGrpUi	显示与按键	Display & Controls	Pantalla y controles		Отображение и управление	표시 및 조작	游戏页分组标题 | Gameplay page group heading
+dmCustomAutoManaNote	生命低于 50%、法力低于 30% 时	When Life is below 50%, or Mana below 30%	Con vida bajo 50%, o maná bajo 30%		Когда жизнь ниже 50%, или мана ниже 30%	생명 50% 또는 마나 30% 미만일 때	选项行副文（方案 C）| options row subtext (plan C)
+dmCustomMercPotNote	佣兵生命低于 50% 时，会多耗药	When its Life is below 50%; uses more potions	Con su vida bajo 50%; gasta más pociones		Когда его жизнь ниже 50%; расход зелий выше	용병 생명 50% 미만일 때, 물약을 더 씁니다	选项行副文（方案 C）| options row subtext (plan C)
+dmCustomAutoBuffNote	站着不动时	While standing still	Al estar quieto		Когда стоишь на месте	가만히 있을 때	选项行副文（方案 C）| options row subtext (plan C)
+dmCustomFreeTpNote	不扣回城书和卷轴	Uses no tome or scroll	No gasta tomo ni pergamino		Без траты книги и свитка	책과 두루마리를 쓰지 않습니다	选项行副文（方案 C）| options row subtext (plan C)
+dmCustomPotPickNote	腰带有空位时	When the belt has room	Si hay sitio en el cinturón		Когда в поясе есть место	벨트에 자리가 있을 때	选项行副文（方案 C）| options row subtext (plan C)
+dmCustomGemPickNote	直接进高级仓库	Go straight to the advanced stash	Van directo al alijo avanzado		Сразу в расширенное хранилище	고급 창고로 바로 들어갑니다	选项行副文（方案 C）| options row subtext (plan C)
+dmCustomLootFilterNote	噩梦起自动隐藏杂物	Hides junk automatically from Nightmare on	Oculta lo inútil desde Pesadilla		Скрывает мусор начиная с Кошмара	악몽부터 잡템을 자동으로 숨깁니다	选项行副文（方案 C）| options row subtext (plan C)
+dmCustomItemNotesNote	重启后生效	Chinese and Spanish only; applies after restart	Se aplica al reiniciar		Только кит. и исп.; после перезапуска	중국어·스페인어 전용, 재시작 후 적용	选项行副文（方案 C）| options row subtext (plan C)
+dmCustomMapMarkNote	出入口、小站与任务终点	Exits, waypoints and quest targets	Salidas, transportadores y misiones		Выходы, точки пути и квесты	출구, 웨이포인트, 퀘스트 목표	选项行副文（方案 C）| options row subtext (plan C)
+dmCustomIcloudNote	重启后生效	Applies after restart	Se aplica al reiniciar		После перезапуска	재시작 후 적용	选项行副文（方案 C）| options row subtext (plan C)
+dmCustomIcloudNoAcct	未登录 iCloud，或这个安装包不支持 iCloud	Not signed in to iCloud, or this build does not support it	Sin sesión en iCloud, o esta versión no lo admite		Нет входа в iCloud, или сборка его не поддерживает	iCloud 로그인이 없거나 이 빌드가 지원하지 않습니다	选项行副文（方案 C）| options row subtext (plan C)
+dmOptTouchOnly	仅触屏	Touch only	Solo táctil		Только сенсор	터치 전용	选项行副文（方案 C）| options row subtext (plan C)
+dmGraphicsUpscaleNoHw	本机不支持	Not supported on this device	No compatible con este dispositivo		Не поддерживается на этом устройстве	이 기기에서 지원하지 않습니다	选项行副文（方案 C）| options row subtext (plan C)
+dmGraphicsRtNoHw	本机不支持	Not supported on this device	No compatible con este dispositivo		Не поддерживается на этом устройстве	이 기기에서 지원하지 않습니다	选项行副文（方案 C）| options row subtext (plan C)
+dmOptGrpOrig	更多选项	More Options	Más opciones		Другие настройки	추가 옵션	游戏页分组标题：原版表格整体 | Gameplay page group heading: the original table as a unit
+dmOptFold	展开 / 收起	Show / Hide	Mostrar / Ocultar		Показать / Скрыть	펼치기 / 접기	游戏页分组折叠钮 | Gameplay page fold button
+dmOptDesecrated	进入恐惧区域	Terror Zones	Zonas de terror		Зоны ужаса	공포 구역	游戏页难度行下面的入口（方案 C：原版「游戏设定」页拿掉后，离线恐惧区域开关的入口）| entry under the Gameplay difficulty row (plan C: the way in to the offline Terror Zones switch after the original Game Settings page was dropped)
+dmOptDesecratedNote	只在创建新游戏时生效	Applies to new games only	Solo en partidas nuevas		Только для новых игр	새 게임에만 적용	上一行的副文 | subtext of the row above
+dmOptDesecratedOpen	打开	Open	Abrir		Открыть	열기	上一行的「打开」钮：发原版设置页的切页消息 | the row's Open button: sends the original settings page's switch-tab message
+dmPadLegGroups	上下：跳组	Up / Down: Groups	Arriba / abajo: grupos		Вверх / вниз: группы	위 / 아래: 그룹	游戏页手柄提示条，右摇杆键帽 | Gameplay page controller legend, right stick glyph
 dmChronRunewords	符文之语	Runewords	P. rúnicas		Руны	룬워드	编年史第三个页签（touch_layout.py _chronicle_killboard）：原版 Runewords 的西语 Palabras rúnicas 在 320 宽页签里被截断，换我们的短写；中英与原版同字
 dmVaultPart0	头盔	Helms	Yelmos		Шлемы	투구	编年史暗金页部位页签（wide_stash.py）
 dmVaultPart1	盔甲	Armor	Armadura		Броня	갑옷	编年史暗金页部位页签（wide_stash.py）
@@ -379,7 +412,9 @@ dmPadLegIdentify	捡起（按住鉴定）	Pick Up (Hold to Identify)	Recoger (ma
 dmPadLegCompare	比较（按住）	Compare (hold)	Comparar (mantén)		Сравнить (держать)	길게 눌러 비교	手柄模式下原版提示条 X 那条的「比较」常换成这句（dm_padmode.c 换串小表 HINT_CMP，键 ControllerPromptItemCompare；B014：比较实际要按住 X）；写法照原版 comparisonTooltipController「按住 X 来比较」；比 dmPadLegIdentify 短，原版提示条放得下；只在有我们译文的语言换（dm_lang_ours），德法意波日葡保留原版自己的「比较」（dmPadLegIdentify 同样）
 dmDiffSection	难度	Difficulty	Dificultad	Dificultad	Сложность	난이도	「选项 → 游戏」页难度行的分节标题（touch_layout.py _diff_row，换掉原版「离线」）
 dmDiffRow	游戏难度	Game Difficulty	Dificultad de la partida	Dificultad de partida	Сложность игры	게임 난이도	「选项 → 游戏」页难度行的行名（touch_layout.py _diff_row）；英文 = 原版 ui[OptionsMenuGameDifficulty]「Game Difficulty」
-dmDiffRowNote	相当于同局人数 1–8 档，改了立刻生效	Same as 1–8 players in the game; takes effect at once	Equivale a 1–8 jugadores en la partida; surte efecto al instante	Equivale a 1–8 jugadores en la partida; surte efecto al instante	Как при 1–8 игроках в игре; действует сразу	같은 게임에 1–8명이 있는 것과 같으며 바로 적용됩니다	「选项 → 游戏」页难度行下的说明（touch_layout.py _diff_row，副文 28 号灰；宿主 dm_padmode.c 局内写这一句）
+dmDiffRowNote	人数越高怪物越强、经验和掉落越多，改了立刻生效	More players: tougher monsters, more XP and drops. Takes effect at once	Más jugadores: monstruos más duros, más EXP y botín. Efecto inmediato		Больше игроков: монстры сильнее, больше опыта и добычи. Сразу	인원이 많을수록 몬스터가 강해지고 경험치와 드롭이 늘어납니다. 즉시 적용	「选项 → 游戏」页难度行下的说明（touch_layout.py _diff_row，副文 28 号灰；宿主 dm_padmode.c 局内写这一句）
+dmDiffTipBody	游戏难度 %d：相当于同局 %d 人	Game Difficulty %d: same as %d players	Dificultad %d: como %d jugadores		Сложность %d: как %d игроков	게임 난이도 %d: %d인과 같음	触屏底栏难度格提示正文（B034）| touch difficulty cell tip body (B034)
+dmDiffTipSub	人数越高怪物越强、经验和掉落越多，按自己的生存能力平衡	More players: tougher monsters, more XP and drops. Balance it to what you can survive	Más jugadores: monstruos más duros, más EXP y botín. Equilíbralo a tu medida		Больше игроков: монстры сильнее, больше опыта и добычи. Выбирай по силам	인원이 많을수록 몬스터가 강해지고 경험치와 드롭이 늘어납니다. 생존력에 맞게 조절하세요	触屏底栏难度格提示副文（B034）| touch difficulty cell tip subtext (B034)
 dmDiffOutOfRun	进入游戏后可调整	Available once you are in a game	Disponible al entrar en una partida	Disponible al entrar en una partida	Доступно после входа в игру	게임에 들어간 뒤 조절할 수 있습니다	「选项 → 游戏」页难度行的说明（不在局内时；宿主 dm_padmode.c 写）
 dmDiffRowValue	游戏难度：%d	Game Difficulty: %d	Dificultad de la partida: %d	Dificultad de partida: %d	Сложность игры: %d	게임 난이도: %d	「选项 → 游戏」页难度行的行名带当前档（dm_padmode.c 局内写；滑块本身不显示数字）
 dmRiftGamAfterEn	通关本层后	After This Level	Tras este nivel		После уровня	이 층 이후	大秘境面板赌博区英文版的小标题行（中文界面不用：中文是「通关后暗金 / 通关后套装」两行）
@@ -599,7 +634,7 @@ dmLoadCommCopyGh	复制链接	Copy link	Copiar		Копировать	링크 복�
 dmLoadCommCopied	已复制	Copied	Copiado		Скопировано	복사됨	加载页复制钮：复制成功后 2 秒
 dmLoadCommCopyFail	复制失败	Copy failed	Error al copiar		Ошибка	복사 실패	加载页复制钮：剪贴板写入失败后 2 秒
 dmLoadCommPrefer	qq	github	github		github	github	不显示：加载页复制钮先复制哪一项（qq = 群号，github = 链接；只有一项时用那一项）
-dmAndGraphicsApplyHint	点“应用”生效，无需重启。\n“默认”全局恢复游戏设定、图形与自定义，保留语言及配音。	Apply without restarting.\nDefaults resets game options, Graphics and Custom; language and voice stay unchanged.	Aplica sin reiniciar.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.	Aplica sin reiniciar.\nPredeterminados restaura ajustes del juego, Gráficos y Personalizado; conserva idioma y voces.	Применяется без перезапуска.\nСброс восстанавливает настройки игры, графику и свои настройки; язык и озвучка сохраняются.	재시작 없이 적용됩니다.\n기본값은 게임, 그래픽과 사용자 설정을 초기화하며 언어와 음성은 유지합니다.	安卓图形页说明，不提另一端专属的超分（另一端用 dmGraphicsApplyHint）| Android Graphics page help: leaves out the upscaling only the other platform has (which uses dmGraphicsApplyHint)
+dmAndGraphicsApplyHint	点“应用”生效，无需重启。\n“默认”恢复全部 Plus 选项，保留语言及配音。	Apply without restarting.\nDefaults resets all Plus options; language and voice stay unchanged.	Aplica sin reiniciar.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.	Aplica sin reiniciar.\nPredeterminados restaura todas las opciones Plus; conserva idioma y voces.	Применяется без перезапуска.\nСброс восстанавливает все настройки Plus; язык и озвучка сохраняются.	재시작 없이 적용됩니다.\n기본값은 모든 Plus 옵션을 초기화하며 언어와 음성은 유지합니다.	安卓图形页说明，不提另一端专属的超分（另一端用 dmGraphicsApplyHint）| Android Graphics page help: leaves out the upscaling only the other platform has (which uses dmGraphicsApplyHint)
 dmSaveMgrRow	存档管理	Save Management	Gestión de partidas		Управление сохранениями	저장 관리	自定义页「存档管理」组的标题与行名（dm_custom.c、dm_savemgr.c）
 dmSaveMgrOpen	打开	Open	Abrir		Открыть	열기	自定义页「存档管理」行的按钮
 dmSaveInRun	回到主菜单后可用	Available from the main menu	Disponible en el menú principal		Доступно в главном меню	메인 메뉴에서 사용 가능	局内选项页：存档管理灰显时的副文（用户 D3）

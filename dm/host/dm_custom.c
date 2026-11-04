@@ -40,13 +40,13 @@ static const char *const k_keys[] = { "lang",
 #if VOICE_ROW
     "voice",
 #endif
-    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "belt_refill", "tel_stats", "auto_crash", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
+    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "belt_refill", "tel_stats", "auto_crash", "bright_level", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
 static const int k_def[NK] = { 0,
 #if VOICE_ROW
     1,
 #endif
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 2, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 #define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
@@ -59,9 +59,9 @@ static const int k_def[NK] = { 0,
 // free_tp（免费回城，dm_freetp.c）缺省开（用户 2026-10-30，RC2 起）：RC1.2 / 安卓 1.0.x 缺省关且存盘写全部键，它们留下的 free_tp=0 分不出是不是玩家关的，所以另记 free_tp_v2：没有这个标记的旧文件迁移一次到开；存盘都带标记，之后玩家再关就一直是关
 // free_tp (free town portal, dm_freetp.c) on by default (user 2026-10-30, from RC2): RC1.2 / Android 1.0.x shipped it off and saved every key, so their free_tp=0 cannot be told from a player choice; hence the free_tp_v2 marker: an old file without it migrates once to on; every save writes the marker, so a later off by the player stays off
 // auto_crash（自动上报崩溃，dm_crashreport.c）缺省关；第一次打开要在游戏内确认框里同意（dm_diagup.c），同意记一行 auto_crash_ok=1（点「应用」才写）。文件里只有 auto_crash=1 没有同意记录 = 当关 | auto_crash (automatic crash reports) off by default; the first enable needs consent in the in-game box, recorded as auto_crash_ok=1 (written on Apply). auto_crash=1 without that record counts as off
-#define K_AUTOCRASH (NK - 5)   // rt_level 取代 rt_shadow / rt_ao 两键后前移一位 | one place up now that rt_level replaces rt_shadow / rt_ao
+#define K_AUTOCRASH (NK - 6)   // rt_level 取代 rt_shadow / rt_ao 两键后前移一位；方案 C 的 bright_level 排在它后面 | one place up now that rt_level replaces rt_shadow / rt_ao; plan C's bright_level comes after it
 // tel_stats（设备与使用统计，dm_telemetry.c）缺省关；告知框（dm_telebox.c）答过才算数：答过记一行 tel_notice=<版本>，之后可在页上分别开关，不再弹框。没答过时勾上 = 勾选框退回去，回主菜单弹告知框（构建没配地址 = 同自动上报的说明页） | tel_stats (device and usage statistics) off by default; it only counts once the notice was answered: tel_notice=<version> records that, afterwards both switches toggle freely with no further box. Ticking it unanswered falls back and the notice shows on the main menu (no origin = the same explanation page as crash reports)
-#define K_TELSTATS (NK - 6)
+#define K_TELSTATS (NK - 7)
 __attribute__((weak)) void dm_telemetry_setting_changed(int on) { (void)on; }
 static _Atomic int g_tel_notice;      // 答过的告知版本 | the answered notice version
 __attribute__((weak)) int dm_diagup_modal(void) { return 0; }   // 不带提示框模块的单测用这几份；产品里 dm_diagup.c / dm_crashreport.c 的强定义替换 | for unit tests without those modules; the strong definitions replace them in the product
@@ -70,12 +70,11 @@ __attribute__((weak)) void dm_crashreport_setting_changed(int on) { (void)on; }
 __attribute__((weak)) int dm_crashreport_configured(void) { return 0; }
 static _Atomic int g_ac_ok;           // 文件里有同意记录 | consent on file
 static _Atomic int g_ac_ok_pending;   // 确认框里同意了、还没点「应用」 | agreed in the box, Apply not tapped yet
+#define K_BRIGHT (NK - 5)   // 画面加亮档位：0 关 / 1 低 / 2 中 / 3 高，缺省中（用户 2026-10-31，B098 定中 = 上限 2），dm_bright.c 每帧读 | brightening level: 0 off / 1 low / 2 mid / 3 high, default mid (user 2026-10-31; B098 made mid = cap 2), read every frame by dm_bright.c
 #define K_FPSHUD (NK - 4)   // fps_hud 显示帧数：图形页第二行（原在自定义页末行）| fps_hud Show frame rate: Graphics tab row 2 (was the last Custom row)
 #define K_UPSCALE (NK - 3)
 #define K_RES (NK - 2)
 #define K_RTLVL (NK - 1)   // 光追档位（实验性，缺省关）：0 关、1 低、2 中、3 高，见 dm_rt_level_setting；替换 rt_shadow / rt_ao 两个开关 | ray-tracing level (experimental, off by default): 0 off, 1 low, 2 medium, 3 high, see dm_rt_level_setting; replaces the rt_shadow / rt_ao switches
-#define N_GFX 6   // 图形页的键数：eco_fps / q3d / fps_hud / upscale / render_res / rt_level（自定义页的行数 = custom_rows()） | Number of Graphics-tab keys (Custom-page rows = custom_rows())
-static int graphics_key(int i) { return i == K_FPS || i == K_Q3D || i == K_FPSHUD || i == K_UPSCALE || i == K_RES || i == K_RTLVL; }
 // 配置项的平台限制：没有 iCloud 的平台（Android：nvn_vk.c 强定义 0）自定义页不出 icloud 行，布局生成器按 DM_TARGET=android 同样不出（touch_layout.py _CUSTOM_KEYS），
 // 行号两边对齐；键仍在设置文件里（分享摘要照写），只是没人读。弱定义 = 支持（Apple 不变）
 // Per-platform settings: platforms without iCloud (Android: strong 0 in nvn_vk.c) get no icloud row on the Custom page, and the layout generator omits it likewise under
@@ -85,10 +84,44 @@ __attribute__((weak)) int dm_icloud_supported(void) { return 1; }
 #else
 int dm_icloud_supported(void);
 #endif
-static int custom_row(int i) { return !graphics_key(i) && !(i == K_ICLOUD && !dm_icloud_supported()); }   // 自定义页上有这一行 | this key has a Custom-page row
+// 选项页「键 → 页 / 组 / 平台」表（RC2 方案 C，用户 2026-10-30；顺序 = 页内显示顺序，与存盘顺序 k_keys 无关）。布局 touch_layout.py 的 _OPT_TABLE 是同一张，单测 test_options_table.py 逐行比对。
+// 组名 = 分组标题文案键 dmOptGrp<组>。还没并入的键（k_keys 里没有）也先占位，key_index 认不出就跳过：并入时只动 k_keys / k_def。Mac 只是实验室宿主，平台上跟 iOS 算一类（布局也只分 Apple / 安卓）
+// Options "key -> page / group / platform" table (RC2 plan C, user 2026-10-30; order = display order within a page, unrelated to the save order k_keys). _OPT_TABLE in touch_layout.py is the same table, compared line by line by test_options_table.py.
+// Group = heading text key dmOptGrp<group>. Keys not merged yet (absent from k_keys) already hold a place and are skipped when key_index does not know them: merging only touches k_keys / k_def. The Mac is only a lab host and counts with iOS (the layout also only tells Apple / Android apart)
+enum { PG_GFX, PG_GAME, PG_SYS };
+enum { PF_APPLE = 1, PF_ANDROID = 2, PF_ALL = 3 };
+#ifdef __ANDROID__
+#define PF_HERE PF_ANDROID
+#else
+#define PF_HERE PF_APPLE
+#endif
+static const struct { const char *key; unsigned char page; const char *group; unsigned char plat; } k_opts[] = {
+    { "render_res", PG_GFX, "Display", PF_ALL }, { "bright_level", PG_GFX, "Display", PF_ALL },
+    { "fps_hud", PG_GFX, "Frame", PF_ALL }, { "eco_fps", PG_GFX, "Frame", PF_ALL }, { "dyn_refresh", PG_GFX, "Frame", PF_ALL }, { "fgen", PG_GFX, "Frame", PF_APPLE },
+    { "upscale", PG_GFX, "Upscale", PF_APPLE }, { "q3d", PG_GFX, "Upscale", PF_APPLE },
+    { "rt_level", PG_GFX, "Rt", PF_APPLE },   // RC2 光追档位一行取代 rt_shadow / rt_ao 两个开关（23a2ee3e） | RC2's one ray-tracing level row replaces the rt_shadow / rt_ao switches
+    { "lang", PG_SYS, "Lang", PF_ALL }, { "voice", PG_SYS, "Lang", PF_ALL },
+    { "icloud", PG_SYS, "Saves", PF_APPLE },
+    { "tel_stats", PG_SYS, "Privacy", PF_ALL }, { "auto_crash", PG_SYS, "Privacy", PF_ALL },
+    { "auto_mana", PG_GAME, "Combat", PF_ALL }, { "merc_pot", PG_GAME, "Combat", PF_ALL }, { "auto_buff", PG_GAME, "Combat", PF_ALL }, { "free_tp", PG_GAME, "Combat", PF_ALL },
+    { "pot_pick", PG_GAME, "Loot", PF_ALL }, { "gem_pick", PG_GAME, "Loot", PF_ALL }, { "belt_refill", PG_GAME, "Loot", PF_ALL }, { "loot_filter", PG_GAME, "Loot", PF_ALL }, { "drop_light", PG_GAME, "Loot", PF_ALL }, { "drop_haptic", PG_GAME, "Loot", PF_APPLE },
+    { "item_notes", PG_GAME, "Ui", PF_ALL }, { "map_mark", PG_GAME, "Ui", PF_ALL }, { "store_btn", PG_GAME, "Ui", PF_ALL }, { "touch_swap_above", PG_GAME, "Ui", PF_ALL },
+};
+#define N_OPTS (int)(sizeof k_opts / sizeof *k_opts)
+static int key_index(const char *k) { if (k) for (int i = 0; i < NK; i++) if (!strcmp(k, k_keys[i])) return i; return -1; }
+static int opt_page(int i) { for (int o = 0; o < N_OPTS; o++) if (!strcmp(k_opts[o].key, k_keys[i])) return (k_opts[o].plat & PF_HERE) ? k_opts[o].page : -1; return -1; }   // 这个键在本平台的页；-1 = 本平台没有这一行 | this key's page on this platform; -1 = no such row here
+static int graphics_key(int i) { for (int o = 0; o < N_OPTS; o++) if (!strcmp(k_opts[o].key, k_keys[i])) return k_opts[o].page == PG_GFX; return 0; }
+static int row_on_page(int i, int page) { return opt_page(i) == page && !(i == K_ICLOUD && !dm_icloud_supported()); }
+// 图形页的平台门控照键表（审计 r1 P2-3）：超分组（upscale）、光追组（rt_level）在本平台有没有行，看 k_opts 的平台列；安卓都没有，Apple 都有
+// Graphics page platform gate from the key table (audit r1 P2-3): whether the upscaling group (upscale) and the ray-tracing group (rt_level) have rows here comes from k_opts' platform column; Android has neither, Apple both
+static int key_on_here(const char *k) { int i = key_index(k); return i >= 0 && opt_page(i) == PG_GFX; }
+static void graphics_plat_rows(int *up_show, int *rt_show) { *up_show = key_on_here("upscale"); *rt_show = key_on_here("rt_level"); }
+// iCloud 这台机此刻能不能用（没登录、这个包没权限）：运行时探测，Apple 端 cloud_ios.m 强定义；弱定义 = 能用（Mac 宿主、单测）| whether iCloud is usable right now (not signed in, no entitlement): probed at run time, strong on Apple in cloud_ios.m; weak = usable (Mac host, unit tests)
+__attribute__((weak)) int dm_icloud_available(void) { return 1; }
+static int custom_row(int i) { return row_on_page(i, PG_SYS); }   // 系统页（借来的视频页 VideoOptionsPanel）上有这一行，语言在最前 | this key has a row on the System page (the borrowed VideoOptionsPanel), language first
 static int custom_rows(void) { int n = 0; for (int i = 0; i < NK; i++) n += custom_row(i); return n; }
 static int custom_key_at(int row) {
-    for (int i = 0; i < NK; i++) if (custom_row(i) && row-- == 0) return i;
+    for (int o = 0; o < N_OPTS; o++) { int i = key_index(k_opts[o].key); if (i >= 0 && custom_row(i) && row-- == 0) return i; }
     return 0;
 }
 void dm_3d_quality_mode_set(int mode);
@@ -162,7 +195,6 @@ static int tier_def(int i, int tier) {   // 本档缺省：只有 q3d（MetalFX 
 }        // 默认 / 放弃之后：页上的勾选框按待定值 / 生效值重摆一遍 | After default / discard: lay out the checkboxes on the page again according to pending values / effective values
 
 const char *dm_save_commitdir(void);
-static int key_index(const char *k) { if (k) for (int i = 0; i < NK; i++) if (!strcmp(k, k_keys[i])) return i; return -1; }
 // 这一端没有的设置项：不写进日志与设置文件（§2.8，B092；旧文件里的这一行读进来也没有作用） | a setting this platform does not have: stays out of the log and the settings file (B092; the line in an old file has no effect)
 static int key_other_platform(int i) { (void)i;
 #ifdef __ANDROID__
@@ -204,6 +236,7 @@ static void load_once(void) {
     for (int b = 0; b < 3; b++) atomic_store(&g_bak[b], -1);   // 备份以文件为准 | the backup follows the file
     while (f && fgets(ln, sizeof ln, f)) { char *eq = strchr(ln, '='); if (!eq) continue; *eq = 0; int i = key_index(ln); if (i > 0) v[i] = eq[1] != '0';
         if (i == K_Q3D) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 4) v[i] = (int)q; else v[i] = 0; }
+        if (i == K_BRIGHT) { char *end; long q = strtol(eq + 1, &end, 10); v[i] = end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 3 ? (int)q : k_def[i]; }
         if (i == K_RES) { char *end; long q = strtol(eq + 1, &end, 10); if (end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q < DM_RES_LEVELS) v[i] = (int)q; else v[i] = 0; }
         if (i == K_RTLVL) { char *end; long q = strtol(eq + 1, &end, 10); v[i] = end != eq + 1 && (*end == '\n' || *end == '\r' || *end == 0) && q >= 0 && q <= 3 ? (int)q : 0; has_rtlvl = 1; }
         if (!strcmp(ln, "rt_shadow")) old_rt = eq[1] != '0';
@@ -438,9 +471,12 @@ __attribute__((weak)) int dm_render_res_supported(void) { return 1; }
 #endif
 // 图形页的行（与 touch_layout.py _graphics_page 同序）：可见的紧挨着排，返回可见行数，out 依次是布局行号；选中框按可见序号放、行为按布局行号走（单测 t_graphics_gate）
 // Graphics-tab rows (same order as touch_layout.py _graphics_page): the visible ones are packed, returns the visible count with the layout row ids in out; the selection frame follows the visible index, behaviour follows the layout row (unit test t_graphics_gate)
-enum { ROW_RES, ROW_FPSHUD, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT };   // 显示帧数行第二（用户 2026-10-28）| the Show-frame-rate row is second (user 2026-10-28)
-static int graphics_rows_pack(int res_ok, int up_ok, int prof_on, int rt_row, int out[6]) {
-    int n = 0; if (res_ok) out[n++] = ROW_RES; out[n++] = ROW_FPSHUD; out[n++] = ROW_FPS; if (up_ok) { out[n++] = ROW_UPSCALE; if (prof_on) out[n++] = ROW_PROFILE; } if (rt_row) out[n++] = ROW_RT; return n;
+enum { ROW_RES, ROW_BRIGHT, ROW_FPSHUD, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT };   // 显示帧数行第二（用户 2026-10-28）| the Show-frame-rate row is second (user 2026-10-28)
+// 可见行 i 的 y：行紧挨着排，换组的地方多一行分组标题（方案 C：画面 / 帧率 / 超分 / 光线追踪）| y of visible row i: rows are packed, with one heading row where the group changes (plan C)
+static int graphics_row_group(int row) { return row <= ROW_BRIGHT ? 0 : row <= ROW_FPS ? 1 : row <= ROW_PROFILE ? 2 : 3; }
+static int graphics_row_y(const int *vis, int i) { int y = 180; for (int k = 1; k <= i; k++) y += graphics_row_group(vis[k]) != graphics_row_group(vis[k - 1]) ? 360 : 180; return y; }
+static int graphics_rows_pack(int res_ok, int up_ok, int prof_on, int rt_ok, int out[7]) {
+    int n = 0; if (res_ok) out[n++] = ROW_RES; out[n++] = ROW_BRIGHT; out[n++] = ROW_FPSHUD; out[n++] = ROW_FPS; if (up_ok) { out[n++] = ROW_UPSCALE; if (prof_on) out[n++] = ROW_PROFILE; } if (rt_ok) out[n++] = ROW_RT; return n;
 }
 // 图形层 nvn_rtshadow.inc rts_on 每帧读（弱符号的强定义）：玩家档 0–3，已含机器门槛和内存封顶；DM_RT_PRESET=0–3 钉住。生效值一变就记一行「光追档位：生效 rt_level=」（分享诊断日志的摘要按这个前缀取最后一行）
 // 内存档位 < 2 时高档不开放（AO、软影多两张贴图，内存紧的机器不值得）：存的还是高，生效值夹到中
@@ -525,8 +561,14 @@ static int exp_restore_pending(void) {
     if (n) { atomic_fetch_add(&g_repaint, 1); LOG("自定义设置：图形页打开，按崩溃围栏自动关闭前的值预选 %d 项（点应用生效，放弃则保持关闭）", n); }
     return n;
 }
+// 游戏页分组折叠（方案 C）：Plus 三组与原版表格（整体一组，D2）。缺省收起，同一次运行内记住，不写设置文件 | Gameplay page folding (plan C): the Plus groups and the original table (one unit, D2). Collapsed by default, remembered within a run, not saved
+static const char *const k_fold[4] = { "Combat", "Loot", "Ui", "Orig" };
+#define GAME_ROWS_Y 660   // 游戏页难度块的下沿（布局 touch_layout.py 的 DIFF_H：标题 / 难度行 / 说明 480 + 「进入恐惧区域」入口行 180）；Plus 分组与原版表格从这里往下摆 | bottom of the Gameplay difficulty block (DIFF_H in the layout touch_layout.py: title / difficulty row / note 480 + the 180-tall Terror Zones entry row); the Plus groups and the original table are stacked from here down
+static _Atomic int g_fold_open[4];
+static void fold_toggle(const char *g) { for (int i = 0; i < 4; i++) if (!strcmp(g, k_fold[i])) { int on = !atomic_load(&g_fold_open[i]); atomic_store(&g_fold_open[i], on); LOG("选项页：分组 %s %s", g, on ? "展开" : "收起"); } }
 void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
-    (void)arg; if (!cat || !act || strcmp(cat, "OptionsPanelMessage")) return;
+    if (cat && act && arg && !strcmp(cat, "PanelManager") && !strcmp(act, "ClosePanel") && !strncmp(arg, "TouchFold", 9)) { fold_toggle(arg + 9); return; }   // 游戏页分组折叠钮 | Gameplay page fold buttons
+    if (!cat || !act || strcmp(cat, "OptionsPanelMessage")) return;
     load_once();
     if (!strcmp(act, "AcceptChanges")) { int ch = 0, res_changed = 0, ac0 = atomic_load(&g_val[K_AUTOCRASH]), ts0 = atomic_load(&g_val[K_TELSTATS]);
         // Migrate the former fifth radio option to the independent enable switch.
@@ -605,6 +647,11 @@ static void graphics_select_profile(int value) {
     atomic_store(&g_pend[K_Q3D], value);
     LOG("图形设置：" DM_STR_METALFX " 档位 → %d（点应用生效）", value);
 }
+static void graphics_select_bright(int value) {
+    if (value < 0 || value > 3 || value == pending_value(K_BRIGHT)) return;
+    atomic_store(&g_pend[K_BRIGHT], value);
+    LOG("图形设置：画面加亮档位 → %d（点应用生效）", value);
+}
 static void graphics_select_res(int value) {
     if (value < 0 || value >= DM_RES_LEVELS || value == pending_value(K_RES)) return;
     atomic_store(&g_pend[K_RES], value);
@@ -648,7 +695,7 @@ static void move_ours_y(uint64_t w, int y) {
 }
 void dm_graphics_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
-    static dm_wref seen[7]; static int paint;
+    static dm_wref seen[8]; static int paint;
     uint64_t sp = dm_ui_top(root, "3PlusGraphicsOptionsPanel");
     static int was_open;
     if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); was_open = 0; return; }
@@ -667,24 +714,21 @@ void dm_graphics_ui_pump(unsigned long long root) {
         } else graphics_select_fps(*(int32_t *)(fps + 0x5c4));
     }
     // 分辨率行、超分开关（文字 + 勾选）在不支持的平台整组藏起来（Android）；藏了就不参与交互 | the resolution row and the upscaling switch (text + checkbox) are hidden as a group on platforms without them (Android); hidden = no interaction
-    int res_ok = dm_render_res_supported(), up_ok = mtl_upscale_supported();
+    // 两层门控（用户 2026-10-30）：平台不符不出行（安卓没有 MetalFX / 光追）；本机不支持的行还在，置灰 + 一句说明 | two-layer gating (user 2026-10-30): no row on the wrong platform (Android has no MetalFX / ray tracing); on an unsupported machine the row stays, greyed, with one line of explanation
+    int res_ok = dm_render_res_supported(), up_ok = mtl_upscale_supported(), up_show, rt_show; graphics_plat_rows(&up_show, &rt_show);
     { uint64_t resrow = find_w(sp, "TouchGraphicsResRow", 0); if (resrow) ui_show_ours(resrow, res_ok);
-      uint64_t uptext = find_w(sp, "TouchGraphicsUpscaleText", 0); if (uptext) ui_show_ours(uptext, up_ok); }
+      uint64_t uptext = find_w(sp, "TouchGraphicsUpscaleText", 0); if (uptext) ui_show_ours(uptext, up_show); uint64_t upn = find_w(sp, "TouchGraphicsUpscaleNoHw", 0); if (upn) ui_show_ours(upn, up_show && !up_ok); }
     uint64_t upscale = find_w(sp, "TouchGraphicsUpscale", 0);
-    if (upscale) ui_show_ours(upscale, up_ok);
-    if (!up_ok) upscale = 0;
+    if (upscale) ui_show_ours(upscale, up_show);
+    if (!up_ok) { if (upscale && up_show) set_toggle_grey(upscale); upscale = 0; }
     if (upscale) {
         int want=pending_value(K_UPSCALE);
         if (dm_wref_get(&seen[1])!=upscale) { dm_wref_set(&seen[1],upscale); set_toggle(upscale,want); }
         else if (TOGGLED(upscale)!=want) atomic_store(&g_pend[K_UPSCALE],TOGGLED(upscale));
     }
-    // 光追档位（实验性）：关 / 低 / 中 / 高四档滑块。没有硬件光追的机器置灰：滑块藏起来，文字换灰色那份，副文写明原因；安卓整行不出现（§2.8，布局里也没有这一行）
+    // 光追档位（实验性）：关 / 低 / 中 / 高四档滑块。没有硬件光追的机器置灰：滑块藏起来，文字换灰色那份，副文写明原因；安卓整行不出现（§2.8，键表 k_opts 平台列，布局里也没有这一行）
     // Ray-tracing level (experimental): four-position slider Off / Low / Medium / High. Machines without hardware ray tracing grey it out: slider hidden, the grey caption shown, the subtext says why; on Android the whole row is absent (§2.8; the layout has no such row either)
-#ifdef __ANDROID__
-    int rt_row = 0;
-#else
-    int rt_row = 1;
-#endif
+    int rt_row = rt_show;   // 平台层照键表 k_opts（rt_level 只有 Apple）| platform layer from k_opts (rt_level is Apple only)
     int rt_ok = rt_row && rt_shadow_ok(); uint64_t rtrow = find_w(sp, "TouchGraphicsRtRow", 0); if (rtrow) ui_show_ours(rtrow, rt_row);
     uint64_t rtl = find_w(sp, "TouchGraphicsRtLevel", 0); if (rtl) ui_show_ours(rtl, rt_ok); if (!rt_ok) rtl = 0;
     // 显示帧数（fps_hud，图形页第二行，缺省开）：勾选框与超分开关同一套处理 | Show frame rate (fps_hud, Graphics row 2, on by default): the checkbox is handled like the upscale switch
@@ -699,11 +743,11 @@ void dm_graphics_ui_pump(unsigned long long root) {
     if (dm_wref_get(&focus_panel) != sp) { dm_wref_set(&focus_panel, sp); selected = 0; }
     int pad = dm_padmode_current() && !dm_ui_modal_active(root);
     uint64_t ev = pad ? dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A | DM_BTN_LEFT | DM_BTN_RIGHT) : 0;
-    // 行（与 touch_layout.py _graphics_page 同序，用户 2026-10-27）：0 渲染分辨率 / 1 帧率 / 2 超分开关 / 3 超分档位（开关开着才有）/ 4 光追阴影（实验性，机器过门槛才有）/ 5 光追 AO（同门槛，阴影没开时置灰）。
+    // 行（与 touch_layout.py _graphics_page 同序，用户 2026-10-27）：0 渲染分辨率 / 1 帧率 / 2 超分开关 / 3 超分档位（开关开着才有）/ 4 光追档位（实验性，只有 Apple；机器不过门槛时置灰）。
     // 可见行紧挨着排：档位行藏起来时光追行上移一格补位（下面按可见行数挪光追行与说明行），所以选中框按可见序号 selected 放，行为按布局行号 row_id 走
-    // Rows (same order as touch_layout.py _graphics_page, user 2026-10-27): 0 render resolution / 1 frame rate / 2 upscale switch / 3 upscale profile (only while the switch is on) / 4 ray-traced shadows (experimental, only on machines that pass the gate).
+    // Rows (same order as touch_layout.py _graphics_page, user 2026-10-27): 0 render resolution / 1 frame rate / 2 upscale switch / 3 upscale profile (only while the switch is on) / 4 ray-tracing level (experimental, Apple only; greyed on machines that fail the gate).
     // Visible rows are packed: with the profile row hidden, the ray-tracing row moves up one slot (the ray-tracing row and the hint are moved below by the visible row count), so the selection frame follows the visible index selected and behaviour follows the layout row row_id
-    int prof_on = up_ok && pending_value(K_UPSCALE) != 0, vis[6], rows = graphics_rows_pack(res_ok, up_ok, prof_on, rt_row, vis);
+    int prof_on = up_ok && pending_value(K_UPSCALE) != 0, vis[7], rows = graphics_rows_pack(res_ok, up_show, prof_on, rt_show, vis);
     if (ev & DM_BTN_DOWN) selected++; else if (ev & DM_BTN_UP) selected--;
     if (selected < 0) selected = 0; if (selected >= rows) selected = rows - 1;
     int row_id = vis[selected];
@@ -713,7 +757,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
         if (to>=0 && to<=fps_max_pos()) { graphics_select_fps(to);
             ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(fps,to,0,0); }
     }
-    if ((ev & DM_BTN_A) && row_id == ROW_UPSCALE) {
+    if ((ev & DM_BTN_A) && row_id == ROW_UPSCALE && up_ok) {   // 本机不支持 MetalFX 时这一行置灰：A 不改待定值（审计 r1 P2-2） | greyed on machines without MetalFX: A does not change the pending value (audit r1 P2-2)
         int to=!pending_value(K_UPSCALE); atomic_store(&g_pend[K_UPSCALE],to);
         if (upscale) set_toggle(upscale,to);
     }
@@ -724,16 +768,19 @@ void dm_graphics_ui_pump(unsigned long long root) {
     // 全部可见时各行正好在布局原位（180 / 360 / 540 / 720 / 900），Apple 行为不变
     // Visible rows are packed: visible row i sits at y = 180 x (i + 1) (text / container), sliders and checkboxes at +55 (touch_layout.py's label / toggle placement); the hint follows the last visible row.
     // With every row visible each sits at its layout position (180 / 360 / 540 / 720 / 900): Apple unchanged
-    { int all_vis[6], nv = graphics_rows_pack(res_ok, up_ok, enabled, rt_row, all_vis);
-      for (int i = 0; i < nv; i++) { int y = 180 * (i + 1);
+    { int all_vis[7], nv = graphics_rows_pack(res_ok, up_show, enabled, rt_show, all_vis);
+      static const char *const heads[4] = { NULL, "TouchOptHeadFrame", "TouchOptHeadUpscale", "TouchOptHeadRt" };
+      for (int g = 1; g < 4; g++) { uint64_t hw = find_w(sp, heads[g], 0); int on = 0; for (int i = 0; i < nv; i++) if (graphics_row_group(all_vis[i]) == g) { if (hw) move_ours_y(hw, graphics_row_y(all_vis, i) - 180); on = 1; break; } if (hw) ui_show_ours(hw, on); }
+      for (int i = 0; i < nv; i++) { int y = graphics_row_y(all_vis, i);
         switch (all_vis[i]) {
+        case ROW_BRIGHT: move_ours_y(find_w(sp, "TouchGraphicsBrightRow", 0), y); break;
         case ROW_RES: move_ours_y(find_w(sp, "TouchGraphicsResRow", 0), y); break;
         case ROW_FPSHUD: move_ours_y(find_w(sp, "TouchGraphicsFpsHudRow", 0), y); break;
         case ROW_FPS: move_ours_y(find_w(sp, "TouchGraphicsFpsText", 0), y); if (fps) move_ours_y(fps, y + 55); move_ours_y(find_w(sp, "TouchGraphicsFpsNote", 0), y + 116); break;
-        case ROW_UPSCALE: move_ours_y(find_w(sp, "TouchGraphicsUpscaleText", 0), y); if (upscale) move_ours_y(upscale, y + 55); break;
+        case ROW_UPSCALE: move_ours_y(find_w(sp, "TouchGraphicsUpscaleText", 0), y); { uint64_t ub = find_w(sp, "TouchGraphicsUpscale", 0); if (ub) move_ours_y(ub, y + 55); } move_ours_y(find_w(sp, "TouchGraphicsUpscaleNoHw", 0), y + 116); break;
         case ROW_PROFILE: if (row) move_ours_y(row, y); break;
         case ROW_RT: if (rtrow) move_ours_y(rtrow, y); break; } }
-      move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), 180 * (nv + 1)); }
+      move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), graphics_row_y(all_vis, nv - 1) + 180); }
     uint64_t slider = find_w(sp, "TouchGraphicsProfile", 0);
     if (slider && DM_WIDGET_OK(main_base(), slider, DM_VT_SLIDER, "图形设置滑块")) {
         // 3.3.94012: render main+aef3cc reads min/max/current here; main+ad7028
@@ -793,6 +840,23 @@ void dm_graphics_ui_pump(unsigned long long root) {
       if ((w = find_w(sp, "TouchGraphicsRtNote", 0))) ui_show_ours(w, rt_ok && !capped);
       if ((w = find_w(sp, "TouchGraphicsRtHighNote", 0))) ui_show_ours(w, capped);
       if ((w = find_w(sp, "TouchGraphicsRtNoHw", 0))) ui_show_ours(w, !rt_ok); }
+    uint64_t bright = find_w(sp, "TouchGraphicsBright", 0);
+    if (bright && DM_WIDGET_OK(main_base(), bright, DM_VT_SLIDER, "图形设置加亮滑块")) {
+        if (dm_wref_get(&seen[7]) != bright) {
+            *(int32_t *)(bright + 0x5b0) = 1; *(int32_t *)(bright + 0x5b8) = 3;
+            *(int32_t *)(bright + 0x5bc) = 0; *(int32_t *)(bright + 0x5c0) = 3;
+            ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(bright, pending_value(K_BRIGHT), 0, 0);
+            dm_wref_set(&seen[7], bright);
+        } else graphics_select_bright(*(int32_t *)(bright + 0x5c4));
+        if (row_id == ROW_BRIGHT && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT))) {
+            int to = pending_value(K_BRIGHT) + ((ev & DM_BTN_RIGHT) ? 1 : -1);
+            if (to >= 0 && to <= 3) { graphics_select_bright(to);
+                ((void (*)(uint64_t, int, int, int))(main_base() + 0xad7028))(bright, to, 0, 0); }
+        }
+    }
+    { static const char *const bright_captions[4] = { "dmGraphicsBrightOff", "dmGraphicsBrightLow", "dmGraphicsBrightMid", "dmGraphicsBrightHigh" };
+      int lv = pending_value(K_BRIGHT); if (lv < 0 || lv > 3) lv = 2;
+      graphics_text(find_w(sp, "TouchGraphicsBrightText", 0), dm_str(main_base(), bright_captions[lv])); }
     { static const char *const res_captions[DM_RES_LEVELS] = { "dmGraphicsResAuto", "dmGraphicsResEco", "dmGraphicsResBalanced", "dmGraphicsResNative" };
       int lv = pending_value(K_RES); if (lv < 0 || lv >= DM_RES_LEVELS) lv = 0;
       graphics_text(find_w(sp, "TouchGraphicsResText", 0), dm_str(main_base(), res_captions[lv])); }
@@ -800,13 +864,13 @@ void dm_graphics_ui_pump(unsigned long long root) {
       graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), dm_str(main_base(), fps_captions[fps_pos(pending_value(K_FPS))])); }
     indent_rows(find_w(sp, "TouchGraphicsRows", 0), 0);
     uint64_t focus = find_w(sp, "TouchGraphicsSel", 0);
-    if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? dm_sel_frame_x(DM_ROW_INDENT) : 99999, y = pad ? 170 + 180 * selected : 0;
+    if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? dm_sel_frame_x(DM_ROW_INDENT) : 99999, y = pad ? graphics_row_y(vis, selected) - 10 : 0;
         if (r[0] != x || r[1] != y) { r[0] = x; r[1] = y; ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)focus + 0x10))(focus); } }
-    // 这页行数超过一屏（加了光追 AO 行）：手柄选到框外的行时滚到位，同自定义页（滚动量取法、到头判定见下面 custom 页那段）
-    // This page now has more rows than fit (the ray-traced AO row): scroll to the controller's row, same as the Custom page (offset reading and end detection: see that block below)
+    // 这页行数超过一屏（方案 C 分组标题）：手柄选到框外的行时滚到位，同自定义页（滚动量取法、到头判定见下面 custom 页那段）
+    // This page now has more rows than fit (plan C group headings): scroll to the controller's row, same as the Custom page (offset reading and end detection: see that block below)
     if (pad) { uint64_t rw = find_w(sp, "TouchGraphicsRows", 0), view = rw ? *(uint64_t *)(rw + 0x30) : 0, sv = view ? *(uint64_t *)(view + 0x30) : 0, dm_guest_frame(void), f = dm_guest_frame(); static uint64_t lf;
         static int last_dir, last_off = -1, last_sel = -1; if (selected != last_sel) { last_sel = selected; last_dir = 0; last_off = -1; }
-        if (sv && f - lf >= 4) { int top = selected ? 160 + 180 * selected : 0, bot = 180 + 180 * (selected + 1), off = -*(int32_t *)(view + 0x74), vh = *(int32_t *)(sv + 0x7c); if (vh <= 0) vh = 1260; void dm_ui_wheel_on(uint64_t, int);
+        if (sv && f - lf >= 4) { int top = selected ? graphics_row_y(vis, selected) - 20 : 0, bot = graphics_row_y(vis, selected) + 180, off = -*(int32_t *)(view + 0x74), vh = *(int32_t *)(sv + 0x7c); if (vh <= 0) vh = 1260; void dm_ui_wheel_on(uint64_t, int);
             int dir = dm_custom_scroll_step(top, bot, off, vh, last_dir, last_off);
             if (dir) { lf = f; last_dir = dir; last_off = off; dm_ui_wheel_on(sv, dir); } } }
     static const char *const captions[] = { "dmGraphicsProfileAuto", "dmGraphicsProfileEco", "dmGraphicsProfileBalanced", "dmGraphicsProfileQuality" };
@@ -844,8 +908,70 @@ void dm_custom_tel_answer(int yes) {
     if (dm_custom_auto_crash() != ac0) dm_crashreport_setting_changed(yes);
     if (dm_custom_tel_stats() != ts0) dm_telemetry_setting_changed(yes);
 }
+// 这一页上的普通勾选行：页刚出现时摆成该显示的值，之后玩家点了就记待定值（两项单选行存一个键）| Plain checkbox rows of a page: set to the value to show when the page appears, then record pending values on taps (two-option radio rows store one key)
+// 只有触屏才起作用的两行：手柄模式置灰、副文「仅触屏」（D8），设置值不动 | the two touch-only rows: greyed in controller mode with the subtext "touch only" (D8), the setting stays
+// iCloud 能不能用：页刚出现时问一次，之后每 60 帧（约 1 秒）再问一次，不每帧调 ubiquityIdentityToken（审计 r1 P2-8） | iCloud usability: asked once when the page appears, then every 60 frames (about 1 s), not every frame (audit r1 P2-8)
+static int g_icloud_probes;   // 单测核调用次数 | call count for the unit test
+static int icloud_available_throttled(int fresh) { static int ok = 1, n; if (fresh || n <= 0) { ok = dm_icloud_available(); g_icloud_probes++; n = 60; } n--; return ok; }
+static int touch_only_row(int i) { return i == K_TOUCH_SWAP || !strcmp(k_keys[i], "store_btn"); }
+static void sync_toggles(uint64_t sp, int page, dm_wref *seen) {
+    int dm_padmode_current(void); int pad = dm_padmode_current();
+    for (int i = 1; i < NK; i++) { if (!row_on_page(i, page)) continue; char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
+        uint64_t w = find_w(sp, nm, 0); if (!w || !*(uint8_t *)(w + 0x50)) continue;
+        if (touch_only_row(i)) { char pn[56]; snprintf(pn, sizeof pn, "TouchCustom_%s_Pad", k_keys[i]); uint64_t pw = find_w(sp, pn, 0); if (pw) ui_show_ours(pw, pad);
+            if (pad) { set_toggle_grey(w); if (rev_box(i)) { uint64_t rz = find_w(sp, rev_box(i), 0); if (rz) set_toggle_grey(rz); } dm_wref_set(&seen[i], 0); continue; } }
+        if (i == K_ICLOUD) { uint64_t nw = find_w(sp, "TouchCustom_icloud_NoAcct", 0), nn = find_w(sp, "TouchCustom_icloud_Note", 0); int ok = icloud_available_throttled(dm_wref_get(&seen[i]) != w); if (nw) ui_show_ours(nw, !ok); if (nn) ui_show_ours(nn, ok);
+            if (!ok) { set_toggle_grey(w); dm_wref_set(&seen[i], 0); continue; } }
+        int pd0 = atomic_load(&g_pend[i]), want = pd0 >= 0 ? pd0 : atomic_load(&g_val[i]);
+        uint64_t z = rev_box(i) ? find_w(sp, rev_box(i), 0) : 0;   // 两项单选行（3D 画质：上下的「流畅优先」「画质优先」；换组位置）：存的仍是一个键，反面那一项是它的反面 | Two-option radio rows (3D quality: "Smoothness first" / "Quality first" stacked; swap-group position): still stores one key, the other option is its negation
+        if (dm_wref_get(&seen[i]) != w) { dm_wref_set(&seen[i], w); set_toggle(w, want); if (z) set_toggle(z, !want); continue; }   // 页刚出现（布局里一律是没勾）：先摆成该显示的值，这一帧不当玩家点了 | The page has just appeared (in the layout everything is unchecked): first set it to the value it should show, and do not treat this frame as a player tap
+        int on = TOGGLED(w), pd = atomic_load(&g_pend[i]), shown = pd >= 0 ? pd : atomic_load(&g_val[i]);
+        if (z) {   // 点没选中的那一项 = 选它；点已选中的那一项不变（摆回勾上） | Tapping the item that is not selected = select it; tapping the one already selected changes nothing (it is put back to checked)
+            int zon = TOGGLED(z), to = on != shown ? (on ? 1 : shown) : zon != !shown ? (zon ? 0 : shown) : shown;
+            if (to != shown) { atomic_store(&g_pend[i], to); LOG("自定义设置：%s → %d（点「应用」生效）",k_keys[i],to); }
+            if (TOGGLED(w) != to) set_toggle(w, to); if (TOGGLED(z) != !to) set_toggle(z, !to); continue; }
+        // 自动上报崩溃：第一次勾上先开确认框，勾选框退回去；同意了才算改（ac_consent_cb） | automatic crash reports: the first tick opens the consent box and the checkbox falls back; it only counts once agreed
+        if (i == K_AUTOCRASH && on && !shown && !atomic_load(&g_ac_ok) && !atomic_load(&g_ac_ok_pending) && !atomic_load(&g_tel_notice)) { set_toggle(w, 0); if (!dm_diagup_modal()) dm_diagup_consent_open(ac_consent_cb); continue; }
+        if (i == K_TELSTATS && on && !shown && !atomic_load(&g_tel_notice)) { set_toggle(w, 0); if (!dm_diagup_modal() && !dm_crashreport_configured()) dm_diagup_consent_open(ac_consent_cb); else LOG("自定义设置：统计还没答过告知框，回主菜单时弹"); continue; }
+        if (on != shown) { atomic_store(&g_pend[i], on); LOG("自定义设置：%s 勾选框 → %s（点「应用」生效）", k_keys[i], on ? "勾上" : "取消"); } }
+}
+// 原版选项子页的每帧更新 main+0xae5f28 在不在这个虚表里（前 96 项）：在 = +0x1a0 确是「有未应用的改动」（系统页、游戏页共用） | whether the original options subpage per-frame update main+0xae5f28 is in this vtable (first 96 slots): yes = +0x1a0 really is "unapplied changes" (shared by the System and Gameplay pages)
+static int panel_vt_has_dirty_update(uint64_t vt) { if (!vt || !main_base()) return 0; for (int k = 0; k < 96; k++) if (*(uint64_t *)(vt + 8 * k) == (uint64_t)main_base() + 0xae5f28) return 1; return 0; }
+// 游戏页（GameplayOptionsPanel）上的 Plus 勾选行：同系统页的待定值 / 应用 / 放弃；手柄焦点链在 dm_padmode.c diff_pump。
+// 「有改动」位 +0x1a0 这页原版自己也在用：我们只在有待定改动时置位、从不清（见函数里），不抹原版自己的改动
+// Plus checkbox rows on the Gameplay page: same pending / Apply / Discard as the System page; the controller focus chain is in dm_padmode.c diff_pump.
+// The original also uses the "changed" flag +0x1a0 on this page: we only set it for pending changes and never clear it (see inside), leaving the original's own changes alone
+static void game_ui_pump(uint64_t root) {
+    static dm_wref seen[NK]; uint64_t sp = dm_ui_top(root, "GameplayOptionsPanel"); if (!sp || !*(uint8_t *)(sp + 0x50)) { memset(seen, 0, sizeof seen); return; }
+    load_once(); static int paint; int repaint = atomic_load(&g_repaint); if (paint != repaint) { paint = repaint; memset(seen, 0, sizeof seen); }
+    { int y = GAME_ROWS_Y;   // 难度块的下沿：标题 / 难度行 / 说明 + 「进入恐惧区域」入口行，与布局 touch_layout.py 的 DIFF_H 同一个数 | bottom of the difficulty block: title / difficulty row / note + the Terror Zones entry row; the same number as DIFF_H in the layout touch_layout.py
+      for (int g = 0; g < 4; g++) { char nm[32]; snprintf(nm, sizeof nm, "TouchGrp%s", k_fold[g]); uint64_t w = find_w(sp, nm, 0); if (!w) continue; int open = atomic_load(&g_fold_open[g]); move_ours_y(w, y);
+          uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); for (uint64_t i = 0; ch && i < n && i < 64; i++) { uint64_t c = *(uint64_t *)(ch + 8 * i); const char *cn = c ? *(const char **)(c + 8) : NULL; if (cn && !strstr(cn, "Title") && strncmp(cn, "TouchFold", 9)) ui_show_ours(c, open); }
+          y += open ? *(int32_t *)(w + 0x7c) : 180; }
+      uint64_t hd = find_w(sp, "TouchTableHolder", 0); if (hd) { move_ours_y(hd, y); ui_show_ours(hd, atomic_load(&g_fold_open[3])); } }
+    sync_toggles(sp, PG_GAME, seen);
+    // 「有改动」位 +0x1a0：同系统页，先核面板虚表里确有 main+0xae5f28（审计 r1 P2-1）。这一页原版表格自己也用这一位（原版勾选框一改就置，见系统页那段），
+    // 我们分不出这一位此刻是谁置的，所以只置不清：Plus 行改回原样后「应用」仍亮着，由应用 / 放弃收掉——代价是多亮一会儿，好处是永远不会抹掉原版表格自己的改动
+    // "Changed" flag +0x1a0: as on the System page, first check the panel vtable really holds main+0xae5f28 (audit r1 P2-1). The original table on this page uses the same flag (a native
+    // checkbox sets it on change, see the System page); we cannot tell who set it at a given moment, so we only ever set it: after reverting a Plus row Apply stays lit until
+    // Apply / Discard -- lit a little longer, but an original change of the table is never wiped
+    static uint64_t vt_for; static int vt_good; if (vt_for != *(uint64_t *)sp) { vt_for = *(uint64_t *)sp; vt_good = panel_vt_has_dirty_update(vt_for);
+        if (!vt_good) LOG("【红】游戏页：面板虚表里没有 main+0xae5f28，不写「有改动」位（原版版本变了？）"); }
+    if (vt_good && enhanced_settings_dirty() && !*(uint8_t *)(sp + 0x1a0)) { *(uint8_t *)(sp + 0x1a0) = 1; LOG("游戏页：Plus 勾选有未应用的改动 → 「应用 / 放弃」点亮"); }
+}
+// 手柄焦点停靠点：本页可选的 Plus 勾选框，按表序；只有触屏才起作用的两行不停靠（D8）| Controller focus stops: this page's selectable Plus checkboxes in table order; the two touch-only rows are not stops (D8)
+int dm_custom_game_stops(unsigned long long gp, unsigned long long *out, int max) {
+    int n = 0; const char *grp = NULL; for (int o = 0; o < N_OPTS && n < max; o++) { int i = key_index(k_opts[o].key); if (i < 0 || !row_on_page(i, PG_GAME)) continue; char nm[48];
+        if (!grp || strcmp(grp, k_opts[o].group)) { grp = k_opts[o].group; snprintf(nm, sizeof nm, "TouchFold%s", grp); uint64_t f = find_w(gp, nm, 0); if (f && n < max) out[n++] = f; }
+        if (i == K_TOUCH_SWAP || !strcmp(k_keys[i], "store_btn")) continue;
+        snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]); uint64_t w = find_w(gp, nm, 0); if (w && *(uint8_t *)(w + 0x50)) out[n++] = w; }
+    { uint64_t f = find_w(gp, "TouchFoldOrig", 0); if (f && n < max) out[n++] = f; }
+    return n;
+}
+void dm_custom_game_press(unsigned long long w) { const char *nm = *(const char **)(w + 8); if (nm && !strncmp(nm, "TouchFold", 9)) { fold_toggle(nm + 9); return; } set_toggle(w, !TOGGLED(w)); }   // 手柄 A：翻勾选，下一帧照「玩家点了」记待定值 | controller A: flip the checkbox; next frame it counts as a player tap
 void dm_custom_ui_pump(unsigned long long root) {
     if (!root || !main_base()) return;
+    game_ui_pump(root);
     static dm_wref seen[NK];   // 每行最近见到的勾选框（带界面代号：重建后取到 0 = 页刚出现） | Most recently seen checkbox of each row (with UI generation: 0 after a rebuild = page just appeared)
     uint64_t sp = dm_ui_top(root, "VideoOptionsPanel"); if (!sp || !*(uint8_t *)(sp + 0x50)) {   // 「自定义」页 = 借来的视频页（界面根的直接子，与设置页并列）。页不在屏上：没点「应用」的勾选作废（同原版不应用就离开），下次出现重摆 | The 「自定义」(Custom) page = the borrowed video page (a direct child of the UI root, alongside the settings page). Page not on screen: checkbox changes without tapping 「应用」(Apply) are discarded (same as leaving without applying in the original game), and it is laid out again the next time it appears
         uint64_t settings = dm_ui_top(root, "SettingsPanel");
@@ -916,20 +1042,7 @@ void dm_custom_ui_pump(unsigned long long root) {
           if (to != shown) atomic_store(&g_pend[K_Q3D], to);
           for (int k = 0; k < 5; k++) if (TOGGLED(boxes[k]) != (k == to)) set_toggle(boxes[k], k == to);
       } }
-    for (int i = 1; i < NK; i++) { if (!custom_row(i)) continue; char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
-        uint64_t w = find_w(sp, nm, 0); if (!w || !*(uint8_t *)(w + 0x50)) continue;
-        int pd0 = atomic_load(&g_pend[i]), want = pd0 >= 0 ? pd0 : atomic_load(&g_val[i]);
-        uint64_t z = rev_box(i) ? find_w(sp, rev_box(i), 0) : 0;   // 两项单选行（3D 画质：上下的「流畅优先」「画质优先」；换组位置）：存的仍是一个键，反面那一项是它的反面 | Two-option radio rows (3D quality: "Smoothness first" / "Quality first" stacked; swap-group position): still stores one key, the other option is its negation
-        if (dm_wref_get(&seen[i]) != w) { dm_wref_set(&seen[i], w); set_toggle(w, want); if (z) set_toggle(z, !want); continue; }   // 页刚出现（布局里一律是没勾）：先摆成该显示的值，这一帧不当玩家点了 | The page has just appeared (in the layout everything is unchecked): first set it to the value it should show, and do not treat this frame as a player tap
-        int on = TOGGLED(w), pd = atomic_load(&g_pend[i]), shown = pd >= 0 ? pd : atomic_load(&g_val[i]);
-        if (z) {   // 点没选中的那一项 = 选它；点已选中的那一项不变（摆回勾上） | Tapping the item that is not selected = select it; tapping the one already selected changes nothing (it is put back to checked)
-            int zon = TOGGLED(z), to = on != shown ? (on ? 1 : shown) : zon != !shown ? (zon ? 0 : shown) : shown;
-            if (to != shown) { atomic_store(&g_pend[i], to); LOG("自定义设置：%s → %d（点「应用」生效）",k_keys[i],to); }
-            if (TOGGLED(w) != to) set_toggle(w, to); if (TOGGLED(z) != !to) set_toggle(z, !to); continue; }
-        // 自动上报崩溃：第一次勾上先开确认框，勾选框退回去；同意了才算改（ac_consent_cb） | automatic crash reports: the first tick opens the consent box and the checkbox falls back; it only counts once agreed
-        if (i == K_AUTOCRASH && on && !shown && !atomic_load(&g_ac_ok) && !atomic_load(&g_ac_ok_pending) && !atomic_load(&g_tel_notice)) { set_toggle(w, 0); if (!dm_diagup_modal()) dm_diagup_consent_open(ac_consent_cb); continue; }
-        if (i == K_TELSTATS && on && !shown && !atomic_load(&g_tel_notice)) { set_toggle(w, 0); if (!dm_diagup_modal() && !dm_crashreport_configured()) dm_diagup_consent_open(ac_consent_cb); else LOG("自定义设置：统计还没答过告知框，回主菜单时弹"); continue; }
-        if (on != shown) { atomic_store(&g_pend[i], on); LOG("自定义设置：%s 勾选框 → %s（点「应用」生效）", k_keys[i], on ? "勾上" : "取消"); } }
+    sync_toggles(sp, PG_SYS, seen);
     // 语言那一行下面的「点应用后把 App 关掉重开」提示（TouchCustomLangHint，布局里先放在屏外）：勾选框此刻显示的值与正在跑的语言不一致时挪到标签正下方（横坐标取标签的）
     // The "tap Apply, then close and reopen the app" hint under the language row (TouchCustomLangHint, placed off screen in the layout): moved right under the label (taking the label's x) when the value the checkboxes currently show differs from the language now running
     { uint64_t lw = find_w(sp, "TouchCustom_lang_Text", 0); int pd = atomic_load(&g_pend[0]), shown = pd >= 0 ? pd : atomic_load(&g_val[0]), diff = shown != lang_running();
@@ -942,8 +1055,7 @@ void dm_custom_ui_pump(unsigned long long root) {
     // Whether 「应用 / 放弃」(Apply / Discard) light up (a checkbox on the custom page was changed, yet 「应用」(Apply) is still gray): the per-frame update main+0xae5f28 of each original-game option subpage passes its own +0x1a0 'has unapplied changes'
     // to main+0xaed9e4(settings page, lit or not), and button +0x57a is the gray flag; an original-game checkbox has +0x1a0 set by the panel as soon as it changes, but the original panel does not know our checkboxes, so this bit stays 0.
     // Write this bit by comparing pending values with effective values (changed back to the original = no change = off), using the original game's own lit / unlit behavior and its 'confirm when leaving with changes'. Written only when the panel vtable really contains 0xae5f28 (confirming that +0x1a0 has this meaning)
-    static uint64_t vt_ok_for; static int vt_ok; if (vt_ok_for != *(uint64_t *)sp) { vt_ok_for = *(uint64_t *)sp; vt_ok = 0;
-        for (int k = 0; k < 96 && !vt_ok; k++) vt_ok = *(uint64_t *)(vt_ok_for + 8 * k) == (uint64_t)main_base() + 0xae5f28;
+    static uint64_t vt_ok_for; static int vt_ok; if (vt_ok_for != *(uint64_t *)sp) { vt_ok_for = *(uint64_t *)sp; vt_ok = panel_vt_has_dirty_update(vt_ok_for);
         if (!vt_ok) LOG("【红】自定义设置：借来的视频页虚表里没有 main+0xae5f28，不写「有改动」位（原版版本变了？）"); }
     if (vt_ok) { int dirty = enhanced_settings_dirty();
         if (*(uint8_t *)(sp + 0x1a0) != dirty) { *(uint8_t *)(sp + 0x1a0) = (uint8_t)dirty; LOG("自定义设置：有未应用的改动 → %d（「应用 / 放弃」%s）", dirty, dirty ? "点亮" : "变灰"); } }

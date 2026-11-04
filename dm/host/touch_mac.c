@@ -362,7 +362,8 @@ apply_input:
             if (g_touch.state.mouse_click_seq != mc) { float nx = g_touch.state.mouse_click_x / 2868, ny = g_touch.state.mouse_click_y / 1320; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
         }
     }
-    if (g_touch.state.diff_request) { dm_hud_request_players(g_touch.state.diff_request); g_touch.state.diff_request = 0; }   // 难度选择条选中档位 → 下一拍走原版路径 | a level is selected on the difficulty selector bar -> take the original game's path on the next tick
+    { static int was; if (g_touch.state.diff_open && !was) dm_diff_tip(0); was = g_touch.state.diff_open; }
+    if (g_touch.state.diff_request) { dm_diff_tip(g_touch.state.diff_request); dm_hud_request_players(g_touch.state.diff_request); g_touch.state.diff_request = 0; }   // 难度选择条选中档位 → 下一拍走原版路径 | a level is selected on the difficulty selector bar -> take the original game's path on the next tick
     dm_tc_tick(&g_touch.state, (double)g_touch.beat / 30.0);
     if (g_touch.state.pulse_button && !g_touch.pulse_end_beat) {
         g_touch.pulse_end_beat = g_touch.beat + 4;

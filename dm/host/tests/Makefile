@@ -62,6 +62,8 @@ run: \
 	$(B)/t_mem_tier \
 	$(B)/t_graphics_gate \
 	$(B)/t_ingame \
+	$(B)/t_options_android \
+	$(B)/t_padmode_pure \
 	$(B)/t_res_auto_policy \
 	$(B)/t_res_cap \
 	$(B)/t_update_appear \
@@ -128,6 +130,8 @@ run: \
 	$(B)/t_fps_thermal
 	$(B)/t_mem_tier
 	$(B)/t_graphics_gate
+	$(B)/t_options_android
+	$(B)/t_padmode_pure
 	$(B)/t_custom_readlog
 	$(B)/t_crashfence 2>/dev/null
 	$(B)/t_community 2>/dev/null
@@ -398,11 +402,15 @@ $(B)/t_modal_input_gate: t_modal_input_gate.c ../dm_cursor.c ../dm_cursor.h | $(
 $(B)/t_settings_modal_input: t_settings_modal_input.c ../dm_custom.c ../dm_cursor.h ../dm_widget.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
 
-$(B)/t_notice_widgets: t_notice_widgets.c ../dm_cursor.c ../dm_cursor.h ../dm_widget.h | $(B)
+$(B)/t_notice_widgets: t_notice_widgets.c ../dm_cursor.c ../dm_cursor.h ../dm_widget.h ../dm_notice_pair.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
 
-$(B)/t_notice_dispatch: t_notice_dispatch.c ../dm_bossrush.c ../dm_bossrush.h | $(B)
+$(B)/t_notice_dispatch: t_notice_dispatch.c ../dm_bossrush.c ../dm_bossrush.h ../dm_notice_pair.h ../dm_padmode_pure.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_notice_dispatch.c
+$(B)/t_padmode_pure: t_padmode_pure.c ../dm_padmode_pure.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_padmode_pure.c
+$(B)/t_options_android: t_options_android.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -D__ANDROID__ -I.. -o $@ t_options_android.c
 
 $(B)/t_metalfx_handoff: t_metalfx_handoff.c t_metalfx_handoff_backend.c ../hle_oe.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_metalfx_handoff.c t_metalfx_handoff_backend.c

@@ -38,6 +38,8 @@ static NSString *g_cloud, *g_save, *g_bak, *g_state;   // 云端目录 / 本地�
 static dispatch_queue_t g_q;
 static uint64_t now_ms(void) { return (uint64_t)([NSDate date].timeIntervalSince1970 * 1000); }
 
+// 选项页系统页：没登录 iCloud 或这个包没有 iCloud 权限（免费签名）时这一行置灰（dm_custom.c）。ubiquityIdentityToken 同步、不访问网络 | System page: the row is greyed when not signed in to iCloud or this build lacks the entitlement (free signing). ubiquityIdentityToken is synchronous and does no network I/O
+int dm_icloud_available(void) { return NSFileManager.defaultManager.ubiquityIdentityToken != nil; }
 // 云端某个单位的包是否已在本机（iCloud 里没下载的文件是占位：旧系统是「.<名>.icloud」，新系统是同名但下载状态不是「最新」）
 // Whether a given unit's package in the cloud is already on this device (undownloaded files in iCloud are placeholders: on older systems ".<name>.icloud", on newer systems the same name with a download status other than "current")
 static int pack_ready(const char *unit) {
