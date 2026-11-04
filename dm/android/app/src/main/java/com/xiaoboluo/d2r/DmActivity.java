@@ -56,6 +56,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     static native void nativeTextResult(long id, boolean accepted, String text);
     static native void nativeSaveInit(String downloads, String commit, String build);   // 存档管理：备份另存的 Download 目录（没有所有文件访问权限时为空）、来源身份 | save management: the Download folder for the second backup copy (empty without all files access), source identity
     static native void nativeSavePicked(String path);      // null = 没选 | null = nothing picked
+    static native void nativeSavePickedFrom(String path, String origin);   // origin = SAF 文档 ID（外部存储的带路径），宿主按它判联机（审计 20261104 P1-3）| origin = the SAF document id (with a path on external storage), for the host's co-op check
     static native void nativeSaveExported(boolean saved);
     // 实体手柄（pad_android.c）：按键 / 轴事件交给原生，true = 归手柄（不再交给系统，B 发的 BACK 不退出）| physical controllers (pad_android.c): key / axis events go native, true = the controller's (not passed on; BACK from B does not exit)
     static native boolean nativePadKey(int device, int vendor, int product, int source, int keycode, boolean down);
@@ -894,22 +895,23 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         Uri uri = res == RESULT_OK && data != null ? data.getData() : null; String src = saveExportPath; android.content.ContentResolver cr = getContentResolver();
         if (req == REQ_SAVE_FOLDER) {
             if (uri == null) { nativeSavePicked(null); return; }
-            File dir = new File(new File(getFilesDir(), "temp"), "save_import_tree");
-            new Thread(() -> {
-                boolean ok = false; String bad = "!io"; try { saveDeleteTree(dir); saveCopyTree(cr, uri, android.provider.DocumentsContract.getTreeDocumentId(uri), dir, 0, new SaveCopy.Budget(SaveCopy.PICK_MAX), true); ok = true; } catch (SaveTooBig e) { bad = "!limit"; } catch (Exception e) { android.util.Log.w("dm", "save pick folder copy: " + e); }
-                if (!ok) saveDeleteTree(dir);   // 同选文件：总量有上限，失败不留半份 | as a picked file: the total is capped and a failure leaves nothing behind
-                nativeSavePicked(ok ? dir.getPath() : bad);
-            }, "dm-save-pick").start();
+            File trees = new File(new File(getFilesDir(), "temp"), "save_import_tree");
+            SaveCopy.PICKS.execute(() -> {   // 串行、每次一个新目录（审计 20261104 P1-1）| one at a time, a new directory each time
+                boolean ok = false; String bad = "!io", origin = null; File dir = null; try { origin = android.provider.DocumentsContract.getTreeDocumentId(uri); dir = SaveCopy.freshDir(trees); saveCopyTree(cr, uri, origin, dir, 0, new SaveCopy.Budget(SaveCopy.PICK_MAX), true); ok = true; } catch (SaveTooBig e) { bad = "!limit"; } catch (Exception e) { android.util.Log.w("dm", "save pick folder copy: " + e); }
+                if (!ok && dir != null) saveDeleteTree(dir);   // 同选文件：总量有上限，失败不留半份 | as a picked file: the total is capped and a failure leaves nothing behind
+                nativeSavePickedFrom(ok ? dir.getPath() : bad, origin);
+            });
         } else if (req == REQ_SAVE_PICK) {
             if (uri == null) { nativeSavePicked(null); return; }
             final Uri pu = uri;
-            new Thread(() -> {
-                File tmp = new File(new File(getFilesDir(), "temp/save_pick"), saveNameOf(pu));   // 名字在后台线程问系统（provider 可能慢）| the name is asked on the background thread: a provider can be slow
-                if (tmp.getParentFile() != null) tmp.getParentFile().mkdirs();
-                boolean ok = false; String bad = "!io"; try (java.io.InputStream in = cr.openInputStream(pu); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { ok = SaveCopy.copy(in, out, SaveCopy.PICK_MAX); if (!ok && in != null) bad = "!limit"; } catch (Exception e) { android.util.Log.w("dm", "save pick copy: " + e); }
-                if (!ok) tmp.delete();   // 失败不留半份；成功的副本下次启动整目录清（save_pick）| a failure leaves nothing; a good copy is cleared with the whole directory at the next start
-                nativeSavePicked(ok ? tmp.getPath() : bad);   // 拷失败不是取消：原生那边给失败提示 | a failed copy is not a cancel: the native side shows the failure
-            }, "dm-save-pick").start();
+            SaveCopy.PICKS.execute(() -> {   // 串行、每次一个新目录（审计 20261104 P1-1）| one at a time, a new directory each time
+                String origin = null; try { origin = android.provider.DocumentsContract.getDocumentId(pu); } catch (Exception ignored) {}   // 外部存储的 ID 带路径（primary:Download/save.coop/…），别的 provider 没有路径 | an external-storage id carries the path; other providers carry none
+                File tmp = null; boolean ok = false; String bad = "!io";
+                try { tmp = new File(SaveCopy.freshDir(new File(getFilesDir(), "temp/save_pick")), saveNameOf(pu)); } catch (Exception e) { android.util.Log.w("dm", "save pick dir: " + e); }   // 名字在后台线程问系统（provider 可能慢）| the name is asked on the background thread: a provider can be slow
+                if (tmp != null) try (java.io.InputStream in = cr.openInputStream(pu); java.io.OutputStream out = new java.io.FileOutputStream(tmp)) { ok = SaveCopy.copy(in, out, SaveCopy.PICK_MAX); if (!ok && in != null) bad = "!limit"; } catch (Exception e) { android.util.Log.w("dm", "save pick copy: " + e); }
+                if (!ok && tmp != null) tmp.delete();   // 失败不留半份；成功的副本下次选或下次启动清（save_pick）| a failure leaves nothing; a good copy is cleared at the next pick or start
+                nativeSavePickedFrom(ok ? tmp.getPath() : bad, origin);   // 拷失败不是取消：原生那边给失败提示 | a failed copy is not a cancel: the native side shows the failure
+            });
         } else {
             if (uri == null || src == null) { nativeSaveExported(false); return; }
             new Thread(() -> {

@@ -21,6 +21,14 @@ public final class SaveCopyTest {
         b.spend(1000); check(!b.fits(1) && b.bytesLeft() == 0, "扣完就不再有");
         b = new SaveCopy.Budget(1000); b.spend(1500); check(b.bytesLeft() < 0 && !b.fits(0), "实写比声明多：下一份就停，不会再超");
         b = new SaveCopy.Budget(Long.MAX_VALUE); check(!b.fits(-1), "大小不明（负数）算放不下");
+        // 每次选择一个新目录，旧副本清掉；拷贝排成一个线程（审计 20261104 P1-1）| a new directory per pick, older copies cleared; copies run on one thread
+        java.io.File par = java.nio.file.Files.createTempDirectory("savecopy").toFile();
+        java.io.File d1 = SaveCopy.freshDir(par); new java.io.FileOutputStream(new java.io.File(d1, "a.d2s")).close(); java.io.File d2 = SaveCopy.freshDir(par);
+        check(!d1.equals(d2) && d2.isDirectory() && !d1.exists() && d2.getParentFile().equals(par) && !d2.equals(par), "两次选择不共用目录，旧的清掉");
+        java.util.concurrent.atomic.AtomicInteger in = new java.util.concurrent.atomic.AtomicInteger(), peak = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.List<java.util.concurrent.Future<?>> fs = new java.util.ArrayList<>(); for (int i = 0; i < 6; i++) fs.add(SaveCopy.PICKS.submit(() -> { int k = in.incrementAndGet(); peak.accumulateAndGet(k, Math::max); try { Thread.sleep(20); } catch (InterruptedException ignored) {} in.decrementAndGet(); }));
+        for (java.util.concurrent.Future<?> f : fs) f.get(); check(peak.get() == 1, "选文件的拷贝同时只有一个 [" + peak.get() + "]");
+        SaveCopy.deleteTree(par); check(!par.exists(), "清理");
         System.out.println("PASS SaveCopyTest");
     }
 }

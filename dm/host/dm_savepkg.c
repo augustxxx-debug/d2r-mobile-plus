@@ -205,10 +205,21 @@ static int walk(const char *root, pfl *l) {
     closedir(d); if (!rc) qsort(l->v, (size_t)l->n, sizeof *l->v, cmp_pf); return rc;
 }
 // 进度（文件数）：导出、校验在工作线程写，面板读。QA 构建可放慢，真存档太小，看不到进度条（§2.9）| progress (files): written by the worker in export and inspect, read by the panel. QA builds can slow it down: real saves are too small to see the bar
-static _Atomic int g_prog_done, g_prog_total;
-void dm_savepkg_progress_read(int *done, int *total) { *done = atomic_load(&g_prog_done); *total = atomic_load(&g_prog_total); }
+// 做到第几个和一共几个合成一个 64 位原子，一起写一起读：读端不会拿到「新总数 + 旧进度」。每一步开头清零，不读上一步的终值（审计 20261104 P1-2）| done and total share one 64-bit atomic, written and read together, so a reader never gets a new total with an old count. Every step starts from zero instead of the last step's final value
+static _Atomic uint64_t g_prog;
+#ifdef DM_SAVEPKG_TEST_HOOKS
+void (*dm_savepkg_test_prog_hook)(int done, int total);   // 只有单测编译：看每一次写入 | unit test builds only: sees every write
+#endif
+void dm_savepkg_progress_read(int *done, int *total) { uint64_t v = atomic_load(&g_prog); *done = (int)(uint32_t)(v >> 32); *total = (int)(uint32_t)v; }
+static void prog_store(int done, int total) {
+    atomic_store(&g_prog, (uint64_t)(uint32_t)done << 32 | (uint32_t)total);
+#ifdef DM_SAVEPKG_TEST_HOOKS
+    if (dm_savepkg_test_prog_hook) dm_savepkg_test_prog_hook(done, total);
+#endif
+}
+void dm_savepkg_progress_reset(void) { prog_store(0, 0); }
 static void prog(int done, int total) {
-    atomic_store(&g_prog_total, total); atomic_store(&g_prog_done, done);
+    prog_store(done, total);
 #ifdef DM_QA_BUILD
     { const char *slow = getenv("DM_TEST_SAVE_SLOW"); if (slow) usleep((useconds_t)atoi(slow) * 1000); }
 #endif
@@ -282,7 +293,7 @@ static int zip_end(FILE *f, const ze *z, int n) {
 static int sel_has(const dm_pkg_export_opts *o, const char *name) { if (o->nnames < 0) return 1; for (int i = 0; i < o->nnames; i++) if (!strcmp(o->names[i], name)) return 1; return 0; }
 static void iso_utc(int64_t t, char o[24]) { time_t tt = (time_t)t; struct tm tm; gmtime_r(&tt, &tm); strftime(o, 24, "%Y-%m-%dT%H:%M:%SZ", &tm); }
 int dm_savepkg_export(const char *tree, const char *out_zip, const dm_pkg_export_opts *o, const dm_pkg_source *src) {
-    if (coop_root(tree) || (o->source_root && coop_root(o->source_root))) { LOG("存档管理：联机存档根不能导出"); return DM_PKG_E_COOP; }
+    dm_savepkg_progress_reset(); if (coop_root(tree) || (o->source_root && coop_root(o->source_root))) { LOG("存档管理：联机存档根不能导出"); return DM_PKG_E_COOP; }
     pfl all = {0}; if (walk(tree, &all)) { free(all.v); return DM_PKG_E_IO; }
     int rc = DM_PKG_E_IO; int n = 0; for (int i = 0; i < all.n; i++) { pf *x = &all.v[i]; int keep = x->cls == PC_CHAR ? sel_has(o, x->unit) : x->cls == PC_STASH ? o->stash : o->settings; if (keep) all.v[n++] = *x; } all.n = n;
     if (all.n >= MAX_FILES) { free(all.v); return DM_PKG_E_LIMIT; }
@@ -372,7 +383,7 @@ static int local_char(const char *save, const char *name, char *guest_out, size_
 static int name_nfd(const char *s) { for (const uint8_t *p = (const uint8_t *)s; *p; p++) { if (p[0] >= 0xcc && p[0] <= 0xcd && p[1]) { uint32_t u = (uint32_t)(p[0] & 0x1f) << 6 | (p[1] & 0x3f); if (u >= 0x300 && u <= 0x36f) return 1; } if (p[0] == 0xe1 && p[1] >= 0x84 && p[1] <= 0x87) return 1; } return 0; }
 static int names_clash(const jn *chars) { if (!chars || chars->t != J_ARR) return 0; for (const jn *a = chars->kid; a; a = a->next) { const char *x = jstrv(a, "name"); if (name_nfd(x)) return 1; for (const jn *b = a->next; b; b = b->next) if (ieq_ascii(x, jstrv(b, "name"))) return 1; } return 0; }
 static void stage_paths(const char *save, char *tmp, char *pend) { snprintf(tmp, 1400, "%s.import.tmp", save); snprintf(pend, 1400, "%s.import", save); }
-void dm_savepkg_view_free(dm_pkg_view *v) { free(v->chars); v->chars = NULL; }
+void dm_savepkg_view_free(dm_pkg_view *v) { free(v->chars); v->chars = NULL; v->nchars = v->nstash = v->has_settings = 0; }   // 计数跟着清：释放后再按 nchars 遍历也不越界（审计 20261104 P1-1 d）| the counts go too, so walking by nchars after a free stays in bounds
 void dm_savepkg_stage_cancel(const char *save) { pth t, p; stage_paths(save, t, p); rm_tree(t); }
 
 // ---- 上游 D2R Mobile 存档（交接/RC2_原版存档导入_可行性与设计_20261031.md）：改成包的形状后走现有校验、预览、备份、换入；只读来源
@@ -403,8 +414,11 @@ static int foreign_zip(zf *z, const char *tree) {
         if (++cnt > MAX_FILES || (total += e->usize) > MAX_TOTAL) return DM_PKG_E_LIMIT; int err = 0; uint8_t *d = zf_read(z, e, MAX_FILE, &err); if (!d) return err ? err : DM_PKG_E_IO; pth t; snprintf(t, sizeof t, "%s/%s", tree, rem); struct stat ts; if (!lstat(t, &ts)) { free(d); LOG("存档管理：包里有同名角色，整包拒绝"); return DM_PKG_E_DUP; } int bad = mkdirs_for(t) || write_new(t, d, e->usize); free(d); if (bad) return DM_PKG_E_IO; }
     return cnt ? DM_PKG_OK : DM_PKG_E_NOTOURS;
 }
-int dm_savepkg_wrap_foreign(const char *in, const char *work, char *out, size_t n, int *partial) {
-    *partial = 0; strlcpy(out, in, n); struct stat st; if (stat(in, &st)) return DM_PKG_E_IO; if (coop_root(in)) { LOG("存档管理：联机存档根不能导入"); return DM_PKG_E_COOP; }
+int dm_savepkg_wrap_foreign(const char *in, const char *work, char *out, size_t n, int *partial) { return dm_savepkg_wrap_foreign_from(in, NULL, work, out, n, partial); }
+// origin = 外壳拷贝之前的原路径（iOS 的文件 URL、安卓 SAF 的文档 ID）：拷到临时目录后路径里的 save.coop 就没了，联机判定要按原路径做（审计 20261104 P1-3）。绝对路径同 coop_root（含解析后的真实路径），别的只看字面 | origin = the path before the shell's copy (an iOS file URL, an Android SAF document id): the copy in a temporary directory loses save.coop from the path, so the co-op check goes by the original. An absolute path is judged as coop_root (the resolved path too), anything else literally
+int dm_savepkg_wrap_foreign_from(const char *in, const char *origin, const char *work, char *out, size_t n, int *partial) {
+    *partial = 0; strlcpy(out, in, n); if (origin && origin[0] && (origin[0] == '/' ? coop_root(origin) : coop_path(origin))) { LOG("存档管理：选的东西来自联机存档，不能导入"); return DM_PKG_E_COOP; }
+    struct stat st; if (stat(in, &st)) return DM_PKG_E_IO; if (coop_root(in)) { LOG("存档管理：联机存档根不能导入"); return DM_PKG_E_COOP; }
     pth root, tree; snprintf(tree, sizeof tree, "%s/tree", work); size_t L = strlen(in); int rc = DM_PKG_OK;
     if (S_ISDIR(st.st_mode)) { if (!foreign_root(in, root, sizeof root)) return DM_PKG_E_NOTOURS; rm_tree(work); }
     else if (L > 4 && (!strcasecmp(in + L - 4, ".d2s") || !strcasecmp(in + L - 4, ".d2i"))) { rm_tree(work); strlcpy(root, tree, sizeof root); size_t bn = 0; uint8_t *b = read_all(in, MAX_FILE, &bn); if (!b) return DM_PKG_E_IO; pth t; const char *base = strrchr(in, '/'); base = base ? base + 1 : in;
@@ -416,7 +430,7 @@ int dm_savepkg_wrap_foreign(const char *in, const char *work, char *out, size_t 
     rc = dm_savepkg_export(root, zip, &o, &src); if (!rc) strlcpy(out, zip, n); return rc;
 }
 int dm_savepkg_inspect(const char *zip, const char *save, int restore, dm_pkg_view *v) {
-    memset(v, 0, sizeof *v); if (coop_root(save)) { LOG("存档管理：联机存档根不能作为导入目标"); return DM_PKG_E_COOP; } pth tmp, pend, failed; stage_paths(save, tmp, pend); snprintf(failed, sizeof failed, "%s.import.failed", save); rm_tree(tmp); rm_tree(failed);
+    memset(v, 0, sizeof *v); dm_savepkg_progress_reset(); if (coop_root(save)) { LOG("存档管理：联机存档根不能作为导入目标"); return DM_PKG_E_COOP; } pth tmp, pend, failed; stage_paths(save, tmp, pend); snprintf(failed, sizeof failed, "%s.import.failed", save); rm_tree(tmp); rm_tree(failed);
     zf z; int rc = zf_open(&z, zip); jn *m = NULL; uint8_t *mj = NULL; v->chars = calloc(DM_PKG_MAX_CHARS, sizeof *v->chars); if (!v->chars) rc = DM_PKG_E_IO; if (rc) goto done;
     for (int i = 0; i < z.n; i++) if (coop_path(z.e[i].name)) { LOG("存档管理：包里有联机角色标记，整包拒绝"); rc = DM_PKG_E_COOP; goto done; }
     const zr *me = zf_find(&z, "manifest.json"); if (!me) { rc = DM_PKG_E_NOTOURS; goto done; } int zerr = 0; mj = zf_read(&z, me, MAX_MANIFEST, &zerr); if (!mj) { rc = zerr; goto done; }
@@ -434,7 +448,7 @@ int dm_savepkg_inspect(const char *zip, const char *save, int restore, dm_pkg_vi
     long long fr = dm_savepkg_free_bytes(save); pth parent; strlcpy(parent, save, sizeof parent); if (fr < 0) { char *sl = strrchr(parent, '/'); if (sl) *sl = 0; fr = dm_savepkg_free_bytes(parent); } if (fr >= 0 && fr < 2 * total + (32ll << 20)) { rc = DM_PKG_E_SPACE; goto done; } if (test_fail("space")) { rc = DM_PKG_E_SPACE; goto done; }
     // 解到临时目录，逐文件 SHA-256 | extract into the temporary directory, SHA-256 per file
     if (mkdirs_for(tmp) || mkdir(tmp, 0755)) { rc = DM_PKG_E_IO; goto done; } pth fd; snprintf(fd, sizeof fd, "%s/files", tmp); if (mkdir(fd, 0755)) { rc = DM_PKG_E_IO; goto done; }
-    int pn = 0, pi = 0; for (jn *f = files->kid; f; f = f->next) pn++;
+    int pn = 0, pi = 0; for (jn *f = files->kid; f; f = f->next) pn++; prog(0, pn);
     for (jn *f = files->kid; f; f = f->next) { prog(++pi, pn); const char *p = jstrv(f, "path"); char unit[64] = ""; int c = dm_savepkg_path_class(p, unit, sizeof unit); if (c == PC_UNKNOWN) { v->skipped_unknown++; continue; } const zr *e = zf_find(&z, p); uint8_t *b = zf_read(&z, e, MAX_FILE, &zerr); if (!b) { rc = zerr; goto done; } char h[65]; sha_hex(b, e->usize, h); if (strcmp(h, jstrv(f, "sha256"))) { free(b); rc = DM_PKG_E_CHECK; goto done; }
         pth dst; snprintf(dst, sizeof dst, "%s/%s", fd, p); int wr = mkdirs_for(dst); if (!wr) wr = write_new(dst, b, e->usize); int wer = errno; free(b); if (wr) { rc = wer == EEXIST ? DM_PKG_E_DUP : DM_PKG_E_IO; goto done; } v->nfiles++; v->total_bytes += e->usize; if (c == PC_SETTINGS) v->has_settings = 1; }   // EEXIST：同一个包里两个名字落到同一个文件（大小写、NFC / NFD）| EEXIST: two names in one package land on the same file (case, NFC / NFD)
     rc = convert_step(fd, v); if (rc) goto done;

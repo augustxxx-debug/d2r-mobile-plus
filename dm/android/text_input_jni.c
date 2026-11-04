@@ -219,7 +219,7 @@ void dm_android_share_file(const char *path, const char *title) {
 
 // 存档管理的系统面板（jni_android.c 的工作线程调，不是客体线程）：path 空指针 = 选文件（DmActivity.savePick），空串 = 选文件夹（savePickFolder），否则 = 存到玩家选的位置（saveExport）；调不到时直接报结果，免得界面一直等
 // Save management's system panels (called from a jni_android.c worker thread, never a guest thread): NULL path = pick a file (DmActivity.savePick), empty string = pick a folder (savePickFolder), otherwise save to a place the player picks (saveExport); when Java cannot be reached the result is reported at once so the page does not wait forever
-void dm_savemgr_picked(const char *path); void dm_savemgr_share_done(int saved);
+void dm_savemgr_picked(const char *path); void dm_savemgr_picked_from(const char *path, const char *origin); void dm_savemgr_share_done(int saved);
 void dm_android_save_panel(const char *path) {
     JNIEnv *env = NULL; int attached = vm && (*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK, ok = 0;
     if (vm && (!attached || (*vm)->AttachCurrentThread(vm, &env, NULL) == JNI_OK)) {
@@ -235,5 +235,8 @@ void dm_android_save_panel(const char *path) {
 }
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSavePicked(JNIEnv *env, jclass cls, jstring path) {
     (void)cls; const char *p = path ? (*env)->GetStringUTFChars(env, path, NULL) : NULL; dm_savemgr_picked(p); if (p) (*env)->ReleaseStringUTFChars(env, path, p);
+}
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSavePickedFrom(JNIEnv *env, jclass cls, jstring path, jstring origin) {
+    (void)cls; const char *p = path ? (*env)->GetStringUTFChars(env, path, NULL) : NULL, *o = origin ? (*env)->GetStringUTFChars(env, origin, NULL) : NULL; dm_savemgr_picked_from(p, o); if (p) (*env)->ReleaseStringUTFChars(env, path, p); if (o) (*env)->ReleaseStringUTFChars(env, origin, o);
 }
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSaveExported(JNIEnv *env, jclass cls, jboolean saved) { (void)env; (void)cls; dm_savemgr_share_done(saved); }
