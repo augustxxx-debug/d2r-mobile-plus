@@ -33,7 +33,7 @@ enum { OFF = 99999, COLS = DM_BAG_COLS, ROWS = DM_BAG_ROWS, CHARM_PAGE = 5, CAP 
 static const struct { const char *panel; int theirs; } k_tab_owner[] = {
     { "VendorPanelLayout", 1 }, { "BankExpansionLayout", 1 }, { "HoradricCubeLayout", 0 }, { "TradeLayout", 0 },
 };
-static uint8_t *B; static int g_page, g_selling_ticks; static _Atomic int g_tap, g_restore_fail, g_full, g_sell_full, g_unid_full; static _Atomic uint32_t g_selling;
+static uint8_t *B; static int g_page; static _Atomic int g_tap, g_restore_fail, g_full, g_pick_full, g_unid_full;
 int dm_bag_take_full(void) { return atomic_exchange(&g_full, 0); } int dm_bag_take_restore_fail(void) { return atomic_exchange(&g_restore_fail, 0); }
 uint64_t dm_bag_cli_item(uint8_t *b, uint32_t id) { return ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0 + 4 * 0x400), id & 0x7f, id, 4); }   // g_tap = 1 + 点到的图标 | g_tap = 1 + the tapped icon
 
@@ -89,7 +89,7 @@ static void pad_nav(uint64_t root, uint64_t panel, uint64_t grid, int held) {
     if ((ev & DM_BTN_A) && held) { static int lg; if (lg++ < 20) LOG("大背包：手上有物品（id %d），图标上的 A 不切页不放下", held); }
 }
 
-void dm_bag_set_opp(int v); int dm_bag_opp_of(uint64_t root); uint32_t dm_bag_take_sell(void); int dm_bag_take_trade_note(void); int dm_bag_take_full(void); int dm_bag_take_restore_fail(void);
+void dm_bag_set_opp(int v); int dm_bag_opp_of(uint64_t root); int dm_bag_take_full(void); int dm_bag_take_restore_fail(void);
 const char *dm_str(uint8_t *b, const char *key); void dm_game_notice_ui(uint8_t *main_base, const char *text); uint64_t dm_bag_cli_item(uint8_t *b, uint32_t id);
 #ifdef DM_QA_BUILD
 // QA 入口（CLAUDE.md §2.9）：DM_TEST_UI=<帧>:<identifier>:hover;…，帧从物品栏打开起算；identifier = CharmTabs@0/1 或 grid@x,y。找不到控件日志报红，脚本判失败。玩家不设这个环境变量。
@@ -123,13 +123,9 @@ void dm_bag_ui(uint8_t *b, uint64_t inv_panel, uint64_t box, uint64_t pl) {
     if (open) { int o = dm_bag_opp_of(root); dm_bag_set_opp(o);
         if (held) { uint64_t it = dm_bag_cli_item(b, (uint32_t)held); if (it) set_page(charm_paged(b, it) ? 1 : 0, "held"); }
         else if (o) { dm_cursor_item_info ci; if (dm_cursor_item(&ci) && ci.container != DM_ITEM_AT_INVENTORY && ci.container != DM_ITEM_AT_CHARM && !strncmp(ci.code, "cm", 2)) set_page(1, "hover"); } 
-        // 等客户端看到它回了页 0 再卖（搬动的通知包要走一拍）；0x433e50 距上次交易不足 500 ms 返回 0，下一帧再试 | Sell once the client sees it back on page 0 (the move notice takes a tick); 0x433e50 returns 0 within 500 ms of the last deal, so retry next frame
-        { static uint32_t sid; static int wait; uint32_t nid = dm_bag_take_sell(); if (nid) { sid = nid; wait = 120; }
-          if (sid && (o != 3 || --wait <= 0)) sid = 0;
-          uint64_t ci = sid ? dm_bag_cli_item(b, sid) : 0, cd = ci ? *(uint64_t *)(ci + 0x10) : 0; if (cd && pl && wait < 80 && *(uint8_t *)(cd + 0x55) == 0 && ((int (*)(uint64_t, uint64_t, int, int, int, int))(b + 0x433e50))(pl, ci, 1, 0, 1, 0)) { LOG("大背包：卖护身符 id %u（等了 %d 帧）", sid, 120 - wait); sid = 0; } }
-        if (dm_bag_take_trade_note()) dm_game_notice_ui(b, dm_str(b, "dmCharmTradeHint")); }
+    }
     if (dm_bag_take_full()) dm_game_notice_ui(b, dm_str(b, "dmCharmFull"));
-    if (atomic_exchange(&g_sell_full, 0)) dm_game_notice_ui(b, dm_str(b, "dmCharmPickFull"));
+    if (atomic_exchange(&g_pick_full, 0)) dm_game_notice_ui(b, dm_str(b, "dmCharmPickFull"));
     if (dm_bag_take_restore_fail()) dm_game_notice_ui(b, dm_str(b, "dmCharmRestore"));
     if (atomic_exchange(&g_unid_full, 0)) dm_game_notice_ui(b, dm_str(b, "dmCharmUnidFull"));
     if (grid) *(uint8_t *)(grid + 0x630) = g_page ? CHARM_PAGE : 0;
@@ -234,12 +230,11 @@ void dm_bag_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
     charm_snapshot(b, player); pthread_mutex_unlock(&g_cmu);
     uint64_t inv = *(uint64_t *)(player + 0x90), f = 0; if (!inv || *(uint32_t *)inv != 0x01020304) return;
     { static uint32_t ls; uint64_t i0 = *(uint64_t *)(player + 0x90), c0 = i0 ? *(uint64_t *)(i0 + 0x40) : 0; uint32_t cid = c0 ? *(uint32_t *)(c0 + 8) : 0; if (cid != ls) { LOG("大背包：服务端手上 id %u → %u", ls, cid); ls = cid; } }
-    uint32_t selling = atomic_load(&g_selling); if (selling && --g_selling_ticks <= 0) { atomic_store(&g_selling, 0); selling = 0; }
     uint8_t used[ROWS][COLS]; memset(used, 0, sizeof used); int nf = 0; static int last_nf = -1; uint32_t back = 0;
     for (uint64_t it = *(uint64_t *)(inv + 0x10), n = 0; it && n < 2048; n++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
         if (*(uint32_t *)(it + 0xc) == 0 && pp) { int pg = *(uint8_t *)(d + 0x55);
             if (pg == CHARM_PAGE) { if (!back && !(*(uint32_t *)(d + 0x18) & 0x10)) back = *(uint32_t *)(it + 8); int gw = 1, gh = 1, x = *(int32_t *)(pp + 0x10), y = *(int32_t *)(pp + 0x14); dm_cursor_item_size(b, it, &gw, &gh); for (int r = y; r < y + gh && r < ROWS; r++) for (int c = x; c < x + gw && c < COLS; c++) if (r >= 0 && c >= 0) used[r][c] = 1; }
-            else if (pg == 0 && charm_paged(b, it) && *(uint32_t *)(it + 8) != selling) { nf++; if (!f) f = it; } }
+            else if (pg == 0 && charm_paged(b, it)) { nf++; if (!f) f = it; } }
         it = *(uint64_t *)(d + 0xb0); }
     // 页 5 上未鉴定的（老档、导入、云合并、本修复之前搬进去的）搬回背包页，一拍一件；背包页放不下就留着，同一件只记一次日志
     // Unidentified ones on page 5 (old saves, imports, cloud merges, moved there before this fix) go back to the bag page, one per tick; if the bag page has no room they stay, logged once per item
@@ -269,11 +264,9 @@ void dm_bag_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
 //   pick up = quick move: to the stash / cube if open, sold if a vendor is open (through the original sale on the client tick), otherwise nothing;
 //   place = the charm in hand lands on page 5 (a free cell if the chosen one does not fit); a non-charm is refused and the UI goes back to the bag page (dm_bag_ui).
 enum { OPP_NONE, OPP_STASH, OPP_CUBE, OPP_VENDOR, OPP_TRADE };
-static _Atomic int g_opp; static _Atomic uint32_t g_sell_id; static _Atomic int g_note_trade;
+static _Atomic int g_opp;
 void dm_bag_set_opp(int v) { atomic_store(&g_opp, v); }
 int dm_bag_opp_of(uint64_t root) { return up(dm_ui_top(root, "BankExpansionLayout")) ? OPP_STASH : up(dm_ui_top(root, "HoradricCubeLayout")) ? OPP_CUBE : up(dm_ui_top(root, "VendorPanelLayout")) ? OPP_VENDOR : up(dm_ui_top(root, "TradeLayout")) ? OPP_TRADE : OPP_NONE; }
-uint32_t dm_bag_take_sell(void) { return atomic_exchange(&g_sell_id, 0); }
-int dm_bag_take_trade_note(void) { return atomic_exchange(&g_note_trade, 0); }
 static int page_free(uint64_t inv, int page, int gw, int gh, int *fx, int *fy) {   // 页的格表见 dm_stack.c free_cell | Page grid table: see free_cell in dm_stack.c
     // 空页的格表是放第一件时才建的（0x560740 自己建），没有格表就是全空 | An empty page's grid is only created when the first item goes in (0x560740 builds it), so no grid means all free
     uint64_t pg = *(uint64_t *)(inv + 0x20), e = pg && (uint64_t)page + 2 < *(uint64_t *)(inv + 0x28) ? pg + (uint64_t)(page + 2) * 0x20 : 0, cells = e ? *(uint64_t *)(e + 0x18) : 0; if (!cells) { *fx = 0; *fy = 0; return 1; }
@@ -318,7 +311,9 @@ void dm_bag_c2s(uint64_t *regs) {
         LOG("大背包：页 5 拿起 id %u → 先搬到背包页 %d,%d：%d%s", id, g_qx, g_qy, r, r ? "，改写成原版背包页拿起" : "（背包页满，不拿起）");
         if (r) { static uint8_t pick[17]; memcpy(pick, pk, 17); uint32_t nx = (uint32_t)g_qx, ny = (uint32_t)g_qy, np = 0; memcpy(pick + 5, &nx, 4); memcpy(pick + 9, &ny, 4); memcpy(pick + 13, &np, 4);
             regs[2] = (uint64_t)(uintptr_t)pick; return; }
-        atomic_store(&g_sell_full, 1); }
+        // 背包页满：仓库 / 方块开着时退回原来的一键搬（直接进对面，同 B148 之前），别的情况不拿起、提示一次 | Bag page full: with the stash / cube open fall back to the old one-tap move (straight into it, as before B148); otherwise nothing is picked up and a notice is shown once
+        int o = atomic_load(&g_opp), q = o == OPP_STASH ? quick_out(b, G, player, id, 4, 10, 1) : o == OPP_CUBE ? quick_out(b, G, player, id, 3, 9, 1) : 0;
+        if (q) LOG("大背包：背包页满，页 5 id %u 直接搬进%s", id, o == OPP_STASH ? "仓库" : "方块"); else atomic_store(&g_pick_full, 1); }
     else { int r = place_held(b, G, player, id, (int)x, (int)y); LOG("大背包：页 5 放下 id %u → %d", id, r); }
     static uint8_t noop[0x24]; memset(noop, 0, sizeof noop); noop[0] = 0x26; noop[6] = 0xff; regs[2] = (uint64_t)(uintptr_t)noop; regs[3] = sizeof noop;
 }

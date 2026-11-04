@@ -7,7 +7,7 @@ import os, sys
 T = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'i18n', 'ui_text.tsv')
 rows = {l.split('\t')[0]: l.rstrip('\n').split('\t') for l in open(T, encoding='utf-8') if '\t' in l}
 hdr = rows['键']; col = {n: hdr.index(n) for n in ('English', 'Español', 'Español MX', 'Русский', '한국어')}
-KEYS = ['dmBagPageCharm', 'dmCharmFull', 'dmCharmRestore', 'dmCharmTradeHint']
+KEYS = ['dmBagPageCharm', 'dmCharmFull', 'dmCharmRestore', 'dmCharmPickFull', 'dmCharmUnidFull']   # dmCharmTradeHint 随 B148 撤了；两条 B146 / B148 新提示一起核 | dmCharmTradeHint went with B148; the two new B146 / B148 notices are checked too
 WANT = {'English': 'charm', 'Español': 'dij', 'Español MX': 'talism', 'Русский': 'оберег', '한국어': '부적'}
 BAD = {'English': 'amulet', 'Español': 'amulet', 'Español MX': 'amulet', 'Русский': 'амулет', '한국어': '목걸이'}
 checks = fails = 0
