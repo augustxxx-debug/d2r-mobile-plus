@@ -43,6 +43,7 @@
 #include "dm_i18n.h"
 #include "dm_modetx.h"
 #include "dm_mode_items.h"
+#include "dm_padfocus.h"
 #include <stdatomic.h>
 #include <string.h>
 #include <unistd.h>
@@ -196,6 +197,90 @@ static const struct { const char *name; int side; void (*enter)(void), (*leave)(
 #undef X
 };
 static void items_run(int side, int leave) { for (unsigned i = 0; i < sizeof k_items / sizeof *k_items; i++) { if (k_items[i].side != 2 && k_items[i].side != side) continue; void (*f)(void) = leave ? k_items[i].leave : k_items[i].enter; if (f) f(); } }
+// ---- B036：切到手柄版后把开着网格面板的手柄焦点放回合法格子 ----
+// 事务重载整套布局：旧控件全被释放，游戏不会为「本来开着的」面板重走开页时的缺省焦点，焦点管理器的焦点
+// （[界面根+0xd0]+0x190）留空，方向键 / 左摇杆没有起点——商人货架、交易、储物箱、方块这些网格页都动不了。
+// 事务开始前记下开着的网格面板与光标在网格内的相对位置，两次重建完成后用原版悬停刷新（dm_ui_hover_now）
+// 落回同一格；记不到位置就落第一格。纯策略在 dm_padfocus.h（tests/t_b036.c 测），这里只读写游戏内存。
+// ---- B036: after switching to the controller layout, put the controller focus of open grid panels back on a valid cell ----
+// The transaction reloads the whole layout: every old widget is freed, and the game does not replay the default focus a panel gets when it
+// is opened for a panel that was already open; the focus manager's focus ([UI root+0xd0]+0x190) stays empty and the D-pad / left stick has no
+// starting point -- the vendor shelf, trade, stash and Cube grid pages cannot move. Before the transaction starts we record the open grid panel
+// and the cursor's position inside the grid; after both rebuilds the original hover refresh (dm_ui_hover_now) puts the focus back on the same
+// cell, or on the first cell when no position was recorded. The pure policy is in dm_padfocus.h (tested by tests/t_b036.c); this file only
+// reads and writes game memory.
+static const char *const k_focus_panel[] = { "VendorPanelLayout", "TradeLayout", "BankExpansionLayout", "BankOriginalLayout", "HoradricCubeLayout" };   // 商人 / 赌博同页 | vendor / gambling share the panel
+enum { FOCUS_PANEL_N = (int)(sizeof k_focus_panel / sizeof *k_focus_panel) };
+static dm_padfocus_mem g_focus_mem = { -1, 0, 0.0, 0.0 };
+static int g_focus_wait;   // 还要重试的帧数（0 = 没有待恢复） | frames left to retry (0 = nothing pending)
+static uint64_t focus_item_find(uint8_t *b, uint64_t w, int dep) {   // 面板里第一个可见的物品格 / 网格控件 | first visible item-cell / grid widget in the panel
+    if (!w || dep > 14 || !*(uint8_t *)(w + 0x50)) return 0;
+    uint64_t vt = *(uint64_t *)w - (uint64_t)(uintptr_t)b;
+    if (vt == 0x2089ab8 || vt == 0x2088fc8 || vt == 0x2089fa0 || vt == 0x20892f8) return w;   // 多格格子 / 腰带 / 装备位 / 高级仓库成叠格（同 dm_cursor_item.c） | multi-cell grid / belt / equipment slot / advanced stash stack (same as dm_cursor_item.c)
+    uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
+    for (uint64_t i = 0; i < n; i++) { uint64_t r = focus_item_find(b, *(uint64_t *)(ch + 8 * i), dep + 1); if (r) return r; }
+    return 0;
+}
+static int focus_panel_of(uint64_t root, uint64_t w) {   // 控件挂在前面的顶层面板（父链 +0x30，同 dm_cursor.c） | top-level panel the widget hangs under (parent chain +0x30, same as dm_cursor.c)
+    for (int n = 0; w && w != root && n < 64; n++) {
+        const char *nm = (const char *)*(uint64_t *)(w + 8);
+        if (nm) for (int i = 0; i < FOCUS_PANEL_N; i++) if (!strcmp(nm, k_focus_panel[i])) return i;
+        w = *(uint64_t *)(w + 0x30);
+    }
+    return -1;
+}
+static uint64_t focus_panel_grid(uint8_t *b, uint64_t root, int idx, uint64_t *panel) {
+    uint64_t p = dm_ui_top(root, k_focus_panel[idx]);
+    if (!p || !*(uint8_t *)(p + 0x50)) return 0;   // 面板没开（同 dm_actions.c 判商人页开的同一字节） | panel not open (same byte dm_actions.c uses to tell the vendor page is open)
+    uint64_t g = focus_item_find(b, p, 0); if (!g) return 0;
+    if (panel) *panel = p; return g;
+}
+#define FOCUS_HIT(g, px, py) (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)(g) + 0x48))((g), (uint64_t)(uint32_t)(px) | ((uint64_t)(uint32_t)(py) << 32)) & 1)
+static int focus_rect(uint8_t *b, uint64_t g, int *x0, int *y0, int *x1, int *y1) {   // 网格的屏幕命中矩形（同 dm_bag.c ui_test 的探法） | screen hit rect of the grid (same probing as ui_test in dm_bag.c)
+    int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c); if (!g || vw <= 0 || vh <= 0) return 0;
+    int st = vh / 64 + 1, fx = -1, fy = -1;
+    for (int y = 0; y < vh && fx < 0; y += st) for (int x = 0; x < vw; x += st) if (FOCUS_HIT(g, x, y)) { fx = x; fy = y; break; }
+    if (fx < 0) return 0;
+    int ax = fx, ay = fy, bx = fx, by = fy;
+    while (ax > 0 && FOCUS_HIT(g, ax - 1, ay)) ax--;
+    while (ay > 0 && FOCUS_HIT(g, ax, ay - 1)) ay--;
+    while (bx + 1 < vw && FOCUS_HIT(g, bx + 1, ay)) bx++;
+    while (by + 1 < vh && FOCUS_HIT(g, ax, by + 1)) by++;
+    if (bx <= ax || by <= ay) return 0;
+    *x0 = ax; *y0 = ay; *x1 = bx; *y1 = by; return 1;
+}
+static void focus_capture(uint8_t *b) {   // 切换开始前：记下开着的网格面板与光标位置 | before the switch: record the open grid panel and the cursor position
+    dm_padfocus_capture(&g_focus_mem, -1, 0, 0, 0.0, 0.0); g_focus_wait = 0;
+    uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)); if (!root) return;
+    uint64_t fm = rd8(root + 0xd0), fw = fm ? rd8(fm + 0x190) : 0, hw = fm ? rd8(fm + 0x178) : 0;
+    int pref = focus_panel_of(root, fw); if (pref < 0) pref = focus_panel_of(root, hw);   // 光标在哪一侧就先恢复哪一侧 | restore the side the cursor is on first
+    int order[FOCUS_PANEL_N], n = 0; if (pref >= 0) order[n++] = pref; for (int i = 0; i < FOCUS_PANEL_N; i++) if (i != pref) order[n++] = i;
+    for (int k = 0; k < n; k++) {
+        int idx = order[k]; uint64_t p = 0, g = focus_panel_grid(b, root, idx, &p); if (!g) continue;
+        int x0, y0, x1, y1; if (!focus_rect(b, g, &x0, &y0, &x1, &y1)) continue;
+        int cx = *(int32_t *)(b + 0x2d128f8), cy = *(int32_t *)(b + 0x2d128fc);
+        int in = cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1 && FOCUS_HIT(g, cx, cy);
+        double u = in ? (double)(cx - x0) / (double)(x1 - x0) : 0.0, v = in ? (double)(cy - y0) / (double)(y1 - y0) : 0.0;
+        dm_padfocus_capture(&g_focus_mem, idx, 1, in, u, v);
+        LOG("手柄 / 触屏布局：记下%s的网格焦点（%s，格内 %.2f,%.2f）", k_focus_panel[idx], in ? "光标原格" : "落第一格", u, v);
+        return;
+    }
+}
+static int focus_restore_once(uint8_t *b) {   // 重建完成后：把焦点放回网格；返回 1 = 处理完 / 没得处理，0 = 下一帧再试 | after the rebuild: put the focus back on the grid; 1 = done / nothing to do, 0 = retry next frame
+    if (g_focus_mem.panel < 0) return 1;
+    uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)); if (!root) return 0;   // 界面根还没就位：下一帧再试 | UI root not in place yet: retry next frame
+    { uint64_t fm = rd8(root + 0xd0); if (fm && rd8(fm + 0x190)) { LOG("手柄 / 触屏布局：切到手柄版后焦点已在（原版自己恢复了），不改"); g_focus_mem.panel = -1; return 1; } }   // 只补空焦点，不和原版抢（只读指针值、不解引用；Opus 审 P2-1） | only fill an empty focus, never fight the original (reads the pointer value, no dereference; Opus review P2-1)
+    int idx = g_focus_mem.panel; uint64_t p = dm_ui_top(root, k_focus_panel[idx]);
+    if (!p) return 0;   // 新布局还没把这个面板建出来：下一帧再试 | the new layout has not built this panel yet: retry next frame
+    if (!*(uint8_t *)(p + 0x50)) { g_focus_mem.panel = -1; return 1; }   // 面板已经关了：不硬塞 | panel closed: do not force it
+    uint64_t g = focus_item_find(b, p, 0); if (!g) return 0;   // 面板在、网格还没就位：下一帧再试（重试用尽会报红） | panel is there but the grid is not ready: retry next frame (report red when retries run out)
+    int x0, y0, x1, y1; if (!focus_rect(b, g, &x0, &y0, &x1, &y1)) return 0;   // 布局还没摆好 | layout not laid out yet
+    int x = 0, y = 0; if (!dm_padfocus_restore(&g_focus_mem, idx, 1, x0, y0, x1, y1, &x, &y)) { g_focus_mem.panel = -1; return 1; }
+    int dm_ui_hover_now(int, int);
+    if (!dm_ui_hover_now(x, y)) return 0;   // 原版手柄光标模式还没就位 | the original controller cursor mode is not ready yet
+    LOG("手柄 / 触屏布局：切到手柄版后把%s的焦点放回网格（%d,%d，格内 %.2f,%.2f）", k_focus_panel[idx], x, y, g_focus_mem.u, g_focus_mem.v);
+    g_focus_mem.panel = -1; return 1;
+}
 // 我们自己的页在手柄模式下接管按键（自定义页、积分牌…；原版的焦点导航不认识我们加的控件）：页在屏上时每帧声明要哪些键（dm_padmode_page_keys，游戏主线程），
 // 取手柄处（hle_hid.c fill）把这些键扣下不交给原版、按下沿攒给页（dm_padmode_page_keys 的返回值）。页不再声明（3 帧）就失效；失效时还按着的键松开前仍不交给原版。同一时刻只有一页在屏上
 // 页接管了的键还想让原版照常收到一次短按时（如编年史仓库页的 Y：短按仍是原版的「丢弃」，按住才是我们的「存入」）：dm_padmode_page_pulse 让取手柄处替玩家按几次采样
@@ -674,6 +759,7 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
       if (k < n && frame >= ev[k].f) { LOG("DM_TEST_GLYPH：帧 %llu 请求键帽样式 %d", (unsigned long long)frame, ev[k].m); dm_padmode_request_glyph(ev[k].m); k++; } }
     if (g_have && frame % 30 == 0) str_apply(g_cur);   // 串表开机后才装、切语言会重装：定期核 | The string table is loaded only after boot and reloaded on a language switch: check periodically
     if (!g_have) return;
+    if (g_focus_wait && !atomic_load(&g_freeze)) { if (focus_restore_once(b)) g_focus_wait = 0; else if (!--g_focus_wait) LOG("【红】手柄 / 触屏布局：网格焦点恢复重试 16 帧仍未成（面板 / 网格 / 手柄光标模式没就位）"); }   // B036 重试 | B036 retry
     { uint32_t dm_oe_ui_opmode_reads(void); static uint64_t fp0; static uint32_t nfp; uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), ch = root ? rd8(root + 0x58) : 0, n = root ? rd8(root + 0x60) : 0, fp = n * 0x9e3779b97f4a7c15ull;
       for (uint64_t i = 0; ch && i < n && i < 256; i++) fp = (fp << 7 | fp >> 57) ^ rd8(ch + 8 * i);
       if (fp != fp0) { fp0 = fp; nfp++; } g_sig = dm_oe_ui_opmode_reads() + nfp; }
@@ -684,6 +770,7 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
     if (act == DM_TXA_BEGIN) { g_glyph_next = wx >> 1; w = wx & 1; }
     if (act == DM_TXA_NONE) { if (g_tx.st == DM_TX_IDLE && atomic_load(&g_freeze)) { atomic_store(&g_freeze, 0); if (atomic_load(&g_want) != w) atomic_store(&g_freeze, 1); } return; }   // 没在切：请求时立的冻结（想要的就是当前模式 / 又改回来了）撤掉；撤的同时又来了新请求的重新立上 | Not switching: the freeze set at request time (the wanted mode is the current one / it was changed back) is lifted; if a new request arrives at the same time as the lift, it is set again
     if (act == DM_TXA_BEGIN) {
+        focus_capture(b);   // 改前缀 / 报运行模式之前记下开着的网格面板与光标位置（B036） | record the open grid panel and cursor position before the prefixes change / the run mode is reported (B036)
         if (!pfx_write(b, w)) { g_tx.st = DM_TX_IDLE; atomic_store(&g_want, -1); atomic_store(&g_freeze, 0); return; }
         atomic_store(&g_freeze, 1); g_tx_from = frame;
         items_run(g_cur, 1);   // 旧一侧各登记项收手（dm_mode_items.h）：在途的替按键作废、挪过的控件写回、缓存的控件地址清掉 | Registered items of the old side stand down (dm_mode_items.h): in-flight key presses on the player's behalf are voided, moved widgets written back, cached widget addresses cleared
@@ -697,6 +784,8 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
     if (atomic_load(&g_want) == g_cur) atomic_store(&g_want, -1);
     atomic_store(&g_freeze, 0);   // 放开输入：冻结期间按着过的键先松开过一次才交给游戏（dm_modegate）；事务中又来了反向请求的，下一帧接着起下一次（请求时已重新立冻结） | Release input: keys held during the freeze must be let go once before being handed to the game (dm_modegate); if an opposite request arrived during the transaction, the next switch starts on the next frame (the freeze was already set again at request time)
     if (atomic_load(&g_want) >= 0 && atomic_load(&g_want) != g_cur) atomic_store(&g_freeze, 1);
+    if (g_cur && !atomic_load(&g_freeze)) g_focus_wait = focus_restore_once(b) ? 0 : 16;   // 切到手柄版：把开着的网格面板焦点放回合法格子（B036）；还不成就再试几帧 | switched to controller: restore the focus of open grid panels to a valid cell (B036); retry a few frames if not yet possible
+    else if (!g_cur) { g_focus_mem.panel = -1; g_focus_wait = 0; }   // 切到触屏版：手柄焦点不用恢复，触屏行为不变 | switched to touch: no controller focus to restore, touch behavior unchanged
     LOG("手柄 / 触屏布局：切到%s版——完成（%llu 帧，两次重建里 %d 次靠超时）", g_cur ? "原版手柄" : "触屏", (unsigned long long)(frame - g_tx_from), g_tx.timeouts);
     if (g_cur) {   // 切到手柄版时记一行六个技能格各绑的技能号（第二组 = 按着 ZL）：面 → 格表 main+0x2d13cbc（6 × {逻辑键, 普通格, 替代格}）、格 → 技能表 main+0x2d5f0c0（每格 28 字节，武器第二组在 +16 格），读法同 dm_freetp.c | On switching to the controller layout, log one line with the skill number bound to each of the six skill slots (second set = ZL held): face button -> slot table main+0x2d13cbc (6 x {logical key, normal slot, alternate slot}), slot -> skill table main+0x2d5f0c0 (28 bytes per slot, the second weapon set is at +16 slots), read the same way as dm_freetp.c
         int dm_swapskill_wset(void); int bank = dm_swapskill_wset() ? 16 : 0; char o[240]; size_t L = 0; o[0] = 0;

@@ -22,6 +22,7 @@ run: \
 	$(B)/t_altstack \
 	$(B)/t_audio \
 	$(B)/t_audio_spsc \
+	$(B)/t_b036 \
 	$(B)/t_cloudsync \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
@@ -190,6 +191,7 @@ run: \
 	$(B)/t_minimap_lift
 	$(B)/t_widestash_restore
 	$(B)/t_modetx
+	$(B)/t_b036
 	$(B)/t_padmap
 	$(B)/t_unit_level
 	$(B)/t_widget
@@ -237,6 +239,8 @@ $(B)/t_widestash_restore: t_widestash_restore.c ../dm_cursor.c ../dm_cursor.h | 
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_widestash_restore.c
 $(B)/t_modetx: t_modetx.c ../dm_modetx.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_modetx.c
+$(B)/t_b036: t_b036.c ../dm_modetx.h ../dm_padfocus.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_b036.c
 $(B)/t_namegen: t_namegen.c ../dm_namegen.c | $(B)
 	clang -O1 -Wall -Werror -o $@ t_namegen.c ../dm_namegen.c
 $(B)/t_savepkg: t_savepkg.c ../dm_savepkg.c ../dm_savepkg.h ../dm_savejob.h ../dm.h | $(B)
