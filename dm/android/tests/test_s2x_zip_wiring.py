@@ -87,6 +87,18 @@ class S2xZipWiring(unittest.TestCase):
         self.assertLess(thread, body.index('S2xZip.spaceNeeded(plan, dest)'))
         self.assertLess(thread, body.index('S2xZip.extract(plan, dest,'))
         self.assertIn('postUi(', body)   # 结果只经 postUi 投递主线程 | results reach the main thread only through postUi
+        # 线程真的被 start()，不是在主线程上直接 run()（OMP 变异 M3）| the thread is really start()ed, not run() on the main thread (OMP mutation M3)
+        self.assertRegex(re.sub(r'\s+', ' ', body), r'\}, "dm-s2x-zip"\)\.start\(\);')
+        self.assertNotIn('.run();', body)
+
+    def test_zip_done_guard_and_both_cancel_paths(self):
+        # 本进程解过一次就不再触发（防解完仍缺文件时反复解压，OMP 变异 M6）| once per process (stops a loop when files are still missing after a full pass, OMP mutation M6)
+        body = method_body(self.code, 'private boolean ensureZipUnpacked(File downloads, File gameBase)')
+        self.assertIn('missing.isEmpty() || zipDone ? null : S2xZip.find(downloads)', re.sub(r'\s+', ' ', body))
+        self.assertIn('zipDone = true', method_body(self.code, 'private void startZip(File zip, File dest)'))
+        # 加载页没挂上（或不认这个键）时，B / 返回也要能取消（OMP 变异 M1）| B / Back must cancel even when the loading page is not attached or ignores the key (OMP mutation M1)
+        keys = re.sub(r'\s+', ' ', method_body(self.code, 'public boolean dispatchKeyEvent('))
+        self.assertIn('if (!started && zipRunning && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) { zipCancel.set(true); return true; }', keys)
 
     def test_four_outcomes_have_their_screens(self):
         # 结构不对 / 空间不够 → 失败页（showGenScreen）；否则加载页；取消 → 暂停页；成功 → 照常进现有流程
