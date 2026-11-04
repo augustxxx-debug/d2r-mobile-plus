@@ -565,7 +565,9 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
       int rs = 0; if (pad && fm && !dm_ui_modal_active(root)) { atomic_store(&g_rs_frame, frame); rs = atomic_exchange(&g_rs_ev, 0); void dm_padmode_legend(int, const char *); dm_padmode_legend(4, dm_str(b, "dmPadLegGroups")); }
       // 跳组：Plus 这边跳到相邻的分组折叠钮；原版表格（探针 2）里跳到相邻小组的第一行 | group jump: on the Plus side to the adjacent fold button; inside the original table to the first row of the adjacent subgroup
       if (rs) { int to = -1; for (int k = si + rs; si >= 0 && k > 0 && k < ns && to < 0; k += rs) { const char *nm = st[k] ? (const char *)rd8(st[k] + 8) : NULL; if (nm && !strncmp(nm, "TouchFold", 9)) to = k; }
-          if (si >= 0 && rs < 0 && to < 0) to = 0;
+          // 往上没有折叠钮时回到停靠点组的头：局外难度行不可调（B066 / 审计 P2-2），落到第一条可操作的行（入口钮 / Plus 停靠点），不落在死行上；局内难度行照常
+          // no fold button above: back to the head of the stop group; outside a run the difficulty row cannot be changed (B066 / audit P2-2), so land on the first actionable stop (entry button / Plus stops), never on the dead row; inside a run the difficulty row as usual
+          if (si >= 0 && rs < 0 && to < 0) { to = shown ? 0 : 1; while (to < ns && !st[to]) to++; if (to >= ns) to = 0; }
           if (to >= 0) { *(uint64_t *)(uintptr_t)(fm + 0x190) = st[to]; F = st[to]; si = to; on_row = 1; last_dir = 0; last_off = -1; LOG("选项页：右摇杆跳组 → %s", (const char *)rd8(st[to] + 8)); }
           else if (pm_find(gp, "TouchTableHolder", 0) && *(uint8_t *)(uintptr_t)(pm_find(gp, "TouchTableHolder", 0) + 0x50)) {   // 原版表格那组收起时没有可跳的 | nothing to jump to while the original table's group is collapsed
               uint64_t tb = pm_find(gp, "OptionsTable", 0), ch = tb ? rd8(tb + 0x58) : 0, n = tb ? rd8(tb + 0x60) : 0, heads[12]; int nh = 0, cur = -1;

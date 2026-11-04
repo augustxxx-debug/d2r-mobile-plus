@@ -132,6 +132,7 @@ run: \
 	$(B)/t_graphics_gate
 	$(B)/t_options_android
 	$(B)/t_padmode_pure
+	$(PY) test_padmode_focus.py
 	$(B)/t_custom_readlog
 	$(B)/t_crashfence 2>/dev/null
 	$(B)/t_community 2>/dev/null
