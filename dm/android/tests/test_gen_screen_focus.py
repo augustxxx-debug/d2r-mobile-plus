@@ -30,6 +30,10 @@ class GenScreenFocus(unittest.TestCase):
         seg = seg[:seg.index('return true;')]
         self.assertIn('getCurrentFocus()', seg)
         self.assertIn('GenScreenKeys.aTarget(', seg)
+        # 焦点必须真按按钮对象认，不许被写死成 NONE | the focus must really be matched against the button objects, never hard-wired to NONE
+        flat = re.sub(r'\s+', ' ', seg)
+        self.assertRegex(flat, r'int focused = f != null && f == genShareBtn \? GenScreenKeys\.SHARE : f != null && f == genRetryBtn \? GenScreenKeys\.RETRY : GenScreenKeys\.NONE;')
+        self.assertRegex(flat, r'GenScreenKeys\.aTarget\(focused,')
         # 不许再按 genRetryOffered 一刀切 | no more blanket decision on genRetryOffered
         self.assertNotRegex(seg, r'if\s*\(\s*genRetryOffered\s*\)\s*retryGeneration\(\)')
 
