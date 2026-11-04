@@ -188,7 +188,8 @@ static void settings_json(jb *b, int android) {   // 安卓没有超分与 iClou
     for (size_t i = 0; i < sizeof flags / sizeof *flags; i++) { jf(b, "%s\"%s\":%d", first ? "" : ",", flags[i], android && !strcmp(flags[i], "icloud") ? 0 : dm_custom_get(flags[i]) != 0); first = 0; }
     for (size_t i = 0; i < sizeof levels / sizeof *levels; i++) jf(b, ",\"%s\":%d", levels[i], dm_custom_get(levels[i]));
     int eco = dm_custom_get("eco_fps"), up_on = dm_custom_get("upscale") != 0, q = dm_custom_get("q3d"), eff = dm_3d_profile_get();
-    J_INT(b, DM_TF_S_FPS_SELECTED, eco == 1 ? 30 : eco == 2 ? 120 : 60); J_INT(b, DM_TF_S_FPS_EFFECTIVE, dm_fps_setting());
+    int high = dm_fps_high_hz();   // 第三档按本机高刷值报 90 / 120（服务端枚举 30/60/90/120）；屏幕还不知道时按 120 | the third stop reports this machine's 90 / 120 (server enum 30/60/90/120); 120 while the screen is unknown
+    J_INT(b, DM_TF_S_FPS_SELECTED, eco == 1 ? 30 : eco == 2 ? (high ? high : 120) : 60); J_INT(b, DM_TF_S_FPS_EFFECTIVE, dm_fps_setting());
     J_STR(b, DM_TF_S_UPSCALE_SELECTED, android || !up_on ? up[4] : q >= 0 && q < 5 ? up[q] : up[0]); J_STR(b, DM_TF_S_UPSCALE_EFFECTIVE, !android && eff >= 0 && eff < 5 ? up[eff] : up[4]);
     // rt_level 取代了 rt_shadow / rt_ao（RC2 并线）：协议字段不变——设置 = 档位非关，生效 = 生效档位非关；AO 跟高档走，DM_RT_AO 钉住时按它 | rt_level replaced rt_shadow / rt_ao (RC2 merge): protocol fields unchanged - set = level not off, effective = effective level not off; AO follows High, DM_RT_AO pins it
     int rt_set = dm_custom_get("rt_level") != 0, rt_lvl = dm_rt_level_setting(), rt_on = rt_lvl > 0; const char *ao = getenv("DM_RT_AO"); int ao_on = ao ? *ao == '1' && rt_on : rt_lvl == 3;

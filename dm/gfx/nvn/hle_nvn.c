@@ -1392,7 +1392,13 @@ static double present_auto_hz(double screen_hz) {
     // 自适应目标是最高60，而旧Apple策略是至少60；两者不共用取整方向。首帧/刷新率改变也受上限约束。
     // Adaptive pacing caps at 60; the legacy Apple policy has a floor of 60. Cap the first frame and refresh changes too.
     if (pace_adapt_enabled() && screen_hz > 0) return screen_hz / nvn_adaptive_divisor(screen_hz, g_pa_k, g_pa_screen_hz);
-    return dm_pace_hz(screen_hz, nvn_present_floor_hz(mtl_fps_target()));   // 120 帧档 = 120（与显示节拍同速，见 nvn_pace.h nvn_present_floor_hz），其余 60 | 120 fps mode = 120 (same rate as the display link, see nvn_pace.h nvn_present_floor_hz), otherwise 60
+    // 120 帧档 = 120（与显示节拍同速，见 nvn_pace.h nvn_present_floor_hz），其余 60。90 帧档走 60 这一支也是对的：
+    // dm_pace_hz 取「屏幕刷新率的整数分之一里不低于下限的最小一档」，89–118 Hz 屏除以 60 的整数部分是 1 → 直接返回屏幕刷新率，
+    // 90 Hz 屏就是 90（每节拍一帧），与下限换成 90 的结果逐字相同；安卓 Java 侧把窗口切到该模式（DmActivity.applyPreferredMode）
+    // 120 fps mode = 120 (same rate as the display link, see nvn_pace.h nvn_present_floor_hz), otherwise 60. The 90 fps stop is right on the 60 branch too:
+    // dm_pace_hz takes the smallest tier among integer fractions of the screen refresh rate that is not below the floor; for an 89-118 Hz screen the integer part of refresh/60 is 1,
+    // so it returns the screen refresh rate itself -- 90 on a 90 Hz screen (one frame per tick), byte-identical to passing 90 as the floor; the Android Java side switches the window to that mode (DmActivity.applyPreferredMode)
+    return dm_pace_hz(screen_hz, nvn_present_floor_hz(mtl_fps_target()));
 }
 static int g_hz = -1, g_display_mode, g_hz_auto;   // g_hz_auto：有窗口、没用 DM_PRESENT_HZ 钉住——帧率跟着窗口所在屏的刷新率取整除档（每帧重读，换屏即换） | g_hz_auto: has a window and not pinned by DM_PRESENT_HZ; the frame rate takes the evenly dividing tier of the refresh rate of the screen the window is on (re-read every frame, changes with the screen)
 void nvn_present_config(int hz, int display_mode) { g_hz = hz; g_display_mode = display_mode; g_hz_auto = 0; }

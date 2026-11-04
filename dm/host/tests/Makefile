@@ -62,6 +62,7 @@ run: \
 	$(B)/t_oe \
 	$(B)/t_render_profile \
 	$(B)/t_fps_thermal \
+	$(B)/t_fps_caption \
 	$(B)/t_mem_tier \
 	$(B)/t_graphics_gate \
 	$(B)/t_ingame \
@@ -135,6 +136,7 @@ run: \
 	$(B)/t_metalfx_handoff --disabled
 	$(B)/t_render_profile
 	$(B)/t_fps_thermal
+	$(B)/t_fps_caption
 	$(B)/t_mem_tier
 	$(B)/t_graphics_gate
 	$(B)/t_options_android
@@ -344,6 +346,8 @@ $(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
 
 $(B)/t_mem_tier: t_mem_tier.c ../dm_custom.c ../dm_custom.h ../dm_crashfence.c ../dm_crashfence.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_mem_tier.c
+$(B)/t_fps_caption: t_fps_caption.c ../dm_custom.h ../dm_i18n_tab.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-const-variable -I.. -o $@ t_fps_caption.c
 $(B)/t_fps_thermal: t_fps_thermal.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_fps_thermal.c
 $(B)/t_render_profile: t_render_profile.c ../dm_custom.c ../dm_custom.h | $(B)
