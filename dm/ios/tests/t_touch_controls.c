@@ -670,6 +670,19 @@ static void modal_box_tap(void) {
     dm_tc_begin_at(&s,0,333,250,11.0); dm_tc_pointer_item(&s,6); dm_tc_end_at(&s,0,11.1);
     CHECK(s.mouse_click_seq==1); CHECK(s.pulse_button==0);   /* 答 6：什么都不发——复核 P1-2 的失败现象 | answer 6: nothing at all -- the failure seen in recheck P1-2 */
 }
+/* 冒烟 11-05：短点按不能丢——功能页 / 设置页里非物品区的点按（鼠标点击模式），按下到抬起 0 / 16 / 50 / 80 ms 都要记一次鼠标点击（真手指约 50–100 ms；
+   手势层没有最短按住时长，真机「瞬时点不认」是注入工具的接触 / 抬起被系统整下丢掉，App 收不到 touchesBegan） | Smoke 11-05: short taps must not be lost -- a tap outside the item area
+   in mouse-click mode, 0 / 16 / 50 / 80 ms from press to lift, records one mouse click each (real fingers are about 50-100 ms; the gesture layer has no minimum hold,
+   the device "instant tap not taken" was the injection tool's contact / release being dropped by the system before the App got touchesBegan) */
+static void short_taps(void) {
+    static const double hold[] = { 0.0, 0.016, 0.05, 0.08 };
+    for (unsigned i = 0; i < sizeof hold / sizeof hold[0]; i++) {
+        dm_tc_state s; dm_tc_init(&s,667,375); dm_tc_set_navigation_mode(&s,1); s.mouse_click_mode=1;
+        unsigned mc = s.mouse_click_seq; double t = 20.0 + i;
+        dm_tc_begin_at(&s,0,300,180,t); dm_tc_pointer_item(&s,0); dm_tc_end_at(&s,0,t + hold[i]);
+        CHECK(s.mouse_click_seq == mc + 1); NEAR(s.mouse_click_x,300,0.001); NEAR(s.mouse_click_y,180,0.001);
+    }
+}
 int main(void) {
     RUN(layout_667); RUN(layout_812); RUN(layout_956); RUN(layout_1024); RUN(layout_ipad169); RUN(layout_pixels); RUN(small_layout); RUN(difficulty_picker);
     RUN(hit_edges); RUN(key_hold_and_ownership); RUN(two_fingers_same_key); RUN(joystick_deadzone); RUN(joystick_clamp_956);
@@ -677,5 +690,6 @@ int main(void) {
     RUN(circles_before_joystick); RUN(cancel_and_resize); RUN(deferred_skill_vs_belt); RUN(held_skill2_vs_belt); RUN(belt_single_double); RUN(no_ui_drag_outside_modal); RUN(invalid_slots_and_repeated_begin); RUN(all_slots_hold); RUN(enabled_targets); RUN(ui_scene_messages);
     RUN(pointer_tap); RUN(world_tap); RUN(pointer_outside_close); RUN(scene_dialog_only); RUN(pointer_item_tap); RUN(pointer_stack_tap); RUN(pointer_over_disabled_target); RUN(ui_drag_typing); RUN(pointer_drag_out); RUN(pointer_drag); RUN(pointer_long); RUN(pointer_long_then_drag); RUN(pointer_long_seq); RUN(pointer_shop_drag); RUN(pointer_control_hit); RUN(pointer_game_mode); RUN(pointer_pulse_queue); RUN(safe_insets); RUN(swap_key); RUN(skill_cluster_clearance);
     RUN(belt_expand); RUN(quest_button_timing); RUN(modal_box_tap);
+    RUN(short_taps);
     printf("PASS %d/%d cases; %d/%d checks\n",cases,cases,checks,checks); return 0;
 }
