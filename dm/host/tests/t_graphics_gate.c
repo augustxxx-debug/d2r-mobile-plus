@@ -50,6 +50,8 @@ int main(void) {
     // Per-platform Custom rows: with iCloud the icloud row exists; without it the page has one row fewer and later rows move up (matching touch_layout.py DM_TARGET=android)
     int n_gfx = 0, n_game = 0; for (int i = 0; i < NK; i++) { n_gfx += graphics_key(i); n_game += row_on_page(i, PG_GAME); }
     icloud_ok = 1; int rows_apple = custom_rows(); CHECK(n_gfx == 7 && rows_apple == 4 + VOICE_ROW && rows_apple + n_game == NK - n_gfx && custom_key_at(1 + VOICE_ROW) == K_ICLOUD && row_on_page(K_TOUCH_SWAP, PG_GAME));
+    // 配音行在缺省包里也在（VOICE_ROW 恒为 1）：语言之后第一行，手柄与触屏都按这张键表出行 | the voice row is on default builds too (VOICE_ROW is always 1): first after language; both controller and touch iterate this key table
+    CHECK(VOICE_ROW == 1 && K_VOICE == 1 && custom_row(K_VOICE) && custom_key_at(1) == K_VOICE);
     icloud_ok = 0; CHECK(custom_rows() == rows_apple - 1 && !custom_row(K_ICLOUD) && custom_key_at(rows_apple - 2) == key_index("auto_crash"));
     // RC2 并入的四个键的归属（方案 C × rt_level 移植）| where the four keys RC2 brought in live (plan C x rt_level port)
     { int rl = key_index("rt_level"), ts = key_index("tel_stats"), ac = key_index("auto_crash"), br = key_index("belt_refill"); const char *g_rl = NULL, *g_ts = NULL, *g_ac = NULL, *g_br = NULL, *g_pp = NULL;

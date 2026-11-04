@@ -182,7 +182,8 @@ int main(void) {
     CHECK(h_fs_MountSave("save", NULL) == RES_OK && write_save("save:/a", "ok3") == RES_OK && h_fs_Commit("save") == RES_OK, "去掉注入重新挂载：事务式照常，写 a=ok3 提交成功");
     snprintf(p, sizeof p, "%s/a", save); CHECK(same(p, "ok3"), "已提交 a = ok3");
 
-    // 语言开关改写设置文件（settings_lang_apply）：期望值按规则手算——只在「与开关不符」时把 Language / VoiceLanguage 改成 0（英文）、8（简中）、2 / 10（西语）、7（俄语）或 5（韩语），配音按 voice_for 走中英，别的键和别的语言不动
+    // 语言开关改写设置文件（settings_lang_apply）：期望值按规则手算——只在「与开关不符」时把 Language / VoiceLanguage 改成 0（英文）、8（简中）、2 / 10（西语）、7（俄语）或 5（韩语），配音按 voice_for 走中英，别的键和别的语言不动；
+    // 单独配音选 English 时配音写 0，但资源里读不到英文配音基底（00-00000001.data）就回落中文配音 8
     { extern int g_t_lang, g_t_voice; char sd[1200], sf[1300], gotj[512]; snprintf(sd, sizeof sd, "%s/langt", root); mkdir(sd, 0755); snprintf(sf, sizeof sf, "%s/Settings", sd); mkdir(sf, 0755); snprintf(sf, sizeof sf, "%s/Settings/Settings.json", sd);
       #define LANGCASE(dm, in, want, what) do { g_t_lang = (dm); g_t_voice = -1; put(sf, (in)); settings_lang_apply(sd); FILE *lf = fopen(sf, "rb"); size_t ln_ = lf ? fread(gotj, 1, sizeof gotj - 1, lf) : 0; if (lf) fclose(lf); gotj[ln_] = 0; CHECK(!strcmp(gotj, (want)), "语言开关：%s", (what)); } while (0)
       #define VOICECASE(dm, voice, in, want, what) do { g_t_lang = (dm); g_t_voice = (voice); put(sf, (in)); settings_lang_apply(sd); FILE *lf = fopen(sf, "rb"); size_t ln_ = lf ? fread(gotj, 1, sizeof gotj - 1, lf) : 0; if (lf) fclose(lf); gotj[ln_] = 0; CHECK(!strcmp(gotj, (want)), "单独配音：%s", (what)); } while (0)
@@ -203,6 +204,7 @@ int main(void) {
       // 俄语（开关 = 3）：原版只有一种俄文 = 7 ruRU；俄语配音在分块 16，资源里有这个分块时语音跟着改成俄语，没有（我们出的包裁掉了）就配英文；已在俄语就不动
       // Russian (switch = 3): the original has a single Russian = 7 ruRU; the Russian voice-over is in chunk 16 - when the resources have that chunk the voice switches to Russian too, otherwise (our packages strip it) it stays English; already Russian = untouched
       { char rr[1200], rd[1300]; snprintf(rr, sizeof rr, "%s/romfs_ru", root); snprintf(rd, sizeof rd, "%s/data", rr); mkdir(rr, 0755); mkdir(rd, 0755); setenv("DM_ROMFS", rr, 1);
+        snprintf(rd, sizeof rd, "%s/data/00-00000001.data", rr); put(rd, "x");   // 英文配音基底在：显式选 English 不回落中文
         LANGCASE(3, "{ \"Language\": 0, \"VoiceLanguage\": 0 }", "{ \"Language\": 7, \"VoiceLanguage\": 0 }", "开关 = 俄语、资源里没有俄语配音分块：文字改 ruRU，语音配英文");
         snprintf(rd, sizeof rd, "%s/data/16-00000001.data", rr); put(rd, "x"); }
       LANGCASE(3, "{ \"Language\": 0, \"VoiceLanguage\": 0 }", "{ \"Language\": 7, \"VoiceLanguage\": 7 }", "开关 = 俄语、文件是英文：文字与语音都改成 ruRU");
@@ -219,6 +221,9 @@ int main(void) {
       VOICECASE(0, 1, "{ \"Language\": 8, \"VoiceLanguage\": 8 }", "{ \"Language\": 8, \"VoiceLanguage\": 0 }", "中文文字 + English 配音，只改 VoiceLanguage");
       VOICECASE(0, 0, "{ \"Language\": 8, \"VoiceLanguage\": 0 }", "{ \"Language\": 8, \"VoiceLanguage\": 8 }", "中文文字 + 中文配音，只改 VoiceLanguage");
       VOICECASE(-1, 1, "{ \"Language\": 9, \"VoiceLanguage\": 9 }", "{ \"Language\": 9, \"VoiceLanguage\": 0 }", "没动语言行，只把繁中配音改成 English，文字保持繁中");
+      // 英文配音没有自己的分块，在基底档案 00-00000001.data 里；这份档案读不到时显式选 English 回落中文配音（8），不能写 0 让对话 / 过场没有声音
+      { char er[1200], ed[1300]; snprintf(er, sizeof er, "%s/romfs_no_en", root); snprintf(ed, sizeof ed, "%s/data", er); mkdir(er, 0755); mkdir(ed, 0755); setenv("DM_ROMFS", er, 1);
+        VOICECASE(0, 1, "{ \"Language\": 8, \"VoiceLanguage\": 0 }", "{ \"Language\": 8, \"VoiceLanguage\": 8 }", "资源里没有英文配音基底：English 配音回落中文"); }
       unsetenv("DM_ROMFS");
       g_t_lang = g_t_voice = -1; }
 

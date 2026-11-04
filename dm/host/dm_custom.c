@@ -29,13 +29,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-// 「配音」单选（voice：0 中文配音 / 1 English voice，公开）只在编进过场解码（DM_MOVIE_FFMPEG，Makefile 的 MOVIE_FFMPEG=1）的包里有：
-// 布局侧 touch_layout.py 的 _CUSTOM_KEYS 按同一个开关（环境变量 MOVIE_FFMPEG=1）加这一行。缺省包键表、行序、存盘内容与原来一字不差
-#ifdef DM_MOVIE_FFMPEG
+// 「配音」单选（voice：0 中文配音 / 1 English voice，公开）：缺省包与编进过场解码（DM_MOVIE_FFMPEG=1）的包都有这一行，与过场解码开关无关
+// （用户 2026-11-04：「配音放进 RC2」）。布局侧 touch_layout.py 的 _CUSTOM_KEYS 同样恒有这一行，两端行序一致。
+// 它只改原版设置文件的 VoiceLanguage，不改 Language；英文配音在基底档案里（hle_fs.c 的 voice_english_present），读不到时回落中文配音
+// The voice-over radio (voice: 0 Chinese voice / 1 English voice) is on both default builds and builds with cutscene decoding (DM_MOVIE_FFMPEG=1);
+// it is no longer tied to that switch (user, 2026-11-04: "put voice into RC2"). _CUSTOM_KEYS in touch_layout.py always has the row too, so both sides agree.
+// It only changes the original settings file's VoiceLanguage, never Language; the English voice lives in the base archive (voice_english_present in hle_fs.c) and falls back to Chinese voice when unreadable
 #define VOICE_ROW 1
-#else
-#define VOICE_ROW 0
-#endif
 // iCloud 那一行的键名：安卓包里没有这一行（CLAUDE.md §2.8），但槽位要留着（K_ICLOUD 下标、行号与 Apple 对齐）。
 // 安卓用占位名，key_other_platform 把它挡在存盘与日志外，没有人按名字读写它。
 // The key name of the iCloud row: the Android package has no such row (CLAUDE.md section 2.8), but the slot must stay (the K_ICLOUD index keeps row numbers aligned with Apple).
@@ -58,13 +58,14 @@ static const int k_def[NK] = { 0,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 2, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
-#define K_VOICE (VOICE_ROW ? 1 : -2)   // 缺省包没有这一行：-2 不等于任何行号（也不等于 key_index 认不出时的 -1）
-#define K_MERC (2 + VOICE_ROW)
-#define K_ICLOUD (6 + VOICE_ROW)   // iCloud 存档同步：只有 Apple 平台有（dm_icloud_supported），Android 的自定义页不出这一行 | iCloud save sync: Apple platforms only (dm_icloud_supported); the Android Custom page has no such row
-#define K_FPS (11 + VOICE_ROW)   // eco_fps：0 = 60、1 = 30（省电）、FPS_120 = 120 帧档；旧文件只有 0 / 1，旧包读到 2 当省电 30 | eco_fps: 0 = 60, 1 = 30 (power saving), FPS_120 = 120 fps mode; old files only hold 0 / 1, and old builds read 2 as power saving 30
+// voice 恒为第 1 行后，其余下标整体后移一位（键表顺序见上，直接写死，改键表时一并核对）| with voice always row 1 the other indices shift by one (fixed numbers; check them together with the key table)
+#define K_VOICE 1
+#define K_MERC 3
+#define K_ICLOUD 7   // iCloud 存档同步：只有 Apple 平台有（dm_icloud_supported），Android 的自定义页不出这一行 | iCloud save sync: Apple platforms only (dm_icloud_supported); the Android Custom page has no such row
+#define K_FPS 12   // eco_fps：0 = 60、1 = 30（省电）、FPS_120 = 120 帧档；旧文件只有 0 / 1，旧包读到 2 当省电 30 | eco_fps: 0 = 60, 1 = 30 (power saving), FPS_120 = 120 fps mode; old files only hold 0 / 1, and old builds read 2 as power saving 30
 #define FPS_120 2
-#define K_Q3D (12 + VOICE_ROW)
-#define K_TOUCH_SWAP (15 + VOICE_ROW)
+#define K_Q3D 13
+#define K_TOUCH_SWAP 16
 // free_tp（免费回城，dm_freetp.c）缺省开（用户 2026-10-30，RC2 起）：RC1.2 / 安卓 1.0.x 缺省关且存盘写全部键，它们留下的 free_tp=0 分不出是不是玩家关的，所以另记 free_tp_v2：没有这个标记的旧文件迁移一次到开；存盘都带标记，之后玩家再关就一直是关
 // free_tp (free town portal, dm_freetp.c) on by default (user 2026-10-30, from RC2): RC1.2 / Android 1.0.x shipped it off and saved every key, so their free_tp=0 cannot be told from a player choice; hence the free_tp_v2 marker: an old file without it migrates once to on; every save writes the marker, so a later off by the player stays off
 // auto_crash（自动上报崩溃，dm_crashreport.c）缺省关；第一次打开要在游戏内确认框里同意（dm_diagup.c），同意记一行 auto_crash_ok=1（点「应用」才写）。文件里只有 auto_crash=1 没有同意记录 = 当关 | auto_crash (automatic crash reports) off by default; the first enable needs consent in the in-game box, recorded as auto_crash_ok=1 (written on Apply). auto_crash=1 without that record counts as off

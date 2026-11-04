@@ -1464,7 +1464,7 @@ def _drop_rows(*rows):
     return fn
 # Custom reuses the native Video destination; Graphics uses a new layout and
 # leaves the native Game Settings destination intact. The host owns only our controls.
-# 「配音」单选（voice：中文配音 / English voice）只在编进过场解码的包里有（MOVIE_FFMPEG=1，与宿主 dm_custom.c 的 DM_MOVIE_FFMPEG 同一个开关）：缺省包的自定义页一行不多
+# 「配音」单选（voice：中文配音 / English voice）缺省包与编进过场解码的包都有（与宿主 dm_custom.c 的 VOICE_ROW 恒为 1 对应）：它只改原版设置文件的 VoiceLanguage，不改界面语言
 # 选项页「键 → 页 / 组 / 平台」表（RC2 方案 C，用户 2026-10-30）：与宿主 dm_custom.c 的 k_opts 同一张，test_options_table.py 逐行比对。平台只分 apple（iOS，Mac 实验室宿主算同类）/ android / all（DM_TARGET=android 由 d2rm_android.py 传）。
 # 顺序 = 页内显示顺序。_OPT_PENDING = 代码还没并入的键：占位不出行，并入时从这里删掉
 # Options "key -> page / group / platform" table (RC2 plan C, user 2026-10-30): the same table as k_opts in the host's dm_custom.c, compared line by line by test_options_table.py. Platform is apple (iOS, with the Mac lab host) / android / all (DM_TARGET=android is passed by d2rm_android.py).
@@ -1483,7 +1483,7 @@ _OPT_TABLE = (
 )
 _OPT_PENDING = frozenset(('dyn_refresh', 'fgen'))   # rt_level / tel_stats / auto_crash / belt_refill 已随 RC2 并入（方案 C × rt_level 移植） | merged with RC2 (plan C x rt_level port)
 def _opt_here(plat): return plat != ('apple' if os.environ.get('DM_TARGET') == 'android' else 'android')
-_CUSTOM_KEYS = tuple(k for k, page, _, plat in _OPT_TABLE if page == 'sys' and k != 'lang' and k not in _OPT_PENDING and _opt_here(plat) and (k != 'voice' or os.environ.get('MOVIE_FFMPEG') == '1'))   # 系统页（VideoOptionsPanel） | System page
+_CUSTOM_KEYS = tuple(k for k, page, _, plat in _OPT_TABLE if page == 'sys' and k != 'lang' and k not in _OPT_PENDING and _opt_here(plat))   # 系统页（VideoOptionsPanel） | System page
 _GAME_KEYS = tuple(k for k, page, _, plat in _OPT_TABLE if page == 'game' and k not in _OPT_PENDING and _opt_here(plat))   # 游戏页原版表格之前的 Plus 行 | Plus rows before the original table on the Gameplay page
 _OPT_GROUP = {k: g for k, _, g, _ in _OPT_TABLE}
 # 字在中英表（dm/i18n/ui_text.tsv 的 dmCustom<键名驼峰>），布局写 @键、跟原版语言走（英文版）；行高按中文行数分，英文必须同样行数（不然换语言排版变）
