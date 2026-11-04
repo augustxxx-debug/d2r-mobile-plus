@@ -239,6 +239,16 @@ int main(void) {
       CHECK(fg_reason(DM_FGEN_OFF,1,60,0)==FG_OFF); CHECK(fg_reason(DM_FGEN_SMOOTH,0,60,0)==FG_UNSUPPORTED); CHECK(fg_reason(DM_FGEN_ECO,1,60,0)==FG_ECO_CLOSED);
       // B147（用户 2026-11-04）：帧生成不再看温控——温控 3（危急）照样开着，只按设置；把温控门加回去这里会红 | B147: frame generation no longer consults the thermal state - still on at thermal 3 (critical), setting only; putting the gate back turns this red
       { int keep=thermal_stub; thermal_stub=3; CHECK(dm_fg_setting()); CHECK(dm_thermal_eff()==3); thermal_stub=2; CHECK(dm_fg_setting()); thermal_stub=keep; }
+      // 终审 P2-1 贯通：温控 0→1→2→3→2→1→0→3→0 冷热往返、每一步都实际生效（设置 → 生效状态），设置文件始终是 fgen_level=2，重读盘后仍开；
+      // 关掉帧生成时热了也不会自己开（只听设置）| final audit P2-1 end to end: thermal 0->1->2->3->2->1->0->3->0 round trips, in effect at every step (setting -> effective state), the settings file stays fgen_level=2 and it is still on after re-reading; switched off it never turns itself on when hot
+      { int keep=thermal_stub; static const int seq[]={0,1,2,3,2,1,0,3,0};
+        for (unsigned i=0;i<sizeof seq/sizeof *seq;i++) { thermal_stub=seq[i]; CHECK(dm_thermal_eff()==seq[i]); CHECK(dm_fg_setting()); CHECK(dm_fgen_level()==DM_FGEN_SMOOTH); }
+        file=fopen(path,"r"); CHECK(file); char t2[4096]={0}; fread(t2,1,sizeof t2-1,file); fclose(file); CHECK(strstr(t2,"fgen_level=2\n"));
+        thermal_stub=3; atomic_store(&g_loaded,0); CHECK(dm_fgen_level()==DM_FGEN_SMOOTH); CHECK(dm_fg_setting());   // 热着重读盘：照旧开 | re-read while hot: still on
+        atomic_store(&g_pend[K_FGEN],DM_FGEN_OFF); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(!dm_fg_setting());
+        for (int t=0;t<=3;t++) { thermal_stub=t; CHECK(!dm_fg_setting()); }   // 关着：任何温控都不自己开 | off: never turns itself on at any thermal state
+        atomic_store(&g_pend[K_FGEN],DM_FGEN_SMOOTH); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); thermal_stub=3; CHECK(dm_fg_setting());   // 热着打开：当场生效 | switched on while hot: in effect at once
+        thermal_stub=keep; }
       // 分享摘要键：状态行带 fg= | share summary key: the state line carries fg=
       { char logp[1100]; snprintf(logp,sizeof logp,"%s/log.txt",directory); fg_supported=0; int saved_err=dup(2); CHECK(saved_err>=0); CHECK(freopen(logp,"w",stderr)); CHECK(!dm_fg_setting()); fg_supported=1; CHECK(dm_fg_setting()); fflush(stderr); dup2(saved_err,2); close(saved_err);
         file=fopen(logp,"r"); CHECK(file); char t2[8192]={0}; fread(t2,1,sizeof t2-1,file); fclose(file); unlink(logp); CHECK(strstr(t2,"帧生成：状态 fg=0 关")); CHECK(strstr(t2,"帧生成：状态 fg=1 开")); }
