@@ -136,9 +136,26 @@ int main(void) {
       graphics_select_fps(2); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==120);
       dm_custom_on_uimsg("OptionsPanelMessage","ResetToDefaults",NULL); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==60);   // 默认回 60 | defaults back to 60
       display_hz=0; }
-    // DM_TEST_FPS 时间表（纯函数）：帧率只认 30 / 60 / 120 | DM_TEST_FPS schedule (pure function): only 30 / 60 / 120 are accepted
+    // DM_TEST_FPS 时间表（纯函数）：帧率只认 30 / 60 / 90 / 120 | DM_TEST_FPS schedule (pure function): only 30 / 60 / 90 / 120 are accepted
     CHECK(fps_schedule("120",0)==120); CHECK(fps_schedule("30@0,60@40,120@70",39.9)==30); CHECK(fps_schedule("30@0,60@40,120@70",40)==60); CHECK(fps_schedule("30@0,60@40,120@70",500)==120);
+    CHECK(fps_schedule("90",0)==90); CHECK(fps_schedule("30@0,90@40",50)==90);
     CHECK(fps_schedule("120@20",0)==120); CHECK(fps_schedule("",0)==-1); CHECK(fps_schedule("45",0)==-1); CHECK(fps_schedule("120@-1",0)==-1); CHECK(fps_schedule("60;120@5",0)==-1);
+    // 高刷第三档（本卡）：dm_high_hz 的边界、第三格的开放与生效；90 与 120 共用 eco_fps=2（存盘值不变），内存 1 档不开放
+    // High-refresh third stop (this card): dm_high_hz boundaries, whether the stop is offered and what it runs at; 90 and 120 share eco_fps=2 (the saved value is unchanged); memory tier 1 gets no stop
+    CHECK(dm_high_hz(0)==0); CHECK(dm_high_hz(60)==0); CHECK(dm_high_hz(88)==0); CHECK(dm_high_hz(89)==90); CHECK(dm_high_hz(90)==90);
+    CHECK(dm_high_hz(100)==90); CHECK(dm_high_hz(118)==90); CHECK(dm_high_hz(119)==120); CHECK(dm_high_hz(120)==120); CHECK(dm_high_hz(144)==120); CHECK(dm_high_hz(165)==120);
+    setenv("DM_MEM_TIER","2",1); unsetenv("DM_TEST_FPS");
+    { const int hzs[]={60,89,90,100,118,119,120,144,165}, open[]={0,90,90,90,90,120,120,120,120};
+      for (unsigned k=0;k<sizeof hzs/sizeof *hzs;k++) { display_hz=hzs[k];
+          FILE *file=fopen(path,"w"); CHECK(file); fputs("q3d=0\nq3d_v2=1\neco_fps=0\n",file); fclose(file); atomic_store(&g_loaded,0);
+          CHECK(fps_max_pos()==(open[k]?2:1)); CHECK(dm_fps_setting()==60);   // 缺省仍 60 | default stays 60
+          file=fopen(path,"w"); CHECK(file); fputs("q3d=0\nq3d_v2=1\neco_fps=2\n",file); fclose(file); atomic_store(&g_loaded,0);
+          CHECK(dm_fps_setting()==(open[k]?open[k]:60)); CHECK(fps_pos(pending_value(K_FPS))==(open[k]?2:1));
+          CHECK(fps_rate(FPS_120,120)==(open[k]?open[k]:60)); } }
+    display_hz=120; CHECK(fps_rate(FPS_120,90)==90); CHECK(fps_rate(FPS_120,120)==120);   // DM_TEST_FPS=90 在 120 Hz 屏上就按 90 | DM_TEST_FPS=90 stays 90 on a 120 Hz screen
+    display_hz=90; CHECK(fps_rate(FPS_120,120)==90);   // 120 在 90 Hz 屏上按 90（第三档的本机值）| 120 on a 90 Hz screen runs at 90 (the machine's third-stop value)
+    setenv("DM_MEM_TIER","1",1); display_hz=90; CHECK(fps_max_pos()==1); CHECK(fps_mem_capped()); CHECK(dm_fps_setting()==60);
+    unsetenv("DM_MEM_TIER"); display_hz=0;
     // 光追开时启动即降一档的判定（纯函数）：环境钉住优先且要过门槛；没钉住按设置；DM_RT_RES_DROP=0 关掉；其它值不关 | RT-on startup tier drop decision (pure): the env pin wins and needs the gate; otherwise the setting; DM_RT_RES_DROP=0 turns it off; other values do not
     { int on;
       CHECK(rt_res_drop_decide(NULL,NULL,1,1,&on)==1 && on==1); CHECK(rt_res_drop_decide(NULL,NULL,1,0,&on)==0 && on==0);

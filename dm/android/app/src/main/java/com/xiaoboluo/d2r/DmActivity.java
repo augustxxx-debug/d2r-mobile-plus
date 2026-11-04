@@ -823,20 +823,24 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         for (android.view.Display.Mode m : d.getSupportedModes()) if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight() && m.getRefreshRate() > best) best = m.getRefreshRate();
         return best;
     }
-    // 帧率档 120 时把窗口的首选显示模式切到同尺寸的最高刷新率（≥ 119 Hz）；其余档回系统默认（0）。每秒问一次宿主，变了才设（设置页「应用」后一秒内生效）
-    // With the 120 stop, switch the window's preferred display mode to the highest refresh rate of the same size (>= 119 Hz); the other stops go back to the system default (0).
+    // 帧率档是高刷时把窗口的首选显示模式切到同尺寸的对应刷新率：目标 90 选 ≥ 89 Hz 且 ≤ 120.5 Hz 的最高模式（90 Hz 屏上就是 90），目标 120 照旧选 ≥ 119 Hz 的最高模式；
+    // 其余档回系统默认（0）。每秒问一次宿主，变了才设（设置页「应用」后一秒内生效）
+    // With the high-refresh stop, switch the window's preferred display mode to the matching refresh rate of the same size: target 90 picks the highest mode >= 89 Hz and <= 120.5 Hz (90 on a 90 Hz screen),
+    // target 120 keeps the old highest mode >= 119 Hz; the other stops go back to the system default (0).
     // The host is asked once a second and the mode is set only on change (takes effect within a second of Apply on the settings page)
     private int preferredModeId = -1;
     private final android.os.Handler modeHandler = new android.os.Handler(android.os.Looper.getMainLooper());
     private final Runnable modePoll = new Runnable() { @Override public void run() { applyPreferredMode(); modeHandler.postDelayed(this, 1000); } };
     private void applyPreferredMode() {
         if (!started || view.getDisplay() == null) return;
-        android.view.Display d = view.getDisplay(); int want = 0;
-        if (nativeFpsTarget() == 120) { android.view.Display.Mode cur = d.getMode(); float best = 0;
-            for (android.view.Display.Mode m : d.getSupportedModes()) if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight() && m.getRefreshRate() >= 119f && m.getRefreshRate() > best) { best = m.getRefreshRate(); want = m.getModeId(); } }
+        android.view.Display d = view.getDisplay(); int target = nativeFpsTarget(), want = 0;
+        if (target == 90 || target == 120) { android.view.Display.Mode cur = d.getMode(); float best = 0;
+            float lo = target == 120 ? 119f : 89f, hi = target == 120 ? Float.MAX_VALUE : 120.5f;
+            for (android.view.Display.Mode m : d.getSupportedModes()) if (m.getPhysicalWidth() == cur.getPhysicalWidth() && m.getPhysicalHeight() == cur.getPhysicalHeight()
+                    && m.getRefreshRate() >= lo && m.getRefreshRate() <= hi && m.getRefreshRate() > best) { best = m.getRefreshRate(); want = m.getModeId(); } }
         if (want == preferredModeId) return;
         preferredModeId = want; WindowManager.LayoutParams lp = getWindow().getAttributes(); lp.preferredDisplayModeId = want; getWindow().setAttributes(lp);
-        android.util.Log.i("dm", "display mode: preferredDisplayModeId=" + want + " (fps target " + nativeFpsTarget() + ")");
+        android.util.Log.i("dm", "display mode: preferredDisplayModeId=" + want + " (fps target " + target + ")");
     }
     // 实体手柄：按键与轴都先交原生（pad_android.c 判断来源与键位；手柄来源的 BACK 当 B 吃掉）；不归手柄的照常交给系统
     // Physical controllers: keys and axes go native first (pad_android.c decides source and mapping; BACK from a controller counts as B and is swallowed); anything else goes to the system as usual

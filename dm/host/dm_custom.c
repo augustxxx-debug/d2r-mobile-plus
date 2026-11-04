@@ -341,7 +341,7 @@ int mtl_upscale_supported(void);   // 弱定义在下面（光追门旁）| weak
 int dm_3d_profile_get(void) {
     if (!mtl_upscale_supported() || !dm_custom_get("upscale")) return 4;
     int q = dm_custom_get("q3d"), f = (dm_fps_setting(), fps_selected()), e = q3d_for_fps(q, f);   // 高画质上限跟「选的帧率」走，遇热退回 60 时不跟着放开（免得 MetalFX 随热度反复重建）| the Quality cap follows the selected rate, not the thermal fallback (so MetalFX is not rebuilt with the heat)
-    static _Atomic int last = -1; int key = (q & 7) * 64 + (e & 7) * 8 + (f == 120 ? 2 : f == 30);
+    static _Atomic int last = -1; int key = (q & 7) * 64 + (e & 7) * 8 + (f >= 90 ? 2 : f == 30);
     static const char *const nm[5] = { "自动", "省电", "均衡", "高画质", "原版" };
     if (atomic_exchange(&last, key) != key)
         LOG("超分档位：帧率 %d → 设置 %s、生效 %s%s", f, q >= 0 && q < 5 ? nm[q] : "?", e >= 0 && e < 5 ? nm[e] : "?", e != q ? "（120 帧档不提供高画质，按均衡）" : "");
@@ -380,14 +380,16 @@ __attribute__((weak)) void dm_oe_res_changed(void) {}
 static _Atomic unsigned g_res_notify_n;
 unsigned dm_render_res_notify_count(void) { return atomic_load(&g_res_notify_n); }
 static void res_notify(void) { atomic_fetch_add(&g_res_notify_n, 1); LOG("图形设置：渲染分辨率档位 → %d（通知游戏重读输出尺寸）", dm_render_res_level()); dm_oe_res_changed(); }
-// 测试开关 DM_TEST_FPS=<帧率>[@秒][,<帧率>@秒…]（帧率 30 / 60 / 120）：按宿主初始化起的秒数切帧率档，走与设置页「应用」相同的运行时路径（显示节拍、节拍器、
-// ProMotion 表态、3D 比例控制器的周期都每帧读 dm_fps_setting），不读也不写设置文件；120 同样只在屏幕撑得住时生效。真机验 省电 / 60 / 120 切换用
-// Test switch DM_TEST_FPS=<fps>[@sec][,<fps>@sec...] (fps 30 / 60 / 120): switches the frame rate by seconds since host init, through the same runtime path as Apply on the settings page (display link, pacer,
-// ProMotion declaration and the 3D scale controller period all read dm_fps_setting every frame); reads and writes no settings file; 120 likewise takes effect only on a screen that can do it. For checking 30 / 60 / 120 switching on a device
+// 测试开关 DM_TEST_FPS=<帧率>[@秒][,<帧率>@秒…]（帧率 30 / 60 / 90 / 120）：按宿主初始化起的秒数切帧率档，走与设置页「应用」相同的运行时路径（显示节拍、节拍器、
+// ProMotion 表态、3D 比例控制器的周期都每帧读 dm_fps_setting），不读也不写设置文件；第三档（90 / 120）同样只在屏幕撑得住时生效，90 在 120 Hz 屏上就按 90 走。
+// 真机验 省电 / 60 / 高刷切换用
+// Test switch DM_TEST_FPS=<fps>[@sec][,<fps>@sec...] (fps 30 / 60 / 90 / 120): switches the frame rate by seconds since host init, through the same runtime path as Apply on the settings page (display link, pacer,
+// ProMotion declaration and the 3D scale controller period all read dm_fps_setting every frame); reads and writes no settings file; the third stop (90 / 120) likewise takes effect only on a screen that can do it, and 90 stays 90 on a 120 Hz screen.
+// For checking 30 / 60 / high-refresh switching on a device
 static int fps_schedule(const char *spec, double elapsed) {
     if (!spec || !*spec) return -1;
     int cur = -1; const char *p = spec;
-    while (*p) { char *end; long f = strtol(p, &end, 10); if (end == p || (f != 30 && f != 60 && f != 120)) return -1;
+    while (*p) { char *end; long f = strtol(p, &end, 10); if (end == p || (f != 30 && f != 60 && f != 90 && f != 120)) return -1;
         double at = 0; p = end; if (*p == '@') { at = strtod(p + 1, &end); if (end == p + 1 || at < 0) return -1; p = end; }
         if (elapsed >= at || cur < 0) cur = (int)f;
         if (*p == ',') p++; else if (*p) return -1; }
@@ -401,32 +403,44 @@ static int fps_test(void) {
     if (atomic_exchange(&last, f) != f) LOG("测试 DM_TEST_FPS：第 %.0f 秒 → %d 帧档", el, f);
     return f;
 }
-// 120 帧档只在屏幕最高刷新率 ≥ 120 时开放（ProMotion iPhone / iPad、高刷 Mac 屏）：设置页滑块才有第三格，存着 120 的设置换到 60 Hz 屏上按 60 走。
-// 屏幕刷新率由图形层给（nvn_mtl.m 的强定义，有窗口时读 UIScreen / CoreGraphics；未建窗口 0）；单测 / 不链图形层时 0 = 不开放
-// The 120 fps mode is offered only when the screen's maximum refresh rate is >= 120 (ProMotion iPhone / iPad, high-refresh Mac displays): only then does the settings slider get a third stop, and a saved 120 setting runs at 60 on a 60 Hz screen.
-// The refresh rate comes from the graphics layer (strong definition in nvn_mtl.m, reading UIScreen / CoreGraphics once there is a window; 0 before the window exists); 0 = not offered in unit tests / without the graphics layer
+// 高刷档（帧率第三格）在本机的帧率：屏幕最高刷新率 < 89 → 0（不开放）；89–118 → 90；≥ 119 → 120（144 / 165 等也封顶 120）。
+// 屏幕刷新率由图形层给（nvn_mtl.m 的强定义，有窗口时读 UIScreen / CoreGraphics；安卓 front_android.c；未建窗口 0）；单测 / 不链图形层时 0 = 不开放
+// The high-refresh stop (the third frame-rate stop) on this machine: screen max < 89 -> 0 (not offered); 89-118 -> 90; >= 119 -> 120 (144 / 165 etc. cap at 120).
+// The refresh rate comes from the graphics layer (strong definition in nvn_mtl.m, reading UIScreen / CoreGraphics once there is a window; the Android front end front_android.c; 0 before the window exists); 0 = not offered in unit tests / without the graphics layer
+int dm_high_hz(int max_hz) { return max_hz >= 119 ? 120 : max_hz >= 89 ? 90 : 0; }   // 纯函数，单测 t_render_profile 核边界 | pure function; t_render_profile checks the boundaries
 #ifndef DM_DISPLAY_HZ_TEST_HOOK   // 单测直接包含本文件并自带强定义时打开（t_render_profile.c） | defined by unit tests that include this file and bring their own strong definition (t_render_profile.c)
 __attribute__((weak)) int dm_display_max_hz(void) { return 0; }
 #else
 int dm_display_max_hz(void);
 #endif
-static int fps120_ok(void) { return dm_display_max_hz() >= 119 && dm_mem_tier() >= 2; }   // 119：容 119.88 这类档；内存 1 / 0 档不开放 120 | 119: tolerates rates like 119.88; memory tiers 1 / 0 get no 120
-static int fps_mem_capped(void) { return dm_display_max_hz() >= 119 && dm_mem_tier() < 2; }   // 屏幕撑得住 120、只因内存档位不开放：图形页帧率行出说明 | the screen could do 120 and only the memory tier forbids it: note on the Graphics frame-rate row
-// 图形层 nvn_mtl.m mtl_fps_target 每帧读（弱符号的强定义）：eco_fps 0 = 60 / 1 = 30（省电）/ 2 = 120 | Read every frame by mtl_fps_target in the graphics layer nvn_mtl.m (strong definition of a weak symbol): eco_fps 0 = 60 / 1 = 30 (power saving) / 2 = 120
+static int fps_high_hz(void) { return dm_high_hz(dm_display_max_hz()); }   // 本机高刷档的帧率（0 = 不开放）| this machine's high-refresh rate (0 = not offered)
+static int fps_high_ok(void) { return fps_high_hz() > 0 && dm_mem_tier() >= 2; }   // 内存 1 / 0 档不开放高刷 | memory tiers 1 / 0 get no high-refresh stop
+static int fps_mem_capped(void) { return fps_high_hz() > 0 && dm_mem_tier() < 2; }   // 屏幕撑得住高刷、只因内存档位不开放：图形页帧率行出说明 | the screen could do high refresh and only the memory tier forbids it: note on the Graphics frame-rate row
+// 图形层 mtl_fps_target 每帧读（弱符号的强定义）：eco_fps 0 = 60 / 1 = 30（省电）/ 2 = 高刷档（90 或 120，见 dm_high_hz） | Read every frame by mtl_fps_target in the graphics layer (strong definition of a weak symbol): eco_fps 0 = 60 / 1 = 30 (power saving) / 2 = the high-refresh stop (90 or 120, see dm_high_hz)
+// 选/生效帧率：测试开关的值不超过本机高刷档（DM_TEST_FPS=90 在 120 Hz 屏上就是 90，120 在 90 Hz 屏上按 90）；设置里的第三档取本机高刷档。
+// 内存 1 / 0 档、屏幕不到 89 Hz、还没建窗 → 高刷档按 60（存盘值不变）
+// Selected / effective rate: a test-switch value does not exceed this machine's high-refresh rate (DM_TEST_FPS=90 is 90 on a 120 Hz screen, 120 runs at 90 on a 90 Hz screen); the saved third stop takes the machine's high-refresh rate.
+// Memory tiers 1 / 0, a screen below 89 Hz, or no window yet -> the high-refresh stop runs at 60 (the saved value is unchanged)
+static int fps_rate(int v, int t) {
+    if (v == 1) return 30;
+    if (v != FPS_120 || !fps_high_ok()) return 60;
+    int high = fps_high_hz();
+    return t >= 90 && t < high ? t : high;
+}
 // 生效值或原因一变就记一行「帧率档：」（分享诊断日志的摘要按这个前缀取最后一行，dm_sharelog.m perf_block）。屏幕刷新率要等有窗口才读得到，所以「按 60」在建窗前后各可能记一次
 // One "帧率档：" (frame rate mode) line whenever the effective value or its reason changes (the share-diagnostics summary takes the last line with this prefix, dm_sharelog.m perf_block). The screen refresh rate is readable only once there is a window, so "runs at 60" may be logged once before and once after
-static int fps_effective(int saved) {   // 设置值（eco_fps）+ 测试开关 + 屏幕刷新率 → 生效帧率 30 / 60 / 120 | saved value (eco_fps) + test switch + screen refresh -> effective 30 / 60 / 120
-    int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t == 120 ? FPS_120 : 0) : saved;
-    return v == 1 ? 30 : v == FPS_120 && fps120_ok() ? 120 : 60;
+static int fps_effective(int saved) {   // 设置值（eco_fps）+ 测试开关 + 屏幕刷新率 → 生效帧率 30 / 60 / 90 / 120 | saved value (eco_fps) + test switch + screen refresh -> effective 30 / 60 / 90 / 120
+    int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t >= 90 ? FPS_120 : 0) : saved;
+    return fps_rate(v, t);
 }
-// 120 帧档遇热自动退回 60（用户 2026-10-30 定，原 RC2 待办提前；B060：用户 Duo 开局就是温控 2，进野外打怪 CPU 主频从约 3.6 降到约 1.5 GHz，
-// 120 档 1 分钟内从 113 帧掉到 53）：温控 ≥ 2（严重 / 危急）立刻按 60 走；回落到 ≤ 1 并持续 THERMAL_RECOVER_NS（60 秒）才回 120，中途再热重新计时，不来回跳。
-// 只动生效帧率（显示节拍、节拍器、ProMotion 表态、3D 比例控制都每帧读 dm_fps_setting，运行时切档已有）；设置文件、图形页帧率格（仍显示玩家选的 120）、
+// 高刷档（90 / 120）遇热自动退回 60（用户 2026-10-30 定，原 RC2 待办提前；B060：用户 Duo 开局就是温控 2，进野外打怪 CPU 主频从约 3.6 降到约 1.5 GHz，
+// 120 档 1 分钟内从 113 帧掉到 53）：温控 ≥ 2（严重 / 危急）立刻按 60 走；回落到 ≤ 1 并持续 THERMAL_RECOVER_NS（60 秒）才回本机高刷档（90 或 120），中途再热重新计时，不来回跳。
+// 只动生效帧率（显示节拍、节拍器、ProMotion 表态、3D 比例控制都每帧读 dm_fps_setting，运行时切档已有）；设置文件、图形页帧率格（仍显示玩家选的高刷档）、
 // 超分高画质上限（跟选的帧率）都不变。温控未知（−1：Mac、单测）按凉。DM_THERMAL_NOFALLBACK（功耗测量，front_ios.m 同名开关）不退。
 // 测试开关 DM_TEST_THERMAL=<档>[@秒][,<档>@秒…]（0–3）：按宿主计时秒数换温控，Mac 上验证用。纯函数 fps_thermal_step / thermal_schedule 给单测（t_fps_thermal）
-// The 120 fps mode falls back to 60 when hot (user 2026-10-30, pulled forward from RC2; B060: the user's Duo started at thermal state 2, and in the field with monsters the CPU clock fell from about 3.6 to about 1.5 GHz,
-// the 120 mode dropping from 113 to 53 fps within a minute): thermal >= 2 (serious / critical) runs at 60 at once; back to 120 only after it has stayed <= 1 for THERMAL_RECOVER_NS (60 s), the timer restarting if it heats up again, so it does not flap.
-// Only the effective rate changes (display link, pacer, ProMotion declaration and the 3D scale controller all read dm_fps_setting every frame; runtime switching already exists); the settings file, the Graphics frame-rate stop (still showing the player's 120)
+// The high-refresh stop (90 / 120) falls back to 60 when hot (user 2026-10-30, pulled forward from RC2; B060: the user's Duo started at thermal state 2, and in the field with monsters the CPU clock fell from about 3.6 to about 1.5 GHz,
+// the 120 mode dropping from 113 to 53 fps within a minute): thermal >= 2 (serious / critical) runs at 60 at once; back to this machine's high-refresh rate (90 or 120) only after it has stayed <= 1 for THERMAL_RECOVER_NS (60 s), the timer restarting if it heats up again, so it does not flap.
+// Only the effective rate changes (display link, pacer, ProMotion declaration and the 3D scale controller all read dm_fps_setting every frame; runtime switching already exists); the settings file, the Graphics frame-rate stop (still showing the player's high-refresh stop)
 // and the Quality cap (following the selected rate) stay. Unknown thermal state (-1: Mac, unit tests) counts as cool. DM_THERMAL_NOFALLBACK (power measurement, same switch as in front_ios.m) does not fall back.
 // Test switch DM_TEST_THERMAL=<state>[@sec][,<state>@sec...] (0-3): thermal state by host seconds, for checks on the Mac. Pure functions fps_thermal_step / thermal_schedule for unit tests (t_fps_thermal)
 #define THERMAL_CAP_AT 2
@@ -452,30 +466,33 @@ static int thermal_now(void) {
     if (on < 0) { spec = getenv("DM_TEST_THERMAL"); on = spec && thermal_schedule(spec, 0) >= 0; t0 = g_fps_clock(); if (spec && !on) LOG("【红】DM_TEST_THERMAL 非法：%s", spec); }
     return on ? thermal_schedule(spec, (g_fps_clock() - t0) / 1e9) : dm_thermal_now();
 }
-static _Atomic int g_fps_hot;                 // 此刻是否因过热按 60（图形页说明、分享摘要读）| whether 120 is running as 60 because of heat right now (read by the Graphics note and the share summary)
+static _Atomic int g_fps_hot;                 // 此刻是否因过热按 60（图形页说明、分享摘要读）| whether the high-refresh stop is running as 60 because of heat right now (read by the Graphics note and the share summary)
 static _Atomic uint64_t g_fps_cool_since;     // 回落开始的时刻（0 = 没在回落）| when cooling started (0 = not cooling)
 int dm_fps_thermal_capped(void) { return atomic_load(&g_fps_hot); }
 // 选的帧率（测试开关 / 设置 + 屏幕刷新率 + 内存档位），未计遇热退回 | the selected rate (test switch / setting + screen refresh + memory tier), before the thermal fallback
 static int fps_selected(void) {
-    int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t == 120 ? FPS_120 : 0) : dm_custom_get("eco_fps");
-    return v == 1 ? 30 : v == FPS_120 && fps120_ok() ? 120 : 60;
+    int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t >= 90 ? FPS_120 : 0) : dm_custom_get("eco_fps");
+    return fps_rate(v, t);
 }
 int dm_fps_setting(void) {
-    int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t == 120 ? FPS_120 : 0) : dm_custom_get("eco_fps"), hz = dm_display_max_hz();
-    int f = v == 1 ? 30 : v == FPS_120 && fps120_ok() ? 120 : 60, why = (v == FPS_120 && f == 60) * 2 + (t > 0);
+    int t = fps_test(), v = t > 0 ? (t == 30 ? 1 : t >= 90 ? FPS_120 : 0) : dm_custom_get("eco_fps"), hz = dm_display_max_hz();
+    int f = fps_rate(v, t), why = (v == FPS_120 && f == 60) * 2 + (t > 0);
     int th = thermal_now(), hot = 0;
-    if (f == 120 && !getenv("DM_THERMAL_NOFALLBACK")) {
+    if (f >= 90 && !getenv("DM_THERMAL_NOFALLBACK")) {
         fps_thermal_state st = { atomic_load(&g_fps_hot), atomic_load(&g_fps_cool_since) };
         hot = fps_thermal_step(&st, th, g_fps_clock());
         atomic_store(&g_fps_hot, hot); atomic_store(&g_fps_cool_since, st.cool_since);
     } else { atomic_store(&g_fps_hot, 0); atomic_store(&g_fps_cool_since, 0); }
     int sel = f; if (hot) f = 60;
-    static _Atomic int last = -1; int key = f * 16 + why * 4 + (hz > 0) + (hz >= 119) * 2 + hot * 4096;
+    static _Atomic int last = -1; int key = f * 16 + why * 4 + (hz > 0) + (hz >= 89) * 2 + hot * 4096;
     if (atomic_exchange(&last, key) != key) {
-        // 生效帧率变了（应用、测试开关、建窗后才读到 120 Hz、遇热退回 / 回升）：3D 比例控制的高画质模式跟着「选的」120 帧上限走 | the effective rate changed (Apply, test switch, 120 Hz known once the window exists, thermal fallback / recovery): the 3D scale controller's Quality mode follows the selected 120 cap
+        // 生效帧率变了（应用、测试开关、建窗后才读到高刷屏、遇热退回 / 回升）：3D 比例控制的高画质模式跟着「选的」高刷档上限走 | the effective rate changed (Apply, test switch, a high-refresh screen known once the window exists, thermal fallback / recovery): the 3D scale controller's Quality mode follows the selected high-refresh cap
         if (atomic_load(&g_loaded)) dm_3d_quality_mode_set(atomic_load(&g_val[K_UPSCALE]) && q3d_for_fps(atomic_load(&g_val[K_Q3D]), sel) == 3);
-        if (hot) LOG("帧率档：生效 60 帧（设置 120，过热 温控 %d，自动退回 60；温控回落到 ≤ 1 并持续 60 秒后回 120）", th);
-        else LOG("帧率档：生效 %d 帧（%s%s，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", v == 1 ? "30" : v == FPS_120 ? "120" : "60", hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz, why >= 2 && hz >= 119 ? "；内存档位不开放 120 帧（见「内存档位：」行），120 档按 60" : why >= 2 && hz > 0 ? "；屏幕不到 120 Hz，120 档按 60" : why >= 2 ? "；暂按 60" : sel == 120 && th >= 0 ? "；温控已回落，回到 120" : "");
+        int req = v == 1 ? 30 : v == FPS_120 ? (t >= 90 ? t : fps_high_hz() ? fps_high_hz() : 120) : 60;
+        if (hot) LOG("帧率档：生效 60 帧（%s%d，过热 温控 %d，自动退回 60；温控回落到 ≤ 1 并持续 60 秒后回 %d）", t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", req, th, sel);
+        else LOG("帧率档：生效 %d 帧（%s%d，%s%d Hz）%s", f, t > 0 ? "测试开关 DM_TEST_FPS " : "设置 ", req, hz > 0 ? "屏幕最高 " : "还没窗口、刷新率 ", hz,
+            why >= 2 && hz >= 89 ? "；内存档位不开放高刷档（见「内存档位：」行），高刷档按 60" : why >= 2 && hz > 0 ? "；屏幕不到 90 Hz，高刷档按 60" : why >= 2 ? "；暂按 60"
+            : sel == 90 && th >= 0 ? "；温控已回落，回到 90" : sel == 120 && th >= 0 ? "；温控已回落，回到 120" : "");
     }
     return f;
 }
@@ -655,19 +672,19 @@ static int enhanced_settings_dirty(void) {
     for (int i=0;i<NK;i++) if (pending_value(i)!=atomic_load(&g_val[i])) return 1;
     return 0;
 }
-// 帧率滑块的格：0 = 30、1 = 60、2 = 120（屏幕撑得住 120 才有第三格）；格 ↔ eco_fps 值。存着 120、屏幕只有 60 时停在 60 那格，不当成改动
-// Frame-rate slider stops: 0 = 30, 1 = 60, 2 = 120 (the third stop exists only when the screen can do 120); stop <-> eco_fps value. A saved 120 on a 60-only screen sits on the 60 stop and does not count as a change
-static int fps_max_pos(void) { return fps120_ok() ? 2 : 1; }
-static int fps_pos(int v) { return v == 1 ? 0 : v == FPS_120 && fps120_ok() ? 2 : 1; }
+// 帧率滑块的格：0 = 30、1 = 60、2 = 高刷（屏幕撑得住 89 Hz 以上才有第三格）；格 ↔ eco_fps 值（存盘仍是 2，90 与 120 共用）。存着第三档、屏幕不到 89 Hz 时停在 60 那格，不当成改动
+// Frame-rate slider stops: 0 = 30, 1 = 60, 2 = high refresh (the third stop exists only when the screen can do 89 Hz or more); stop <-> eco_fps value (still saved as 2; 90 and 120 share it). A saved third stop on a screen below 89 Hz sits on the 60 stop and does not count as a change
+static int fps_max_pos(void) { return fps_high_ok() ? 2 : 1; }
+static int fps_pos(int v) { return v == 1 ? 0 : v == FPS_120 && fps_high_ok() ? 2 : 1; }
 static int fps_val(int pos) { return pos == 0 ? 1 : pos == 2 ? FPS_120 : 0; }
 static void graphics_select_fps(int pos) {
     if (pos < 0 || pos > fps_max_pos() || pos == fps_pos(pending_value(K_FPS))) return;
     atomic_store(&g_pend[K_FPS], fps_val(pos));
-    LOG("图形设置：帧率 → %d FPS（点应用生效）", pos == 0 ? 30 : pos == 2 ? 120 : 60);
+    LOG("图形设置：帧率 → %d FPS（点应用生效）", pos == 0 ? 30 : pos == 2 ? fps_high_hz() : 60);
 }
-// 图形页的档位滑块：120 帧格选着时只到均衡（q3d_for_fps），显示的是落到均衡后的档；读回显示档不算改动，选高画质被挡住
-// The Graphics profile slider: with the 120 fps stop selected it stops at Balanced (q3d_for_fps) and shows the capped profile; reading back the shown profile is not a change, picking Quality is refused
-static int profile_fps_pending(void) { return fps_pos(pending_value(K_FPS)) == 2 ? 120 : 60; }
+// 图形页的档位滑块：高刷档（120）选着时只到均衡（q3d_for_fps），显示的是落到均衡后的档；读回显示档不算改动，选高画质被挡住。90 帧不设这条上限
+// The Graphics profile slider: with the high-refresh stop (120) selected it stops at Balanced (q3d_for_fps) and shows the capped profile; reading back the shown profile is not a change, picking Quality is refused. The 90 fps stop has no such cap
+static int profile_fps_pending(void) { return fps_pos(pending_value(K_FPS)) == 2 ? fps_high_hz() : 60; }
 static int profile_max(void) { return q3d_for_fps(3, profile_fps_pending()); }
 static int profile_shown(void) { return q3d_for_fps(pending_value(K_Q3D), profile_fps_pending()); }
 static void graphics_select_profile(int value) {
@@ -888,8 +905,10 @@ void dm_graphics_ui_pump(unsigned long long root) {
     { static const char *const res_captions[DM_RES_LEVELS] = { "dmGraphicsResAuto", "dmGraphicsResEco", "dmGraphicsResBalanced", "dmGraphicsResNative" };
       int lv = pending_value(K_RES); if (lv < 0 || lv >= DM_RES_LEVELS) lv = 0;
       graphics_text(find_w(sp, "TouchGraphicsResText", 0), dm_str(main_base(), res_captions[lv])); }
-    { static const char *const fps_captions[3] = { "dmGraphicsFrameRate30", "dmGraphicsFrameRate60", "dmGraphicsFrameRate120" };
-      graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), dm_str(main_base(), fps_captions[fps_pos(pending_value(K_FPS))])); }
+    { static const char *const fps_captions[3] = { "dmGraphicsFrameRate30", "dmGraphicsFrameRate60", "dmGraphicsFrameRateHigh" };
+      int fpos = fps_pos(pending_value(K_FPS));
+      if (fpos == 2) { char t[64]; snprintf(t, sizeof t, dm_str(main_base(), fps_captions[2]), fps_high_hz()); graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), t); }   // 第三格按本机高刷档写 90 / 120 | the third stop shows 90 / 120, this machine's high-refresh rate
+      else graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), dm_str(main_base(), fps_captions[fpos])); }
     indent_rows(find_w(sp, "TouchGraphicsRows", 0), 0);
     uint64_t focus = find_w(sp, "TouchGraphicsSel", 0);
     if (focus) { int32_t *r = (int32_t *)(focus + 0x70), x = pad ? dm_sel_frame_x(DM_ROW_INDENT) : 99999, y = pad ? graphics_row_y(vis, selected) - 10 : 0;

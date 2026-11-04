@@ -14,7 +14,8 @@ int dm_lang_group(void) { return DM_LG_EN; }
 const char *dm_save_commitdir(void) { return NULL; }
 int dm_3d_quality_mode_get(void) { return quality; }
 float dm_3d_scale_cur(void) { return .75f; }
-int dm_display_max_hz(void) { return 120; }
+static int display_hz = 120;   // 屏幕最高刷新率替身（本测试在 120 与 90 之间换） | stand-in for the screen's maximum refresh rate (this test switches between 120 and 90)
+int dm_display_max_hz(void) { return display_hz; }
 static int thermal = 0;
 int dm_thermal_now(void) { return thermal; }
 static uint64_t fake_ns = 1000000000ull;
@@ -54,6 +55,15 @@ int main(void) {
     thermal = 2; fake_ns += SEC; CHECK(dm_fps_setting() == 60); CHECK(dm_3d_profile_get() == 2); CHECK(quality == 0);
     // 图形页上帧率格仍显示 120（玩家的选择），说明行另起 | the Graphics frame-rate stop still shows 120 (the player's choice); the note says why
     CHECK(fps_pos(pending_value(K_FPS)) == 2);
+
+    // 2b. 90 Hz 屏：第三档 = 90；遇热退 60，凉 60 秒回 90；存盘仍是 eco_fps=2 | 2b. 90 Hz screen: third stop = 90; hot -> 60, after 60 s cool -> 90; still saved as eco_fps=2
+    { display_hz = 90; settings("eco_fps=2\n"); thermal = 0; fake_ns += SEC; CHECK(dm_fps_setting() == 60);   // 上一段还在回落计时 | the previous block is still counting down
+      fake_ns += 61 * SEC; CHECK(dm_fps_setting() == 90); CHECK(!dm_fps_thermal_capped()); CHECK(fps_pos(pending_value(K_FPS)) == 2);
+      thermal = 2; fake_ns += SEC; CHECK(dm_fps_setting() == 60); CHECK(dm_fps_thermal_capped());
+      thermal = 0; fake_ns += SEC; CHECK(dm_fps_setting() == 60);
+      fake_ns += 61 * SEC; CHECK(dm_fps_setting() == 90); CHECK(!dm_fps_thermal_capped());
+      { FILE *f = fopen(path, "r"); char text[512] = {0}; fread(text, 1, sizeof text - 1, f); fclose(f); CHECK(strstr(text, "eco_fps=2")); }
+      display_hz = 120; }
 
     // 3. 60 / 30 档不受影响 | 3. the 60 / 30 modes are unaffected
     settings("eco_fps=0\n"); thermal = 3; fake_ns += SEC; CHECK(dm_fps_setting() == 60); CHECK(!dm_fps_thermal_capped());
