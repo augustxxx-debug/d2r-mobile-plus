@@ -233,13 +233,12 @@ int main(void) {
       graphics_select_fps(0); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==30); CHECK(!dm_fg_setting());   // 30 帧档不可用 | not at 30
       CHECK(dm_fgen_level()==DM_FGEN_SMOOTH);                                                      // 存着的档位不清掉 | the saved level is kept
       graphics_select_fps(2); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fps_setting()==120); CHECK(!dm_fg_setting());   // 120 档到顶 | 120 is at the top
-      CHECK(fg_reason(DM_FGEN_SMOOTH,1,90,0,0)==FG_CAPPED);   // 高刷档 90（RC2 84c04ac2）同样不开 | the 90 high-refresh stop is excluded too
+      CHECK(fg_reason(DM_FGEN_SMOOTH,1,90,0)==FG_CAPPED);   // 高刷档 90（RC2 84c04ac2）同样不开 | the 90 high-refresh stop is excluded too
       graphics_select_fps(1); dm_custom_on_uimsg("OptionsPanelMessage","AcceptChanges",NULL); CHECK(dm_fg_setting());
-      CHECK(fg_reason(DM_FGEN_SMOOTH,1,60,0,0)==FG_ON); CHECK(fg_reason(DM_FGEN_SMOOTH,1,60,1,0)==FG_RT); CHECK(fg_reason(DM_FGEN_SMOOTH,1,60,0,1)==FG_HOT); CHECK(fg_reason(DM_FGEN_SMOOTH,1,30,0,0)==FG_ECO30); CHECK(fg_reason(DM_FGEN_SMOOTH,1,120,0,0)==FG_CAPPED);
-      CHECK(fg_reason(DM_FGEN_OFF,1,60,0,0)==FG_OFF); CHECK(fg_reason(DM_FGEN_SMOOTH,0,60,0,0)==FG_UNSUPPORTED); CHECK(fg_reason(DM_FGEN_ECO,1,60,0,0)==FG_ECO_CLOSED);
-      // 温控门：≥ 2 立刻停，回落满冷却才恢复；-1（未读）不算热 | thermal gate: stops at once at >= 2, resumes after the cooldown; -1 (unread) is not hot
-      { double hu=0; CHECK(!fg_hot_step(0,2,100,60,&hu)); CHECK(!fg_hot_step(-1,2,100,60,&hu)); CHECK(fg_hot_step(2,2,100,60,&hu)); CHECK(fg_hot_step(1,2,159,60,&hu)); CHECK(!fg_hot_step(1,2,160,60,&hu)); CHECK(fg_hot_step(3,2,170,60,&hu)); CHECK(fg_hot_step(0,2,229,60,&hu)); CHECK(!fg_hot_step(0,2,231,60,&hu));
-        hu=0; CHECK(!fg_hot_step(2,3,300,60,&hu)); CHECK(fg_hot_step(3,3,301,60,&hu)); CHECK(FG_HOT_LEVEL==2); }
+      CHECK(fg_reason(DM_FGEN_SMOOTH,1,60,0)==FG_ON); CHECK(fg_reason(DM_FGEN_SMOOTH,1,60,1)==FG_RT); CHECK(fg_reason(DM_FGEN_SMOOTH,1,30,0)==FG_ECO30); CHECK(fg_reason(DM_FGEN_SMOOTH,1,120,0)==FG_CAPPED);
+      CHECK(fg_reason(DM_FGEN_OFF,1,60,0)==FG_OFF); CHECK(fg_reason(DM_FGEN_SMOOTH,0,60,0)==FG_UNSUPPORTED); CHECK(fg_reason(DM_FGEN_ECO,1,60,0)==FG_ECO_CLOSED);
+      // B147（用户 2026-11-04）：帧生成不再看温控——温控 3（危急）照样开着，只按设置；把温控门加回去这里会红 | B147: frame generation no longer consults the thermal state - still on at thermal 3 (critical), setting only; putting the gate back turns this red
+      { int keep=thermal_stub; thermal_stub=3; CHECK(dm_fg_setting()); CHECK(dm_thermal_eff()==3); thermal_stub=2; CHECK(dm_fg_setting()); thermal_stub=keep; }
       // 分享摘要键：状态行带 fg= | share summary key: the state line carries fg=
       { char logp[1100]; snprintf(logp,sizeof logp,"%s/log.txt",directory); fg_supported=0; int saved_err=dup(2); CHECK(saved_err>=0); CHECK(freopen(logp,"w",stderr)); CHECK(!dm_fg_setting()); fg_supported=1; CHECK(dm_fg_setting()); fflush(stderr); dup2(saved_err,2); close(saved_err);
         file=fopen(logp,"r"); CHECK(file); char t2[8192]={0}; fread(t2,1,sizeof t2-1,file); fclose(file); unlink(logp); CHECK(strstr(t2,"帧生成：状态 fg=0 关")); CHECK(strstr(t2,"帧生成：状态 fg=1 开")); }

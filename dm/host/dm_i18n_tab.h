@@ -872,9 +872,6 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmGraphicsFrameGenNoRt", "光追开着时不生效，关掉光追后生效", "No effect with ray tracing on; turn it off", "Sin efecto con trazado activo; desactívalo", "Sin efecto con trazado activo; desactívalo", "Не работает при включённой трассировке; выключите её", "레이 트레이싱이 켜져 있으면 적용 안 됨" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmGraphicsFrameGenHot", "手机过热，已暂停；降温后自动恢复", "Paused: device is hot; resumes when it cools", "En pausa por calor; se reanuda al enfriarse", "En pausa por calor; se reanuda al enfriarse", "Пауза: устройство нагрето; продолжится после остывания", "기기 과열로 일시 중지, 식으면 자동 재개" },
-#endif
-#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmGraphicsFrameGenBackoff", "画面跟不上或内存紧张，已暂停；稍后自动重试", "Paused: too slow or low memory; retries shortly", "En pausa: lento o poca memoria; se reintenta pronto", "En pausa: lento o poca memoria; se reintenta pronto", "Пауза: не хватает скорости или памяти; скоро повтор", "속도 또는 메모리 부족으로 일시 중지, 곧 재시도" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
