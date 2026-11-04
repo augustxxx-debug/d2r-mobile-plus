@@ -31,6 +31,7 @@ int main(void) {
         EQ(strstr(st, "return 9") == 0, 1, "模态框那段到 dm_ui_gate 之间没有直接 return 9 | no direct return 9 before dm_ui_gate");
         *gate = save;
     }
+    EQ(st && strstr(st, "slider_part_hit(page, xy, (uint64_t)m->base)") && strstr(st, "slider_part_hit(page, xy, (uint64_t)m->base)") < (gate ? gate : st) ? 1 : 0, 1, "B145：设置页那道认滑块箭头（slider_part_hit）| B145: the settings gate accepts slider arrows");
     free(s);
     if (fails) { printf("t_ui_gate: %d FAIL\n", fails); return 1; }
     puts("PASS B143 ui gate: modal first (inside = carry on, outside = 9), settings cover 11 only without a modal; ui_classify goes through dm_ui_gate");

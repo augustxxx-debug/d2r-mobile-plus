@@ -17,6 +17,7 @@ run: \
 	$(B)/t_modal_input_gate \
 	$(B)/t_settings_modal_input \
 	$(B)/t_ui_gate \
+	$(B)/t_slider_part \
 	$(B)/t_metalfx_auto \
 	$(B)/main.orig.bin \
 	$(B)/subsdk0.orig.bin \
@@ -180,6 +181,7 @@ run: \
 	$(B)/t_modal_input_gate
 	$(B)/t_settings_modal_input
 	$(B)/t_ui_gate
+	$(B)/t_slider_part
 	$(B)/t_notice_geometry
 	$(B)/t_notice_dispatch
 	$(B)/t_notice_widgets
@@ -450,6 +452,8 @@ $(B)/t_metalfx_auto: t_metalfx_auto.c ../../gfx/nvn/nvn_metalfx_policy.h | $(B)
 	$(CC) -std=c11 -Wall -Wextra -Werror $< -o $@
 
 $(B)/t_modal_input_gate: t_modal_input_gate.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
+$(B)/t_slider_part: t_slider_part.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
 $(B)/t_ui_gate: t_ui_gate.c ../dm_ui_gate.h ../dm_cursor.c | $(B)
 	clang -std=c11 -O1 -Wall -Wextra -Werror -I.. -o $@ $<

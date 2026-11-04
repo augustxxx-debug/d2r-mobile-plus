@@ -1176,6 +1176,26 @@ static int ui_button_kind(uint64_t w) {
     (void)w; return 0;
 #endif
 }
+// B145：滑块两端的箭头是滑块的子控件、不在 click_walk 认的可点类里（滑块本身也只在 g_click_exact 时算）。设置页这一道只认「可点控件」，
+// 箭头正好压在暂停菜单按钮那一列上（图形页「画面加亮」、音频页各滑块的左箭头）时被判成「被盖住、不点」，点了没反应。
+// 这里认「点在某个可见滑块的可见子控件（箭头 / 指示块）上」也算设置页自己的控件：沿页面找可见滑块，再用子控件自己的命中函数判
+// B145: the arrows at a slider's ends are its child widgets and not in the clickable classes click_walk knows (the slider itself only counts with g_click_exact). The settings gate
+// only accepts clickable widgets, so a left arrow lying over the pause menu button column (Dark Area Boost on the Graphics page, every left arrow on the Audio page) was judged
+// "covered, no click" and the tap did nothing. A point on a visible child (arrow / thumb) of a visible slider now counts as the settings page's own widget: find the page's visible
+// sliders, then test each child with its own hit function
+static void dg_sliders(uint64_t w, uint64_t vt, int dep, uint64_t *out, int *n);
+static int slider_part_walk(uint64_t w, uint64_t xy, int dep) {
+    if (!w || dep > 3 || !*(uint8_t *)(w + 0x50)) return 0;
+    if (dep && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, xy) & 1)) return 1;
+    uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 64) return 0;
+    for (uint64_t i = 0; i < n; i++) if (slider_part_walk(*(uint64_t *)(ch + 8 * i), xy, dep + 1)) return 1;
+    return 0;
+}
+static int slider_part_hit(uint64_t page, uint64_t xy, uint64_t base) {
+    static uint64_t sl[48]; int n = 0; dg_sliders(page, base + 0x20bad70, 0, sl, &n);
+    for (int i = 0; i < n; i++) if (slider_part_walk(sl[i], xy, 0)) return 1;
+    return 0;
+}
 static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size_t hn) {   // 12 任务页慢点按按钮；其余分类保持原样 | 12 quest-page button with relaxed tap timing; other classifications are unchanged
     if (g_cls_out) { g_cls_out = 0; const char *on = "";
         if (modal_top(m, root, &on)) { snprintf(hit, hn, "模态框外 %s", on); g_modal_name = on; return 9; }
@@ -1195,7 +1215,7 @@ static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size
       int page_hit = 0;
       if (st && *(uint8_t *)(st + 0x50)) for (unsigned i = 0; i < sizeof pages / sizeof pages[0] && !page_hit; i++) {
           uint64_t page = ui_panel(root, pages[i]);
-          page_hit = page && *(uint8_t *)(page + 0x50) && click_walk(page, xy, 1, (uint64_t)m->base);
+          page_hit = page && *(uint8_t *)(page + 0x50) && (click_walk(page, xy, 1, (uint64_t)m->base) || slider_part_hit(page, xy, (uint64_t)m->base));
       }
       if (st && *(uint8_t *)(st + 0x50) && !click_walk(st, xy, 1, (uint64_t)m->base) && !page_hit) {   // 设置页自己可点的控件照常；点在它的底板 / 列表空处时，游戏会把这一下交给底下的暂停菜单按钮 | The settings page's own clickable widgets work as usual; when the tap is on its backing / empty list space, the game would hand this tap to the pause menu button underneath
           static const char *const pl[] = { "PauseLayoutGarden", "PauseLayout" };
