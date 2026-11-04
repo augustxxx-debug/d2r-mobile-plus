@@ -330,7 +330,7 @@ def main():
     pouch = open(os.path.join(TOOLS, 'pouch_layout.py'), encoding='utf-8').read()
     stash = open(os.path.join(TOOLS, 'wide_stash.py'), encoding='utf-8').read()
     rule = open(os.path.join(HOST, 'dm_stack_rule.h'), encoding='utf-8').read()
-    for name in ('TouchQtyOne', 'TouchQtyHalf', 'TouchQtyAll', 'TouchQtySellOne', 'TouchQtySellHalf', 'TouchQtySellAll', 'TouchQtyBuyOne', 'TouchQtyBuyTen', 'TouchQtyBuyFull'):
+    for name in ('TouchQtyOne', 'TouchQtyHalf', 'TouchQtyAll', 'TouchQtySellOne', 'TouchQtySellHalf', 'TouchQtySellAll', 'TouchQtyBuyOne', 'TouchQtyBuyTen', 'TouchQtyBuyFull', 'TouchQtyKeyA', 'TouchQtyKeyY', 'TouchQtyKeyX'):
         check(('"%s"' % name) in rule and ("'%s'" % name) in pouch, '数量框按钮 %s（规则表 ↔ 物品栏布局）' % name)
     for name in ('TouchQtyN%02d', 'TouchQtyBg', 'TouchQtyTitle'):
         check(name in pouch, '物品栏角标 / 拆分框控件 %s' % name)

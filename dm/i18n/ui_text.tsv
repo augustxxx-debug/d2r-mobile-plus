@@ -26,17 +26,17 @@ dmStoreNone	没有可以存放的物品	No items to deposit	Nada que depositar		
 dmStoreLeft	，%d 件留在背包	, %d left in inventory	, %d siguen en el inventario		, %d осталось в инвентаре	, %d개 가방에 남음	存放提示：没存进去的件数
 dmStoreFull	这一格已放满，物品留在原处	That stack is full. Item left where it is.	Esa pila está llena. El objeto se queda donde está.		Этот стак полон. Предмет остался на месте.	해당 칸이 가득 참. 아이템은 제자리에 둡니다.	存放提示：高级仓库那一格叠满 99，物品留在背包 / 仓库页
 dmStackTitle	%d 瓶	%d bottles	%d frascos		%d шт.	%d병	拆分框标题
-dmStackOne	拆出 1 瓶（A）	Split 1 (A)	Separar 1 (A)		Отделить 1 (A)	1병 나누기 (A)	拆分框按钮，括号里是手柄键
-dmStackHalf	拆半（Y）	Split half (Y)	Separar mitad (Y)		Пополам (Y)	절반 나누기 (Y)	拆分框按钮
-dmStackAll	全部拆开（X）	Split all (X)	Separar todo (X)		Разделить все (X)	모두 나누기 (X)	拆分框按钮
-dmStackSellTitle	卖出（共 %d 瓶）	Sell (%d bottles)	Vender (%d frascos)		Продать (%d шт.)	판매 (%d병)	商店数量框标题
-dmStackSellOne	卖 1 瓶（A）	Sell 1 (A)	Vender 1 (A)		Продать 1 (A)	1병 판매 (A)	商店数量框按钮，括号里是手柄键
-dmStackSellHalf	卖一半（Y）	Sell half (Y)	Vender mitad (Y)		Продать половину (Y)	절반 판매 (Y)	商店数量框按钮
-dmStackSellAll	全部卖出（X）	Sell all (X)	Vender todo (X)		Продать все (X)	모두 판매 (X)	商店数量框按钮
-dmStackBuyTitle	买入几瓶	Buy how many	¿Cuántos comprar?		Сколько купить	몇 병 구매	商店买入数量框标题（11-04 加）
-dmStackBuyOne	买 1 瓶（A）	Buy 1 (A)	×1 (A)		1 шт. (A)	1병 구매 (A)	商店买入数量框按钮，括号里是手柄键
-dmStackBuyTen	买 10 瓶（Y）	Buy 10 (Y)	×10 (Y)		10 шт. (Y)	10병 구매 (Y)	商店买入数量框按钮
-dmStackBuyFull	买 99 瓶（X）	Buy 99 (X)	×99 (X)		99 шт. (X)	99병 구매 (X)	商店买入数量框按钮：买满一叠 99 瓶；钱不够时按身上金币能买几瓶封顶
+dmStackOne	拆出 1 瓶	Split 1	Separar 1		Отделить 1	1병 나누기	拆分框按钮（手柄键帽由按钮左边的原版提示控件出图，文字里不写键名）
+dmStackHalf	拆半	Split half	Separar mitad		Пополам	절반 나누기	拆分框按钮
+dmStackAll	全部拆开	Split all	Separar todo		Разделить все	모두 나누기	拆分框按钮
+dmStackSellTitle	卖出 %d 瓶	Sell (%d bottles)	Vender (%d)		Продать (%d)	판매 (%d병)	商店数量框标题
+dmStackSellOne	卖 1 瓶	Sell 1	Vender 1		Продать 1	1병 판매	商店数量框按钮（手柄键帽由按钮左边的原版提示控件出图，文字里不写键名）
+dmStackSellHalf	卖一半	Sell half	Vender mitad		Половину	절반 판매	商店数量框按钮
+dmStackSellAll	全部卖出	Sell all	Vender todo		Продать все	모두 판매	商店数量框按钮
+dmStackBuyTitle	买入几瓶	Buy how many	¿Cuántos?		Сколько купить	몇 병 구매	商店买入数量框标题（11-04 加）
+dmStackBuyOne	买 1 瓶	Buy 1	Comprar 1		Купить 1	1병 구매	商店买入数量框按钮（手柄键帽由按钮左边的原版提示控件出图，文字里不写键名）
+dmStackBuyTen	买 10 瓶	Buy 10	Comprar 10		Купить 10	10병 구매	商店买入数量框按钮
+dmStackBuyFull	买 99 瓶	Buy 99	Comprar 99		Купить 99	99병 구매	商店买入数量框按钮：买满一叠 99 瓶；钱不够时按身上金币能买几瓶封顶
 dmStackNoRoom	没有空格，拆不开	No free cell to split into	No hay espacio para separar		Нет места для разделения	나눌 공간이 없습니다	拆分时背包或仓库满的提示
 dmPouchTitle	百宝囊	Pouch	Zurrón		Сумка	주머니	百宝囊清单标题
 dmPouchEmpty	（空）	(empty)	(vacío)		(пусто)	(비어 있음)	百宝囊清单：空

@@ -75,6 +75,9 @@ static inline const char *dmstk_box_name(int set, int mode) {
     if (set) return mode == 1 ? "TouchQtySellOne" : mode == 2 ? "TouchQtySellHalf" : mode == 3 ? "TouchQtySellAll" : 0;
     return mode == 1 ? "TouchQtyOne" : mode == 2 ? "TouchQtyHalf" : mode == 3 ? "TouchQtyAll" : 0;
 }
+// 三档的手柄键帽控件（布局 pouch_layout.py QTY_KEYS：原版提示控件按当前手柄出图），第 1 / 2 / 3 档 = A / Y / X 键位
+// The controller keycap widgets of the three modes (layout QTY_KEYS: the original legend widget draws the glyph for the current controller), modes 1 / 2 / 3 = A / Y / X
+static inline const char *dmstk_key_name(int mode) { return mode == 1 ? "TouchQtyKeyA" : mode == 2 ? "TouchQtyKeyY" : mode == 3 ? "TouchQtyKeyX" : 0; }
 // 买入三档：1 瓶 / 10 瓶 / 买满一叠 99 瓶。原版先照常买 1 瓶（原版自己查钱、查空位、查商人），单价 = 这一瓶前后金币差；
 // 其余的按身上剩下的金币能买几瓶封顶，总数不超过一叠上限。返回总瓶数（含原版那 1 瓶）；单价认不出时只算原版那 1 瓶
 // Buy, three modes: 1 / 10 / a full stack of 99. The original buys 1 bottle first as usual (it checks gold, room and the vendor itself) and the unit

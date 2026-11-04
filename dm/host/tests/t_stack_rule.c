@@ -196,6 +196,9 @@ int main(void) {
     CHECK(dmstk_buy_total(500, 1000000, 1) == 99);       // 不超过一叠
     CHECK(dmstk_buy_total(0, 9354, 27) == 0);
 
+    // 键帽控件名（11-04 用户：按钮上的 (A)/(Y)/(X) 换成原版按手柄出图的键帽） | keycap widget names
+    CHECK(!strcmp(dmstk_key_name(1), "TouchQtyKeyA") && !strcmp(dmstk_key_name(2), "TouchQtyKeyY") && !strcmp(dmstk_key_name(3), "TouchQtyKeyX") && !dmstk_key_name(0) && !dmstk_key_name(4));
+
     printf("t_stack_rule: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

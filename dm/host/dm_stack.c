@@ -145,6 +145,7 @@ static _Atomic uint32_t g_putback_req;   // 卖出框取消：手上那叠放回
 
 static _Atomic uint64_t g_sell_req;   // 物品 id << 8 | 档（1 卖 1、2 卖半） | item id << 8 | mode (1 sell 1, 2 sell half)
 static _Atomic uint32_t g_cli_pid; static _Atomic uint32_t g_sell_go, g_sell_pass;   // 这件可以卖了 / 这件的 0x33 放行 | this item may now be sold / let this item's 0x33 through
+enum { DMSTK_KEY_DX = 60, DMSTK_KEY_DY = 4 };   // 键帽相对框左上的位置（布局单位） | keycap position relative to the box top-left (layout units)
 static int inside;   // 我们自己往原版分派里送包时置 1：自己送的包不再拦 | set while we hand a packet to the original dispatch ourselves: our own packets are not intercepted again
 void dm_stack_c2s(uint64_t *regs) {
     uint64_t G = regs[0], player = regs[1]; uint8_t *pk = (uint8_t *)(uintptr_t)regs[2]; uint32_t len = (uint32_t)regs[3];
@@ -365,7 +366,10 @@ void dm_stack_ui(uint8_t *b, uint64_t inv_panel, uint64_t pl) {   // 游戏主�
     w_move(find_w(inv_panel, "TouchQtyBg", 3), bx, 900);
     w_move(find_w(inv_panel, "TouchQtyTitle", 3), bx + 20, 920);
     { int set = atomic_load(&g_box_sell);
-      for (int g = DMSTK_SET_SPLIT; g <= DMSTK_SET_BUY; g++) for (int i = 1; i <= 3; i++) w_move(find_w(inv_panel, dmstk_box_name(g, i), 3), open && set == g ? bx + 139 : OFF, 990 + 80 * (i - 1)); }   // 三组按钮只露当前这一组 | of the three button sets only the current one is shown
+      for (int g = DMSTK_SET_SPLIT; g <= DMSTK_SET_BUY; g++) for (int i = 1; i <= 3; i++) w_move(find_w(inv_panel, dmstk_box_name(g, i), 3), open && set == g ? bx + 139 : OFF, 990 + 80 * (i - 1));
+      // 手柄键帽（原版提示控件按当前手柄出图）：只在手柄模式露出，摆在每个按钮左边；触屏收到屏外 | controller keycaps (drawn by the original legend widget for the current controller): shown only in controller mode, left of each button; off screen in touch mode
+      { int dm_padmode_current(void); int pad = open && dm_padmode_current();
+        for (int i = 1; i <= 3; i++) w_move(find_w(inv_panel, dmstk_key_name(i), 3), pad ? bx + DMSTK_KEY_DX : OFF, 990 + 80 * (i - 1) + DMSTK_KEY_DY); } }   // 三组按钮只露当前这一组 | of the three button sets only the current one is shown
     if (open) { char t[96]; int set = atomic_load(&g_box_sell); snprintf(t, sizeof t, dm_str(b, set == DMSTK_SET_BUY ? "dmStackBuyTitle" : set ? "dmStackSellTitle" : "dmStackTitle"), g_box_n); w_text(find_w(inv_panel, "TouchQtyTitle", 3), t); }
 }
 void dm_stack_panel_closed(void) { box_cancel(); }
