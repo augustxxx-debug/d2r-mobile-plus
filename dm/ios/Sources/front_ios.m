@@ -511,10 +511,6 @@ static BOOL touch_done(UITouch *t) { UITouchPhase ph=t.phase; return ph==UITouch
 - (void)touchesBegan:(NSSet<UITouch *> *)ts withEvent:(UIEvent *)e {
     (void)e;
     [self sweepEndedSlots];
-    { static int diag=-1; if(diag<0) { const char *v=getenv("DM_TOUCH_DIAG"); diag=v && v[0]=='1'; }   // B143 诊断：每次落指记一行前端各道闸门的状态（看触点在哪一层被丢） | B143 diagnostic: one line per touch-down with every front-end gate's state (where a touch is dropped)
-      if(diag) { int used=0; for(int i=0;i<16;i++) if(_slot[i]) used++; int dm_padmode_busy(void); CGPoint q=[[ts anyObject] locationInView:self];
-        LOG("[触点诊断] 落指 (%.0f,%.0f) 手柄态 %d 切换中 %d 前端页 %d 面板态 %d/%d 槽占用 %d 挂起抬手 %d 界面手指 %d 吞着 %lu 指针槽 %d 脉冲 %d",
-            q.x,q.y,(int)_padMode,dm_padmode_busy(),atomic_load(&g_touch_frontend),(int)_navigation,_controls.navigation_mode,used,_pendEnd!=nil,_uiFinger!=nil,(unsigned long)_swallow.count,_controls.pointer_slot,_controls.pulse_button); } }
     // 手柄模式下碰屏幕 = 回触屏模式（dm_gamepad.m），这一下只做这一件事：此刻屏上是手柄版界面，触屏控件还没显示出来（布局重载要几十帧），
     // 照常往下走的话，落点正好在看不见的回城钮 / 技能钮位置就会直接回城、放技能，面板态还会对手柄版面板发点击。
     // Touching the screen in controller mode = back to touch mode (dm_gamepad.m), and this touch does that one thing only: at this moment the
@@ -945,10 +941,7 @@ static void window_px(CGSize s, CGFloat k) {
         g_layer.drawableSize = CGSizeMake(self.bounds.size.width * g_layer.contentsScale, self.bounds.size.height * g_layer.contentsScale); [CATransaction commit]; } }
 // 真全屏：游戏视图上方那一截只有 3D，手指落在那里也交给游戏视图（纵坐标为负）——点怪 / 点箱子照常，界面与自绘控件不会被点到
 // True fullscreen: the strip above the game view has only 3D; fingers landing there are also given to the game view (negative y) -- tapping monsters / chests works as usual, and the UI and custom-drawn widgets cannot be hit
-- (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e { UIView *h = [super hitTest:p withEvent:e]; UIView *r = g_full && h == self ? self.game : h;
-    { static int diag=-1; if(diag<0) { const char *v=getenv("DM_TOUCH_DIAG"); diag=v && v[0]=='1'; }   // B143 诊断：触点落到哪个视图（游戏视图之上的遮罩 / 原生控件会把整屏点按吃掉） | B143 diagnostic: which view a touch lands on (a mask / native control above the game view eats every tap)
-      static double last; double now=CACurrentMediaTime(); if(diag && e.type==UIEventTypeTouches && now-last>0.25) { last=now; LOG("[触点诊断] 命中视图 (%.0f,%.0f) → %s%s", p.x, p.y, r ? NSStringFromClass([r class]).UTF8String : "无", r == self.game ? "（游戏视图）" : ""); } }
-    return r; }
+- (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e { UIView *h = [super hitTest:p withEvent:e]; return g_full && h == self ? self.game : h; }
 @end
 // 测试：模拟窗口变尺寸（iPhone Duo 展开 / 折叠）。Mac 上的 iOS 包窗口不能拖（要求全屏），用这个到点把最外层视图改成给定点数，走的是同一段布局代码。
 // DM_TEST_FOLD=<秒>:<宽>x<高>[,<秒>:<宽>x<高>…]，秒数从视图建好时算；配 DM_TEST_WINDOW_PX=1 让 Mac 上也跟着换出图尺寸

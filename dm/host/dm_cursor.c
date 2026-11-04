@@ -1176,24 +1176,24 @@ static int ui_button_kind(uint64_t w) {
     (void)w; return 0;
 #endif
 }
-// B145：滑块两端的箭头是滑块的子控件、不在 click_walk 认的可点类里（滑块本身也只在 g_click_exact 时算）。设置页这一道只认「可点控件」，
-// 箭头正好压在暂停菜单按钮那一列上（图形页「画面加亮」、音频页各滑块的左箭头）时被判成「被盖住、不点」，点了没反应。
-// 这里认「点在某个可见滑块的可见子控件（箭头 / 指示块）上」也算设置页自己的控件：沿页面找可见滑块，再用子控件自己的命中函数判
-// B145: the arrows at a slider's ends are its child widgets and not in the clickable classes click_walk knows (the slider itself only counts with g_click_exact). The settings gate
-// only accepts clickable widgets, so a left arrow lying over the pause menu button column (Dark Area Boost on the Graphics page, every left arrow on the Audio page) was judged
-// "covered, no click" and the tap did nothing. A point on a visible child (arrow / thumb) of a visible slider now counts as the settings page's own widget: find the page's visible
-// sliders, then test each child with its own hit function
+// B145：滑块两端的箭头不是控件——滑块只有一个子控件（指示块 Indicator），箭头是滑块自己画在命中区（滑槽）外面、自己收点击的（真机诊断：音频页十条滑块全是这样；
+// 原先吸附到右箭头那一下改了值，说明在箭头位置发鼠标点击游戏照收）。设置页那道只认可点控件，左箭头正好压在暂停菜单按钮那一列上时（图形页「画面加亮」、音频页各滑块）
+// 被判成「被盖住、不点」，点了没反应。这里按几何认：同一行（上下 ±16 布局单位）、离滑槽两端 64 布局单位以内（箭头中心约在端外 36 单位、半宽约 21 单位）也算点在滑块上。
+// B145: a slider's end arrows are not widgets -- the slider has a single child (the Indicator) and draws the arrows outside its own hit area (the track), handling their clicks itself
+// (device diagnostic: all ten Audio page sliders; the earlier tap snapped onto a right arrow did change the value, so the game takes a mouse click at the arrow position). The settings gate
+// only accepts clickable widgets, so a left arrow over the pause menu button column (Dark Area Boost on Graphics, the Audio sliders) was judged "covered, no click" and did nothing. Judged by
+// geometry here: on the same row (±16 layout units) and within 64 layout units of either end of the track (arrow centre about 36 units outside the end, half width about 21) also counts as on the slider.
+#define SLIDER_ARROW_REACH 64
+#define SLIDER_ROW_SLACK 16
 static void dg_sliders(uint64_t w, uint64_t vt, int dep, uint64_t *out, int *n); static int dg_hit(uint64_t w, int x, int y);
-static int slider_part_walk(uint64_t w, uint64_t xy, int dep) {
-    if (!w || dep > 3 || !*(uint8_t *)(w + 0x50)) return 0;
-    if (dep && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, xy) & 1)) return 1;
-    uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 64) return 0;
-    for (uint64_t i = 0; i < n; i++) if (slider_part_walk(*(uint64_t *)(ch + 8 * i), xy, dep + 1)) return 1;
-    return 0;
-}
-static int slider_part_hit(uint64_t page, uint64_t xy, uint64_t base) {
+static int slider_part_hit(uint64_t page, int x, int y, uint64_t base, int vh) {
+    if (vh <= 0) return 0;
     static uint64_t sl[48]; int n = 0; dg_sliders(page, base + 0x20bad70, 0, sl, &n);
-    for (int i = 0; i < n; i++) if (slider_part_walk(sl[i], xy, 0)) return 1;
+    int reach = SLIDER_ARROW_REACH * vh / 2160, slack = SLIDER_ROW_SLACK * vh / 2160, step = vh / 540 > 1 ? vh / 540 : 1;
+    for (int i = 0; i < n; i++)
+        for (int dy = -slack; dy <= slack; dy += slack > 0 ? slack : 1) { int yy = y + dy; if (yy < 0) continue;
+            for (int d = 0; d <= reach; d += step) { if (dg_hit(sl[i], x + d, yy) || (x - d >= 0 && dg_hit(sl[i], x - d, yy))) return 1; }
+            if (!slack) break; }
     return 0;
 }
 static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size_t hn) {   // 12 任务页慢点按按钮；其余分类保持原样 | 12 quest-page button with relaxed tap timing; other classifications are unchanged
@@ -1215,25 +1215,11 @@ static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size
       int page_hit = 0;
       if (st && *(uint8_t *)(st + 0x50)) for (unsigned i = 0; i < sizeof pages / sizeof pages[0] && !page_hit; i++) {
           uint64_t page = ui_panel(root, pages[i]);
-          page_hit = page && *(uint8_t *)(page + 0x50) && (click_walk(page, xy, 1, (uint64_t)m->base) || slider_part_hit(page, xy, (uint64_t)m->base));
+          page_hit = page && *(uint8_t *)(page + 0x50) && (click_walk(page, xy, 1, (uint64_t)m->base) || slider_part_hit(page, x, y, (uint64_t)m->base, *(int32_t *)(m->base + 0x211da3c)));
       }
       if (st && *(uint8_t *)(st + 0x50) && !click_walk(st, xy, 1, (uint64_t)m->base) && !page_hit) {   // 设置页自己可点的控件照常；点在它的底板 / 列表空处时，游戏会把这一下交给底下的暂停菜单按钮 | The settings page's own clickable widgets work as usual; when the tap is on its backing / empty list space, the game would hand this tap to the pause menu button underneath
           static const char *const pl[] = { "PauseLayoutGarden", "PauseLayout" };
-          for (int i = 0; i < 2; i++) { uint64_t pw = ui_panel(root, pl[i]); if (pw && *(uint8_t *)(pw + 0x50) && click_walk(pw, xy, 1, (uint64_t)m->base)) { cover = 1;
-              { static int dumped; if (dumped < 6) { dumped++;   // B145 诊断：被判「盖着」的这一点在页面里落在哪个叶子上、页面上各滑块的子控件 | B145 diagnostic: which page leaf this point is on, and the children of the page's sliders
-                  for (unsigned k = 0; k < sizeof pages / sizeof pages[0]; k++) { uint64_t pg = ui_panel(root, pages[k]); if (!pg || !*(uint8_t *)(pg + 0x50)) continue;
-                      g_inside_name = ""; int ih = inside_walk(pg, xy, 1, (uint64_t)m->base + 0x20c1328);
-                      LOG("[B145 诊断] (%d,%d) 盖着：页 %s 叶子 %s", x, y, pages[k], ih ? g_inside_name : "（无）");
-                      static uint64_t sl[48]; int sn = 0; dg_sliders(pg, (uint64_t)m->base + 0x20bad70, 0, sl, &sn);
-                      for (int q = 0; q < sn && q < 12; q++) { uint64_t sw = sl[q]; uint64_t sc = *(uint64_t *)(sw + 0x58), scn = *(uint64_t *)(sw + 0x60), par = *(uint64_t *)(sw + 0x30);
-                          char buf[400]; int o = snprintf(buf, sizeof buf, "滑块 %s 父 %s 子 %llu：", *(uint64_t *)(sw + 8) ? (const char *)*(uint64_t *)(sw + 8) : "?", par && *(uint64_t *)(par + 8) ? (const char *)*(uint64_t *)(par + 8) : "?", (unsigned long long)scn);
-                          for (uint64_t c = 0; sc && c < scn && c < 8 && o < (int)sizeof buf - 60; c++) { uint64_t cw = *(uint64_t *)(sc + 8 * c); if (!cw) continue;
-                              o += snprintf(buf + o, sizeof buf - o, " %s[vt+%#llx 见%d 中%d]", *(uint64_t *)(cw + 8) ? (const char *)*(uint64_t *)(cw + 8) : "?", (unsigned long long)(*(uint64_t *)cw - (uint64_t)m->base), *(uint8_t *)(cw + 0x50), dg_hit(cw, x, y)); }
-                          if (par) { uint64_t pc = *(uint64_t *)(par + 0x58), pn = *(uint64_t *)(par + 0x60);
-                              for (uint64_t c = 0; pc && c < pn && c < 10 && o < (int)sizeof buf - 60; c++) { uint64_t cw = *(uint64_t *)(pc + 8 * c); if (!cw || cw == sw) continue;
-                                  if (dg_hit(cw, x, y)) o += snprintf(buf + o, sizeof buf - o, " 兄弟中:%s[vt+%#llx]", *(uint64_t *)(cw + 8) ? (const char *)*(uint64_t *)(cw + 8) : "?", (unsigned long long)(*(uint64_t *)cw - (uint64_t)m->base)); } }
-                          LOG("[B145 诊断] %s", buf); } } } }
-              break; }   /* 11：这一下不点下去，但从这里起手上下拖照常滚设置页的列表（自定义页各行的文字不是可点控件，玩家多半就在文字上滑） | 11: this tap is not pressed down, but a vertical drag starting here still scrolls the settings page list as usual (the text of the rows on the Custom page is not a clickable widget, and players mostly swipe right on the text) */ } } }
+          for (int i = 0; i < 2; i++) { uint64_t pw = ui_panel(root, pl[i]); if (pw && *(uint8_t *)(pw + 0x50) && click_walk(pw, xy, 1, (uint64_t)m->base)) { cover = 1; break; }   /* 11：这一下不点下去，但从这里起手上下拖照常滚设置页的列表（自定义页各行的文字不是可点控件，玩家多半就在文字上滑） | 11: this tap is not pressed down, but a vertical drag starting here still scrolls the settings page list as usual (the text of the rows on the Custom page is not a clickable widget, and players mostly swipe right on the text) */ } } }
     const char *mn = ""; uint64_t mp = modal_top(m, root, &mn); int in_modal = 0;
     if (mp) { uint64_t xy = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32), fn = *(uint64_t *)(*(uint64_t *)mp + 0x48);
         // 「在框里」：框自己有边界且点在里面，或点中它的某个可见叶子 / 可点控件（确认框的「应用 / 放弃」按钮只有后一种认得到——
