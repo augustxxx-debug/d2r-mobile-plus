@@ -816,16 +816,28 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmGraphicsResBalanced", "渲染分辨率：均衡", "Resolution: Balanced", "Resolución: Equilibrada", "Resolución: Equilibrada", "Разрешение: баланс", "해상도: 균형" },
     { "dmGraphicsResNative", "渲染分辨率：原生", "Resolution: Native", "Resolución: Nativa", "Resolución: Nativa", "Разрешение: нативное", "해상도: 네이티브" },
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmGraphicsRtShadow", "光追阴影（实验性）", "Ray-traced shadows (experimental)", "Sombras por trazado de rayos (experimental)", "Sombras por trazado de rayos (experimental)", "Трассировка теней (эксперимент)", "레이 트레이싱 그림자 (실험적)" },
+    { "dmGraphicsRtLevelOff", "光追（实验性）：关", "Ray tracing (experimental): Off", "Trazado (experimental): No", "Trazado (experimental): No", "Трассировка (эксперимент): выкл", "레이 트레이싱 (실험적): 끔" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmGraphicsRtAo", "光追 AO（实验性）", "Ray-traced AO (experimental)", "AO por trazado de rayos (experimental)", "AO por trazado de rayos (experimental)", "Трассировка AO (эксперимент)", "레이 트레이싱 AO (실험적)" },
+    { "dmGraphicsRtLevelLow", "光追（实验性）：低", "Ray tracing (experimental): Low", "Trazado (experimental): Baja", "Trazado (experimental): Baja", "Трассировка (эксперимент): низк.", "레이 트레이싱 (실험적): 낮음" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmGraphicsRtAoNote", "让墙脚、石缝和贴地处的阴影更实，会增加 GPU 负担、可能降低帧率", "Firmer contact shadows; heavier on the GPU, may lower FPS", "Sombras de contacto firmes; más GPU, puede bajar FPS", "Sombras de contacto firmes; más GPU, puede bajar FPS", "Чётче тени у стен; нагружает GPU, может снизить FPS", "벽 밑·틈의 그림자가 더 진해짐, GPU 부담 증가·프레임 저하 가능" },
+    { "dmGraphicsRtLevelMid", "光追（实验性）：中", "Ray tracing (experimental): Mid", "Trazado (experimental): Media", "Trazado (experimental): Media", "Трассировка (эксперимент): средн.", "레이 트레이싱 (실험적): 중간" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmGraphicsRtAoNeedRt", "需先开启光追阴影", "Turn on ray-traced shadows first", "Activa primero las sombras por trazado de rayos", "Activa primero las sombras por trazado de rayos", "Сначала включите трассировку теней", "레이 트레이싱 그림자를 먼저 켜세요" },
+    { "dmGraphicsRtLevelHigh", "光追（实验性）：高", "Ray tracing (experimental): High", "Trazado (experimental): Alta", "Trazado (experimental): Alta", "Трассировка (эксперимент): выс.", "레이 트레이싱 (실험적): 높음" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsRtLevelNone", "光追（实验性）：不可用", "Ray tracing (experimental): N/A", "Trazado (experimental): No disponible", "Trazado (experimental): No disponible", "Трассировка (эксперимент): нет", "레이 트레이싱 (실험적): 사용 불가" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsRtLevelNote", "档位越高阴影越细、越耗 GPU；性能不足时自动降低", "Finer shadows, more GPU; lowers itself if slow", "Más alto, más GPU; baja si falta rendimiento", "Más alto, más GPU; baja si falta rendimiento", "Выше — тяжелее; снижается автоматически", "높을수록 GPU 부하 증가, 성능 부족 시 자동으로 낮아짐" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsRtLevelHighNote", "本机内存偏小：最高到中档", "Low memory: Medium is the maximum", "Poca memoria: máximo Media", "Poca memoria: máximo Media", "Мало памяти: максимум средний", "메모리 부족: 중간까지만 가능" },
+#endif
+#if !defined(__ANDROID__) || defined(DM_I18N_ALL)
+    { "dmGraphicsRtLevelNoHw", "本机没有硬件光追，此项不可用", "No hardware ray tracing on this device", "Este dispositivo no tiene trazado por hardware", "Este dispositivo no tiene trazado por hardware", "На этом устройстве нет аппаратной трассировки", "이 기기는 하드웨어 레이 트레이싱 미지원" },
 #endif
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmIpadModeTitle", "画面两边有黑边？", "Black bars on both sides?", "¿Barras negras a los lados?", "¿Barras negras a los lados?", "Чёрные полосы по бокам?", "양쪽에 검은 띠가 보이나요?" },

@@ -88,6 +88,12 @@ int main(void) { @autoreleasepool {
         if (g.lvl != RTS_LVL_MAX || g.hold_up < 15.9) FAIL("gov: quick relapse should double the wait (lvl %d, hold %.0f)", g.lvl, g.hold_up);
         for (int i = 0; i < 60 * 5; i++, t += 1 / 60.0) rts_gov_step(&g, 3.0, 13.0, B, t, &why);   // 72–92%：两边都不动 | 72–92%: neither way
         if (g.lvl != RTS_LVL_MAX) FAIL("gov: moved inside the hysteresis band");
+        // 玩家档定上限：低 2、中 1、高 0；有余量也不升过上限，超预算照样往下降 | the player level sets the ceiling: low 2, medium 1, high 0; headroom never steps above it, over budget still steps down
+        if (rts_preset_min_lvl(0) != 0 || rts_preset_min_lvl(1) != 2 || rts_preset_min_lvl(2) != 1 || rts_preset_min_lvl(3) != 0) FAIL("preset: ceiling table");
+        { rts_gov gm; rts_gov_init(&gm, RTS_LVL_MAX); gm.lvl = gm.min_lvl = rts_preset_min_lvl(2); t = 0;
+          for (int i = 0; i < 60 * 200; i++, t += 1 / 60.0) if (rts_gov_step(&gm, 1.0, 9.0, B, t, &why) < 0) FAIL("preset: stepped above the ceiling"); if (gm.lvl != 1) FAIL("preset: left the ceiling with headroom");
+          for (int i = 0; i < 60 * 3; i++, t += 1 / 60.0) rts_gov_step(&gm, 4.0, 18.0, B, t, &why); if (gm.lvl <= 1) FAIL("preset: did not step down over budget");
+          for (int i = 0; i < 60 * 300; i++, t += 1 / 60.0) rts_gov_step(&gm, 1.0, 9.0, B, t, &why); if (gm.lvl != 1) FAIL("preset: did not return to the ceiling"); }
         rts_gov g2; rts_gov_init(&g2, RTS_LVL_MAX); t = 0;   // 整帧不知道（< 0）时只看光追单独占比 | frame time unknown (< 0): ray tracing share alone
         for (int i = 0; i < 300; i++, t += 1 / 60.0) rts_gov_step(&g2, 9.0, -1, B, t, &why); if (g2.lvl < 1) FAIL("gov: ray tracing alone over half the budget should step down");
         rts_gov g3; rts_gov_init(&g3, RTS_LVL_MAX); t = 0;   // 整帧超了但光追不重（< 12%）：不降（降了也没用） | frame over budget but ray tracing light (< 12%): no step down (it would not help)

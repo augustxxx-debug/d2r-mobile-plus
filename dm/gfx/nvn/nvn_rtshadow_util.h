@@ -2,6 +2,7 @@
 // Pure computations of the ray-traced shadows (no Metal objects), shared by nvn_rtshadow.inc and the unit test dm/gfx/tests/t_rtshadow.m: 4×4 inverse, strip expansion, point-light picking
 #pragma once
 #include <stdint.h>
+#include <string.h>
 #include <math.h>
 // 4×4 求逆（伴随矩阵法，双精度；列主序 / 行主序都一样，逆的布局跟输入一致） | 4×4 inverse (adjugate, double precision; layout-agnostic: the inverse has the input's layout)
 static inline void rts_inv4(const double *m, double *o) {
@@ -122,7 +123,7 @@ static inline int rts_sun_from_lvp(const float *L, float sun[3]) {
 // Down: frame > 92% of the budget with ray tracing > 12% (it really is a burden); with the frame time unknown, ray tracing alone > 50%; sustained for 1 s → one level down (no step down while the frame has headroom, however costly ray tracing is); at least 1 s between changes.
 // Up: frame < 70% of the budget (ray tracing < 20% when the frame time is unknown), sustained for hold_up seconds (8 s at first) → one level up; forced back down within 5 s of a step up doubles hold_up (≤ 120 s) to avoid oscillation.
 // Returns +1 = one level down (lvl + 1), −1 = one level up, 0 = unchanged; why receives the reason (for the log)
-typedef struct { int lvl, max_lvl, n; double rt, fr, t_change, t_over, t_under, hold_up, t_up; } rts_gov;
+typedef struct { int lvl, max_lvl, min_lvl, n; double rt, fr, t_change, t_over, t_under, hold_up, t_up; } rts_gov;   // min_lvl：只往上升到这一档（玩家档定的上限，见 rts_preset_min_lvl） | min_lvl: steps up no further than this level (the ceiling set by the player level, see rts_preset_min_lvl)
 static inline void rts_gov_init(rts_gov *g, int max_lvl) { *g = (rts_gov){.max_lvl = max_lvl, .hold_up = 8, .t_over = -1, .t_under = -1, .t_change = -1e9, .t_up = -1e9, .fr = -1}; }
 static inline int rts_gov_step(rts_gov *g, double rt_ms, double fr_ms, double budget_ms, double now, const char **why) {
     if (!(rt_ms >= 0) || !(budget_ms > 0)) return 0;
@@ -140,7 +141,7 @@ static inline int rts_gov_step(rts_gov *g, double rt_ms, double fr_ms, double bu
         g->lvl++; g->t_change = now; g->t_over = g->t_under = -1;
         if (why) *why = fk ? "整帧 GPU 超预算且光追占比高" : "整帧时间不知道、光追单独超过半帧预算";
         return 1; }
-    if (under && g->lvl > 0 && now - g->t_under >= g->hold_up) {
+    if (under && g->lvl > g->min_lvl && now - g->t_under >= g->hold_up) {
         g->lvl--; g->t_change = g->t_up = now; g->t_over = g->t_under = -1;
         if (why) *why = fk ? "整帧 GPU 有余量" : "光追耗时降下来了";
         return -1; }
@@ -157,6 +158,9 @@ static inline int rts_gov_step(rts_gov *g, double rt_ms, double fr_ms, double bu
 // (the judge is the forest's main cost: Mac forest ray tracing 3.6 → 0.6 ms; characters / monsters / opaque objects stay ray traced).
 // "Pause" (original shadows) is only for the GPU-hang protection (rts_lvl_params.off, set by the caller); the quarter-resolution sun level is gone (crawling stair steps along the stone wall, user recording on the device with 79eaa3f)
 #define RTS_LVL_MAX 3
+// 玩家档（图形页「光追」，设置键 rt_level：0 关、1 低、2 中、3 高）→ 降档器能升到的最高一档：低 = 第 2 档、中 = 第 1 档、高 = 第 0 档；只往下降，不越过这一档
+// Player level (Graphics "Ray tracing", settings key rt_level: 0 off, 1 low, 2 medium, 3 high) → the highest level the downgrade may reach: low = level 2, medium = level 1, high = level 0; it only steps down from there
+static inline int rts_preset_min_lvl(int preset) { return preset >= 1 && preset <= 3 ? 3 - preset : 0; }
 typedef struct { int point_on, point_n, point_div, sun_div, soft, ao, off, no_alpha, excl_player; } rts_lvl_params;
 static inline rts_lvl_params rts_lvl_apply(int lvl, int point_on, int point_n, int point_div, int sun_half, int soft, int ao) {
     rts_lvl_params p = {point_on, point_n, point_div, sun_half ? 2 : 1, soft, ao, 0, 0, 0};
@@ -220,4 +224,60 @@ static inline int rts_memw_tick(rts_memw *m, double now) {   // 放宽了一档�
     if (m->floor <= 0 || now - m->t_last < RTS_MEMW_HOLD_S || now - m->t_step < (m->t_step > m->t_last ? RTS_MEMW_STEP_S : RTS_MEMW_HOLD_S)) return 0;
     m->floor--; m->t_step = now; if (!m->floor) { m->ao_off = 0; m->mesh_half = 0; m->streak = 0; }
     return 1;
+}
+
+// ---- 本帧实例去重 | per-frame instance de-duplication ----
+// 阴影绘制同一实例会被两级级联 / 预渲染重复登记，只许进 TLAS 一次（t_rts_state 第 9 节）。集合按帧号惰性清空（gen 不等于本帧号即空位，可以直接占），
+// 键是实例标签（网格键 ^ 整个模型矩阵），按 uint64 精确比较。
+// The same instance is registered again by the other cascade / the prepass, and may enter the TLAS only once (t_rts_state section 9). The set
+// is cleared lazily by frame number (an entry whose gen is not this frame's is a free slot and may be claimed); the key is the instance tag
+// (mesh key ^ the whole model matrix), compared exactly as a uint64.
+#define RTS_TAGSET_CAP 8192        // 2 的幂，≥ 2 × RTS_MAX_INST（4096），载入率 ≤ 1/2 | power of two, >= 2 x RTS_MAX_INST (4096), load <= 1/2
+#define RTS_TAGSET_PROBE_MAX 32    // 单次查找的探测上限，超了返回 −1 让调用方回退 | probe limit per lookup; -1 tells the caller to fall back
+typedef struct { uint64_t tag[RTS_TAGSET_CAP]; uint32_t gen[RTS_TAGSET_CAP]; uint32_t cur, n; uint64_t probes; } rts_tagset;
+static inline void rts_tagset_frame(rts_tagset *t) {   // 新的一帧 | a new frame
+    if (++t->cur == 0) { memset(t->gen, 0, sizeof t->gen); t->cur = 1; }   // 帧号回绕：整表作废 | frame number wrapped: the whole table is void
+    t->n = 0;
+}
+// 只在「实例真的进了本帧实例表」之后才 add：缓存未就绪 / 槽满 / 上限满的绘制没有登记实例，它的标签不能留在集合里，
+// 否则两级级联的第二次绘制会被当成重复、这个单位就一个影子都没有
+// add only once the instance really entered this frame's instance table: a draw that bailed out (mesh not ready / no slot / over the cap)
+// registered no instance, so its tag must not stay in the set - otherwise the second cascade's draw counts as a duplicate and the unit casts no shadow at all
+static inline int rts_tagset_has(rts_tagset *t, uint64_t tag) {   // 1 = 本帧已有、0 = 没有、−1 = 集合不可用（调用方回退线性扫描）；t->probes 只给单测看工作量 | 1 = already this frame, 0 = not, -1 = set unusable (the caller falls back to a linear scan); t->probes is the work counter the unit test reads
+    if (t->n >= RTS_TAGSET_CAP * 3 / 4) { t->probes++; return -1; }
+    uint32_t mask = RTS_TAGSET_CAP - 1;   // 标签本身已经是 FNV 过的，再乘一次常数取高位，免得低位规律（同款怪的键 + 位置）聚成一串 | the tag is already FNV-hashed; one more multiply and the high bits keep regular low bits (one model's key + positions) from clustering
+    uint32_t i = (uint32_t)((tag * 0x9E3779B97F4A7C15ull) >> 40) & mask, p = 0;
+    for (;; i = (i + 1) & mask) {
+        if (t->gen[i] != t->cur) { t->probes += p + 1; return 0; }   // 空位（上一帧的残留也算空位）| free slot (a leftover from an earlier frame counts as free)
+        if (t->tag[i] == tag) { t->probes += p + 1; return 1; }
+        if (++p >= RTS_TAGSET_PROBE_MAX) return -1;   // 探测链过长（异常输入）：回退，不在这里死循环 | probe chain too long (unexpected input): fall back instead of looping
+    }
+}
+static inline void rts_tagset_add(rts_tagset *t, uint64_t tag) {   // 登记进集合（满了就什么也不做：查找那边同样会回退） | record in the set (when full, nothing happens: lookups fall back too)
+    if (t->n >= RTS_TAGSET_CAP * 3 / 4) return;
+    uint32_t mask = RTS_TAGSET_CAP - 1, i = (uint32_t)((tag * 0x9E3779B97F4A7C15ull) >> 40) & mask, p = 0;
+    for (;; i = (i + 1) & mask) {
+        if (t->gen[i] != t->cur) { t->gen[i] = t->cur; t->tag[i] = tag; t->n++; return; }
+        if (t->tag[i] == tag) return;
+        if (++p >= RTS_TAGSET_PROBE_MAX) return;
+    }
+}
+// 整体释放（关开关 / 抓帧 / 模块失败）之后：必须是合法空表。不能 memset(0) 了事 —— 那样 cur == 0 而 gen 全 0，
+// 「本帧已有」与「空位」分不开：标签 0 被当成重复（该单位丢影），别的标签每次探 32 次才回退（白扫）。
+// gen 清零 + cur 置非零 = 每个槽都是空位，同帧号直接再画也对（rts_draw_inner 帧号没变、不会重新进帧头）。
+// After a full release (switched off / capture / module failure) this must be a valid empty table. A plain memset(0) is not: cur == 0
+// with gen all 0 makes "already this frame" and "free slot" indistinguishable - tag 0 counts as a duplicate (that unit loses its shadow)
+// and every other tag burns 32 probes before falling back. Clearing gen and setting a non-zero cur makes every slot free, so drawing
+// again under the same frame number is still correct (rts_draw_inner does not re-enter the frame head when the number has not changed).
+static inline void rts_tagset_reset(rts_tagset *t) { memset(t->gen, 0, sizeof t->gen); t->cur = 1; t->n = 0; t->probes = 0; }
+// 生产判定（rts_draw_inner 的唯一入口）：集合说「有」= 本帧已登记；集合不可用（−1：满载 / 探测链过长）时回退扫本帧实例表，
+// 与旧实现逐项扫描的判定完全相同。单测 t_rts_tags 直接调它，测的就是生产这一步，不再各写一份。
+// The production decision (rts_draw_inner's only entry): "yes" from the set = already registered this frame; when the set is unusable
+// (-1: full / probe chain too long) fall back to a scan of this frame's instance table, item for item what the old scan did. The unit test
+// t_rts_tags calls this directly, so it tests the production step itself instead of a copy of it.
+static inline int rts_tagset_dup(rts_tagset *t, uint64_t tag, const uint64_t *inst_tag, int ninst) {
+    int h = rts_tagset_has(t, tag);
+    if (h >= 0) return h;
+    for (int i = 0; i < ninst; i++) if (inst_tag[i] == tag) return 1;
+    return 0;
 }

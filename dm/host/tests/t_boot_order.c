@@ -15,7 +15,8 @@ const char *dm_save_commitdir(void) { return NULL; }
 int dm_3d_quality_mode_get(void) { return quality; }
 float dm_3d_scale_cur(void) { return .75f; }
 int dm_display_max_hz(void) { return 120; }
-int mtl_rt_shadow_supported(void) { return 1; }   // 机器过光追门槛 | the machine passes the RT gate
+static int g_rt_hw = 1;
+int mtl_rt_shadow_supported(void) { return g_rt_hw; }   // 缺省机器过光追门槛 | the machine passes the RT gate by default
 static int checks, fails;
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
 int main(void) {
@@ -27,15 +28,23 @@ int main(void) {
     int dropA = dm_render_res_rt_drop(); CHECK(dropA == 0);   // 读不到设置：按「不降」答，但不记死 | settings unreadable: answer "no drop" without latching
     // 阶段 B：上限 2900 MB（1 档）、设置目录已给 | stage B: limit 2900 MB (tier 1), settings directory given
     dm_mem_measure_set(2900, 12288, "iPhoneTest,1"); dm_custom_init(dir);
-    CHECK(dm_custom_loaded()); CHECK(dm_mem_tier() == 1); CHECK(dm_rt_shadow_setting() == 1);
-    // 光追 AO：缺省关；要设置开且光追阴影开才生效，阴影关时设置值保留 | ray-traced AO: off by default; effective only with the setting and ray-traced shadows on, the setting is kept while shadows are off
-    int dm_rt_ao_setting(void); CHECK(dm_rt_ao_setting() == 0); CHECK(dm_custom_get("rt_ao") == 0);
-    atomic_store(&g_val[K_RTAO], 1); CHECK(dm_rt_ao_setting() == 1);
-    atomic_store(&g_val[K_RT], 0); CHECK(dm_rt_ao_setting() == 0); CHECK(dm_custom_get("rt_ao") == 1);
-    atomic_store(&g_val[K_RT], 1); CHECK(dm_rt_ao_setting() == 1); atomic_store(&g_val[K_RTAO], 0); CHECK(dm_render_res_level() == 3);
+    CHECK(dm_custom_loaded()); CHECK(dm_mem_tier() == 1); int dm_rt_level_setting(void); CHECK(dm_custom_get("rt_level") == 2); CHECK(dm_rt_level_setting() == 2);   // 旧键 rt_shadow=1 迁移为中 | the old key rt_shadow=1 migrates to medium
+    // 内存 1 档：存的是高也只生效到中，设置值保留 | memory tier 1: a stored high is effective as medium only, the setting is kept
+    atomic_store(&g_val[K_RTLVL], 3); CHECK(dm_rt_level_setting() == 2); CHECK(dm_custom_get("rt_level") == 3); atomic_store(&g_val[K_RTLVL], 2); CHECK(dm_render_res_level() == 3);
     CHECK(dm_render_res_rt_drop() == 1);   // 修前这里是 0（已在阶段 A 记死）| before the fix this was 0 (latched in stage A)
     // 读到设置之后才记死：之后改设置不再变（整局不变的语义不变）| it latches once the settings were read: later setting changes no longer move it (the run-long semantics stay)
-    atomic_store(&g_val[K_RT], 0); CHECK(dm_render_res_rt_drop() == 1);
+    atomic_store(&g_val[K_RTLVL], 0); CHECK(dm_render_res_rt_drop() == 1);
+    CHECK(rt_level_migrate(0, 0) == 0); CHECK(rt_level_migrate(0, 1) == 0); CHECK(rt_level_migrate(1, 0) == 2); CHECK(rt_level_migrate(1, 1) == 3);
+    // 文件里有 rt_level 就不看旧键；非法值当关 | with rt_level in the file the old keys are ignored; an invalid value counts as off
+    f = fopen(p, "w"); if (!f) return 1; fputs("rt_level=1\nrt_shadow=1\nrt_ao=1\nq3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_level") == 1);
+    f = fopen(p, "w"); if (!f) return 1; fputs("rt_level=9\nrt_shadow=1\nq3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_level") == 0);
+    f = fopen(p, "w"); if (!f) return 1; fputs("q3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_level") == 0);   // 没键 = 关 | no key = off
+    // B108：没有硬件光追的机器（M2 iPad、安卓）上残留的 rt_level 不生效，并写回关；有硬件的机器不动 | B108: on machines without hardware ray tracing (M2 iPad, Android) a leftover rt_level has no effect and is written back as off; machines with the hardware are untouched
+    f = fopen(p, "w"); if (!f) return 1; fputs("rt_level=3\nrt_shadow=1\nq3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_level") == 3);
+    g_rt_hw = 0; CHECK(dm_rt_level_setting() == 0); CHECK(dm_custom_get("rt_level") == 0);
+    { char line[64]; int lvl0 = 0, shadow0 = 0; f = fopen(p, "r"); if (!f) return 1; while (fgets(line, sizeof line, f)) { if (!strcmp(line, "rt_level=0\n")) lvl0 = 1; if (!strcmp(line, "rt_shadow=0\n")) shadow0 = 1; } fclose(f); CHECK(lvl0 && shadow0); }
+    atomic_store(&g_loaded, 0); CHECK(dm_custom_get("rt_level") == 0); CHECK(dm_rt_level_setting() == 0);
+    g_rt_hw = 1; f = fopen(p, "w"); if (!f) return 1; fputs("rt_level=2\nq3d_v2=1\n", f); fclose(f); atomic_store(&g_loaded, 0); CHECK(dm_rt_level_setting() == 2); CHECK(dm_custom_get("rt_level") == 2);
     unlink(p); rmdir(dir);
     printf("t_boot_order: %d checks, %d failures\n", checks, fails);
     return fails != 0;

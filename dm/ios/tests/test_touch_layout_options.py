@@ -40,8 +40,8 @@ for voice in (False, True):
         os.environ['MOVIE_FFMPEG'] = '1'; layout = importlib.reload(layout)
     host = host_variant(voice)
     keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
-    assert [key for key in keys if key not in ('eco_fps', 'q3d', 'fps_hud', 'upscale', 'render_res', 'rt_shadow', 'rt_ao')] == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)   # 图形页六键（含显示帧数）不在自定义页 | the five Graphics-tab keys are not Custom-page rows
-    assert keys[-4:] == ['upscale', 'render_res', 'rt_shadow', 'rt_ao']   # 末四键 = 图形页 K_UPSCALE / K_RES / K_RT / K_RTAO | last four keys = Graphics-tab K_UPSCALE / K_RES / K_RT / K_RTAO
+    assert [key for key in keys if key not in ('eco_fps', 'q3d', 'fps_hud', 'upscale', 'render_res', 'rt_level')] == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)   # 图形页六键（含显示帧数）不在自定义页 | the five Graphics-tab keys are not Custom-page rows
+    assert keys[-3:] == ['upscale', 'render_res', 'rt_level']   # 末三键 = 图形页 K_UPSCALE / K_RES / K_RTLVL | last three keys = Graphics-tab K_UPSCALE / K_RES / K_RTLVL
     assert ('voice' in keys) == voice
     defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
     assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
@@ -109,14 +109,15 @@ _rows_y = [_res_y, g_nodes['TouchGraphicsFpsHudRow']['fields']['rect']['y'], g_n
 assert _rows_y == [180, 360, 540, 720, 900], _rows_y   # 2026-10-28：第二行是显示帧数 | 2026-10-28: row 2 is Show frame rate
 assert g_nodes['TouchGraphicsFps']['fields']['rect']['y'] == 540 + 55 and _hint['y'] >= _rows_y[-1] + 180
 assert g_nodes['TouchGraphicsRows']['fields']['rect']['height'] >= _hint['y'] + _hint['height']
-# 光追阴影（实验性）：自成一行，缺省摆在档位行之后（宿主按可见行数挪：档位行藏着时上移到 720），说明再往下；勾选框 + 标签都在行容器里，宿主按 mtl_rt_shadow_supported 藏整行 | Ray-traced shadows (experimental): its own row, laid out after the profile row (the host moves it by the visible row count: up to 720 while the profile row is hidden), the hint below it; checkbox + label inside the row container, the host hides the whole row via mtl_rt_shadow_supported
-_rt = g_nodes['TouchGraphicsRtRow']['fields']['rect']; _ao = g_nodes['TouchGraphicsRtAoRow']['fields']['rect']; assert _rt['y'] == _rows_y[-1] + 180 and _ao['y'] == _rt['y'] + 180 and _hint['y'] == _ao['y'] + 180, (_rt, _ao, _hint)
-# 光追 AO（实验性）：光追阴影下一行；两行副文（说明 / 需先开阴影）同款 28 号说明灰、在行内，宿主二选一显示 | ray-traced AO (experimental): the row below ray-traced shadows; two subtext lines (description / needs shadows) in the same 28 pt description grey inside the row, the host shows one of them
-assert g_nodes['TouchGraphicsRtAo']['type'] == 'ToggleButtonWidget' and g_nodes['TouchGraphicsRtAoText']['fields']['text'] == '@dmGraphicsRtAo'
-for _n, _k in (('TouchGraphicsRtAoNote', '@dmGraphicsRtAoNote'), ('TouchGraphicsRtAoNeedRt', '@dmGraphicsRtAoNeedRt')):
+# 光追档位（实验性）：一行四档滑块，缺省摆在档位行之后（宿主按可见行数挪），说明再往下；三行副文同款 28 号说明灰、在行内、不压滑块，宿主三选一显示；灰色文字给没有硬件光追的机器 | ray-tracing level (experimental): one four-position slider row, after the profile row by default (moved by the host per visible rows), the hint below; three subtexts in the same 28 pt grey, inside the row, clear of the slider, the host shows one; the grey caption is for machines without hardware ray tracing
+_rt = g_nodes['TouchGraphicsRtRow']['fields']['rect']; assert _rt['y'] == _rows_y[-1] + 180 and _hint['y'] == _rt['y'] + 180, (_rt, _hint)
+assert g_nodes['TouchGraphicsRtLevel']['type'] == 'SettingsSliderWidget' and g_nodes['TouchGraphicsRtLevel']['fields']['onUpdateMessage'].endswith('SetD2RRtLevel')
+assert g_nodes['TouchGraphicsRtText']['fields']['text'] == '@dmGraphicsRtLevelOff' and g_nodes['TouchGraphicsRtTextOff']['fields']['text'] == '@dmGraphicsRtLevelNone' and g_nodes['TouchGraphicsRtTextOff']['fields']['style/fontColor'] == '$FontColorLightGray'
+for _n, _k in (('TouchGraphicsRtNote', '@dmGraphicsRtLevelNote'), ('TouchGraphicsRtHighNote', '@dmGraphicsRtLevelHighNote'), ('TouchGraphicsRtNoHw', '@dmGraphicsRtLevelNoHw')):
     _f = g_nodes[_n]['fields']; assert _f['text'] == _k and _f['style/pointSize'] == 28 and _f['style/fontColor'] == '$FontColorLightGray' and _f['style/spacing'] == '$ReducedSpacing', _f
-    assert _f['rect']['y'] >= 80 and _f['rect']['y'] + _f['rect']['height'] <= 150 and _f['rect']['x'] + _f['rect']['width'] <= g_nodes['TouchGraphicsRtAo']['fields']['rect']['x'], _f['rect']
-assert g_nodes['TouchGraphicsRtShadow']['type'] == 'ToggleButtonWidget' and g_nodes['TouchGraphicsRtText']['fields']['text'] == '@dmGraphicsRtShadow'
+    assert _f['rect']['y'] >= 80 and _f['rect']['y'] + _f['rect']['height'] <= 150 and _f['rect']['x'] + _f['rect']['width'] <= g_nodes['TouchGraphicsRtLevel']['fields']['rect']['x'], _f['rect']
+# 安卓没有 Metal 光追：布局整行不出现（§2.8）| Android has no Metal ray tracing: the row is absent from its layout (§2.8)
+assert 'TouchGraphicsRt' not in _and_out and 'dmGraphicsRtLevel' not in _and_out
 # 120 帧档不给高画质（用户 2026-10-29）：档位行里一行副文（28 号、说明灰、$ReducedSpacing，CLAUDE.md §2.6），宿主只在 120 帧格选着时显示；在档位文字下方、行内，不压下一行
 # 120 fps gets no Quality (user 2026-10-29): one subtext line inside the profile row (28 pt, description grey, $ReducedSpacing, CLAUDE.md §2.6), shown by the host only while the 120 fps stop is selected; below the profile caption, inside the row, never over the next row
 _note = g_nodes['TouchGraphicsProfileNote']['fields']
@@ -203,10 +204,10 @@ assert 'row_id == ROW_FPS' in _custom and 'row_id == ROW_FPSHUD' in _custom and 
 # Ray-tracing row (experimental) comes last: controller row 4; visible rows are packed and the selection frame follows the visible index; with the profile row hidden the ray-tracing row and the hint each move up one slot (matching the layout defaults 900 / 1080)
 # 可见行由 graphics_rows_pack 紧挨着排（f705573 起：安卓藏分辨率 / 超分行时后面的行上移），行号取 vis[selected]；说明行接在最后一个可见行下面；全部可见时说明在 180 × 7 = 1260
 # Visible rows are packed by graphics_rows_pack (since f705573: with the resolution / upscale rows hidden on Android the later rows move up), row_id = vis[selected]; the hint follows the last visible row; with everything visible the hint sits at 180 × 7 = 1260
-assert 'enum { ROW_RES, ROW_FPSHUD, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT, ROW_RTAO }' in _custom
-assert 'int row_id = vis[selected];' in _custom and 'graphics_rows_pack(res_ok, up_ok, prof_on, rt != 0, vis)' in _custom
+assert 'enum { ROW_RES, ROW_FPSHUD, ROW_FPS, ROW_UPSCALE, ROW_PROFILE, ROW_RT }' in _custom
+assert 'int row_id = vis[selected];' in _custom and 'graphics_rows_pack(res_ok, up_ok, prof_on, rt_row, vis)' in _custom
 assert 'case ROW_RT: if (rtrow) move_ours_y(rtrow, y); break;' in _custom and 'case ROW_FPSHUD: move_ours_y(find_w(sp, "TouchGraphicsFpsHudRow", 0), y); break;' in _custom
-assert 'move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), 180 * (nv + 1))' in _custom and 180 * (7 + 1) == _hint['y']
+assert 'move_ours_y(find_w(sp, "TouchGraphicsApplyHint", 0), 180 * (nv + 1))' in _custom and 180 * (6 + 1) == _hint['y']
 print('PASS Graphics rows: render resolution first, host controller rows in the same order')
 # 局内选项页的手柄提示条（2026-10-27：触屏下「全部接受 / 默认 / 返回」露在「应用 / 默认 / 放弃」下面）：Console 这份 basedOn 原版手柄基页（字面路径，宿主改写前缀管不到），
 # 所以触屏这份自己把 Legend 挪出屏；手柄这份（pad_settings）原样留着提示条。夹具照原版 Console 那份的形状：Legend 没有 fields、带尾逗号
