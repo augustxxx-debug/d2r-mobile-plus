@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """物品 / 符文 / 区域 / 怪物 / 神殿的注释与旧译名（注释要、旧译名整体换回、不加英文缩写）。
 做法 = RomFS 覆盖层换字符串文件（与 touch_strings 同一套机制），按键名定位、原文不符即报错。
-改 zhCN、esES、esMX 三列（LANGS），每列各算一遍、各写各的列，名字取该列的现行值；旧译名、点评是中文特有内容，只做 zhCN。
+改 zhCN、esES、esMX 三列（LANGS），每列各算一遍、各写各的列，名字取该列的现行值；符文序号另跑七列（RUNES_LANGS：上面三列加 zhTW / enUS / ruRU / koKR）；旧译名、点评是中文特有内容，只做 zhCN。
 注释的数字一律从我们 3.3 包里的 excel 表算（不拷红叶的表）；旧译名表 annot/oldnames.tsv 是从红叶 mod 的名字部分抽出、
 逐条与 3.3 原文对过的。
 Annotations and old names for items / runes / areas / monsters / shrines (annotations wanted, old names restored wholesale, no English abbreviations added).
 Method = RomFS overlay replaces string files (same mechanism as touch_strings), located by key name, error if the original text doesn't match.
-Changes the zhCN, esES, esMX columns (LANGS), computed separately and written to its own column each, names from that column's current value; old names and commentary are Chinese-specific, done only for zhCN.
+Changes the zhCN, esES, esMX columns (LANGS), computed separately and written to its own column each, names from that column's current value; rune numbers run on seven columns (RUNES_LANGS: those three plus zhTW / enUS / ruRU / koKR); old names and commentary are Chinese-specific, done only for zhCN.
 Annotation numbers are always computed from the excel tables in our 3.3 package (Hongye's tables are not copied); the old-name table annot/oldnames.tsv was extracted from the name part of the Hongye mod
 and checked entry by entry against the 3.3 original text."""
 import csv, hashlib, io, os, re, sys
@@ -17,6 +17,11 @@ STR = '/lng/strings/'
 
 
 LANGS = ('zhCN', 'esES', 'esMX')   # 注释写进的语言列；先做 zhCN（中文列的产出与只做中文时逐字节一致） | Language columns annotations are written into; zhCN goes first (Chinese column output is byte-identical to Chinese-only)
+# 符文序号单独跑这七列（六种界面语言对应的七个字符串列）。其余注释 / 掉落名仍只做 LANGS：
+# annot_drop.misc_rule() / base_rule() 按 s.col 取 WORDS，英 / 繁 / 俄 / 韩没有措辞，直接扩 LANGS 会崩。
+# Rune numbers run on these seven columns (the seven string columns behind the six UI languages). The other annotations / drop names stay on LANGS:
+# annot_drop.misc_rule() / base_rule() index WORDS by s.col, and English / Traditional Chinese / Russian / Korean have no wording; widening LANGS directly would crash.
+RUNES_LANGS = ('zhCN', 'zhTW', 'enUS', 'esES', 'esMX', 'ruRU', 'koKR')
 # 西语名字串开头的语法性别标记（[fs] 阴单、[ms] 阳单、[fp]、[mp]），游戏据它配魔法词缀的阴阳性；改写只动标记后面的部分，标记留在串首
 # Grammatical gender marker at the start of Spanish name strings ([fs] fem. sing., [ms] masc. sing., [fp], [mp]); the game uses it to match the gender of magic affixes; rewrites only touch the part after the marker, the marker stays at the start
 GENDER_TAG = re.compile(r'(?:\[[fm][sp]\])+')
@@ -139,22 +144,43 @@ def rune_numbers(s):
         Chinese from the short name rNNL in the runeword recipes (old names already applied), English from the enUS column of rNNL.
         Spanish columns: the original name is already "Runa Ber" (including the English short name), only add the number → "Runa Ber #30"; recipe short names likewise "Ber#30 "."""
     n = 0
-    if s.col != 'zhCN':
+    if s.col == 'zhCN':
+        for i in range(1, 34):
+            zh, en = s.get('item-runes.json', 'r%02dL' % i), s.get_lang('item-runes.json', 'r%02dL' % i, 'enUS')
+            if not zh or not en or not re.fullmatch(r"[A-Za-z']+", en): raise SystemExit('annot_strings：r%02dL 的中 / 英短名不对：%r %r' % (i, zh, en))
+            n += s.set('item-runes.json', 'r%02d' % i, lambda _, i=i, zh=zh, en=en: '%s %s #%d' % (zh, en, i))
+            # 配方短名也带序号：rNNL 只被 gems.txt 的 letter 列引用，用在符文之语装备说明框的配方行，
+            # 游戏把各符文短名直接拼进一对引号（实测「'奈夫提尔'」），所以序号后留一个空格分隔：「'乔#31 伊斯特#24 贝#30 '」
+            # Recipe short names also carry the number: rNNL is referenced only by the letter column of gems.txt and is used in the recipe line of the runeword item tooltip;
+            # the game concatenates the rune short names directly inside one pair of quotes (measured: 「'奈夫提尔'」('NefTir')), so one space is left after the number as a separator: 「'乔#31 伊斯特#24 贝#30 '」('Jah#31 Ist#24 Ber#30 ')
+            n += s.set('item-runes.json', 'r%02dL' % i, lambda _, i=i, zh=zh: '%s#%d ' % (zh, i))
+        return n
+    if s.col == 'zhTW':
+        # 繁中与简中同构：该列短名 + 英文短名 + 序号（如「拉爾 Ral #8」）
+        # Traditional Chinese mirrors Simplified: this column's short name + the English short name + number (e.g. 「拉爾 Ral #8」)
+        for i in range(1, 34):
+            nm, zh, en = s.get('item-runes.json', 'r%02d' % i), s.get('item-runes.json', 'r%02dL' % i), s.get_lang('item-runes.json', 'r%02dL' % i, 'enUS')
+            if not nm or not zh or re.search(r'\s', zh) or not en or not re.fullmatch(r"[A-Za-z']+", en) or zh not in nm:
+                raise SystemExit('annot_strings：zhTW 的 r%02d / r%02dL 不是「含短名的全名」/「短名」或英文短名不是拉丁字母：%r %r %r' % (i, i, nm, zh, en))
+            n += s.set('item-runes.json', 'r%02d' % i, lambda _, i=i, zh=zh, en=en: '%s %s #%d' % (zh, en, i))
+            n += s.set('item-runes.json', 'r%02dL' % i, lambda _, i=i, zh=zh: '%s#%d ' % (zh, i))
+        return n
+    if s.col in ('esES', 'esMX'):
         for i in range(1, 34):
             nm, short = s.get('item-runes.json', 'r%02d' % i), s.get('item-runes.json', 'r%02dL' % i)
             if not nm or not short or not re.fullmatch(r"\S+ %s" % re.escape(short), nm) or not re.fullmatch(r"[A-Za-z']+", short): raise SystemExit('annot_strings：%s 的 r%02d / r%02dL 不是「Runa 短名」/「短名」：%r %r' % (s.col, i, i, nm, short))
             n += s.set('item-runes.json', 'r%02d' % i, lambda _, i=i, nm=nm: '%s #%d' % (nm, i))
             n += s.set('item-runes.json', 'r%02dL' % i, lambda _, i=i, short=short: '%s#%d ' % (short, i))
         return n
+    # enUS / ruRU / koKR：该列现行全名 + 序号（如「Ral Rune #8」「Руна Рал #8」「랄 룬 #8」），短名按该列文字形状校验
+    # enUS / ruRU / koKR: this column's current full name + number (e.g. 「Ral Rune #8」 「Руна Рал #8」 「랄 룬 #8」); the short name is shape-checked in that column's script
+    short_shape = {'enUS': r"[A-Za-z']+", 'ruRU': r"[А-Яа-яЁё]+", 'koKR': r"[가-힣]+"}[s.col]
     for i in range(1, 34):
-        zh, en = s.get('item-runes.json', 'r%02dL' % i), s.get_lang('item-runes.json', 'r%02dL' % i, 'enUS')
-        if not zh or not en or not re.fullmatch(r"[A-Za-z']+", en): raise SystemExit('annot_strings：r%02dL 的中 / 英短名不对：%r %r' % (i, zh, en))
-        n += s.set('item-runes.json', 'r%02d' % i, lambda _, i=i, zh=zh, en=en: '%s %s #%d' % (zh, en, i))
-        # 配方短名也带序号：rNNL 只被 gems.txt 的 letter 列引用，用在符文之语装备说明框的配方行，
-        # 游戏把各符文短名直接拼进一对引号（实测「'奈夫提尔'」），所以序号后留一个空格分隔：「'乔#31 伊斯特#24 贝#30 '」
-        # Recipe short names also carry the number: rNNL is referenced only by the letter column of gems.txt and is used in the recipe line of the runeword item tooltip;
-        # the game concatenates the rune short names directly inside one pair of quotes (measured: 「'奈夫提尔'」('NefTir')), so one space is left after the number as a separator: 「'乔#31 伊斯特#24 贝#30 '」('Jah#31 Ist#24 Ber#30 ')
-        n += s.set('item-runes.json', 'r%02dL' % i, lambda _, i=i, zh=zh: '%s#%d ' % (zh, i))
+        nm, short = s.get('item-runes.json', 'r%02d' % i), s.get('item-runes.json', 'r%02dL' % i)
+        if not nm or not short or not re.fullmatch(short_shape, short) or short not in nm:
+            raise SystemExit('annot_strings：%s 的 r%02d / r%02dL 不是「含该列短名的全名」/「短名」：%r %r' % (s.col, i, i, nm, short))
+        n += s.set('item-runes.json', 'r%02d' % i, lambda _, i=i, nm=nm: '%s #%d' % (nm, i))
+        n += s.set('item-runes.json', 'r%02dL' % i, lambda _, i=i, short=short: '%s#%d ' % (short, i))
     return n
 
 
@@ -247,6 +273,12 @@ def apply_all(s, romfs):
               '掉落名': ann_drop(s, romfs)}
         if zh: stat.update(st)
         else: stat[col] = {k: v for k, v in st.items() if k not in ('旧译名', '点评')}
+    # 不在 LANGS 里的四列只做符文序号（其余步骤没有对应措辞，见 RUNES_LANGS 处的说明）
+    # The four columns not in LANGS only get rune numbers (the other steps have no wording for them; see the note at RUNES_LANGS)
+    for col in RUNES_LANGS:
+        if col in LANGS: continue
+        s.col = col
+        stat[col] = {'符文序号': rune_numbers(s)}
     s.col = 'zhCN'
     return stat
 
