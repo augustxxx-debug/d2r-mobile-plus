@@ -70,7 +70,8 @@ int main(int argc,char **argv) {
     test_dyn3d=0;sample(16.666667);assert(fabsf(actual()-.80f)<1e-4f);
     for (int i=0;i<3000;i++) sample(33.333333);
     assert(fabsf(actual()-.80f)<1e-4f);
-    test_dyn3d=1;
+    // 关 → 开：从配置值重新起步，不接着关之前降到的档（DeepSeek 变异 4：删掉关时的档位清零，这里会红）| off -> on restarts from the configured value instead of resuming the level reached before (DeepSeek mutation 4: removing the reset on off turns this red)
+    test_dyn3d=1;sample(16.666667);assert(fabsf(actual()-.80f)<1e-4f);
     puts("PASS production scale handoff: thermal/recovery retain actual downgrade; recovery steps slowly; explicit profile changes reset");
     return 0;
 }
