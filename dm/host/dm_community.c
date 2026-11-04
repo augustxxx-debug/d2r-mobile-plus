@@ -25,7 +25,6 @@
 #include "dm_input.h"
 #include "dm_widget.h"
 #include "dm_notice_geometry.h"
-#include "dm_pan.h"
 #include "dm_site.h"
 #include "dm_cursor.h"
 #include "dm_stick_nav.h"
@@ -42,19 +41,11 @@
 #define QQ_MAX 12
 #define GH_MAX 160
 #define MANIFEST_MAX 4096   // 外壳也按 4096 字节封顶（dm_update.m） | the shells cap at 4096 bytes too (dm_update.m)
-static pthread_mutex_t g_cm_mu = PTHREAD_MUTEX_INITIALIZER;   // 护 g_qq / g_gh / g_site / g_mirror / g_pans（清单从网络线程来，泵在游戏主线程读） | guards the values (the manifest arrives on a network thread; the pump reads on the game main thread)
+static pthread_mutex_t g_cm_mu = PTHREAD_MUTEX_INITIALIZER;   // 护 g_qq / g_gh / g_site / g_mirror（清单从网络线程来，泵在游戏主线程读） | guards g_qq / g_gh / g_site / g_mirror (the manifest arrives on a network thread; the pump reads on the game main thread)
 static char g_qq[QQ_MAX + 1], g_gh[GH_MAX + 1], g_site[GH_MAX + 1], g_mirror[GH_MAX + 1];   // g_site：项目官网（清单 community.site，用户 2026-10-29）；g_mirror：国内镜像（community.mirror） | g_site: the project website; g_mirror: the mainland mirror (community.mirror)
-static dm_pan_entry g_pans[DM_PAN_MAX]; static int g_n_pans;   // 网盘（community.pans；规则见 dm_pan.h） | cloud drives (community.pans; rules in dm_pan.h)
 static _Atomic int g_loaded_cm;
 static _Atomic int g_show, g_ack, g_copied;   // g_show：0 不显示 / 1 要显示 / 2 显示着；g_copied：0 / 1 已复制 / -1 复制失败 | g_show: 0 none / 1 pending / 2 shown; g_copied: 0 / 1 copied / -1 failed
 static _Atomic int g_copied_row; static _Atomic uint64_t g_copied_at;   // 哪一行的「复制」刚按过、何时（按钮字变「已复制 / 复制失败」2 秒） | which row's Copy was just pressed and when (the button reads Copied / Copy failed for 2 s)
-static _Atomic int g_copied_pan;   // 刚按的是第几条网盘的「复制」（< 0 = 渠道行） | which drive's Copy was just pressed (< 0 = a channel row)
-// 网盘「打开」前的确认态（用户 2026-11-04）：同一个框，标题换成「即将打开外部网站」、正文是域名，一颗「确定」（打开）与一颗「取消」；
-// g_confirm_pan 记住第几条，确定后走 dm_community_open_pan（唯一的打开入口，白名单仍在那里判），不论成败都回到普通态
-// Confirmation before opening a drive (user, 2026-11-04): the same box, title "Opening an external website", body the host name, one OK (open) and one Cancel;
-// g_confirm_pan remembers the index; OK goes through dm_community_open_pan (the only open entry, the whitelist still decides there); either way the normal state returns
-static _Atomic int g_confirm, g_confirm_pan, g_confirm_foc;   // g_confirm_foc：0 = 确定 / 1 = 取消 | 0 = OK / 1 = Cancel
-static _Atomic uint64_t g_open_fail_at;   // 上一次打开失败的时刻（免费声明行换成「无法打开链接」2 秒） | when opening last failed (the free-notice line reads Could not open the link for 2 s)
 // 弹窗吞输入（RC1.1 阻塞，用户 Duo 真机 80c0882：触屏点弹窗下半部穿透到底下暂停菜单、「确定」点不到；手柄左摇杆还在动左边的菜单）：弹窗开着（g_show ≠ 0）时
 //   触屏：dm_cursor.c 不再给游戏发鼠标消息，抬起那一下由 dm_community_ui_tap 用控件自己的命中判断只认两颗「复制」与「确定」，其余吞掉；拖动 / 滚动也不起；
 //   手柄：hle_hid.c 取手柄处最后经 dm_community_input_gate，键与两根摇杆全清零，方向键 / 左右摇杆上下变成焦点移动、A / B 留给弹窗。各自计数，收起时记一行（交给底层的应为 0）
@@ -101,7 +92,7 @@ void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx
     uint64_t down = *bt & ~prev; prev = *bt;
     int32_t vy = (*ly < 0 ? -*ly : *ly) >= (*ry < 0 ? -*ry : *ry) ? *ly : *ry;   // 两根摇杆取推得多的那根的上下 | up / down of whichever stick is pushed further
     uint64_t dir = dm_stick_nav_dirs(&nav, *lx, vy) & (DM_BTN_UP | DM_BTN_DOWN);   // 公共折算（dm_stick_nav.h：回滞、主轴）；左右在弹窗里无处可去 | shared conversion; left / right have nowhere to go in the box
-    uint64_t ev = down & (DM_BTN_A | DM_BTN_B | DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT);   // 方向键左右：网盘行里切「打开 / 复制」（摇杆左右仍无处可去） | D-pad left / right switch Open / Copy in a drive row (stick left / right still has nowhere to go)
+    uint64_t ev = down & (DM_BTN_A | DM_BTN_B | DM_BTN_UP | DM_BTN_DOWN);
     if (dir & ~pdir) { ev |= dir; atomic_fetch_add(&g_sw_stick, 1); }
     pdir = dir;
     if (down) atomic_fetch_add(&g_sw_key, 1);
@@ -110,7 +101,6 @@ void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx
 }
 void dm_community_input_leak(int leaked) { if (leaked && (atomic_load(&g_show) || atomic_load(&g_after))) atomic_fetch_add(&g_leak, 1); }   // 闸门之后（弹窗开着或关框后压住窗口里）还有非零输入交给游戏 | a non-zero input reached the game after the gate while the box was up or in the post-close window
 static int (*g_copy)(const char *);
-static int (*g_open)(const char *);   // 外壳登记的「用系统浏览器打开」回调（网盘链接专用；github / site / mirror 不走这里） | the shell's open-in-browser callback (cloud drives only; github / site / mirror never use it)
 static _Atomic unsigned g_copies;
 static _Atomic int g_from;   // 从哪里点开（只进日志）：1 暂停菜单 / 2 主菜单 / 3 自定义页 | which entry opened it (log only): 1 pause menu / 2 main menu / 3 Custom page
 static _Atomic int g_mode;   // 1 社区框（社区段 + 「关于」段）/ 2 纯「关于」框（版本 + 鸣谢，主菜单「关于」行） | 1 community box (community + About section) / 2 About-only box (version + credits, the main menu's About row)
@@ -133,18 +123,10 @@ static int gitee_ok(const char *s) {   // 规则同 gh_ok，前缀换 gitee；�
 // The website: only from the manifest / cache, never hard-coded; the contract is shared with the loading page (dm_site.h); invalid = absent (GitHub fallback)
 static void set_values(const char *qq, const char *gh, const char *site, const char *mirror) { pthread_mutex_lock(&g_cm_mu); snprintf(g_qq, sizeof g_qq, "%s", qq ? qq : ""); snprintf(g_gh, sizeof g_gh, "%s", gh ? gh : ""); snprintf(g_site, sizeof g_site, "%s", site ? site : ""); snprintf(g_mirror, sizeof g_mirror, "%s", mirror ? mirror : ""); pthread_mutex_unlock(&g_cm_mu); }
 static void get_values(char *qq, char *gh, char *site, char *mirror) { pthread_mutex_lock(&g_cm_mu); memcpy(qq, g_qq, sizeof g_qq); memcpy(gh, g_gh, sizeof g_gh); if (site) memcpy(site, g_site, sizeof g_site); if (mirror) memcpy(mirror, g_mirror, sizeof g_mirror); pthread_mutex_unlock(&g_cm_mu); }
-static void set_pans(const dm_pan_entry *p, int n) { if (n < 0) n = 0; if (n > DM_PAN_MAX) n = DM_PAN_MAX; pthread_mutex_lock(&g_cm_mu); g_n_pans = n; if (n) memcpy(g_pans, p, (size_t)n * sizeof *p); pthread_mutex_unlock(&g_cm_mu); }
-static int get_pans(dm_pan_entry out[DM_PAN_MAX]) { pthread_mutex_lock(&g_cm_mu); int n = g_n_pans; if (out) memcpy(out, g_pans, (size_t)n * sizeof *out); pthread_mutex_unlock(&g_cm_mu); return n; }
-// 缓存一行一个「键=值」；没有网盘时与旧版逐字节相同 | one "key=value" per line; byte-for-byte the old file when there are no cloud drives
-static int cache_write(const char *qq, const char *gh, const char *site, const char *mirror, const dm_pan_entry *pans, int n_pans) {
+static int cache_write(const char *qq, const char *gh, const char *site, const char *mirror) {
     char p[1100], t[1120]; if (!cache_path(p, sizeof p)) return 0;
     snprintf(t, sizeof t, "%s.tmp", p); FILE *f = fopen(t, "w"); if (!f) return 0;
     int ok = 1; if (qq[0]) ok &= fprintf(f, "qq_group=%s\n", qq) > 0; if (gh[0]) ok &= fprintf(f, "github=%s\n", gh) > 0; if (site[0]) ok &= fprintf(f, "site=%s\n", site) > 0; if (mirror && mirror[0]) ok &= fprintf(f, "mirror=%s\n", mirror) > 0;
-    for (int i = 0; pans && i < n_pans && i < DM_PAN_MAX; i++) {
-        ok &= fprintf(f, "pan%d_name=%s\n", i, pans[i].name) > 0;
-        ok &= fprintf(f, "pan%d_icon=%s\n", i, dm_pan_icon_key(pans[i].icon)) > 0;
-        ok &= fprintf(f, "pan%d_url=%s\n", i, pans[i].url) > 0;
-        if (pans[i].code[0]) ok &= fprintf(f, "pan%d_code=%s\n", i, pans[i].code) > 0; }
     ok = fclose(f) == 0 && ok; return ok && rename(t, p) == 0;
 }
 static void cache_delete(void) { char p[1100]; if (cache_path(p, sizeof p)) unlink(p); }
@@ -158,7 +140,6 @@ static void cache_delete(void) { char p[1100]; if (cache_path(p, sizeof p)) unli
 #define CR_NAME_MAX 32   // 鸣谢名字上限（字节） | credit name limit (bytes)
 #define CR_MAX 24        // 两份名单合计上限 | both lists together
 typedef struct { const char *p, *e; char qq[QQ_MAX + 1], gh[GH_MAX + 1], site[GH_MAX + 1], mirror[GH_MAX + 1]; int n_comm, n_qq, n_gh, n_site, n_mirror, bad_type, too_long;
-    dm_pan_entry pans[DM_PAN_MAX]; int n_pans, pan_n, pan_extra, pan_bad, bad_pans;   // pans：键出现次数 / 收下条数 / 第 5 条起丢弃数 / 坏条目数 / 整个键坏 | key occurrences / accepted / dropped past 4 / bad entries / the whole key bad
     char cr[CR_MAX][CR_NAME_MAX + 1]; int n_cr, n_special, n_thanks, n_credits, bad_credits; int n_tel, tel_bad, tel_has, tel_on; long long tel_until; char tel_reason[33]; } jp_t;   // credits：RC1 只解析、去重、计数进日志，不渲染不缓存（RC2 覆盖静态缺省） | credits: RC1 only parses, dedupes and logs counts; not rendered or cached (RC2 overrides the static default)
 static void js_ws(jp_t *j) { while (j->p < j->e && (*j->p == ' ' || *j->p == '\t' || *j->p == '\n' || *j->p == '\r')) j->p++; }
 static int js_hex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
@@ -207,49 +188,6 @@ static int js_names(jp_t *j, int depth, int which) {
         else { j->bad_credits = 1; if (!js_value(j, depth + 1, 0)) return 0; }
         js_ws(j); if (j->p >= j->e) return 0; if (*j->p == ']') { j->p++; return 1; } if (*j->p != ',') return 0; j->p++; js_ws(j); }
 }
-// community.pans 的一条（规则全在 dm_pan.h）：name / icon / url 必须有且合规，code 可选、不合规只丢 code；坏条目不报语法错、直接不要
-// One community.pans entry (all rules in dm_pan.h): name / icon / url are required and must pass; code is optional and an invalid one is just dropped; a bad entry is skipped, not a syntax error
-static int js_pan_entry(jp_t *j, int depth, dm_pan_entry *out, int *valid) {
-    if (depth > 16 || j->p >= j->e || *j->p != '{') return 0; j->p++; js_ws(j);
-    char name[DM_PAN_NAME_MAX + 1] = "", icon[16] = "", url[DM_PAN_URL_MAX + 1] = "", code[DM_PAN_CODE_MAX + 1] = "";
-    int hn = 0, hi = 0, hu = 0, hc = 0, dup = 0, bad_e = 0;
-    if (j->p < j->e && *j->p == '}') { j->p++; *valid = 0; return 1; }
-    for (;;) { char key[24]; int kesc = 0, kover = 0;
-        if (!js_string(j, key, sizeof key, &kesc, &kover)) return 0; if (kesc || kover) key[0] = 0;
-        js_ws(j); if (j->p >= j->e || *j->p != ':') return 0; j->p++; js_ws(j);
-        int is_name = !strcmp(key, "name"), is_icon = !strcmp(key, "icon"), is_url = !strcmp(key, "url"), is_code = !strcmp(key, "code");
-        if (is_name || is_icon || is_url || is_code) {
-            int *cnt = is_name ? &hn : is_icon ? &hi : is_url ? &hu : &hc; if (++*cnt > 1) dup = 1;
-            char *o = is_name ? name : is_icon ? icon : is_url ? url : code;
-            size_t on = is_name ? sizeof name : is_icon ? sizeof icon : is_url ? sizeof url : sizeof code;
-            if (j->p < j->e && *j->p == '"') { int esc = 0, over = 0; if (!js_string(j, o, on, &esc, &over)) return 0;
-                if (esc || over) { o[0] = 0; if (!is_icon && !is_code) bad_e = 1; } }
-            else { if (!js_value(j, depth + 1, 0)) return 0; if (is_name || is_url) bad_e = 1; }   // icon 非字符串 / code 非字符串：当没给 | a non-string icon / code counts as absent
-        } else if (!js_value(j, depth + 1, 0)) return 0;
-        js_ws(j); if (j->p >= j->e) return 0;
-        if (*j->p == '}') { j->p++; break; }
-        if (*j->p != ',') return 0; j->p++; js_ws(j); }
-    dm_pan_icon ic = dm_pan_icon_of(icon);
-    if (dup || bad_e || !hn || !hi || !hu || !dm_pan_name_ok(name) || !dm_pan_url_ok(ic, url)) *valid = 0;
-    else { memset(out, 0, sizeof *out); snprintf(out->name, sizeof out->name, "%s", name); out->icon = ic; snprintf(out->url, sizeof out->url, "%s", url); if (hc && dm_pan_code_ok(code)) snprintf(out->code, sizeof out->code, "%s", code); *valid = 1; }
-    return 1;
-}
-// community.pans：必须是数组（不是数组 = 整个键忽略，渠道照常）；元素必须是对象（否则整个键忽略）；第 5 条起只验语法、不要
-// community.pans: must be an array (not an array = the whole key is ignored, channels unaffected); elements must be objects (otherwise the whole key is ignored); the 5th on is parsed for syntax only and dropped
-static int js_pans(jp_t *j, int depth) {
-    if (depth > 16 || j->p >= j->e || *j->p != '[') { j->bad_pans = 1; return js_value(j, depth, 0); }
-    j->p++; js_ws(j);
-    if (j->p < j->e && *j->p == ']') { j->p++; return 1; }
-    int idx = 0;
-    for (;;) {
-        if (j->p < j->e && *j->p == '{') { dm_pan_entry e; memset(&e, 0, sizeof e); int valid = 0;
-            if (!js_pan_entry(j, depth + 1, &e, &valid)) return 0;
-            if (idx < DM_PAN_MAX) { if (valid) j->pans[j->pan_n++] = e; else j->pan_bad++; }
-            else j->pan_extra++; }
-        else { j->bad_pans = 1; if (!js_value(j, depth + 1, 0)) return 0; }
-        idx++; js_ws(j); if (j->p >= j->e) return 0;
-        if (*j->p == ']') { j->p++; return 1; } if (*j->p != ',') return 0; j->p++; js_ws(j); }
-}
 static int js_object(jp_t *j, int depth, int ctx) {
     if (depth > 16 || j->p >= j->e || *j->p != '{') return 0; j->p++; js_ws(j);
     if (j->p < j->e && *j->p == '}') { j->p++; return 1; }
@@ -258,7 +196,6 @@ static int js_object(jp_t *j, int depth, int ctx) {
         js_ws(j); if (j->p >= j->e || *j->p != ':') return 0; j->p++; js_ws(j);
         if (ctx == 1 && !strcmp(key, "community")) { j->n_comm++;
             if (j->p < j->e && *j->p == '{') { if (!js_object(j, depth + 1, 2)) return 0; } else { j->bad_type = 1; if (!js_value(j, depth + 1, 0)) return 0; } }
-        else if (ctx == 2 && !strcmp(key, "pans")) { j->n_pans++; if (!js_pans(j, depth + 1)) return 0; }
         else if (ctx == 2 && (!strcmp(key, "qq_group") || !strcmp(key, "github") || !strcmp(key, "site") || !strcmp(key, "mirror"))) { int gh = !strcmp(key, "github"), st = !strcmp(key, "site"), mi = !strcmp(key, "mirror");
             if (gh) j->n_gh++; else if (st) j->n_site++; else if (mi) j->n_mirror++; else j->n_qq++;
             if (j->p < j->e && *j->p == '"') { int esc = 0, over = 0; char *out = gh ? j->gh : st ? j->site : mi ? j->mirror : j->qq; size_t n = gh ? sizeof j->gh : st ? sizeof j->site : mi ? sizeof j->mirror : sizeof j->qq;
@@ -297,7 +234,7 @@ static int js_parse(jp_t *j, const char *json, size_t len, size_t *at) {
     int ok = j->p < j->e && *j->p == '{' && js_object(j, 1, 1); if (ok) { js_ws(j); ok = j->p == j->e; }
     *at = (size_t)(j->p - json); return ok;
 }
-static void drop_values(void) { set_values("", "", "", ""); set_pans(NULL, 0); cache_delete(); }   // 格式错 / 无字段：清内存与缓存 | malformed / absent: clear memory and cache
+static void drop_values(void) { set_values("", "", "", ""); cache_delete(); }   // 格式错 / 无字段：清内存与缓存 | malformed / absent: clear memory and cache
 
 static void tel_apply(const jp_t *j) { if (j->n_tel > 1 || j->tel_bad || (j->n_tel && !j->tel_has)) { dm_crashreport_switch_no_fetch(); return; } dm_crashreport_switch(j->n_tel && j->tel_has, j->tel_on, j->tel_until, j->tel_reason); }   // 坏字段不动缓存 | a bad field leaves the cache alone
 // 只取总开关（安卓自动上报前现拉的清单：不动社区入口的值） | the server switch only (the manifest Android fetches before an automatic report; community values untouched)
@@ -309,58 +246,31 @@ int dm_community_manifest(const char *json, size_t len) {
     jp_t j; size_t at; if (!js_parse(&j, json, len, &at)) { dm_crashreport_switch_no_fetch(); drop_values(); LOG("【红】社区入口：清单格式错（JSON 语法：第 %zu 字节附近），入口不显示（缓存已清）", at); return 0; }
     tel_apply(&j);
     if (j.n_comm == 0) { drop_values(); LOG("社区入口：清单无字段，入口不显示（缓存已清）"); return 0; }
-    if (j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1 || j.n_mirror > 1 || j.n_pans > 1) { drop_values(); LOG("【红】社区入口：清单格式错（community / qq_group / github / site / mirror 重复（含 pans）），入口不显示（缓存已清）"); return 0; }
+    if (j.n_comm > 1 || j.n_qq > 1 || j.n_gh > 1 || j.n_site > 1 || j.n_mirror > 1) { drop_values(); LOG("【红】社区入口：清单格式错（community / qq_group / github / site / mirror 重复），入口不显示（缓存已清）"); return 0; }
     int given = j.n_qq || j.n_gh || j.n_site || j.n_mirror;   // 给了渠道键（值合不合规另算） | channel keys are present (valid or not)
-    int given_pans = j.n_pans > 0, pans_ok = !j.bad_pans;   // pans 键给了 / 形状合规（不是数组或元素不是对象 = 整个键忽略） | the pans key is present / its shape is valid
-    if (j.bad_type && !given && !given_pans) { drop_values(); LOG("【红】社区入口：清单格式错（community 不是对象），入口不显示（缓存已清）"); return 0; }
+    if (j.bad_type && !given) { drop_values(); LOG("【红】社区入口：清单格式错（community 不是对象），入口不显示（缓存已清）"); return 0; }
     if (j.qq[0] && !qq_ok(j.qq)) j.qq[0] = 0; if (j.gh[0] && !gh_ok(j.gh)) j.gh[0] = 0; if (j.site[0] && !dm_site_ok(j.site)) j.site[0] = 0; if (j.mirror[0] && !gitee_ok(j.mirror)) j.mirror[0] = 0;
     int bad = (j.n_qq && !j.qq[0]) + (j.n_gh && !j.gh[0]) + (j.n_site && !j.site[0]) + (j.n_mirror && !j.mirror[0]);   // 给了键但没留下值，空串也算 | a key given with no value left, an empty string included
     if (!j.qq[0] && !j.gh[0] && !j.site[0] && !j.mirror[0]) {
         // 唯一的渠道无效不能清掉有效的旧缓存（外审 RC2-E-01）：只有 community 明确不带渠道才算撤下入口 | an invalid sole channel must not clear a good old cache (external review RC2-E-01): only a community with no channels withdraws the entry
         if (given) { LOG("【红】社区入口：清单格式错（%d 项不合规：群号须 5–12 位数字，链接须 https://github.com/ 开头，官网须 https:// + 主机名 + 可选路径、不带端口与 @ ? #、不超过 %d 字符，国内镜像须 https://gitee.com/ 开头、只含 URL 字符，都不带转义），沿用缓存（群号 %s，链接 %s，官网 %s%s%s）", bad, DM_SITE_MAX, qq[0] ? "有" : "无", gh[0] ? "有" : "无", site[0] ? "有" : "无", mirror[0] ? "，国内镜像 " : "", mirror[0] ? "有" : ""); return -1; }
-        if (given_pans) {   // 只有 pans：渠道 = 明确没有（清掉旧渠道），网盘照存；形状坏 / 条目全坏 → 沿用旧缓存；明确空数组 = 清掉 | pans only: channels are explicitly absent, pans are stored; a bad key / all entries bad keeps the old cache; an explicitly empty array clears
-            if (!pans_ok || (j.pan_n == 0 && j.pan_bad)) { LOG("【红】社区入口：清单 pans %s，沿用缓存", !pans_ok ? "须是数组且元素为对象" : "没有可用的条目"); return -1; }
-            if (j.pan_n == 0) { drop_values(); LOG("社区入口：清单 community 没有渠道也没有网盘，入口不显示（缓存已清）"); return 0; }
-            set_values("", "", "", ""); set_pans(j.pans, j.pan_n); int wr = cache_write("", "", "", "", j.pans, j.pan_n);
-            if (j.pan_bad || j.pan_extra) LOG("【红】社区入口：清单 pans 有 %d 条不合规、%d 条超出 4 条上限，已丢弃", j.pan_bad, j.pan_extra);
-            LOG("社区入口：清单有字段（只有网盘 %d 个）%s", j.pan_n, wr ? "" : "【红】缓存写不进设置目录");
-            return 1; }
         drop_values(); LOG("社区入口：清单 community 没有渠道，入口不显示（缓存已清）"); return 0; }
-    set_values(j.qq, j.gh, j.site, j.mirror); set_pans(pans_ok ? j.pans : NULL, pans_ok ? j.pan_n : 0);
-    int wr = cache_write(j.qq, j.gh, j.site, j.mirror, pans_ok ? j.pans : NULL, pans_ok ? j.pan_n : 0);
+    set_values(j.qq, j.gh, j.site, j.mirror); int wr = cache_write(j.qq, j.gh, j.site, j.mirror);
     if (j.n_credits > 1 || j.bad_credits) LOG("【红】社区入口：清单 credits 字段格式坏（%s），忽略（RC1 只计数不渲染）", j.n_credits > 1 ? "重复" : "须是 { special: [名字…], thanks: [名字…] }，名字 ≤ 32 字节、不带转义、合计 ≤ 24");
     LOG("社区入口：清单有字段 群号=%s 链接=%s 官网=%s%s%s%s%s credits=特别 %d / 鸣谢 %d", j.qq[0] ? j.qq : "无", j.gh[0] ? j.gh : "无", j.site[0] ? j.site : "无", j.mirror[0] ? " 国内镜像=" : "", j.mirror[0] ? j.mirror : "", bad ? "（另一项格式坏，已忽略）" : "", wr ? "" : "【红】缓存写不进设置目录", j.bad_credits || j.n_credits > 1 ? 0 : j.n_special, j.bad_credits || j.n_credits > 1 ? 0 : j.n_thanks);
-    if (given_pans) {   // 网盘另有日志，不改上面那行（没有 pans 时逐字节不变） | separate log for pans; the line above stays byte-for-byte without pans
-        if (!pans_ok) LOG("【红】社区入口：清单 pans 须是数组且元素为对象，整项已忽略");
-        else if (j.pan_bad || j.pan_extra) LOG("【红】社区入口：清单 pans 网盘 %d 个，另丢 %d 条不合规、%d 条超出 4 条上限（第 5 条起丢弃）", j.pan_n, j.pan_bad, j.pan_extra);
-        else LOG("社区入口：清单 网盘=%d", j.pan_n); }
     return 1;
 }
 static void cache_read(void) {
     char p[1100]; if (!cache_path(p, sizeof p)) { LOG("社区入口：没有设置目录，不读缓存"); return; }
     FILE *f = fopen(p, "r"); if (!f) { LOG("社区入口：没有缓存，入口不显示（等清单）"); return; }
     char ln[256], qq[QQ_MAX + 1] = "", gh[GH_MAX + 1] = "", site[GH_MAX + 1] = "", mirror[GH_MAX + 1] = "";
-    char pn[DM_PAN_MAX][DM_PAN_NAME_MAX + 1] = {{0}}, pi[DM_PAN_MAX][16] = {{0}}, pu[DM_PAN_MAX][DM_PAN_URL_MAX + 1] = {{0}}, pc[DM_PAN_MAX][DM_PAN_CODE_MAX + 1] = {{0}};
-    while (fgets(ln, sizeof ln, f)) { size_t n = strcspn(ln, "\r\n"); ln[n] = 0; int used = 0;
+    while (fgets(ln, sizeof ln, f)) { size_t n = strcspn(ln, "\r\n"); ln[n] = 0;
         if (!strncmp(ln, "qq_group=", 9) && qq_ok(ln + 9)) snprintf(qq, sizeof qq, "%s", ln + 9);
         else if (!strncmp(ln, "github=", 7) && gh_ok(ln + 7)) snprintf(gh, sizeof gh, "%s", ln + 7);
         else if (!strncmp(ln, "site=", 5) && dm_site_ok(ln + 5)) snprintf(site, sizeof site, "%s", ln + 5);
-        else if (!strncmp(ln, "mirror=", 7) && gitee_ok(ln + 7)) snprintf(mirror, sizeof mirror, "%s", ln + 7);
-        else for (int i = 0; i < DM_PAN_MAX && !used; i++) { char k[16]; int L;   // 网盘行：先原样收下，读完再按 dm_pan.h 逐字段校验 | pan lines: collected raw, validated per field after the read
-            snprintf(k, sizeof k, "pan%d_name=", i); L = (int)strlen(k); if (!strncmp(ln, k, (size_t)L)) { snprintf(pn[i], sizeof pn[i], "%s", ln + L); used = 1; continue; }
-            snprintf(k, sizeof k, "pan%d_icon=", i); L = (int)strlen(k); if (!strncmp(ln, k, (size_t)L)) { snprintf(pi[i], sizeof pi[i], "%s", ln + L); used = 1; continue; }
-            snprintf(k, sizeof k, "pan%d_url=", i); L = (int)strlen(k); if (!strncmp(ln, k, (size_t)L)) { snprintf(pu[i], sizeof pu[i], "%s", ln + L); used = 1; continue; }
-            snprintf(k, sizeof k, "pan%d_code=", i); L = (int)strlen(k); if (!strncmp(ln, k, (size_t)L)) { snprintf(pc[i], sizeof pc[i], "%s", ln + L); used = 1; continue; } } }
+        else if (!strncmp(ln, "mirror=", 7) && gitee_ok(ln + 7)) snprintf(mirror, sizeof mirror, "%s", ln + 7); }
     fclose(f); set_values(qq, gh, site, mirror);
-    dm_pan_entry ps[DM_PAN_MAX]; int np = 0;
-    for (int i = 0; i < DM_PAN_MAX; i++) {   // 读回时逐字段再过 dm_pan.h：name / url 坏 = 丢这一条，icon 认不出 = generic，code 坏 = 只丢 code | re-validate: a bad name / url drops the entry, an unknown icon is generic, a bad code is dropped
-        if (!dm_pan_name_ok(pn[i])) continue;
-        dm_pan_icon ic = dm_pan_icon_of(pi[i]);
-        if (!dm_pan_url_ok(ic, pu[i])) continue;
-        memset(&ps[np], 0, sizeof ps[np]); snprintf(ps[np].name, sizeof ps[np].name, "%s", pn[i]); ps[np].icon = ic; snprintf(ps[np].url, sizeof ps[np].url, "%s", pu[i]); if (dm_pan_code_ok(pc[i])) snprintf(ps[np].code, sizeof ps[np].code, "%s", pc[i]); np++; }
-    set_pans(ps, np);
     LOG("社区入口：缓存 群号=%s 链接=%s 官网=%s%s%s", qq[0] ? qq : "无", gh[0] ? gh : "无", site[0] ? site : "无", mirror[0] ? " 国内镜像=" : "", mirror[0] ? mirror : "");
-    if (np) LOG("社区入口：缓存 网盘=%d", np);   // 没有网盘时日志与旧版逐字节相同 | byte-for-byte the old log when there are no cloud drives
 }
 void dm_community_load(void) {
     if (atomic_exchange(&g_loaded_cm, 1)) return;
@@ -425,95 +335,26 @@ int dm_community_fit(char *s, size_t cap, int pt, int maxw) {
     return 1;
 }
 static const char *co_ch_key(int ch) { return ch == DM_CH_QQ ? "dmCommunityLabelQq" : ch == DM_CH_SITE ? "dmCommunityLabelSite" : ch == DM_CH_MIRROR ? "dmCommunityLabelMirror" : "dmCommunityLabelGithub"; }
-// 手柄焦点链：渠道卡各自的「复制」→ 每条网盘的「打开」→（这一条有提取码才跟一颗「复制」）→ 下一行 … → 「确定」；上下移不循环，左右在同一行里切「打开 / 复制」
-// Controller focus chain: each channel card's Copy -> each drive's Open -> (the same row's Copy only when it has a code) -> next row ... -> OK; up / down do not wrap, left / right switch Open / Copy within a row
-enum { CO_F_CH = 0, CO_F_PAN_OPEN = 1, CO_F_PAN_COPY = 2, CO_F_OK = 3 };
-typedef struct { int kind, idx; } co_foc_t;
-#define CO_FOC_MAX (CO_ROWS + 2 * DM_PAN_MAX + 1)
-static int co_focus_build(int n, const dm_pan_entry *pans, int np, co_foc_t *out, int max) {
-    int m = 0;
-    for (int k = 0; k < n; k++) { if (m < max) out[m].kind = CO_F_CH, out[m].idx = k; m++; }
-    for (int p = 0; p < np; p++) {
-        if (m < max) out[m].kind = CO_F_PAN_OPEN, out[m].idx = p; m++;
-        if (pans && pans[p].code[0]) { if (m < max) out[m].kind = CO_F_PAN_COPY, out[m].idx = p; m++; } }
-    if (m < max) out[m].kind = CO_F_OK, out[m].idx = 0; m++;
-    return m;
-}
-static int co_focus_toggle(const co_foc_t *fl, int nf, int foc, int dir) {   // 左右只在同一行网盘的「打开 / 复制」之间切，别处不动 | left / right only switch between a drive row's Open / Copy, nowhere else
-    int d = foc + dir; if (!fl || d < 0 || d >= nf) return foc;
-    int a = fl[foc].kind, b = fl[d].kind;
-    if (fl[foc].idx != fl[d].idx) return foc;   // 只在同一行里切 | only within the same row
-    return ((a == CO_F_PAN_OPEN && b == CO_F_PAN_COPY) || (a == CO_F_PAN_COPY && b == CO_F_PAN_OPEN)) ? d : foc;
-}
-int dm_community_pans(dm_pan_entry out[DM_PAN_MAX]) { return get_pans(out); }
 int dm_community_available(void) { return dm_community_value(dm_lang_group(), NULL, 0) != 0; }
 void dm_community_open(int from) {   // from：1 暂停菜单 / 2 主菜单 / 3 自定义页按钮 / 4 自定义页手柄 A | from: 1 pause menu / 2 main menu / 3 Custom page button / 4 Custom page controller A
     if (!dm_community_available()) { LOG("【红】社区入口：点了「加入社区讨论」（%s）但当前语言没有可显示的值", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页"); return; }
     atomic_store(&g_sw_touch, 0); atomic_store(&g_sw_key, 0); atomic_store(&g_sw_stick, 0); atomic_store(&g_leak, 0); atomic_store(&g_md_ev, 0);
-    atomic_store(&g_copied, 0); atomic_store(&g_copied_at, 0); atomic_store(&g_copied_pan, -1); atomic_store(&g_confirm, 0); atomic_store(&g_confirm_pan, -1); atomic_store(&g_confirm_foc, 0); atomic_store(&g_open_fail_at, 0);
-    atomic_store(&g_from, from >= 3 ? 3 : from); atomic_store(&g_mode, 1); atomic_store(&g_show, 1); LOG("社区入口：点了「加入社区讨论」（%s%s）", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页", from == 4 ? "手柄 A" : "");
+    atomic_store(&g_copied, 0); atomic_store(&g_copied_at, 0); atomic_store(&g_from, from >= 3 ? 3 : from); atomic_store(&g_mode, 1); atomic_store(&g_show, 1); LOG("社区入口：点了「加入社区讨论」（%s%s）", from == 1 ? "暂停菜单" : from == 2 ? "主菜单" : "自定义页", from == 4 ? "手柄 A" : "");
 }
 void dm_community_open_about(void) {   // 主菜单「关于」行：只有版本 + 鸣谢的框，没有社区值也开 | the main menu's About row: the version + credits box, opens without a community value too
-    atomic_store(&g_copied, 0); atomic_store(&g_copied_at, 0); atomic_store(&g_copied_pan, -1); atomic_store(&g_confirm, 0); atomic_store(&g_confirm_pan, -1); atomic_store(&g_confirm_foc, 0);
-    atomic_store(&g_from, 2); atomic_store(&g_mode, 2); atomic_store(&g_show, 1); LOG("社区入口：点了「关于」（主菜单）");
+    atomic_store(&g_copied, 0); atomic_store(&g_copied_at, 0); atomic_store(&g_from, 2); atomic_store(&g_mode, 2); atomic_store(&g_show, 1); LOG("社区入口：点了「关于」（主菜单）");
 }
 void dm_community_copy_init(int (*cb)(const char *)) { g_copy = cb; }
 unsigned dm_community_copy_count(void) { return atomic_load(&g_copies); }
-void dm_community_open_init(int (*cb)(const char *url)) { g_open = cb; }
-// 外壳打开前的第二道复核（iOS / Mac 调）：https 且是四家网盘之一的分享前缀（dm_pan.h，generic 同一张白名单）；mirror / github / site / http / javascript: 一律 0
-// second check in the shells before opening (iOS / Mac call it): https on one of the four drives' share prefixes (dm_pan.h, the generic whitelist); mirror / github / site / http / javascript: are all 0
-int dm_community_url_openable(const char *url) { return url && dm_pan_url_ok(DM_PAN_GENERIC, url); }
-// 打开外部链接的唯一入口（网盘卡下一张卡接上界面后用）：取第 idx 条网盘，打开前用 dm_pan_open_allowed 做最终判定——方案 https、仍是所属网盘的前缀、主机名非空；
-// 越界 / 没登记回调 / 不合规一律返回 0 并记一行【红】，不调回调。github / site / mirror 仍只复制，不经这里。
-// The only way to open an external link (the cloud-drive cards will call it from the next card): take drive idx and run dm_pan_open_allowed as the final check -- https scheme, still the
-// provider's own prefix, non-empty host; out of range / no callback / invalid all return 0 with one red log line and never call the callback. github / site / mirror stay copy-only.
-int dm_community_open_pan(int idx) {
-    dm_pan_entry pans[DM_PAN_MAX]; int n = dm_community_pans(pans);
-    if (idx < 0 || idx >= n) { LOG("【红】社区入口：打开网盘失败（第 %d 条不存在，共 %d 条）", idx + 1, n); return 0; }
-    if (!g_open) { LOG("【红】社区入口：打开网盘失败（外壳没登记打开回调）"); return 0; }
-    if (!dm_pan_open_allowed(&pans[idx])) { LOG("【红】社区入口：打开网盘失败（第 %d 条链接不合规：只接受所属网盘的 https 地址）", idx + 1); return 0; }
-    return g_open(pans[idx].url);
-}
 int dm_community_shown(void) { return atomic_load(&g_show) == 2 || dm_savemgr_modal(); }
 static uint64_t co_now(void) { return clock_gettime_nsec_np(CLOCK_MONOTONIC); }
 static void do_copy(int by, int row) {   // by：1 点按钮 / 2 手柄 A；row：第几行渠道 | by: 1 button / 2 controller A; row: channel row
     int ch[3], n = dm_community_channels(dm_lang_group(), ch); char v[GH_MAX + 1] = "";
-    atomic_store(&g_copied_row, row); atomic_store(&g_copied_pan, -1); atomic_store(&g_copied_at, co_now());
+    atomic_store(&g_copied_row, row); atomic_store(&g_copied_at, co_now());
     if (row < 0 || row >= n || !dm_community_channel_value(ch[row], v, sizeof v, NULL, 0)) { atomic_store(&g_copied, -1); LOG("【红】社区入口：复制失败（第 %d 行没有可复制的值）", row + 1); return; }
     int ok = g_copy ? g_copy(v) : 0;
     if (ok) { atomic_fetch_add(&g_copies, 1); atomic_store(&g_copied, 1); LOG("社区入口：复制 %s %s（%s）", ch[row] == DM_CH_QQ ? "群号" : ch[row] == DM_CH_SITE ? "官网" : ch[row] == DM_CH_MIRROR ? "国内镜像" : "GitHub", v, by == 2 ? "手柄 A" : "点按钮"); }   // 日志标签按渠道内联，避免上屏字面量闸门误判（日志本身不上屏） | log labels inline by channel so the on-screen literal gate does not mistake them (logs never reach the screen)
     else { atomic_store(&g_copied, -1); LOG("【红】社区入口：复制失败（%s；%s）", g_copy ? "剪贴板回调返回失败" : "外壳没登记剪贴板回调", by == 2 ? "手柄 A" : "点按钮"); }
-}
-// 网盘行的「复制」：复制提取码（4–8 位字母或数字），按钮字与渠道行同一套「已复制 / 复制失败」2 秒；不提提取码本身进日志
-// A drive row's Copy: copies the extraction code (4-8 letters or digits); the same 2-second Copied / Copy failed text as the channel rows; the code itself never goes to the log
-static void do_copy_code(int by, int pan) {
-    dm_pan_entry pans[DM_PAN_MAX]; int n = dm_community_pans(pans);
-    atomic_store(&g_copied_pan, pan); atomic_store(&g_copied_row, -1); atomic_store(&g_copied_at, co_now());
-    if (pan < 0 || pan >= n || !pans[pan].code[0]) { atomic_store(&g_copied, -1); LOG("【红】社区入口：复制失败（第 %d 条网盘没有提取码）", pan + 1); return; }
-    int ok = g_copy ? g_copy(pans[pan].code) : 0;
-    if (ok) { atomic_fetch_add(&g_copies, 1); atomic_store(&g_copied, 1); LOG("社区入口：复制 网盘提取码（第 %d 条，%s）", pan + 1, by == 2 ? "手柄 A" : "点按钮"); }
-    else { atomic_store(&g_copied, -1); LOG("【红】社区入口：复制失败（%s；%s）", g_copy ? "剪贴板回调返回失败" : "外壳没登记剪贴板回调", by == 2 ? "手柄 A" : "点按钮"); }
-}
-// 打开网盘前的确认：只记第几条、进确认态；链接合不合规留给 dm_community_open_pan 的最终判定（那里的白名单一个字不改）
-// Confirmation before opening a drive: only remember the index and enter the confirm state; whether the link passes is left to dm_community_open_pan's final check (its whitelist is untouched)
-static void co_pan_request(int pan) {
-    dm_pan_entry pans[DM_PAN_MAX]; int n = dm_community_pans(pans);
-    if (pan < 0 || pan >= n) { LOG("【红】社区入口：打开网盘失败（第 %d 条不存在，共 %d 条）", pan + 1, n); return; }
-    char host[64]; dm_pan_host(pans[pan].url, host, sizeof host);
-    atomic_store(&g_confirm_pan, pan); atomic_store(&g_confirm_foc, 0); atomic_store(&g_confirm, 1);
-    LOG("社区入口：请确认打开外部网站（第 %d 条，%s）", pan + 1, host[0] ? host : "没有主机名");
-}
-static void co_confirm_ok(int by) {
-    if (!atomic_load(&g_confirm)) return;
-    int pan = atomic_load(&g_confirm_pan); atomic_store(&g_confirm, 0);
-    int ok = dm_community_open_pan(pan);
-    if (!ok) atomic_store(&g_open_fail_at, co_now());
-    LOG("社区入口：确认打开外部网站（第 %d 条，%s）→ %s", pan + 1, by == 2 ? "手柄 A" : "点确定", ok ? "已交给系统浏览器" : "失败，回到普通态");
-}
-static void co_confirm_cancel(void) {
-    if (!atomic_load(&g_confirm)) return;
-    atomic_store(&g_confirm, 0); atomic_store(&g_confirm_pan, -1);
-    LOG("社区入口：取消打开外部网站，回到普通态");
 }
 void dm_community_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c 转来，游戏主线程） | UI message callback (forwarded from diag.c, game main thread)
     if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return;
@@ -522,10 +363,7 @@ void dm_community_on_uimsg(const char *cat, const char *act, const char *arg) { 
     else if (!strcmp(arg, "TouchCommunityOpt")) dm_community_open(3);   // 自定义页「查看」 | Custom page View
     else if (!strcmp(arg, "TouchAbout")) dm_community_open_about();      // 主菜单「关于」 | main-menu About
     else if (!strncmp(arg, "TouchCommCopy", 13) && (!arg[13] || ((arg[13] >= '0' && arg[13] <= '2') && !arg[14])) && atomic_load(&g_show) == 2) do_copy(1, arg[13] ? arg[13] - '0' : 0);   // 各行的小「复制」（不带行号 = 第一行） | each row's Copy (no index = row 1)
-    else if (!strncmp(arg, "TouchCommPanOpen", 16) && arg[16] >= '0' && arg[16] <= '3' && !arg[17] && atomic_load(&g_show) == 2 && atomic_load(&g_mode) == 1) co_pan_request(arg[16] - '0');   // 网盘行「打开」→ 确认态 | a drive row's Open -> confirm state
-    else if (!strncmp(arg, "TouchCommPanCopy", 16) && arg[16] >= '0' && arg[16] <= '3' && !arg[17] && atomic_load(&g_show) == 2 && atomic_load(&g_mode) == 1) do_copy_code(1, arg[16] - '0');   // 网盘行「复制」提取码 | a drive row's Copy (the code)
-    else if (!strcmp(arg, "TouchCommCancel") && atomic_load(&g_show) == 2) co_confirm_cancel();   // 确认态的「取消」 | the confirm state's Cancel
-    else if (!strcmp(arg, "TouchCommOk") && atomic_load(&g_show) == 2) { if (atomic_load(&g_confirm)) co_confirm_ok(1); else atomic_store(&g_ack, 1); }   // 确认态 = 打开；普通态 = 收起 | confirm = open; normal = dismiss
+    else if (!strcmp(arg, "TouchCommOk") && atomic_load(&g_show) == 2) atomic_store(&g_ack, 1);   // 1 点按钮 / 2 手柄 B（只进日志） | 1 button / 2 controller B (log only)
 }
 
 // ---- 鸣谢（提示框页脚；RC1.1 B008 起自定义页不再另有一块，用户 2026-10-28 定拼行规则）：名字放代码缺省常量（RC2 由清单 credits 覆盖），宿主按语言拼行：每行 ≤ 4 名且估算宽 ≤ 44 单位（原名单框 36 号 × 0.7 ≈ 25 单位 / 字，框 1110），
@@ -631,42 +469,20 @@ void co_origin(uint64_t p, int xr, int *ox, int *oy, float *s) {
 #define CO_LABEL_W 260
 #define CO_VALUE_X (-420)
 #define CO_VALUE_W (CO_CARD_W / 2 - 30 - CO_BTN_W - 30 - CO_VALUE_X)   // 值列：起点 −420，到小按钮左边留 30 | value column: from −420 to 30 left of the small button
-typedef struct { int n, np, h, btn_y, div_y, free_y, foot_y[2], card_y[CO_ROWS], pan_y[DM_PAN_MAX]; } co_geom_t;
-// 网盘行接在渠道卡下面、免费声明上面，行高 100、行距 120，与渠道卡完全同一种间距；np = 0 时每个字段都与旧版逐字节相同
-// Drive rows follow the channel cards and precede the free notice, 100 high at a 120 pitch, exactly the channel cards' spacing; with np = 0 every field is byte-for-byte the old one
-static co_geom_t co_geom_pans(int n, int np) {
-    co_geom_t g = { 0 }; if (n < 0) n = 0; if (n > CO_ROWS) n = CO_ROWS; if (np < 0) np = 0; if (np > DM_PAN_MAX) np = DM_PAN_MAX; g.n = n; g.np = np;
+typedef struct { int n, h, btn_y, div_y, free_y, foot_y[2], card_y[CO_ROWS]; } co_geom_t;
+static co_geom_t co_geom(int n) {
+    co_geom_t g = { 0 }; if (n < 0) n = 0; if (n > CO_ROWS) n = CO_ROWS; g.n = n;
     for (int k = 0; k < n; k++) g.card_y[k] = 130 + 120 * k;
-    for (int p = 0; p < np; p++) g.pan_y[p] = 130 + 120 * (n + p);
-    g.free_y = 140 + 120 * (n + np); g.div_y = g.free_y + 80; g.foot_y[0] = g.div_y + 30; g.foot_y[1] = g.foot_y[0] + 48;
+    g.free_y = 140 + 120 * n; g.div_y = g.free_y + 80; g.foot_y[0] = g.div_y + 30; g.foot_y[1] = g.foot_y[0] + 48;
     g.btn_y = g.foot_y[1] + 30 + 28 / 2 + CO_GAP; g.h = g.btn_y + 115 + 45;
     return g;
-}
-static co_geom_t co_geom(int n) { return co_geom_pans(n, 0); }   // 旧调用口径（没有网盘） | the old call shape (no drives)
-// 网盘行的横向位置（框内面板单位，cx = 框中心）：图标方框 72×72、名称 400 宽、提取码 280 宽，右侧「打开」「复制」两颗小按钮各 293 宽、间隔 20
-// Horizontal positions of a drive row (panel units inside the box, cx = box centre): a 72x72 icon square, a 400-wide name, a 280-wide code, and the Open / Copy small buttons at 293 each with a 20 gap
-#define CO_PAN_ICON 72
-static void co_pan_x(int cx, int *icon, int *name, int *code, int *open, int *copy) {
-    int cl = cx - CO_CARD_W / 2, bx = cl + CO_CARD_W - 30 - CO_BTN_W;
-    if (copy) *copy = bx; if (open) *open = bx - 20 - CO_BTN_W;
-    if (icon) *icon = cl + 30; if (name) *name = cl + 122; if (code) *code = cl + 542;
 }
 static const char *const k_co_names[] = { "TouchCommTitle", "TouchCommLabel0", "TouchCommLabel1", "TouchCommLabel2", "TouchCommValue0", "TouchCommValue1", "TouchCommValue2",
     "TouchCommCopy0", "TouchCommCopy1", "TouchCommCopy2", "TouchCommCopyText0", "TouchCommCopyText1", "TouchCommCopyText2",
     "TouchCommCard0T", "TouchCommCard0B", "TouchCommCard0L", "TouchCommCard0R", "TouchCommCard1T", "TouchCommCard1B", "TouchCommCard1L", "TouchCommCard1R",
     "TouchCommCard2T", "TouchCommCard2B", "TouchCommCard2L", "TouchCommCard2R",
-    "TouchCommPanBox0T", "TouchCommPanBox0B", "TouchCommPanBox0L", "TouchCommPanBox0R", "TouchCommPanIcon0", "TouchCommPanName0", "TouchCommPanOpen0", "TouchCommPanCode0", "TouchCommPanCopy0", "TouchCommPanCopyText0",
-    "TouchCommPanBox1T", "TouchCommPanBox1B", "TouchCommPanBox1L", "TouchCommPanBox1R", "TouchCommPanIcon1", "TouchCommPanName1", "TouchCommPanOpen1", "TouchCommPanCode1", "TouchCommPanCopy1", "TouchCommPanCopyText1",
-    "TouchCommPanBox2T", "TouchCommPanBox2B", "TouchCommPanBox2L", "TouchCommPanBox2R", "TouchCommPanIcon2", "TouchCommPanName2", "TouchCommPanOpen2", "TouchCommPanCode2", "TouchCommPanCopy2", "TouchCommPanCopyText2",
-    "TouchCommPanBox3T", "TouchCommPanBox3B", "TouchCommPanBox3L", "TouchCommPanBox3R", "TouchCommPanIcon3", "TouchCommPanName3", "TouchCommPanOpen3", "TouchCommPanCode3", "TouchCommPanCopy3", "TouchCommPanCopyText3",
-    "TouchCommPanInkQuark", "TouchCommPanInkBaidu", "TouchCommPanInkAliyun", "TouchCommPanInkP123", "TouchCommPanInkGeneric",
-    "TouchCommConfirmText", "TouchCommCancel",
     "TouchCommFree", "TouchCommDivider", "TouchCommFoot0", "TouchCommFoot0R", "TouchCommFoot1", "TouchCommOk", "TouchCommFocusT", "TouchCommFocusB", "TouchCommFocusL", "TouchCommFocusR" };
-// 第三行渠道控件（布局未更新时可以缺）：只认渠道卡自己的名字——不能按「名字以 2 结尾」判，那会把网盘第 3 行（TouchCommPan…2）也算成可选
-// Third channel-row widgets (may be missing on an older layout): only the channel card's own names -- not "ends with 2", which would treat drive row 3 (TouchCommPan...2) as optional
-static int co_row2(const char *nm) {
-    return !strncmp(nm, "TouchCommLabel2", 15) || !strncmp(nm, "TouchCommValue2", 15) || !strncmp(nm, "TouchCommCopy2", 14) || !strncmp(nm, "TouchCommCopyText2", 18) || !strncmp(nm, "TouchCommCard2", 14);
-}
+static int co_row2(const char *nm) { size_t n = strlen(nm); return (n && nm[n - 1] == '2') || strstr(nm, "Card2") != NULL; }   // 第三行控件（布局未更新时可以缺） | third-row widgets (may be missing on an older layout)
 #define CO_NNAMES (int)(sizeof k_co_names / sizeof *k_co_names)
 static void co_hide_all(uint8_t *b, uint64_t p) {
     for (int k = 0; k < 15; k++) { char nm[24]; snprintf(nm, sizeof nm, "TouchCommTile%d%d", k / 3, k % 3); uint64_t t = co_find(p, nm, 0); if (t) { int32_t *r = (int32_t *)(t + 0x70); r[0] = r[1] = 99999; } }   // 边框片挪出屏幕（尺寸不动） | tiles off screen (size unchanged)
@@ -692,14 +508,6 @@ void co_rect_lines(uint8_t *b, uint64_t p, const char *pre, const char *fh, cons
     snprintf(nm, sizeof nm, "%sR", pre); co_line(b, co_find(p, nm, 0), fv, x + wd - t, y, t, ht);
 }
 void co_rect_hide(uint64_t p, const char *pre) { static const char sfx[4] = { 'T', 'B', 'L', 'R' }; for (int k = 0; k < 4; k++) { char nm[32]; snprintf(nm, sizeof nm, "%s%c", pre, sfx[k]); uint64_t w = co_find(p, nm, 0); if (w) { int32_t *r = (int32_t *)(w + 0x70); r[0] = r[1] = 99999; } } }
-// 图标首字的颜色：从布局里同色票的样片控件抄字色（+0xbc，RGBA）过来，不在这里写 RGB；改完同 co_text 一样调一次重算（+0xad c434）
-// The icon glyph's colour: copied from the same-token swatch widget in the layout (text colour at +0xbc, RGBA), no RGB written here; then the same recompute as co_text (b + 0xadc434)
-static void co_ink(uint8_t *b, uint64_t w, uint64_t sw) {
-    if (!w || !sw) return;
-    uint8_t *d = (uint8_t *)w + 0xbc, *s = (uint8_t *)sw + 0xbc;
-    if (!memcmp(d, s, 12)) return;
-    memcpy(d, s, 12); ((void (*)(uint64_t))(b + 0xadc434))(w);
-}
 // 社区段与「关于」段之间的分隔线（用户 2026-10-29：「关于」子标题换成分隔线）：原版设置页分节同一张图 PauseMenu\Divider，共享精灵不改尺寸——
 // 只读它的图宽（精灵 +0xd0，同 co_tile 的偏移）按框中线居中；读不到就按 1500 估。核过是图片控件、名字对才摆
 // Divider between the community and About sections (user, 2026-10-29: replaces the About sub-title): the original settings-section image PauseMenu\Divider, a shared sprite never resized --
@@ -733,81 +541,33 @@ const char *dm_update_label(void);   // dm_update.c：显示版本「1.0.0+N · 
 // So the widgets' own hit test still goes first; on a miss the drawn geometry decides: each channel row spans the box's width with no gap between rows, the first row reaches 70 further up,
 // OK is widened by 60 / 50. The pump records the geometry it actually placed (panel units) every frame; the tap converts game-window pixels back to panel units (checked against a 2622x1206
 // Mac host screenshot: the computed button centres match the picture)
-typedef struct { int valid, vh, ox, oy, n, bx0, bx1, card_y[CO_ROWS], ok_x, ok_y, ok_w, ok_h; float s;
-    int np, pan_y[DM_PAN_MAX], pan_open_x, pan_copy_x, confirm, cancel_x, cancel_y, cancel_w, cancel_h; } co_tapgeo_t;   // 新字段都排在 s 之后：旧的定长初始化照旧有效 | the new fields follow s, so the old positional initializer still holds
+typedef struct { int valid, vh, ox, oy, n, bx0, bx1, card_y[CO_ROWS], ok_x, ok_y, ok_w, ok_h; float s; } co_tapgeo_t;
 static co_tapgeo_t g_tapgeo;
-static int co_tap_zone(const co_tapgeo_t *g, int x, int y) {   // 返回 0 / 1 / 2 = 第几行「复制」，3 = 「确定」，100 + 2p = 第 p 条「打开」，101 + 2p = 第 p 条「复制」，200 = 「取消」，-1 = 都不是
-    if (!g || !g->valid || g->vh <= 0 || !(g->s > 0.05f)) return -1;   // 0 / 1 / 2 = that channel row's Copy, 3 = OK, 100 + 2p = drive p's Open, 101 + 2p = drive p's Copy, 200 = Cancel, -1 = none
+static int co_tap_zone(const co_tapgeo_t *g, int x, int y) {   // 返回 0 / 1 / 2 = 第几行「复制」，3 = 「确定」，-1 = 都不是 | 0 / 1 / 2 = that row's Copy, 3 = OK, -1 = none
+    if (!g || !g->valid || g->vh <= 0 || !(g->s > 0.05f)) return -1;
     float u = (float)x * 2160 / g->vh, v = (float)y * 2160 / g->vh, lx = (u - g->ox) / g->s, ly = (v - g->oy) / g->s;
     if (lx >= g->ok_x - 60 && lx <= g->ok_x + g->ok_w + 60 && ly >= g->ok_y - 50 && ly <= g->ok_y + g->ok_h + 50) return 3;
-    if (g->confirm) { if (lx >= g->cancel_x - 60 && lx <= g->cancel_x + g->cancel_w + 60 && ly >= g->cancel_y - 50 && ly <= g->cancel_y + g->cancel_h + 50) return 200; return -1; }
     if (lx < g->bx0 || lx > g->bx1) return -1;
     for (int k = 0; k < g->n && k < CO_ROWS; k++) if (ly >= g->card_y[k] - (k ? 10 : 70) && ly <= g->card_y[k] + 110) return k;
-    for (int p = 0; p < g->np && p < DM_PAN_MAX; p++) if (ly >= g->pan_y[p] - 10 && ly <= g->pan_y[p] + 110)   // 网盘行：整行算「打开」，只有右侧「复制」那一块算复制 | the whole row opens; only the Copy block on its right copies
-        return lx >= g->pan_copy_x - 60 ? 101 + 2 * p : 100 + 2 * p;
     return -1;
 }
 // 触屏点在弹窗上（dm_cursor.c 在弹窗开着时不发鼠标消息，抬起那一下转到这里）：用控件自己的命中判断（虚表 +0x48，同 dm_cursor.c 删除角色弹窗的「是」）只认两颗「复制」与「确定」；
 // x / y = 游戏窗口像素（与 dm_cursor.c 发鼠标消息同一坐标）。其余位置一律吞掉。游戏主线程
 // A tap while the box is up (dm_cursor.c sends no mouse messages then and hands the lift here): the widgets' own hit test (vtable +0x48, as the delete-character Yes in dm_cursor.c) for the two Copy buttons and OK only;
 // x / y = game window pixels (the coordinates dm_cursor.c sends mouse messages in). Anything else is swallowed. Game main thread
-static int co_hit(uint64_t w, uint64_t xy) {   // 控件在屏上且自己的命中判断中（虚表 +0x48） | on screen and its own hit test (vtable +0x48) hits
-    if (!w || ((int32_t *)(w + 0x70))[0] == 99999) return 0;
-    return ((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, xy) & 1;
-}
 void dm_community_ui_tap(uint64_t root, int x, int y) {
     if (dm_crashfence_modal()) { dm_crashfence_ui_tap(root, x, y); return; }
     if (dm_savemgr_modal()) { dm_savemgr_ui_tap(root, x, y); return; }
     atomic_fetch_add(&g_sw_touch, 1);
     int which = 0; uint64_t p = root ? co_host(root, &which) : 0; if (!p || atomic_load(&g_show) != 2) return;
     uint64_t xy = (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)y << 32;
-    if (atomic_load(&g_confirm)) {   // 确认态：只认「确定」（打开）与「取消」 | confirm state: only OK (open) and Cancel
-        if (co_hit(co_find(p, "TouchCommOk", 0), xy)) { LOG("社区入口：弹窗开着时点按 (%d,%d) → 确定（确认态，打开）", x, y); co_confirm_ok(1); return; }
-        if (co_hit(co_find(p, "TouchCommCancel", 0), xy)) { LOG("社区入口：弹窗开着时点按 (%d,%d) → 取消（确认态）", x, y); co_confirm_cancel(); return; }
-    } else {
-        int ch[3], n = dm_community_channels(dm_lang_group(), ch), nrows = n < CO_ROWS ? n : CO_ROWS;
-        char nm[32];
-        for (int k = 0; k < nrows; k++) { snprintf(nm, sizeof nm, "TouchCommCopy%d", k); if (co_hit(co_find(p, nm, 0), xy)) { LOG("社区入口：弹窗开着时点按 (%d,%d) → 第 %d 行复制", x, y, k + 1); do_copy(1, k); return; } }
-        dm_pan_entry pans[DM_PAN_MAX]; int np = atomic_load(&g_mode) == 1 ? dm_community_pans(pans) : 0;
-        for (int q = 0; q < np; q++) { snprintf(nm, sizeof nm, "TouchCommPanOpen%d", q); if (co_hit(co_find(p, nm, 0), xy)) { LOG("社区入口：弹窗开着时点按 (%d,%d) → 第 %d 条网盘打开（确认态）", x, y, q + 1); co_pan_request(q); return; }
-            if (pans[q].code[0]) { snprintf(nm, sizeof nm, "TouchCommPanCopy%d", q); if (co_hit(co_find(p, nm, 0), xy)) { LOG("社区入口：弹窗开着时点按 (%d,%d) → 第 %d 条网盘复制", x, y, q + 1); do_copy_code(1, q); return; } } }
-        if (co_hit(co_find(p, "TouchCommOk", 0), xy)) { LOG("社区入口：弹窗开着时点按 (%d,%d) → 确定", x, y); atomic_store(&g_ack, 1); return; }
-    }
+    static const char *const nm[4] = { "TouchCommCopy0", "TouchCommCopy1", "TouchCommCopy2", "TouchCommOk" };
+    for (int k = 0; k < 4; k++) { uint64_t w = co_find(p, nm[k], 0); if (!w || ((int32_t *)(w + 0x70))[0] == 99999) continue;
+        if (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x48))(w, xy) & 1) { LOG("社区入口：弹窗开着时点按 (%d,%d) → %s", x, y, k == 3 ? "确定" : k == 2 ? "第 3 行复制" : k ? "第 2 行复制" : "第 1 行复制"); if (k < 3) do_copy(1, k); else atomic_store(&g_ack, 1); return; } }
     { int z = co_tap_zone(&g_tapgeo, x, y);   // 放宽的命中区（B058） | the widened hit areas (B058)
-      if (z >= 0) { LOG("社区入口：弹窗开着时点按 (%d,%d) → %s（按卡片 / 按钮周围的放宽区）", x, y, z == 3 ? "确定" : z == 200 ? "取消" : z >= 100 ? "网盘行" : "渠道行复制");
-          if (z == 3) atomic_store(&g_ack, 1); else if (z == 200) co_confirm_cancel(); else if (z >= 100) { int q = (z - 100) / 2; if ((z - 100) % 2) do_copy_code(1, q); else co_pan_request(q); } else do_copy(1, z); return; } }
+      if (z >= 0) { LOG("社区入口：弹窗开着时点按 (%d,%d) → %s（按卡片 / 按钮周围的放宽区）", x, y, z == 3 ? "确定" : z == 2 ? "第 3 行复制" : z ? "第 2 行复制" : "第 1 行复制"); if (z < 3) do_copy(1, z); else atomic_store(&g_ack, 1); return; } }
     LOG("社区入口：弹窗开着时点按 (%d,%d) → 没点在按钮上，吞掉", x, y);
 }
-#ifdef DM_QA_BUILD
-// QA 入口（CLAUDE.md §2.9，玩家包不带）：DM_TEST_UI=<帧>:<identifier>:tap[;…]，帧从提示框显示起算；只认本框的四个 identifier，别的（物品栏 / 存档管理的）跳过。
-// identifier：dm.community.pan.<n>.open / dm.community.pan.<n>.copy / dm.community.confirm.ok / dm.community.confirm.cancel（n 从 0 起）
-// QA entry (CLAUDE.md 2.9, not in player packages): DM_TEST_UI=<frame>:<identifier>:tap[;...], frames counted from the box showing; only this box's four identifiers are taken, others (inventory / save management) are skipped.
-// identifiers: dm.community.pan.<n>.open / .copy / dm.community.confirm.ok / dm.community.confirm.cancel (n from 0)
-static void co_ui_test(int st) {
-    enum { K_OPEN, K_COPY, K_OK, K_CANCEL };
-    static int n = -1, at[16], kind[16], pan[16], f, started;
-    if (n < 0) { n = 0; const char *e = getenv("DM_TEST_UI");
-        while (e && *e && n < 16) { int fr = 0, c = 0; char id[64] = "";
-            if (sscanf(e, "%d:%63[^:;,:]%n", &fr, id, &c) == 2 && c && !strncmp(e + c, ":tap", 4)) {
-                int pn = -1, k = -1;
-                if (sscanf(id, "dm.community.pan.%d.open", &pn) == 1) k = K_OPEN;
-                else if (sscanf(id, "dm.community.pan.%d.copy", &pn) == 1) k = K_COPY;
-                else if (!strcmp(id, "dm.community.confirm.ok")) k = K_OK;
-                else if (!strcmp(id, "dm.community.confirm.cancel")) k = K_CANCEL;
-                if (k >= 0) { at[n] = fr; kind[n] = k; pan[n] = pn; n++; }
-                e += c + 4; if (*e == ';' || *e == ',') e++; continue; }
-            const char *q = strpbrk(e, ";,"); if (!q) break; e = q + 1; } }
-    if (st == 0) { started = 0; f = 0; return; }
-    if (st == 1) { started = 0; return; }
-    if (!started) { started = 1; f = 0; }
-    f++;
-    for (int i = 0; i < n; i++) if (at[i] && f >= at[i]) { at[i] = 0;
-        if (kind[i] == K_OPEN) co_pan_request(pan[i]); else if (kind[i] == K_COPY) do_copy_code(1, pan[i]); else if (kind[i] == K_OK) co_confirm_ok(1); else co_confirm_cancel();
-        LOG("DM_TEST_UI：帧 %d %s → 执行", f, kind[i] == K_OPEN ? "网盘打开" : kind[i] == K_COPY ? "网盘复制" : kind[i] == K_OK ? "确认确定" : "确认取消"); }
-}
-#else   // 玩家包不带脚本驱动入口（CLAUDE.md §2.9） | player packages carry no scripted driver entry
-static void co_ui_test(int st) { (void)st; }
-#endif
 void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hle_hid.c） | called every frame at the controller poll (game main thread, hle_hid.c)
     uint8_t *b = co_base(); if (!b) return;
     uint64_t root = *(uint64_t *)(b + 0x2f05458); if (!root) return;
@@ -844,7 +604,7 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
           if (fm && nm && !strcmp(nm, saved_nm)) { *(uint64_t *)(fm + 0x190) = saved; LOG("社区入口：关框后焦点交还 %s", saved_nm); }
           else if (saved) LOG("社区入口：关框后原焦点控件 %s 已不在界面树里，不交还", saved_nm);
           saved = 0; } }
-    int st = atomic_load(&g_show); co_ui_test(st); if (!st) return;   // QA 脚本（只在 QA 构建里编译） | QA script (compiled in QA builds only)
+    int st = atomic_load(&g_show); if (!st) return;
     static int wait; int which = 0; uint64_t p = co_host(root, &which);
     if (!p) { if (st == 1 && ++wait == 600) { wait = 0; atomic_store(&g_show, 0); LOG("【红】社区入口：开着的面板里没有提示框控件（原版布局？），只记日志不显示"); }
               else if (st == 2) { atomic_store(&g_show, 0); LOG("社区入口：所在面板已关，提示框作废"); }
@@ -856,32 +616,18 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     if (!all) { atomic_store(&g_show, 0); LOG("【红】社区入口：%s 里的提示框控件不全，不显示", k_hosts[which]); return; }
 #define W(nm) co_find(p, nm, 0)
     int ch[CO_ROWS], n = mode == 1 ? dm_community_channels(dm_lang_group(), ch) : 0; if (!have2 && n > CO_ROWS - 1) n = CO_ROWS - 1;
-    dm_pan_entry pans[DM_PAN_MAX]; int np = mode == 1 ? dm_community_pans(pans) : 0;
-    if (mode == 1 && !n && !np) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：没有可显示的值了，提示框收起"); return; }
-    { int cp = atomic_load(&g_confirm_pan); if (atomic_load(&g_confirm) && (cp < 0 || cp >= np)) atomic_store(&g_confirm, 0); }   // 网盘没了：确认态作废 | the drives are gone: the confirm state lapses
-    int incf = mode == 1 && np > 0 && atomic_load(&g_confirm) != 0;
-    co_foc_t fl[CO_FOC_MAX]; int nf = co_focus_build(n, pans, np, fl, CO_FOC_MAX);
-    static int foc; if (st == 1) foc = 0;   // 缺省焦点：第一行「复制」（没有渠道行时是第一行网盘「打开」，再没有是「确定」） | default focus: row 1's Copy (else the first drive's Open, else OK)
-    if (foc >= nf) foc = nf - 1; if (foc < 0) foc = 0;
-    if (st == 2) { uint64_t ev = atomic_exchange(&g_md_ev, 0); if (!pad) ev = 0;   // 键已在取手柄处闸门截下（dm_community_input_gate），这里只用；触屏模式不走焦点 | keys were taken at the controller gate; touch mode does not use focus
-        if (incf) {   // 确认态：左右切「确定 / 取消」，A 触发，B = 取消（都是回到普通态、不开链接） | confirm: left / right switch OK / Cancel, A activates, B = Cancel (both return to normal without opening)
-            int cfo = atomic_load(&g_confirm_foc);
-            if (ev & (DM_BTN_LEFT | DM_BTN_RIGHT)) { cfo = (ev & DM_BTN_RIGHT) ? 1 : 0; atomic_store(&g_confirm_foc, cfo); }
-            if (ev & DM_BTN_A) { if (cfo) co_confirm_cancel(); else co_confirm_ok(2); }
-            if (ev & DM_BTN_B) co_confirm_cancel();
-        } else {   // 普通态：上下移不循环，左右在网盘同一行里切「打开 / 复制」，A 触发，B 收起 | normal: up / down do not wrap, left / right switch Open / Copy within a drive row, A activates, B dismisses
-            if ((ev & DM_BTN_UP) && foc > 0) foc--;
-            if ((ev & DM_BTN_DOWN) && foc < nf - 1) foc++;
-            int d = (ev & DM_BTN_RIGHT) ? 1 : (ev & DM_BTN_LEFT) ? -1 : 0;
-            if (d) foc = co_focus_toggle(fl, nf, foc, d);
-            if (ev & DM_BTN_A) { int kd = fl[foc].kind, ix = fl[foc].idx;
-                if (kd == CO_F_CH) do_copy(2, ix); else if (kd == CO_F_PAN_OPEN) co_pan_request(ix); else if (kd == CO_F_PAN_COPY) do_copy_code(2, ix); else atomic_store(&g_ack, 3); }
-            if (ev & DM_BTN_B) atomic_store(&g_ack, 2); } }
+    if (mode == 1 && !n) { co_hide_all(b, p); atomic_store(&g_show, 0); LOG("社区入口：没有可显示的值了，提示框收起"); return; }
+    static int foc; if (st == 1) foc = 0;   // 缺省焦点：第一行「复制」（没有渠道行时是「确定」） | default focus: row 1's Copy (OK when there are no rows)
+    if (foc > n) foc = n;
+    if (st == 2) { uint64_t ev = atomic_exchange(&g_md_ev, 0); if (!pad) ev = 0;   // 键已在取手柄处闸门截下（dm_community_input_gate），这里只用；触屏模式不走焦点 | keys were taken at the controller gate; touch mode does not use focus   // 手柄：焦点链 复制₁ → 复制₂ → 复制₃ → 确定（上下移、不循环），A 触发、B 收起 | controller focus chain Copy1 → Copy2 → Copy3 → OK, A activates, B dismisses
+        if ((ev & DM_BTN_UP) && foc > 0) foc--; if ((ev & DM_BTN_DOWN) && foc < n) foc++;
+        if (ev & DM_BTN_A) { if (foc < n) do_copy(2, foc); else atomic_store(&g_ack, 3); }
+        if (ev & DM_BTN_B) atomic_store(&g_ack, 2); }
     { int ack = atomic_exchange(&g_ack, 0); if (ack) { co_hide_all(b, p); atomic_store(&g_show, 0); unsigned t0 = atomic_exchange(&g_sw_touch, 0), k0 = atomic_exchange(&g_sw_key, 0), s0 = atomic_exchange(&g_sw_stick, 0), l0 = atomic_exchange(&g_leak, 0); atomic_store(&g_md_ev, 0);
         LOG("社区入口：打开期间吞掉 触点 %u / 手柄键 %u / 摇杆 %u，交给底层 %u", t0, k0, s0, l0); LOG("社区入口：收起（%s）", ack == 2 ? "手柄 B" : ack == 3 ? "手柄 A 确定" : "点确定"); return; } }
     int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840;
     int ox, oy; float s; co_origin(p, xr, &ox, &oy, &s);
-    const co_geom_t gm_ = co_geom_pans(n, np); int H = gm_.h; int cf = mode == 1 && np > 0 && atomic_load(&g_confirm) != 0;
+    const co_geom_t gm_ = co_geom(n); int H = gm_.h;
     int cx = (int)((xr / 2 - ox) / s), y0 = (int)((1080 - oy) / s) - H / 2;   // 整屏居中：框 1800×H（面板单位） | centered on the screen: box 1800×H (panel units)
     // 页脚：版本（外壳给的显示版本，没有就空）、制作（右）、特别鸣谢（第二行）——名单是代码缺省常量，按语言拼两行 | footer: version, maker (right), special thanks (second line)
     char ver[96]; const char *label = dm_update_label(); if (label && *label) snprintf(ver, sizeof ver, dm_str(b, "dmAboutVersion"), label); else ver[0] = 0;
@@ -892,72 +638,32 @@ void dm_community_pump(void) {   // 取手柄处每帧调（游戏主线程，hl
     dm_community_fit(ver, sizeof ver, 28, 880); dm_community_fit(crt[0], sizeof crt[0], 28, 560); dm_community_fit(crt[1], sizeof crt[1], 28, CO_CARD_W);
     { int gm[15][4], h = dm_notice_geometry(1800 - 128, H - 24, 1800, gm), top = (244 - h) / 2;   // 边框几何同崩溃围栏提示框（dm_crashfence.c） | frame geometry as the crash-fence box
       for (int k = 0; h && k < 15; k++) { int r[4] = { cx - 900 + gm[k][0], y0 + gm[k][1] - top, gm[k][2], gm[k][3] + (k / 3 < 4 ? 2 : 0) }; co_tile(b, tl[k], r); } }
-    co_text(b, W("TouchCommTitle"), dm_str(b, cf ? "dmCommunityPanConfirmTitle" : mode == 1 ? "dmCommunityTitle" : "dmCommunityAbout")); co_place(W("TouchCommTitle"), cx - 850, y0 + 40);
-    int cl = cx - CO_CARD_W / 2, bx = cl + CO_CARD_W - 30 - CO_BTN_W; uint64_t now = co_now(); int crow = atomic_load(&g_copied_row), cpan = atomic_load(&g_copied_pan), cst = atomic_load(&g_copied);
+    co_text(b, W("TouchCommTitle"), dm_str(b, mode == 1 ? "dmCommunityTitle" : "dmCommunityAbout")); co_place(W("TouchCommTitle"), cx - 850, y0 + 40);
+    int cl = cx - CO_CARD_W / 2, bx = cl + CO_CARD_W - 30 - CO_BTN_W; uint64_t now = co_now(); int crow = atomic_load(&g_copied_row), cst = atomic_load(&g_copied);
     int recent = now - atomic_load(&g_copied_at) < 2000000000ull;   // 按钮字「已复制 / 复制失败」留 2 秒 | Copied / Copy failed stays 2 s
     for (int k = 0; k < CO_ROWS; k++) { char nm[32], full[GH_MAX + 1], shown[GH_MAX + 4];
         uint64_t lb, vl, cp, ct; snprintf(nm, sizeof nm, "TouchCommLabel%d", k); lb = W(nm); snprintf(nm, sizeof nm, "TouchCommValue%d", k); vl = W(nm);
         snprintf(nm, sizeof nm, "TouchCommCopy%d", k); cp = W(nm); snprintf(nm, sizeof nm, "TouchCommCopyText%d", k); ct = W(nm); snprintf(nm, sizeof nm, "TouchCommCard%d", k);
-        if (cf || k >= n || !dm_community_channel_value(ch[k], full, sizeof full, shown, sizeof shown)) { co_place(lb, 99999, 99999); co_place(vl, 99999, 99999); co_place(cp, 99999, 99999); co_place(ct, 99999, 99999); co_rect_hide(p, nm); continue; }
+        if (k >= n || !dm_community_channel_value(ch[k], full, sizeof full, shown, sizeof shown)) { co_place(lb, 99999, 99999); co_place(vl, 99999, 99999); co_place(cp, 99999, 99999); co_place(ct, 99999, 99999); co_rect_hide(p, nm); continue; }
         int top = y0 + gm_.card_y[k]; dm_community_fit(shown, sizeof shown, 36, CO_VALUE_W);
         co_rect_lines(b, p, nm, "rule_h", "rule_v", cl, top, CO_CARD_W, 100, 2);
         co_text(b, lb, dm_str(b, co_ch_key(ch[k]))); co_place(lb, cl + 40, top);
         co_text(b, vl, shown); co_place(vl, cx + CO_VALUE_X, top);
         co_place(cp, bx, top + (100 - CO_BTN_H) / 2); co_place(ct, bx, top + (100 - CO_BTN_H) / 2 + 2);
-        co_text(b, ct, recent && cpan < 0 && crow == k ? dm_str(b, cst > 0 ? "dmCommunityCopied" : "dmCommunityCopyFailShort") : dm_str(b, "dmCommunityCopy")); }
-    int iconx, namex, codex, openx, copyx; co_pan_x(cx, &iconx, &namex, &codex, &openx, &copyx);
-    static const char *const k_ink[5] = { "TouchCommPanInkGeneric", "TouchCommPanInkQuark", "TouchCommPanInkBaidu", "TouchCommPanInkAliyun", "TouchCommPanInkP123" };   // 按 dm_pan_icon 枚举排（GENERIC = 0） | in dm_pan_icon order (GENERIC = 0)
-    for (int q = 0; q < DM_PAN_MAX; q++) { char nm[32], nv[64], cv[64];
-        snprintf(nm, sizeof nm, "TouchCommPanBox%d", q);
-        snprintf(nm, sizeof nm, "TouchCommPanIcon%d", q); uint64_t ic = W(nm);
-        snprintf(nm, sizeof nm, "TouchCommPanName%d", q); uint64_t nw = W(nm);
-        snprintf(nm, sizeof nm, "TouchCommPanOpen%d", q); uint64_t op = W(nm);
-        snprintf(nm, sizeof nm, "TouchCommPanCode%d", q); uint64_t cd = W(nm);
-        snprintf(nm, sizeof nm, "TouchCommPanCopy%d", q); uint64_t cp = W(nm);
-        snprintf(nm, sizeof nm, "TouchCommPanCopyText%d", q); uint64_t ct = W(nm);
-        snprintf(nm, sizeof nm, "TouchCommPanBox%d", q);
-        if (cf || q >= np) { co_place(ic, 99999, 99999); co_place(nw, 99999, 99999); co_place(op, 99999, 99999); co_place(cd, 99999, 99999); co_place(cp, 99999, 99999); co_place(ct, 99999, 99999);
-            co_text(b, ic, ""); co_text(b, nw, ""); co_text(b, cd, ""); co_text(b, ct, ""); co_rect_hide(p, nm); continue; }
-        int top = y0 + gm_.pan_y[q];
-        co_rect_lines(b, p, nm, "rule_h", "rule_v", iconx, top + (100 - CO_PAN_ICON) / 2, CO_PAN_ICON, CO_PAN_ICON, 2);
-        co_text(b, ic, dm_pan_icon_glyph(pans[q].icon)); co_ink(b, ic, W(k_ink[pans[q].icon])); co_place(ic, iconx, top + 20);
-        snprintf(nv, sizeof nv, "%s", pans[q].name); dm_community_fit(nv, sizeof nv, 36, 400); co_text(b, nw, nv); co_place(nw, namex, top);
-        co_place(op, openx, top + (100 - CO_BTN_H) / 2);
-        if (pans[q].code[0]) { snprintf(cv, sizeof cv, dm_str(b, "dmCommunityPanCode"), pans[q].code); dm_community_fit(cv, sizeof cv, 28, 280); co_text(b, cd, cv); co_place(cd, codex, top);
-            co_place(cp, copyx, top + (100 - CO_BTN_H) / 2); co_place(ct, copyx, top + (100 - CO_BTN_H) / 2 + 2);
-            co_text(b, ct, recent && cpan == q ? dm_str(b, cst > 0 ? "dmCommunityCopied" : "dmCommunityCopyFailShort") : dm_str(b, "dmCommunityPanCopy")); }
-        else { co_text(b, cd, ""); co_text(b, ct, ""); co_place(cd, 99999, 99999); co_place(cp, 99999, 99999); co_place(ct, 99999, 99999); } }   // 没有提取码：整颗「复制」连字一起移出屏幕 | no code: the whole Copy button and its text move off screen
-    uint64_t cftw = W("TouchCommConfirmText");
-    if (cf) { dm_pan_entry pp[DM_PAN_MAX]; int cp2 = atomic_load(&g_confirm_pan); dm_community_pans(pp); char host[64] = "";
-        if (cp2 >= 0 && cp2 < DM_PAN_MAX) dm_pan_host(pp[cp2].url, host, sizeof host); dm_community_fit(host, sizeof host, 36, 1560);
-        co_text(b, cftw, host); co_place(cftw, cx - 780, y0 + gm_.free_y); }
-    else { co_text(b, cftw, ""); co_place(cftw, 99999, 99999); }
-    uint64_t fw = W("TouchCommFree");
-    int fail_recent = now - atomic_load(&g_open_fail_at) < 2000000000ull;
-    if (cf) { co_text(b, fw, ""); co_place(fw, 99999, 99999); }
-    else { co_text(b, fw, dm_str(b, fail_recent ? "dmCommunityPanOpenFail" : "dmLoadCommFree")); co_place(fw, cx - 850, y0 + gm_.free_y); }
-    if (cf) { co_place(W("TouchCommDivider"), 99999, 99999);
-        co_place(W("TouchCommFoot0"), 99999, 99999); co_place(W("TouchCommFoot0R"), 99999, 99999); co_place(W("TouchCommFoot1"), 99999, 99999); }
-    else { co_divider(b, W("TouchCommDivider"), cx, y0 + gm_.div_y);
-        co_text(b, W("TouchCommFoot0"), ver); co_place(W("TouchCommFoot0"), cl, y0 + gm_.foot_y[0]);
-        co_text(b, W("TouchCommFoot0R"), crt[0]); co_place(W("TouchCommFoot0R"), cl + CO_CARD_W - 880, y0 + gm_.foot_y[0]);
-        co_text(b, W("TouchCommFoot1"), crt[1]); co_place(W("TouchCommFoot1"), cl, y0 + gm_.foot_y[1]); }
-    int okx = cf ? cx - 490 : cx - 235;   // 确认态：确定 / 取消并排居中 | confirm: OK / Cancel side by side, centred
-    co_place(W("TouchCommOk"), okx, y0 + gm_.btn_y);
-    if (cf) co_place(W("TouchCommCancel"), cx + 20, y0 + gm_.btn_y); else co_place(W("TouchCommCancel"), 99999, 99999);
-    { co_tapgeo_t g = { 1, vh, ox, oy, n, cx - 860, cx + 860, { 0 }, okx, y0 + gm_.btn_y, 470, 115, s };
-      g.np = np; for (int k = 0; k < CO_ROWS; k++) g.card_y[k] = y0 + gm_.card_y[k]; for (int q = 0; q < DM_PAN_MAX; q++) g.pan_y[q] = q < np ? y0 + gm_.pan_y[q] : 99999;
-      g.pan_open_x = openx; g.pan_copy_x = copyx; g.confirm = cf; g.cancel_x = cx + 20; g.cancel_y = y0 + gm_.btn_y; g.cancel_w = 470; g.cancel_h = 115; g_tapgeo = g; }   // 触屏命中区的几何（B058） | geometry for the touch hit areas (B058)
-    if (pad && cf) { int cfx = atomic_load(&g_confirm_foc) ? cx + 20 : okx; co_rect_lines(b, p, "TouchCommFocus", "focus_h", "focus_v", cfx - 8, y0 + gm_.btn_y - 8, 470 + 16, 115 + 16, 4); }
-    else if (pad) { int fk = fl[foc].kind, fi = fl[foc].idx;
-        if (fk == CO_F_CH) co_rect_lines(b, p, "TouchCommFocus", "focus_h", "focus_v", bx - 8, y0 + gm_.card_y[fi] + (100 - CO_BTN_H) / 2 - 8, CO_BTN_W + 16, CO_BTN_H + 16, 4);
-        else if (fk == CO_F_PAN_OPEN || fk == CO_F_PAN_COPY) { int fx = fk == CO_F_PAN_OPEN ? openx : copyx; co_rect_lines(b, p, "TouchCommFocus", "focus_h", "focus_v", fx - 8, y0 + gm_.pan_y[fi] + (100 - CO_BTN_H) / 2 - 8, CO_BTN_W + 16, CO_BTN_H + 16, 4); }
-        else co_rect_lines(b, p, "TouchCommFocus", "focus_h", "focus_v", okx - 8, y0 + gm_.btn_y - 8, 470 + 16, 115 + 16, 4); }   // 手柄焦点框贴合按钮、不压字 | controller focus frame hugs the button
+        co_text(b, ct, recent && crow == k ? dm_str(b, cst > 0 ? "dmCommunityCopied" : "dmCommunityCopyFailShort") : dm_str(b, "dmCommunityCopy")); }
+    co_text(b, W("TouchCommFree"), dm_str(b, "dmLoadCommFree")); co_place(W("TouchCommFree"), cx - 850, y0 + gm_.free_y);
+    co_divider(b, W("TouchCommDivider"), cx, y0 + gm_.div_y);
+    co_text(b, W("TouchCommFoot0"), ver); co_place(W("TouchCommFoot0"), cl, y0 + gm_.foot_y[0]);
+    co_text(b, W("TouchCommFoot0R"), crt[0]); co_place(W("TouchCommFoot0R"), cl + CO_CARD_W - 880, y0 + gm_.foot_y[0]);
+    co_text(b, W("TouchCommFoot1"), crt[1]); co_place(W("TouchCommFoot1"), cl, y0 + gm_.foot_y[1]);
+    co_place(W("TouchCommOk"), cx - 235, y0 + gm_.btn_y);   // 只留一颗「确定」，居中 | one OK only, centered
+    { co_tapgeo_t g = { 1, vh, ox, oy, n, cx - 860, cx + 860, { 0 }, cx - 235, y0 + gm_.btn_y, 470, 115, s }; for (int k = 0; k < CO_ROWS; k++) g.card_y[k] = y0 + gm_.card_y[k]; g_tapgeo = g; }   // 触屏命中区的几何（B058） | geometry for the touch hit areas (B058)
+    if (pad) { if (foc < n) co_rect_lines(b, p, "TouchCommFocus", "focus_h", "focus_v", bx - 8, y0 + gm_.card_y[foc] + (100 - CO_BTN_H) / 2 - 8, CO_BTN_W + 16, CO_BTN_H + 16, 4);
+               else co_rect_lines(b, p, "TouchCommFocus", "focus_h", "focus_v", cx - 235 - 8, y0 + gm_.btn_y - 8, 470 + 16, 115 + 16, 4); }   // 手柄焦点框贴合按钮、不压字 | controller focus frame hugs the button
     else co_rect_hide(p, "TouchCommFocus");
 #undef W
     if (st == 1) { atomic_store(&g_show, 2); int32_t *pr = (int32_t *)(p + 0x70);
         char chdesc[80] = ""; for (int k = 0; k < n; k++) { size_t L = strlen(chdesc); snprintf(chdesc + L, sizeof chdesc - L, "%s%s", k ? " + " : ": ", dm_ui(co_ch_key(ch[k]))); }   // 日志内渠道名走中英表，不写死上屏字面量 | channel names in the log come from the string table instead of on-screen literals
         LOG("社区入口：已显示（%s，%s，%s，渠道 %d 行%s，版本%s，鸣谢 %d 行；面板 %s 锚 %.2f/%.2f 矩形 %d,%d %dx%d 缩放 %.2f → 框中心 %d 顶 %d 高 %d）", atomic_load(&g_from) == 1 ? "暂停菜单" : atomic_load(&g_from) == 2 ? "主菜单" : "自定义页", mode == 2 ? "关于框" : pad ? n >= 3 ? "手柄模式，焦点链 复制₁ → 复制₂ → 复制₃ → 确定" : "手柄模式，焦点链 复制 → 确定" : "触屏 / 鼠标点按钮", mode == 2 ? "版本 + 鸣谢" : "社区", n, chdesc, ver[0] ? "有" : "无", ncr,
-            k_hosts[which], *(float *)(p + 0x48), *(float *)(p + 0x4c), pr[0], pr[1], pr[2], pr[3], s, cx, y0, H);
-        if (np) LOG("社区入口：网盘 %d 条（%s）；手柄焦点链 渠道复制 → 每条网盘打开 →（有提取码才跟复制）→ 确定", np, pad ? "手柄模式可左右切打开 / 复制" : "触屏点打开 / 复制"); }   // 没有网盘时这一行不出现：日志与旧版逐字节相同 | no drives: this line is absent, so the log is byte-for-byte the old one
+            k_hosts[which], *(float *)(p + 0x48), *(float *)(p + 0x4c), pr[0], pr[1], pr[2], pr[3], s, cx, y0, H); }
 }

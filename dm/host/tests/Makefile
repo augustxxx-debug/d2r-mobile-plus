@@ -53,7 +53,6 @@ run: \
 	$(B)/t_loadpage \
 	$(B)/t_loadpage_render \
 	$(B)/t_manifest \
-	$(B)/t_pan \
 	$(B)/t_loadpage_race \
 	$(B)/t_minimap_lift \
 	$(B)/t_npcdlg_first_frame \
@@ -168,7 +167,6 @@ run: \
 	$(B)/t_loadpage
 	mkdir -p $(B)/loadpage_render && $(B)/t_loadpage_render ../../assets/loadpage $(B)/loadpage_render zh
 	$(B)/t_manifest
-	$(B)/t_pan
 	TSAN_OPTIONS=halt_on_error=1 $(B)/t_loadpage_race > /dev/null
 	$(B)/t_custom_scroll
 	$(B)/t_sel_frame
@@ -397,7 +395,7 @@ $(B)/t_telemetry: t_telemetry.c ../dm_telemetry.c ../dm_telemetry.h ../dm_teleme
 $(B)/t_diagup: t_diagup.c ../dm_diagup.c ../dm_diagup.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_diagup.c
 
-$(B)/t_community: t_community.c site_contract_cases.h ../dm_site.h ../dm_pan.h ../dm_manifest.c ../dm_manifest.h ../dm_community.c ../dm_community.h ../dm_custom.c ../dm_custom.h ../../ios/Sources/dm_touch_controls.c ../../ios/Sources/dm_touch_controls.h | $(B)
+$(B)/t_community: t_community.c site_contract_cases.h ../dm_site.h ../dm_manifest.c ../dm_manifest.h ../dm_community.c ../dm_community.h ../dm_custom.c ../dm_custom.h ../../ios/Sources/dm_touch_controls.c ../../ios/Sources/dm_touch_controls.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -I../../ios/Sources -o $@ t_community.c ../dm_manifest.c ../../ios/Sources/dm_touch_controls.c -lm
 
 $(B)/t_ingame: t_ingame.c ../dm_hud.c ../dm_hud.h ../dm_ingame.h | $(B)
@@ -417,11 +415,8 @@ $(B)/t_loadpage: t_loadpage.c ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.h ../
 	clang -O1 -Wall -Werror -Wno-unused-function -DDM_I18N_ALL -I.. -o $@ t_loadpage.c -lm
 # 加载页出图核对（不在 run 里：写 PNG 到指定目录）：make render-loadpage OUT=<目录> [LANG=zh]
 # Loading page render check (not part of run: writes PNGs to a given directory): make render-loadpage OUT=<dir> [LANG=zh]
-$(B)/t_manifest: t_manifest.c site_contract_cases.h ../dm_site.h ../dm_manifest.c ../dm_manifest.h ../dm_pan.h | $(B)
+$(B)/t_manifest: t_manifest.c site_contract_cases.h ../dm_site.h ../dm_manifest.c ../dm_manifest.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_manifest.c
-
-$(B)/t_pan: t_pan.c ../dm_pan.h | $(B)
-	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_pan.c
 
 $(B)/t_loadpage_race: t_loadpage_race.c ../dm_loadpage.c ../dm_loadpage.h | $(B)
 	clang -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=thread -I.. -o $@ t_loadpage_race.c -lm

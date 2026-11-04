@@ -208,10 +208,7 @@ class PromptOnly(unittest.TestCase):
 
     def test_shells_never_open_install_or_download_page(self):
         ios = (DM / 'ios' / 'Sources' / 'dm_update.m').read_text(encoding='utf-8')
-        # 更新提示仍不打开任何页面。openURL 只许出现在社区网盘的打开回调 ios_open 里（用户 2026-11-04：白名单网盘 + 先确认，规矩见 test_community_entry.py）
-        # the update notice still opens no page; openURL may appear only in the community cloud-drive callback ios_open (user 2026-11-04: whitelisted drives after a confirm, see test_community_entry.py)
-        i = ios.index('static int ios_open(const char *s)'); j = ios.index('\n}\n', i); outside = ios[:i] + ios[j:]
-        self.assertNotIn('openURL', outside); self.assertNotIn('install_url"]', ios); self.assertNotIn('on_click', ios)
+        self.assertNotIn('openURL', ios); self.assertNotIn('install_url"]', ios); self.assertNotIn('on_click', ios)
         mac = (DM / 'host' / 'app_mac.m').read_text(encoding='utf-8')
         i = mac.index('// ---- 更新检查 ----'); j = mac.index('\n}\n', mac.index('static void upd_start(void)')); upd = mac[i:j]
         self.assertNotIn('openURL', upd); self.assertNotIn('upd_click', upd)

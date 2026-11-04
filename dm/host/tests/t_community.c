@@ -40,11 +40,7 @@ static char dir[64], cache[128], logp[128];
 static int copies; static char copied[256];
 static int copy_ok(const char *s) { copies++; snprintf(copied, sizeof copied, "%s", s); return 1; }
 static int copy_bad(const char *s) { (void)s; return 0; }
-static int opens; static char opened[256];
-static int open_ok(const char *s) { opens++; snprintf(opened, sizeof opened, "%s", s ? s : ""); return 1; }
-static int open_bad(const char *s) { (void)s; return 0; }
-static void restart(void) { g_qq[0] = g_gh[0] = g_site[0] = g_mirror[0] = 0; g_n_pans = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0);
-    atomic_store(&g_confirm, 0); atomic_store(&g_confirm_pan, -1); atomic_store(&g_confirm_foc, 0); atomic_store(&g_copied_pan, -1); atomic_store(&g_open_fail_at, 0); }
+static void restart(void) { g_qq[0] = g_gh[0] = g_site[0] = g_mirror[0] = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0); }
 static char *log_text(void) { static char t[16384]; fflush(stderr); FILE *f = fopen(logp, "r"); size_t n = f ? fread(t, 1, sizeof t - 1, f) : 0; t[n] = 0; if (f) fclose(f); return t; }
 static void log_reset(void) { fflush(stderr); if (ftruncate(fileno(stderr), 0) == 0) rewind(stderr); }   // 截断并回到文件头（只重开文件会从旧偏移接着写、前面留一段空洞） | truncate and rewind (reopening alone keeps writing at the old offset, leaving a hole at the front)
 static int cache_has(const char *s) { FILE *f = fopen(cache, "r"); char t[512] = {0}; if (!f) return 0; fread(t, 1, sizeof t - 1, f); fclose(f); return strstr(t, s) != NULL; }
@@ -486,135 +482,6 @@ int main(void) {
       #undef E01_ONE
       #undef E01_SEED
     }
-    // 28. community.pans（网盘数组，规则见 dm_pan.h）：清单解析进状态与缓存、dm_community_pans 快照、重启读回；缓存坏字段逐项丢；没有 pans 时缓存与渠道逐字节不变
-    // 28. community.pans (cloud drives, rules in dm_pan.h): parsed into state and cache, the dm_community_pans snapshot, read back after a restart; bad cache fields dropped per field; without pans the cache and channels stay byte-for-byte
-    { dm_pan_entry pe[DM_PAN_MAX]; char t[1024]; FILE *fp; size_t n;
-      static const char *const p1 = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": ["
-          "{\"name\": \"夸克\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/abc\", \"code\": \"ab12\"},"
-          "{\"name\": \"Baidu\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/1x\"}]}}";
-      log_reset(); CHECK(dm_community_manifest(p1, strlen(p1)) == 1);
-      CHECK(dm_community_pans(pe) == 2 && dm_community_pans(NULL) == 2);
-      CHECK(!strcmp(pe[0].name, "夸克") && pe[0].icon == DM_PAN_QUARK && !strcmp(pe[0].url, "https://pan.quark.cn/s/abc") && !strcmp(pe[0].code, "ab12"));
-      CHECK(!strcmp(pe[1].name, "Baidu") && pe[1].icon == DM_PAN_BAIDU && !pe[1].code[0]);
-      CHECK(cache_has("pan0_name=夸克\n") && cache_has("pan0_icon=quark\n") && cache_has("pan0_url=https://pan.quark.cn/s/abc\n") && cache_has("pan0_code=ab12\n"));
-      CHECK(cache_has("pan1_name=Baidu\n") && cache_has("pan1_icon=baidu\n") && cache_has("pan1_url=https://pan.baidu.com/s/1x\n") && !cache_has("pan1_code="));
-      fp = fopen(cache, "r"); n = fp ? fread(t, 1, sizeof t - 1, fp) : 0; if (fp) fclose(fp); t[n] = 0;
-      CHECK(!strcmp(t, "qq_group=1129913678\npan0_name=夸克\npan0_icon=quark\npan0_url=https://pan.quark.cn/s/abc\npan0_code=ab12\npan1_name=Baidu\npan1_icon=baidu\npan1_url=https://pan.baidu.com/s/1x\n"));
-      restart(); log_reset(); dm_community_load();
-      CHECK(dm_community_pans(pe) == 2 && !strcmp(pe[0].name, "夸克") && pe[0].icon == DM_PAN_QUARK && !strcmp(pe[0].code, "ab12") && pe[1].icon == DM_PAN_BAIDU && !pe[1].code[0]);
-      CHECK(strstr(log_text(), "网盘=2"));
-      // 没有 pans：缓存逐字节仍是旧格式、渠道不变、日志不提网盘 | no pans: the cache is exactly the old format, channels unchanged, no cloud-drive mention in the log
-      log_reset(); CHECK(dm_community_manifest(M_FULL, strlen(M_FULL)) == 1);
-      fp = fopen(cache, "r"); n = fp ? fread(t, 1, sizeof t - 1, fp) : 0; if (fp) fclose(fp); t[n] = 0;
-      CHECK(!strcmp(t, "qq_group=1129913678\ngithub=https://github.com/example/d2r-mobile-plus/discussions\n"));
-      CHECK(dm_community_pans(pe) == 0); CHECK(!strstr(log_text(), "网盘"));
-      { int c[3]; CHECK(dm_community_channels(DM_LG_ZH, c) == 2 && c[0] == DM_CH_QQ && c[1] == DM_CH_GITHUB); }
-      // 读回时逐字段再过 dm_pan.h：坏 name / 坏 url 丢整条，认不出的 icon = generic，坏 code 只丢 code | re-validated on read: a bad name / url drops the entry, an unknown icon is generic, a bad code is dropped alone
-      fp = fopen(cache, "w"); fputs("qq_group=1129913678\n"
-          "pan0_name=good\npan0_icon=quark\npan0_url=https://pan.quark.cn/s/a\npan0_code=ab12\n"
-          "pan1_name=中中中中中中中中中中中中中\npan1_icon=baidu\npan1_url=https://pan.baidu.com/s/b\n"
-          "pan2_name=Baidu\npan2_icon=weird\npan2_url=https://pan.baidu.com/s/b\npan2_code=abc\n"
-          "pan3_name=badurl\npan3_icon=123pan\npan3_url=https://pan.quark.cn/s/x\n", fp); fclose(fp);
-      restart(); log_reset(); dm_community_load();
-      CHECK(dm_community_pans(pe) == 2);
-      CHECK(!strcmp(pe[0].name, "good") && pe[0].icon == DM_PAN_QUARK && !strcmp(pe[0].code, "ab12"));
-      CHECK(!strcmp(pe[1].name, "Baidu") && pe[1].icon == DM_PAN_GENERIC && !pe[1].code[0]);
-      // 第 5 条起丢弃，日志记一行 | the 5th on is dropped, one log line
-      static const char *const p5 = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": ["
-          "{\"name\": \"a\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/a\"},"
-          "{\"name\": \"b\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/b\"},"
-          "{\"name\": \"c\", \"icon\": \"aliyun\", \"url\": \"https://www.alipan.com/s/c\"},"
-          "{\"name\": \"d\", \"icon\": \"123pan\", \"url\": \"https://www.123pan.com/s/d\"},"
-          "{\"name\": \"e\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/e\"}]}}";
-      log_reset(); CHECK(dm_community_manifest(p5, strlen(p5)) == 1); CHECK(dm_community_pans(pe) == 4); CHECK(!strcmp(pe[3].name, "d"));
-      CHECK(!cache_has("pan4_")); CHECK(strstr(log_text(), "第 5 条起"));
-      // 形状坏（pans 不是数组）：整个键忽略，渠道照常，缓存不写 pan 行 | bad shape (pans not an array): the key is ignored, channels proceed, no pan cache lines
-      static const char *const pb = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": {}}}";
-      log_reset(); CHECK(dm_community_manifest(pb, strlen(pb)) == 1); CHECK(dm_community_pans(pe) == 0); CHECK(dm_community_available());
-      CHECK(!cache_has("pan0_")); CHECK(strstr(log_text(), "pans 须是数组"));
-      // 只有 pans（没有渠道）：网盘照存、渠道为空，返回 1 | pans only (no channels): the drives are stored, channels empty, returns 1
-      static const char *const po = "{\"community\": {\"pans\": [{\"name\": \"only\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/x\"}]}}";
-      log_reset(); CHECK(dm_community_manifest(po, strlen(po)) == 1); CHECK(dm_community_pans(pe) == 1 && !strcmp(pe[0].name, "only"));
-      CHECK(!dm_community_available()); CHECK(cache_has("pan0_name=only\n")); CHECK(!cache_has("qq_group="));
-      // 明确给空数组：撤下网盘（缓存清掉） | an explicitly empty array withdraws the drives (cache cleared)
-      { const char *const pe0 = "{\"community\": {\"pans\": []}}"; CHECK(dm_community_manifest(pe0, strlen(pe0)) == 0); CHECK(dm_community_pans(pe) == 0); CHECK(access(cache, F_OK) != 0); } }
-    // 29. 网盘「用系统浏览器打开」（dm_community_open_pan）：唯一入口；合规条目调回调且 URL 逐字一致；越界 / 没登记回调 / 非白名单 URL（直接塞进社区状态）→ 返回 0、不调回调、日志有【红】
-    // 29. Opening a cloud drive in the system browser (dm_community_open_pan): the only entry; a valid entry calls the callback with the exact URL; out-of-range idx / no registered callback /
-    //     a non-whitelisted URL (stuffed straight into the community state) -> 0, the callback is never called, a red log line
-    { dm_pan_entry pe[DM_PAN_MAX]; memset(pe, 0, sizeof pe);
-      snprintf(pe[0].name, sizeof pe[0].name, "夸克"); pe[0].icon = DM_PAN_QUARK; snprintf(pe[0].url, sizeof pe[0].url, "https://pan.quark.cn/s/abc");
-      set_pans(pe, 1); dm_community_open_init(open_ok);
-      opens = 0; opened[0] = 0; log_reset();
-      CHECK(dm_community_open_pan(0) == 1); CHECK(opens == 1); CHECK(!strcmp(opened, "https://pan.quark.cn/s/abc")); CHECK(!strstr(log_text(), "【红】"));
-      dm_community_open_init(open_bad); CHECK(dm_community_open_pan(0) == 0);   // 回调说失败：原样返回 | the callback reports failure: passed through
-      dm_community_open_init(open_ok);
-      opens = 0; log_reset(); CHECK(dm_community_open_pan(1) == 0); CHECK(dm_community_open_pan(-1) == 0); CHECK(opens == 0); CHECK(strstr(log_text(), "【红】社区入口：打开网盘失败"));   // 越界 | out of range
-      dm_community_open_init(NULL); opens = 0; log_reset(); CHECK(dm_community_open_pan(0) == 0); CHECK(opens == 0); CHECK(strstr(log_text(), "【红】社区入口：打开网盘失败"));   // 没登记 | not registered
-      dm_community_open_init(open_ok);
-      static const struct { dm_pan_icon icon; const char *url; } bad[] = {   // 直接往社区状态塞坏数据 | bad data stuffed straight into the community state
-          { DM_PAN_QUARK, "https://pan.baidu.com/s/x" }, { DM_PAN_GENERIC, "https://evil.example/s/x" },
-          { DM_PAN_GENERIC, "http://pan.quark.cn/s/x" }, { DM_PAN_123PAN, "" } };
-      for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) { dm_pan_entry b[DM_PAN_MAX]; memset(b, 0, sizeof b); b[0].icon = bad[i].icon;
-          snprintf(b[0].name, sizeof b[0].name, "bad"); snprintf(b[0].url, sizeof b[0].url, "%s", bad[i].url); set_pans(b, 1);
-          opens = 0; log_reset(); CHECK(dm_community_open_pan(0) == 0); CHECK(opens == 0); CHECK(strstr(log_text(), "【红】社区入口：打开网盘失败")); }
-      dm_community_manifest(M_NONE, strlen(M_NONE)); dm_community_open_init(NULL); }
-    // 30. 网盘行几何（RC2 任务卡）：接在渠道卡下面、免费声明上面，行高 100 / 行距 120（与渠道卡同一种间距）；没有网盘时每个字段与旧版一致
-    // 30. Drive-row geometry (RC2 card): after the channel cards, before the free notice, 100 high at a 120 pitch (the cards' spacing); with no drives every field matches the old version
-    { for (int n = 0; n <= CO_ROWS; n++) {
-        co_geom_t g0 = co_geom_pans(n, 0);
-        CHECK(g0.n == n && g0.np == 0); CHECK(g0.free_y == 140 + 120 * n); CHECK(g0.div_y == g0.free_y + 80);
-        CHECK(g0.foot_y[0] == g0.div_y + 30 && g0.foot_y[1] == g0.foot_y[0] + 48); CHECK(g0.btn_y == g0.foot_y[1] + 30 + 14 + CO_GAP);
-        CHECK(g0.h == g0.btn_y + 115 + 45); CHECK(g0.h == co_geom(n).h); CHECK(g0.btn_y == co_geom(n).btn_y);
-        for (int k = 0; k < n; k++) CHECK(g0.card_y[k] == 130 + 120 * k);
-        for (int np = 1; np <= DM_PAN_MAX; np++) { co_geom_t g = co_geom_pans(n, np);
-          CHECK(g.n == n && g.np == np); CHECK(g.h == g0.h + 120 * np); CHECK(g.free_y == 140 + 120 * (n + np));
-          for (int p = 0; p < np; p++) CHECK(g.pan_y[p] == 130 + 120 * (n + p));
-          CHECK(g.pan_y[0] >= (n ? g.card_y[n - 1] + 100 : 100) + 20);   // 第一行网盘在渠道卡下面留 20 | the first drive row keeps 20 below the cards
-          CHECK(g.free_y >= g.pan_y[np - 1] + 100 + 20); } }   // 免费声明在最后一行网盘下面留 20 | the free notice keeps 20 below the last drive row
-      int ic, na, co, op, cp; co_pan_x(0, &ic, &na, &co, &op, &cp);   // 框宽 1480（±740），右侧两颗 293 宽小按钮
-      CHECK(ic == -710 && na == -618 && co == -198 && op == 104 && cp == 417);
-      CHECK(op + CO_BTN_W + 20 == cp && cp + CO_BTN_W == 740 - 30); CHECK(na + 400 + 20 <= co && co + 280 <= op);
-      CHECK(co_geom_pans(3, 4).n == 3 && co_geom_pans(3, 5).np == 4); }   // 上限：渠道 3 / 网盘 4 | caps: 3 channels / 4 drives
-    // 31. 手柄焦点链：渠道复制 → 每条网盘打开 →（这一条有提取码才跟复制）→ 下一条 … → 确定；上下不循环，左右只在同一行切「打开 / 复制」
-    // 31. Controller focus chain: channel Copy -> each drive's Open -> (this row's Copy only with a code) -> next ... -> OK; up / down never wrap, left / right only switch within a row
-    { static const char *const p2 = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": ["
-          "{\"name\": \"夸克\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/abc\", \"code\": \"ab12\"},"
-          "{\"name\": \"Baidu\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/1x\"}]}}";
-      dm_pan_entry pe[DM_PAN_MAX]; co_foc_t fl[CO_FOC_MAX]; CHECK(dm_community_manifest(p2, strlen(p2)) == 1); CHECK(dm_community_pans(pe) == 2);
-      int nf = co_focus_build(1, pe, 2, fl, CO_FOC_MAX); CHECK(nf == 5);
-      CHECK(fl[0].kind == CO_F_CH && fl[0].idx == 0); CHECK(fl[1].kind == CO_F_PAN_OPEN && fl[1].idx == 0);
-      CHECK(fl[2].kind == CO_F_PAN_COPY && fl[2].idx == 0); CHECK(fl[3].kind == CO_F_PAN_OPEN && fl[3].idx == 1);   // 第二条没有提取码：后面直接是确定 | row 2 has no code: OK follows
-      CHECK(fl[4].kind == CO_F_OK);
-      nf = co_focus_build(0, pe, 2, fl, CO_FOC_MAX); CHECK(nf == 4 && fl[0].kind == CO_F_PAN_OPEN && fl[1].kind == CO_F_PAN_COPY && fl[2].kind == CO_F_PAN_OPEN && fl[3].kind == CO_F_OK);
-      CHECK(co_focus_toggle(fl, nf, 0, 1) == 1 && co_focus_toggle(fl, nf, 1, -1) == 0);
-      CHECK(co_focus_toggle(fl, nf, 1, 1) == 1 && co_focus_toggle(fl, nf, 2, 1) == 2 && co_focus_toggle(fl, nf, 2, -1) == 2);   // 没有同行的另一颗：左右不动 | no partner in the row: left / right do nothing
-      CHECK(co_focus_toggle(fl, nf, 0, -1) == 0 && co_focus_toggle(fl, nf, nf - 1, 1) == nf - 1);   // 不循环、不跨行 | no wrap, no crossing rows
-      nf = co_focus_build(2, NULL, 0, fl, CO_FOC_MAX); CHECK(nf == 3 && fl[0].kind == CO_F_CH && fl[1].kind == CO_F_CH && fl[2].kind == CO_F_OK);   // 没有网盘：链与旧版相同 | no drives: the old chain
-      CHECK(co_focus_build(3, pe, 4, fl, CO_FOC_MAX) <= CO_FOC_MAX); }
-    // 32. 网盘确认态（RC2 任务卡）：点「打开」只进确认态并记住第几条；确定 → dm_community_open_pan（白名单照旧），取消 / B → 回普通态不开；
-    //     不在白名单的链接即使在确认态点确定也不调回调；网盘「复制」复制提取码，按钮状态与渠道行同一套 2 秒
-    // 32. Drive confirmation (RC2 card): Open only enters the confirm state and remembers the index; OK -> dm_community_open_pan (whitelist unchanged), Cancel / B -> normal without opening;
-    //     a non-whitelisted link never calls the callback even after OK; a drive's Copy copies the code, with the same 2-second button state as the channel rows
-    { static const char *const p2 = "{\"community\": {\"qq_group\": \"1129913678\", \"pans\": ["
-          "{\"name\": \"夸克\", \"icon\": \"quark\", \"url\": \"https://pan.quark.cn/s/abc\", \"code\": \"ab12\"},"
-          "{\"name\": \"Baidu\", \"icon\": \"baidu\", \"url\": \"https://pan.baidu.com/s/1x\"}]}}";
-      dm_pan_entry pe[DM_PAN_MAX]; CHECK(dm_community_manifest(p2, strlen(p2)) == 1); CHECK(dm_community_pans(pe) == 2);
-      atomic_store(&g_show, 2); atomic_store(&g_mode, 1); dm_community_copy_init(copy_ok); dm_community_open_init(open_ok); opens = 0; copies = 0; opened[0] = copied[0] = 0;
-      log_reset(); co_pan_request(0); CHECK(atomic_load(&g_confirm) == 1 && atomic_load(&g_confirm_pan) == 0 && atomic_load(&g_confirm_foc) == 0);
-      CHECK(strstr(log_text(), "请确认打开外部网站"));
-      co_confirm_ok(1); CHECK(!atomic_load(&g_confirm) && opens == 1 && !strcmp(opened, "https://pan.quark.cn/s/abc")); CHECK(strstr(log_text(), "确认打开外部网站"));
-      co_pan_request(1); CHECK(atomic_load(&g_confirm) == 1); co_confirm_cancel(); CHECK(!atomic_load(&g_confirm) && opens == 1);   // 取消：不开 | Cancel: no open
-      co_pan_request(0); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommOk"); CHECK(!atomic_load(&g_confirm) && opens == 2);   // 确认态的「确定」按钮 | the confirm state's OK button
-      co_pan_request(0); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommCancel"); CHECK(!atomic_load(&g_confirm) && opens == 2);   // 取消按钮 | the Cancel button
-      co_pan_request(0); dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommPanOpen1"); CHECK(atomic_load(&g_confirm) == 1 && atomic_load(&g_confirm_pan) == 1); co_confirm_cancel();   // 点第二行「打开」 | row 2's Open
-      do_copy_code(1, 0); CHECK(copies == 1 && !strcmp(copied, "ab12") && atomic_load(&g_copied_pan) == 0 && atomic_load(&g_copied) == 1);
-      log_reset(); do_copy_code(1, 1); CHECK(copies == 1 && atomic_load(&g_copied) == -1 && atomic_load(&g_copied_pan) == 1 && strstr(log_text(), "没有提取码"));   // 第二条没有提取码 | row 2 has no code
-      do_copy_code(1, 0); CHECK(copies == 2 && !strcmp(copied, "ab12")); dm_community_copy_init(NULL); do_copy_code(1, 0); CHECK(atomic_load(&g_copied) == -1); dm_community_copy_init(copy_ok);
-      dm_community_on_uimsg("PanelManager", "ClosePanel", "TouchCommPanCopy0"); CHECK(copies == 3 && !strcmp(copied, "ab12"));   // 网盘复制按钮的消息 | the drive Copy button's message
-      // 非白名单：直接往社区状态塞一条坏链接，确认态点确定也不调回调 | non-whitelisted: a bad link stuffed into the state, OK in the confirm state still calls nothing
-      { dm_pan_entry bad[DM_PAN_MAX]; memset(bad, 0, sizeof bad); snprintf(bad[0].name, sizeof bad[0].name, "bad"); bad[0].icon = DM_PAN_GENERIC; snprintf(bad[0].url, sizeof bad[0].url, "https://evil.example/s/x"); set_pans(bad, 1);
-        opens = 0; log_reset(); co_pan_request(0); CHECK(atomic_load(&g_confirm) == 1); co_confirm_ok(1); CHECK(!atomic_load(&g_confirm) && opens == 0 && strstr(log_text(), "【红】社区入口：打开网盘失败")); }
-      dm_community_manifest(M_NONE, strlen(M_NONE)); dm_community_open_init(NULL); dm_community_copy_init(NULL); atomic_store(&g_show, 0); }
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);
     fflush(stderr); printf("t_community: %d checks, %d failed\n", checks, fails);
     return fails != 0;
