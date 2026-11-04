@@ -37,6 +37,11 @@ static uint8_t *B; static int g_page, g_selling_ticks; static _Atomic int g_tap,
 int dm_bag_take_full(void) { return atomic_exchange(&g_full, 0); } int dm_bag_take_restore_fail(void) { return atomic_exchange(&g_restore_fail, 0); }
 uint64_t dm_bag_cli_item(uint8_t *b, uint32_t id) { return ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0 + 4 * 0x400), id & 0x7f, id, 4); }   // g_tap = 1 + 点到的图标 | g_tap = 1 + the tapped icon
 
+// 进护身符页的只有已鉴定的护身符（B146）：原版鉴定卷轴的目标和凯恩「鉴定全部」只认背包页，未鉴定的护身符留在背包页等鉴定，鉴定完下一拍自动搬进页 5。
+//   物品数据 +0x18 标志位 0x10 = 已鉴定（客户端、服务端同一位，同 dm_pouch.c 存放判定）
+// Only identified charms go to the charm page (B146): the original identify scroll's target and Cain's "Identify All" only see the bag page, so unidentified charms stay on the bag page until identified and move to page 5 on the next tick after that.
+//   Item data +0x18 flag bit 0x10 = identified (same bit on client and server, same as the deposit check in dm_pouch.c)
+static int charm_paged(uint8_t *b, uint64_t it) { uint64_t d = it ? *(uint64_t *)(it + 0x10) : 0; return d && ((int (*)(uint64_t, int))(b + 0x574bc0))(it, 13) && (*(uint32_t *)(d + 0x18) & 0x10); }
 int dm_bag_page(void) { return g_page; }
 static const char *w_name(uint64_t w) { return w ? *(const char **)(uintptr_t)(w + 8) : NULL; }
 static uint64_t find_w(uint64_t w, const char *name, int dep) {
@@ -116,7 +121,7 @@ void dm_bag_ui(uint8_t *b, uint64_t inv_panel, uint64_t box, uint64_t pl) {
     { int t = atomic_exchange(&g_tap, 0); if (t && !held) set_page(t - 1, "tap"); }
     // 自动切页：手上是护身符 → 护身符页，手上是别的 → 背包页；对面面板里指着护身符也切（用户 15:5x）| Automatic page: a charm in hand goes to the charm page, anything else to the bag page; pointing at a charm in the opposite panel also switches (user rule)
     if (open) { int o = dm_bag_opp_of(root); dm_bag_set_opp(o);
-        if (held) { uint64_t it = dm_bag_cli_item(b, (uint32_t)held); if (it) set_page(((int (*)(uint64_t, int))(b + 0x574bc0))(it, 13) ? 1 : 0, "held"); }
+        if (held) { uint64_t it = dm_bag_cli_item(b, (uint32_t)held); if (it) set_page(charm_paged(b, it) ? 1 : 0, "held"); }
         else if (o) { dm_cursor_item_info ci; if (dm_cursor_item(&ci) && ci.container != DM_ITEM_AT_INVENTORY && ci.container != DM_ITEM_AT_CHARM && !strncmp(ci.code, "cm", 2)) set_page(1, "hover"); } 
         // 等客户端看到它回了页 0 再卖（搬动的通知包要走一拍）；0x433e50 距上次交易不足 500 ms 返回 0，下一帧再试 | Sell once the client sees it back on page 0 (the move notice takes a tick); 0x433e50 returns 0 within 500 ms of the last deal, so retry next frame
         { static uint32_t sid; static int wait; uint32_t nid = dm_bag_take_sell(); if (nid) { sid = nid; wait = 120; }
@@ -220,6 +225,7 @@ __attribute__((constructor)) static void charm_hook_install(void) { extern void 
 
 // 服务端每拍：进局读回；页 0 的护身符搬进页 5（拾取、买入、交易收货、导入、老档都走这一条），一拍一件；页 5 放不下就留在原处。
 // Server every tick: load on entry; charms on page 0 move to page 5 (pickup, purchase, trade, import and old saves all take this path), one per tick; if page 5 has no room they stay.
+static int quick_out(uint8_t *b, uint64_t G, uint64_t player, uint32_t id, int np, int nrow, int loud);
 void dm_bag_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
     static uint64_t lp; if (!player) { lp = 0; return; }   // 退局那次提交可能晚于这一拍，清单留着，下一个角色进局才换 | The commit on leaving may come after this tick, so the state stays until the next character loads
     pthread_mutex_lock(&g_cmu);
@@ -228,12 +234,16 @@ void dm_bag_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
     uint64_t inv = *(uint64_t *)(player + 0x90), f = 0; if (!inv || *(uint32_t *)inv != 0x01020304) return;
     { static uint32_t ls; uint64_t i0 = *(uint64_t *)(player + 0x90), c0 = i0 ? *(uint64_t *)(i0 + 0x40) : 0; uint32_t cid = c0 ? *(uint32_t *)(c0 + 8) : 0; if (cid != ls) { LOG("大背包：服务端手上 id %u → %u", ls, cid); ls = cid; } }
     uint32_t selling = atomic_load(&g_selling); if (selling && --g_selling_ticks <= 0) { atomic_store(&g_selling, 0); selling = 0; }
-    int (*is)(uint64_t, int) = (int (*)(uint64_t, int))(b + 0x574bc0); uint8_t used[ROWS][COLS]; memset(used, 0, sizeof used); int nf = 0; static int last_nf = -1;
+    uint8_t used[ROWS][COLS]; memset(used, 0, sizeof used); int nf = 0; static int last_nf = -1; uint32_t back = 0;
     for (uint64_t it = *(uint64_t *)(inv + 0x10), n = 0; it && n < 2048; n++) { uint64_t d = *(uint64_t *)(it + 0x10), pp = *(uint64_t *)(it + 0x38); if (!d) break;
         if (*(uint32_t *)(it + 0xc) == 0 && pp) { int pg = *(uint8_t *)(d + 0x55);
-            if (pg == CHARM_PAGE) { int gw = 1, gh = 1, x = *(int32_t *)(pp + 0x10), y = *(int32_t *)(pp + 0x14); dm_cursor_item_size(b, it, &gw, &gh); for (int r = y; r < y + gh && r < ROWS; r++) for (int c = x; c < x + gw && c < COLS; c++) if (r >= 0 && c >= 0) used[r][c] = 1; }
-            else if (pg == 0 && is(it, 13) && *(uint32_t *)(it + 8) != selling) { nf++; if (!f) f = it; } }
+            if (pg == CHARM_PAGE) { if (!back && !(*(uint32_t *)(d + 0x18) & 0x10)) back = *(uint32_t *)(it + 8); int gw = 1, gh = 1, x = *(int32_t *)(pp + 0x10), y = *(int32_t *)(pp + 0x14); dm_cursor_item_size(b, it, &gw, &gh); for (int r = y; r < y + gh && r < ROWS; r++) for (int c = x; c < x + gw && c < COLS; c++) if (r >= 0 && c >= 0) used[r][c] = 1; }
+            else if (pg == 0 && charm_paged(b, it) && *(uint32_t *)(it + 8) != selling) { nf++; if (!f) f = it; } }
         it = *(uint64_t *)(d + 0xb0); }
+    // 页 5 上未鉴定的（老档、导入、云合并、本修复之前搬进去的）搬回背包页，一拍一件；背包页放不下就留着，同一件只记一次日志
+    // Unidentified ones on page 5 (old saves, imports, cloud merges, moved there before this fix) go back to the bag page, one per tick; if the bag page has no room they stay, logged once per item
+    if (back) { static uint32_t back_fail; int r = quick_out(b, G, player, back, 0, *(int32_t *)(b + 0x1dae684 + *(uint32_t *)(player + 4) * 8 + 4), back_fail != back);
+        if (r || back_fail != back) LOG("大背包：未鉴定护身符 id %u 页 5 → 页 0：%d", back, r); back_fail = r ? 0 : back; return; }
     if (!f) { last_nf = 0; return; }
     int gw = 1, gh = 1, fx = -1, fy = -1; dm_cursor_item_size(b, f, &gw, &gh);
     for (int c = 0; c + gw <= COLS && fx < 0; c++) for (int r = 0; r + gh <= ROWS && fx < 0; r++) { int ok = 1; for (int q = r; q < r + gh && ok; q++) for (int w = c; w < c + gw; w++) if (used[q][w]) { ok = 0; break; } if (ok) { fx = c; fy = r; } }
@@ -251,7 +261,7 @@ void dm_bag_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
 
 // ---- 放置过滤：护身符页不走光标（用户 15:5x）。客户端发的拿起 0x19 / 放下 0x18 里页号是 5 的这里接管：
 //   拿起 = 快速移动：对面开着仓库 / 方块就搬过去，商店就卖（客户端拍里走原版卖出），都没开什么也不做；
-//   放下 = 手上的护身符落进页 5（点的格放不下就找空位）；手上不是护身符不接，界面切回背包页（dm_bag_ui）。
+//   放下 = 手上已鉴定的护身符落进页 5（点的格放不下就找空位）；手上不是已鉴定的护身符不接，界面切回背包页（dm_bag_ui）。
 // Placement filter: the charm page does not use the cursor (user rule). Pick-up 0x19 / place 0x18 packets from the client with page 5 are taken over here:
 //   pick up = quick move: to the stash / cube if open, sold if a vendor is open (through the original sale on the client tick), otherwise nothing;
 //   place = the charm in hand lands on page 5 (a free cell if the chosen one does not fit); a non-charm is refused and the UI goes back to the bag page (dm_bag_ui).
@@ -268,10 +278,10 @@ static int page_free(uint64_t inv, int page, int gw, int gh, int *fx, int *fy) {
     for (int x = 0; x + gw <= w; x++) for (int y = 0; y + gh <= h; y++) { int ok = 1; for (int q = y; q < y + gh && ok; q++) for (int c = x; c < x + gw; c++) if (*(uint64_t *)(cells + 8 * (uint64_t)(q * w + c))) { ok = 0; break; } if (ok) { *fx = x; *fy = y; return 1; } }
     return 0;
 }
-static int quick_out(uint8_t *b, uint64_t G, uint64_t player, uint32_t id, int np, int nrow) {
+static int quick_out(uint8_t *b, uint64_t G, uint64_t player, uint32_t id, int np, int nrow, int loud) {
     uint64_t inv = *(uint64_t *)(player + 0x90), f = 0; for (uint64_t it = *(uint64_t *)(inv + 0x10), n = 0; it && n < 2048 && !f; n++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; if (*(uint32_t *)(it + 8) == id) f = it; else it = *(uint64_t *)(d + 0xb0); }
     if (!f) return 0; uint64_t d = *(uint64_t *)(f + 0x10), pp = *(uint64_t *)(f + 0x38); if (!pp || *(uint8_t *)(d + 0x55) != CHARM_PAGE) return 0;
-    int gw = 1, gh = 1, x, y, ox = *(int32_t *)(pp + 0x10), oy = *(int32_t *)(pp + 0x14); dm_cursor_item_size(b, f, &gw, &gh); if (!page_free(inv, np, gw, gh, &x, &y)) { LOG("大背包：页 %d 放不下 id %u", np, id); return 0; }
+    int gw = 1, gh = 1, x, y, ox = *(int32_t *)(pp + 0x10), oy = *(int32_t *)(pp + 0x14); dm_cursor_item_size(b, f, &gw, &gh); if (!page_free(inv, np, gw, gh, &x, &y)) { if (loud) LOG("大背包：页 %d 放不下 id %u", np, id); return 0; }
     void (*eff)(int, uint64_t, uint64_t, int) = (void (*)(int, uint64_t, uint64_t, int))(b + 0x645820); void (*nt)(uint64_t, uint64_t, uint64_t, int, int, int, int, int, uint64_t) = (void (*)(uint64_t, uint64_t, uint64_t, int, int, int, int, int, uint64_t))(b + 0x642f70);
     if (np) eff(*(uint8_t *)(G + 0x106), f, player, 0);   // 页 0 的护身符原版也生效，转去卖的那一下不动 | A charm on page 0 is live in the original too, so the hop before selling leaves it on
     if (!((int (*)(uint64_t, uint64_t, int, int, int, int))(b + 0x560740))(inv, f, x, y, np + 2, nrow)) { if (np) eff(*(uint8_t *)(G + 0x106), f, player, 1); LOG("大背包：放进页 %d %d,%d 失败 id %u", np, x, y, id); return 0; }
@@ -279,7 +289,7 @@ static int quick_out(uint8_t *b, uint64_t G, uint64_t player, uint32_t id, int n
     LOG("大背包：护身符 id %u 页 5 %d,%d → 页 %d %d,%d", id, ox, oy, np, x, y); return 1;
 }
 static int place_held(uint8_t *b, uint64_t G, uint64_t player, uint32_t id, int x, int y) {
-    uint64_t inv = *(uint64_t *)(player + 0x90), it = *(uint64_t *)(inv + 0x40); if (!it || *(uint32_t *)(it + 8) != id || !((int (*)(uint64_t, int))(b + 0x574bc0))(it, 13)) return 0;
+    uint64_t inv = *(uint64_t *)(player + 0x90), it = *(uint64_t *)(inv + 0x40); if (!it || *(uint32_t *)(it + 8) != id || !charm_paged(b, it)) return 0;   // 未鉴定的护身符不进页 5（B146），界面已按 charm_paged 切回背包页 | Unidentified charms do not go to page 5 (B146); the UI already switched back to the bag page by charm_paged
     uint64_t d = *(uint64_t *)(it + 0x10); uint32_t cls = *(uint32_t *)(player + 4); int row = *(int32_t *)(b + 0x1dae684 + cls * 8 + 4), gw = 1, gh = 1, fx = x, fy = y; dm_cursor_item_size(b, it, &gw, &gh);
     if (!page_free(inv, CHARM_PAGE, gw, gh, &fx, &fy)) return 0;
     int (*put)(uint64_t, uint64_t, int, int, int, int) = (int (*)(uint64_t, uint64_t, int, int, int, int))(b + 0x560740);
@@ -295,9 +305,9 @@ void dm_bag_c2s(uint64_t *regs) {
     if (!b || !G || !player || !pk || len != 17 || (pk[0] != 0x18 && pk[0] != 0x19)) return;
     uint32_t id, x, y, pg; memcpy(&id, pk + 1, 4); memcpy(&x, pk + 5, 4); memcpy(&y, pk + 9, 4); memcpy(&pg, pk + 13, 4); if (pg != CHARM_PAGE) return;
     if (pk[0] == 0x19) { int o = atomic_load(&g_opp), r = 0;
-        if (o == OPP_STASH) r = quick_out(b, G, player, id, 4, 10); else if (o == OPP_CUBE) r = quick_out(b, G, player, id, 3, 9);
+        if (o == OPP_STASH) r = quick_out(b, G, player, id, 4, 10, 1); else if (o == OPP_CUBE) r = quick_out(b, G, player, id, 3, 9, 1);
         else if (o == OPP_VENDOR) {   // 服务端不收页 5 的卖出（实测「我无法完成该请求」），先搬回页 0 再走原版卖；没卖成的话 g_selling 到期，下一拍搬回页 5 | The server refuses to buy from page 5 (measured), so hop to page 0 and sell the normal way; if the sale does not happen, g_selling expires and the charm goes back to page 5
-            r = quick_out(b, G, player, id, 0, *(int32_t *)(b + 0x1dae684 + *(uint32_t *)(player + 4) * 8 + 4)); if (r) { atomic_store(&g_selling, id); g_selling_ticks = 50; atomic_store(&g_sell_id, id); } else atomic_store(&g_sell_full, 1); }
+            r = quick_out(b, G, player, id, 0, *(int32_t *)(b + 0x1dae684 + *(uint32_t *)(player + 4) * 8 + 4), 1); if (r) { atomic_store(&g_selling, id); g_selling_ticks = 50; atomic_store(&g_sell_id, id); } else atomic_store(&g_sell_full, 1); }
         else if (o == OPP_TRADE) atomic_store(&g_note_trade, 1);
         LOG("大背包：页 5 拿起 id %u → 对面 %d，搬动 %d", id, o, r); }
     else { int r = place_held(b, G, player, id, (int)x, (int)y); LOG("大背包：页 5 放下 id %u → %d", id, r); }
