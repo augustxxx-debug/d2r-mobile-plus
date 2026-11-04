@@ -356,6 +356,39 @@ static void t_coop_origin(void) {
     CHECK(dm_savepkg_wrap_foreign_from(in, "primary:Download/save/Alice/Alice.d2s", w, o, sizeof o, &part) == 0, "安卓普通路径照常收");
     dm_savepkg_rmtree(w);
 }
+// 终审 T1 P2-1 / P2-2：直接选 save.test / save.work 目录本身不收；ZIP 有叫 save 的根就用它，根以外还有存档就整包拒绝，不静默丢角色
+// Final audit T1 P2-1 / P2-2: picking save.test / save.work itself is refused; a ZIP uses the root named save, and saves outside the root refuse the whole package instead of being dropped silently
+static void t_foreign_edges(void) {
+    char in[1024], w[1024], o[1100]; int part = 0; dm_pkg_view v; P(w, "fe/work");
+    mk_char("fe/Documents/save.test", "Testy", 1, 3, 0, 1); mk_char("fe/Documents/save.work", "Worky", 1, 3, 0, 1); mk_char("fe/Documents/SAVE.TEST", "Testy", 1, 3, 0, 1); mk_char("fe/Documents/save", "Alice", 1, 30, 0, 100); mk_char("fe/pick/p1-123", "Testy", 1, 3, 0, 1);
+    P(in, "fe/Documents/save.test"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS && !strcmp(o, in), "直接选 save.test 拒绝");
+    P(in, "fe/Documents/save.work"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "直接选 save.work 拒绝");
+    P(in, "fe/Documents/SAVE.TEST"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "大写 SAVE.TEST 拒绝");
+    P(in, "fe/Documents/save.test/"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "结尾带 / 也拒绝");
+    { char ln[1024], tg[1024]; P(tg, "fe/Documents/save.test"); P(ln, "fe/alias"); CHECK(!symlink(tg, ln), "造别名"); P(in, "fe/alias"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "save.test 的链接别名按真实路径拒绝"); }
+    P(in, "fe/pick/p1-123"); CHECK(dm_savepkg_wrap_foreign_from(in, NULL, w, o, sizeof o, &part) == 0, "安卓副本目录只看名字判不出来（所以要原路径）");
+    CHECK(dm_savepkg_wrap_foreign_from(in, "primary:Download/save.test", w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "安卓 SAF 树 ID 是 save.test：拒绝");
+    CHECK(dm_savepkg_wrap_foreign_from(in, "primary:save.work", w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "安卓 SAF 树 ID 是 save.work：拒绝");
+    CHECK(dm_savepkg_wrap_foreign_from(in, "primary:save.test", w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "安卓 SAF 树 ID 在卷根（primary:save.test）：拒绝");
+    CHECK(dm_savepkg_wrap_foreign_from(in, "primary:Download/SAVE.TEST", w, o, sizeof o, &part) == DM_PKG_E_NOTOURS && dm_savepkg_wrap_foreign_from(in, "primary:Download/Old.WORK", w, o, sizeof o, &part) == DM_PKG_E_NOTOURS, "安卓 SAF 树 ID 大小写不同也拒绝（安卓盘分大小写，不靠 realpath）");
+    CHECK(dm_savepkg_wrap_foreign_from(in, "primary:Download/save.testing", w, o, sizeof o, &part) == 0, "名字只是像（save.testing）照常收");
+    P(in, "fe/Documents/save"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "save 照常收"); P(in, "fe/Documents"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "选上级 Documents 照常进 save");
+    { char s[1024]; P(s, "fe2/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0 && v.nchars == 1 && row(&v, "Alice") && !row(&v, "Testy") && !row(&v, "Worky"), "上级目录只进 save [%d]", v.nchars); dm_savepkg_view_free(&v); }
+    size_t an = 0, bn = 0; uint8_t *a = get("fe/Documents/save/Alice/Alice.d2s", &an); mk_char("fe/b/save", "Bobby", 1, 30, 0, 100); uint8_t *b = get("fe/b/save/Bobby/Bobby.d2s", &bn);
+    // 终审探针原样：旧仓库在 old/、save/ 里另有角色 → 不再只出 old，整包拒绝 | the audit probe as is: an old repository in old/ and another character in save/
+    { ent z[2] = { { .name = "old/Alice/Alice.d2s", .d = a, .n = (uint32_t)an }, { .name = "save/Bobby/Bobby.d2s", .d = b, .n = (uint32_t)bn } }; mkzip("fe/z1.zip", z, 2, 0); P(in, "fe/z1.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_PATH && !strcmp(o, in), "old/ 与 save/ 两个根：拒绝，不静默丢"); }
+    { ent z[2] = { { .name = "Alice/Alice.d2s", .d = a, .n = (uint32_t)an }, { .name = "save/Bobby/Bobby.d2s", .d = b, .n = (uint32_t)bn } }; mkzip("fe/z2.zip", z, 2, 0); P(in, "fe/z2.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_PATH, "顶层角色 + save/：拒绝（旧做法取空前缀丢掉 save 里的）"); }
+    { ent z[2] = { { .name = "a/save/Alice/Alice.d2s", .d = a, .n = (uint32_t)an }, { .name = "b/save/Bobby/Bobby.d2s", .d = b, .n = (uint32_t)bn } }; mkzip("fe/z3.zip", z, 2, 0); P(in, "fe/z3.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_PATH, "两个 save 仓库：拒绝"); }
+    { ent z[2] = { { .name = "save/Alice/Alice.d2s", .d = a, .n = (uint32_t)an }, { .name = "SharedStashSoftCoreV2.d2i", .d = (const uint8_t *)"\x55\xaa\x55\xaastash", .n = 9 } }; mkzip("fe/z4.zip", z, 2, 0); P(in, "fe/z4.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_PATH, "save/ 以外的顶层仓库：拒绝"); }
+    { ent z[3] = { { .name = "Documents/save/Alice/Alice.d2s", .d = a, .n = (uint32_t)an }, { .name = "Documents/save/Bobby/Bobby.d2s", .d = b, .n = (uint32_t)bn }, { .name = "Documents/save.test/Testy/Testy.d2s", .d = a, .n = (uint32_t)an } }; mkzip("fe/z5.zip", z, 3, 0); P(in, "fe/z5.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "一个 save 仓库 + save.test：照常收");
+      char s[1024]; P(s, "fe5/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0 && v.nchars == 2 && row(&v, "Alice") && row(&v, "Bobby"), "两个角色都在 [%d]", v.nchars); dm_savepkg_view_free(&v); }
+    // 上级目录里另有仓库：最短前缀会取 Documents/，把 save 里的角色当认不出的条目丢掉；现在取 save，Documents/ 下的仓库在根外 → 拒绝 | a stash in the parent: the shortest prefix would take Documents/ and drop save's characters as unrecognised; now save is the root and the stash outside it refuses the package
+    { ent z[2] = { { .name = "Documents/SharedStashSoftCoreV2.d2i", .d = (const uint8_t *)"\x55\xaa\x55\xaastash", .n = 9 }, { .name = "Documents/save/Alice/Alice.d2s", .d = a, .n = (uint32_t)an } }; mkzip("fe/z6.zip", z, 2, 0); P(in, "fe/z6.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_PATH, "上级有仓库 + save/：拒绝，不丢 save 里的角色"); }
+    { ent z[2] = { { .name = "save/Alice/Alice.d2s", .d = a, .n = (uint32_t)an }, { .name = "save/Alice/old/Alice.d2s", .d = a, .n = (uint32_t)an } }; mkzip("fe/z7.zip", z, 2, 0); P(in, "fe/z7.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == DM_PKG_E_PATH, "根下认不出的存档（角色目录里的旧副本）：拒绝"); }
+    { ent z[2] = { { .name = "save/Alice/Alice.d2s", .d = a, .n = (uint32_t)an }, { .name = "save/SharedStashSoftCoreV2.d2i", .d = (const uint8_t *)"\x55\xaa\x55\xaastash", .n = 9 } }; mkzip("fe/z8.zip", z, 2, 0); P(in, "fe/z8.zip"); CHECK(dm_savepkg_wrap_foreign(in, w, o, sizeof o, &part) == 0, "save/ 里角色 + 仓库：照常收");
+      char s[1024]; P(s, "fe8/save"); CHECK(dm_savepkg_inspect(o, s, 0, &v) == 0 && v.nchars == 1 && v.nstash == 1, "角色和仓库都在 [%d/%d]", v.nchars, v.nstash); dm_savepkg_view_free(&v); }
+    free(a); free(b); dm_savepkg_rmtree(w);
+}
 // 上游 ZIP 的数量 / 总量预算：解压中实时生效，停下时盘上不超（审计 P2-5，变异 M1b 曾存活）| an upstream ZIP's count and total budgets act during extraction and nothing past them reaches the disk
 typedef struct { uint8_t *b; size_t n, cap; uint32_t acc; int bits; } bw;
 static void bw_put(bw *w, uint32_t v, int n) { for (int i = 0; i < n; i++) { w->acc |= ((v >> i) & 1u) << w->bits; if (++w->bits == 8) { if (w->n == w->cap) { w->cap = w->cap ? w->cap * 2 : 4096; w->b = realloc(w->b, w->cap); } w->b[w->n++] = (uint8_t)w->acc; w->acc = 0; w->bits = 0; } } }
@@ -389,7 +422,7 @@ static void t_upstream_budget(void) {
 
 int main(void) {
     const char *td = getenv("TMPDIR"); snprintf(R, sizeof R, "%s/t_savepkg_%d", td ? td : "/tmp", (int)getpid()); mkdir(R, 0755);
-    t_path_set(); t_names(); t_paths(); t_d2s(); t_swcharm(); t_upstream(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_mirror_test_run(); t_cross(); t_coop(); t_mirror_dirs(); t_job_gate(); t_progress(); t_coop_origin(); t_upstream_budget();
+    t_path_set(); t_names(); t_paths(); t_d2s(); t_swcharm(); t_upstream(); t_roundtrip(); t_merge_conflict(); t_bad_packages(); t_apply_interrupt(); t_backups(); t_mirror_test_run(); t_cross(); t_coop(); t_mirror_dirs(); t_job_gate(); t_progress(); t_coop_origin(); t_foreign_edges(); t_upstream_budget();
     char cmd[700]; snprintf(cmd, sizeof cmd, "rm -rf '%s'", R); if (!fails) system(cmd); else printf("  保留现场 %s\n", R);
     printf("t_savepkg: %d 项检查，%d 项失败\n", checks, fails); return fails != 0;
 }
