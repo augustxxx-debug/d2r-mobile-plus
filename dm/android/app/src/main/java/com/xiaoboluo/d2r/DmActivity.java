@@ -221,8 +221,19 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
 
     // 失败页 / 熔断页上的两个按钮（每次重画页面时重设；手柄 A 按当前焦点分发，见 dispatchKeyEvent 与 GenScreenKeys）| the two buttons on the failure / breaker page (reset on every redraw; controller A follows the current focus, see dispatchKeyEvent and GenScreenKeys)
     private android.widget.Button genShareBtn, genRetryBtn;
+    private TextView genPadHint;                     // 「手柄按 A：<当前焦点按钮的动作>」，焦点 / 手柄一变就重写 | "Controller A: <the focused button's action>", rewritten when the focus or the controller changes
+    private static volatile int genPadVendor;        // 最近一次按键的手柄厂商号（0 = 还没按过，按 Xbox 写 A）| vendor id of the controller that pressed a key last (0 = none yet, shown as A)
+    private void updateGenPadHint() {
+        if (genPadHint == null) return;
+        android.view.View f = getCurrentFocus();
+        int focused = f != null && f == genShareBtn ? GenScreenKeys.SHARE : f != null && f == genRetryBtn ? GenScreenKeys.RETRY : GenScreenKeys.NONE;
+        int t = GenScreenKeys.aTarget(focused, genShareBtn != null, genRetryBtn != null || genRetryOffered);
+        if (t == GenScreenKeys.NONE) { genPadHint.setVisibility(android.view.View.GONE); return; }
+        genPadHint.setVisibility(android.view.View.VISIBLE);
+        genPadHint.setText(getString(R.string.dmAndroidGenPadHint, GenScreenKeys.aGlyph(genPadVendor), getString(t == GenScreenKeys.RETRY ? R.string.dmAndroidGenRetry : R.string.dmAndroidGenShare)));
+    }
     private void showGenScreen(String title, String body, String hint, boolean share, boolean retry) {
-        genShareBtn = null; genRetryBtn = null;
+        genShareBtn = null; genRetryBtn = null; genPadHint = null;
         android.widget.LinearLayout box = new android.widget.LinearLayout(this);
         box.setOrientation(android.widget.LinearLayout.VERTICAL); box.setPadding(64, 48, 64, 48);
         box.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -241,7 +252,16 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             box.addView(btn, lp); btn.requestFocus(); genRetryBtn = btn;
         }
         if (hint != null) { TextView h = new TextView(this); h.setTextSize(14); h.setText(hint); h.setPadding(0, 24, 0, 0); box.addView(h); }
+        // 手柄提示：按当前焦点按钮写「手柄按 A：分享诊断日志 / 再试一次」（真机奥丁 60aac2e3：原文案写死「按 A 分享」，熔断页按 A 实为重试）
+        // controller hint after the focused button: "Controller A: Share Diagnostics / Try again" (Thor 60aac2e3: the fixed text said A shares, while A retried on the breaker page)
+        if (share || retry) {
+            genPadHint = new TextView(this); genPadHint.setTextSize(14); genPadHint.setPadding(0, 12, 0, 0); box.addView(genPadHint);
+            android.view.View.OnFocusChangeListener fl = (v, has) -> updateGenPadHint();
+            if (genShareBtn != null) genShareBtn.setOnFocusChangeListener(fl);
+            if (genRetryBtn != null) genRetryBtn.setOnFocusChangeListener(fl);
+        }
         setContentView(box);
+        updateGenPadHint();
     }
     private void showGenFailure() { String t = genFailTitle != null ? genFailTitle : getString(R.string.dmAndroidGenFailed); showGenScreen(t, genFailure, null, genLogText != null, genRetryOffered); }
 
@@ -440,7 +460,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         String text = PackGenerator.scrubLog(PackGenerator.genLog(title, reason, genState.summary, envReport(this, getFilesDir(), base, null),
                 PackGenerator.listInputs(new File(base, "ExeFS"), data), "（没有开始生成：同一版本已连续生成失败 " + StartupDecision.GEN_TRIES_MAX + " 次）\n"),
                 new File(nativeDir).getParentFile().getParent(), getFilesDir().getParent(), getPackageName());
-        try (OutputStream o = new FileOutputStream(new File(base, "gen_log.txt"))) { o.write(text.getBytes(StandardCharsets.UTF_8)); } catch (IOException ignored) {}
+        try (OutputStream o = new FileOutputStream(PackGenerator.genLogFile(base))) {   // 一律写新目录 D2R Mobile Plus（真机奥丁 60aac2e3：熔断页这处原先跟着 base 写进旧目录）| always the new D2R Mobile Plus folder (Thor 60aac2e3: this spot followed base into the old folder)
+            o.write(text.getBytes(StandardCharsets.UTF_8)); } catch (IOException ignored) {}
         genRetryBase = base; genRetryOffered = true;
         genFailTitle = title; genFailure = reason; genLogText = text; showGenFailure();
     }
@@ -905,6 +926,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         // 生成失败页（§2.7）：手柄 A 松开 = 触发当前有焦点的按钮（十字键照系统焦点在「分享诊断日志」/「再试一次」间移动）；都没焦点时熔断页 = 再试一次，否则 = 分享（GenScreenKeys）。触屏点按钮不变
         // generation failure screen (§2.7): controller A on release activates the focused button (the D-pad moves the system focus between Share Diagnostics / Try again);
         // with neither focused, the breaker page means Try again and otherwise Share (GenScreenKeys). Touch taps are unchanged
+        if (!started && genPadHint != null && e.getDevice() != null && (e.getSource() & android.view.InputDevice.SOURCE_GAMEPAD) == android.view.InputDevice.SOURCE_GAMEPAD && e.getDevice().getVendorId() != genPadVendor) { genPadVendor = e.getDevice().getVendorId(); updateGenPadHint(); }   // 换了手柄：键帽字跟着换 | another controller: the glyph follows
         if (!started && !generating && genFailure != null && genLogText != null && e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_A) {
             if (e.getAction() == android.view.KeyEvent.ACTION_UP) {
                 android.view.View f = getCurrentFocus();

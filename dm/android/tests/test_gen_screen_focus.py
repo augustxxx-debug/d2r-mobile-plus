@@ -49,5 +49,22 @@ class GenScreenFocus(unittest.TestCase):
         self.assertIn('genRetryBtn = btn', b)
 
 
+    def test_pad_hint_follows_focus(self):
+        # 真机奥丁 60aac2e3：提示写死「按 A 分享」而熔断页 A 实为重试 → 提示按焦点走同一判定 | the hint follows the focus through the same decision
+        b = re.sub(r'\s+', ' ', body(code(), 'private void updateGenPadHint()'))
+        self.assertIn('GenScreenKeys.aTarget(focused,', b)
+        self.assertIn('GenScreenKeys.aGlyph(genPadVendor)', b)
+        self.assertIn('t == GenScreenKeys.RETRY ? R.string.dmAndroidGenRetry : R.string.dmAndroidGenShare', b)
+        g = re.sub(r'\s+', ' ', body(code(), 'private void showGenScreen('))
+        self.assertIn('setOnFocusChangeListener(fl)', g)
+        self.assertIn('updateGenPadHint();', g)
+
+    def test_gen_log_always_in_new_folder(self):
+        # 熔断页曾写 new File(base, "gen_log.txt")，旧目录有文件时落进 D2R Mobile | the breaker page once wrote into the old D2R Mobile folder
+        c = code()
+        self.assertNotIn('new File(base, "gen_log.txt")', c)
+        self.assertGreaterEqual(c.count('PackGenerator.genLogFile(base)'), 3)
+
+
 if __name__ == '__main__':
     unittest.main()

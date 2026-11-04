@@ -25,4 +25,9 @@ final class GenScreenKeys {
         if (target == RETRY) retry.run();
         else if (target == SHARE) share.run();
     }
+
+    // 提示行里 A 键的键帽字：PlayStation（索尼 vendor 0x054c）的下键是 ✕，Xbox / Switch / 掌机自带键位都写 A（同 pad_android.c glyph_of 的分法）
+    // the glyph for the A key in the hint line: the PlayStation (Sony vendor 0x054c) bottom button is ✕; Xbox / Switch / built-in controls read A (same split as glyph_of in pad_android.c)
+    static final int VENDOR_SONY = 0x054c;
+    static String aGlyph(int vendorId) { return vendorId == VENDOR_SONY ? "\u2715" : "A"; }
 }

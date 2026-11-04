@@ -32,6 +32,9 @@ public class GenScreenKeysTest {
         GenScreenKeys.dispatch(GenScreenKeys.aTarget(S, true, true), () -> chain.append("share;"), () -> chain.append("retry;"));
         GenScreenKeys.dispatch(GenScreenKeys.aTarget(R, true, true), () -> chain.append("share;"), () -> chain.append("retry;"));
         eq(1, chain.toString().equals("share;retry;") ? 1 : 0, "熔断页：焦点分享 → 分享，焦点重试 → 重试（实际 " + chain + "）");
+        // 提示行键帽字：索尼 ✕，其余 A | hint glyph: Sony ✕, everything else A
+        checks++; if (!GenScreenKeys.aGlyph(0x054c).equals("\u2715")) { fails++; System.out.println("  ✗ 索尼手柄应写 ✕"); }
+        for (int v : new int[]{0, 0x045e, 0x057e, 0x2dc8}) { checks++; if (!GenScreenKeys.aGlyph(v).equals("A")) { fails++; System.out.println("  ✗ 厂商 " + v + " 应写 A"); } }
         System.out.println("GenScreenKeysTest: " + checks + " 项，" + fails + " 失败");
         if (fails > 0) System.exit(1);
     }
