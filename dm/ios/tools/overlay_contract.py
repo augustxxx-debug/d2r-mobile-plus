@@ -57,6 +57,7 @@ SOURCE_INPUTS = tuple(sorted((
     "dm/ios/tools/touch_strings.py", "dm/ios/tools/romfs_art.py",
     "dm/ios/tools/dm_i18n.py", "dm/ios/tools/merc_slots.py",
     "dm/ios/tools/pouch_layout.py", "dm/ios/tools/wide_stash.py", "dm/ios/tools/stack_potions.py",
+    "dm/ios/tools/bag_layout.py", "dm/host/dm_bag_layout.h",   # 大背包控件（pouch_layout 导入，读宿主那份页签参数）：手机端生成要带上（RC2 并线） | large-bag widgets (imported by pouch_layout, read the host tab parameters): the on-phone generator needs them (RC2 merge)
     "dm/ios/tools/drop_light.py", "dm/ios/tools/kbd_glyphs.py",
     "dm/ios/tools/gen_widestash_art.py", "dm/ios/tools/gen_vault_cover.py",
     "dm/ios/tools/gen_trove_art.py", "dm/ios/tools/gen_pouch_art.py",
