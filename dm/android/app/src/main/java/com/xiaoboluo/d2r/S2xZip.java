@@ -139,12 +139,17 @@ final class S2xZip {
                 }
                 rel = stripDotSlash(rel);
                 if (rel.isEmpty() || junk(rel)) continue;
+                // 只解游戏文件的两棵树：包里别的东西（例如玩家放在同一文件夹的 android/ 导入包）不解、不覆盖（Opus 审 P2-1）
+                // only the two game-file trees are extracted: anything else in the pack (e.g. an android/ import pack in the same folder) is neither extracted nor overwritten (Opus review P2-1)
+                if (!rel.startsWith("ExeFS/") && !rel.startsWith("data/")) continue;
                 // 与 PackGenerator 现有兼容规则一致：没有点的 build.config 也认，解出来改名成 .build.config
                 // Same compatibility rule as PackGenerator: a build.config without the dot is accepted and renamed to .build.config when extracted
                 String path = rel.equals("data/build.config") ? "data/.build.config" : rel;
                 Entry prev = byPath.get(path);
-                if (prev != null && prev.zipName.endsWith("/.build.config")) continue;   // 两种写法都在时保留点开头的那份 | with both spellings keep the dot one
-                byPath.put(path, new Entry(name, path, Math.max(0, ze.getSize()), ze.getCrc()));
+                if (prev != null && norm(prev.zipName).endsWith("/.build.config")) continue;   // 两种写法都在时保留点开头的那份 | with both spellings keep the dot one
+                // 存包里的原名：反斜杠 / 「./」开头的包（Windows PowerShell 打的）规整后的名字在 ZipFile.getEntry 里查不到（Opus 审 P1-1）
+                // keep the raw name in the pack: for backslash / "./" packs (Windows PowerShell) the normalized name is not found by ZipFile.getEntry (Opus review P1-1)
+                byPath.put(path, new Entry(ze.getName(), path, Math.max(0, ze.getSize()), ze.getCrc()));
             }
 
             List<Entry> files = new ArrayList<>(byPath.values());
@@ -160,6 +165,9 @@ final class S2xZip {
             if (!sdk) missing.add("ExeFS/sdk");
             if (!config) missing.add("data/.build.config");
             if (!data) missing.add("data/*.data");
+            // 启动判定（PackGenerator.missingInputs）还要的文件也得在包里，否则解完仍缺、每次冷启动都要重验整包（Opus 审 P2-2）
+            // files the startup check (PackGenerator.missingInputs) needs must be in the pack too, or every cold start re-checks the whole pack (Opus review P2-2)
+            for (String need : PackGenerator.INPUTS) { boolean have = false; for (Entry e : files) if (e.path.equals(need)) { have = true; break; } if (!have && !missing.contains(need)) missing.add(need); }
             long total = 0;
             for (Entry e : files) total += e.size;
             return new Plan(zip, prefix, files, missing, null, total, entries.size());
@@ -239,26 +247,34 @@ final class S2xZip {
 
     // 外层多一级目录（S2X/、D2R Mobile Plus/）就剥掉；直接以 ExeFS/、data/ 开头就是 ""。先找直接开头的，再看下一级。
     // Strip one extra outer level (S2X/, D2R Mobile Plus/) when present; "" when entries start directly with ExeFS/ or data/. Direct markers win.
+    // 根前缀：ExeFS/ 或 data/ 之前的那几级目录，最多两级（「S2X/」或照教程压整个 S2X 文件夹得到的「S2X/D2R Mobile Plus/」，Opus 审 P1-2）。
+    // 各条目算出的前缀不一致就说不清，按没有前缀处理（结构检查会列出缺项）；直接以 ExeFS/、data/ 开头的优先。
+    // Root prefix: the directory levels before ExeFS/ or data/, at most two ("S2X/", or "S2X/D2R Mobile Plus/" from zipping the whole S2X folder as the guide says,
+    // Opus review P1-2). Entries disagreeing on the prefix are ambiguous and count as no prefix (the structure check lists what is missing); a pack starting directly
+    // with ExeFS/ or data/ wins.
+    static final int MAX_PREFIX_LEVELS = 2;
     private static String detectPrefix(List<ZipEntry> entries) {
-        for (ZipEntry ze : entries) {
-            String n = norm(ze.getName());
-            if (n.startsWith("ExeFS/") || n.startsWith("data/")) return "";
-        }
         String found = null;
         for (ZipEntry ze : entries) {
-            String n = norm(ze.getName());
-            int slash = n.indexOf('/');
-            if (slash <= 0) continue;
-            String rest = n.substring(slash + 1);
-            if (!rest.startsWith("ExeFS/") && !rest.startsWith("data/")) continue;
-            String p = n.substring(0, slash + 1);
+            String p = prefixOf(norm(ze.getName()));
+            if (p == null) continue;
+            if (p.isEmpty()) return "";
             if (found == null) found = p;
-            else if (!found.equals(p)) return "";   // 两个不同的外层目录：说不清，按没有前缀处理 | two different outer dirs: ambiguous, treat as no prefix
+            else if (!found.equals(p)) return "";
         }
         return found == null ? "" : found;
     }
+    private static String prefixOf(String n) {
+        int levels = 0, start = 0;
+        while (true) {
+            String rest = n.substring(start);
+            if (rest.startsWith("ExeFS/") || rest.startsWith("data/")) return n.substring(0, start);
+            int slash = n.indexOf('/', start);
+            if (slash < 0 || slash == start || ++levels > MAX_PREFIX_LEVELS) return null;
+            start = slash + 1;
+        }
+    }
 
-    // 绝对路径、..、符号链接都算 zip slip；返回拒绝原因，没问题是 null | absolute paths, .., symlinks are zip slip; returns the reason or null
     private static String unsafe(String name, boolean symlink) {
         if (name.isEmpty()) return "empty entry name";
         if (name.startsWith("/") || name.startsWith("\\")

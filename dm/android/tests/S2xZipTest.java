@@ -29,6 +29,7 @@ public class S2xZipTest {
     static final byte[] SDK = bytes("sdk!");
     static final byte[] CONFIG = bytes("config=1\n");
     static final byte[] DATA = bytes("1234");
+    static final byte[] MANIFEST = bytes("manifest|1\n");   // data/build_manifest.psv：启动判定 PackGenerator.INPUTS 也要它 | the startup check PackGenerator.INPUTS needs it too
 
     static final long MARGIN = 200L << 20;
     static final int ZIP64_ENTRIES = 70000;
@@ -98,6 +99,7 @@ public class S2xZipTest {
         put(z, pre + "ExeFS/sdk", SDK);
         put(z, pre + "data/" + (dotted ? ".build.config" : "build.config"), CONFIG);
         put(z, pre + "data/00.data", DATA);
+        put(z, pre + "data/build_manifest.psv", MANIFEST);
     }
 
     static void deleteTree(File f) throws IOException {
@@ -153,6 +155,7 @@ public class S2xZipTest {
             cancelResumeCase();
             badCrcExistingCase();
             zip64Case();
+            auditR1Cases();
             System.out.println("S2xZip OK (" + cases + " cases)");
         } finally {
             deleteTree(root);
@@ -199,8 +202,8 @@ public class S2xZipTest {
         S2xZip.Plan p = S2xZip.plan(z);
         equal("S2X/", p.prefix);
         ok(p.ok(), "outer pack is structurally fine");
-        equal(4, p.files.size());
-        long total = MAIN.length + SDK.length + CONFIG.length + DATA.length;
+        equal(5, p.files.size());
+        long total = MAIN.length + SDK.length + CONFIG.length + DATA.length + MANIFEST.length;
         equal(total, p.totalBytes);
         File empty = dir("outer-empty");
         equal(total + MARGIN, S2xZip.spaceNeeded(p, empty));
@@ -240,6 +243,7 @@ public class S2xZipTest {
             put(x, "S2X/ExeFS/main", MAIN);
             put(x, "S2X/ExeFS/sdk", SDK);
             put(x, "S2X/data/00.data", DATA);
+            put(x, "S2X/data/build_manifest.psv", MANIFEST);
         });
         S2xZip.Plan p = S2xZip.plan(z);
         equal(1, p.missing.size());
@@ -298,6 +302,7 @@ public class S2xZipTest {
             put(x, "ExeFS/main", MAIN);
             put(x, "ExeFS/sdk", SDK);
             put(x, "data/.build.config", CONFIG);
+            put(x, "data/build_manifest.psv", MANIFEST);
             put(x, "data/99.data", big);
         });
         S2xZip.Plan p = S2xZip.plan(z);
@@ -315,7 +320,7 @@ public class S2xZipTest {
         ok(!new File(dest, "data/99.data").exists(), "the cancelled file is not renamed into place");
         equal("main!", text(new File(dest, "ExeFS/main")));
         equal("config=1\n", text(new File(dest, "data/.build.config")));
-        long finished = MAIN.length + SDK.length + CONFIG.length;
+        long finished = MAIN.length + SDK.length + CONFIG.length + MANIFEST.length;
         equal(p.totalBytes - finished + MARGIN, S2xZip.spaceNeeded(p, dest));
 
         equal(S2xZip.Result.OK, S2xZip.extract(p, dest, null, new AtomicBoolean(false)));
@@ -347,11 +352,40 @@ public class S2xZipTest {
         });
         S2xZip.Plan p = S2xZip.plan(z);
         ok(p.entryCount > 65535, "central directory is zip64 (" + p.entryCount + " entries)");
-        equal(4, p.files.size());
+        equal(5, p.files.size());
         ok(p.ok(), "zip64 pack is structurally fine");
         File dest = dir("zip64-dest");
         equal(S2xZip.Result.OK, S2xZip.extract(p, dest, null, new AtomicBoolean(false)));
         equal("main!", text(new File(dest, "ExeFS/main")));
         equal("config=1\n", text(new File(dest, "data/.build.config")));
+    }
+
+    // Opus 审 R1：反斜杠 / 「./」条目（Windows PowerShell 打的包）能解；照教程压整个 S2X 文件夹（两级外层）能认；ExeFS/、data/ 之外的不解不覆盖；缺 build_manifest.psv 列为缺项
+    // Opus review R1: backslash / "./" entries (Windows PowerShell packs) extract; zipping the whole S2X folder (two outer levels) is recognised; nothing outside
+    // ExeFS/ and data/ is extracted or overwritten; a missing build_manifest.psv is listed
+    static void auditR1Cases() throws IOException {
+        File z1 = zip("backslash.zip", x -> game(x, "S2X\\D2R Mobile Plus\\", true));
+        // ZipOutputStream 不改名里的反斜杠，正好模拟 PowerShell 5.1 | ZipOutputStream keeps backslashes as is, which mimics PowerShell 5.1
+        S2xZip.Plan p1 = S2xZip.plan(z1); ok(p1.ok(), "backslash pack is structurally fine");
+        File d1 = dir("backslash-dest"); equal(S2xZip.Result.OK, S2xZip.extract(p1, d1, null, null));
+        equal("main!", text(new File(d1, "ExeFS/main"))); equal("config=1\n", text(new File(d1, "data/.build.config")));
+
+        File z2 = zip("dotslash.zip", x -> game(x, "./", true));
+        S2xZip.Plan p2 = S2xZip.plan(z2); ok(p2.ok(), "./ pack is structurally fine");
+        File d2 = dir("dotslash-dest"); equal(S2xZip.Result.OK, S2xZip.extract(p2, d2, null, null));
+        equal("1234", text(new File(d2, "data/00.data")));
+
+        File z3 = zip("twolevel.zip", x -> { game(x, "S2X/D2R Mobile Plus/", true); put(x, "S2X/D2R Mobile Plus/android/pack_info.txt", "NEW"); put(x, "S2X/readme.txt", "x"); });
+        S2xZip.Plan p3 = S2xZip.plan(z3); equal("S2X/D2R Mobile Plus/", p3.prefix); ok(p3.ok(), "two outer levels are fine");
+        File d3 = dir("twolevel-dest"); write(new File(d3, "android/pack_info.txt"), "OLD");
+        equal(S2xZip.Result.OK, S2xZip.extract(p3, d3, null, null));
+        equal("OLD", text(new File(d3, "android/pack_info.txt")));   // 玩家原有的导入包没被覆盖 | the player's own import pack is untouched
+        ok(!new File(d3, "readme.txt").exists(), "files outside ExeFS/ and data/ are not extracted");
+
+        File z4 = zip("threelevel.zip", x -> game(x, "a/b/c/", true));
+        ok(!S2xZip.plan(z4).ok(), "three outer levels are not guessed");
+
+        File z5 = zip("nomanifest.zip", x -> { put(x, "ExeFS/main", MAIN); put(x, "ExeFS/sdk", SDK); put(x, "data/.build.config", CONFIG); put(x, "data/00.data", DATA); });
+        S2xZip.Plan p5 = S2xZip.plan(z5); ok(p5.missing.contains("data/build_manifest.psv"), "missing build_manifest.psv is listed");
     }
 }

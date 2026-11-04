@@ -57,6 +57,15 @@ class S2xZipWiring(unittest.TestCase):
     def setUp(self):
         self.code = strip_comments(ACTIVITY.read_text(encoding='utf-8'))
 
+    def zip_body(self):
+        # 线程体在 startZip 里起、活在 runZip 里（Opus 审 P2-3 拆出来以便整段接 Throwable）| the thread starts in startZip and its work lives in runZip (split by Opus review P2-3 so the whole body catches Throwable)
+        return method_body(self.code, 'private void startZip(File zip, File dest)') + method_body(self.code, 'private static void runZip(')
+
+    def test_worker_catches_everything(self):
+        start = re.sub(r'\s+', ' ', method_body(self.code, 'private void startZip(File zip, File dest)'))
+        self.assertIn('try { runZip(app, zip, dest, progressFormat); } catch (Throwable t)', start)
+        self.assertIn('finishZipFailure(', start[start.index('catch (Throwable t)'):])
+
     def test_trigger_is_the_pure_should_offer_and_runs_before_the_old_decision(self):
         # 有权限、准备判定之前：ensureZipUnpacked 用纯函数 shouldOffer(missingInputs, find(downloads))；文件齐了它放行
         # With permission and before the preparation decision: ensureZipUnpacked uses the pure shouldOffer(missingInputs, find(downloads));
@@ -76,7 +85,7 @@ class S2xZipWiring(unittest.TestCase):
     def test_zip_work_runs_on_a_background_thread(self):
         # plan / spaceNeeded / extract 全在 "dm-s2x-zip" 线程里；主线程只投递界面
         # plan / spaceNeeded / extract all run on the "dm-s2x-zip" thread; the main thread only receives UI work
-        body = method_body(self.code, 'private void startZip(File zip, File dest)')
+        body = self.zip_body()
         self.assertIn('new Thread(', body)
         self.assertIn('"dm-s2x-zip"', body)
         self.assertIn('S2xZip.plan(zip)', body)
@@ -95,7 +104,7 @@ class S2xZipWiring(unittest.TestCase):
         # 本进程解过一次就不再触发（防解完仍缺文件时反复解压，OMP 变异 M6）| once per process (stops a loop when files are still missing after a full pass, OMP mutation M6)
         body = method_body(self.code, 'private boolean ensureZipUnpacked(File downloads, File gameBase)')
         self.assertIn('missing.isEmpty() || zipDone ? null : S2xZip.find(downloads)', re.sub(r'\s+', ' ', body))
-        self.assertIn('zipDone = true', method_body(self.code, 'private void startZip(File zip, File dest)'))
+        self.assertIn('zipDone = true', self.zip_body())
         # 加载页没挂上（或不认这个键）时，B / 返回也要能取消（OMP 变异 M1）| B / Back must cancel even when the loading page is not attached or ignores the key (OMP mutation M1)
         keys = re.sub(r'\s+', ' ', method_body(self.code, 'public boolean dispatchKeyEvent('))
         self.assertIn('if (!started && zipRunning && (e.getKeyCode() == android.view.KeyEvent.KEYCODE_BACK || e.getKeyCode() == android.view.KeyEvent.KEYCODE_BUTTON_B)) { zipCancel.set(true); return true; }', keys)
@@ -104,7 +113,7 @@ class S2xZipWiring(unittest.TestCase):
         # 结构不对 / 空间不够 → 失败页（showGenScreen）；否则加载页；取消 → 暂停页；成功 → 照常进现有流程
         # structurally wrong / not enough space -> failure page (showGenScreen); otherwise the loading page; cancel -> paused page;
         # success -> the existing flow as usual
-        body = method_body(self.code, 'private void startZip(File zip, File dest)')
+        body = self.zip_body()
         self.assertIn('!plan.ok()', body)
         self.assertIn('R.string.dmAndroidZipNeedFiles', body)
         self.assertIn('R.string.dmAndroidZipReject', body)

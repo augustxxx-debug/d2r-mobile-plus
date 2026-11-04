@@ -212,6 +212,13 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         final android.content.Context app = getApplicationContext();
         final String progressFormat = app.getString(R.string.dmAndroidZipProgress);
         new Thread(() -> {
+            // IOException 以外的异常 / 内存不足也落到失败页，不让整个 App 崩、下次启动又崩（Opus 审 P2-3）| anything beyond IOException, out-of-memory included, lands on the failure page instead of crashing the app on every start (Opus review P2-3)
+            try { runZip(app, zip, dest, progressFormat); }
+            catch (Throwable t) { android.util.Log.e("dm", "S2X.zip: " + t); finishZipFailure(app.getString(R.string.dmAndroidZipFailTitle), app.getString(R.string.dmAndroidZipFailed, t.toString())); }
+        }, "dm-s2x-zip").start();
+    }
+    private static void runZip(android.content.Context app, File zip, File dest, String progressFormat) {
+        {
             S2xZip.Plan plan;
             try { plan = S2xZip.plan(zip); }
             catch (IOException e) { finishZipFailure(app.getString(R.string.dmAndroidZipFailTitle), app.getString(R.string.dmAndroidZipFailed, message(e))); return; }
@@ -248,7 +255,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             } else {
                 finishZipFailure(app.getString(R.string.dmAndroidZipFailTitle), app.getString(R.string.dmAndroidZipFailed, app.getString(R.string.dmAndroidZipCheckFailed)));
             }
-        }, "dm-s2x-zip").start();
+        }
     }
 
     // 后台线程的结果只改静态状态 + 投递界面工作；没有 Activity（被杀 / 重建中）时状态照样留着，下次 onResume 接着处理。

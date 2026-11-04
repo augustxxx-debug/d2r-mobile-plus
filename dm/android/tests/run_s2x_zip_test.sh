@@ -18,7 +18,7 @@ if [[ -n "${JAVA_HOME:-}" ]]; then
 fi
 
 "$JAVAC" -encoding UTF-8 -d "$OUT" \
-    "$SRC/S2xZip.java" \
+    "$SRC/S2xZip.java" "$SRC/PackGenerator.java" \
     "$HERE/S2xZipTest.java"
 # 测试也在 TMPDIR 里造包 | the test builds its packs under TMPDIR too
 "$JAVA" -Djava.io.tmpdir="${TMPDIR:-/tmp}" -cp "$OUT" com.xiaoboluo.d2r.S2xZipTest
