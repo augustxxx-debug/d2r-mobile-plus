@@ -38,5 +38,6 @@ int main(void) {
         CHECK(strlen(s.out) == 7 && !memcmp(s.out, "AAAAAAA", 7), "超长输入截到 7 字节（得 %u）", (unsigned)strlen(s.out));
         int ok = 1; for (size_t i = 0; i < sizeof s.canary; i++) if (s.canary[i] != 0x7f) ok = 0;
         CHECK(ok, "超长输入没写越界"); }
+    check("贝 Ber#30\n掉落于：地狱", "贝 Ber#30", "带 #号 的行之后还有说明行：仍取带 #号 那行");   // 带号行优先，后面的行不能覆盖 | the #N line wins; later lines must not override it
     printf("t_pouch_name: %d 项，%d 失败\n", checks, fails); return fails != 0;
 }
