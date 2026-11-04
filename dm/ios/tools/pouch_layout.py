@@ -11,12 +11,39 @@
 # Both buttons send PanelManager:ClosePanel:TouchPouch / TouchStore (a no-op; the host receives it as a signal, same as the chronicle page's sub-tabs). Everything is wrapped in one container TouchPouchBox (the panel's direct child widget count must be ≤ 256, see touch_layout._RW).
 # Coordinates: the inventory base image is placed at (38 + ...) in the panel, 1 pixel = 2 units, the gold box's outer ring is at units x 512–906, y 1294–1422; grid x 216–1196. The box and the button each occupy the gap on either side of the gold box.
 # The host moves the whole container off screen (off) or back (on) according to the switch on the 「自定义」(Custom) page
-import os, shutil
+import math, os, shutil
 import touch_layout, bag_layout
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 INV = 'controller/console/switch/playerinventoryexpansionlayouthd.json'
 TIP = 99999   # 说明框缺省在屏外，宿主按字的大小摆 | The tooltip box is off screen by default; the host positions it according to the size of the text
+
+# 百宝囊框（B109）：按钮格 = 贴图原尺寸 140×64 像素 = 280×128 布局单位。框内凹槽在 PouchBox.sprite 里逐行量得：
+# 左右各内缩 18 像素、上内缩 10 像素、下内缩 22 像素（凹槽内沿到外框金边），即 104×32 像素 = 208×64 单位。
+# 符文图 el_rune 原版帧 49×49 像素（同 touch_layout.RF_MS 量到的 zod_rune），1 像素 = 2 单位、scale 0.53 → 51.94 单位见方；
+# 距凹槽每边 ≥ 8%（左 17 / 上 6 / 下 6.06 单位），不再压到金边。触屏命中区仍是整块 280×128 的 TouchPouch，不随图缩小。
+# Pouch box (B109): the button cell is the texture's natural size 140x64 px = 280x128 layout units. Measured row by row on PouchBox.sprite,
+# the inner well is inset 18 px left/right, 10 px top and 22 px bottom from the outer gold edge, i.e. 104x32 px = 208x64 units.
+# The rune image el_rune has a 49x49 px original frame (same as the zod_rune measured in touch_layout.RF_MS); 1 px = 2 units, scale 0.53 -> 51.94 units square,
+# leaving >= 8% of the well on every side (left 17 / top 6 / bottom 6.06 units) instead of riding on the gold border. The touch hit area stays the whole 280x128
+# TouchPouch button and does not shrink with the icon.
+PX = 2                       # 1 像素 = 2 布局单位 | 1 pixel = 2 layout units
+BOX = (222, 1294, 280, 128)  # TouchPouch 命中区 / 格子 | TouchPouch hit area / cell
+WELL_INSET_PX = (18, 10, 18, 22)   # 贴图内凹槽相对外框的内缩（左 上 右 下，像素）| inner-well insets from the outer frame (left top right bottom, px)
+ICON_PX = 49                 # el_rune 原版帧边长（像素）| el_rune original frame side (px)
+ICON_SCALE = 0.53            # 49×2×0.53 = 51.94 单位，见上 | 49x2x0.53 = 51.94 units, see above
+MIN_MARGIN = 0.08            # 图标到凹槽每边的最小边距（占该边尺寸）| minimum margin per side (fraction of that side)
+
+def well_rect():
+    """框内凹槽（图标可占的格子），布局单位。 | Inner well of the frame (the cell the icon may occupy), layout units."""
+    x, y, w, h = BOX; l, t, r, b = WELL_INSET_PX
+    return (x + l * PX, y + t * PX, w - (l + r) * PX, h - (t + b) * PX)
+
+def icon_rect():
+    """符文图矩形 (x, y, side, side)，布局单位；左上角贴凹槽左边/上边留最小边距。 | Rune rect (x, y, side, side) in layout units; top-left keeps the minimum margin from the well's left/top."""
+    wx, wy, ww, wh = well_rect()
+    side = ICON_PX * PX * ICON_SCALE
+    return (wx + math.ceil(ww * MIN_MARGIN), wy + math.ceil(wh * MIN_MARGIN), side, side)
 
 # 药水叠数（宿主 dm_stack.c 按格摆，平时在屏外）与拆分框：副文 28 号、金色，右下对齐
 # Potion counts (placed per cell by the host dm_stack.c, off screen otherwise) and the split box: 28 pt secondary text, gold, bottom right
@@ -50,10 +77,11 @@ QTY_KEY_H = 72
 QTY_KEYS = (('TouchQtyKeyA', 'select'), ('TouchQtyKeyY', 'option1'), ('TouchQtyKeyX', 'option2'))
 
 def widgets():
+    bx, by, bw, bh = BOX; ix, iy = icon_rect()[:2]
     return ('        { "type": "Widget", "name": "TouchPouchBox", "children": [\n'
-            '            { "type": "ButtonWidget", "name": "TouchPouch", "fields": { "rect": { "x": 222, "y": 1294, "width": 280, "height": 128 }, "filename": "Controller/Panel/zspouch/PouchBox", '
+            '            { "type": "ButtonWidget", "name": "TouchPouch", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": %d }, "filename": "Controller/Panel/zspouch/PouchBox", '
             '"onClickMessage": "PanelManager:ClosePanel:TouchPouch" } },\n'
-            '            { "type": "ImageWidget", "name": "TouchPouchIcon", "fields": { "rect": { "x": 259, "y": 1306, "scale": 0.79 }, "filename": "Items/misc/rune/el_rune" } },\n'
+            '            { "type": "ImageWidget", "name": "TouchPouchIcon", "fields": { "rect": { "x": %d, "y": %d, "scale": %s }, "filename": "Items/misc/rune/el_rune" } },\n' % (bx, by, bw, bh, ix, iy, '%g' % ICON_SCALE) +
             '            { "type": "TextBoxWidget", "name": "TouchPouchCount", "fields": { "rect": { "x": 350, "y": 1294, "width": 140, "height": 128 }, "text": "0", '
             '"style": { "fontColor": "$FontColorGoldYellow", "pointSize": "$MediumLargeFontSize", "alignment": { "h": "left", "v": "center" } } } },\n'
             '            { "type": "ButtonWidget", "name": "TouchStore", "fields": { "rect": { "x": 916, "y": 1323, "width": 366, "scale": 0.74 }, "filename": "FrontEnd/HD/Final/FrontEnd_ButtonSmall", "hoveredFrame": 1, '
