@@ -68,6 +68,7 @@ assert 'note_image_write(*im,__LINE__)' in flush_body, 'the recorded write advan
 assert 'clear();' in flush_body, 'a recorded write consumes its queue, so one draw stamps once'
 
 production = '\n'.join([
+    balanced(source, source.index('void note_image_stamp(Image &im,int line){')),
     balanced(source, source.index('void note_image_write(Image &im,int line){')),
     balanced(source, source.index('void note_storage_begin(){')),
     balanced(source, source.index('void note_storage_bind(Image &im){')),
