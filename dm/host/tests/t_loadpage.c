@@ -239,6 +239,59 @@ int main(void) {
         dm_loadpage_ui_set_group(-1); dm_loadpage_community(NULL, NULL, NULL);
     }
 
+    // 11. 大屏适配（B139）：静态尺寸（字号 / 边距 / 间距 / 页脚 / 条高 / 静音钮）按整屏长边缩放——长边 1000 点 / dp 以内保持手持原值，
+    //     更大的屏（iPad Pro 11 横 1194×834、竖 834×1194，安全区上 24 / 下 20）按 1194 / 1000 = 1.194 放大。
+    //     修前 iPad 横屏图标框高 567 点（屏高 68.0%）、标题在 76.4% 高、条在 81.8% 高；修后 524 点（62.8%）、72.3%、78.7%，
+    //     和安卓参照（奥丁 52.4% / 62.2% / 71.7%，Fold8 73.5% / 79.0% / 84.3%）落在同一范围。
+    //     奥丁（832.5×468.3）与 Fold8 内屏（934.2×841.7）长边都 ≤ 1000，k 恰好是 1，矩形与修前逐位相同——这里逐项钉住。
+    // 11. Large-screen fit (B139): static metrics (fonts / margins / gaps / footer / bar height / mute button) scale with the long side - up to 1000 pt / dp
+    //     they keep the handheld values; larger screens (iPad Pro 11 1194×834, 834×1194, safe insets 24 top / 20 bottom) scale by 1194 / 1000 = 1.194.
+    //     Before, the iPad landscape icon box was 567 pt tall (68.0% of the height), the title at 76.4% and the bar at 81.8%; after, 524 pt (62.8%), 72.3%, 78.7%,
+    //     in the same band as the Android references (Thor 52.4% / 62.2% / 71.7%, Fold8 73.5% / 79.0% / 84.3%).
+    //     The Thor (832.5×468.3) and the Fold8 inner screen (934.2×841.7) both have a long side ≤ 1000, so k is exactly 1 and every rectangle is bit-identical to
+    //     before - pinned item by item below.
+    {
+        dm_lp_screen thor2 = { 832.5, 468.3, 0, 0, 0, 0 }, fold = { 934.2, 841.7, 0, 0, 0, 0 };
+        dm_lp_screen ipad_l = { 1194, 834, 0, 24, 0, 20 }, ipad_p = { 834, 1194, 0, 24, 0, 20 };
+        dm_lp_layout L2;
+        dm_loadpage_set_wordmark(0); dm_loadpage_begin(two, 2, w_two, 15000); dm_loadpage_set(0, 0.5, NULL, 15001); dm_loadpage_set(1, 0.16, NULL, 15002);
+        // 安卓手持：字号仍是 24 / 18 / 14，矩形与修前完全一致（同一份小数） | Android handheld: fonts stay 24 / 18 / 14 and the rectangles are exactly as before
+        dm_loadpage_layout(&thor2, &L2);
+        CHECK(L2.title_pt == 24 && L2.body_pt == 18 && L2.sub_pt == 14 && L2.comm_pt == 12 && L2.bar_radius == 3);
+        CHECK(fabs(L2.title.x - 175.535) < 1e-9 && fabs(L2.title.y - 291.5) < 1e-9 && fabs(L2.title.w - 346.6296) < 1e-9 && fabs(L2.title.h - 32.4) < 1e-9);
+        CHECK(fabs(L2.bar.x - 175.535) < 1e-9 && fabs(L2.bar.y - 335.9) < 1e-9 && fabs(L2.bar.w - 481.43) < 1e-9 && L2.bar.h == 8);
+        CHECK(fabs(L2.body.y - 353.9) < 1e-9 && fabs(L2.sub.y - 385.1) < 1e-9 && L2.mute.w == 40 && fabs(L2.mute.x - 764.5) < 1e-9 && L2.mute.y == 22);
+        CHECK(fabs(L2.bg_dst.x - 141.13609) < 1e-6 && fabs(L2.bg_dst.y - 18.724181) < 1e-6 && fabs(L2.bg_dst.w - 549.678142) < 1e-6 && fabs(L2.bg_dst.h - 309.193955) < 1e-6);
+        dm_loadpage_layout(&fold, &L2);
+        CHECK(L2.title_pt == 24 && L2.body_pt == 18 && L2.sub_pt == 14 && L2.mute.w == 40);
+        CHECK(fabs(L2.title.y - 664.9) < 1e-9 && fabs(L2.bar.y - 709.3) < 1e-9 && fabs(L2.bar.w - 544.484) < 1e-9 && fabs(L2.body.y - 727.3) < 1e-9 && fabs(L2.sub.y - 758.5) < 1e-9);
+        CHECK(fabs(L2.bg_dst.x - (-226.456003)) < 1e-6 && fabs(L2.bg_dst.y - 4.615869) < 1e-6 && fabs(L2.bg_dst.w - 1385.72628) < 1e-6 && fabs(L2.bg_dst.h - 779.471033) < 1e-6);
+        // iPhone 17 Pro 横竖也都在 1000 以内：字号与矩形同样逐位不变 | iPhone 17 Pro in both orientations is under 1000 too: same fonts and rectangles
+        dm_lp_screen ipp = { 402, 874, 0, 59, 0, 34 }, ipl = { 874, 402, 59, 0, 59, 21 };
+        dm_loadpage_layout(&ipp, &L2);
+        CHECK(L2.title_pt == 24 && L2.body_pt == 18 && fabs(L2.title.y - 663.2) < 1e-9 && fabs(L2.bar.w - 346) < 1e-9 && fabs(L2.bg_dst.x - (-2.900118)) < 1e-6 && fabs(L2.bg_dst.h - 722.809766) < 1e-6);
+        dm_loadpage_layout(&ipl, &L2);
+        CHECK(L2.title_pt == 24 && fabs(L2.title.y - 204.2) < 1e-9 && fabs(L2.bar.w - 434) < 1e-9 && fabs(L2.bg_dst.x - 259.716821) < 1e-6 && fabs(L2.bg_dst.h - 199.244332) < 1e-6);
+        // iPad：静态尺寸 ×1.194；图标框占屏比例与进度组相对位置（根因：修前图标吃满剩余高度、进度组贴底） | iPad: static metrics ×1.194; icon box share and progress group position (the root cause: the icon ate all remaining height, the group hugged the bottom)
+        dm_loadpage_layout(&ipad_l, &L2);
+        CHECK(NEAR(L2.title_pt, 24 * 1.194) && NEAR(L2.body_pt, 18 * 1.194) && NEAR(L2.sub_pt, 14 * 1.194) && NEAR(L2.mute.w, 40 * 1.194) && NEAR(L2.bar.h, 8 * 1.194));
+        { const double *ib = L2.landscape ? k_icon_land : k_icon_port;
+          double ix0 = L2.bg_dst.x + L2.bg_dst.w * ib[0], iy0 = L2.bg_dst.y + L2.bg_dst.h * ib[1];
+          double ix1 = L2.bg_dst.x + L2.bg_dst.w * ib[2], iy1 = L2.bg_dst.y + L2.bg_dst.h * ib[3];
+          CHECK(fabs((iy1 - iy0) / ipad_l.h - 0.6283) < 0.002 && fabs((ix1 - ix0) / ipad_l.w - 0.4451) < 0.002);   // 图标框高 62.8% / 宽 44.5%（修前 68.0% / 48.2%，安卓 52.4–73.5%） | icon box 62.8% high / 44.5% wide (before 68.0% / 48.2%; Android 52.4-73.5%)
+          CHECK(iy0 >= 24 + 28 * 1.194 - 0.5 && iy1 <= L2.title.y - 18 * 1.194 + 0.5 && ix0 >= 28 * 1.194 - 0.5 && ix1 <= 1194 - 28 * 1.194 + 0.5); }
+        CHECK(fabs(L2.title.y / ipad_l.h - 0.7229) < 0.002 && fabs(L2.bar.y / ipad_l.h - 0.7865) < 0.002);   // 标题 72.3% / 条 78.7%（修前 76.4% / 81.8%） | title 72.3% / bar 78.7% (before 76.4% / 81.8%)
+        dm_loadpage_layout(&ipad_p, &L2);
+        CHECK(NEAR(L2.title_pt, 24 * 1.194) && NEAR(L2.mute.w, 40 * 1.194));
+        { const double *ib = k_icon_port;   // 竖屏：图标框宽占 85.1%（内容宽内），高 58.6%；标题 80.6% / 条 85.1%（修前 83.5% / 87.2%） | portrait: icon box 85.1% wide (inside the content width), 58.6% high; title 80.6% / bar 85.1% (before 83.5% / 87.2%)
+          double ix0 = L2.bg_dst.x + L2.bg_dst.w * ib[0], iy0 = L2.bg_dst.y + L2.bg_dst.h * ib[1];
+          double ix1 = L2.bg_dst.x + L2.bg_dst.w * ib[2], iy1 = L2.bg_dst.y + L2.bg_dst.h * ib[3];
+          CHECK(fabs((ix1 - ix0) / ipad_p.w - 0.8510) < 0.002 && fabs((iy1 - iy0) / ipad_p.h - 0.5861) < 0.002);
+          CHECK(ix0 >= 28 * 1.194 - 0.5 && ix1 <= 834 - 28 * 1.194 + 0.5 && iy1 <= L2.title.y - 18 * 1.194 + 0.5); }
+        CHECK(fabs(L2.title.y / ipad_p.h - 0.8064) < 0.002 && fabs(L2.bar.y / ipad_p.h - 0.8508) < 0.002);
+        dm_loadpage_set_wordmark(1);
+    }
+
     printf("t_loadpage：%d 项检查，%d 项失败\n", checks, fails);
     return fails ? 1 : 0;
 }

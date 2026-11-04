@@ -1,5 +1,6 @@
 // 加载页出图核对（Mac，离屏）：用 iOS 同一个 Core Graphics 画函数（ios/Sources/dm_loadpage_cg.m）把「导入 → 着色器缓存」走到 37% 的中间态渲染成 PNG，
-// 三种屏：Duo 内屏 951×669 pt @3.3、iPhone 17 Pro 竖 402×874 pt @3（顶 59 / 底 34 安全区）与横 874×402（左右 59、底 21）、安卓 20:9 873×393 dp @2.75。
+// 五种屏：Duo 内屏 951×669 pt @3.3、iPhone 17 Pro 竖 402×874 pt @3（顶 59 / 底 34 安全区）与横 874×402（左右 59、底 21）、安卓 20:9 873×393 dp @2.75，
+// 以及 iPad Pro 11 横 1194×834 / 竖 834×1194 pt（安全区上 24 / 下 20；B139 大屏按长边放大静态尺寸）。
 // 背景是 App 图标美术（带 MOBILE PLUS），不画金色字标（用户 2026-10-29，与安卓同一个开关）：这里断言布局没有字标图、字标文字为空、背景图中心亮四角黑，
 // 并把「开字标」多渲染一张对比：字标区的金色像素在正图里必须明显少于对比图，证明金色字标真的没画上去。
 // 用法：t_loadpage_render <素材目录 dm/assets/loadpage> <输出目录> [语言 zh|en|es|ru|ko]。不开窗口、不起宿主、不截屏。
@@ -17,6 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 #include <unistd.h>
 CGImageRef dm_loadpage_cg_image(const char *path);
 int dm_loadpage_cg_png(const char *path, CGImageRef bg, CGImageRef logo, const dm_lp_screen *scr, double scale, uint64_t now_ms);
@@ -117,8 +119,30 @@ int main(int argc, char **argv) {
         { "iphone17pro_port_402x874", { 402, 874, 0, 59, 0, 34 }, 3 },
         { "iphone17pro_land_874x402", { 874, 402, 59, 0, 59, 21 }, 3 },
         { "android_20x9_873x393", { 873, 393, 0, 0, 0, 0 }, 2400.0 / 873 },
+        { "ipad_pro11_land_1194x834", { 1194, 834, 0, 24, 0, 20 }, 1 },   // B139：大屏按长边 1.194 放大静态尺寸 | large screen, static metrics ×1.194
+        { "ipad_pro11_port_834x1194", { 834, 1194, 0, 24, 0, 20 }, 1 },
     };
     int fails = gate_ios_view(); char path[1024];
+    // B139 根因守卫：iPad 的静态尺寸按长边放大（24 → 28.656 pt），图标框不再吃满剩余高度、进度组不再贴底——
+    // 横屏标题在 72.3% 屏高（修前 76.4%）、条 78.7%（修前 81.8%）；竖屏 80.6% / 85.1%（修前 83.5% / 87.2%）。
+    // 安卓参照（奥丁 832.5×468.3、Fold8 934.2×841.7、出图的 873×393）长边都 ≤ 1000，字号仍是 24 pt、矩形逐位不变。
+    // B139 root-cause gate: the iPad's static metrics scale with the long side (24 → 28.656 pt), so the icon box no longer eats all the
+    // remaining height and the progress group no longer hugs the bottom - title at 72.3% of the height (76.4% before), bar 78.7% (81.8%);
+    // portrait 80.6% / 85.1% (83.5% / 87.2%). The Android references (Thor 832.5×468.3, Fold8 934.2×841.7, the 873×393 shot) all have a
+    // long side ≤ 1000: their fonts stay 24 pt and every rectangle is bit-identical.
+    {
+        dm_lp_screen ip[2] = { { 1194, 834, 0, 24, 0, 20 }, { 834, 1194, 0, 24, 0, 20 } };
+        const double want[2][2] = { { 0.7229, 0.7865 }, { 0.8064, 0.8508 } };
+        for (int i = 0; i < 2; i++) {
+            dm_lp_layout L; dm_loadpage_layout(&ip[i], &L);
+            printf("  iPad %s：标题 %.1f pt，标题在 %.1f%% 高，条在 %.1f%% 高\n", i ? "竖" : "横", L.title_pt, L.title.y / ip[i].h * 100, L.bar.y / ip[i].h * 100);
+            if (fabs(L.title_pt - 28.656) > 0.01) { fprintf(stderr, "【红】iPad %s 的字号没按大屏放大（%.2f pt）\n", i ? "竖" : "横", L.title_pt); fails++; }
+            if (fabs(L.title.y / ip[i].h - want[i][0]) > 0.002 || fabs(L.bar.y / ip[i].h - want[i][1]) > 0.002) {
+                fprintf(stderr, "【红】iPad %s 的进度组相对位置不对（标题 %.3f、条 %.3f，期望 %.3f / %.3f）\n", i ? "竖" : "横", L.title.y / ip[i].h, L.bar.y / ip[i].h, want[i][0], want[i][1]); fails++; }
+        }
+        dm_lp_screen an = { 873, 393, 0, 0, 0, 0 }; dm_lp_layout A; dm_loadpage_layout(&an, &A);
+        if (A.title_pt != 24 || A.bar.h != 8) { fprintf(stderr, "【红】安卓手持屏被大屏缩放碰到了（字号 %.1f、条高 %.1f）\n", A.title_pt, A.bar.h); fails++; }
+    }
     // 新背景：两张都应是 App 图标美术——中心（图标）明显亮于四角（四周渐隐到黑），且只有横 / 竖各一张 | new background: both are the App icon art - the centre (the icon) is clearly brighter than the four corners (edges fade to black), one landscape and one portrait
     for (int i = 0; i < 2; i++) {
         int bw, bh; const char *bgn = dm_loadpage_bg_name(i ? 402 : 951, i ? 874 : 669, &bw, &bh);
