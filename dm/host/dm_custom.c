@@ -609,14 +609,14 @@ int dm_fg_need_fi(void) { pthread_once(&g_fgs_once, fg_sched_load); if (!g_fgs_n
 // AI 帧生成（实验性，图形页「帧率」组一行，键 fgen_level，缺省关；帧插值，日志前缀「帧生成：」）：帧率档只管真渲染帧率，帧生成只管显示翻倍。
 // 两层门控（方案 C，同光追 / 超分）：平台层照键表 k_opts（fgen_level 只有 Apple；安卓整行不出现，§2.8）；本机层 fg_row_ok = 设备支持插值器（图形层 mtl_fg_supported）、
 // 屏幕 ≥ 120 Hz、内存档位放开高刷档（档位 ≥ 2）——不满足时这一行还在、置灰、副文写原因。
-// 生效（fg_reason）还要：不是 30 帧档（用户 2026-10-27 定）、不是高刷档（90 / 120，RC2 84c04ac2；屏幕已到顶，按「选的」帧率判，遇热退回 60 时也不开）、光追关（rt_level 生效档 0；
+// 生效（fg_reason）还要：不是 30 帧档（用户 2026-10-27 定）、不是高刷档（90 / 120，RC2 84c04ac2；屏幕已到顶，按「选的」帧率判）、光追关（rt_level 生效档 0；
 // 两个实验项的组合没有验证过内存与 GPU 预算，且只能二选一拿预算）。不看温控（B147，用户 2026-11-04「一样取消自动关闭，只按你的设置来」：原先温控 ≥ 2 停、回落 60 秒才恢复）；过热只沿用那条一次性提示。
 // 测试开关 DM_TEST_FG=<0|1>[@秒],…（写法同 DM_TEST_FPS）顶替设置值，不读写设置文件。
 // 生效值或原因一变就记一行「帧生成：状态 fg=…」（分享诊断日志摘要取最后一行就是当前状态）
 // AI frame generation (experimental, one row in the Graphics page's Frame group, key fgen_level, off by default; frame interpolation, log prefix "帧生成："): the frame-rate mode sets only the true render rate, frame generation only doubles what is shown.
 // Two-layer gate (plan C, as ray tracing / upscaling): the platform layer follows k_opts (fgen_level is Apple only; on Android the row is absent, §2.8); the machine layer fg_row_ok = interpolator support
 // (graphics layer mtl_fg_supported), a >= 120 Hz screen and a memory tier that allows the high-refresh stop (tier >= 2) - failing it the row stays, greyed, with the reason as subtext.
-// In effect (fg_reason) also needs: not the 30 fps mode (user decision 2026-10-27), not the high-refresh stop (90 / 120, RC2 84c04ac2; judged by the selected rate, so not even while the heat runs it at 60), ray tracing off
+// In effect (fg_reason) also needs: not the 30 fps mode (user decision 2026-10-27), not the high-refresh stop (90 / 120, RC2 84c04ac2; judged by the selected rate), ray tracing off
 // (effective rt_level 0; the combination has no verified memory / GPU budget). The thermal state is not consulted (B147, user 2026-11-04 "cancel the automatic stop too, follow my setting": it used to stop at >= 2 and resume after 60 s cool); overheating only shows the one-time tip.
 // Test switches DM_TEST_FG=<0|1>[@seconds],... override the setting without touching the settings file. One "帧生成：状态 fg=..." line whenever the effective value or its reason changes
 #ifndef DM_FG_TEST_HOOK   // 单测（t_fgen_level.c）自带强定义 | the unit test brings its own strong definitions
