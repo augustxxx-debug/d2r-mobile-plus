@@ -11,6 +11,9 @@ os.environ.pop('MOVIE_FFMPEG', None); os.environ.pop('DM_TARGET', None)
 import touch_layout as layout
 
 host = (root / 'host/dm_custom.c').read_text(encoding='utf-8')
+# K_ICLOUD_KEY（e1c459bd，§2.8）：安卓用占位名；这张表按 Apple 一侧核，按非安卓那条宏展开 | K_ICLOUD_KEY (e1c459bd): Android uses a placeholder; the table is checked on the Apple side, so expand the non-Android definition
+_ik = re.search(r'#else\n#define K_ICLOUD_KEY ("[a-z_]+")\n#endif', host); assert _ik and _ik[1] == '"icloud"', 'K_ICLOUD_KEY 的 Apple 定义找不到'
+host = host.replace('K_ICLOUD_KEY', _ik[1])
 PAGE = {'PG_GFX': 'gfx', 'PG_GAME': 'game', 'PG_SYS': 'sys'}
 PLAT = {'PF_ALL': 'all', 'PF_APPLE': 'apple', 'PF_ANDROID': 'android'}
 block = re.search(r'k_opts\[\] = \{(.*?)\n\};', host, re.S)[1]

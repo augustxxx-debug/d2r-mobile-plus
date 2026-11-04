@@ -34,6 +34,9 @@ assert re.search(r'"name": "TouchCustom_touch_swap_above_Text", "fields": \{ "re
 for suffix in ('Near', 'Far'):
     assert '"text": "@dmCustomTouchSwap%s"' % suffix in game_rows
 host_src = (root / 'host/dm_custom.c').read_text()
+# K_ICLOUD_KEY（e1c459bd，§2.8）：安卓用占位名，这里测的是 Apple 一侧的布局，按非安卓那条宏展开 | K_ICLOUD_KEY (e1c459bd): Android uses a placeholder; this test covers the Apple layout, so expand the non-Android definition
+_ik = re.search(r'#else\n#define K_ICLOUD_KEY ("[a-z_]+")\n#endif', host_src); assert _ik and _ik[1] == '"icloud"', 'K_ICLOUD_KEY 的 Apple 定义找不到'
+host_src = host_src.replace('K_ICLOUD_KEY,', _ik[1] + ',')
 def host_variant(voice):   # 宿主按 VOICE_ROW（DM_MOVIE_FFMPEG）条件编译的两份键表：缺省去掉 #if VOICE_ROW 块，开关包只去掉预处理行
     keep = re.sub(r'#if VOICE_ROW\n(.*?)#endif\n', (lambda m: m[1]) if voice else '', host_src, flags=re.S)
     return re.sub(r'(?m)^#.*\n', '', keep)
