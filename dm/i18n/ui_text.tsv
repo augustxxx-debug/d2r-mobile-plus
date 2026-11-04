@@ -530,11 +530,11 @@ dmCreditsSep	、	, 	, 		, 	, 	鸣谢名单里名字之间的分隔（中文顿�
 dmAboutVersion	版本 %s	Version %s	Versión %s		Версия %s	버전 %s	提示框「关于」段的版本行：显示版本「1.0.0+N · 哈希」（dm_community.c，取 dm_update_label）
 dmCommunityFe	加入社区讨论	Community	Comunidad		Сообщество	커뮤니티	主菜单第二行「加入社区讨论」（原版前端中号按钮 470 宽，西 / 俄文的长句放不下，这里用短词；暂停菜单那行仍用 dmCommunityJoin）
 dmBagPageBag	背包	Bag	Inventario		Рюкзак	가방	物品栏：页签右侧读数里的页名，后接已用 / 上限
-dmBagPageCharm	护身符	Charms	Amuletos		Талисманы	부적	物品栏：页签右侧读数里的页名，后接已用 / 上限
-dmCharmFull	护身符页满了	Charm page is full	La página de amuletos está llena		Страница амулетов заполнена	부적 페이지가 가득 찼습니다	物品栏：护身符页没有空位时提示
+dmBagPageCharm	护身符	Charms	Dijes	Talismanes	Обереги	부적	物品栏：页签右侧读数里的页名，后接已用 / 上限
+dmCharmFull	护身符页满了	Charm page is full	La página de dijes está llena	La página de talismanes está llena	Страница оберегов заполнена	부적 페이지가 가득 찼습니다	物品栏：护身符页没有空位时提示
 dmCharmSellFull	背包满了，卖不出去	Bag is full, can't sell	El inventario está lleno, no se puede vender		Рюкзак полон, продать нельзя	가방이 가득 차서 팔 수 없습니다	物品栏：商店开着卖护身符，背包页没有空位时提示
-dmCharmRestore	有护身符没能放回护身符页，已保留	Some charms could not return to the charm page; they are kept	Algunos amuletos no volvieron a su página; se conservan		Некоторые амулеты не вернулись на страницу; они сохранены	일부 부적을 페이지로 되돌리지 못했습니다. 보존되어 있습니다	进局读护身符页：文件损坏或放不回去时提示
-dmCharmTradeHint	护身符暂时不能从这里放入交易	Charms cannot go into a trade from here yet	Los amuletos aún no pueden entrar en un intercambio desde aquí		Амулеты пока нельзя добавить в обмен отсюда	아직 여기서 부적을 거래에 넣을 수 없습니다	交易开着时在护身符页按确认；交易路径未实现，待联机线
+dmCharmRestore	有护身符没能放回护身符页，已保留	Some charms could not return to the charm page; they are kept	Algunos dijes no volvieron a su página; se conservan	Algunos talismanes no volvieron a su página; se conservan	Некоторые обереги не вернулись на страницу; они сохранены	일부 부적을 페이지로 되돌리지 못했습니다. 보존되어 있습니다	进局读护身符页：文件损坏或放不回去时提示
+dmCharmTradeHint	护身符暂时不能从这里放入交易	Charms cannot go into a trade from here yet	Los dijes aún no pueden entrar en un intercambio desde aquí	Los talismanes aún no pueden entrar en un intercambio desde aquí	Обереги пока нельзя добавить в обмен отсюда	아직 여기서 부적을 거래에 넣을 수 없습니다	交易开着时在护身符页按确认；交易路径未实现，待联机线
 dmCharmHintStash	存入仓库	To stash	Al alijo		В тайник	보관함으로	手柄键位条：护身符页、仓库开着时 A 的说明
 dmCharmHintSell	卖出	Sell	Vender		Продать	판매	手柄键位条：护身符页、商店开着时 A 的说明
 dmCharmHintCube	放入魔盒	To cube	Al cubo		В куб	큐브로	手柄键位条：护身符页、方块开着时 A 的说明

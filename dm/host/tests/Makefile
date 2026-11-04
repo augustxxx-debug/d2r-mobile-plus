@@ -87,6 +87,7 @@ run: \
 	python3 test_literal_scan.py
 	python3 ../../i18n/scan_literals.py
 	python3 t_stack_table.py
+	python3 t_charm_terms.py
 	$(B)/t_thread_leak
 	$(B)/t_loader_weak
 	$(B)/t_mac_overlay
