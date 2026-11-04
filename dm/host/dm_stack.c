@@ -141,6 +141,7 @@ static _Atomic uint32_t g_box_id; static int g_box_n; static _Atomic int g_box_s
 // Buy quantity box: a shelf potion's 0x32 is held back, replaced by a copy with a nonexistent item id (the client's "waiting for trade" only clears on a server reply) and the box opens; after the choice the server tick dispatches the original packet once
 // (the original buys 1 bottle and does the gold / room / vendor checks), then adds the rest at the unit price and takes the gold (dm_stack_srv_tick). Local player only
 static uint8_t g_buy_pk[64]; static uint32_t g_buy_len, g_buy_code; static _Atomic int g_buy_req, g_buy_note_on; static char g_buy_note[160];
+static _Atomic uint32_t g_req_pid;   // 发起买入 / 卖出框的玩家 id：服务端拍只替这一位做（联机时每个玩家都走一遍拍，Sonnet 审计 P2） | the player who opened the buy / sell box: the server tick acts only for that player (in co-op the tick runs per player)
 static _Atomic uint32_t g_putback_req;   // 卖出框取消：手上那叠放回原格（服务端拍 held_to_bag） | sell box cancelled: put the stack in hand back to its cell (server tick, held_to_bag)
 
 static _Atomic uint64_t g_sell_req;   // 物品 id << 8 | 档（1 卖 1、2 卖半） | item id << 8 | mode (1 sell 1, 2 sell half)
@@ -158,12 +159,12 @@ void dm_stack_c2s(uint64_t *regs) {
     // 只给本机玩家弹框（联机客机没有这个框，照原版） | The box is only for the local player (a co-op guest has no such box and keeps the original behaviour)
     if (pk[0] == 0x32 && len >= 9 && len <= sizeof g_buy_pk) { memcpy(&id, pk + 5, 4); uint64_t it = dm_diag_srv_item(id);
         if (it && *(uint32_t *)(player + 8) == atomic_load(&g_cli_pid) && is_potion(it) && !atomic_load(&g_box_id) && !atomic_load(&g_buy_req)) {
-            memcpy(g_buy_pk, pk, len); g_buy_len = len; g_buy_code = code_of(it); g_box_n = 0; atomic_store(&g_box_sell, DMSTK_SET_BUY); atomic_store(&g_box_id, id);
+            memcpy(g_buy_pk, pk, len); g_buy_len = len; atomic_store(&g_req_pid, *(uint32_t *)(player + 8)); g_buy_code = code_of(it); g_box_n = 0; atomic_store(&g_box_sell, DMSTK_SET_BUY); atomic_store(&g_box_id, id);
             LOG("堆叠：买入 %.3s（货架 id %u）先弹数量框", (const char *)&g_buy_code, id);
             static uint8_t rej[64]; memcpy(rej, pk, len); memset(rej + 5, 0xff, 4); regs[2] = (uint64_t)(uintptr_t)rej; }   // 同卖出：物品 id 换成不存在的，服务端走拒绝路径回复，客户端的「等待交易确认」才会撤（换成空操作会一直等，bbc / tbbc 实测） | same as selling: a nonexistent item id makes the server reply through its reject path, which dismisses the client's "waiting for trade" (a no-op leaves it waiting forever, measured bbc / tbbc)
         return; }
     if (pk[0] == 0x33 && len >= 9) { memcpy(&id, pk + 5, 4); uint32_t pass = id; if (atomic_compare_exchange_strong(&g_sell_pass, &pass, 0)) return;
-        uint64_t it = dm_diag_srv_item(id); if (it && *(uint32_t *)(player + 8) == atomic_load(&g_cli_pid) && is_potion(it) && qty(it) >= 2) { g_box_n = qty(it); atomic_store(&g_box_sell, 1); atomic_store(&g_box_id, id); LOG("堆叠：卖出 %d 瓶的一叠（id %u）先弹数量框", g_box_n, id); static uint8_t rej[64]; if (len <= sizeof rej) { memcpy(rej, pk, len); memset(rej + 5, 0xff, 4); regs[2] = (uint64_t)(uintptr_t)rej; } }   // 物品 id 换成不存在的：服务端走拒绝路径回复客户端，「等待交易确认」才会撤 | Replace the item id with a nonexistent one: the server replies through its reject path, which is what dismisses the "waiting for trade" prompt
+        uint64_t it = dm_diag_srv_item(id); if (it && *(uint32_t *)(player + 8) == atomic_load(&g_cli_pid) && is_potion(it) && qty(it) >= 2) { g_box_n = qty(it); atomic_store(&g_req_pid, *(uint32_t *)(player + 8)); atomic_store(&g_box_sell, 1); atomic_store(&g_box_id, id); LOG("堆叠：卖出 %d 瓶的一叠（id %u）先弹数量框", g_box_n, id); static uint8_t rej[64]; if (len <= sizeof rej) { memcpy(rej, pk, len); memset(rej + 5, 0xff, 4); regs[2] = (uint64_t)(uintptr_t)rej; } }   // 物品 id 换成不存在的：服务端走拒绝路径回复客户端，「等待交易确认」才会撤 | Replace the item id with a nonexistent one: the server replies through its reject path, which is what dismisses the "waiting for trade" prompt
         return; }
     if (pk[0] == 0x19 && len >= 17) { uint32_t pid, px, py, pg; memcpy(&pid, pk + 1, 4); memcpy(&px, pk + 5, 4); memcpy(&py, pk + 9, 4); memcpy(&pg, pk + 13, 4);
         uint64_t pit = pg == 0 && px < 64 && py < 64 ? dm_diag_srv_item(pid) : 0; if (pit && is_potion(pit)) atomic_store(&g_pick_cell, (uint64_t)pid << 32 | (uint64_t)px << 16 | (uint64_t)py | 0x8000); return; }
@@ -220,7 +221,8 @@ void dm_stack_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
             LOG("堆叠：拆分 %.3s×%d（档 %d，页 %d）→ 拆出 %d 次，原叠剩 %d", (const char *)&c, n, m, page, done, qty(it));
             if (!done) atomic_store(&g_notice_full, 1); else { int dm_request_save(void); dm_request_save(); } }
         else LOG("堆叠：拆分请求 id %u 已不是一叠，不做", id); } }
-    { int m = atomic_exchange(&g_buy_req, 0); uint32_t pl_len = m ? g_buy_len : 0; if (m) g_buy_len = 0; if (m && pl_len) {
+    int mine = *(uint32_t *)(player + 8) == atomic_load(&g_req_pid);   // 不是发起的那位玩家：请求留给它自己的那一拍 | not the requesting player: leave the request for that player's own tick
+    { int m = mine ? atomic_exchange(&g_buy_req, 0) : 0; uint32_t pl_len = m ? g_buy_len : 0; if (m) g_buy_len = 0; if (m && pl_len) {
         int want = dmstk_buy_want(m), gold0 = ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 14, 0); static uint32_t seen[2048]; static int seen_q[2048]; int ns = 0;
         for (uint64_t it = inv_first(player), k = 0; it && k < 2048 && ns < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; seen[ns] = *(uint32_t *)(it + 8); seen_q[ns++] = code_of(it) == g_buy_code ? qty(it) : -1; it = *(uint64_t *)(d + 0xb0); }
         int room0 = 0, fx0, fy0; room0 = free_cell(player, 0, &fx0, &fy0); for (int q = 0; q < ns && !room0; q++) room0 = seen_q[q] >= 0 && seen_q[q] < DMSTK_CAP;   // 买前有没有地方放：背包空格或同种未满的一叠 | room before buying: a free bag cell or a same-kind stack below 99
@@ -241,7 +243,7 @@ void dm_stack_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
         { int note = dmstk_buy_note(nu != 0, room0, want, total, put, extra); static const char *const nk[] = { 0, "dmStackBuyNoRoom", "dmStackBuyNoGold", "dmStackBuyGoldPart", "dmStackBuyRoomPart" };
           if (note) { snprintf(g_buy_note, sizeof g_buy_note, dm_str(B, nk[note]), 1 + put); atomic_store(&g_buy_note_on, 1); LOG("堆叠：买入提示 %s（买到 %d 瓶）", nk[note], nu ? 1 + put : 0); } }
         if (put) { int dm_request_save(void); dm_request_save(); } } }
-    { uint32_t pid = atomic_exchange(&g_putback_req, 0); uint64_t pit = pid ? dm_diag_srv_item(pid) : 0; if (pit) { int ok = held_to_bag(G, player, pit); LOG("堆叠：卖出框取消，id %u %s", pid, ok ? "在背包里" : "放不回背包，留在手上"); if (!ok) atomic_store(&g_notice_full, 1); } }
+    { uint32_t pid = mine ? atomic_exchange(&g_putback_req, 0) : 0; uint64_t pit = pid ? dm_diag_srv_item(pid) : 0; if (pit) { int ok = held_to_bag(G, player, pit); LOG("堆叠：卖出框取消，id %u %s", pid, ok ? "在背包里" : "放不回背包，留在手上"); if (!ok) atomic_store(&g_notice_full, 1); } }
     { uint64_t r = atomic_exchange(&g_sell_req, 0); if (r) { uint32_t id = (uint32_t)(r >> 8); uint64_t it = dm_diag_srv_item(id), d = it ? *(uint64_t *)(it + 0x10) : 0;
         if (d && qty(it) >= 2 && !held_to_bag(G, player, it)) { LOG("堆叠：手上的一叠（id %u）放不回背包，不卖", id); atomic_store(&g_notice_full, 1); }
         else if (d && qty(it) >= 2) { int n = qty(it), m = (int)(r & 0xff), k = dmstk_sell_amount(n, m), page = *(uint8_t *)(d + 0x55) > 4 ? 0 : *(uint8_t *)(d + 0x55); if (k < 1) k = 1;   // 卖全部不拆、整叠那件直接卖；档位认不出照老做法拆 1 | sell all does not split (that whole item is sold); an unknown mode splits 1 as before
