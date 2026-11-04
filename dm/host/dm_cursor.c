@@ -3160,9 +3160,10 @@ static uint64_t ef_candidate(uint64_t p, int page, int k) {   // page 0 任务�
     return 0;
 }
 static void ui_pad_entry_focus_pump(module_t *m, uint64_t root) {
-    int dm_padmode_current(void); static int last = -1, k, done; static uint64_t since, tried_at;
+    int dm_padmode_current(void), dm_padmode_busy(void); static int last = -1, k, done; static uint64_t since, tried_at;
     static const char *const pn[2] = { "QuestLogPanelExpansion", "SkillsTreePanel" };
     if (!m || !root || !dm_padmode_current()) { last = -1; return; }
+    if (dm_padmode_busy()) return;   // 模式切换进行中：界面在重建，不量不放 | mode switch in progress: the UI is being rebuilt
     int page = -1; for (int i = 0; i < 2 && page < 0; i++) if (root_panel_shown(root, pn[i])) page = i;
     if (page < 0) { last = -1; return; }
     uint64_t fr = dm_guest_frame();
@@ -3170,7 +3171,7 @@ static void ui_pad_entry_focus_pump(module_t *m, uint64_t root) {
     if (done || modal_any(root, 1, NULL)) return;
     if (fr - since > 60) { done = 1; return; }
     uint64_t p = ui_panel(root, pn[page]), fm = *(uint64_t *)(root + 0xd0), f = fm ? *(uint64_t *)(fm + 0x190) : 0;
-    if (p && EF_VIS(f) && ui_has(p, f, 0)) { done = 1; if (tried_at) { static int lg; if (lg++ < 20) LOG("手柄进页起始焦点：%s 焦点到 %s", pn[page], *(const char **)(f + 8)); } return; }   // 焦点已在这一页 | focus is already on the page
+    if (p && f && ui_has(p, f, 0) && EF_VIS(f)) { done = 1; if (tried_at) { static int lg; if (lg++ < 20) LOG("手柄进页起始焦点：%s 焦点到 %s", pn[page], *(const char **)(f + 8)); } return; }   // 焦点已在这一页（先按指针核它还挂在本页树上再读它：上一页卸载后焦点指针可能悬空） | focus is already on the page (checked by pointer against the page tree before it is read: it may dangle once the previous page unloads)
     if (tried_at && fr - tried_at < 4) return;   // 等上一次悬停生效 | wait for the last hover to take effect
     if (!p || k > 1) { done = 1; static int lg; if (lg++ < 8) LOG("手柄进页起始焦点：%s 候选都没让焦点进页，交还原版", pn[page]); return; }
     uint64_t c = ef_candidate(p, page, k); int x, y;

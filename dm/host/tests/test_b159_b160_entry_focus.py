@@ -49,11 +49,12 @@ class EntryFocus(unittest.TestCase):
     def test_controller_only_and_modal(self):
         self.assertRegex(self.b, r'if \(!m \|\| !root \|\| !dm_padmode_current\(\)\) \{ last = -1; return; \}')   # 触屏清零 | touch mode clears the state
         self.assertIn('modal_any(root, 1, NULL)', self.b)
+        self.assertRegex(self.b, r'if \(dm_padmode_busy\(\)\) return;')   # 模式切换进行中不动 | not during a mode switch
 
     def test_focus_check_is_on_page(self):
         self.assertIn('*(uint64_t *)(root + 0xd0)', self.b)
         self.assertIn('*(uint64_t *)(fm + 0x190)', self.b)
-        self.assertRegex(self.b, r'if \(p && EF_VIS\(f\) && ui_has\(p, f, 0\)\) \{ done = 1;')   # 原版已给焦点就不动 | game already focused: untouched
+        self.assertRegex(self.b, r'if \(p && f && ui_has\(p, f, 0\) && EF_VIS\(f\)\) \{ done = 1;')   # 先按指针核在本页树上再读（防悬空）；原版已给焦点就不动 | pointer-checked before read; game already focused: untouched
 
     def test_entry_window_and_retry(self):
         self.assertIn('if (page != last) { last = page; since = fr; k = 0; done = 0; tried_at = 0; }', self.b)
