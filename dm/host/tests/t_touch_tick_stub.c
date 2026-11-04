@@ -94,6 +94,8 @@ void dm_held_stow(void) {}
 int dm_held_stow_result(void) { return -1; }
 void dm_test_swap_held(void) {}
 int dm_held_pending(void) { return 0; }
+int dm_held_unid(void) { return 0; }   // 手上那件未鉴定（dm_cursor_item.c，B099）：没拿着 | held item unidentified (B099): nothing held
+void dm_game_notice_ui(uint8_t *b, const char *t) { (void)b; (void)t; }   // 游戏内提示（dm_bossrush.c）：不弹 | in-game notice: none
 void uimsg_emit(const char *cat, const char *act, const char *arg) { (void)cat; (void)act; (void)arg; }
 void dm_item_identify_free(unsigned id) { (void)id; }   // 免费鉴定（dm_actions.c）的桩 | stub for free identify (dm_actions.c)
 int dm_runeword_long_press(const void *ci) { (void)ci; return 0; }   // 符文之语助手（dm_runeword.c）的桩 | stub for the runeword helper (dm_runeword.c)

@@ -19,6 +19,7 @@ typedef struct {
 } dm_cursor_item_info;
 int dm_cursor_item(dm_cursor_item_info *out);   // 1 = 指着物品并已填 out；0 = 没有（面板没开 / 指着空格 / 焦点不在物品格上） | 1 = pointing at an item and out has been filled; 0 = none (panel not open / pointing at an empty cell / focus not on an item cell)
 int dm_held_size(int *w, int *h);              // 手上拿着的那件的占格（宽、高）；没拿着返回 0。「用了鉴定卷轴等目标」那种不算拿着 | Cells occupied by the item held in hand (width, height); returns 0 if nothing is held. The 'identify scroll used, waiting for a target' case does not count as held
+int dm_held_unid(void);                        // 手上拿着的那件未鉴定（原版佣兵穿不了，B099）；没拿着返回 0 | The held item is unidentified (the original never lets the mercenary wear it, B099); returns 0 if nothing is held
 int dm_held_pending(void);                     // 手上那件此刻有没有待确认的操作（上一个指令还没答完）；没拿着返回 0 | Whether the item in hand has an operation pending confirmation right now (the previous command has not been answered yet); returns 0 if nothing is held
 int dm_vendor_repair_mode(void);                // 商人页此刻是否处在「修理」光标模式（点了修理钮、锤子光标）。只许游戏主线程调 | Whether the vendor page is in the 'repair' cursor mode right now (repair button tapped, hammer cursor). May only be called from the game main thread
 int dm_item_targeting(void);                    // 此刻是否处在「用了一件物品、等待选目标物品」的状态：0 无；非 0 = 物品表里该物品的目标类型 + 1（鉴定卷轴 / 鉴定书都走这个状态） | Whether the 'an item was used, waiting to select a target item' state is in effect right now: 0 none; non-zero = the target type of that item in the item table + 1 (identify scroll / identify tome both go through this state)

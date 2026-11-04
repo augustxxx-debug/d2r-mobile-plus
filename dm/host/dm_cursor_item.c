@@ -9,6 +9,7 @@
 //   It fetches the cell and the item via the widget vtable, so first verify that the vtable is one of the three recognized item cell kinds: multi-cell grid 0x2089ab8 (inventory / stash / cube / shop / trade), belt 0x2088fc8, equipment slot 0x2089fa0, advanced stash stacked cell 0x20892f8 (one kind of item per cell, the item pointer is directly at widget +0x608).
 //   Grid widget: [+0x5c8] owner unit type (1 = NPC -> shop), [+0x630] page (0 inventory, 1 / 2 trade, 3 cube, 4 big stash).
 #include "dm_cursor_item.h"
+#include "dm_pad_merc.h"
 #include "hle.h"
 #include "dm.h"
 #include <string.h>
@@ -69,6 +70,19 @@ int dm_held_size(int *w, int *h) {
     uint64_t pl = ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c)), inv = pl ? *(uint64_t *)(pl + 0x90) : 0, held = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x40) : 0;
     if (!held || *(uint32_t *)held != 4) return 0;
     int gw = 1, gh = 1; item_size(b, held, &gw, &gh); if (w) *w = gw; if (h) *h = gh; return 1;
+}
+
+// 手上那件佣兵穿不了（B099）：原版「佣兵能不能穿这件」main+0x3bea44 在判类型之前先看物品数据 +0x18 的 0x110 两位——
+// 0x3beaa8–0x3beab8：(标志 & 0x110) != 0x10（未鉴定 = 0x10 没置，或 0x100 置了）直接返回 0，原版四格同样拦，是原版规则不是我们的格子没开。
+// 返回 1 = 手上拿着这样一件（未鉴定）；没拿着 / 已鉴定返回 0。只许游戏主线程调
+// The held item cannot go on the mercenary (B099): the original "can the mercenary wear this" main+0x3bea44 checks the two bits 0x110 of item data +0x18 before any type test --
+// 0x3beaa8–0x3beab8: (flags & 0x110) != 0x10 (unidentified = 0x10 clear, or 0x100 set) returns 0 at once, for the original four cells too: an original rule, not a closed cell of ours.
+// Returns 1 = holding such an (unidentified) item; 0 when nothing is held / it is identified. May only be called from the game main thread
+int dm_held_unid(void) {
+    uint8_t *b = main_base(); if (!b) return 0;
+    uint64_t pl = ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c)), inv = pl ? *(uint64_t *)(pl + 0x90) : 0, held = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x40) : 0;
+    if (!held || *(uint32_t *)held != 4) return 0;
+    uint64_t d = *(uint64_t *)(held + 0x10); return d && dm_item_flags_unid(*(uint32_t *)(d + 0x18));
 }
 
 // 手上那件此刻有没有「待确认的操作」（main+0x474990，原版放回背包 / 装备前判的同一个前置；dm_actions.c 收进背包也判它）：
