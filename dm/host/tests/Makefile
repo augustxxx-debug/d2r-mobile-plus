@@ -73,6 +73,7 @@ run: \
 	$(B)/t_uiscreen_frontend \
 	$(B)/t_padmap \
 	$(B)/t_pouch_notice \
+	$(B)/t_req40_merc_slots \
 	$(B)/t_rift_clock \
 	$(B)/t_rift_next \
 	$(B)/t_rift_oldrun \
@@ -102,6 +103,7 @@ run: \
 	$(B)/t_loader_weak
 	$(B)/t_mac_overlay
 	$(PY) test_mac_features.py
+	$(B)/t_req40_merc_slots
 	$(B)/t_rift_clock
 	$(B)/t_rift_next
 	$(B)/t_rift_oldrun
@@ -284,6 +286,8 @@ $(B)/t_touch_mac: t_uiscreen_fixture.h t_touch_mac.c ../touch_mac.c ../dm_cursor
 	clang -std=c11 -Wall -Wextra -Werror -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_touch_mac.c ../dm_cursor.c ../dm_hud.c -lm ../dm_prof.c
 $(B)/t_target_rank: t_target_rank.c ../hle_target.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_target_rank.c ../hle_target.c
+$(B)/t_req40_merc_slots: t_req40_merc_slots.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_req40_merc_slots.c ../hle_os.c
 $(B)/t_rift_clock: t_rift_clock.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_clock.c ../hle_os.c
 $(B)/t_rift_next: t_rift_next.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
