@@ -413,7 +413,8 @@ __attribute__((weak)) int dm_display_max_hz(void) { return 0; }
 #else
 int dm_display_max_hz(void);
 #endif
-static int fps_high_hz(void) { return dm_high_hz(dm_display_max_hz()); }   // 本机高刷档的帧率（0 = 不开放）| this machine's high-refresh rate (0 = not offered)
+static int fps_high_hz(void) { return dm_high_hz(dm_display_max_hz()); }
+int dm_fps_high_hz(void) { return fps_high_hz(); }   // 本机高刷档的帧率（0 = 不开放）| this machine's high-refresh rate (0 = not offered)
 static int fps_high_ok(void) { return fps_high_hz() > 0 && dm_mem_tier() >= 2; }   // 内存 1 / 0 档不开放高刷 | memory tiers 1 / 0 get no high-refresh stop
 static int fps_mem_capped(void) { return fps_high_hz() > 0 && dm_mem_tier() < 2; }   // 屏幕撑得住高刷、只因内存档位不开放：图形页帧率行出说明 | the screen could do high refresh and only the memory tier forbids it: note on the Graphics frame-rate row
 // 图形层 mtl_fps_target 每帧读（弱符号的强定义）：eco_fps 0 = 60 / 1 = 30（省电）/ 2 = 高刷档（90 或 120，见 dm_high_hz） | Read every frame by mtl_fps_target in the graphics layer (strong definition of a weak symbol): eco_fps 0 = 60 / 1 = 30 (power saving) / 2 = the high-refresh stop (90 or 120, see dm_high_hz)
@@ -907,7 +908,7 @@ void dm_graphics_ui_pump(unsigned long long root) {
       graphics_text(find_w(sp, "TouchGraphicsResText", 0), dm_str(main_base(), res_captions[lv])); }
     { static const char *const fps_captions[3] = { "dmGraphicsFrameRate30", "dmGraphicsFrameRate60", "dmGraphicsFrameRateHigh" };
       int fpos = fps_pos(pending_value(K_FPS));
-      if (fpos == 2) { char t[64]; snprintf(t, sizeof t, dm_str(main_base(), fps_captions[2]), fps_high_hz()); graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), t); }   // 第三格按本机高刷档写 90 / 120 | the third stop shows 90 / 120, this machine's high-refresh rate
+      if (fpos == 2) { char t[DM_FPS_CAPTION_MAX]; snprintf(t, sizeof t, dm_str(main_base(), fps_captions[2]), fps_high_hz()); graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), t); }   // 第三格按本机高刷档写 90 / 120 | the third stop shows 90 / 120, this machine's high-refresh rate
       else graphics_text(find_w(sp, "TouchGraphicsFpsText", 0), dm_str(main_base(), fps_captions[fpos])); }
     indent_rows(find_w(sp, "TouchGraphicsRows", 0), 0);
     uint64_t focus = find_w(sp, "TouchGraphicsSel", 0);
