@@ -22,7 +22,7 @@
 int dm_ingame_now(void);
 int dm_padmode_current(void);
 const char *dm_padmode_pad_type(void);
-int dm_rt_shadow_setting(void);
+int dm_rt_level_setting(void);   // 光追档位 0–3 的生效值（dm_custom.c；已含机器门槛与内存封顶） | effective ray-tracing level 0–3 (dm_custom.c; machine gate and memory cap included)
 
 #define Q_MAX_N 64
 #define Q_MAX_BYTES (128 * 1024)
@@ -190,8 +190,9 @@ static void settings_json(jb *b, int android) {   // 安卓没有超分与 iClou
     int eco = dm_custom_get("eco_fps"), up_on = dm_custom_get("upscale") != 0, q = dm_custom_get("q3d"), eff = dm_3d_profile_get();
     J_INT(b, DM_TF_S_FPS_SELECTED, eco == 1 ? 30 : eco == 2 ? 120 : 60); J_INT(b, DM_TF_S_FPS_EFFECTIVE, dm_fps_setting());
     J_STR(b, DM_TF_S_UPSCALE_SELECTED, android || !up_on ? up[4] : q >= 0 && q < 5 ? up[q] : up[0]); J_STR(b, DM_TF_S_UPSCALE_EFFECTIVE, !android && eff >= 0 && eff < 5 ? up[eff] : up[4]);
-    int rt_set = dm_custom_get("rt_shadow") != 0, rt_on = dm_rt_shadow_setting(); const char *ao = getenv("DM_RT_AO");
-    J_STR(b, DM_TF_S_RT_SHADOW_SET, rt_set ? "on" : "off"); J_STR(b, DM_TF_S_RT_SHADOW_EFF, rt_on ? "on" : rt_set ? "unsupported" : "off"); J_INT(b, DM_TF_S_RT_AO, ao && *ao == '1');
+    // rt_level 取代了 rt_shadow / rt_ao（RC2 并线）：协议字段不变——设置 = 档位非关，生效 = 生效档位非关；AO 跟高档走，DM_RT_AO 钉住时按它 | rt_level replaced rt_shadow / rt_ao (RC2 merge): protocol fields unchanged - set = level not off, effective = effective level not off; AO follows High, DM_RT_AO pins it
+    int rt_set = dm_custom_get("rt_level") != 0, rt_lvl = dm_rt_level_setting(), rt_on = rt_lvl > 0; const char *ao = getenv("DM_RT_AO"); int ao_on = ao ? *ao == '1' && rt_on : rt_lvl == 3;
+    J_STR(b, DM_TF_S_RT_SHADOW_SET, rt_set ? "on" : "off"); J_STR(b, DM_TF_S_RT_SHADOW_EFF, rt_on ? "on" : rt_set ? "unsupported" : "off"); J_INT(b, DM_TF_S_RT_AO, ao_on);
     jf(b, ",\"%s\":null", DM_TF_S_FRAMEGEN);   // 帧生成还没并进来 | frame generation is not merged yet
     J_STR(b, DM_TF_S_INPUT_MODE, dm_padmode_current() ? "pad" : "touch"); J_STR(b, DM_TF_S_PAD_TYPE, dm_padmode_pad_type());
     J_INT(b, DM_TF_S_LANG, dm_lang_group());

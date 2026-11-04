@@ -15,10 +15,10 @@ int dm_custom_tel_notice(void) { return f_notice; }
 int dm_custom_loaded(void) { return 1; }
 int dm_custom_auto_crash(void) { return f_crash; }
 int dm_custom_dir(char *p, size_t n) { snprintf(p, n, "%s", g_dir); return 1; }
-int dm_custom_get(const char *k) { if (!strcmp(k, "eco_fps")) return 2; if (!strcmp(k, "q3d")) return 3; if (!strcmp(k, "upscale")) return 1; if (!strcmp(k, "rt_shadow")) return 1; if (!strcmp(k, "render_res")) return 2; return 1; }
+int dm_custom_get(const char *k) { if (!strcmp(k, "eco_fps")) return 2; if (!strcmp(k, "q3d")) return 3; if (!strcmp(k, "upscale")) return 1; if (!strcmp(k, "rt_level")) return 2; if (!strcmp(k, "render_res")) return 2; return 1; }
 int dm_fps_setting(void) { return 120; }
 int dm_3d_profile_get(void) { return 2; }
-int dm_rt_shadow_setting(void) { return 0; }
+int dm_rt_level_setting(void) { return 0; }
 int dm_padmode_current(void) { return f_pad; }
 const char *dm_padmode_pad_type(void) { return f_pad ? "xbox" : "none"; }
 int dm_lang_group(void) { return 1; }
