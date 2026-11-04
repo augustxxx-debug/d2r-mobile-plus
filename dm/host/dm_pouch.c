@@ -41,6 +41,7 @@
 // Threads: dm_pouch_step on the game main thread (dm_world.c); UI message callback dm_pouch_on_uimsg (diag.c); stow / release / system notices in the server tick dm_pouch_srv_tick (hud_tick in diag.c);
 // persistence in the pre-commit hook pouch_hook on the disk-write thread (start of Commit in hle_fs.c, [2]).
 #include "dm_widget.h"
+#include "dm_pouch_name.h"
 #include "hle.h"
 #include "dm_i18n.h"
 #include <stdatomic.h>
@@ -428,7 +429,7 @@ static void tip_show(uint64_t root, int on) {
     pthread_mutex_lock(&g_umu); for (int i = 0; i < g_nu; i++) { int j = 0; while (j < nc && cc[j] != g_u[i].code) j++; if (j == nc) { if (nc == 64) continue; cc[nc] = g_u[i].code; cn[nc++] = 0; } cn[j]++; } pthread_mutex_unlock(&g_umu);
     char s[1024]; int k = snprintf(s, sizeof s, "%s", dm_str(B, "dmPouchTitle"));
     if (!nc) k += snprintf(s + k, sizeof s - k, "\n%s", dm_str(B, "dmPouchEmpty"));
-    for (int i = 0; i < nc && k < (int)sizeof s - 64; i++) k += snprintf(s + k, sizeof s - k, "\n%s ×%d", str_of(cc[i]), cn[i]);
+    for (int i = 0; i < nc && k < (int)sizeof s - 64; i++) { char nm[256]; dm_pouch_clean_name(str_of(cc[i]), nm, sizeof nm); k += snprintf(s + k, sizeof s - k, "\n%s ×%d", nm, cn[i]); }   // 高号符文名带颜色码 / 换行 / 框线，先清洗成单行「名字 #号」 | High-rune names carry colour codes / newlines / frame lines: clean them to one "name #N" line first
     w_text(tb, s); g_tip = 1;
     int32_t *br = (int32_t *)(box + 0x70), w = *(int32_t *)(tb + 0x78), h = *(int32_t *)(tb + 0x7c); if (w <= 0 || h <= 0) { w = 500; h = 300; }
     int x = br[0] + br[2] / 2 - w / 2, y = br[1] - h - 70; if (x < 40) x = 40;
