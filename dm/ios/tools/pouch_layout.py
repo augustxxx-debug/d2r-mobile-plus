@@ -36,7 +36,7 @@ def _qty_widgets():
     # Controller keycaps: the original legend widget draws the glyph for the current controller itself (Xbox / PlayStation / Switch, like the game's other
     # panels, by action rather than by letter), glyph only; the host moves them left of the three buttons in controller mode and off screen in touch mode
     for n, act in QTY_KEYS:
-        t += '            { "type": "ButtonLegendWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": 0, "width": 0, "height": 72 }, "text": { "style": "$StyleButtonLegend" }, "presets": [ { "action": "%s" } ] } },\n' % (n, TIP, act)
+        t += '            { "type": "ButtonLegendWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": 0, "width": 0, "height": %d }, "text": { "style": "$StyleButtonLegend" }, "presets": [ { "action": "%s" } ] } },\n' % (n, TIP, QTY_KEY_H, act)
     return t
 # 数量框按钮字：§2.6 副文 28 号（下限）。36 号时西语「Separar mitad / Vender todo」、俄语「Разделить все」压到按钮两端的框（六语截图 *_L2 / *_L3 断言），
 # 布局不分语言，所以统一取 28；按钮上不再写 (A)/(Y)/(X)，键帽由 QTY_KEYS 出
@@ -45,6 +45,8 @@ def _qty_widgets():
 QTY_BTN_STYLE = '{ "fontColor": "$LightButtonTextColor", "pointSize": 28, "dropShadow": "$DefaultDropShadow", "spacing": "$ReducedSpacing" }'
 # 三档对应的原版动作：第 1 档 A（select）、第 2 档 Y、第 3 档 X（option1 / option2 哪个是 X 以实机出图为准，见 dm_stack.c 键位）
 # The original actions for the three modes: mode 1 A (select), mode 2 Y, mode 3 X
+# 键帽高度（布局单位）：暂定，等 ui-pad-spec 规范；位置在 dm_stack_rule.h DMSTK_KEY_DX / DY | keycap height (layout units): provisional until the ui-pad-spec spec; position in dm_stack_rule.h
+QTY_KEY_H = 72
 QTY_KEYS = (('TouchQtyKeyA', 'select'), ('TouchQtyKeyY', 'option1'), ('TouchQtyKeyX', 'option2'))
 
 def widgets():

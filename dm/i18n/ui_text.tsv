@@ -37,6 +37,10 @@ dmStackBuyTitle	买入几瓶	Buy how many	¿Cuántos?		Сколько купит
 dmStackBuyOne	买 1 瓶	Buy 1	Comprar 1		Купить 1	1병 구매	商店买入数量框按钮（手柄键帽由按钮左边的原版提示控件出图，文字里不写键名）
 dmStackBuyTen	买 10 瓶	Buy 10	Comprar 10		Купить 10	10병 구매	商店买入数量框按钮
 dmStackBuyFull	买 99 瓶	Buy 99	Comprar 99		Купить 99	99병 구매	商店买入数量框按钮：买满一叠 99 瓶；钱不够时按身上金币能买几瓶封顶
+dmStackBuyNoRoom	背包没有空位，买不进	No room in the bag, nothing bought	No hay espacio en el inventario		Нет места в рюкзаке	가방에 공간이 없어 구매하지 못했습니다	买入数量框：背包没空格、同种那叠也满 99
+dmStackBuyNoGold	金币不够，买不了	Not enough gold	No tienes oro suficiente		Недостаточно золота	골드가 부족합니다	买入数量框：身上金币不够一瓶
+dmStackBuyGoldPart	金币只够买 %d 瓶	Gold only covered %d	El oro solo alcanzó para %d		Золота хватило только на %d	골드가 %d병 분량만 있었습니다	买入数量框：要的瓶数按身上金币封顶，%d = 实际买到的瓶数
+dmStackBuyRoomPart	背包放不下，只买了 %d 瓶	No room for more, bought %d	Sin espacio: solo %d comprados		Нет места: куплено только %d	공간이 부족해 %d병만 구매했습니다	买入数量框：其余放不下，%d = 实际买到的瓶数
 dmStackNoRoom	没有空格，拆不开	No free cell to split into	No hay espacio para separar		Нет места для разделения	나눌 공간이 없습니다	拆分时背包或仓库满的提示
 dmPouchTitle	百宝囊	Pouch	Zurrón		Сумка	주머니	百宝囊清单标题
 dmPouchEmpty	（空）	(empty)	(vacío)		(пусто)	(비어 있음)	百宝囊清单：空
