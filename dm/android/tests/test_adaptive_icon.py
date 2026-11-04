@@ -62,8 +62,8 @@ class AdaptiveIcon(unittest.TestCase):
             self.assertTrue(generated.is_file(), generated)
             with Image.open(committed) as a, Image.open(generated) as b:
                 self.assertEqual(a.size, (icon.LAYER_PX, icon.LAYER_PX), name)
-                diff = ImageChops.difference(a.convert('RGBA'), b.convert('RGBA'))
-                self.assertIsNone(diff.getbbox(), f'{name}: committed PNG is stale; rerun {TOOL.name}')
+                # 直接比原始字节：RGBA 的 difference().getbbox() 只看 alpha 通道，颜色变了也会漏掉 | compare raw bytes: getbbox() on an RGBA difference looks only at alpha and misses colour changes
+                self.assertEqual(a.convert('RGBA').tobytes(), b.convert('RGBA').tobytes(), f'{name}: committed PNG is stale; rerun {TOOL.name}')
 
     def test_color_resource_matches_the_source_corners(self):
         committed = RES / 'values/ic_launcher_colors.xml'
