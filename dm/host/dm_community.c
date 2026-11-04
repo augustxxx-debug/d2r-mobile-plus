@@ -103,6 +103,7 @@ void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx
 }
 void dm_community_input_leak(int leaked) { if (leaked && (atomic_load(&g_show) || atomic_load(&g_after))) atomic_fetch_add(&g_leak, 1); }   // 闸门之后（弹窗开着或关框后压住窗口里）还有非零输入交给游戏 | a non-zero input reached the game after the gate while the box was up or in the post-close window
 static int (*g_copy)(const char *);
+static int (*g_open)(const char *);   // 外壳登记的「用系统浏览器打开」回调（网盘链接专用；github / site / mirror 不走这里） | the shell's open-in-browser callback (cloud drives only; github / site / mirror never use it)
 static _Atomic unsigned g_copies;
 static _Atomic int g_from;   // 从哪里点开（只进日志）：1 暂停菜单 / 2 主菜单 / 3 自定义页 | which entry opened it (log only): 1 pause menu / 2 main menu / 3 Custom page
 static _Atomic int g_mode;   // 1 社区框（社区段 + 「关于」段）/ 2 纯「关于」框（版本 + 鸣谢，主菜单「关于」行） | 1 community box (community + About section) / 2 About-only box (version + credits, the main menu's About row)
@@ -429,6 +430,18 @@ void dm_community_open_about(void) {   // 主菜单「关于」行：只有版�
 }
 void dm_community_copy_init(int (*cb)(const char *)) { g_copy = cb; }
 unsigned dm_community_copy_count(void) { return atomic_load(&g_copies); }
+void dm_community_open_init(int (*cb)(const char *url)) { g_open = cb; }
+// 打开外部链接的唯一入口（网盘卡下一张卡接上界面后用）：取第 idx 条网盘，打开前用 dm_pan_open_allowed 做最终判定——方案 https、仍是所属网盘的前缀、主机名非空；
+// 越界 / 没登记回调 / 不合规一律返回 0 并记一行【红】，不调回调。github / site / mirror 仍只复制，不经这里。
+// The only way to open an external link (the cloud-drive cards will call it from the next card): take drive idx and run dm_pan_open_allowed as the final check -- https scheme, still the
+// provider's own prefix, non-empty host; out of range / no callback / invalid all return 0 with one red log line and never call the callback. github / site / mirror stay copy-only.
+int dm_community_open_pan(int idx) {
+    dm_pan_entry pans[DM_PAN_MAX]; int n = dm_community_pans(pans);
+    if (idx < 0 || idx >= n) { LOG("【红】社区入口：打开网盘失败（第 %d 条不存在，共 %d 条）", idx + 1, n); return 0; }
+    if (!g_open) { LOG("【红】社区入口：打开网盘失败（外壳没登记打开回调）"); return 0; }
+    if (!dm_pan_open_allowed(&pans[idx])) { LOG("【红】社区入口：打开网盘失败（第 %d 条链接不合规：只接受所属网盘的 https 地址）", idx + 1); return 0; }
+    return g_open(pans[idx].url);
+}
 int dm_community_shown(void) { return atomic_load(&g_show) == 2 || dm_savemgr_modal(); }
 static uint64_t co_now(void) { return clock_gettime_nsec_np(CLOCK_MONOTONIC); }
 static void do_copy(int by, int row) {   // by：1 点按钮 / 2 手柄 A；row：第几行渠道 | by: 1 button / 2 controller A; row: channel row

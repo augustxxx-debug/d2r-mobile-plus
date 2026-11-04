@@ -40,6 +40,9 @@ static char dir[64], cache[128], logp[128];
 static int copies; static char copied[256];
 static int copy_ok(const char *s) { copies++; snprintf(copied, sizeof copied, "%s", s); return 1; }
 static int copy_bad(const char *s) { (void)s; return 0; }
+static int opens; static char opened[256];
+static int open_ok(const char *s) { opens++; snprintf(opened, sizeof opened, "%s", s ? s : ""); return 1; }
+static int open_bad(const char *s) { (void)s; return 0; }
 static void restart(void) { g_qq[0] = g_gh[0] = g_site[0] = g_mirror[0] = 0; g_n_pans = 0; atomic_store(&g_loaded_cm, 0); atomic_store(&g_show, 0); atomic_store(&g_copied, 0); }
 static char *log_text(void) { static char t[16384]; fflush(stderr); FILE *f = fopen(logp, "r"); size_t n = f ? fread(t, 1, sizeof t - 1, f) : 0; t[n] = 0; if (f) fclose(f); return t; }
 static void log_reset(void) { fflush(stderr); if (ftruncate(fileno(stderr), 0) == 0) rewind(stderr); }   // 截断并回到文件头（只重开文件会从旧偏移接着写、前面留一段空洞） | truncate and rewind (reopening alone keeps writing at the old offset, leaving a hole at the front)
@@ -534,6 +537,26 @@ int main(void) {
       CHECK(!dm_community_available()); CHECK(cache_has("pan0_name=only\n")); CHECK(!cache_has("qq_group="));
       // 明确给空数组：撤下网盘（缓存清掉） | an explicitly empty array withdraws the drives (cache cleared)
       { const char *const pe0 = "{\"community\": {\"pans\": []}}"; CHECK(dm_community_manifest(pe0, strlen(pe0)) == 0); CHECK(dm_community_pans(pe) == 0); CHECK(access(cache, F_OK) != 0); } }
+    // 29. 网盘「用系统浏览器打开」（dm_community_open_pan）：唯一入口；合规条目调回调且 URL 逐字一致；越界 / 没登记回调 / 非白名单 URL（直接塞进社区状态）→ 返回 0、不调回调、日志有【红】
+    // 29. Opening a cloud drive in the system browser (dm_community_open_pan): the only entry; a valid entry calls the callback with the exact URL; out-of-range idx / no registered callback /
+    //     a non-whitelisted URL (stuffed straight into the community state) -> 0, the callback is never called, a red log line
+    { dm_pan_entry pe[DM_PAN_MAX]; memset(pe, 0, sizeof pe);
+      snprintf(pe[0].name, sizeof pe[0].name, "夸克"); pe[0].icon = DM_PAN_QUARK; snprintf(pe[0].url, sizeof pe[0].url, "https://pan.quark.cn/s/abc");
+      set_pans(pe, 1); dm_community_open_init(open_ok);
+      opens = 0; opened[0] = 0; log_reset();
+      CHECK(dm_community_open_pan(0) == 1); CHECK(opens == 1); CHECK(!strcmp(opened, "https://pan.quark.cn/s/abc")); CHECK(!strstr(log_text(), "【红】"));
+      dm_community_open_init(open_bad); CHECK(dm_community_open_pan(0) == 0);   // 回调说失败：原样返回 | the callback reports failure: passed through
+      dm_community_open_init(open_ok);
+      opens = 0; log_reset(); CHECK(dm_community_open_pan(1) == 0); CHECK(dm_community_open_pan(-1) == 0); CHECK(opens == 0); CHECK(strstr(log_text(), "【红】社区入口：打开网盘失败"));   // 越界 | out of range
+      dm_community_open_init(NULL); opens = 0; log_reset(); CHECK(dm_community_open_pan(0) == 0); CHECK(opens == 0); CHECK(strstr(log_text(), "【红】社区入口：打开网盘失败"));   // 没登记 | not registered
+      dm_community_open_init(open_ok);
+      static const struct { dm_pan_icon icon; const char *url; } bad[] = {   // 直接往社区状态塞坏数据 | bad data stuffed straight into the community state
+          { DM_PAN_QUARK, "https://pan.baidu.com/s/x" }, { DM_PAN_GENERIC, "https://evil.example/s/x" },
+          { DM_PAN_GENERIC, "http://pan.quark.cn/s/x" }, { DM_PAN_123PAN, "" } };
+      for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) { dm_pan_entry b[DM_PAN_MAX]; memset(b, 0, sizeof b); b[0].icon = bad[i].icon;
+          snprintf(b[0].name, sizeof b[0].name, "bad"); snprintf(b[0].url, sizeof b[0].url, "%s", bad[i].url); set_pans(b, 1);
+          opens = 0; log_reset(); CHECK(dm_community_open_pan(0) == 0); CHECK(opens == 0); CHECK(strstr(log_text(), "【红】社区入口：打开网盘失败")); }
+      dm_community_manifest(M_NONE, strlen(M_NONE)); dm_community_open_init(NULL); }
     unlink(cache); unlink(logp); { char mp[160]; snprintf(mp, sizeof mp, "%s/sample.json", dir); unlink(mp); } rmdir(dir);
     fflush(stderr); printf("t_community: %d checks, %d failed\n", checks, fails);
     return fails != 0;

@@ -58,6 +58,17 @@ int main(void) {
       CHECK(dm_pan_host(NULL, h, sizeof h) == 0 && !h[0]);
       CHECK(dm_pan_host(quark, h, 8) == 7 && !strcmp(h, "pan.qua"));
       CHECK(dm_pan_host(quark, NULL, 0) == 12); }   // 只问长度 | length only
+    // 打开前的最终判定 dm_pan_open_allowed：合规条目放行（具体网盘 / generic）；http、别家域名、图标与域名不符、空串、认不出的图标、NULL 全拒
+    // Final check before opening, dm_pan_open_allowed: valid entries pass (concrete provider / generic); http, other hosts, icon / domain mismatch, empty, unknown icon and NULL are rejected
+    { dm_pan_entry e; memset(&e, 0, sizeof e); snprintf(e.name, sizeof e.name, "q"); e.icon = DM_PAN_QUARK; snprintf(e.url, sizeof e.url, "%s", quark);
+      CHECK(dm_pan_open_allowed(&e));
+      e.icon = DM_PAN_GENERIC; CHECK(dm_pan_open_allowed(&e));
+      snprintf(e.url, sizeof e.url, "http://pan.quark.cn/s/abc"); CHECK(!dm_pan_open_allowed(&e));
+      e.icon = DM_PAN_QUARK; snprintf(e.url, sizeof e.url, "https://evil.example/s/abc"); CHECK(!dm_pan_open_allowed(&e));
+      e.icon = DM_PAN_BAIDU; snprintf(e.url, sizeof e.url, "%s", quark); CHECK(!dm_pan_open_allowed(&e));
+      e.icon = DM_PAN_QUARK; e.url[0] = 0; CHECK(!dm_pan_open_allowed(&e));
+      e.icon = (dm_pan_icon)99; snprintf(e.url, sizeof e.url, "%s", quark); CHECK(!dm_pan_open_allowed(&e));
+      CHECK(!dm_pan_open_allowed(NULL)); }
     printf("t_pan: %d checks, %d failed\n", checks, fails);
     return fails != 0;
 }
