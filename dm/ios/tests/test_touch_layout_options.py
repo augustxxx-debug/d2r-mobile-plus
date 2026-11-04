@@ -8,7 +8,7 @@ import sys
 
 root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root / 'ios/tools'))
-os.environ.pop('MOVIE_FFMPEG', None)   # 缺省包的自定义页（「配音」行只在 MOVIE_FFMPEG=1 时有，下面另核）
+os.environ.pop('MOVIE_FFMPEG', None)   # 缺省包的自定义页（「配音」行现在缺省包也有，与过场解码开关无关）
 import touch_layout as layout
 
 out, _ = layout._custom_page('"name": "VideoOptionsPanel", "name": "OptionsTable"')
@@ -37,22 +37,19 @@ host_src = (root / 'host/dm_custom.c').read_text()
 # K_ICLOUD_KEY（e1c459bd，§2.8）：安卓用占位名，这里测的是 Apple 一侧的布局，按非安卓那条宏展开 | K_ICLOUD_KEY (e1c459bd): Android uses a placeholder; this test covers the Apple layout, so expand the non-Android definition
 _ik = re.search(r'#else\n#define K_ICLOUD_KEY ("[a-z_]+")\n#endif', host_src); assert _ik and _ik[1] == '"icloud"', 'K_ICLOUD_KEY 的 Apple 定义找不到'
 host_src = host_src.replace('K_ICLOUD_KEY,', _ik[1] + ',')
-def host_variant(voice):   # 宿主按 VOICE_ROW（DM_MOVIE_FFMPEG）条件编译的两份键表：缺省去掉 #if VOICE_ROW 块，开关包只去掉预处理行
-    keep = re.sub(r'#if VOICE_ROW\n(.*?)#endif\n', (lambda m: m[1]) if voice else '', host_src, flags=re.S)
+def host_variant():   # VOICE_ROW 恒为 1（voice 行不再跟 MOVIE_FFMPEG 走）：保留 #if VOICE_ROW 块，只去掉预处理行 | VOICE_ROW is always 1: keep the #if VOICE_ROW blocks and strip only the directives
+    keep = re.sub(r'#if VOICE_ROW\n(.*?)#endif\n', r'\1', host_src, flags=re.S)
     return re.sub(r'(?m)^#.*\n', '', keep)
-for voice in (False, True):
-    if voice:
-        os.environ['MOVIE_FFMPEG'] = '1'; layout = importlib.reload(layout)
-    host = host_variant(voice)
-    keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
-    assert sorted(key for key in keys if key not in ('eco_fps', 'q3d', 'bright_level', 'fps_hud', 'upscale', 'render_res', 'rt_level')) == sorted([key for key, _ in layout._CUSTOM_ALL] + list(layout._GAME_KEYS)), (voice, keys)   # 图形页七键（含显示帧数、画面加亮、光追档位）不在系统 / 游戏页 | the seven Graphics-tab keys are not System / Gameplay rows
-    assert keys[-5:] == ['bright_level', 'fps_hud', 'upscale', 'render_res', 'rt_level'] and keys[-8:-5] == ['belt_refill', 'tel_stats', 'auto_crash']   # 末五键 = 图形页 K_BRIGHT / K_FPSHUD / K_UPSCALE / K_RES / K_RTLVL，之前是 K_TELSTATS / K_AUTOCRASH | last five keys = Graphics-tab K_BRIGHT .. K_RTLVL, preceded by K_TELSTATS / K_AUTOCRASH
-    assert ('voice' in keys) == voice
-    defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
-    assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
-    assert defaults[keys.index('free_tp')] == 1   # 免费回城缺省开（用户 2026-10-30，RC2 起） | free town portal on by default (user 2026-10-30, from RC2)
-    assert defaults[keys.index('bright_level')] == 2   # 画面加亮缺省「中」（用户方案 C，B098 中 = 上限 2；审计 r1 P2-6） | brightening defaults to mid (plan C, B098 mid = cap 2; audit r1 P2-6)
-os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
+host = host_variant()
+keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
+assert sorted(key for key in keys if key not in ('eco_fps', 'q3d', 'bright_level', 'fps_hud', 'upscale', 'render_res', 'rt_level')) == sorted([key for key, _ in layout._CUSTOM_ALL] + list(layout._GAME_KEYS)), keys   # 图形页七键（含显示帧数、画面加亮、光追档位）不在系统 / 游戏页 | the seven Graphics-tab keys are not System / Gameplay rows
+assert keys[-5:] == ['bright_level', 'fps_hud', 'upscale', 'render_res', 'rt_level'] and keys[-8:-5] == ['belt_refill', 'tel_stats', 'auto_crash']   # 末五键 = 图形页 K_BRIGHT / K_FPSHUD / K_UPSCALE / K_RES / K_RTLVL，之前是 K_TELSTATS / K_AUTOCRASH | last five keys = Graphics-tab K_BRIGHT .. K_RTLVL, preceded by K_TELSTATS / K_AUTOCRASH
+assert keys[0] == 'lang' and keys[1] == 'voice'   # 配音行在语言行之后（缺省包也有）| voice follows language on every build
+for name in ('TouchCustom_voice', 'TouchCustom_voice_zh', 'TouchCustom_voice_Text'): assert name in nodes, name   # 触屏系统页真的摆出了配音单选（两个勾选框）| the touch System page really lays out the voice radio (both checkboxes)
+defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
+assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
+assert defaults[keys.index('free_tp')] == 1   # 免费回城缺省开（用户 2026-10-30，RC2 起） | free town portal on by default (user 2026-10-30, from RC2)
+assert defaults[keys.index('bright_level')] == 2   # 画面加亮缺省「中」（用户方案 C，B098 中 = 上限 2；审计 r1 P2-6） | brightening defaults to mid (plan C, B098 mid = cap 2; audit r1 P2-6)
 # 平台限制：DM_TARGET=android 的自定义页没有 icloud 行，其余行序不变（宿主 dm_custom.c custom_row 在没有 iCloud 的平台同样跳过）| per-platform: under DM_TARGET=android the Custom page has no icloud row, the other rows keep their order (the host's custom_row skips it likewise)
 os.environ['DM_TARGET'] = 'android'; layout = importlib.reload(layout)
 assert 'icloud' not in [k for k, _ in layout._CUSTOM_ALL] and 'drop_haptic' not in layout._GAME_KEYS, layout._GAME_KEYS
@@ -61,7 +58,7 @@ os.environ.pop('DM_TARGET'); layout = importlib.reload(layout)
 assert 'icloud' in [k for k, _ in layout._CUSTOM_ALL]
 host = host_src
 assert 'TouchCustom_touch_swap_above_near' in host
-print('PASS touch layout options: generated radio pair, labels, defaults, host order (default and MOVIE_FFMPEG=1) and scrolling row extent')
+print('PASS touch layout options: generated radio pair, labels, defaults, host order (voice row on every build) and scrolling row extent')
 
 # Graphics controls live in the dedicated Graphics tab, not duplicated in Custom.
 assert not any(name.startswith('TouchCustom_q3d') for name in nodes)
