@@ -50,6 +50,17 @@ static inline const char *dm_pan_icon_key(dm_pan_icon icon) {   // 枚举 → �
     default: return "generic";
     }
 }
+// 图标方块里的首字（社区框网盘行）：只放这一个字，六种语言都用这五个（用户 2026-11-04）。放在头文件里，上屏中文字面量闸门只扫 .c
+// First character inside the icon square (a cloud-drive row in the community box): only this one character, the same five in every language (user, 2026-11-04)
+static inline const char *dm_pan_icon_glyph(dm_pan_icon icon) {
+    switch (icon) {
+    case DM_PAN_QUARK: return "夸";
+    case DM_PAN_BAIDU: return "百";
+    case DM_PAN_ALIYUN: return "阿";
+    case DM_PAN_123PAN: return "1";
+    default: return "盘";
+    }
+}
 static inline int dm_pan_prefixed(const char *s, const char *pre) { size_t n = strlen(s), p = strlen(pre); return n > p && n <= DM_PAN_URL_MAX && !strncmp(s, pre, p); }
 static inline int dm_pan_url_ok(dm_pan_icon icon, const char *url) {
     if (!url) return 0;
