@@ -252,8 +252,9 @@ int dm_stack_open(const dm_cursor_item_info *ci) {
 // 手柄：按住 X 0.4 秒打开；开着时 A 拆 1、Y 拆半、X 全部、B 取消，这几个键不给游戏（dm_cursor.c cursor_apply 每帧调，仅手柄模式）
 // Controller: hold X for 0.4 s to open; while open A splits 1, Y half, X all, B cancels, and these keys do not reach the game (called every frame from cursor_apply in dm_cursor.c, controller mode only)
 void dm_stack_pad(uint64_t *buttons, uint64_t now_ns) {
-    static uint64_t since, prev; uint64_t b = *buttons, edge = b & ~prev; prev = b;
-    if (dm_stack_box_open()) { if (edge & DM_BTN_A) box_choose(1); else if (edge & DM_BTN_Y) box_choose(2); else if (edge & DM_BTN_X) box_choose(3); else if (edge & DM_BTN_B) box_close(); *buttons &= ~(uint64_t)(DM_BTN_A | DM_BTN_B | DM_BTN_X | DM_BTN_Y); since = 0; return; }
+    static uint64_t since, prev, eaten; uint64_t b = *buttons, edge = b & ~prev; prev = b; const uint64_t K = DM_BTN_A | DM_BTN_B | DM_BTN_X | DM_BTN_Y;
+    if (dm_stack_box_open()) { if (edge & DM_BTN_A) box_choose(1); else if (edge & DM_BTN_Y) box_choose(2); else if (edge & DM_BTN_X) box_choose(3); else if (edge & DM_BTN_B) box_close(); *buttons &= ~dmstk_box_eat(&eaten, b, 1, K); since = 0; return; }
+    { uint64_t off = dmstk_box_eat(&eaten, b, 0, K); if (off) { *buttons &= ~off; b &= ~off; } }   // 框吃过、还按着的键：扣到松开 | keys the box ate that are still down: withheld until released
     if (!(b & DM_BTN_X)) { since = 0; return; }
     if (!since) { since = now_ns; return; }
     if (now_ns - since >= 400000000ull) { since = 0; dm_cursor_item_info ci; if (dm_cursor_item(&ci)) dm_stack_open(&ci); }

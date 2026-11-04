@@ -6,6 +6,7 @@
 // All pure functions: no game memory, no packets. dm_stack.c calls only these, and dm/host/tests/t_stack_rule.c tests the same
 // functions, so a rule is changed in one place. The 99 cap must match MAX_STACK in the table tool dm/ios/tools/stack_potions.py.
 #pragma once
+#include <stdint.h>
 
 // 一叠最多几瓶 | how many bottles a stack holds
 #ifndef DMSTK_CAP
@@ -110,3 +111,17 @@ static inline int dmstk_badge_hide_from(const dmstk_badge_plan *p) { return p->s
 static inline int dmstk_badge_hidden(const dmstk_badge_plan *p) { return DMSTK_BADGE_MAX - p->shown; }
 // 日志里的格数：只能是 shown | the cell count in the log line: `shown` and nothing else
 static inline int dmstk_badge_logged(const dmstk_badge_plan *p) { return p->shown; }
+
+// 数量框吃键：框开着时 A / B / X / Y 都不给游戏；被框吃过的键要一直扣到松开为止。
+// 原先只在框开着的那几帧扣：A / Y 选了档、框当帧收起，键还按着，下一帧游戏把它当成新按下——A 把剩下那叠拿到手上，
+// Y 走原版 Y（商店里那一下发 0x5c），剩下的半叠没了、读档也找不回（11-04 整机验收 pvy1 / pvyh2）。
+// 返回这一帧要从按键里去掉的位；*eaten 是还按着、被框吃过的键。
+// Quantity box key eating: while the box is open A / B / X / Y do not reach the game, and a key the box consumed stays withheld until it is released.
+// It used to be withheld only while the box was open: A / Y chose a mode, the box closed that frame, the key was still down and the next frame the game took it
+// as a new press - A picked up the rest of the stack, Y ran the original Y (0x5c in a shop) and the remaining half was gone, also after reloading (11-04 Mac
+// acceptance pvy1 / pvyh2). Returns the bits to clear this frame; *eaten holds the keys the box consumed that are still down.
+static inline uint64_t dmstk_box_eat(uint64_t *eaten, uint64_t held, int box_open, uint64_t keys) {
+    if (box_open) *eaten |= held & keys;
+    *eaten &= held;
+    return box_open ? keys : *eaten;
+}
