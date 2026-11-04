@@ -1,5 +1,6 @@
 #include "dm_elysium.h"
 #include "dm_cursor.h"
+#include "dm_ui_gate.h"
 #include "dm_widget.h"
 #include "dm_notice_geometry.h"
 #include "dm_notice_pair.h"
@@ -889,6 +890,11 @@ static int slider_arrow(module_t *m, uint64_t root, int *x, int *y, int W, int H
                 if (*x >= l && *x <= r) { if (*x - l <= in && *x - l <= r - *x) side = 1; else if (r - *x <= in) side = -1; else return 0; }
                 int ax = side > 0 ? l - off : r + off, ay = (top + bot) / 2;   // side>0：触点在左端 | side>0: the touch point is at the left end
                 LOG("界面吸附：(%d,%d) 在滑块 %s 的%s端（滑槽 x %d–%d，行 y=%d）→ 点箭头 (%d,%d)", *x, *y, *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "?", side > 0 ? "左" : "右", l, r, ay, ax, ay);
+                // 点中的是这条滑块：g_click 记它（交叉审 P2-1）。原先这里不写，后面判「后果重的按钮只认本体」与吸附日志用的是上一次点中的控件——刚点过「放弃 / 默认」再点滑块箭头，
+                // 会被当成「离那颗按钮太远」吞掉，日志名也是陈旧的那颗
+                // The hit is this slider: g_click records it (cross-review P2-1). It used to stay untouched, so the "heavy buttons accept only their body" check and the snap log used the previously
+                // hit widget -- tapping a slider arrow right after Discard / Default was swallowed as "too far from that button", and the log showed that stale name
+                dm_wref_set(&g_click, w); g_click_name = *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "?";
                 *x = ax; *y = ay; return 1; } } }
     return 0;
 }
@@ -1175,6 +1181,25 @@ static int ui_button_kind(uint64_t w) {
     (void)w; return 0;
 #endif
 }
+// B145：滑块两端的箭头不是控件——滑块只有一个子控件（指示块 Indicator），箭头是滑块自己画在命中区（滑槽）外面、自己收点击的（真机诊断：音频页十条滑块全是这样；
+// 原先吸附到右箭头那一下改了值，说明在箭头位置发鼠标点击游戏照收）。设置页那道只认可点控件，左箭头正好压在暂停菜单按钮那一列上时（图形页「画面加亮」、音频页各滑块）
+// 被判成「被盖住、不点」，点了没反应。这里按几何认：同一行（上下 ±16 布局单位）、离滑槽两端 64 布局单位以内（箭头中心约在端外 36 单位、半宽约 21 单位）也算点在滑块上。
+// B145: a slider's end arrows are not widgets -- the slider has a single child (the Indicator) and draws the arrows outside its own hit area (the track), handling their clicks itself
+// (device diagnostic: all ten Audio page sliders; the earlier tap snapped onto a right arrow did change the value, so the game takes a mouse click at the arrow position). The settings gate
+// only accepts clickable widgets, so a left arrow over the pause menu button column (Dark Area Boost on Graphics, the Audio sliders) was judged "covered, no click" and did nothing. Judged by
+// geometry here: on the same row (±16 layout units) and within 64 layout units of either end of the track (arrow centre about 36 units outside the end, half width about 21) also counts as on the slider.
+#define SLIDER_ARROW_REACH 64
+#define SLIDER_ROW_SLACK 16
+static int slider_part_hit(uint64_t page, int x, int y, uint64_t base, int vh) {
+    if (vh <= 0) return 0;
+    static uint64_t sl[48]; int n = 0; slider_collect(page, base + 0x20bad70, 0, sl, &n);
+    int reach = SLIDER_ARROW_REACH * vh / 2160, slack = SLIDER_ROW_SLACK * vh / 2160, step = vh / 540 > 1 ? vh / 540 : 1;
+    for (int i = 0; i < n; i++)
+        for (int dy = -slack; dy <= slack; dy += slack > 0 ? slack : 1) { int yy = y + dy; if (yy < 0) continue;
+            for (int d = 0; d <= reach; d += step) { if (slider_hit(sl[i], x + d, yy) || (x - d >= 0 && slider_hit(sl[i], x - d, yy))) return 1; }
+            if (!slack) break; }
+    return 0;
+}
 static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size_t hn) {   // 12 任务页慢点按按钮；其余分类保持原样 | 12 quest-page button with relaxed tap timing; other classifications are unchanged
     if (g_cls_out) { g_cls_out = 0; const char *on = "";
         if (modal_top(m, root, &on)) { snprintf(hit, hn, "模态框外 %s", on); g_modal_name = on; return 9; }
@@ -1188,25 +1213,29 @@ static int ui_classify(module_t *m, uint64_t root, int x, int y, char *hit, size
     // 原先设置页开着时把暂停菜单整层设成不可见、关了写回——那是写原版控件，违反不写原版控件的规则，改成这里只在命中时挡
     // The settings page covers the pause menu, yet the pause menu's buttons still receive clicks (the game's dispatch does not look at who is on top): on a pause menu button and not on a clickable widget of the settings page = covered, do not click (same as "on a button covered by an upper panel").
     // Previously, while the settings page was open the whole pause menu layer was set invisible and written back on close - that is writing to the original game's widgets, violating the no-writes-to-original-widgets rule; changed to blocking here only on a hit
+    int cover = 0;   // 点在被设置页盖住的暂停菜单按钮上；拦不拦由下面 dm_ui_gate 定（模态框优先，B143） | on a pause menu button covered by the settings page; whether it blocks is decided by dm_ui_gate below (modal first, B143)
     { uint64_t st = ui_panel(root, "SettingsPanel"), xy = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32);
       static const char *const pages[] = { "SoundOptionsPanel", "3PlusGraphicsOptionsPanel", "GameplayOptionsPanel", "OnlineGameOptionsPanel", "VideoOptionsPanel" };   // 与页签同序，查找不依赖顺序 | same order as the tabs; lookup does not depend on order
       int page_hit = 0;
       if (st && *(uint8_t *)(st + 0x50)) for (unsigned i = 0; i < sizeof pages / sizeof pages[0] && !page_hit; i++) {
           uint64_t page = ui_panel(root, pages[i]);
-          page_hit = page && *(uint8_t *)(page + 0x50) && click_walk(page, xy, 1, (uint64_t)m->base);
+          page_hit = page && *(uint8_t *)(page + 0x50) && (click_walk(page, xy, 1, (uint64_t)m->base) || slider_part_hit(page, x, y, (uint64_t)m->base, *(int32_t *)(m->base + 0x211da3c)));
       }
       if (st && *(uint8_t *)(st + 0x50) && !click_walk(st, xy, 1, (uint64_t)m->base) && !page_hit) {   // 设置页自己可点的控件照常；点在它的底板 / 列表空处时，游戏会把这一下交给底下的暂停菜单按钮 | The settings page's own clickable widgets work as usual; when the tap is on its backing / empty list space, the game would hand this tap to the pause menu button underneath
           static const char *const pl[] = { "PauseLayoutGarden", "PauseLayout" };
-          for (int i = 0; i < 2; i++) { uint64_t pw = ui_panel(root, pl[i]); if (pw && *(uint8_t *)(pw + 0x50) && click_walk(pw, xy, 1, (uint64_t)m->base)) { snprintf(hit, hn, "设置页盖着的暂停菜单按钮（不点，可滚）"); return 11; }   /* 11：这一下不点下去，但从这里起手上下拖照常滚设置页的列表（自定义页各行的文字不是可点控件，玩家多半就在文字上滑） | 11: this tap is not pressed down, but a vertical drag starting here still scrolls the settings page list as usual (the text of the rows on the Custom page is not a clickable widget, and players mostly swipe right on the text) */ } } }
-    const char *mn = ""; uint64_t mp = modal_top(m, root, &mn);
+          for (int i = 0; i < 2; i++) { uint64_t pw = ui_panel(root, pl[i]); if (pw && *(uint8_t *)(pw + 0x50) && click_walk(pw, xy, 1, (uint64_t)m->base)) { cover = 1; break; }   /* 11：这一下不点下去，但从这里起手上下拖照常滚设置页的列表（自定义页各行的文字不是可点控件，玩家多半就在文字上滑） | 11: this tap is not pressed down, but a vertical drag starting here still scrolls the settings page list as usual (the text of the rows on the Custom page is not a clickable widget, and players mostly swipe right on the text) */ } } }
+    const char *mn = ""; uint64_t mp = modal_top(m, root, &mn); int in_modal = 0;
     if (mp) { uint64_t xy = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32), fn = *(uint64_t *)(*(uint64_t *)mp + 0x48);
         // 「在框里」：框自己有边界且点在里面，或点中它的某个可见叶子 / 可点控件（确认框的「应用 / 放弃」按钮只有后一种认得到——
         // 只用叶子判时点「应用」被当成框外，确认框按不动）
         // "Inside the box": the box has its own bounds and the point is inside, or one of its visible leaves / clickable widgets is hit (the confirmation box's 「应用 / 放弃」(Apply / Discard) buttons are only caught by the latter -
         // judging by leaves alone, a tap on 「应用」(Apply) was treated as outside the box and the confirmation box could not be pressed)
-        int in = ((((int (*)(uint64_t, uint64_t))fn)(mp, xy) & 1) && !(((int (*)(uint64_t, uint64_t))fn)(mp, (uint64_t)3 | ((uint64_t)3 << 32)) & 1))
+        in_modal = ((((int (*)(uint64_t, uint64_t))fn)(mp, xy) & 1) && !(((int (*)(uint64_t, uint64_t))fn)(mp, (uint64_t)3 | ((uint64_t)3 << 32)) & 1))
               || inside_walk(mp, xy, 1, (uint64_t)m->base + 0x20c1328) || click_walk(mp, xy, 1, (uint64_t)m->base);
-        if (!in) { snprintf(hit, hn, "模态框外 %s", mn); g_modal_name = mn; return 9; } }
+    }
+    { int gate = dm_ui_gate(mp != 0, in_modal, cover);   // B143：模态框先于设置页那道 | B143: the modal before the settings gate
+      if (gate == 9) { snprintf(hit, hn, "模态框外 %s", mn); g_modal_name = mn; return 9; }
+      if (gate == 11) { snprintf(hit, hn, "设置页盖着的暂停菜单按钮（不点，可滚）"); return 11; } }
     // 单件任务槽面板（灌魔 / 打孔 / 个性化 / 古墓底座）的关闭钮画在外框右上角凹槽里，但它属于最先打开的 ImbueItemsPanel，凹槽那块被后开的背包面板与外框盖在上层：
     // 按层级它不算可点控件，游戏自己的鼠标分发也到不了它（点了有鼠标按下抬起、没有关面板消息）。点中它 = 走「点面板外 = 关面板」那条现成的路（原版的返回键）
     // The close button of the single-item quest slot panel (imbue / socketing / personalize / tomb pedestal) is drawn in the notch at the top right of the outer frame, but it belongs to the ImbueItemsPanel opened first, and that notch area is covered on upper layers by the later-opened inventory panel and the outer frame:
