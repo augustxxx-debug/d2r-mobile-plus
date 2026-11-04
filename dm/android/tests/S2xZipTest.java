@@ -385,6 +385,13 @@ public class S2xZipTest {
         File z4 = zip("threelevel.zip", x -> game(x, "a/b/c/", true));
         ok(!S2xZip.plan(z4).ok(), "three outer levels are not guessed");
 
+        // 复审 R2：Mac 访达压的一级外层包带 __MACOSX/S2X/ExeFS/._main；S2X/android/data/ 这种别处的 data/ 都不能把外层判乱
+        // re-review R2: a Finder zip with one outer folder carries __MACOSX/S2X/ExeFS/._main; a data/ elsewhere such as S2X/android/data/ must not confuse the prefix
+        File z6 = zip("finder.zip", x -> { game(x, "S2X/", true); put(x, "__MACOSX/S2X/ExeFS/._main", "apple"); put(x, "__MACOSX/S2X/data/._00.data", "apple"); put(x, "S2X/android/data/x.bin", "y"); });
+        S2xZip.Plan p6 = S2xZip.plan(z6); equal("S2X/", p6.prefix); ok(p6.ok(), "Finder pack with __MACOSX and android/data is fine");
+        File d6 = dir("finder-dest"); equal(S2xZip.Result.OK, S2xZip.extract(p6, d6, null, null));
+        ok(!new File(d6, "android").exists() && !new File(d6, "__MACOSX").exists(), "__MACOSX/ and android/ are not extracted");
+
         File z5 = zip("nomanifest.zip", x -> { put(x, "ExeFS/main", MAIN); put(x, "ExeFS/sdk", SDK); put(x, "data/.build.config", CONFIG); put(x, "data/00.data", DATA); });
         S2xZip.Plan p5 = S2xZip.plan(z5); ok(p5.missing.contains("data/build_manifest.psv"), "missing build_manifest.psv is listed");
     }

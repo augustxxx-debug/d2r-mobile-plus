@@ -247,32 +247,31 @@ final class S2xZip {
 
     // 外层多一级目录（S2X/、D2R Mobile Plus/）就剥掉；直接以 ExeFS/、data/ 开头就是 ""。先找直接开头的，再看下一级。
     // Strip one extra outer level (S2X/, D2R Mobile Plus/) when present; "" when entries start directly with ExeFS/ or data/. Direct markers win.
-    // 根前缀：ExeFS/ 或 data/ 之前的那几级目录，最多两级（「S2X/」或照教程压整个 S2X 文件夹得到的「S2X/D2R Mobile Plus/」，Opus 审 P1-2）。
-    // 各条目算出的前缀不一致就说不清，按没有前缀处理（结构检查会列出缺项）；直接以 ExeFS/、data/ 开头的优先。
-    // Root prefix: the directory levels before ExeFS/ or data/, at most two ("S2X/", or "S2X/D2R Mobile Plus/" from zipping the whole S2X folder as the guide says,
-    // Opus review P1-2). Entries disagreeing on the prefix are ambiguous and count as no prefix (the structure check lists what is missing); a pack starting directly
-    // with ExeFS/ or data/ wins.
+    // 根前缀：必需文件 ExeFS/main、ExeFS/sdk 之前的那几级目录，最多两级（「S2X/」或照教程压整个 S2X 文件夹得到的「S2X/D2R Mobile Plus/」，Opus 审 P1-2）。
+    // 只拿这两个必需文件定外层、跳过 __MACOSX/（Mac 访达压缩带的 ._ 影子文件），别的目录里碰巧有 data/（如 S2X/android/data/）不参与判断（复审 R2 P1 / P2）。
+    // 几处算出的前缀不一致就说不清，按没有前缀处理（结构检查会列出缺项）。
+    // Root prefix: the directory levels before the required ExeFS/main and ExeFS/sdk, at most two ("S2X/", or "S2X/D2R Mobile Plus/" from zipping the whole S2X folder
+    // as the guide says, Opus review P1-2). Only these two required files decide, and __MACOSX/ (the ._ shadow files of a Finder zip) is skipped, so a data/ that
+    // happens to sit in another folder (e.g. S2X/android/data/) does not take part (re-review R2 P1 / P2). Disagreeing prefixes count as none (the structure check lists
+    // what is missing).
     static final int MAX_PREFIX_LEVELS = 2;
     private static String detectPrefix(List<ZipEntry> entries) {
         String found = null;
         for (ZipEntry ze : entries) {
-            String p = prefixOf(norm(ze.getName()));
+            String n = norm(ze.getName());
+            if (n.startsWith("__MACOSX/")) continue;
+            String p = null;
+            for (String anchor : new String[]{"ExeFS/main", "ExeFS/sdk"}) {
+                if (!n.equals(anchor) && !n.endsWith("/" + anchor)) continue;
+                String pre = n.substring(0, n.length() - anchor.length());
+                int levels = 0; for (int i = 0; i < pre.length(); i++) if (pre.charAt(i) == '/') levels++;
+                if (levels <= MAX_PREFIX_LEVELS) p = pre;
+            }
             if (p == null) continue;
-            if (p.isEmpty()) return "";
             if (found == null) found = p;
             else if (!found.equals(p)) return "";
         }
         return found == null ? "" : found;
-    }
-    private static String prefixOf(String n) {
-        int levels = 0, start = 0;
-        while (true) {
-            String rest = n.substring(start);
-            if (rest.startsWith("ExeFS/") || rest.startsWith("data/")) return n.substring(0, start);
-            int slash = n.indexOf('/', start);
-            if (slash < 0 || slash == start || ++levels > MAX_PREFIX_LEVELS) return null;
-            start = slash + 1;
-        }
     }
 
     private static String unsafe(String name, boolean symlink) {
