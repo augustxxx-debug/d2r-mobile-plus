@@ -60,16 +60,47 @@ static inline int dmstk_cube_lone_split(int qty, int small_rejuv) { return qty >
 // （布局 pouch_layout.py 里就是这六个名字；界面按名字找控件，写错一个字就点不到）
 // The six quantity-box buttons: the mode (1 one, 2 half, 3 all), 0 when it is not a button; dmstk_box_name gives the widget name
 // back (these six names are in the layout pouch_layout.py; the UI finds widgets by name, so one wrong letter and the tap misses)
+// 三组：0 拆分、1 卖出、2 买入（买入组 11-04 加，用户要求进 RC2）
+// Three sets: 0 split, 1 sell, 2 buy (the buy set was added 11-04 at the user's request for RC2)
+enum { DMSTK_SET_SPLIT, DMSTK_SET_SELL, DMSTK_SET_BUY };
 static inline int dmstk_box_choice(const char *name) {
     if (!name) return 0;
-    if (!__builtin_strcmp(name, "TouchQtyOne") || !__builtin_strcmp(name, "TouchQtySellOne")) return 1;
-    if (!__builtin_strcmp(name, "TouchQtyHalf") || !__builtin_strcmp(name, "TouchQtySellHalf")) return 2;
-    if (!__builtin_strcmp(name, "TouchQtyAll") || !__builtin_strcmp(name, "TouchQtySellAll")) return 3;
+    if (!__builtin_strcmp(name, "TouchQtyOne") || !__builtin_strcmp(name, "TouchQtySellOne") || !__builtin_strcmp(name, "TouchQtyBuyOne")) return 1;
+    if (!__builtin_strcmp(name, "TouchQtyHalf") || !__builtin_strcmp(name, "TouchQtySellHalf") || !__builtin_strcmp(name, "TouchQtyBuyTen")) return 2;
+    if (!__builtin_strcmp(name, "TouchQtyAll") || !__builtin_strcmp(name, "TouchQtySellAll") || !__builtin_strcmp(name, "TouchQtyBuyFull")) return 3;
     return 0;
 }
-static inline const char *dmstk_box_name(int sell_set, int mode) {
-    if (sell_set) return mode == 1 ? "TouchQtySellOne" : mode == 2 ? "TouchQtySellHalf" : mode == 3 ? "TouchQtySellAll" : 0;
+static inline const char *dmstk_box_name(int set, int mode) {
+    if (set == DMSTK_SET_BUY) return mode == 1 ? "TouchQtyBuyOne" : mode == 2 ? "TouchQtyBuyTen" : mode == 3 ? "TouchQtyBuyFull" : 0;
+    if (set) return mode == 1 ? "TouchQtySellOne" : mode == 2 ? "TouchQtySellHalf" : mode == 3 ? "TouchQtySellAll" : 0;
     return mode == 1 ? "TouchQtyOne" : mode == 2 ? "TouchQtyHalf" : mode == 3 ? "TouchQtyAll" : 0;
+}
+// 三档的手柄键帽控件（布局 pouch_layout.py QTY_KEYS：原版提示控件按当前手柄出图），第 1 / 2 / 3 档 = A / Y / X 键位
+// The controller keycap widgets of the three modes (layout QTY_KEYS: the original legend widget draws the glyph for the current controller), modes 1 / 2 / 3 = A / Y / X
+// 键帽样式与位置：暂定，等「按钮 + 手柄统一设计规范」（会话 ui-pad-spec，参照原版）定稿后统一改这里与 pouch_layout.py 的 QTY_KEY_* 两处。
+// 原版做法：键帽在文字左边、不加括号。位置单位 = 布局单位，相对数量框左上；行距跟按钮行（80）
+// Keycap style and position: provisional until the unified button + controller spec (session ui-pad-spec, modelled on the original) is final; change here and
+// QTY_KEY_* in pouch_layout.py. As in the original: keycap left of the text, no brackets. Layout units relative to the box top-left; row pitch follows the buttons (80)
+enum { DMSTK_KEY_DX = 60, DMSTK_KEY_DY = 4 };
+static inline const char *dmstk_key_name(int mode) { return mode == 1 ? "TouchQtyKeyA" : mode == 2 ? "TouchQtyKeyY" : mode == 3 ? "TouchQtyKeyX" : 0; }
+// 买入三档：1 瓶 / 10 瓶 / 买满一叠 99 瓶。原版先照常买 1 瓶（原版自己查钱、查空位、查商人），单价 = 这一瓶前后金币差；
+// 其余的按身上剩下的金币能买几瓶封顶，总数不超过一叠上限。返回总瓶数（含原版那 1 瓶）；单价认不出时只算原版那 1 瓶
+// Buy, three modes: 1 / 10 / a full stack of 99. The original buys 1 bottle first as usual (it checks gold, room and the vendor itself) and the unit
+// price is the gold difference of that bottle; the rest is capped by how many the remaining carried gold pays for, the total never above the stack cap.
+// Returns the total bottles (including the original one); with an unknown unit price only the original bottle counts
+// 买入结果的提示（11-04 用户问超过 99 怎么办）：0 不提示；1 背包没空位买不进；2 金币不够一瓶；3 金币只够买一部分；4 背包放不下其余、只买了一部分
+// Buy result notice: 0 none; 1 no room, nothing bought; 2 not enough gold for one; 3 gold paid for only part; 4 no room for the rest, only part bought
+enum { DMSTK_BUYNOTE_NONE, DMSTK_BUYNOTE_NOROOM, DMSTK_BUYNOTE_NOGOLD, DMSTK_BUYNOTE_GOLD_PART, DMSTK_BUYNOTE_ROOM_PART };
+static inline int dmstk_buy_note(int bought_first, int room_before, int want, int total, int put, int extra) {
+    if (!bought_first) return room_before ? DMSTK_BUYNOTE_NOGOLD : DMSTK_BUYNOTE_NOROOM;
+    if (put < extra) return DMSTK_BUYNOTE_ROOM_PART;
+    if (total < want) return DMSTK_BUYNOTE_GOLD_PART;
+    return DMSTK_BUYNOTE_NONE;
+}
+static inline int dmstk_buy_want(int mode) { return mode == 1 ? 1 : mode == 2 ? 10 : mode == 3 ? DMSTK_CAP : 0; }
+static inline int dmstk_buy_total(int want, int gold_after_first, int unit) {
+    if (want < 1) return 0; if (want > DMSTK_CAP) want = DMSTK_CAP; if (unit <= 0 || gold_after_first < 0) return 1;
+    long more = gold_after_first / unit; int t = 1 + (int)(more > DMSTK_CAP ? DMSTK_CAP : more); return t < want ? t : want;
 }
 
 // 叠数角标画在哪个容器：物品栏 = 页 0，个人仓库 = 页 4（存档里个人仓库的当前页就放在页 4），别的容器不画

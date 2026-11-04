@@ -180,6 +180,36 @@ int main(void) {
       CHECK(e == 0 && dmstk_box_eat(&e, X, 0, K) == 0); // 框外第一次按 X（开框的按住 X）不被误扣
     }
 
+
+    // 买入数量框（11-04 用户定进 RC2）：三个按钮名、三档要几瓶、按金币封顶（阿卡拉 hp1 单价 27，实跑 bq1：9381 → 9354）
+    // Buy box: the three button names, how many each mode wants, capped by gold (Akara hp1 at 27 each, real run bq1: 9381 -> 9354)
+    CHECK(!strcmp(dmstk_box_name(DMSTK_SET_BUY, 1), "TouchQtyBuyOne") && !strcmp(dmstk_box_name(DMSTK_SET_BUY, 2), "TouchQtyBuyTen") && !strcmp(dmstk_box_name(DMSTK_SET_BUY, 3), "TouchQtyBuyFull"));
+    CHECK(dmstk_box_choice("TouchQtyBuyOne") == 1 && dmstk_box_choice("TouchQtyBuyTen") == 2 && dmstk_box_choice("TouchQtyBuyFull") == 3);
+    CHECK(!strcmp(dmstk_box_name(DMSTK_SET_SELL, 2), "TouchQtySellHalf") && !strcmp(dmstk_box_name(DMSTK_SET_SPLIT, 3), "TouchQtyAll"));   // 旧两组不变 | the old two sets unchanged
+    CHECK(dmstk_buy_want(1) == 1 && dmstk_buy_want(2) == 10 && dmstk_buy_want(3) == 99 && dmstk_buy_want(0) == 0);
+    CHECK(dmstk_buy_total(1, 9354, 27) == 1);
+    CHECK(dmstk_buy_total(10, 9354, 27) == 10);
+    CHECK(dmstk_buy_total(99, 9354, 27) == 99);          // 9354 / 27 = 346 瓶够
+    CHECK(dmstk_buy_total(99, 270, 27) == 11);           // 只剩 270 金币：原版 1 瓶 + 10 瓶
+    CHECK(dmstk_buy_total(10, 26, 27) == 1);             // 钱不够第二瓶
+    CHECK(dmstk_buy_total(10, 9354, 0) == 1);            // 单价认不出（原版没买成 / 免费）：不加
+    CHECK(dmstk_buy_total(500, 1000000, 1) == 99);       // 不超过一叠
+    CHECK(dmstk_buy_total(0, 9354, 27) == 0);
+
+    // 键帽控件名（11-04 用户：按钮上的 (A)/(Y)/(X) 换成原版按手柄出图的键帽） | keycap widget names
+    CHECK(!strcmp(dmstk_key_name(1), "TouchQtyKeyA") && !strcmp(dmstk_key_name(2), "TouchQtyKeyY") && !strcmp(dmstk_key_name(3), "TouchQtyKeyX") && !dmstk_key_name(0) && !dmstk_key_name(4));
+
+    // 买入提示（11-04 超过 99 边界）：原版没买成 → 买前没地方 = 没空位、有地方 = 金币不够；只补了一部分 → 放不下；要的比买到的多 → 金币封顶
+    // Buy notices: original failed -> no room before = no room, else not enough gold; part of the extra placed -> no room; fewer than wanted -> gold cap
+    CHECK(dmstk_buy_note(0, 0, 1, 0, 0, 0) == DMSTK_BUYNOTE_NOROOM);     // q2a：背包满、那叠 99，买 1
+    CHECK(dmstk_buy_note(0, 0, 99, 0, 0, 0) == DMSTK_BUYNOTE_NOROOM);    // q2b：同上买 99
+    CHECK(dmstk_buy_note(0, 1, 10, 0, 0, 0) == DMSTK_BUYNOTE_NOGOLD);    // 有地方但原版没卖：金币不够一瓶
+    CHECK(dmstk_buy_note(1, 1, 99, 10, 9, 9) == DMSTK_BUYNOTE_GOLD_PART); // q3：270 金币买 99 → 10 瓶
+    CHECK(dmstk_buy_note(1, 1, 99, 99, 50, 98) == DMSTK_BUYNOTE_ROOM_PART);
+    CHECK(dmstk_buy_note(1, 1, 99, 99, 98, 98) == DMSTK_BUYNOTE_NONE);   // q1：90 + 买 99，全买到
+    CHECK(dmstk_buy_note(1, 1, 1, 1, 0, 0) == DMSTK_BUYNOTE_NONE);
+    CHECK(DMSTK_KEY_DX > 0 && DMSTK_KEY_DY >= 0);   // 键帽位置参数存在（待 ui-pad-spec 定稿） | keycap position parameters exist
+
     printf("t_stack_rule: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

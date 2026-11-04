@@ -27,11 +27,27 @@ def _qty_widgets():
               '"style": { "fontColor": "$FontColorGoldYellow", "pointSize": "$MediumFontSize", "spacing": "$ReducedSpacing", "dropShadow": "$DefaultDropShadow", "alignment": { "h": "right", "v": "bottom" } } } },\n') % (i, TIP)
     t += ('            { "type": "NineTileImageWidget", "name": "TouchQtyBg", "fields": { "rect": { "x": %d, "y": 0, "width": 560, "height": 340 }, "filename": "PANEL/TooltipBorder/TooltipBorder", "backgroundColor": [0.0, 0.0, 0.0, 0.92], "tileScale": 1.0 } },\n'
           '            { "type": "TextBoxWidget", "name": "TouchQtyTitle", "fields": { "rect": { "x": %d, "y": 0, "width": 520, "height": 60 }, "text": "", '
-          '"style": { "fontColor": "$FontColorLightGold", "pointSize": "$TooltipFontSize", "spacing": "$ReducedSpacing", "alignment": { "h": "center", "v": "center" } } } },\n') % (TIP, TIP)
-    for n, key in (('TouchQtyOne', '@dmStackOne'), ('TouchQtyHalf', '@dmStackHalf'), ('TouchQtyAll', '@dmStackAll'), ('TouchQtySellOne', '@dmStackSellOne'), ('TouchQtySellHalf', '@dmStackSellHalf'), ('TouchQtySellAll', '@dmStackSellAll')):
+          '"style": { "fontColor": "$FontColorLightGold", "pointSize": 36, "spacing": "$ReducedSpacing", "alignment": { "h": "center", "v": "center" } } } },\n') % (TIP, TIP)   # 框标题 §2.6 正文 36 | box title §2.6 body 36
+    for n, key in (('TouchQtyOne', '@dmStackOne'), ('TouchQtyHalf', '@dmStackHalf'), ('TouchQtyAll', '@dmStackAll'), ('TouchQtySellOne', '@dmStackSellOne'), ('TouchQtySellHalf', '@dmStackSellHalf'), ('TouchQtySellAll', '@dmStackSellAll'), ('TouchQtyBuyOne', '@dmStackBuyOne'), ('TouchQtyBuyTen', '@dmStackBuyTen'), ('TouchQtyBuyFull', '@dmStackBuyFull')):
         t += ('            { "type": "ButtonWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": 0, "width": 700, "scale": 0.74 }, "filename": "FrontEnd/HD/Final/FrontEnd_ButtonSmall", "hoveredFrame": 1, '
-              '"textString": "%s", "textColor": "$LightButtonTextColor", "text/style": "$StyleFEButtonText", "onClickMessage": "PanelManager:ClosePanel:%s" } },\n') % (n, TIP, key, n)
+              '"textString": "%s", "textColor": "$LightButtonTextColor", "text/style": %s, "onClickMessage": "PanelManager:ClosePanel:%s" } },\n') % (n, TIP, key, QTY_BTN_STYLE, n)
+    # 手柄键帽：原版提示条控件 ButtonLegendWidget 自己按当前手柄出图（Xbox / PlayStation / Switch 键帽同原版其它面板，按动作取键、不按字母），只要键帽不要字；
+    # 宿主 dm_stack.c 在手柄模式把它们摆到三个按钮左边，触屏模式收到屏外（同大背包页签的 ZL / ZR 键帽 TouchBagKeyL/R）
+    # Controller keycaps: the original legend widget draws the glyph for the current controller itself (Xbox / PlayStation / Switch, like the game's other
+    # panels, by action rather than by letter), glyph only; the host moves them left of the three buttons in controller mode and off screen in touch mode
+    for n, act in QTY_KEYS:
+        t += '            { "type": "ButtonLegendWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": 0, "width": 0, "height": %d }, "text": { "style": "$StyleButtonLegend" }, "presets": [ { "action": "%s" } ] } },\n' % (n, TIP, QTY_KEY_H, act)
     return t
+# 数量框按钮字：§2.6 副文 28 号（下限）。36 号时西语「Separar mitad / Vender todo」、俄语「Разделить все」压到按钮两端的框（六语截图 *_L2 / *_L3 断言），
+# 布局不分语言，所以统一取 28；按钮上不再写 (A)/(Y)/(X)，键帽由 QTY_KEYS 出
+# Quantity box button text: §2.6 secondary 28 pt (the floor). At 36 the Spanish / Russian labels ran into the button's end frame (six-language screenshot assertions),
+# and the layout is language independent, so 28 for all; no more (A)/(Y)/(X) in the text, the keycaps come from QTY_KEYS
+QTY_BTN_STYLE = '{ "fontColor": "$LightButtonTextColor", "pointSize": 28, "dropShadow": "$DefaultDropShadow", "spacing": "$ReducedSpacing" }'
+# 三档对应的原版动作：第 1 档 A（select）、第 2 档 Y、第 3 档 X（option1 / option2 哪个是 X 以实机出图为准，见 dm_stack.c 键位）
+# The original actions for the three modes: mode 1 A (select), mode 2 Y, mode 3 X
+# 键帽高度（布局单位）：暂定，等 ui-pad-spec 规范；位置在 dm_stack_rule.h DMSTK_KEY_DX / DY | keycap height (layout units): provisional until the ui-pad-spec spec; position in dm_stack_rule.h
+QTY_KEY_H = 72
+QTY_KEYS = (('TouchQtyKeyA', 'select'), ('TouchQtyKeyY', 'option1'), ('TouchQtyKeyX', 'option2'))
 
 def widgets():
     return ('        { "type": "Widget", "name": "TouchPouchBox", "children": [\n'
