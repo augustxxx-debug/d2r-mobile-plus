@@ -56,7 +56,8 @@ class GenScreenFocus(unittest.TestCase):
         self.assertIn('GenScreenKeys.aGlyph(genPadVendor)', b)
         self.assertIn('t == GenScreenKeys.RETRY ? R.string.dmAndroidGenRetry : R.string.dmAndroidGenShare', b)
         g = re.sub(r'\s+', ' ', body(code(), 'private void showGenScreen('))
-        self.assertIn('setOnFocusChangeListener(fl)', g)
+        self.assertIn('if (genShareBtn != null) genShareBtn.setOnFocusChangeListener(fl);', g)
+        self.assertIn('if (genRetryBtn != null) genRetryBtn.setOnFocusChangeListener(fl);', g)
         self.assertIn('updateGenPadHint();', g)
 
     def test_gen_log_always_in_new_folder(self):
