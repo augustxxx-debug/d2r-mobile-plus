@@ -46,19 +46,27 @@ assert 'dm.mirrored' in source, 'the new entry must copy the mirror flags'
 # 3. P1-2：任何把内容写进源图的 GPU 命令都推进写戳，且只有一个推进点。
 # P1-2: every GPU command that writes the source advances the write stamp, from one single place.
 assert source.count('last_write=++write_seq') == 1, 'the write stamp must have exactly one bump site'
-stamp = balanced(source, source.index('void note_image_write(Image &im,int line){'))
-assert 'last_write=++write_seq' in stamp, 'the write-stamp helper bumps the stamp'
-assert 'gpu_written=true' in stamp and 'provenance_write(' in stamp, 'the helper also marks the image written'
+stamp = balanced(source, source.index('void note_image_stamp(Image &im,int line){'))
+write = balanced(source, source.index('void note_image_write(Image &im,int line){'))
+assert 'last_write=++write_seq' in stamp and 'provenance_write(' in stamp, 'the stamp helper bumps the stamp'
+assert 'gpu_written' not in stamp, 'stamping alone must not claim the GPU wrote the image'
+assert 'gpu_written=true' in write and 'note_image_stamp(' in write, 'a GPU write marks the image and stamps it'
 # 其余地方不许再手写 gpu_written/provenance 组合，否则下一次加写路径还会漏
 # No other place may hand-roll the pair, or the next write path will leak again
 assert source.count('gpu_written=true') == 1, 'image write marks come from note_image_write only'
-assert 'gpu_written=true' in stamp, 'the helper is the one place that marks the image written'
 
 for name in ('void copy_texture_buffer(', 'void copy_texture(', 'void partial_clear_texture(',
-             'void clear_texture(', 'void resolve_texture(', 'Image &get_image_slow(const tex_t *t,bool upload){',
-             'void after_dispatch(Commands &c){'):
+             'void clear_texture(', 'void resolve_texture(', 'void after_dispatch(Commands &c){'):
     body = balanced(source, source.index(name))
     assert 'note_image_write(' in body, name + ' writes the source image without advancing the stamp'
+
+# CPU 上传（guest 内存 → 图像）推进写戳，但不是 GPU 写：标 gpu_written 会关掉 guest 内存变更检测，
+# 游戏改写贴图后永不重传（安卓真机营地贴图错乱 / 黑块，8548ff60 引入）。行为回归见 texture_cache_regression.py。
+# A CPU upload advances the stamp but is not a GPU write: marking gpu_written turns off guest-memory change
+# detection and a rewritten texture is never uploaded again (8548ff60; behaviour test in texture_cache_regression.py).
+slow = balanced(source, source.index('Image &get_image_slow(const tex_t *t,bool upload){'))
+assert 'im.uploaded=true;note_image_stamp(im,__LINE__);' in slow, 'the CPU upload must stamp the image'
+assert 'im.uploaded=true;note_image_write(' not in slow, 'the CPU upload must not mark the image GPU-written'
 
 # 附件的 pass 也是写路径：没有 draw 的 pass 仍会 clear（loadOp=CLEAR / vkCmdClearAttachments）
 # An attachment pass is a write path too: a pass without draws still clears

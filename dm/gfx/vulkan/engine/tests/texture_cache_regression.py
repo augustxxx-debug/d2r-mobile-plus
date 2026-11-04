@@ -37,6 +37,11 @@ def main():
     registration = source[source.index('struct RegisteredTexture{'):
                           source.index('struct MemoImage{')]
     cadence = balanced(source, source.index('if(upload && im.uploaded && !im.gpu_written'))
+    # The CPU upload's own bookkeeping: the helper it calls, extracted with its production body.
+    upload_call = re.search(r'im\.uploaded=true;(note_image_\w+)\(im,__LINE__\);', source)[1]
+    helpers = ''.join(balanced(source, source.index('void ' + name + '(Image &im,int line){'))
+                      for name in ('note_image_stamp', 'note_image_write')
+                      if 'void ' + name + '(Image &im,int line){' in source)
     # Integration checks complement the executed CPU tests below; they are not GPU tests.
     assert 'cached.record->revision!=cached.revision' in source
     assert 'it->second.record->revision==it->second.revision' in source
@@ -65,7 +70,10 @@ int memcmp(const void *a,const void *b,size_t n){
 '''
     harness += '\n'.join(declarations) + '\n' + registration
     harness += r'''
-struct CpuImage {bool uploaded=true,gpu_written=false;uint64_t checked_submission=~uint64_t(0),cpu_hash=0,dirty_stamp=0,dirty_seen=0;uint32_t stable_checks=0;};
+struct CpuImage {bool uploaded=true,gpu_written=false;uint64_t checked_submission=~uint64_t(0),cpu_hash=0,dirty_stamp=0,dirty_seen=0,last_write=0;uint32_t stable_checks=0;};
+typedef CpuImage Image;uint64_t write_seq=0;void provenance_write(Image&,unsigned){}
+'''+helpers+r'''
+void cpu_upload(Image &im){im.uploaded=true;'''+upload_call+r'''(im,__LINE__);}
 // No dirty-page tracker (gfx-tex-dirty off, hooks absent), so the extracted cadence runs its hash checks.
 bool tex_dirty=false;uint64_t tex_dirty_tracked=0,tex_dirty_checks=0,tex_dirty_changed=0;
 bool ab_off(const char*){return false;}
@@ -126,6 +134,13 @@ extern "C" int run_tests(){
     CHECK(!im.uploaded && im.stable_checks==0);CHECK(hash_calls==before+1);
     im.uploaded=true;im.gpu_written=true;before=hash_calls;
     stats.submissions=100;check_cpu(im,&t,true);CHECK(hash_calls==before);
+    // A texture that only came from a CPU upload keeps guest-memory change detection: the game rewriting it
+    // must be noticed (8548ff60 routed the upload through note_image_write, which set gpu_written and froze it).
+    {CpuImage up;up.uploaded=false;pixels[0]=5;uint64_t stamp0=write_seq;cpu_upload(up);
+     CHECK(up.uploaded && !up.gpu_written);CHECK(up.last_write==stamp0+1);
+     up.cpu_hash=hash_memory(pixels,4);pixels[0]=6;
+     for(uint64_t submit=200;submit<232 && up.uploaded;submit++){stats.submissions=submit;check_cpu(up,&t,true);}
+     CHECK(!up.uploaded);}
     CHECK(!memo_eligible(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE));CHECK(memo_eligible(99));
     return 0;
 }

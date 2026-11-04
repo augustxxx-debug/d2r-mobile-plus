@@ -1594,7 +1594,15 @@ void provenance_image(const char *event,const tex_t *t,const Image &im,const vie
     event,(unsigned long long)t->serial,(unsigned long long)im.source.serial,(void*)im.image,t->mem,(void*)(t->mem && t->off>=0 && uint64_t(t->off)<=uint64_t(t->mem)?uint64_t(t->mem)-uint64_t(t->off):0),(long long)t->off,(unsigned long long)t->L.size,(unsigned long long)im.provenance_epoch,(unsigned long long)provenance.epoch((t->mem && t->off>=0 && uint64_t(t->off)<=uint64_t(t->mem)?uint64_t(t->mem)-uint64_t(t->off):0)),(unsigned long long)im.provenance_writer,im.provenance_write_site,im.uploaded,im.gpu_written,t->d.format,t->d.target,t->d.width,t->d.height,t->d.depth,t->d.levels,t->d.samples,t->d.flags,t->d.stride,t->d.pkg_block_h,v&&v->set_format?v->format:t->d.format,v&&v->set_levels?v->base_level:0,v&&v->set_levels?v->nlevels:int(im.levels),v&&v->set_layers?v->min_layer:0,v&&v->set_layers?v->nlayers:int(im.layers));
 }
 void provenance_write(Image &im,unsigned site){im.provenance_writer=++provenance.sequence;im.provenance_write_site=site;provenance_image("WRITE",&im.source,im);}
-void note_image_write(Image &im,int line){im.gpu_written=true;provenance_write(im,unsigned(line));im.last_write=++write_seq;}
+// 写戳与「GPU 写过」是两件事：CPU 上传（guest 内存 → 图像）也要推进写戳（D16 副本据此判陈旧），但不能标 gpu_written——
+// gpu_written 一旦为真，get_image_slow 就不再对比 guest 内存哈希（以为内容归 GPU），游戏改写同一张贴图后永远不重传，
+// 画面出现别的贴图残片 / 黑块（8548ff60 把上传也改成 note_image_write 引入，安卓真机 Adreno 740/840 实测）。
+// The write stamp and "the GPU wrote it" are separate facts. A CPU upload (guest memory -> image) must advance the stamp
+// (the D16 copy uses it to detect staleness) but must not set gpu_written: once that is true get_image_slow stops comparing
+// the guest-memory hash, so a texture the game rewrites is never uploaded again and stale texels / black blocks show
+// (introduced by 8548ff60 routing the upload through note_image_write; seen on Adreno 740/840 devices).
+void note_image_stamp(Image &im,int line){provenance_write(im,unsigned(line));im.last_write=++write_seq;}
+void note_image_write(Image &im,int line){im.gpu_written=true;note_image_stamp(im,line);}
 // storage 图像是「先绑定、后写」：描述符绑定发生在 vkCmdDraw*/vkCmdDispatch 之前。绑定时就推进写戳，会把写前的
 // D16 副本按新写戳填戳，而真正写进去之后没有人再推进，同一提交下一次比较就复用写前内容（Kimi P1）。
 // 所以绑定只排队，真正录好 draw/dispatch 之后才推进。队列在每次描述符构建开始时清空：早退（零尺寸、pipeguard）
@@ -2040,7 +2048,7 @@ Image &get_image_slow(const tex_t *t,bool upload){CPU_SCOPE(Image);
             s.pro_images.push_back({im.image,im.layout,im.aspects,im.levels,im.layers,staging.buffer,copies});im.layout=VK_IMAGE_LAYOUT_GENERAL;++uploads_prologue;}
         else{++uploads_inpass;if(open_pass.cmd)++uploads_broke_pass;
             Commands c;im.transition(c.command,VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);vkCmdCopyBufferToImage(c.command,staging.buffer,im.image,im.layout,copies.size(),copies.data());im.transition(c.command,VK_IMAGE_LAYOUT_GENERAL);c.finish();}
-        im.uploaded=true;note_image_write(im,__LINE__);im.cpu_hash=can_skip?fresh_hash:hash_memory(t->mem,t->L.size);im.checked_submission=stats.submissions;
+        im.uploaded=true;note_image_stamp(im,__LINE__);im.cpu_hash=can_skip?fresh_hash:hash_memory(t->mem,t->L.size);im.checked_submission=stats.submissions;
         if(dif){   // this cycle's compressed source becomes the next comparison base | 本轮的压缩源成为下一轮的比较基准
             dif->src.swap(dif->src_new);
             if(!dif->ready)dif->ready=true;
