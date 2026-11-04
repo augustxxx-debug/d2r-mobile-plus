@@ -527,6 +527,7 @@ static void store_pad_nav(uint64_t root, uint64_t inv, uint64_t boxw) {
         }
         return;
     }
+    if (hov == btn) { void dm_padmode_legend(int, const char *); dm_padmode_legend(0, dm_str(B, "dmPadLegStore")); }   // 焦点在钮上：底部按键条 A =「存放」（键帽图标原版按当前手柄出；本函数只在手柄模式跑，触屏不显示）| focus on the button: the bottom legend's A reads Deposit (the original draws the glyph for the current controller; this runs only in controller mode)
     if (hov != btn || !g_sgrid_ok) return;   // 没量过网格（不是从 ↓ 进来的）：不接管 | grid never measured (did not come in through Down): do not take over
     if (!g_sbtn_ok || !dm_store_in_rect(&g_sbtn, cx, cy)) { if (!store_btn_rect(btn, &g_sgrid, cx, cy)) return; }
     if (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP) {
