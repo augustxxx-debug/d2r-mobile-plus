@@ -903,6 +903,13 @@ static int ui_snap(module_t *m, uint64_t root, int *x, int *y) {   // 0 周围�
     if (SNAP_AT(*x, *y, lo, (int)n - 1)) return 1;   // 正压在别的可点控件上：不让滑块箭头的放大区抢 | Directly on another clickable widget: do not let the slider arrow's enlarged area take it
     if (slider_arrow(m, root, x, y, w, h)) return 2;
     g_click_exact = 1; int on = SNAP_AT(*x, *y, lo, (int)n - 1); g_click_exact = 0; if (on) return 1;
+    // 触点本身落在物品区（物品格 / 装备位 / 腰带 / 箱子格）：不吸附，同 ui_classify0「物品区先于页签」的次序。
+    // 原先大背包的两枚页签（TouchBagTab0/1）离网格第 0 行只有几个像素，点第 0 行前几格被 3.5 毫米吸附拉到页签上 = 切页，格子点不中（11-04 整机验收 tv154）
+    // The touch point itself is on an item area (item cell / equipment slot / belt / stash cell): no snap, same order as ui_classify0 ("item area before tabs").
+    // The two large-bag tabs (TouchBagTab0/1) sit a few pixels above grid row 0, so taps on the first cells of row 0 were pulled onto a tab by the 3.5 mm snap = page switch, the cell could not be hit (11-04 Mac acceptance tv154)
+    { dm_wref keep = g_slot; char tmp[64]; int item = 0; g_iw_base = base;
+      for (int i = (int)n - 1; i >= lo && !item; i--) { uint64_t p = *(uint64_t *)(ch + 8 * i); if (p && *(uint8_t *)(p + 0x50) && panel_skip((const char *)*(uint64_t *)(p + 8)) != 1 && !panel_clipped(p, SNAP_XY(*x, *y))) item = item_walk(p, SNAP_XY(*x, *y), 1, tmp, sizeof tmp); }
+      g_slot = keep; if (item) return 0; }
     static const int dx[8] = { 0, 0, -1, 1, -1, 1, -1, 1 }, dy[8] = { -1, 1, 0, 0, -1, -1, 1, 1 };   // 先上下、再左右、再斜向：按钮多是横长条，上下偏的最多 | Up/down first, then left/right, then diagonals: buttons are mostly wide horizontal bars, so vertical misses are the most common
     int min_y = 0, max_y = h;
     if (!dm_uiscreen_ingame()) { int ux, uy, uw, uh, rw=0, rh=0; dm_ui_rect(&ux,&uy,&uw,&uh); dm_screen_real(&rw,&rh); if (rh>0 && uh==h) { min_y=-uy; max_y=rh-uy; } }
