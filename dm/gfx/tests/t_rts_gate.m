@@ -466,7 +466,7 @@ int main(void) { @autoreleasepool {
         g_sp = &g_small; shadow_pass(); g_sp = &g_sdepth; g_dt = &g_small; g_lvp = other; int es = sh(2); g_dt = &g_sdepth; g_lvp = tilt; int npp = g_rts.nprepass; main_pass(); hdr_again(); ok13 = frame_close() && ok13;
         EXPECT("室内：没进 TLAS 的太阳图绘制也不画", 1, ep); EXPECT("室内：非太阳图（俯视软影）照画", 0, es); EXPECT("室内：深度预渲染的绘制进了遮挡体", 1, npp >= 1);
         run_frame(1, b2, 2, &ok); EXPECT("室内：不算失败（不退避）", bo0, g_rts.backoff); EXPECT("室内：画面没切换", sw0, RTS_SWITCHES()); EXPECT("室内：不记「省画后没追成」", lost0, g_rts.n_skip_lost);
-        int lv0 = g_rts.gov.lvl, lp0 = g_rts.lvl_pin; g_rts.lvl_pin = 3; g_rts.gov.lvl = 3; run_frame(1, b2, 2, &ok);   // 钉档用 lvl_pin（同 DM_RT_LEVEL）：自动调档关时 gov.lvl 每帧重算 | pin via lvl_pin (as DM_RT_LEVEL): with the governor off gov.lvl is recomputed every frame ok13 = ok13 && ok;
+        int lv0 = g_rts.gov.lvl, lp0 = g_rts.lvl_pin; g_rts.lvl_pin = 3; g_rts.gov.lvl = 3; run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;   // 钉档用 lvl_pin（同 DM_RT_LEVEL）：自动调档关时 gov.lvl 每帧重算 | pin via lvl_pin (as DM_RT_LEVEL): with the governor off gov.lvl is recomputed every frame
         EXPECT("室内第 3 档：点光留 1 盏、排除随身光", 1, g_rts.eff.point_on && g_rts.eff.point_n == 1 && g_rts.eff.excl_player);
         RTS_INDOOR_SET(0); run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
         EXPECT("回到室外第 3 档：点光照旧关", 0, g_rts.eff.point_on); EXPECT("回到室外：太阳图照常省画 / 光追", 1, RTS_MAP_CLEARED());
