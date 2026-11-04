@@ -221,19 +221,23 @@ void dm_stack_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
             if (!done) atomic_store(&g_notice_full, 1); else { int dm_request_save(void); dm_request_save(); } }
         else LOG("堆叠：拆分请求 id %u 已不是一叠，不做", id); } }
     { int m = atomic_exchange(&g_buy_req, 0); uint32_t pl_len = m ? g_buy_len : 0; if (m) g_buy_len = 0; if (m && pl_len) {
-        int want = dmstk_buy_want(m), gold0 = ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 14, 0); static uint32_t seen[2048]; int ns = 0;
-        for (uint64_t it = inv_first(player), k = 0; it && k < 2048 && ns < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; seen[ns++] = *(uint32_t *)(it + 8); it = *(uint64_t *)(d + 0xb0); }
-        inside = 1; *(uint32_t *)(G + 0x19050) = 1; ((void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(B + 0x6e5b40))(G, player, g_buy_pk, pl_len); *(uint32_t *)(G + 0x19050) = 0; inside = 0;
-        int gold1 = ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 14, 0), unit = gold0 - gold1; uint64_t nu = 0;
-        for (uint64_t it = inv_first(player), k = 0; it && k < 2048 && !nu; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; uint32_t iid = *(uint32_t *)(it + 8); int old = 0;
-            for (int i = 0; i < ns && !old; i++) old = seen[i] == iid; if (!old && code_of(it) == g_buy_code) nu = it; else it = *(uint64_t *)(d + 0xb0); }
+        int want = dmstk_buy_want(m), gold0 = ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 14, 0); static uint32_t seen[2048]; static int seen_q[2048]; int ns = 0;
+        for (uint64_t it = inv_first(player), k = 0; it && k < 2048 && ns < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; seen[ns] = *(uint32_t *)(it + 8); seen_q[ns++] = code_of(it) == g_buy_code ? qty(it) : -1; it = *(uint64_t *)(d + 0xb0); }
+        uint32_t f0 = *(uint32_t *)(G + 0x19050); inside = 1; *(uint32_t *)(G + 0x19050) = 1; ((void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(B + 0x6e5b40))(G, player, g_buy_pk, pl_len); *(uint32_t *)(G + 0x19050) = f0; inside = 0;
+        int gold1 = ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 14, 0), unit = gold0 - gold1; uint64_t nu = 0; int merged = 0;
+        // 原版买的那 1 瓶：新物品，或者被并进了背包里已有的同种一叠（那一叠数量 +1、没有新 id）（Sonnet 交叉审 P1）
+        // The original's bottle: a new item, or merged into an existing stack of the same kind in the bag (that stack +1, no new id) (Sonnet cross review P1)
+        for (uint64_t it = inv_first(player), k = 0; it && k < 2048 && !nu; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; uint32_t iid = *(uint32_t *)(it + 8); int at = -1;
+            for (int q = 0; q < ns && at < 0; q++) if (seen[q] == iid) at = q;
+            if (code_of(it) == g_buy_code && (at < 0 || (seen_q[at] >= 0 && qty(it) > seen_q[at]))) { nu = it; merged = at >= 0; } else it = *(uint64_t *)(d + 0xb0); }
         int total = nu && unit > 0 ? dmstk_buy_total(want, gold1, unit) : (nu ? 1 : 0), extra = total > 1 ? total - 1 : 0, put = 0;
-        if (extra) { uint64_t d = *(uint64_t *)(nu + 0x10);
-            if (*(uint32_t *)(nu + 0xc) == 0 && d && *(uint8_t *)(d + 0x55) == 0) { set_qty(player, nu, 1 + extra); put = extra; }   // 落在背包页：这一件就是一叠 | landed on the bag page: this item becomes the stack
-            else { int x, y; uint8_t buf[1024]; int bl = dm_item_write(B, nu, buf); if (bl && free_cell(player, 0, &x, &y) && put_back(G, player, buf, bl, extra, 0, 0, x, y)) put = extra; } }   // 进了腰带：其余另起一叠放背包 | went into the belt: the rest is a new stack in the bag
+        if (extra) { uint64_t d = *(uint64_t *)(nu + 0x10); int add = 0;
+            if (*(uint32_t *)(nu + 0xc) == 0 && d && *(uint8_t *)(d + 0x55) == 0) { int room = DMSTK_CAP - qty(nu); add = extra < room ? extra : (room > 0 ? room : 0); if (add) set_qty(player, nu, qty(nu) + add); }   // 落在背包页：并进这一叠，到 99 为止 | landed on the bag page: add to this stack up to 99
+            int rest = extra - add; if (rest > 0) { int x, y; uint8_t buf[1024]; int bl = dm_item_write(B, nu, buf); if (bl && free_cell(player, 0, &x, &y) && put_back(G, player, buf, bl, rest, 0, 0, x, y)) add += rest; }   // 其余另起一叠放背包（进了腰带 / 那一叠满了） | the rest as a new bag stack (went into the belt / that stack is full)
+            put = add; }
         if (put) ((void (*)(uint64_t, int, int, int))(B + 0x5bc1f0))(player, 14, gold1 - put * unit, 0);
-        LOG("堆叠：买入 %.3s：要 %d，原版 %s（单价 %d），另补 %d 瓶，金币 %d → %d", (const char *)&g_buy_code, want, nu ? "买成 1 瓶" : "没买成", unit, put, gold0, ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 14, 0));
-        if (extra && !put) atomic_store(&g_notice_full, 1); else if (put) { int dm_request_save(void); dm_request_save(); } } }
+        LOG("堆叠：买入 %.3s：要 %d，原版 %s（单价 %d），另补 %d 瓶，金币 %d → %d", (const char *)&g_buy_code, want, !nu ? "没买成" : merged ? "买成 1 瓶、并进已有一叠" : "买成 1 瓶", unit, put, gold0, ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 14, 0));
+        if (extra && put < extra) atomic_store(&g_notice_full, 1); if (put) { int dm_request_save(void); dm_request_save(); } } }
     { uint32_t pid = atomic_exchange(&g_putback_req, 0); uint64_t pit = pid ? dm_diag_srv_item(pid) : 0; if (pit) { int ok = held_to_bag(G, player, pit); LOG("堆叠：卖出框取消，id %u %s", pid, ok ? "在背包里" : "放不回背包，留在手上"); if (!ok) atomic_store(&g_notice_full, 1); } }
     { uint64_t r = atomic_exchange(&g_sell_req, 0); if (r) { uint32_t id = (uint32_t)(r >> 8); uint64_t it = dm_diag_srv_item(id), d = it ? *(uint64_t *)(it + 0x10) : 0;
         if (d && qty(it) >= 2 && !held_to_bag(G, player, it)) { LOG("堆叠：手上的一叠（id %u）放不回背包，不卖", id); atomic_store(&g_notice_full, 1); }
