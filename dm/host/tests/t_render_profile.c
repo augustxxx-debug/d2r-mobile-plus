@@ -79,9 +79,7 @@ int main(void) {
     dm_custom_on_uimsg("OptionsPanelMessage","ResetToDefaults",NULL);
     CHECK(atomic_load(&g_pend[auto_mana])==1); CHECK(atomic_load(&g_pend[K_Q3D])==0);
     CHECK(atomic_load(&g_pend[K_UPSCALE])==1); CHECK(atomic_load(&g_pend[0])==-1);
-#if VOICE_ROW
     CHECK(atomic_load(&g_pend[K_VOICE])==-1);
-#endif
     CHECK(dm_3d_profile_get()==4); CHECK(enhanced_settings_dirty()); // Reset remains pending until Apply.
     dm_custom_on_uimsg("OptionsPanelMessage","CancelChanges",NULL);
     CHECK(atomic_load(&g_val[auto_mana])==0); CHECK(dm_3d_profile_get()==4);

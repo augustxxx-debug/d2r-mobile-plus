@@ -367,9 +367,13 @@ static int voice_chunk_present(int chunk) {
     char b[1024], p[1100]; snprintf(p, sizeof p, "%s/data/%02d-00000001.data", envdir("DM_ROMFS", "data/switch/3.3.94012/Update/RomFS", b, sizeof b), chunk);
     return !access(p, F_OK);
 }
-// 英文配音没有自己的分块，在基底档案（00-00000001.data）里；它是原版启动必需的档案之一，能进游戏就恒在。
+// 英文配音没有自己的分块：开发方说它在基底档案（00-00000001.data）里。这里只查这份档案文件在不在，不打开档案、也不核对里面有没有英文语音资源；
+// 「英文配音在基底档案里」是开发方的断言，本函数并不证明它——这是本判定的局限，真机上英文语音是否真的可放仍待验证。
+// 另外 00-00000001.data 在原版的必需档案列表里（romfs_validate.c 的 need[]），没有它游戏本身起不来，所以这条回落实际几乎只在单测「删掉档案」的场景里触发。
 // 单独选了 English 配音却读不到这份基底（资源被换掉 / 没拷完）时回落中文配音（8），不写 0——否则对话与过场没有可放的语音
-// The English voice-over has no chunk of its own: it lives in the base archive (00-00000001.data), one of the archives the original needs to start, so it is always there once the game runs.
+// The English voice-over has no chunk of its own: the developer says it lives in the base archive (00-00000001.data). This only checks that the archive file exists; it does not open the archive or verify that English voice assets are inside.
+// "The English voice is in the base archive" is the developer's assertion, and this function does not prove it -- that is the limitation of this check; whether the English voice is really playable on a device still needs verification.
+// Also, 00-00000001.data is in the original's required archive list (need[] in romfs_validate.c); the game cannot start without it, so this fallback is in practice almost only reachable in the unit test that deletes the archive.
 // If English voice is picked but that base archive cannot be read (resources replaced / incomplete copy), fall back to the Chinese voice (8) instead of writing 0 -- otherwise dialogue and cinematics would have no voice to play
 static int voice_english_present(void) { return voice_chunk_present(0); }
 static int voice_for(int lang) { return lang == 8 ? 8 : lang == 7 && voice_chunk_present(16) ? 7 : lang == 5 && voice_chunk_present(11) ? 5 : 0; }

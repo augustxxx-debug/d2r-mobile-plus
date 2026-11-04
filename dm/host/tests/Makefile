@@ -30,6 +30,7 @@ run: \
 	$(B)/t_lock_stress_old \
 	$(B)/t_lock_stress_tsan \
 	$(B)/t_custom_readlog \
+	$(B)/t_custom_readlog_movie \
 	$(B)/t_community \
 	$(B)/t_stick_nav \
 	$(B)/t_diagup \
@@ -135,6 +136,7 @@ run: \
 	$(B)/t_padmode_pure
 	$(PY) test_padmode_focus.py
 	$(B)/t_custom_readlog
+	$(B)/t_custom_readlog_movie
 	$(B)/t_crashfence 2>/dev/null
 	$(B)/t_community 2>/dev/null
 	$(B)/t_stick_nav
@@ -335,6 +337,10 @@ $(B)/t_graphics_gate: t_graphics_gate.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_graphics_gate.c
 $(B)/t_custom_readlog: t_custom_readlog.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_custom_readlog.c
+# 同一份测试再用 -DDM_MOVIE_FFMPEG=1 编一份：VOICE_ROW 必须仍为 1（配音行与过场解码开关无关）
+# the same test built with -DDM_MOVIE_FFMPEG=1: VOICE_ROW must still be 1 (the voice row is independent of the cutscene-decoding switch)
+$(B)/t_custom_readlog_movie: t_custom_readlog.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -DDM_MOVIE_FFMPEG=1 -I.. -o $@ t_custom_readlog.c
 $(B)/t_crashfence: t_crashfence.c ../dm_crashfence.c ../dm_crashfence.h ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_crashfence.c
 $(B)/t_diffrow: t_diffrow.c ../dm_hud.c ../dm_hud.h | $(B)

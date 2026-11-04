@@ -35,6 +35,8 @@
 // The voice-over radio (voice: 0 Chinese voice / 1 English voice) is on both default builds and builds with cutscene decoding (DM_MOVIE_FFMPEG=1);
 // it is no longer tied to that switch (user, 2026-11-04: "put voice into RC2"). _CUSTOM_KEYS in touch_layout.py always has the row too, so both sides agree.
 // It only changes the original settings file's VoiceLanguage, never Language; the English voice lives in the base archive (voice_english_present in hle_fs.c) and falls back to Chinese voice when unreadable
+// 下面这个字面量 1 是定的：配音行不跟 DM_MOVIE_FFMPEG 走，缺省包与带过场解码的包都有。t_custom_readlog 用缺省与 -DDM_MOVIE_FFMPEG=1 各编一份，两份都断言它是 1
+// The literal 1 below is fixed: the voice row does not follow DM_MOVIE_FFMPEG, and both default builds and builds with cutscene decoding have it. t_custom_readlog is built twice (default and -DDM_MOVIE_FFMPEG=1) and asserts it is 1 in both
 #define VOICE_ROW 1
 // iCloud 那一行的键名：安卓包里没有这一行（CLAUDE.md §2.8），但槽位要留着（K_ICLOUD 下标、行号与 Apple 对齐）。
 // 安卓用占位名，key_other_platform 把它挡在存盘与日志外，没有人按名字读写它。
@@ -45,17 +47,9 @@
 #else
 #define K_ICLOUD_KEY "icloud"
 #endif
-static const char *const k_keys[] = { "lang",
-#if VOICE_ROW
-    "voice",
-#endif
-    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", K_ICLOUD_KEY, "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "belt_refill", "tel_stats", "auto_crash", "bright_level", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
+static const char *const k_keys[] = { "lang", "voice", "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", K_ICLOUD_KEY, "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "belt_refill", "tel_stats", "auto_crash", "bright_level", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
-static const int k_def[NK] = { 0,
-#if VOICE_ROW
-    1,
-#endif
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 2, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
+static const int k_def[NK] = { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 0, 1, 1, 0, 0, 2, 1, 1, 0, 0 };   // fps_hud 显示帧数缺省开（图形页第二行，用户 2026-10-28）| fps_hud Show frame rate on by default (Graphics tab row 2, user 2026-10-28)   // 末尾 rt_shadow（光追阴影，实验性，图形页）缺省关 | last: rt_shadow (ray-traced shadows, experimental, Graphics tab) off by default   // 缺省：60 FPS、MetalFX 开、Auto 档、渲染分辨率自动 | Defaults: 60 FPS, MetalFX on, Auto profile, render resolution Auto
 // q3d 五档：自动／省电／均衡／高画质／原版；q3d_v2 标记避免旧布尔值被误读。
 // q3d profiles: Auto / Eco / Balanced / Quality / Original; q3d_v2 distinguishes old boolean preferences.
 // voice 恒为第 1 行后，其余下标整体后移一位（键表顺序见上，直接写死，改键表时一并核对）| with voice always row 1 the other indices shift by one (fixed numbers; check them together with the key table)
@@ -172,9 +166,7 @@ static int g_lang_test;   // 测试开关 DM_TEST_LANG=<0–4>：当作玩家选
 static int lang_running(void) { int g = dm_lang_group(); return g == DM_LG_ZH ? 0 : g == DM_LG_ES || g == DM_LG_MX ? 2 : g == DM_LG_RU ? 3 : g == DM_LG_KO ? 4 : 1; }   // 此刻实际在跑的语言落在哪一项 | Which option the currently running language falls into
 static _Atomic int g_voice_explicit = -1;   // 文件里写着的 voice：-1 没写 / 0 中文配音 / 1 英文配音
 static int g_voice_test;   // 测试开关 DM_TEST_VOICE=0|1；只用于真机回归，不写回文件
-#if VOICE_ROW
 static int voice_running(void) { return lang_running() == 0 ? 0 : 1; }   // 没单独选过时，按原来的「中文配中文、其余英文」显示
-#endif
 // merc_pot（佣兵自动喂药）原先缺省关、现在缺省开。旧文件每次存盘都把全部键写一遍，里面的 merc_pot=0 分不出「没动过」还是「自己关的」，
 // 所以另记一行 merc_pot_v2：只有在缺省改成开之后玩家自己在页上改过这一项才写。读盘时有 merc_pot_v2 以它为准；没有 = 没在新缺省下动过 → 开
 // （旧文件里的 merc_pot=1 也是开，结果一样）。merc_pot 那一行照旧写当前值，旧版本的包读它不出错
@@ -276,9 +268,7 @@ static void load_once(void) {
         if (!strcmp(ln, "mem_tier") && eq[1] >= '0' && eq[1] <= '2' && (eq[2] == '\n' || eq[2] == '\r' || eq[2] == 0)) mem_was = eq[1] - '0';
         if (!strcmp(ln, "mem_notice")) mem_ack = eq[1] == '1';
         if (i == 0) { int l = atoi(eq + 1); if (l >= 0 && l < LANG_N) lang = v[0] = l; }
-#if VOICE_ROW
         if (i == K_VOICE) { int x = atoi(eq + 1); if (x == 0 || x == 1) voice = v[K_VOICE] = x; }
-#endif
         if (!strcmp(ln, "merc_pot_v2")) merc = eq[1] != '0';
         if (!strcmp(ln, "auto_crash_ok")) atomic_store(&g_ac_ok, eq[1] == '1');
         if (!strcmp(ln, "tel_notice")) atomic_store(&g_tel_notice, atoi(eq + 1) > 0 ? atoi(eq + 1) : 0);
@@ -291,16 +281,10 @@ static void load_once(void) {
     if (!ftv2) { int ft = key_index("free_tp"); if (f && !v[ft]) LOG("自定义设置：旧文件的 free_tp=0 迁移为开（RC2 起缺省开，free_tp_v2）"); v[ft] = 1; }
     if (v[K_Q3D] == 4) { v[K_Q3D] = 0; v[K_UPSCALE] = 0; }
     { const char *tl = getenv("DM_TEST_LANG"); if (tl && *tl >= '0' && *tl < '0' + LANG_N) { lang = v[0] = *tl - '0'; g_lang_test = 1; LOG("自定义设置：测试开关 DM_TEST_LANG=%d（当作语言行选了 %s 并应用，不写回文件）", lang, k_lang_name[lang]); } }
-#if VOICE_ROW
     { const char *tv = getenv("DM_TEST_VOICE"); if (tv && *tv >= '0' && *tv <= '1') { voice = v[K_VOICE] = *tv - '0'; g_voice_test = 1; LOG("自定义设置：测试开关 DM_TEST_VOICE=%d（当作配音行选了 %s 并应用，不写回文件）", voice, voice ? "English" : "中文"); } }
-#endif
     if (lang < 0) v[0] = lang_running();   // 没写过：按当前实际语言显示 | Never written: display according to the current actual language
-#if VOICE_ROW
     if (voice < 0) v[K_VOICE] = voice_running();
     char vlog[32]; snprintf(vlog, sizeof vlog, " voice=%d%s", v[K_VOICE], voice < 0 ? "(auto)" : "");   // (auto) = 文件里没写、按当前语言显示
-#else
-    const char *vlog = "";
-#endif
     atomic_store(&g_lang_explicit, lang);
     atomic_store(&g_voice_explicit, voice);
     v[K_MERC] = merc < 0 ? k_def[K_MERC] : merc; atomic_store(&g_merc_explicit, merc);
@@ -321,7 +305,7 @@ static void load_once(void) {
     // 读盘行按键表写全每个键（分享诊断日志的摘要靠它看出玩家开了什么；原先写死到 eco_fps，后加的 fps_hud / upscale / render_res 等都不在）
     // The load line lists every key from the key table (the diagnostic share summary relies on it; it used to stop at eco_fps, so later keys such as fps_hud / upscale / render_res were missing)
     char kv[512]; size_t o = 0; kv[0] = 0;
-    for (int i = 1 + VOICE_ROW; i < NK && o < sizeof kv; i++) if (!key_other_platform(i)) o += (size_t)snprintf(kv + o, sizeof kv - o, " %s=%d", k_keys[i], v[i]);
+    for (int i = 2; i < NK && o < sizeof kv; i++) if (!key_other_platform(i)) o += (size_t)snprintf(kv + o, sizeof kv - o, " %s=%d", k_keys[i], v[i]);   // 从 2 起：lang / voice 另有 lang= / voice= 字段 | from 2: lang / voice have their own fields
     if (!atomic_exchange(&g_loaded, 1)) {
         LOG("自定义设置：读盘 %s%s lang=%d%s%s%s", p, f ? "" : "（没有文件，全按缺省）", v[0], lang < 0 ? "（没写，按当前语言）" : "", vlog, kv);
         int lim = atomic_load(&g_mem_limit_mb), phys = atomic_load(&g_mem_phys_mb); char pg[16] = "?"; if (phys >= 0) snprintf(pg, sizeof pg, "%.1f", phys / 1024.0);
@@ -615,7 +599,7 @@ void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) {
     else if (!strcmp(act, "CancelChanges")) { for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1); atomic_store(&g_ac_ok_pending, 0); atomic_fetch_add(&g_repaint, 1); }
     else if (!strcmp(act, "ResetToDefaults")) {
         // Preserve upstream global defaults across the two enhanced tabs. Language/voice stay unchanged.
-        for (int i = 1 + VOICE_ROW; i < NK; i++) atomic_store(&g_pend[i], tier_def(i, dm_mem_tier()));   // 本内存档位的缺省 | this memory tier's defaults
+        for (int i = 2; i < NK; i++) atomic_store(&g_pend[i], tier_def(i, dm_mem_tier()));   // 从 2 起：语言 / 配音两行不跟「默认」走 | from 2: the language / voice rows do not follow Reset. This memory tier's defaults
         atomic_fetch_add(&g_repaint, 1); }
 
 }
@@ -1012,9 +996,7 @@ void dm_custom_ui_pump(unsigned long long root) {
         memset(seen, 0, sizeof seen); return; }
     load_once(); static int paint; int repaint = atomic_load(&g_repaint); if (paint != repaint) { paint = repaint; memset(seen, 0, sizeof seen); }
     if (atomic_load(&g_lang_explicit) < 0) atomic_store(&g_val[0], lang_running());   // 语言那一格没点过应用：生效值 = 此刻实际在跑的语言（读盘时游戏还没设语言，那时取到的不准） | Apply never tapped for the language cell: effective value = the language actually running right now (when read from disk the game has not set the language yet, so the value fetched then is not accurate)
-#if VOICE_ROW
     if (atomic_load(&g_voice_explicit) < 0) atomic_store(&g_val[K_VOICE], voice_running());
-#endif
     // 手柄模式：原版选项页的焦点只认表格里它自己的行，够不着我们的勾选框——十字键上下选行（原版手柄选中框 TouchCustomSel 框住这一行）、A 翻勾选（下面照「玩家点了」处理），其余键照旧归原版
     // Controller mode: the original options page's focus only recognizes its own rows in the table and cannot reach our checkboxes. D-pad up/down selects a row
     // (the original controller selection frame TouchCustomSel frames that row), A toggles the checkbox (handled below as "the player tapped it"), and all other

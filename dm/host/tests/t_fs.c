@@ -221,6 +221,11 @@ int main(void) {
       VOICECASE(0, 1, "{ \"Language\": 8, \"VoiceLanguage\": 8 }", "{ \"Language\": 8, \"VoiceLanguage\": 0 }", "中文文字 + English 配音，只改 VoiceLanguage");
       VOICECASE(0, 0, "{ \"Language\": 8, \"VoiceLanguage\": 0 }", "{ \"Language\": 8, \"VoiceLanguage\": 8 }", "中文文字 + 中文配音，只改 VoiceLanguage");
       VOICECASE(-1, 1, "{ \"Language\": 9, \"VoiceLanguage\": 9 }", "{ \"Language\": 9, \"VoiceLanguage\": 0 }", "没动语言行，只把繁中配音改成 English，文字保持繁中");
+      // hle 层：设置文件里没有单独配音选择（vsel = -1）且语言开关也没点过（sel = -1）时，原版设置文件的 VoiceLanguage 必须原样不动，
+      // 不能被缺省英文配音覆盖——旧文件没有 voice 键、玩家没点过「应用」都走这条路 | hle level: with no separate voice choice (vsel = -1) and no language choice (sel = -1),
+      // the original settings file's VoiceLanguage must stay untouched and must not be overwritten by the default English voice -- old files without a voice key and players who never tapped Apply take this path
+      VOICECASE(-1, -1, "{ \"A\": 1, \"Language\": 8, \"VoiceLanguage\": 8, \"B\": 2 }", "{ \"A\": 1, \"Language\": 8, \"VoiceLanguage\": 8, \"B\": 2 }", "没选语言也没选配音：设置文件原样不动（VoiceLanguage=8 保持 8）");
+      VOICECASE(-1, -1, "{ \"Language\": 0, \"VoiceLanguage\": 0 }", "{ \"Language\": 0, \"VoiceLanguage\": 0 }", "没选语言也没选配音：已是英文配音也不动");
       // 英文配音没有自己的分块，在基底档案 00-00000001.data 里；这份档案读不到时显式选 English 回落中文配音（8），不能写 0 让对话 / 过场没有声音
       { char er[1200], ed[1300]; snprintf(er, sizeof er, "%s/romfs_no_en", root); snprintf(ed, sizeof ed, "%s/data", er); mkdir(er, 0755); mkdir(ed, 0755); setenv("DM_ROMFS", er, 1);
         VOICECASE(0, 1, "{ \"Language\": 8, \"VoiceLanguage\": 0 }", "{ \"Language\": 8, \"VoiceLanguage\": 8 }", "资源里没有英文配音基底：English 配音回落中文"); }
