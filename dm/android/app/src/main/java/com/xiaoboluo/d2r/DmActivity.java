@@ -140,15 +140,34 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         return null;
     }
 
-    // true = 可以接着启动；false = 正在导入或已显示错误
-    // true = startup can continue; false = importing, or an error is shown
+    // 原生层启动前核的那几件（jni_android.c）：六件程序、至少一个着色器包、触屏覆盖层 | what the native layer checks before startup (jni_android.c): the six program files, at least one shader bundle, the touch overlay
+    private static final String[] CONTENT_MODULES = {"main.patched.bin", "main.fixups.tsv", "main.gates.tsv", "sdk.patched.bin", "sdk.fixups.tsv", "sdk.gates.tsv"};
+
+    // 运行目录里有没有能直接启动的游戏内容（与 jni_android.c 同一套检查）。没有就不论生成器在不在，都进加载页。
+    // Whether the runtime directory holds game content the native layer can boot from (the same checks as jni_android.c). Without it, the loading page runs whether or not the generator is bundled.
+    static boolean gameContentReady(File runtime) {
+        File out = new File(runtime, "out");
+        for (String m : CONTENT_MODULES) if (!new File(out, m).canRead()) return false;
+        String[] names = new File(runtime, "shaders").list(); boolean bundle = false;
+        if (names != null) for (String n : names) if (n.endsWith(".xgs")) { bundle = true; break; }
+        return bundle && new File(runtime, "overlay").isDirectory();
+    }
+
+    // nativeStart 的「没有可用游戏内容」返回码（jni_android.c）：缺数据 / 程序 / 着色器 / build 配置 / 触屏资源（缺失或不配套）
+    // nativeStart's "no usable game content" codes (jni_android.c): data / program / shaders / build configuration / touch resources (missing or mismatched)
+    static boolean contentMissing(int code) { return code == -2 || code == -3 || code == -4 || code == -5 || code == -9 || code == -10; }
+
+    // true = 可以接着启动；false = 正在导入 / 生成或已显示加载页、失败页
+    // true = startup can continue; false = importing / generating, or the loading / failure page is shown
     private boolean ensureImported(File source) {
         if (importing) return false;
         File runtime = new File(getFilesDir(), "dm");
         String want = readText(new File(source, "pack_info.txt")), have = readText(new File(runtime, "pack_info.txt"));
         if (want != null && !want.equals(have)) {
             String product = packProduct(want);
-            if (!BuildConfig.DM_PRODUCT.equals(product)) { showStartError(getString(R.string.dmAndroidImportVersion, product)); return false; }
+            // 电脑做的导入包与这版 App 不配套：不再停在纯文字提示上，按「没有可用游戏内容」进加载页，由手机端重做
+            // A computer-made import pack does not match this App version: no plain-text prompt; treat it as "no usable game content" and remake it on the loading page.
+            if (!BuildConfig.DM_PRODUCT.equals(product)) { generate(source.getParentFile(), runtime); return false; }
             importing = true;
             // 加载页（LoadPageView，核心在 dm/host/dm_loadpage.c）：单阶段「导入」，进度按字节报，页面自己算速度与剩余时间 | the loading page (LoadPageView, core in dm/host/dm_loadpage.c): the single stage "import", progress in bytes, the page computes speed and ETA itself
             showLoadPage();
@@ -166,19 +185,21 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             }, "dm-import").start();
             return false;
         }
-        // 没有导入包、也没导入过，或导入的是给别的版本做的：App 带了生成器（-PdmGenRuntime 出的包）就在手机上用玩家自己的游戏文件现做，不用电脑。
-        // 开发时直接推进来的（有 out/main.patched.bin、没有 pack_info.txt）不动
-        // No import pack and nothing imported, or what was imported was made for another version: when the App carries the generator (built with -PdmGenRuntime)
-        // it makes the pack on the phone from the player's own game files, without a computer. Files pushed directly during development (out/main.patched.bin, no pack_info.txt) are left alone;
-        // an unfinished swap of a generated pack (install.pending / import.part left over) is not a push and is generated again (fourth audit A4-04)
+        // 没有可用游戏内容（程序 / 着色器 / 覆盖层不齐，或已导入的是给别的版本做的）或生成器正在跑：一律进加载页（手机端生成流程），
+        // 不再回落到旧版「电脑端导入」纯文字提示。开发时直接推进来的内容只要 native 核的几件齐全就照旧直接启动（没有 pack_info.txt 不核版本）。
+        // No usable game content (program / shaders / overlay incomplete, or made for another version) or generation already running: always the
+        // loading page (on-phone generation), never the legacy computer-import plain-text prompt. Content pushed directly during development still
+        // starts when everything the native layer checks is there (no pack_info.txt means no version check).
         String product = packProduct(have);
+        // 开发时直接推进来的内容也可能在外部私有目录（startHost / jni_android.c 在内部目录没有主程序时就用它），核内容要按同一条运行目录规则；
+        // 内部有主程序时只看内部，免得外面一份旧内容把不完整的内部目录盖过去。
+        // Content pushed directly during development may also sit in the external private directory (startHost / jni_android.c use it when the internal
+        // directory has no main module); the content check follows the same runtime-directory rule. When internal has a main module only internal counts, so
+        // an old copy outside cannot mask an incomplete internal directory.
         File ext = getExternalFilesDir(null);
-        boolean pushed = PackGenerator.pushedByDeveloper(have, runtime, ext == null ? null : new File(ext, "dm"));
-        if (generating || (want == null && !pushed && !BuildConfig.DM_PRODUCT.equals(product) && generatorAvailable())) { generate(source.getParentFile(), runtime); return false; }
-        // 已导入的是给别的版本做的（App 升级了、导入包没重做）：同样要重做导入包。开发时直接推进来的没有 pack_info.txt，不核
-        // The imported pack was made for another version (the app was updated, the pack was not remade): it has to be remade too.
-        // Files pushed directly during development have no pack_info.txt and are not checked
-        if (have != null && !BuildConfig.DM_PRODUCT.equals(product)) { showStartError(getString(R.string.dmAndroidImportVersion, product)); return false; }
+        boolean bootContent = gameContentReady(runtime)
+                || (!new File(runtime, "out/main.patched.bin").canRead() && ext != null && gameContentReady(new File(ext, "dm")));
+        if (generating || !bootContent || (have != null && !BuildConfig.DM_PRODUCT.equals(product))) { generate(source.getParentFile(), runtime); return false; }
         return true;
     }
 
@@ -597,20 +618,20 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag(), BuildConfig.DM_VERSION_LABEL);
         if (result < 0) {
             // 触屏资源缺失 / 与这版不配套（App 升级后覆盖层的输入变了）：带生成器的包把已生成内容标成过期、重启进程，重启后自动在加载页重新生成。
-            // 每个版本只自动重试一次，再不行才显示原提示（免得循环）
+            // 每个版本只自动重试一次，再不行就看下面的「没有可用内容」分支
             // Touch overlay missing / not matching this version (the overlay inputs changed with an app update): a package with the generator marks the generated content stale and restarts
-            // the process, which then regenerates it on the loading page. At most one automatic retry per version; after that the original message shows (no loop)
+            // the process, which then regenerates it on the loading page. At most one automatic retry per version; after that the "no usable content" branch below applies
             if ((result == -9 || result == -10) && regenerateAfterUpdate()) return;
-            int resource = switch (result) {
-                case -2 -> R.string.dmAndroidMissingData;
-                case -3 -> R.string.dmAndroidMissingModules;
-                case -4 -> R.string.dmAndroidMissingShaders;
-                case -5 -> R.string.dmAndroidMissingConfig;
-                case -9 -> R.string.dmAndroidMissingOverlay;
-                case -10 -> R.string.dmAndroidInvalidOverlay;
-                default -> 0;
-            };
-            showStartError(resource == 0 ? getString(R.string.dmAndroidStartFailed, result) : getString(resource)); return;
+            // 没有可用游戏内容（缺数据 / 程序 / 着色器 / 配置 / 触屏资源）：不再停在旧版「电脑端导入」提示上，换一个干净进程重来；
+            // 下次启动在加载原生库之前由 ensureImported 看运行目录的实际内容：不全就进加载页由手机端生成，齐全就再试一次启动。
+            // 每个版本只这样重开一次（整包重做很慢，也防止「生成成功但原生仍说缺」时来回重开）；之后落到通用启动失败页。
+            // No usable game content (missing data / program / shaders / configuration / touch resources): never the legacy computer-import prompt;
+            // relaunch a clean process. Before the native library loads, ensureImported re-checks the runtime directory: incomplete content goes to the
+            // loading page and is generated on the phone, complete content gets one more boot attempt. At most one such relaunch per version (a full
+            // rebuild is slow, and it also stops a "generation succeeded but the native layer still says missing" loop); after that the generic
+            // start-failure page shows.
+            if (contentMissing(result) && !generating && relaunchForMissingContent()) return;
+            showStartError(getString(R.string.dmAndroidStartFailed, result)); return;
         }
         started = true;
         touchOverlay.setInputEnabled(true);
@@ -626,10 +647,28 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         catch (IOException e) { android.util.Log.w("dm", "触屏资源与这版不配套，标记过期失败：" + e); return false; }
         sp.edit().putLong("overlay_regen_for", BuildConfig.VERSION_CODE).commit();
         android.util.Log.i("dm", "触屏资源与这版 App 不配套（App 升级过）：已标记过期，重启后自动重新生成");
+        relaunchClean();   // 原生库已加载，生成要在加载之前做：换一个干净进程 | the native library is loaded and generation must run before that: start a clean process
+        return true;
+    }
+
+    // 原生启动时说「没有可用游戏内容」：本进程的库已加载（derived.tsv 在库加载时读进表），不能再在这里生成；
+    // 每个版本只重开一次，下次启动前 ensureImported 按运行目录的实际内容决定进加载页还是直接启动。
+    // The native boot says "no usable game content": this process has already loaded the library (derived.tsv is read into tables at load time), so a pack
+    // cannot be generated here. At most one relaunch per version; before the next launch ensureImported decides from the actual runtime directory whether
+    // to enter the loading page or boot directly.
+    private boolean relaunchForMissingContent() {
+        android.content.SharedPreferences sp = getSharedPreferences("dm_regen", MODE_PRIVATE);
+        if (sp.getLong("content_regen_for", 0) == BuildConfig.VERSION_CODE) return false;
+        sp.edit().putLong("content_regen_for", BuildConfig.VERSION_CODE).commit();
+        android.util.Log.i("dm", "启动时没有可用游戏内容：换一个干净进程，下次启动前在加载页重做");
+        relaunchClean();
+        return true;
+    }
+
+    private void relaunchClean() {
         Intent i = getPackageManager().getLaunchIntentForPackage(getPackageName());
         if (i != null) { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK); startActivity(i); }
-        finishAffinity(); Runtime.getRuntime().exit(0);   // 原生库已加载，生成要在加载之前做：换一个干净进程 | the native library is loaded and generation must run before that: start a clean process
-        return true;
+        finishAffinity(); Runtime.getRuntime().exit(0);
     }
 
     private void showStartError(String message) {
