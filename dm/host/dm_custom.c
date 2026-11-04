@@ -225,6 +225,13 @@ static _Atomic int g_mem_tier_file = -1, g_mem_notice;
 // 所以内存 1 / 0 档的启动预留按这时的渲染分辨率档缩小（front_ios.m front_game_res），之后调高要下次启动才生效；分享摘要同时记启动值与当前值
 // Render resolution / upscale profile in effect at launch (first load of this process, after tier defaults): the game builds render targets from the startup reserve and lowering mid-run returns no memory,
 // so memory tiers 1 / 0 shrink the startup reserve to this render-resolution level (front_ios.m front_game_res) and raising it only takes effect on the next launch; the share summary records both launch and current values
+// 「重启后生效」提示（B151，用户 11-04）：启动时读到的那一份值记一次（整局不变），某个要重启才生效的项当前值（含没点「应用」的）≠ 启动值时，
+//   该行下方出橙色提示（原版色票 $FontColorOrange、28 号），改回启动值就消失、没改不显示。管的项：配音、物品注释、iCloud、
+//   低内存下调高渲染分辨率（res_raise_needs_restart）、光追开关跨越「开 / 关」（启动时开光追才降一档渲染分辨率，dm_render_res_rt_drop 整局不变）
+// "Applies after restart" hints (B151, user 11-04): the values read at launch are recorded once (fixed for the run); when an item that needs a restart has a current value (including one not yet applied)
+//   different from the launch value, an orange hint (original token $FontColorOrange, 28 pt) appears under its row; changing back hides it, unchanged shows nothing. Items: voice, item notes, iCloud,
+//   a higher render resolution under low memory (res_raise_needs_restart), and ray tracing crossing on / off (the one-tier render-resolution drop is decided at launch, dm_render_res_rt_drop is fixed for the run)
+static int g_boot_v[NK], g_boot_ok;
 static _Atomic int g_boot_res = -1, g_boot_q3d = -1;   // 文件里记的档位（-1 没有）、低内存提示已确认过 | tier recorded in the file (-1 none), low-memory notice already confirmed
 static int mem_tier_of(int limit_mb) { return limit_mb < 0 || limit_mb >= 3200 ? 2 : limit_mb >= 2600 ? 1 : 0; }
 static int mem_tier_env(void) { const char *e = getenv("DM_MEM_TIER"); return e && e[0] >= '0' && e[0] <= '2' && !e[1] ? e[0] - '0' : -1; }
@@ -335,6 +342,7 @@ static void load_once(void) {
         if (!o) snprintf(mem_what, sizeof mem_what, "玩家改过的保留，缺省没动");
         mem_was = tier; }
     atomic_store(&g_mem_tier_file, mem_was); atomic_store(&g_mem_notice, mem_ack);
+    if (!g_boot_ok) { memcpy(g_boot_v, v, sizeof g_boot_v); g_boot_ok = 1; }
     if (atomic_load(&g_boot_res) < 0) { atomic_store(&g_boot_res, v[K_RES]); atomic_store(&g_boot_q3d, v[K_UPSCALE] ? v[K_Q3D] : 4); }
     for (int i = 0; i < NK; i++) { atomic_store(&g_val[i], v[i]); atomic_store(&g_pend[i], -1); }
     dm_3d_quality_mode_set(v[K_UPSCALE] && q3d_for_fps(v[K_Q3D], fps_effective(v[K_FPS])) == 3); LOG("3D profile loaded: %d", v[K_UPSCALE] ? v[K_Q3D] : 4);
@@ -849,6 +857,9 @@ static void set_toggle_grey(uint64_t w) {
 static int pending_value(int i) { int p = atomic_load(&g_pend[i]); return p >= 0 ? p : atomic_load(&g_val[i]); }
 // 内存 1 / 0 档：图形页把渲染分辨率调到比启动时高的档 = 启动预留已按启动档缩小，要下次启动才生效（分辨率行副文 TouchGraphicsResNote）
 // memory tiers 1 / 0: a render-resolution level above the launch level on the Graphics tab only takes effect on the next launch, because the startup reserve was shrunk (subtext TouchGraphicsResNote)
+static int restart_pending(int i) { return g_boot_ok && pending_value(i) != g_boot_v[i]; }
+static int rt_drop_restart(void) { return g_boot_ok && (pending_value(K_RTLVL) > 0) != (g_boot_v[K_RTLVL] > 0); }
+static int key_idx(const char *k) { for (int i = 0; i < NK; i++) if (!strcmp(k_keys[i], k)) return i; return -1; }
 static int res_raise_needs_restart(void) { int b = atomic_load(&g_boot_res); return dm_mem_tier() < 2 && b >= 0 && res_rank(pending_value(K_RES)) > res_rank(b); }
 static int enhanced_settings_dirty(void) {
     for (int i=0;i<NK;i++) if (pending_value(i)!=atomic_load(&g_val[i])) return 1;
@@ -1154,7 +1165,8 @@ void dm_graphics_ui_pump(unsigned long long root) {
       if (note) { int mem = fps_ok && fps_mem_capped();
           if (mem) graphics_text(note, dm_str(main_base(), "dmGraphicsFps120MemNote"));
           ui_show_ours(note, mem); } }
-    { uint64_t note = find_w(sp, "TouchGraphicsResNote", 0); if (note) ui_show_ours(note, res_ok && res_raise_needs_restart()); }
+    { uint64_t note = find_w(sp, "TouchGraphicsResNote", 0); int raise = res_ok && res_raise_needs_restart(), rt = res_ok && rt_drop_restart();
+      if (note) { int k = raise ? 1 : rt ? 2 : 0; if (k) graphics_text(note, dm_str(main_base(), k == 1 ? "dmGraphicsResRestartNote" : "dmGraphicsRtResRestart")); ui_show_ours(note, k != 0); } }   // 页重建后字回到布局缺省，所以每帧写（graphics_text 字没变不写） | the page rebuild resets the text to the layout default, so write every frame (graphics_text skips unchanged text)
     uint64_t vt = *(uint64_t *)sp; int valid = 0;
     for (int k = 0; k < 96 && !valid; k++) valid = *(uint64_t *)(vt + 8 * k) == (uint64_t)main_base() + 0xae5f28;
     if (valid) { int dirty = enhanced_settings_dirty();
@@ -1190,14 +1202,20 @@ static int g_icloud_probes;   // 单测核调用次数 | call count for the unit
 static int icloud_available_throttled(int fresh) { static int ok = 1, n; if (fresh || n <= 0) { ok = dm_icloud_available(); g_icloud_probes++; n = 60; } n--; return ok; }
 #endif
 static int touch_only_row(int i) { return i == K_TOUCH_SWAP; }
+static void restart_hints(uint64_t sp, int page) {   // 配音 / 物品注释两行的「重启后生效」（iCloud 在 sync_toggles 里跟账号状态一起判） | voice / item notes restart hints (iCloud is judged in sync_toggles with the account state)
+    static int k_in = -2; if (k_in == -2) k_in = key_idx("item_notes");
+    if (page == PG_SYS && row_on_page(K_VOICE, page)) { uint64_t w = find_w(sp, "TouchCustom_voice_Restart", 0); if (w) ui_show_ours(w, restart_pending(K_VOICE)); }
+    if (k_in >= 0 && row_on_page(k_in, page)) { uint64_t w = find_w(sp, "TouchCustom_item_notes_Note", 0); if (w) ui_show_ours(w, restart_pending(k_in)); }
+}
 static void sync_toggles(uint64_t sp, int page, dm_wref *seen) {
+    restart_hints(sp, page);
     int dm_padmode_current(void); int pad = dm_padmode_current();
     for (int i = 1; i < NK; i++) { if (!row_on_page(i, page)) continue; char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
         uint64_t w = find_w(sp, nm, 0); if (!w || !*(uint8_t *)(w + 0x50)) continue;
         if (touch_only_row(i)) { char pn[56]; snprintf(pn, sizeof pn, "TouchCustom_%s_Pad", k_keys[i]); uint64_t pw = find_w(sp, pn, 0); if (pw) ui_show_ours(pw, pad);
             if (pad) { set_toggle_grey(w); if (rev_box(i)) { uint64_t rz = find_w(sp, rev_box(i), 0); if (rz) set_toggle_grey(rz); } dm_wref_set(&seen[i], 0); continue; } }
 #ifndef __ANDROID__
-        if (i == K_ICLOUD) { uint64_t nw = find_w(sp, "TouchCustom_icloud_NoAcct", 0), nn = find_w(sp, "TouchCustom_icloud_Note", 0); int ok = icloud_available_throttled(dm_wref_get(&seen[i]) != w); if (nw) ui_show_ours(nw, !ok); if (nn) ui_show_ours(nn, ok);
+        if (i == K_ICLOUD) { uint64_t nw = find_w(sp, "TouchCustom_icloud_NoAcct", 0), nn = find_w(sp, "TouchCustom_icloud_Note", 0); int ok = icloud_available_throttled(dm_wref_get(&seen[i]) != w); if (nw) ui_show_ours(nw, !ok); if (nn) ui_show_ours(nn, ok && restart_pending(K_ICLOUD));
             if (!ok) { set_toggle_grey(w); dm_wref_set(&seen[i], 0); continue; } }
 #endif
         int pd0 = atomic_load(&g_pend[i]), want = pd0 >= 0 ? pd0 : atomic_load(&g_val[i]);

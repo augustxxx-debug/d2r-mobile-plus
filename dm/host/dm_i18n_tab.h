@@ -122,9 +122,9 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCustomLangHintRu", "Нажми «Применить» и перезапусти игру", "Нажми «Применить» и перезапусти игру", "Нажми «Применить» и перезапусти игру", "Нажми «Применить» и перезапусти игру", "Нажми «Применить» и перезапусти игру", "Нажми «Применить» и перезапусти игру" },
     { "dmCustomLangHintKo", "'적용'을 누른 뒤 앱을 종료하고 다시 여세요", "'적용'을 누른 뒤 앱을 종료하고 다시 여세요", "'적용'을 누른 뒤 앱을 종료하고 다시 여세요", "'적용'을 누른 뒤 앱을 종료하고 다시 여세요", "'적용'을 누른 뒤 앱을 종료하고 다시 여세요", "'적용'을 누른 뒤 앱을 종료하고 다시 여세요" },
     { "dmCustomVoiceZh", "中文配音", "Chinese voice", "Voz en chino", "Voz en chino", "Китайская озвучка", "중국어 음성" },
-    { "dmCustomVoiceZhHint", "对话与过场使用中文语音；下次启动生效", "Chinese dialogue and cutscenes; applies after restart", "Diálogos y escenas en chino; se aplica al reiniciar", "Diálogos y escenas en chino; se aplica al reiniciar", "Китайские диалоги и ролики; после перезапуска", "대화와 시네마틱에 중국어 음성; 재시작 후 적용" },
+    { "dmCustomVoiceZhHint", "对话与过场使用中文语音", "Chinese dialogue and cutscenes", "Diálogos y escenas en chino", "Diálogos y escenas en chino", "Китайские диалоги и ролики", "대화와 시네마틱에 중국어 음성" },
     { "dmCustomVoiceEn", "English voice", "English voice", "Voz en inglés", "Voz en inglés", "Английская озвучка", "영어 음성" },
-    { "dmCustomVoiceEnHint", "对话与过场使用英文语音；下次启动生效", "English dialogue and cutscenes; applies after restart", "Diálogos y escenas en inglés; se aplica al reiniciar", "Diálogos y escenas en inglés; se aplica al reiniciar", "Английские диалоги и ролики; после перезапуска", "대화와 시네마틱에 영어 음성; 재시작 후 적용" },
+    { "dmCustomVoiceEnHint", "对话与过场使用英文语音", "English dialogue and cutscenes", "Diálogos y escenas en inglés", "Diálogos y escenas en inglés", "Английские диалоги и ролики", "대화와 시네마틱에 영어 음성" },
     { "dmTabGraphics", "图形", "Graphics", "Gráficos", "Gráficos", "Графика", "그래픽" },
     { "dmOptGrpDisplay", "画面", "Display", "Imagen", "Imagen", "Изображение", "화면" },
     { "dmOptGrpFrame", "帧率", "Frame Rate", "Fotogramas", "Fotogramas", "Частота кадров", "프레임" },
@@ -163,6 +163,7 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmGraphicsQuality120Note", "120 帧下不提供高画质，切回 60 帧可选", "Quality is unavailable at 120 FPS; use 60 FPS", "Calidad no disponible a 120 FPS; usa 60 FPS", "Calidad no disponible a 120 FPS; usa 60 FPS", "«Качество» недоступно при 120 FPS; выберите 60", "120 FPS에서는 고화질 불가, 60 FPS에서 선택하세요" },
     { "dmGraphicsFps120MemNote", "本机内存上限偏小，不提供 120 帧", "120 FPS is unavailable on this device (memory)", "120 FPS no disponible en este dispositivo (memoria)", "120 FPS no disponible en este dispositivo (memoria)", "120 FPS недоступны на этом устройстве (память)", "이 기기에서는 메모리 때문에 120 FPS 불가" },
     { "dmGraphicsResRestartNote", "本机内存偏小：调高分辨率需重启游戏生效", "Low memory: higher resolution applies after restart", "Poca memoria: más resolución tras reiniciar", "Poca memoria: más resolución tras reiniciar", "Мало памяти: выше разрешение — после перезапуска", "메모리 부족: 해상도 올리기는 재시작 후 적용" },
+    { "dmGraphicsRtResRestart", "光追开关已改：渲染分辨率降一档要重启游戏后生效", "Ray tracing changed: resolution drop applies after restart", "Trazado cambiado: baja de resolución tras reiniciar", "Trazado cambiado: baja de resolución tras reiniciar", "Трассировка изменена: разрешение — после перезапуска", "광선 추적 변경: 해상도 낮춤은 재시작 후 적용" },
     { "dmLowMemTitle", "已自动降低画质", "Graphics lowered automatically", "Calidad gráfica reducida", "Calidad gráfica reducida", "Графика снижена автоматически", "화질을 자동으로 낮췄습니다" },
     { "dmLowMemMsg", "本机可用内存偏小，\n已自动降低画质，不开放 120 帧。\n可在选项的「图形」页调整。", "This device has less memory available,\nso graphics were lowered and 120 FPS is off.\nYou can change this on the Graphics tab in Options.", "Este dispositivo tiene poca memoria,\nasí que se redujo la calidad y no hay 120 FPS.\nPuedes cambiarlo en la pestaña Gráficos de Opciones.", "Este dispositivo tiene poca memoria,\nasí que se redujo la calidad y no hay 120 FPS.\nPuedes cambiarlo en la pestaña Gráficos de Opciones.", "На этом устройстве мало памяти,\nпоэтому графика снижена, 120 FPS недоступны.\nЭто можно изменить на вкладке «Графика» в настройках.", "이 기기는 사용 가능한 메모리가 적어\n화질을 낮추고 120 FPS를 껐습니다.\n옵션의 그래픽 탭에서 바꿀 수 있습니다." },
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
@@ -182,11 +183,12 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCustomPotPickNote", "腰带有空位时", "When the belt has room", "Si hay sitio en el cinturón", "Si hay sitio en el cinturón", "Когда в поясе есть место", "벨트에 자리가 있을 때" },
     { "dmCustomGemPickNote", "直接进高级仓库", "Go straight to the advanced stash", "Van directo al alijo avanzado", "Van directo al alijo avanzado", "Сразу в расширенное хранилище", "고급 창고로 바로 들어갑니다" },
     { "dmCustomLootFilterNote", "噩梦起自动隐藏杂物", "Hides junk automatically from Nightmare on", "Oculta lo inútil desde Pesadilla", "Oculta lo inútil desde Pesadilla", "Скрывает мусор начиная с Кошмара", "악몽부터 잡템을 자동으로 숨깁니다" },
-    { "dmCustomItemNotesNote", "重启后生效", "Chinese and Spanish only; applies after restart", "Se aplica al reiniciar", "Se aplica al reiniciar", "Только кит. и исп.; после перезапуска", "중국어·스페인어 전용, 재시작 후 적용" },
+    { "dmCustomItemNotesNote", "重启游戏后生效", "Chinese and Spanish only; applies after restart", "Se aplica al reiniciar", "Se aplica al reiniciar", "Только кит. и исп.; после перезапуска", "중국어·스페인어 전용, 재시작 후 적용" },
     { "dmCustomMapMarkNote", "出入口、小站与任务终点", "Exits, waypoints and quest targets", "Salidas, transportadores y misiones", "Salidas, transportadores y misiones", "Выходы, точки пути и квесты", "출구, 웨이포인트, 퀘스트 목표" },
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
-    { "dmCustomIcloudNote", "重启后生效", "Applies after restart", "Se aplica al reiniciar", "Se aplica al reiniciar", "После перезапуска", "재시작 후 적용" },
+    { "dmCustomIcloudNote", "重启游戏后生效", "Applies after restarting the game", "Se aplica al reiniciar el juego", "Se aplica al reiniciar el juego", "Вступит в силу после перезапуска игры", "게임을 다시 시작하면 적용" },
 #endif
+    { "dmCustomRestartHint", "重启游戏后生效", "Applies after restarting the game", "Se aplica al reiniciar el juego", "Se aplica al reiniciar el juego", "Вступит в силу после перезапуска игры", "게임을 다시 시작하면 적용" },
 #if !defined(__ANDROID__) || defined(DM_I18N_ALL)
     { "dmCustomIcloudNoAcct", "未登录 iCloud，或这个安装包不支持 iCloud", "Not signed in to iCloud, or this build does not support it", "Sin sesión en iCloud, o esta versión no lo admite", "Sin sesión en iCloud, o esta versión no lo admite", "Нет входа в iCloud, или сборка его не поддерживает", "iCloud 로그인이 없거나 이 빌드가 지원하지 않습니다" },
 #endif

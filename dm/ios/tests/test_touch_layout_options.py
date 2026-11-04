@@ -160,7 +160,7 @@ _fn = g_nodes['TouchGraphicsFpsNote']['fields']
 assert _fn['text'] == '@dmGraphicsFps120MemNote' and _fn['style/pointSize'] == 28 and _fn['style/fontColor'] == '$FontColorLightGray' and _fn['style/spacing'] == '$ReducedSpacing', _fn
 assert _fn['rect']['y'] == _rows_y[4] + 116 and _fn['rect']['y'] + _fn['rect']['height'] <= _rows_y[4] + 180, _fn['rect']
 _rn = g_nodes['TouchGraphicsResNote']['fields']
-assert _rn['text'] == '@dmGraphicsResRestartNote' and _rn['style/pointSize'] == 28 and _rn['style/fontColor'] == '$FontColorLightGray', _rn
+assert _rn['text'] == '@dmGraphicsResRestartNote' and _rn['style/pointSize'] == 28 and _rn['style/fontColor'] == '$FontColorOrange', _rn   # B151：重启后生效提示统一橙色
 assert _rn['rect']['y'] + _rn['rect']['height'] <= 180 and 'TouchGraphicsResNote' in [c['name'] for c in g_nodes['TouchGraphicsResRow']['children']], _rn['rect']
 print('PASS Graphics page: native FPS/profile sliders, independent upscale toggle, localization hooks')
 
