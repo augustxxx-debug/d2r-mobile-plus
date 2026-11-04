@@ -18,4 +18,11 @@ final class GenScreenKeys {
         if (retryShown) return RETRY;
         return shareShown ? SHARE : NONE;
     }
+
+    // 去向 → 动作：RETRY 调 retry、SHARE 调 share、NONE 什么都不做。DmActivity 只经这里分发，接线由 GenScreenKeysTest 与 test_gen_screen_focus.py 锁住（terra T4 P2）
+    // target -> action: RETRY runs retry, SHARE runs share, NONE does nothing. DmActivity dispatches only through here; the wiring is pinned by GenScreenKeysTest and test_gen_screen_focus.py (terra T4 P2)
+    static void dispatch(int target, Runnable share, Runnable retry) {
+        if (target == RETRY) retry.run();
+        else if (target == SHARE) share.run();
+    }
 }

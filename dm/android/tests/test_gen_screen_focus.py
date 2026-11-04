@@ -34,6 +34,11 @@ class GenScreenFocus(unittest.TestCase):
         flat = re.sub(r'\s+', ' ', seg)
         self.assertRegex(flat, r'int focused = f != null && f == genShareBtn \? GenScreenKeys\.SHARE : f != null && f == genRetryBtn \? GenScreenKeys\.RETRY : GenScreenKeys\.NONE;')
         self.assertRegex(flat, r'GenScreenKeys\.aTarget\(focused,')
+        # 动作接线：只经 GenScreenKeys.dispatch，参数顺序 (分享, 重试) 锁死；不许再直接调两种动作（terra T4 P2 交换变异）
+        # action wiring: only through GenScreenKeys.dispatch with the (share, retry) argument order pinned; no direct calls to either action (terra T4 P2 swap mutation)
+        self.assertRegex(flat, r'GenScreenKeys\.dispatch\(t, this::shareGenLog, this::retryGeneration\);')
+        self.assertNotIn('retryGeneration()', seg)
+        self.assertNotIn('shareGenLog()', seg)
         # 不许再按 genRetryOffered 一刀切 | no more blanket decision on genRetryOffered
         self.assertNotRegex(seg, r'if\s*\(\s*genRetryOffered\s*\)\s*retryGeneration\(\)')
 

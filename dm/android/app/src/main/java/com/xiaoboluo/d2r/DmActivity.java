@@ -910,7 +910,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
                 android.view.View f = getCurrentFocus();
                 int focused = f != null && f == genShareBtn ? GenScreenKeys.SHARE : f != null && f == genRetryBtn ? GenScreenKeys.RETRY : GenScreenKeys.NONE;
                 int t = GenScreenKeys.aTarget(focused, genShareBtn != null, genRetryBtn != null || genRetryOffered);
-                if (t == GenScreenKeys.RETRY) retryGeneration(); else if (t == GenScreenKeys.SHARE) shareGenLog();
+                GenScreenKeys.dispatch(t, this::shareGenLog, this::retryGeneration);   // 参数顺序 = (分享, 重试)，见 GenScreenKeys.dispatch | argument order = (share, retry), see GenScreenKeys.dispatch
             }
             return true; }
         if (started && (e.getAction() == android.view.KeyEvent.ACTION_DOWN || e.getAction() == android.view.KeyEvent.ACTION_UP)) {
