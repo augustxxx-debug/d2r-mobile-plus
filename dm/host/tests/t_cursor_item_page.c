@@ -1,6 +1,6 @@
 // 物品格页号 → 容器的单测（dm_cursor_item.h dm_item_container_of_page）。
 // 缺陷（11-04 整机验收）：护身符页（页 5）掉进 default 被当成交易格，dm_bag.c 的手柄键位条提示「存入仓库 / 卖出 / 放入魔盒」永远不出。
-// 这里钉住：页 5 = 护身符页，与 dm_bag.c 的 CHARM_PAGE 同一个数；0 / 3 / 4 不变；其余仍是交易。
+// 这里钉住：页 5 = 护身符页，与 dm_bag.c 的 CHARM_PAGE 同一个数；0 / 3 / 4 不变；其余仍是交易。B148 起那三条键位条提示已撤（页 5 的 A 是原版拿起）。
 // Unit test of item grid page -> container (dm_item_container_of_page in dm_cursor_item.h).
 // Defect (11-04 Mac acceptance): the charm page (page 5) fell into the default case and was taken as a trade grid, so the controller
 // legend hints in dm_bag.c ("To stash / Sell / To cube") never appeared. Pinned here: page 5 = charm page, the same number as CHARM_PAGE
@@ -21,8 +21,9 @@ int main(void) {
     // 护身符页号和 dm_bag.c 写进 grid +0x630 的是同一个数 | The charm page number is the one dm_bag.c writes into grid +0x630
     FILE *f = fopen("../dm_bag.c", "r"); CHECK(f != NULL);
     if (f) { static char s[1 << 20]; size_t n = fread(s, 1, sizeof s - 1, f); fclose(f); s[n] = 0; const char *m = strstr(s, "CHARM_PAGE = "); CHECK(m && atoi(m + 13) == 5);
-        // 键位条提示要认护身符页这一类，不能再比 INVENTORY | The legend hint must test for the charm kind, not INVENTORY
-        const char *h = strstr(s, "\"dmCharmHintSell\""); const char *c = h ? strstr(h, "ci.container == ") : NULL; CHECK(c && !strncmp(c + 16, "DM_ITEM_AT_CHARM", 16)); }
+        // B148 起护身符页上的 A 是原版拿起（同背包），dm_bag.c 不再改写键位条：「存入仓库 / 卖出 / 放入魔盒」这三条提示不许回来
+        // Since B148, A on the charm page is the original pick-up (same as the bag), and dm_bag.c no longer overrides the legend: the three hints "To stash / Sell / To cube" must not come back
+        CHECK(!strstr(s, "\"dmCharmHintSell\"") && !strstr(s, "\"dmCharmHintStash\"") && !strstr(s, "\"dmCharmHintCube\"")); }
     printf("t_cursor_item_page: %d checks, %d failures\n", checks, fails);
     return fails != 0;
 }

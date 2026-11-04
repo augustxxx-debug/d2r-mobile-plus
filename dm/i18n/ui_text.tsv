@@ -829,12 +829,9 @@ dmCrashReportFailed	崩溃报告未能上传，已放弃	Crash report could not 
 dmBagPageBag	背包	Bag	Inventario	Inventario	Рюкзак	가방	物品栏：页签右侧读数里的页名，后接已用 / 上限
 dmBagPageCharm	护身符	Charms	Dijes	Talismanes	Обереги	부적	物品栏：页签右侧读数里的页名，后接已用 / 上限
 dmCharmFull	护身符页满了	Charm page is full	La página de dijes está llena	La página de talismanes está llena	Страница оберегов заполнена	부적 페이지가 가득 찼습니다	物品栏：护身符页没有空位时提示
-dmCharmSellFull	背包满了，卖不出去	Bag is full, can't sell	El inventario está lleno, no se puede vender	El inventario está lleno, no se puede vender	Рюкзак полон, продать нельзя	가방이 가득 차서 팔 수 없습니다	物品栏：商店开着卖护身符，背包页没有空位时提示
+dmCharmPickFull	背包页满了，护身符拿不起来	Bag page is full; the charm cannot be picked up	La página de la bolsa está llena; no se puede tomar el dije	La página del inventario está llena; no se puede tomar el talismán	Страница рюкзака заполнена; оберег не взять	가방 페이지가 가득 차 부적을 집을 수 없습니다	物品栏：从护身符页拿起时先搬到背包页，背包页没空位时提示（B148）
 dmCharmRestore	有护身符没能放回护身符页，已保留	Some charms could not return to the charm page; they are kept	Algunos dijes no volvieron a su página; se conservan	Algunos talismanes no volvieron a su página; se conservan	Некоторые обереги не вернулись на страницу; они сохранены	일부 부적을 페이지로 되돌리지 못했습니다. 보존되어 있습니다	进局读护身符页：文件损坏或放不回去时提示
-dmCharmTradeHint	护身符暂时不能从这里放入交易	Charms cannot go into a trade from here yet	Los dijes aún no pueden entrar en un intercambio desde aquí	Los talismanes aún no pueden entrar en un intercambio desde aquí	Обереги пока нельзя добавить в обмен отсюда	아직 여기서 부적을 거래에 넣을 수 없습니다	交易开着时在护身符页按确认；交易路径未实现，待联机线
-dmCharmHintStash	存入仓库	To stash	Al alijo	Al alijo	В тайник	보관함으로	手柄键位条：护身符页、仓库开着时 A 的说明
-dmCharmHintSell	卖出	Sell	Vender	Vender	Продать	판매	手柄键位条：护身符页、商店开着时 A 的说明
-dmCharmHintCube	放入魔盒	To cube	Al cubo	Al cubo	В куб	큐브로	手柄键位条：护身符页、方块开着时 A 的说明
+dmCharmUnidFull	未鉴定的护身符要在背包页鉴定，请先腾出空位	Unidentified charms are identified on the bag page; make room first	Los dijes sin identificar se identifican en la página de la bolsa; haz espacio primero	Los talismanes sin identificar se identifican en la página del inventario; haz espacio primero	Неопознанные обереги опознаются на странице рюкзака; освободите место	미확인 부적은 가방 페이지에서 감정합니다. 먼저 공간을 비우세요	物品栏：护身符页上有未鉴定的护身符、背包页没空位搬回去时提示（B146）
 dmCustomTelStats	设备与使用统计	Device and usage statistics	Estadísticas de dispositivo y uso		Статистика устройства	기기 및 사용 통계	设备与使用统计开关（dm_custom.c / dm_telemetry.c）
 dmTeleTitle	设备与使用统计	Device and Usage Statistics	Estadísticas de dispositivo y uso		Статистика устройства и использования	기기 및 사용 통계	统计告知框 v1（dm_telebox.c）
 dmTele0	为了改进机型适配、修复问题，我们想记录下面这些信息：	To improve device support and fix problems, we would like to record:	Para mejorar la compatibilidad y corregir errores, queremos registrar:		Чтобы улучшать поддержку устройств и исправлять ошибки, мы хотим записывать:	기기 지원을 개선하고 문제를 고치기 위해 다음 정보를 기록하려고 합니다:	统计告知框 v1（dm_telebox.c）
