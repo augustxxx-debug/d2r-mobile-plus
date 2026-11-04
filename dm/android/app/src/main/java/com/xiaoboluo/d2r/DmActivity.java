@@ -299,7 +299,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     }
     private void showZipFailure() {
         String t = zipFailTitle != null ? zipFailTitle : getString(R.string.dmAndroidZipFailTitle);
-        showGenScreen(t, zipFailure, null);
+        showGenScreen(t, zipFailure, null, false, false);   // 解压失败页：不带分享、不带重试（REQ28 原三参版的含义；B134 去掉了三参重载）| zip failure page: no share, no retry (what REQ28's three-argument call meant; B134 removed that overload)
     }
 
     private interface Progress { void bytes(long done, long total); }
