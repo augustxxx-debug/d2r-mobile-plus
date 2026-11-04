@@ -273,48 +273,70 @@ void dm_loadpage_cover(double iw, double ih, double dw, double dh, double fx, do
 static void lpi_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     memset(o, 0, sizeof *o);
     double w = s->w > 0 ? s->w : 1, h = s->h > 0 ? s->h : 1;
+    // 静态尺寸（字号、边距、间距、页脚、条高、静音钮）在大屏上按「安全内容高」缩放（B139 返工）。长边 1000 点 / dp 以内
+    // （奥丁 832×468、Fold8 内屏 934×842、Duo 951×669、iPhone 17 Pro）保持原值 k = 1 不动；更大的屏（iPad 1194×834 / 834×1194）
+    // 取 k =（屏高 − 底安全区）/ 参照内容高：横屏参照 500（奥丁 468.3 那一档横屏机的内容高取整），竖屏参照 iPhone 17 Pro 874 − 34 = 840。
+    // 所以从底往上那一组（页脚 / 副文 / 正文 / 条 / 标题）恒占屏高的同一比例——横屏与奥丁一致（图标 52.4%、标题 62.2%），
+    // 竖屏与 17 Pro 一致（图标 39%、标题 75.9%）。上一版按「长边 / 1000」，iPad 的屏高只有长边的 0.70，底部那一组放得不够大，
+    // 进度组仍被压在屏幕下四分之一（图 62.8%、标题 72.3%、条 78.7%）；竖屏的图标还会被竖图 cover 撑到 58.6%，这里另用 0.40h 封顶。
+    // Static metrics (fonts, margins, gaps, footer, bar height, mute button) scale with the safe content height on large screens (B139 rework).
+    // Up to 1000 pt / dp on the long side (Thor 832×468, Fold8 inner 934×842, Duo 951×669, iPhone 17 Pro) values stay at k = 1; larger screens
+    // (iPad 1194×834 / 834×1194) take k = (height - bottom safe inset) / reference content height: the landscape reference is 500
+    // (the band of the Thor's 468.3), the portrait reference iPhone 17 Pro's 874 - 34 = 840. The bottom stack (footer / sub / body / bar / title) then keeps the
+    // reference's share of the height - landscape matches the Thor (icon 52.4%, title 62.2%), portrait matches the 17 Pro (icon 39%, title 75.9%).
+    // The previous long side / 1000 rule under-scaled the stack on the iPad (its height is only 0.70 of the long side), leaving the progress group
+    // in the bottom quarter (icon 62.8%, title 72.3%, bar 78.7%); in portrait the portrait image's cover also blew the icon up to 58.6%, capped here at 0.40h.
     o->landscape = w >= h;
+    double long_side = w > h ? w : h, k = 1;
+    if (long_side > 1000) {
+        double content_h = h - s->inset_b;
+        k = content_h / (o->landscape ? 500.0 : 840.0);
+        if (k < 1) k = 1;
+    }
     o->bg_name = dm_loadpage_bg_name(w, h, &o->bg_w, &o->bg_h);
     dm_loadpage_cover(o->bg_w, o->bg_h, w, h, LP_FOCUS_X, LP_FOCUS_Y, &o->bg_src);
     o->bg_dst = (dm_lp_rect){ 0, 0, w, h };
-    o->title_pt = 24; o->body_pt = 18; o->sub_pt = 14; o->brand_pt = 20; o->bar_radius = 3; o->comm_pt = 12; o->comm_alpha = DM_LP_COMM_ALPHA;
-    double L = s->inset_l, R = s->inset_r, T = s->inset_t, B = s->inset_b, m = 28;   // 安全区之内再留 28 点边距 | 28 pt margin inside the safe area
+    o->title_pt = 24 * k; o->body_pt = 18 * k; o->sub_pt = 14 * k; o->brand_pt = 20 * k; o->bar_radius = 3 * k; o->comm_pt = 12 * k; o->comm_alpha = DM_LP_COMM_ALPHA;
+    double L = s->inset_l, R = s->inset_r, T = s->inset_t, B = s->inset_b, m = 28 * k;   // 安全区之内再留 28 点边距（大屏按 k 放大） | 28 pt margin inside the safe area (scaled by k on large screens)
     double cx0 = L + m, cw = w - L - R - 2 * m; if (cw < 120) cw = 120;
     double bw = o->landscape ? (cw * 0.62 > 320 ? cw * 0.62 : 320) : cw; if (bw > cw) bw = cw; if (bw > 900) bw = 900;   // 横屏条宽 62%（最宽 900）、竖屏铺满内容宽 | landscape bar 62% wide (900 max), portrait the full content width
-    double bx = cx0 + (cw - bw) / 2, bh = 8;
+    double bx = cx0 + (cw - bw) / 2, bh = 8 * k;
     double sub_h = o->sub_pt * 1.4, body_h = o->body_pt * 1.4, title_h = o->title_pt * 1.35;
-    double y = h - B - 44;   // 从底往上排：（社区两行 + 复制钮）/ 副文 / 正文 / 条 / 标题 + 百分数 | stacked from the bottom: (community lines + copy button) / sub / body / bar / title + percent
+    double y = h - B - 44 * k;   // 从底往上排：（社区两行 + 复制钮）/ 副文 / 正文 / 条 / 标题 + 百分数 | stacked from the bottom: (community lines + copy button) / sub / body / bar / title + percent
     o->comm = dm_loadpage_community_shown();
     if (o->comm || !g_wordmark) {   // 关字标时总按有页脚排（见 dm_loadpage_set_wordmark） | with the wordmark off, always laid out as with a footer (see dm_loadpage_set_wordmark)   // 社区两行做成不抢眼的页脚（用户 2026-10-29：「太乱，字小一些、按钮小一些、文字加透明度」）：12 点字、半透明，贴底占满内容宽（安全区 + 边距之内），
                                                         // 字左对齐；复制钮是一行高的小钮，靠右、与两行字竖向居中；进度那一组整体上移
                                                         // community lines as an unobtrusive footer (user 2026-10-29: "too busy - smaller text, smaller button, more transparent text"): 12 pt, translucent, at the bottom across
                                                         // the full content width (inside the safe area + margin), text left aligned; the copy button is a small one-line pill on the right, centred on the two lines; the progress group moves up
-        double ch = o->comm_pt * 1.4, cb_w = 108, cb_h = 24, cy = h - B - 16 - 2 * ch;
-        o->comm1 = (dm_lp_rect){ cx0, cy, cw - cb_w - 12, ch };
-        o->comm2 = (dm_lp_rect){ cx0, cy + ch, cw - cb_w - 12, ch };
+        double ch = o->comm_pt * 1.4, cb_w = 108 * k, cb_h = 24 * k, cy = h - B - 16 * k - 2 * ch;
+        o->comm1 = (dm_lp_rect){ cx0, cy, cw - cb_w - 12 * k, ch };
+        o->comm2 = (dm_lp_rect){ cx0, cy + ch, cw - cb_w - 12 * k, ch };
         o->copy = (dm_lp_rect){ cx0 + cw - cb_w, cy + ch - cb_h / 2, cb_w, cb_h };
-        y = cy - 14;
+        y = cy - 14 * k;
     }
-    o->sub = (dm_lp_rect){ bx, y - sub_h, bw, sub_h }; y -= sub_h + 6;
-    o->body = (dm_lp_rect){ bx, y - body_h, bw, body_h }; y -= body_h + 10;
-    o->bar = (dm_lp_rect){ bx, y - bh, bw, bh }; y -= bh + 12;
+    o->sub = (dm_lp_rect){ bx, y - sub_h, bw, sub_h }; y -= sub_h + 6 * k;
+    o->body = (dm_lp_rect){ bx, y - body_h, bw, body_h }; y -= body_h + 10 * k;
+    o->bar = (dm_lp_rect){ bx, y - bh, bw, bh }; y -= bh + 12 * k;
     o->title = (dm_lp_rect){ bx, y - title_h, bw * 0.72, title_h };
     o->percent = (dm_lp_rect){ bx + bw * 0.72, y - title_h, bw * 0.28, title_h };
     o->show_bar = g.prompt_title ? 0 : 1;   // 提示页不画条，标题占满条宽 | no bar on a notice page; the title takes the full bar width
     if (g.prompt_title) { o->title.w = bw; o->percent.w = 0; }
     double fill = g.overall < 0 ? 0 : g.overall > 1 ? 1 : g.overall;
     o->bar_fill = (dm_lp_rect){ o->bar.x, o->bar.y, o->bar.w * fill, o->bar.h };
-    o->brand = (dm_lp_rect){ cx0, T + m, cw - 56, o->brand_pt * 1.4 };   // 右边让出静音钮 | leave room for the mute button on the right
-    o->mute = (dm_lp_rect){ w - R - m - 40, T + m - 6, 40, 40 };
+    o->brand = (dm_lp_rect){ cx0, T + m, cw - 56 * k, o->brand_pt * 1.4 };   // 右边让出静音钮 | leave room for the mute button on the right
+    o->mute = (dm_lp_rect){ w - R - m - 40 * k, T + m - 6 * k, 40 * k, 40 * k };
     if (g.prompt_title) o->mute = (dm_lp_rect){ 0, 0, 0, 0 };   // 提示页不放音乐，也不画静音钮（七审 Q7-03） | no music on a notice page, so no mute button either (seventh review Q7-03)
     // 字标图：宽取内容宽的 58%（横屏）/ 86%（竖屏），不超过 560 点、不矮于能放下的高度；中心在 0.36h（横）/ 0.30h（竖），夹在安全区上沿 + 边距与标题上方 24 点之间
     // Wordmark: width 58% of the content width (landscape) / 86% (portrait), at most 560 pt and never taller than the room available; centre at 0.36h (landscape) / 0.30h (portrait), clamped between the top safe edge + margin and 24 pt above the title
     if (!g_wordmark) {   // 背景按图标外框放进「安全区顶 + 边距」到「标题上方 18 点」之间，不比 cover 更大；图外是底色（图边本来就渐隐到黑） | fit the icon box between the safe top + margin and 18 pt above the title, never larger than cover; outside the image is the base colour (the image edges already fade to black)
         const double *ib = o->landscape ? k_icon_land : k_icon_port; double iw = o->bg_w, ih = o->bg_h;
-        double top = T + m, bot = o->title.y - 18, ah = bot - top, aw = cw;
+        double top = T + m, bot = o->title.y - 18 * k, ah = bot - top, aw = cw;
         double cover = w / iw > h / ih ? w / iw : h / ih, sc = cover;
         if (ah > 0 && sc * ih * (ib[3] - ib[1]) > ah) sc = ah / (ih * (ib[3] - ib[1]));
         if (sc * iw * (ib[2] - ib[0]) > aw) sc = aw / (iw * (ib[2] - ib[0]));
+        // 大屏竖屏：竖图 cover 铺满屏宽时图标框会占到屏高的 58.6%（17 Pro 竖屏是 39%），封顶到 0.40h；横屏的 52.4% 由上面的标题位置自然给出。
+        // Large portrait screens: the portrait image's cover fills the width and grows the icon box to 58.6% of the height (the 17 Pro portrait is 39%), so cap it at 0.40h; landscape gets the Thor's 52.4% naturally from the title position above.
+        if (k > 1 && !o->landscape) { double cap = 0.40 * h; if (sc * ih * (ib[3] - ib[1]) > cap) sc = cap / (ih * (ib[3] - ib[1])); }
         double icx = iw * (ib[0] + ib[2]) / 2 * sc, icy = ih * (ib[1] + ib[3]) / 2 * sc;   // 图标中心在缩放后图里的位置 | icon centre within the scaled image
         double cx = cx0 + cw / 2, cy = (ah > 0 ? top + ah / 2 : h * 0.3);
         o->bg_src = (dm_lp_rect){ 0, 0, iw, ih };
@@ -324,7 +346,7 @@ static void lpi_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     }
     o->logo_name = dm_loadpage_logo_name(&o->logo_w, &o->logo_h);
     { double lw = cw * (o->landscape ? 0.58 : 0.86); if (lw > 560) lw = 560; double lh = lw * o->logo_h / o->logo_w;
-      double top_lim = T + m + 46, bot_lim = o->title.y - 24, room = bot_lim - top_lim;
+      double top_lim = T + m + 46 * k, bot_lim = o->title.y - 24 * k, room = bot_lim - top_lim;
       if (room > 0 && lh > room) { lh = room; lw = lh * o->logo_w / o->logo_h; }
       double cy = h * (o->landscape ? 0.36 : 0.30), ly = cy - lh / 2; if (ly + lh > bot_lim) ly = bot_lim - lh; if (ly < top_lim) ly = top_lim;
       o->logo = (dm_lp_rect){ cx0 + (cw - lw) / 2, ly, lw > 0 ? lw : 0, lh > 0 ? lh : 0 }; }
