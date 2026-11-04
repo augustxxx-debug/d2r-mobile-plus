@@ -140,34 +140,24 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         return null;
     }
 
-    // 原生层启动前核的那几件（jni_android.c）：六件程序、至少一个着色器包、触屏覆盖层 | what the native layer checks before startup (jni_android.c): the six program files, at least one shader bundle, the touch overlay
-    private static final String[] CONTENT_MODULES = {"main.patched.bin", "main.fixups.tsv", "main.gates.tsv", "sdk.patched.bin", "sdk.fixups.tsv", "sdk.gates.tsv"};
-
-    // 运行目录里有没有能直接启动的游戏内容（与 jni_android.c 同一套检查）。没有就不论生成器在不在，都进加载页。
-    // Whether the runtime directory holds game content the native layer can boot from (the same checks as jni_android.c). Without it, the loading page runs whether or not the generator is bundled.
-    static boolean gameContentReady(File runtime) {
-        File out = new File(runtime, "out");
-        for (String m : CONTENT_MODULES) if (!new File(out, m).canRead()) return false;
-        String[] names = new File(runtime, "shaders").list(); boolean bundle = false;
-        if (names != null) for (String n : names) if (n.endsWith(".xgs")) { bundle = true; break; }
-        return bundle && new File(runtime, "overlay").isDirectory();
-    }
-
-    // nativeStart 的「没有可用游戏内容」返回码（jni_android.c）：缺数据 / 程序 / 着色器 / build 配置 / 触屏资源（缺失或不配套）
-    // nativeStart's "no usable game content" codes (jni_android.c): data / program / shaders / build configuration / touch resources (missing or mismatched)
-    static boolean contentMissing(int code) { return code == -2 || code == -3 || code == -4 || code == -5 || code == -9 || code == -10; }
+    // nativeStart 的「换一份内容就能修好」返回码（jni_android.c）：缺程序 / 着色器 / 触屏资源（缺失或不配套）。
+    // 缺数据（-2）与缺 build 配置（-5）是玩家资源目录的问题，生成修不好，不在这里重开进程（P2-1）。
+    // nativeStart's "a regenerated pack can fix it" codes (jni_android.c): program / shaders / touch resources (missing or mismatched).
+    // Missing data (-2) and build configuration (-5) are the player's resource directory and generation cannot fix them, so they do not relaunch here (P2-1).
+    static boolean contentMissing(int code) { return code == -3 || code == -4 || code == -9 || code == -10; }
 
     // true = 可以接着启动；false = 正在导入 / 生成或已显示加载页、失败页
     // true = startup can continue; false = importing / generating, or the loading / failure page is shown
     private boolean ensureImported(File source) {
         if (importing) return false;
         File runtime = new File(getFilesDir(), "dm");
-        String want = readText(new File(source, "pack_info.txt")), have = readText(new File(runtime, "pack_info.txt"));
-        if (want != null && !want.equals(have)) {
-            String product = packProduct(want);
-            // 电脑做的导入包与这版 App 不配套：不再停在纯文字提示上，按「没有可用游戏内容」进加载页，由手机端重做
-            // A computer-made import pack does not match this App version: no plain-text prompt; treat it as "no usable game content" and remake it on the loading page.
-            if (!BuildConfig.DM_PRODUCT.equals(product)) { generate(source.getParentFile(), runtime); return false; }
+        File ext = getExternalFilesDir(null);
+        // 判定全在 StartupDecision（javac 可单测）：不配套的旧导入包不会再触发生成（P0-1），换上一半的内容不进启动（P1-1）
+        // The decision lives in StartupDecision (unit-testable with javac): an incompatible old import pack no longer triggers generation (P0-1), and
+        // half-installed content does not boot (P1-1)
+        StartupDecision.Action action = StartupDecision.decide(source, runtime, ext == null ? null : new File(ext, "dm"), BuildConfig.DM_PRODUCT, generating);
+        if (action == StartupDecision.Action.GENERATE) { generate(source.getParentFile(), runtime); return false; }
+        if (action == StartupDecision.Action.IMPORT) {
             importing = true;
             // 加载页（LoadPageView，核心在 dm/host/dm_loadpage.c）：单阶段「导入」，进度按字节报，页面自己算速度与剩余时间 | the loading page (LoadPageView, core in dm/host/dm_loadpage.c): the single stage "import", progress in bytes, the page computes speed and ETA itself
             showLoadPage();
@@ -185,21 +175,6 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             }, "dm-import").start();
             return false;
         }
-        // 没有可用游戏内容（程序 / 着色器 / 覆盖层不齐，或已导入的是给别的版本做的）或生成器正在跑：一律进加载页（手机端生成流程），
-        // 不再回落到旧版「电脑端导入」纯文字提示。开发时直接推进来的内容只要 native 核的几件齐全就照旧直接启动（没有 pack_info.txt 不核版本）。
-        // No usable game content (program / shaders / overlay incomplete, or made for another version) or generation already running: always the
-        // loading page (on-phone generation), never the legacy computer-import plain-text prompt. Content pushed directly during development still
-        // starts when everything the native layer checks is there (no pack_info.txt means no version check).
-        String product = packProduct(have);
-        // 开发时直接推进来的内容也可能在外部私有目录（startHost / jni_android.c 在内部目录没有主程序时就用它），核内容要按同一条运行目录规则；
-        // 内部有主程序时只看内部，免得外面一份旧内容把不完整的内部目录盖过去。
-        // Content pushed directly during development may also sit in the external private directory (startHost / jni_android.c use it when the internal
-        // directory has no main module); the content check follows the same runtime-directory rule. When internal has a main module only internal counts, so
-        // an old copy outside cannot mask an incomplete internal directory.
-        File ext = getExternalFilesDir(null);
-        boolean bootContent = gameContentReady(runtime)
-                || (!new File(runtime, "out/main.patched.bin").canRead() && ext != null && gameContentReady(new File(ext, "dm")));
-        if (generating || !bootContent || (have != null && !BuildConfig.DM_PRODUCT.equals(product))) { generate(source.getParentFile(), runtime); return false; }
         return true;
     }
 
@@ -313,6 +288,10 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private void generate(File base, File runtime) {
         genHandler.removeCallbacks(genPoll);
         if (genFailure != null) { showGenFailure(); return; }
+        // 不带生成器的包（精简版 / 资源包）：内容不全也修不好。给专门说明，不再说「重新打开会接着生成」，也不进加载页空等（P2-2）
+        // A package without the generator (slim build / resource-only pack) cannot be fixed by generating. Show a dedicated explanation, never say
+        // "reopen to continue", and do not wait on the loading page (P2-2)
+        if (!generatorAvailable()) { genFailTitle = getString(R.string.dmAndroidGenFailed); genFailure = getString(R.string.dmAndroidGenNoGenerator); genLogText = null; showGenFailure(); return; }
         showLoadPage();   // 阶段状态在原生侧（静态），Activity 重建时只换一个新视图接上 | stage state lives natively (static); a recreated Activity just attaches a new view
         if (generating) { genHandler.post(genPoll); return; }   // Activity 重建：生成线程还在跑，只接回界面 | the Activity was recreated: the generation thread is still running; only reattach the screen
         // 资源目录与 startHost 同一条规则（缺省 data，没有就沿用早先的 Download/data） | resource directory by the same rule as startHost (data by default, else the earlier Download/data)
@@ -622,10 +601,14 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             // Touch overlay missing / not matching this version (the overlay inputs changed with an app update): a package with the generator marks the generated content stale and restarts
             // the process, which then regenerates it on the loading page. At most one automatic retry per version; after that the "no usable content" branch below applies
             if ((result == -9 || result == -10) && regenerateAfterUpdate()) return;
-            // 没有可用游戏内容（缺数据 / 程序 / 着色器 / 配置 / 触屏资源）：不再停在旧版「电脑端导入」提示上，换一个干净进程重来；
+            // 缺游戏数据（-2）/ 缺 build 配置（-5）：玩家资源目录的问题，生成修不好，也不白重开一次进程；直接告诉玩家文件该放哪（P2-1）
+            // Missing game data (-2) / build configuration (-5): the player's resource directory, which generation cannot fix; do not relaunch for
+            // nothing, just tell the player where the file goes (P2-1)
+            if (result == -2 || result == -5) { showStartError(getString(result == -2 ? R.string.dmAndroidMissingData : R.string.dmAndroidMissingConfig)); return; }
+            // 没有可用游戏内容（缺程序 / 着色器 / 触屏资源）：不再停在旧版「电脑端导入」提示上，换一个干净进程重来；
             // 下次启动在加载原生库之前由 ensureImported 看运行目录的实际内容：不全就进加载页由手机端生成，齐全就再试一次启动。
             // 每个版本只这样重开一次（整包重做很慢，也防止「生成成功但原生仍说缺」时来回重开）；之后落到通用启动失败页。
-            // No usable game content (missing data / program / shaders / configuration / touch resources): never the legacy computer-import prompt;
+            // No usable game content (missing program / shaders / touch resources): never the legacy computer-import prompt;
             // relaunch a clean process. Before the native library loads, ensureImported re-checks the runtime directory: incomplete content goes to the
             // loading page and is generated on the phone, complete content gets one more boot attempt. At most one such relaunch per version (a full
             // rebuild is slow, and it also stops a "generation succeeded but the native layer still says missing" loop); after that the generic

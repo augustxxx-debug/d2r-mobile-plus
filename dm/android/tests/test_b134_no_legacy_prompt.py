@@ -12,6 +12,7 @@ import unittest
 ANDROID = Path(__file__).resolve().parents[1]          # dm/android
 REPO = ANDROID.parents[1]                              # 仓库根 | repository root
 ACTIVITY = ANDROID / 'app/src/main/java/com/xiaoboluo/d2r/DmActivity.java'
+DECISION = ANDROID / 'app/src/main/java/com/xiaoboluo/d2r/StartupDecision.java'
 TSV = REPO / 'dm/i18n/ui_text.tsv'
 HEADER = REPO / 'dm/host/dm_i18n_tab.h'
 
@@ -54,6 +55,7 @@ def method_body(code, signature):
 class NoLegacyPrompt(unittest.TestCase):
     def setUp(self):
         self.code = strip_comments(ACTIVITY.read_text(encoding='utf-8'))
+        self.decision = strip_comments(DECISION.read_text(encoding='utf-8'))
 
     def test_player_strings_have_no_legacy_prompt(self):
         # 玩家看的文字全部来自统一表与它生成的头文件：旧提示与脚本名都不许留 | every player-visible string comes from the shared table and its header: no legacy prompt, no script name
@@ -77,38 +79,52 @@ class NoLegacyPrompt(unittest.TestCase):
         # With no usable content, whether the generator is bundled (generatorAvailable) or content was pushed by a developer (pushedByDeveloper)
         # must not decide whether the loading page runs.
         body = method_body(self.code, 'private boolean ensureImported(File source)')
-        self.assertIn('gameContentReady(runtime)', body)
+        self.assertIn('StartupDecision.Action action = StartupDecision.decide(source, runtime', body)
+        self.assertIn('if (action == StartupDecision.Action.GENERATE)', body)
         self.assertIn('generate(source.getParentFile(), runtime)', body)
         self.assertNotIn('generatorAvailable()', body)
         self.assertNotIn('pushedByDeveloper', body)
-        # 导入包版本不对的分支也必须进加载页，而不是纯文字提示 | a wrong-version import pack must also go to the loading page, not a plain-text prompt
-        self.assertEqual(body.count('generate(source.getParentFile(), runtime)'), 2, body)
+        # B134 返工 P0-1：不配套的旧导入包不再有单独的 generate 分支；生成只由运行目录的实际内容决定。
+        # B134 rework P0-1: an incompatible old import pack no longer has its own generate branch; only the runtime directory decides generation.
+        self.assertNotIn('!BuildConfig.DM_PRODUCT.equals(product)', body)
+        self.assertNotIn('packProduct(want)', body)
+        # 与本版配套的电脑导入包仍走导入流程 | a computer pack for this build still goes through the import flow
+        self.assertIn('StartupDecision.Action.IMPORT', body)
         # 开发时直推到外部私有目录的完整内容也算「有可用内容」：按 startHost / jni_android.c 的运行目录规则，内部没有主程序时看外部。
         # Complete content pushed directly to the external private directory also counts as usable: follow startHost / jni_android.c's runtime-directory
         # rule and look outside when internal has no main module.
         self.assertIn('getExternalFilesDir(null)', body)
-        self.assertIn('gameContentReady(new File(ext, "dm"))', body)
-        # 没有 pack_info.txt（have == null）的开发推送不核版本 | a developer push without pack_info.txt (have == null) skips the version check
-        self.assertIn('(have != null && !BuildConfig.DM_PRODUCT.equals(product))', body)
+        self.assertIn('new File(ext, "dm")', body)
 
     def test_game_content_check_matches_native(self):
-        # gameContentReady 与 jni_android.c 核同一套：六件程序、至少一个 .xgs、overlay 目录（-2 / -3 / -4 / -9）
-        # gameContentReady checks the same set as jni_android.c: the six program files, at least one .xgs, the overlay directory (-2 / -3 / -4 / -9)
-        body = method_body(self.code, 'static boolean gameContentReady(File runtime)')
-        self.assertIn('CONTENT_MODULES', body)
+        # contentReady 与 jni_android.c 核同一套：六件程序、至少一个 .xgs、overlay 目录（-3 / -4 / -9）；
+        # 另加 derived.tsv 与 pack_info.txt 版本记录、换上一半的标记（B134 返工 P1-1）。
+        # contentReady checks the same set as jni_android.c: the six program files, at least one .xgs, the overlay directory (-3 / -4 / -9);
+        # it also requires derived.tsv, the pack_info.txt version record and no unfinished-swap marker (B134 rework P1-1).
+        body = method_body(self.decision, 'static boolean contentReady(File runtime, String product)')
+        self.assertIn('MODULES', body)
         self.assertIn(".endsWith(\".xgs\")", body)
         self.assertIn('new File(runtime, "overlay").isDirectory()', body)
+        self.assertIn('new File(runtime, "derived.tsv").canRead()', body)
+        self.assertIn('new File(runtime, "pack_info.txt")', body)
+        self.assertIn('PackGenerator.installPending(runtime)', body)
         for module in ('main.patched.bin', 'main.fixups.tsv', 'main.gates.tsv',
                        'sdk.patched.bin', 'sdk.fixups.tsv', 'sdk.gates.tsv'):
-            self.assertIn('"%s"' % module, self.code)
+            self.assertIn('"%s"' % module, self.decision)
 
     def test_native_missing_content_codes_enter_loading_page(self):
-        # jni_android.c 启动前核内容，缺数据 / 程序 / 着色器 / 配置 / 触屏资源（-2..-5、-9、-10）都算「没有可用内容」
-        # jni_android.c checks content before boot; missing data / program / shaders / configuration / touch resources (-2..-5, -9, -10) all mean "no usable content".
+        # 生成能修好的只有缺程序 / 着色器 / 触屏资源（-3、-4、-9、-10）；缺数据（-2）与缺 build 配置（-5）是玩家资源目录的问题，
+        # 不重开进程，直接显示指路文案（B134 返工 P2-1）。
+        # Generation can only fix missing program / shaders / touch resources (-3, -4, -9, -10); missing data (-2) and build configuration (-5)
+        # are the player's resource directory, so no relaunch and the guidance text shows instead (B134 rework P2-1).
         missing = method_body(self.code, 'static boolean contentMissing(int code)')
-        for code in ('-2', '-3', '-4', '-5', '-9', '-10'):
+        for code in ('-3', '-4', '-9', '-10'):
             self.assertIn('code == ' + code, missing)
+        self.assertNotIn('code == -2', missing)
+        self.assertNotIn('code == -5', missing)
         start = method_body(self.code, 'private void startHost()')
+        self.assertIn('if (result == -2 || result == -5)', start)
+        self.assertIn('result == -2 ? R.string.dmAndroidMissingData : R.string.dmAndroidMissingConfig', start)
         self.assertIn('contentMissing(result)', start)
         # 本进程库已加载，不能就地生成：换干净进程，下次启动前由 ensureImported 进加载页 | the library is already loaded here, so do not generate in place:
         # relaunch a clean process; before the next launch ensureImported enters the loading page
@@ -130,18 +146,22 @@ class NoLegacyPrompt(unittest.TestCase):
         self.assertIn('showStartError(getString(R.string.dmAndroidStartFailed, result)); return;', start)
 
     def test_without_generator_generation_has_a_failure_exit(self):
-        # 不带生成器的包（generatorAvailable() 为假）内容不全时也会调 generate()：缺游戏文件先 showGenFailure；生成线程里的
-        # IOException / ErrnoException / RuntimeException（例如 assets 里没有 dmgen、libdmgen_py.so 不在）也被捕获成 genFailure，
-        # 加载页轮询看到后 showGenFailure，不会崩、空白或卡在加载页。
-        # A package without the generator (generatorAvailable() is false) still calls generate() when content is incomplete: missing game files go to
-        # showGenFailure first; IOException / ErrnoException / RuntimeException in the generation thread (e.g. no dmgen assets, no libdmgen_py.so) are
-        # caught into genFailure, and the loading-page poll sees it and calls showGenFailure -- no crash, blank screen or stuck loading page.
+        # 不带生成器的包（generatorAvailable() 为假）：generate() 开头就分流到专门的失败文案，不再进加载页空等，也不说「重新打开会接着生成」（P2-2）；
+        # 缺游戏文件仍先 showGenFailure，生成线程里的 IOException / ErrnoException / RuntimeException 仍被捕获成 genFailure。
+        # A package without the generator (generatorAvailable() is false): generate() branches at the top to a dedicated failure text, no longer waits
+        # on the loading page and never says "reopen to continue" (P2-2); missing game files still go to showGenFailure, and IOException / ErrnoException /
+        # RuntimeException in the generation thread are still caught into genFailure.
         gen = method_body(self.code, 'private void generate(File base, File runtime)')
         self.assertIn('failEarly(', gen)
         self.assertIn('catch (IOException | ErrnoException | InterruptedException | RuntimeException e)', gen)
         self.assertIn('genFailure = failure', gen)
         self.assertIn('generating = false', gen)
-        self.assertNotIn('generatorAvailable()', gen)
+        at = gen.index('if (!generatorAvailable())')
+        self.assertLess(at, gen.index('showLoadPage()'))
+        branch = gen[at:gen.index('showLoadPage()', at)]
+        self.assertIn('R.string.dmAndroidGenNoGenerator', branch)
+        self.assertIn('showGenFailure()', branch)
+        self.assertNotIn('dmAndroidGenInterrupted', branch)
         early = method_body(self.code, 'private void failEarly(File base, File data, String title, String reason, String why)')
         self.assertIn('showGenFailure()', early)
 
