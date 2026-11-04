@@ -890,6 +890,11 @@ static int slider_arrow(module_t *m, uint64_t root, int *x, int *y, int W, int H
                 if (*x >= l && *x <= r) { if (*x - l <= in && *x - l <= r - *x) side = 1; else if (r - *x <= in) side = -1; else return 0; }
                 int ax = side > 0 ? l - off : r + off, ay = (top + bot) / 2;   // side>0：触点在左端 | side>0: the touch point is at the left end
                 LOG("界面吸附：(%d,%d) 在滑块 %s 的%s端（滑槽 x %d–%d，行 y=%d）→ 点箭头 (%d,%d)", *x, *y, *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "?", side > 0 ? "左" : "右", l, r, ay, ax, ay);
+                // 点中的是这条滑块：g_click 记它（交叉审 P2-1）。原先这里不写，后面判「后果重的按钮只认本体」与吸附日志用的是上一次点中的控件——刚点过「放弃 / 默认」再点滑块箭头，
+                // 会被当成「离那颗按钮太远」吞掉，日志名也是陈旧的那颗
+                // The hit is this slider: g_click records it (cross-review P2-1). It used to stay untouched, so the "heavy buttons accept only their body" check and the snap log used the previously
+                // hit widget -- tapping a slider arrow right after Discard / Default was swallowed as "too far from that button", and the log showed that stale name
+                dm_wref_set(&g_click, w); g_click_name = *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "?";
                 *x = ax; *y = ay; return 1; } } }
     return 0;
 }
@@ -1185,14 +1190,13 @@ static int ui_button_kind(uint64_t w) {
 // geometry here: on the same row (±16 layout units) and within 64 layout units of either end of the track (arrow centre about 36 units outside the end, half width about 21) also counts as on the slider.
 #define SLIDER_ARROW_REACH 64
 #define SLIDER_ROW_SLACK 16
-static void dg_sliders(uint64_t w, uint64_t vt, int dep, uint64_t *out, int *n); static int dg_hit(uint64_t w, int x, int y);
 static int slider_part_hit(uint64_t page, int x, int y, uint64_t base, int vh) {
     if (vh <= 0) return 0;
-    static uint64_t sl[48]; int n = 0; dg_sliders(page, base + 0x20bad70, 0, sl, &n);
+    static uint64_t sl[48]; int n = 0; slider_collect(page, base + 0x20bad70, 0, sl, &n);
     int reach = SLIDER_ARROW_REACH * vh / 2160, slack = SLIDER_ROW_SLACK * vh / 2160, step = vh / 540 > 1 ? vh / 540 : 1;
     for (int i = 0; i < n; i++)
         for (int dy = -slack; dy <= slack; dy += slack > 0 ? slack : 1) { int yy = y + dy; if (yy < 0) continue;
-            for (int d = 0; d <= reach; d += step) { if (dg_hit(sl[i], x + d, yy) || (x - d >= 0 && dg_hit(sl[i], x - d, yy))) return 1; }
+            for (int d = 0; d <= reach; d += step) { if (slider_hit(sl[i], x + d, yy) || (x - d >= 0 && slider_hit(sl[i], x - d, yy))) return 1; }
             if (!slack) break; }
     return 0;
 }
