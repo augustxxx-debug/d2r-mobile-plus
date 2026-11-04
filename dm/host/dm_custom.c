@@ -36,11 +36,20 @@
 #else
 #define VOICE_ROW 0
 #endif
+// iCloud 那一行的键名：安卓包里没有这一行（CLAUDE.md §2.8），但槽位要留着（K_ICLOUD 下标、行号与 Apple 对齐）。
+// 安卓用占位名，key_other_platform 把它挡在存盘与日志外，没有人按名字读写它。
+// The key name of the iCloud row: the Android package has no such row (CLAUDE.md section 2.8), but the slot must stay (the K_ICLOUD index keeps row numbers aligned with Apple).
+// Android uses a placeholder name; key_other_platform keeps it out of the settings file and log, and nothing reads or writes it by name.
+#ifdef __ANDROID__
+#define K_ICLOUD_KEY "save_sync_unused"
+#else
+#define K_ICLOUD_KEY "icloud"
+#endif
 static const char *const k_keys[] = { "lang",
 #if VOICE_ROW
     "voice",
 #endif
-    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "belt_refill", "tel_stats", "auto_crash", "bright_level", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
+    "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", K_ICLOUD_KEY, "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above", "free_tp", "belt_refill", "tel_stats", "auto_crash", "bright_level", "fps_hud", "upscale", "render_res", "rt_level" };   // fps_hud 右上角帧数标签（front_ios.m attach_fps_hud，缺省关） | fps_hud: top-right frame-rate label (front_ios.m attach_fps_hud, off by default)   // upscale 开关与上次选择的 q3d 档位分开保存；render_res 整帧输出分辨率档位 0 自动 / 1 省电 / 2 均衡 / 3 原生（dm_res_cap.h） | render_res: whole-frame output resolution level (dm_res_cap.h)
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
 static const int k_def[NK] = { 0,
 #if VOICE_ROW
@@ -79,7 +88,10 @@ static _Atomic int g_ac_ok_pending;   // 确认框里同意了、还没点「应
 // 行号两边对齐；键仍在设置文件里（分享摘要照写），只是没人读。弱定义 = 支持（Apple 不变）
 // Per-platform settings: platforms without iCloud (Android: strong 0 in nvn_vk.c) get no icloud row on the Custom page, and the layout generator omits it likewise under
 // DM_TARGET=android (touch_layout.py _CUSTOM_KEYS) so row numbers agree on both sides; the key stays in the settings file (the share summary still lists it), nobody reads it. Weak = supported (Apple unchanged)
-#ifndef DM_GFX_GATE_TEST_HOOK
+#ifdef __ANDROID__
+// 安卓：nvn_vk.c 强定义 0；这个弱定义与 row_on_page 里的调用都去掉，包里的符号表与调试信息也不留这个名字（§2.8）。
+// Android: strong 0 in nvn_vk.c; both this weak definition and the call in row_on_page are gone, so the package's symbol table and debug info hold no such name (section 2.8).
+#elif !defined(DM_GFX_GATE_TEST_HOOK)
 __attribute__((weak)) int dm_icloud_supported(void) { return 1; }
 #else
 int dm_icloud_supported(void);
@@ -89,7 +101,17 @@ int dm_icloud_supported(void);
 // Options "key -> page / group / platform" table (RC2 plan C, user 2026-10-30; order = display order within a page, unrelated to the save order k_keys). _OPT_TABLE in touch_layout.py is the same table, compared line by line by test_options_table.py.
 // Group = heading text key dmOptGrp<group>. Keys not merged yet (absent from k_keys) already hold a place and are skipped when key_index does not know them: merging only touches k_keys / k_def. The Mac is only a lab host and counts with iOS (the layout also only tells Apple / Android apart)
 enum { PG_GFX, PG_GAME, PG_SYS };
+#ifdef __ANDROID__
+// 平台列只用数值（与 enum 完全等价）。安卓构建带 -g，enum 的枚举名会原样进 .debug_str（PF_APPLE 就是这么进的 libdm.so，
+// B089 扫到的那个词）；改用宏，值不变，调试信息里不再有平台名。Apple 侧仍是 enum。
+// The platform column is used by value only (identical to the enum). The Android build uses -g, so enum names land verbatim in .debug_str
+// (that is how PF_APPLE got into libdm.so, the word B089 found); use macros: same values, no platform names in the debug info. Apple keeps the enum.
+#define PF_APPLE 1
+#define PF_ANDROID 2
+#define PF_ALL 3
+#else
 enum { PF_APPLE = 1, PF_ANDROID = 2, PF_ALL = 3 };
+#endif
 #ifdef __ANDROID__
 #define PF_HERE PF_ANDROID
 #else
@@ -101,7 +123,7 @@ static const struct { const char *key; unsigned char page; const char *group; un
     { "upscale", PG_GFX, "Upscale", PF_APPLE }, { "q3d", PG_GFX, "Upscale", PF_APPLE },
     { "rt_level", PG_GFX, "Rt", PF_APPLE },   // RC2 光追档位一行取代 rt_shadow / rt_ao 两个开关（23a2ee3e） | RC2's one ray-tracing level row replaces the rt_shadow / rt_ao switches
     { "lang", PG_SYS, "Lang", PF_ALL }, { "voice", PG_SYS, "Lang", PF_ALL },
-    { "icloud", PG_SYS, "Saves", PF_APPLE },
+    { K_ICLOUD_KEY, PG_SYS, "Saves", PF_APPLE },
     { "tel_stats", PG_SYS, "Privacy", PF_ALL }, { "auto_crash", PG_SYS, "Privacy", PF_ALL },
     { "auto_mana", PG_GAME, "Combat", PF_ALL }, { "merc_pot", PG_GAME, "Combat", PF_ALL }, { "auto_buff", PG_GAME, "Combat", PF_ALL }, { "free_tp", PG_GAME, "Combat", PF_ALL },
     { "pot_pick", PG_GAME, "Loot", PF_ALL }, { "gem_pick", PG_GAME, "Loot", PF_ALL }, { "belt_refill", PG_GAME, "Loot", PF_ALL }, { "loot_filter", PG_GAME, "Loot", PF_ALL }, { "drop_light", PG_GAME, "Loot", PF_ALL }, { "drop_haptic", PG_GAME, "Loot", PF_APPLE },
@@ -111,13 +133,19 @@ static const struct { const char *key; unsigned char page; const char *group; un
 static int key_index(const char *k) { if (k) for (int i = 0; i < NK; i++) if (!strcmp(k, k_keys[i])) return i; return -1; }
 static int opt_page(int i) { for (int o = 0; o < N_OPTS; o++) if (!strcmp(k_opts[o].key, k_keys[i])) return (k_opts[o].plat & PF_HERE) ? k_opts[o].page : -1; return -1; }   // 这个键在本平台的页；-1 = 本平台没有这一行 | this key's page on this platform; -1 = no such row here
 static int graphics_key(int i) { for (int o = 0; o < N_OPTS; o++) if (!strcmp(k_opts[o].key, k_keys[i])) return k_opts[o].page == PG_GFX; return 0; }
+#ifdef __ANDROID__
+static int row_on_page(int i, int page) { return opt_page(i) == page; }   // 安卓没有 icloud 行（平台列已挡掉），也不再引用 dm_icloud_supported | no iCloud row on Android (the platform column already hides it), and no dm_icloud_supported reference either
+#else
 static int row_on_page(int i, int page) { return opt_page(i) == page && !(i == K_ICLOUD && !dm_icloud_supported()); }
+#endif
 // 图形页的平台门控照键表（审计 r1 P2-3）：超分组（upscale）、光追组（rt_level）在本平台有没有行，看 k_opts 的平台列；安卓都没有，Apple 都有
 // Graphics page platform gate from the key table (audit r1 P2-3): whether the upscaling group (upscale) and the ray-tracing group (rt_level) have rows here comes from k_opts' platform column; Android has neither, Apple both
 static int key_on_here(const char *k) { int i = key_index(k); return i >= 0 && opt_page(i) == PG_GFX; }
 static void graphics_plat_rows(int *up_show, int *rt_show) { *up_show = key_on_here("upscale"); *rt_show = key_on_here("rt_level"); }
 // iCloud 这台机此刻能不能用（没登录、这个包没权限）：运行时探测，Apple 端 cloud_ios.m 强定义；弱定义 = 能用（Mac 宿主、单测）| whether iCloud is usable right now (not signed in, no entitlement): probed at run time, strong on Apple in cloud_ios.m; weak = usable (Mac host, unit tests)
-__attribute__((weak)) int dm_icloud_available(void) { return 1; }
+#ifndef __ANDROID__
+__attribute__((weak)) int dm_icloud_available(void) { return 1; }   // 安卓没有 iCloud 探测，名字不进包 | no iCloud probe on Android; the name stays out of the package
+#endif
 static int custom_row(int i) { return row_on_page(i, PG_SYS); }   // 系统页（借来的视频页 VideoOptionsPanel）上有这一行，语言在最前 | this key has a row on the System page (the borrowed VideoOptionsPanel), language first
 static int custom_rows(void) { int n = 0; for (int i = 0; i < NK; i++) n += custom_row(i); return n; }
 static int custom_key_at(int row) {
@@ -198,7 +226,7 @@ const char *dm_save_commitdir(void);
 // 这一端没有的设置项：不写进日志与设置文件（§2.8，B092；旧文件里的这一行读进来也没有作用） | a setting this platform does not have: stays out of the log and the settings file (B092; the line in an old file has no effect)
 static int key_other_platform(int i) { (void)i;
 #ifdef __ANDROID__
-    return !strcmp(k_keys[i], "icloud");
+    return i == K_ICLOUD;   // 按槽位认，不再写键名字面量（§2.8：安卓包里不留 icloud 字样） | by slot, not by the key literal (section 2.8: no icloud wording in the Android package)
 #else
     return 0;
 #endif
@@ -911,8 +939,10 @@ void dm_custom_tel_answer(int yes) {
 // 这一页上的普通勾选行：页刚出现时摆成该显示的值，之后玩家点了就记待定值（两项单选行存一个键）| Plain checkbox rows of a page: set to the value to show when the page appears, then record pending values on taps (two-option radio rows store one key)
 // 只有触屏才起作用的两行：手柄模式置灰、副文「仅触屏」（D8），设置值不动 | the two touch-only rows: greyed in controller mode with the subtext "touch only" (D8), the setting stays
 // iCloud 能不能用：页刚出现时问一次，之后每 60 帧（约 1 秒）再问一次，不每帧调 ubiquityIdentityToken（审计 r1 P2-8） | iCloud usability: asked once when the page appears, then every 60 frames (about 1 s), not every frame (audit r1 P2-8)
+#ifndef __ANDROID__
 static int g_icloud_probes;   // 单测核调用次数 | call count for the unit test
 static int icloud_available_throttled(int fresh) { static int ok = 1, n; if (fresh || n <= 0) { ok = dm_icloud_available(); g_icloud_probes++; n = 60; } n--; return ok; }
+#endif
 static int touch_only_row(int i) { return i == K_TOUCH_SWAP || !strcmp(k_keys[i], "store_btn"); }
 static void sync_toggles(uint64_t sp, int page, dm_wref *seen) {
     int dm_padmode_current(void); int pad = dm_padmode_current();
@@ -920,8 +950,10 @@ static void sync_toggles(uint64_t sp, int page, dm_wref *seen) {
         uint64_t w = find_w(sp, nm, 0); if (!w || !*(uint8_t *)(w + 0x50)) continue;
         if (touch_only_row(i)) { char pn[56]; snprintf(pn, sizeof pn, "TouchCustom_%s_Pad", k_keys[i]); uint64_t pw = find_w(sp, pn, 0); if (pw) ui_show_ours(pw, pad);
             if (pad) { set_toggle_grey(w); if (rev_box(i)) { uint64_t rz = find_w(sp, rev_box(i), 0); if (rz) set_toggle_grey(rz); } dm_wref_set(&seen[i], 0); continue; } }
+#ifndef __ANDROID__
         if (i == K_ICLOUD) { uint64_t nw = find_w(sp, "TouchCustom_icloud_NoAcct", 0), nn = find_w(sp, "TouchCustom_icloud_Note", 0); int ok = icloud_available_throttled(dm_wref_get(&seen[i]) != w); if (nw) ui_show_ours(nw, !ok); if (nn) ui_show_ours(nn, ok);
             if (!ok) { set_toggle_grey(w); dm_wref_set(&seen[i], 0); continue; } }
+#endif
         int pd0 = atomic_load(&g_pend[i]), want = pd0 >= 0 ? pd0 : atomic_load(&g_val[i]);
         uint64_t z = rev_box(i) ? find_w(sp, rev_box(i), 0) : 0;   // 两项单选行（3D 画质：上下的「流畅优先」「画质优先」；换组位置）：存的仍是一个键，反面那一项是它的反面 | Two-option radio rows (3D quality: "Smoothness first" / "Quality first" stacked; swap-group position): still stores one key, the other option is its negation
         if (dm_wref_get(&seen[i]) != w) { dm_wref_set(&seen[i], w); set_toggle(w, want); if (z) set_toggle(z, !want); continue; }   // 页刚出现（布局里一律是没勾）：先摆成该显示的值，这一帧不当玩家点了 | The page has just appeared (in the layout everything is unchecked): first set it to the value it should show, and do not treat this frame as a player tap
