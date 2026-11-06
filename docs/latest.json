@@ -1,11 +1,1 @@
-{
-  "build": 1793336710,
-  "version": "1.0.0-rc1.2",
-  "note": "RC1.2：手柄焦点、社区弹窗触控、回城角标与自动喝药修复",
-  "urgent": false,
-  "community": {
-    "qq_group": "1129913678",
-    "github": "https://github.com/augustxxx-debug/d2r-mobile-plus",
-    "site": "https://d2rplus.augustusplay.com/"
-  }
-}
+{"build":1793977305,"version":"1.1.0","note":"1.1.0：大背包、药水堆叠、iOS 18–25 兼容与三端修复","urgent":false,"community":{"qq_group":"1129913678","github":"https://github.com/augustxxx-debug/d2r-mobile-plus","site":"https://d2rplus.augustusplay.com/"},"android":{"version":"1.1.0","url":"https://dl.augustusplay.com/android/1.1.0/D2R-Mobile-Plus-1.1.0.apk"},"ios18":{"build":1793977305,"note":"1.1.0：大背包、药水堆叠、iOS 18–25 兼容与三端修复","urgent":false,"version":"1.1.0"}}
