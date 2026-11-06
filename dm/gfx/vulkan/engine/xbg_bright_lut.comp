@@ -1,11 +1,11 @@
 #version 450
 // 3D 画面加亮的调色表重写（与 dm/gfx/nvn/nvn_mtl.m 的 Metal 核 lutk 同一算法）：色调映射先把合成好的 HDR x0.008 做 PQ 编码，
-// 再查这张 32^3 调色表；HDR 先乘曝光 k 等价于把表换成 L'(u) = L(PQ(k * PQ^-1(u)))。高光按提亮后的亮度往原值收（雪、天光不糊成白）。
+// 再查这张 32^3 调色表；HDR 先乘曝光 k 等价于把表换成 L'(u) = L(PQ(k * PQ^-1(u)))。高光按单调肩部压（雪、天光不糊成白；B098）。
 // 改了这里要重新生成 xbg_bright_spv.h（命令见那个文件开头）。
 // Color table rewrite for the 3D picture brightening (the same algorithm as the Metal kernel lutk in dm/gfx/nvn/nvn_mtl.m):
 // tone mapping PQ-encodes the composited HDR x0.008 and then looks up this 32^3 table; multiplying HDR by the exposure k
-// first equals replacing the table with L'(u) = L(PQ(k * PQ^-1(u))). Highlights are pulled back toward the original value
-// by their brightened luminance (snow and sky light do not wash out to white). Regenerate xbg_bright_spv.h after editing
+// first equals replacing the table with L'(u) = L(PQ(k * PQ^-1(u))). Highlights go through a monotonic shoulder (snow and sky
+// light do not wash out to white; B098). Regenerate xbg_bright_spv.h after editing
 // this file (the command is at the top of that file).
 layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
 layout(set = 0, binding = 0) uniform sampler3D src;
@@ -25,8 +25,14 @@ void main() {
     // b：按曝光 k 提亮后的输出；o：原版这一格
     // b: the output brightened by exposure k; o: this cell in the original game
     vec4 b = textureLod(src, u2, 0.0), o = texelFetch(src, g, 0);
-    // 高光保护：提亮后越接近白，越收回原值；暗处 s = 0 照常提亮
-    // Highlight protection: the closer to white after brightening, the more it returns to the original; dark cells (s = 0) brighten fully
-    float s = smoothstep(0.65, 1.0, dot(b.rgb, vec3(0.2126, 0.7152, 0.0722)));
-    imageStore(dst, g, vec4(max(mix(b.rgb, o.rgb, s), o.rgb), b.a));
+    // 高光保护（单调，B098）：目标亮度 = max(原版亮度, 肩部(提亮后亮度))，肩部在 0.65 以下恒等、以上平滑压向 1；
+    // 原版与提亮后两色按同一权重混合到这个亮度，不逐通道 max。暗处（提亮后 < 0.65）照常提亮。
+    // Highlight protection (monotonic, B098): target luminance = max(original luminance, shoulder(brightened luminance)), the
+    // shoulder being the identity below 0.65 and easing toward 1 above it; the original and brightened colors are mixed with one
+    // weight to reach it, with no per-channel max. Dark cells (brightened < 0.65) brighten fully.
+    const vec3 W = vec3(0.2126, 0.7152, 0.0722);
+    float lo = dot(o.rgb, W), lb = dot(b.rgb, W);
+    float h = lb <= 0.65 ? lb : 0.65 + 0.35 * (1.0 - exp((0.65 - lb) / 0.35));
+    float d = lb - lo, w = d > 1e-5 ? clamp((max(lo, h) - lo) / d, 0.0, 1.0) : 0.0;
+    imageStore(dst, g, vec4(mix(o.rgb, b.rgb, w), b.a));
 }

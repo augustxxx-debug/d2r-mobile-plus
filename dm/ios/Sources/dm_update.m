@@ -57,9 +57,22 @@ static void upd_net_why(void) {
 
 // 版本文件 → 要不要提示。返回 nil = 提示（out 填好），否则是不提示的原因（进日志）
 // Version file → whether to show a notice. Returns nil = show it (out is filled in); otherwise the reason for not showing it (goes to the log)
+// 旧接口版（iOS 18–25，DM_NVN_M3=1，B211）只看版本文件里的 iOS 18 渠道子对象（字段同顶层：build / note / urgent / version），
+// 顶层那份是 iOS 26 包的；没有这个子对象 = 没有给旧系统的新包，不提示（不算失败、不重试）。社区入口与 render_safe 仍读顶层
+// The older-API build (iOS 18-25, DM_NVN_M3=1, B211) reads only the iOS 18 channel sub-object of the version file (same fields as the top level: build / note /
+// urgent / version); the top level belongs to the iOS 26 build. Without the sub-object there is no new build for older systems: no notice (not a failure, no
+// retry). The community entry and render_safe still read the top level
+#ifndef DM_NVN_M3
+#define DM_NVN_M3 0
+#endif
+#define UPD_CHANNEL_KEY @"ios18"
+static NSString *const k_upd_no_channel = @"版本文件里没有 iOS 18 渠道（" UPD_CHANNEL_KEY @"），旧接口版不提示";
 static NSString *upd_parse(NSData *d, int *build, NSString **ver, NSString **note, int *urgent) {
     NSDictionary *j = d ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
     if (![j isKindOfClass:NSDictionary.class]) return @"格式不对：不是 JSON 对象";
+#if DM_NVN_M3
+    { id c = j[UPD_CHANNEL_KEY]; if (!c) return k_upd_no_channel; if (![c isKindOfClass:NSDictionary.class]) return @"格式不对：" UPD_CHANNEL_KEY @" 不是对象"; j = c; }
+#endif
     NSNumber *b = j[@"build"], *u = j[@"urgent"]; NSString *n = j[@"note"];
     if (![b isKindOfClass:NSNumber.class] || ![u isKindOfClass:NSNumber.class] || ![n isKindOfClass:NSString.class]) return @"格式不对：三个字段缺了或类型不对";
     if (!(b.doubleValue >= 1 && b.doubleValue < 2e9) || b.doubleValue != b.intValue) return @"格式不对：build 不是正整数";
@@ -111,6 +124,7 @@ static void upd_fetch(int n) {
         // 社区入口（dm_community.c）：取到了就把原文交给宿主解析 community 字段（版本号字段不合规也照交，那是另一回事）；三次都取不到才报「没拉到」= 沿用缓存 | community entry (dm_community.c): when fetched, hand the raw text to the host to parse the community field (even when the version fields are invalid, that is a separate matter); only after all attempts fail report "not fetched" = keep the cache
         if (!e && (![r isKindOfClass:NSHTTPURLResponse.class] || [(NSHTTPURLResponse *)r statusCode] == 200) && d.length && d.length <= 4096) dm_community_manifest(d.bytes, d.length);
         else if (n >= UPD_TRIES) dm_community_manifest(NULL, 0);
+        if (why == k_upd_no_channel) { plog("更新：查 %s → %s", us.UTF8String, why.UTF8String); atomic_store(&g_inflight, 0); dm_update_fail(0); dm_update_offer(0, "", "", 0); return; }   // B211：没有渠道 = 没有新包，不是失败 | B211: no channel = no new build, not a failure
         if (why) {
             plog("更新：查 %s（第 %d / %d 次）→ %s%s", us.UTF8String, n, UPD_TRIES, why.UTF8String, n < UPD_TRIES ? "，稍后再试" : "，已有的提示不动");
             if (e) plog("更新：第 %d 次取不到的错误码 %s %ld", n, e.domain.UTF8String, (long)e.code);

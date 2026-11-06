@@ -11,7 +11,7 @@ typedef struct {
     int level;          // stat 12
     int exp_permille;   // 本级经验进度 ‰（原版 experience.txt 门槛） | Experience progress within the current level ‰ (thresholds from the original game's experience.txt)
     int belt[4];        // 腰带四列各剩几件（腰带物品 x % 4 = 列） | How many items remain in each of the four belt columns (belt item x % 4 = column)
-    int portal;         // 回城次数：回城书 tbk 的数量（stat 70）+ 回城卷轴 tsc 张数 | Town portal count: quantity in the Tome of Town Portal tbk (stat 70) + number of Scroll of Town Portal tsc
+    int portal;         // 回城钮能用的次数：背包第 0 页的回城书（次数，stat 70）+ 背包第 0 页与腰带的回城卷轴，同 dm_freetp.c use_scroll；储藏箱 / 方块不算 | Town portal uses a press can spend: tome charges (stat 70) on inventory page 0 + scrolls on inventory page 0 and the belt, as use_scroll in dm_freetp.c; stash / cube do not count
     int players;        // 当前人数档（人数设置对象 +0xc）；0 = 未读到 | Current players setting (players setting object +0xc); 0 = not read
     int hp, hp_max, mp, mp_max;   // 生命 / 法力（stat 6–9 ÷ 256，取整） | Life / mana (stat 6–9 ÷ 256, rounded to an integer)
     int area, x, y;     // 所在区域号（levels.txt Id；0 = 未读到）与玩家坐标（格） | Current area number (levels.txt Id; 0 = not read) and player coordinates (cells)
@@ -34,6 +34,7 @@ static inline int dm_hud_bar_visible(const dm_hud_info *h, int navigation, int b
 void dm_hud_get(dm_hud_info *out);
 uint32_t dm_hud_held(void);
 void dm_hud_set_held(uint32_t id);   // 游戏主线程：客户端手上物品 id（0 = 空），dm_hud_get 的 holding 取它 | Game main thread: id of the item in the client's hand (0 = empty); the holding field of dm_hud_get takes it
+void dm_diff_tip(int n);   // 触屏底栏难度格的说明（B034）：n = 0 选择条刚展开，1–8 刚选中这一档；任意线程调 | the touch difficulty cell's explanation (B034): n = 0 selector just opened, 1-8 this level just picked; any thread
 void dm_hud_request_players(int n);   // 1..8；任意线程调用 | 1..8; callable from any thread
 // 「选项 → 游戏」页难度行（dm_padmode.c 借原版滑块 OfflineDifficultyScaling）：滑块刻度 lo..hi（原版 1..8；0 起的刻度也认）↔ 人数档 1..8，越界夹住；刻度坏（lo >= hi）当没读到：档 1 / 值 lo
 // Difficulty row on the Options → Gameplay page (dm_padmode.c borrows the original slider OfflineDifficultyScaling): slider scale lo..hi (original 1..8; a zero-based scale is accepted too) <-> players level 1..8, clamped; a broken scale (lo >= hi) counts as unread: level 1 / value lo

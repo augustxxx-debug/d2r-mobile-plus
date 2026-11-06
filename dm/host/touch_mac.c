@@ -321,10 +321,19 @@ apply_input:
         if (g_touch.state.ry) *ry = g_touch.state.ry;
         return;
     }
+    // 测试开关 DM_TOUCH_ITEM_DELAY=<拍>（B169 回归）：按下时照样当场判类，但晚这么多个脚本拍才交给触屏层，模拟 iOS / 鸿蒙前端异步问宿主（面板开着时显示节拍慢、手快时第一次移动就过了阈值）；
+    // 抬起先于结果到时按前端的做法：先标「抬手挂起」，再交结果。缺省 0 = 原来的同步
+    // Test switch DM_TOUCH_ITEM_DELAY=<beats> (B169 regression): classify on press as before, but hand the result to the touch layer only this many script beats later, simulating the iOS / Harmony front ends that ask the host asynchronously
+    // (slow display link with a panel open, a fast finger crossing the threshold on its first move); if the lift comes before the result, do as the front end does: mark the lift pending first, then hand over the result. Default 0 = synchronous as before
+    static int item_delay = -1, pend_kind = -1; static uint64_t pend_due;
+    if (item_delay < 0) { const char *dv = getenv("DM_TOUCH_ITEM_DELAY"); item_delay = dv ? atoi(dv) : 0; if (item_delay > 0) fprintf(stderr, "[dm] DM_TOUCH_ITEM_DELAY：判类结果晚 %d 拍交给触屏层\n", item_delay); }
+    if (pend_kind >= 0 && g_touch.beat >= pend_due) { dm_tc_pointer_item(&g_touch.state, pend_kind); fprintf(stderr, "[dm] DM_TOUCH_ITEM_DELAY：第 %llu 拍交判类 %d（已拖起 %d，界面手势 %d）\n", (unsigned long long)g_touch.beat, pend_kind, g_touch.state.pointer_slot >= 0 ? g_touch.state.finger[g_touch.state.pointer_slot].pointer_dragged : -1, g_touch.state.pointer_slot >= 0 ? g_touch.state.finger[g_touch.state.pointer_slot].ui_drag : -1); pend_kind = -1; }
     while (g_touch.next < g_touch.count && g_touch.event[g_touch.next].beat <= g_touch.beat) {
         touch_event *e = &g_touch.event[g_touch.next++];
         if (e->slot < 0 || e->slot >= DM_TC_MAX_TOUCH) continue;
-        if (e->op == TOUCH_DOWN) { dm_tc_begin(&g_touch.state, e->slot, e->x, e->y); if (g_touch.state.navigation_mode && e->slot == g_touch.state.pointer_slot) dm_tc_pointer_item(&g_touch.state, dm_ui_item_at_now(e->x / 2868, e->y / 1320)); }
+        if (e->op == TOUCH_UP && pend_kind >= 0 && e->slot == g_touch.state.pointer_slot) { g_touch.state.pointer_lift_pending = 1; dm_tc_pointer_item(&g_touch.state, pend_kind); pend_kind = -1; }
+        if (e->op == TOUCH_DOWN) { dm_tc_begin(&g_touch.state, e->slot, e->x, e->y); if (g_touch.state.navigation_mode && e->slot == g_touch.state.pointer_slot) { int k = dm_ui_item_at_now(e->x / 2868, e->y / 1320);
+            if (item_delay > 0) { pend_kind = k; pend_due = g_touch.beat + (uint64_t)item_delay; } else dm_tc_pointer_item(&g_touch.state, k); } }
         else if (e->op == TOUCH_MOVE) {
             // 真鼠标拖物品：触屏层把物品图抬在「手指」上方 DM_TC_POINTER_LIFT_PT（手指会挡住图），落点也按抬起后的图算；鼠标不挡东西，物品图应当就在光标上。
             // 所以拖动已经起了之后，把光标位置下移同样的量当「手指位置」喂给触屏层：抬起后的图正好落在光标上，松手落点 = 光标。起拖前不移（不然一下单击会被这段位移当成拖）
@@ -362,7 +371,8 @@ apply_input:
             if (g_touch.state.mouse_click_seq != mc) { float nx = g_touch.state.mouse_click_x / 2868, ny = g_touch.state.mouse_click_y / 1320; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
         }
     }
-    if (g_touch.state.diff_request) { dm_hud_request_players(g_touch.state.diff_request); g_touch.state.diff_request = 0; }   // 难度选择条选中档位 → 下一拍走原版路径 | a level is selected on the difficulty selector bar -> take the original game's path on the next tick
+    { static int was; if (g_touch.state.diff_open && !was) dm_diff_tip(0); was = g_touch.state.diff_open; }
+    if (g_touch.state.diff_request) { dm_diff_tip(g_touch.state.diff_request); dm_hud_request_players(g_touch.state.diff_request); g_touch.state.diff_request = 0; }   // 难度选择条选中档位 → 下一拍走原版路径 | a level is selected on the difficulty selector bar -> take the original game's path on the next tick
     dm_tc_tick(&g_touch.state, (double)g_touch.beat / 30.0);
     if (g_touch.state.pulse_button && !g_touch.pulse_end_beat) {
         g_touch.pulse_end_beat = g_touch.beat + 4;

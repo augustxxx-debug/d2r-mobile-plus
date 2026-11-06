@@ -1,0 +1,406 @@
+// 加载页核心：见 dm_loadpage.h。不依赖平台、不读时钟、不起线程、不分配堆内存。
+// Loading page core: see dm_loadpage.h. Platform independent, reads no clock, starts no thread, allocates no heap memory.
+#include "dm_loadpage.h"
+#include "dm_i18n.h"
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#ifdef DM_LOADPAGE_STANDALONE   // 安卓导入前的小库：没有 dm.h 的 LOG，写安卓日志 | Android pre-import small library: no dm.h LOG, write to the Android log
+#include <android/log.h>
+#define LOG(...) __android_log_print(ANDROID_LOG_INFO, "dm", __VA_ARGS__)
+#else
+#include "dm.h"
+#endif
+
+// 阶段种类表：文案键、缺省权重（毫秒，按实测：安卓拷 690 MB 导入包在奥丁上约 6 秒、之后管线现编合计约 2 秒（2026-10-29 实测，6e9e8e3）→ 导入 : 准备 ≈ 85 : 15；手机端生成在奥丁上 371 秒里着色器占大头；iOS 下载按 4 GB / 10 分钟）、缺省副文键
+// Stage kind table: text key, default weight (ms, by measurement: Android copying the 690 MB import pack ≈ 6 s on the Thor, then ≈ 2 s of pipeline builds (measured 2026-10-29, 6e9e8e3) → import : prepare ≈ 85 : 15; on-phone generation 371 s on the Thor, mostly shaders; iOS download 4 GB / 10 min), default sub-line key
+static const struct { const char *title, *hint; int weight_ms; } k_kind[DM_LP_KIND_N] = {
+    [DM_LP_DOWNLOAD] = { "dmLoadStageDownload", "dmLoadHintStay", 600000 },
+    [DM_LP_IMPORT]   = { "dmLoadStageImport",   "dmLoadHintImport", 8500 },
+    [DM_LP_PATCH]    = { "dmLoadStagePatch",    "dmLoadHintStay", 20000 },
+    [DM_LP_ASSETS]   = { "dmLoadStageAssets",   "dmLoadHintStay", 30000 },
+    [DM_LP_OVERLAY]  = { "dmLoadStageOverlay",  "dmLoadHintStay", 20000 },
+    [DM_LP_PACKS]    = { "dmLoadStagePacks",    "dmLoadHintShaders", 30000 },
+    [DM_LP_SHADERS]  = { "dmLoadStageShaders",  "dmLoadHintShaders", 270000 },
+    [DM_LP_INSTALL]  = { "dmLoadStageInstall",  "dmLoadHintStay", 15000 },
+    [DM_LP_VERIFY]   = { "dmLoadStageVerify",   "dmLoadHintStay", 5000 },
+    [DM_LP_PREPARE]  = { "dmLoadStagePrepare",  "dmLoadHintPrepare", 1500 },
+};
+static const char *const k_kind_zh[DM_LP_KIND_N] = { "下载", "导入", "处理文件", "整理资源", "触屏资源", "着色器打包", "着色器缓存", "安装", "校验", "准备" };   // 日志用 | for the log
+
+typedef struct { int kind, weight_ms; double frac; uint64_t t0, t_last; int started, done; dm_lp_detail d; double rate_bps; uint64_t rate_t; int64_t rate_b; } lp_stage;
+static struct {
+    int state, n, cur;
+    lp_stage s[DM_LP_MAX_STAGES];
+    double overall;             // 只增不减 | never decreasing
+    uint64_t t_begin, t_end;
+    char note[320], fail[320];  // 平台给的正文 / 失败原因 | body override / failure reason from the platform
+    const char *hint_key;
+    int ui_group;               // -1 = dm_ui() | -1 = dm_ui()
+    int muted;                  // 静音开关（缺省 0 = 有声音） | mute toggle (default 0 = sound on)
+    const char *prompt_title, *prompt_sub;   // 提示页的标题 / 副文键（非空 = 提示页） | notice page title / sub keys (non-NULL = notice page)
+} g = { .cur = -1, .ui_group = -1, .muted = 0 };
+
+// ---- 线程：核心状态（g、cm、g_last_line、g_wordmark）全部由一把递归锁护着（外审 EXT6-01：导入 / 生成线程写、社区线程写、UI 线程读，TSan 复现过数据竞争）。
+// 对外函数都是「加锁 → 调实现 → 解锁」的薄壳（文件末尾），实现之间互相调用时递归锁可重入。返回内部缓冲指针的（ui、copy_value、last_line）只在锁内有效：
+// 平台要在锁内用完（dm_loadpage_lock / unlock，JNI 的 nativeFrame 在一次加锁里取齐文本与布局）
+// ---- Threads: all core state (g, cm, g_last_line, g_wordmark) is guarded by one recursive lock (external review EXT6-01: the import / generation thread writes, the community thread
+// writes, the UI thread reads; TSan reproduced the races). Every public function is a thin "lock - call the implementation - unlock" wrapper (end of file); implementations calling each
+// other re-enter the recursive lock. Functions returning a pointer into internal buffers (ui, copy_value, last_line) are valid only under the lock: the platform must use them there
+// (dm_loadpage_lock / unlock; the JNI nativeFrame takes text and layout together under one lock)
+#include <pthread.h>
+static pthread_mutex_t g_lp_mu; static pthread_once_t g_lp_once = PTHREAD_ONCE_INIT;
+static void lp_mu_init(void) { pthread_mutexattr_t a; pthread_mutexattr_init(&a); pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE); pthread_mutex_init(&g_lp_mu, &a); pthread_mutexattr_destroy(&a); }
+#ifdef DM_LOADPAGE_TEST_NO_LOCK   // 只给 t_loadpage_race 证明「去掉锁 TSan 就报」用，产品构建不定义 | only for t_loadpage_race to show TSan reports without the lock; never defined in product builds
+static void lp_lock(void) {} static void lp_unlock(void) {}
+#else
+static void lp_lock(void) { pthread_once(&g_lp_once, lp_mu_init); pthread_mutex_lock(&g_lp_mu); }
+static void lp_unlock(void) { pthread_mutex_unlock(&g_lp_mu); }
+#endif
+void dm_loadpage_lock(void) { lp_lock(); }
+void dm_loadpage_unlock(void) { lp_unlock(); }
+static int g_wordmark = 1;   // 见 dm_loadpage_set_wordmark | see dm_loadpage_set_wordmark
+static void lpi_set_wordmark(int on) { g_wordmark = on != 0; }
+static const char *lpi_ui(const char *key) { return g.ui_group >= 0 ? dm_ui_group(key, g.ui_group) : dm_ui(key); }
+static void lpi_ui_set_group(int group) { g.ui_group = group; }
+
+static void lpi_begin(const int *kinds, int n, const int *weight_ms, uint64_t now_ms) {
+    int grp = g.ui_group, mu = g.muted; memset(&g, 0, sizeof g); g.ui_group = grp; g.muted = mu; g.cur = -1;
+    if (n > DM_LP_MAX_STAGES) n = DM_LP_MAX_STAGES;
+    for (int i = 0; i < n; i++) {
+        int k = kinds[i] >= 0 && kinds[i] < DM_LP_KIND_N ? kinds[i] : DM_LP_IMPORT;
+        g.s[i].kind = k; g.s[i].weight_ms = weight_ms && weight_ms[i] > 0 ? weight_ms[i] : k_kind[k].weight_ms;
+    }
+    g.n = n; g.state = n > 0 ? DM_LP_RUNNING : DM_LP_IDLE; g.t_begin = now_ms;
+    if (n > 0) { char w[256]; int o = 0; for (int i = 0; i < n && o < (int)sizeof w - 32; i++) o += snprintf(w + o, sizeof w - o, "%s%s %d 秒", i ? " → " : "", k_kind_zh[g.s[i].kind], g.s[i].weight_ms / 1000);
+        LOG("加载页：开始，%d 个阶段（权重 %s）", n, w); }
+}
+static double total_weight(void) { double t = 0; for (int i = 0; i < g.n; i++) t += g.s[i].weight_ms; return t > 0 ? t : 1; }
+static void recompute(void) {
+    double done = 0;
+    for (int i = 0; i < g.n; i++) done += g.s[i].weight_ms * (g.s[i].done ? 1.0 : (i == g.cur ? g.s[i].frac : 0.0));
+    double v = done / total_weight(); if (v > 1) v = 1; if (v > g.overall) g.overall = v;
+}
+static void lpi_set(int stage, double frac, const dm_lp_detail *d, uint64_t now_ms) {
+    if (g.state != DM_LP_RUNNING || stage < 0 || stage >= g.n) return;
+    if (frac < 0) frac = 0; if (frac > 1) frac = 1; if (frac != frac) frac = 0;
+    if (stage < g.cur) { if (d) g.s[stage].d = *d; return; }   // 回报更早的阶段：记细节、不动进度（不倒退） | an earlier stage reporting: keep details, progress untouched (no regression)
+    for (int i = 0; i < stage; i++) if (!g.s[i].done) { g.s[i].done = 1; g.s[i].frac = 1; if (!g.s[i].started) { g.s[i].started = 1; g.s[i].t0 = now_ms; } g.s[i].t_last = now_ms; }
+    lp_stage *s = &g.s[stage];
+    if (!s->started) { s->started = 1; s->t0 = now_ms; s->rate_t = now_ms; s->rate_b = d ? d->bytes_done : 0; if (g.cur != stage) LOG("加载页：阶段 %d/%d %s 开始", stage + 1, g.n, k_kind_zh[s->kind]); }
+    if (g.cur != stage) g.cur = stage;
+    if (s->done) { if (d) s->d = *d; return; }   // 已走完的阶段再来回报：只记细节，用时定格在走完那一刻 | a finished stage reporting again: details only, its duration stays fixed at the moment it finished
+    if (frac > s->frac) s->frac = frac;   // 同一阶段内也不倒退 | no regression within a stage either
+    if (d) {
+        s->d = *d;
+        if (d->bytes_done > s->rate_b && now_ms >= s->rate_t + 250) {   // 速度：至少隔 250 毫秒算一次，指数平滑 | speed: at least 250 ms apart, exponentially smoothed
+            double inst = (double)(d->bytes_done - s->rate_b) * 1000.0 / (double)(now_ms - s->rate_t);
+            s->rate_bps = s->rate_bps > 0 ? s->rate_bps * 0.7 + inst * 0.3 : inst; s->rate_t = now_ms; s->rate_b = d->bytes_done;
+        }
+    }
+    s->t_last = now_ms;
+    if (s->frac >= 1) { s->done = 1; LOG("加载页：阶段 %d/%d %s 走完，%.1f 秒", stage + 1, g.n, k_kind_zh[s->kind], (now_ms - s->t0) / 1000.0); }
+    recompute();
+}
+static void lpi_prompt(const char *title_key, const char *body, const char *sub_key) {
+    int grp = g.ui_group, mu = g.muted; memset(&g, 0, sizeof g); g.ui_group = grp; g.muted = mu; g.cur = -1; g.state = DM_LP_IDLE;
+    g.prompt_title = title_key; g.prompt_sub = sub_key; if (body) snprintf(g.note, sizeof g.note, "%s", body);
+    LOG("加载页：提示页 %s", title_key ? title_key : "-");
+}
+static int lpi_prompting(void) { return g.prompt_title != NULL; }
+static void lpi_note(const char *text) { if (text) snprintf(g.note, sizeof g.note, "%s", text); else g.note[0] = 0; }
+static void lpi_hint(const char *key) { g.hint_key = key; }
+// 最近一次完成 / 失败那一行（安卓：加载页在宿主库之前跑，日志只进 logcat；DmActivity 进游戏前把它交给宿主写进 boot.log，分享诊断日志才看得到）
+// The latest finish / failure line (Android: the loading page runs before the host library, so its log reaches only logcat; DmActivity hands it to the host
+// before entering the game, which writes it into boot.log where share diagnostics can see it)
+static char g_last_line[512];
+static const char *lpi_last_line(void) { return g_last_line; }
+static void lpi_fail(const char *reason, uint64_t now_ms) {
+    if (g.state == DM_LP_IDLE) { g.state = DM_LP_RUNNING; g.t_begin = now_ms; }
+    g.state = DM_LP_FAILED; g.t_end = now_ms; snprintf(g.fail, sizeof g.fail, "%s", reason ? reason : "");
+    if (g.cur >= 0) g.s[g.cur].t_last = now_ms;
+    snprintf(g_last_line, sizeof g_last_line, "加载页：失败于阶段 %d/%d %s（%.0f%%）：%s", g.cur + 1, g.n, g.cur >= 0 ? k_kind_zh[g.s[g.cur].kind] : "-", g.overall * 100, g.fail);
+    LOG("%s", g_last_line);
+}
+static void lpi_finish(uint64_t now_ms) {
+    if (g.state != DM_LP_RUNNING) return;
+    for (int i = 0; i < g.n; i++) { if (!g.s[i].started) { g.s[i].started = 1; g.s[i].t0 = now_ms; } if (!g.s[i].done) { g.s[i].done = 1; g.s[i].frac = 1; g.s[i].t_last = now_ms; } }
+    g.cur = g.n - 1; g.overall = 1; g.state = DM_LP_DONE; g.t_end = now_ms;
+    char sum[384]; dm_loadpage_summary(sum, sizeof sum, now_ms);
+    snprintf(g_last_line, sizeof g_last_line, "加载页：完成，%s", sum);
+    LOG("%s", g_last_line);   // 分享诊断日志摘要取「加载页：」的最后一行 | the share-log summary takes the last 「加载页：」 line
+}
+static int lpi_state(void) { return g.state; }
+static double lpi_overall(void) { return g.overall; }
+static int lpi_percent(void) { int p = (int)floor(g.overall * 100 + 1e-9); return p < 0 ? 0 : p > 100 ? 100 : p; }
+static int lpi_stage(void) { return g.cur; }
+static int lpi_stage_kind(int stage) { return stage >= 0 && stage < g.n ? g.s[stage].kind : -1; }
+static int lpi_stage_ms(int stage) { if (stage < 0 || stage >= g.n || !g.s[stage].started) return 0; return (int)(g.s[stage].t_last - g.s[stage].t0); }
+static int lpi_summary(char *buf, size_t n, uint64_t now_ms) {
+    int o = 0; if (!buf || !n) return 0; buf[0] = 0;
+    for (int i = 0; i < g.n && o < (int)n; i++) if (g.s[i].started) o += snprintf(buf + o, n - o, "%s%s %.1f 秒", o ? " · " : "", k_kind_zh[g.s[i].kind], dm_loadpage_stage_ms(i) / 1000.0);
+    uint64_t end = g.state == DM_LP_RUNNING ? now_ms : g.t_end;
+    if (o < (int)n) o += snprintf(buf + o, n - o, "%s合计 %.1f 秒", o ? " · " : "", (end > g.t_begin ? end - g.t_begin : 0) / 1000.0);
+    return o < (int)n ? o : (int)n - 1;
+}
+
+// 剩余时间估计（毫秒）：当前阶段按已用时间线性外推（走了 3% 且过了 2 秒才信），不够就按权重；再加后面各阶段的权重。-1 = 还估不出
+// Remaining time estimate (ms): the current stage extrapolated linearly from elapsed time (trusted once 3% and 2 s have passed), otherwise by weight; plus the weights of later stages. -1 = not yet
+static double eta_ms(uint64_t now_ms) {
+    if (g.cur < 0) return -1;
+    const lp_stage *s = &g.s[g.cur]; double el = (double)(now_ms - s->t0), rem;
+    if (s->done) rem = 0;
+    else if (s->d.bytes_total > s->d.bytes_done && s->rate_bps > 0) rem = (double)(s->d.bytes_total - s->d.bytes_done) * 1000.0 / s->rate_bps;   // 知道字节与速度（下载 / 拷贝）：最准 | bytes and speed known (download / copy): most accurate
+    else if (s->frac >= 0.03 && el >= 2000) rem = el * (1 - s->frac) / s->frac;
+    else if (el < 2000) return -1;
+    else rem = s->weight_ms * (1 - s->frac);
+    for (int i = g.cur + 1; i < g.n; i++) rem += g.s[i].weight_ms;
+    return rem;
+}
+static int cat(char *b, size_t n, int o, const char *sep, const char *piece) {
+    if (o >= (int)n) return o;
+    return o + snprintf(b + o, n - o, "%s%s", o && sep ? sep : "", piece);
+}
+static void community_text(dm_lp_text *t, uint64_t now_ms);
+static void text_main(dm_lp_text *t, uint64_t now_ms);
+static void lpi_text(dm_lp_text *t, uint64_t now_ms) { memset(t, 0, sizeof *t); t->brand = g_wordmark ? "D2R Mobile Plus" : ""; text_main(t, now_ms); community_text(t, now_ms); }
+static void text_main(dm_lp_text *t, uint64_t now_ms) {
+    snprintf(t->percent, sizeof t->percent, "%d%%", dm_loadpage_percent());
+    if (g.state == DM_LP_FAILED) {
+        snprintf(t->title, sizeof t->title, "%s", dm_loadpage_ui("dmLoadFailTitle"));
+        snprintf(t->body, sizeof t->body, "%s", g.fail);
+        snprintf(t->sub, sizeof t->sub, "%s", dm_loadpage_ui("dmLoadFailHint"));
+        return;
+    }
+    if (g.state == DM_LP_DONE) { snprintf(t->title, sizeof t->title, "%s", dm_loadpage_ui("dmLoadDoneTitle")); snprintf(t->percent, sizeof t->percent, "100%%"); return; }
+    if (g.prompt_title) {   // 提示页：标题 / 正文 / 副文，没有百分数 | notice page: title / body / sub, no percent
+        snprintf(t->title, sizeof t->title, "%s", dm_loadpage_ui(g.prompt_title)); snprintf(t->body, sizeof t->body, "%s", g.note);
+        if (g.prompt_sub) snprintf(t->sub, sizeof t->sub, "%s", dm_loadpage_ui(g.prompt_sub));
+        t->percent[0] = 0; return; }
+    if (g.cur < 0) {   // 还没有阶段回报：有阶段表就用第一个阶段的标题，没有（iOS 资源页等玩家 / 等下载）用「准备游戏内容」，百分数空着 | no stage reported yet: the first stage's title if there is a stage list, else "Preparing game content" (iOS asset screen waiting), percent blank
+        snprintf(t->title, sizeof t->title, "%s", dm_loadpage_ui(g.n ? k_kind[g.s[0].kind].title : "dmLoadIdleTitle")); if (!g.n) t->percent[0] = 0;
+        if (g.note[0]) snprintf(t->body, sizeof t->body, "%s", g.note); return; }
+    const lp_stage *s = &g.s[g.cur];
+    snprintf(t->title, sizeof t->title, "%s", dm_loadpage_ui(k_kind[s->kind].title));
+    snprintf(t->sub, sizeof t->sub, "%s", dm_loadpage_ui(g.hint_key ? g.hint_key : k_kind[s->kind].hint));
+    if (g.note[0]) { snprintf(t->body, sizeof t->body, "%s", g.note); return; }
+    const char *sep = dm_loadpage_ui("dmLoadDetailSep"); char piece[160]; int o = 0;
+    if (s->d.items_total > 0) { snprintf(piece, sizeof piece, dm_loadpage_ui("dmLoadDetailItems"), (long long)s->d.items_done, (long long)s->d.items_total); o = cat(t->body, sizeof t->body, o, sep, piece); }
+    if (s->d.bytes_total > 0) {
+        if (s->d.bytes_total >= 1000000000LL) snprintf(piece, sizeof piece, dm_loadpage_ui("dmLoadDetailBytesGb"), s->d.bytes_done / 1e9, s->d.bytes_total / 1e9);
+        else snprintf(piece, sizeof piece, dm_loadpage_ui("dmLoadDetailBytesMb"), s->d.bytes_done / 1e6, s->d.bytes_total / 1e6);
+        o = cat(t->body, sizeof t->body, o, sep, piece);
+        if (s->rate_bps > 0) { snprintf(piece, sizeof piece, dm_loadpage_ui("dmLoadDetailSpeed"), s->rate_bps / 1e6); o = cat(t->body, sizeof t->body, o, sep, piece); }
+    }
+    double eta = eta_ms(now_ms);
+    if (eta < 0) snprintf(piece, sizeof piece, "%s", dm_loadpage_ui("dmLoadDetailEtaCalc"));
+    else if (eta >= 90000) snprintf(piece, sizeof piece, dm_loadpage_ui("dmLoadDetailEtaMin"), (int)ceil(eta / 60000.0));
+    else snprintf(piece, sizeof piece, dm_loadpage_ui("dmLoadDetailEtaSec"), (int)(ceil(eta / 5000.0) * 5));   // 5 秒一档，免得数字每帧跳 | in steps of 5 s so the number does not jitter every frame
+    cat(t->body, sizeof t->body, o, sep, piece);
+}
+
+// ---- 社区信息（接口说明见 dm_loadpage.h） | community info (see dm_loadpage.h) ----
+static struct { char qq[16], gh[168], site[168], mirror[168]; int pad, copy_state; uint64_t copy_t; } cm;   // 不随 begin 清零 | not reset by begin
+static void lpi_community(const char *qq, const char *github, const char *site, const char *mirror) {
+    snprintf(cm.qq, sizeof cm.qq, "%s", qq ? qq : ""); snprintf(cm.gh, sizeof cm.gh, "%s", github ? github : ""); snprintf(cm.site, sizeof cm.site, "%s", site ? site : ""); snprintf(cm.mirror, sizeof cm.mirror, "%s", mirror ? mirror : "");
+    LOG("加载页：社区信息 官网%s、群号%s、GitHub %s%s%s", cm.site[0] ? "有" : "无", cm.qq[0] ? "有" : "无", cm.gh[0] ? "有" : "无", cm.mirror[0] ? "、国内镜像 " : "", cm.mirror[0] ? "有" : "");
+}
+static int lpi_community_shown(void) { return (cm.qq[0] || cm.gh[0] || cm.site[0] || cm.mirror[0]) && (g.state == DM_LP_RUNNING || g.state == DM_LP_FAILED); }
+// 复制哪一项（用户 2026-10-29）：有官网时页脚同时显示官网与群号，复制钮复制群号（各语言都是），没有群号才复制官网；
+// 没有官网时按语言（dmLoadCommPrefer：中文先群号、其余先链接），只有一项就用那一项
+// what to copy (user 2026-10-29): with a site the footer shows the site and the group number, and the button copies the number (every language), the site only when there is no number;
+// without a site by language (dmLoadCommPrefer: Chinese the number, others the link); a single item is used as is
+enum { CP_SITE, CP_QQ, CP_GH, CP_MIRROR };
+static int copy_kind(void) {
+    if (cm.site[0]) return cm.qq[0] ? CP_QQ : CP_SITE;
+    if (cm.qq[0] && (!cm.gh[0] || !strcmp(dm_loadpage_ui("dmLoadCommPrefer"), "qq"))) return CP_QQ;
+    return cm.gh[0] ? CP_GH : cm.mirror[0] ? CP_MIRROR : CP_GH;
+}
+static int prefer_qq(void) { return copy_kind() == CP_QQ; }
+static const char *lpi_copy_value(void) { if (!dm_loadpage_community_shown()) return ""; int k = copy_kind(); return k == CP_SITE ? cm.site : k == CP_QQ ? cm.qq : k == CP_MIRROR ? cm.mirror : cm.gh; }
+static void lpi_copied(int ok, int pad, uint64_t now_ms) {
+    if (!dm_loadpage_community_shown()) return;
+    cm.copy_state = ok ? 1 : -1; cm.copy_t = now_ms;
+    LOG("加载页：复制%s%s（%s）", copy_kind() == CP_SITE ? "官网" : copy_kind() == CP_MIRROR ? "国内镜像" : prefer_qq() ? "群号" : "链接", ok ? "" : "失败", pad ? "手柄 A" : "触屏");
+}
+static void lpi_pad(int on) { if ((on != 0) != cm.pad) { cm.pad = on != 0; LOG("加载页：输入换成%s", cm.pad ? "手柄" : "触屏"); } }
+static int lpi_pad_mode(void) { return cm.pad; }
+int dm_loadpage_hit_copy(const dm_lp_layout *L, double x, double y) {
+    const double pad = 8; return L->comm && x >= L->copy.x - pad && x <= L->copy.x + L->copy.w + pad && y >= L->copy.y - pad && y <= L->copy.y + L->copy.h + pad;
+}
+// 页脚拼一项（镜像存在时才走这条组合路径）：标签 + 值（无值只留标签），「 · 」分隔，最多 3 项 | append one footer item (only on the mirror path): label + value (label only without one), " · " between, at most 3
+static void comm_item(char *b, size_t n, int *o, int *items, const char *label, const char *value) {
+    if (*items >= 3 || *o >= (int)n) return;
+    *o += snprintf(b + *o, n - (size_t)*o, "%s%s%s%s", *items ? " · " : "", label, value && *value ? " " : "", value ? value : "");
+    (*items)++;
+}
+// 只显示主机与路径（去掉 https:// 与结尾斜杠） | host and path only (no https://, no trailing slash)
+static void comm_disp(const char *raw, char *out, size_t n) {
+    snprintf(out, n, "%s", raw + (strncmp(raw, "https://", 8) ? 0 : 8)); size_t L = strlen(out); if (L > 1 && out[L - 1] == '/') out[L - 1] = 0;
+}
+static void community_text(dm_lp_text *t, uint64_t now_ms) {
+    if (!dm_loadpage_community_shown()) return;
+    int zh = !strcmp(dm_loadpage_ui("dmLoadCommPrefer"), "qq");
+    if (cm.mirror[0] && zh) {   // 中文且清单带国内镜像：群号 → 官网 → 国内镜像 → GitHub 取前三项（没有镜像时下面原样不变） | Chinese with the mirror: QQ → website → mirror → GitHub, first three (unchanged below without one)
+        char site[168] = "", mir[168] = "", out[400]; comm_disp(cm.site, site, sizeof site); comm_disp(cm.mirror, mir, sizeof mir);
+        int o = snprintf(out, sizeof out, "%s", dm_loadpage_ui("dmLoadCommPrefix")), items = 0;
+        if (cm.qq[0]) comm_item(out, sizeof out, &o, &items, dm_loadpage_ui("dmCommunityLabelQq"), cm.qq);
+        if (cm.site[0]) comm_item(out, sizeof out, &o, &items, dm_loadpage_ui("dmCommunityLabelSite"), site);
+        comm_item(out, sizeof out, &o, &items, dm_loadpage_ui("dmCommunityLabelMirror"), mir);
+        if (cm.gh[0]) comm_item(out, sizeof out, &o, &items, dm_loadpage_ui("dmCommunityLabelGithub"), "");
+        snprintf(t->comm1, sizeof t->comm1, "%s", out);
+    } else if (cm.site[0]) {
+        char disp[168]; comm_disp(cm.site, disp, sizeof disp);
+        if (cm.qq[0]) snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui("dmLoadCommSiteQq"), disp, cm.qq);
+        else snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui("dmLoadCommSite"), disp);
+    } else if (cm.qq[0]) snprintf(t->comm1, sizeof t->comm1, dm_loadpage_ui(cm.gh[0] ? "dmLoadCommQqGh" : "dmLoadCommQq"), cm.qq);
+    else snprintf(t->comm1, sizeof t->comm1, "%s", dm_loadpage_ui("dmLoadCommGh"));
+    snprintf(t->comm2, sizeof t->comm2, "%s", dm_loadpage_ui("dmLoadCommFree"));
+    if (cm.copy_state && now_ms - cm.copy_t > 2000) cm.copy_state = 0;   // 反馈留 2 秒 | feedback stays for 2 s
+    t->copy_state = cm.copy_state;
+    snprintf(t->copy, sizeof t->copy, "%s", dm_loadpage_ui(cm.copy_state > 0 ? "dmLoadCommCopied" : cm.copy_state < 0 ? "dmLoadCommCopyFail" : copy_kind() == CP_SITE ? "dmLoadCommCopySite" : prefer_qq() ? "dmLoadCommCopyQq" : "dmLoadCommCopyGh"));
+}
+
+// ---- 素材与布局 ----
+// 两张背景：横 2048×1152、竖 1152×2048（dm/assets/loadpage/，App 图标的合成画面：图标居中、四周渐隐到黑、底部压暗，用户 2026-10-29）。焦点 (0.5, 0.58)：火光在画面中下
+// Two backgrounds: landscape 2048×1152, portrait 1152×2048 (dm/assets/loadpage/, composites of the App icon art: icon centred, edges fading to black, bottom darkened; user 2026-10-29). Focus (0.5, 0.58): the fire glow sits centre-low
+#define LP_BG_LAND "loadpage_bg_land.jpg"
+#define LP_BG_PORT "loadpage_bg_port.jpg"
+#define LP_FOCUS_X 0.5
+#define LP_FOCUS_Y 0.58
+const char *dm_loadpage_bg_name(double w, double h, int *bg_w, int *bg_h) {
+    int land = w >= h; if (bg_w) *bg_w = land ? 2048 : 1152; if (bg_h) *bg_h = land ? 1152 : 2048;
+    return land ? LP_BG_LAND : LP_BG_PORT;
+}
+const char *dm_loadpage_logo_name(int *w, int *h) { if (w) *w = 1600; if (h) *h = 600; return "loadpage_logo.png"; }   // dm/tools/gen_loadpage_logo.py | dm/tools/gen_loadpage_logo.py
+// 两张背景里图标（含 MOBILE PLUS 字样）的外框，图内 0..1 坐标：量自 dm/assets/loadpage 的两张图（亮度 > 45 的外接框） | the icon box (MOBILE PLUS included) in the two backgrounds, 0..1 image coordinates (bounding box of luminance > 45)
+static const double k_icon_land[4] = { 0.274, 0.030, 0.727, 0.824 }, k_icon_port[4] = { 0.076, 0.150, 0.927, 0.622 };
+const char *dm_loadpage_music_name(void) { return "loadpage_loop.m4a"; }
+static void lpi_set_muted(int muted) { g.muted = muted != 0; }
+static int lpi_muted(void) { return g.muted; }
+static int lpi_toggle_muted(void) { g.muted = !g.muted; LOG("加载页：玩家%s背景音乐", g.muted ? "关闭了" : "打开了"); return g.muted; }
+int dm_loadpage_hit_mute(const dm_lp_layout *L, double x, double y) { const double pad = 12; return L->mute.w > 0 && x >= L->mute.x - pad && x <= L->mute.x + L->mute.w + pad && y >= L->mute.y - pad && y <= L->mute.y + L->mute.h + pad; }
+static int lpi_music_wanted(void) { return (g.state == DM_LP_RUNNING || g.state == DM_LP_IDLE) && !g.muted && !g.prompt_title; }   // 提示页不放（玩家会去系统设置，声音不该跟过去） | not on a notice page (the player goes to system settings; the music should not follow)   // 页面在就放（含等玩家拷资源的空闲态）；完成 / 失败停 | plays while the page is up (including idle, waiting for the player); stops on done / failure
+void dm_loadpage_cover(double iw, double ih, double dw, double dh, double fx, double fy, dm_lp_rect *src) {
+    if (iw <= 0 || ih <= 0 || dw <= 0 || dh <= 0) { *src = (dm_lp_rect){ 0, 0, iw > 0 ? iw : 1, ih > 0 ? ih : 1 }; return; }
+    double scale = dw / iw > dh / ih ? dw / iw : dh / ih;   // 短边对齐（放大到两边都盖住） | fit the short side (scale until both are covered)
+    double sw = dw / scale, sh = dh / scale;
+    if (sw > iw) sw = iw; if (sh > ih) sh = ih;
+    double sx = fx * iw - sw / 2, sy = fy * ih - sh / 2;
+    if (sx < 0) sx = 0; if (sy < 0) sy = 0; if (sx + sw > iw) sx = iw - sw; if (sy + sh > ih) sy = ih - sh;
+    *src = (dm_lp_rect){ sx, sy, sw, sh };
+}
+static void lpi_layout(const dm_lp_screen *s, dm_lp_layout *o) {
+    memset(o, 0, sizeof *o);
+    double w = s->w > 0 ? s->w : 1, h = s->h > 0 ? s->h : 1;
+    // 静态尺寸（字号、边距、间距、页脚、条高、静音钮）在大屏上按「安全内容高」缩放（B139 返工）。长边 1000 点 / dp 以内
+    // （奥丁 832×468、Fold8 内屏 934×842、Duo 951×669、iPhone 17 Pro）保持原值 k = 1 不动；更大的屏（iPad 1194×834 / 834×1194）
+    // 取 k =（屏高 − 底安全区）/ 参照内容高：横屏参照 500（奥丁 468.3 那一档横屏机的内容高取整），竖屏参照 iPhone 17 Pro 874 − 34 = 840。
+    // 所以从底往上那一组（页脚 / 副文 / 正文 / 条 / 标题）恒占屏高的同一比例——横屏与奥丁一致（图标 52.4%、标题 62.2%），
+    // 竖屏与 17 Pro 一致（图标 39%、标题 75.9%）。上一版按「长边 / 1000」，iPad 的屏高只有长边的 0.70，底部那一组放得不够大，
+    // 进度组仍被压在屏幕下四分之一（图 62.8%、标题 72.3%、条 78.7%）；竖屏的图标还会被竖图 cover 撑到 58.6%，这里另用 0.40h 封顶。
+    // Static metrics (fonts, margins, gaps, footer, bar height, mute button) scale with the safe content height on large screens (B139 rework).
+    // Up to 1000 pt / dp on the long side (Thor 832×468, Fold8 inner 934×842, Duo 951×669, iPhone 17 Pro) values stay at k = 1; larger screens
+    // (iPad 1194×834 / 834×1194) take k = (height - bottom safe inset) / reference content height: the landscape reference is 500
+    // (the band of the Thor's 468.3), the portrait reference iPhone 17 Pro's 874 - 34 = 840. The bottom stack (footer / sub / body / bar / title) then keeps the
+    // reference's share of the height - landscape matches the Thor (icon 52.4%, title 62.2%), portrait matches the 17 Pro (icon 39%, title 75.9%).
+    // The previous long side / 1000 rule under-scaled the stack on the iPad (its height is only 0.70 of the long side), leaving the progress group
+    // in the bottom quarter (icon 62.8%, title 72.3%, bar 78.7%); in portrait the portrait image's cover also blew the icon up to 58.6%, capped here at 0.40h.
+    o->landscape = w >= h;
+    double long_side = w > h ? w : h, k = 1;
+    if (long_side > 1000) {
+        double content_h = h - s->inset_b;
+        k = content_h / (o->landscape ? 500.0 : 840.0);
+        if (k < 1) k = 1;
+    }
+    o->bg_name = dm_loadpage_bg_name(w, h, &o->bg_w, &o->bg_h);
+    dm_loadpage_cover(o->bg_w, o->bg_h, w, h, LP_FOCUS_X, LP_FOCUS_Y, &o->bg_src);
+    o->bg_dst = (dm_lp_rect){ 0, 0, w, h };
+    o->title_pt = 24 * k; o->body_pt = 18 * k; o->sub_pt = 14 * k; o->brand_pt = 20 * k; o->bar_radius = 3 * k; o->comm_pt = 12 * k; o->comm_alpha = DM_LP_COMM_ALPHA;
+    double L = s->inset_l, R = s->inset_r, T = s->inset_t, B = s->inset_b, m = 28 * k;   // 安全区之内再留 28 点边距（大屏按 k 放大） | 28 pt margin inside the safe area (scaled by k on large screens)
+    double cx0 = L + m, cw = w - L - R - 2 * m; if (cw < 120) cw = 120;
+    double bw = o->landscape ? (cw * 0.62 > 320 ? cw * 0.62 : 320) : cw; if (bw > cw) bw = cw; if (bw > 900) bw = 900;   // 横屏条宽 62%（最宽 900）、竖屏铺满内容宽 | landscape bar 62% wide (900 max), portrait the full content width
+    double bx = cx0 + (cw - bw) / 2, bh = 8 * k;
+    double sub_h = o->sub_pt * 1.4, body_h = o->body_pt * 1.4, title_h = o->title_pt * 1.35;
+    double y = h - B - 44 * k;   // 从底往上排：（社区两行 + 复制钮）/ 副文 / 正文 / 条 / 标题 + 百分数 | stacked from the bottom: (community lines + copy button) / sub / body / bar / title + percent
+    o->comm = dm_loadpage_community_shown();
+    if (o->comm || !g_wordmark) {   // 关字标时总按有页脚排（见 dm_loadpage_set_wordmark） | with the wordmark off, always laid out as with a footer (see dm_loadpage_set_wordmark)   // 社区两行做成不抢眼的页脚（用户 2026-10-29：「太乱，字小一些、按钮小一些、文字加透明度」）：12 点字、半透明，贴底占满内容宽（安全区 + 边距之内），
+                                                        // 字左对齐；复制钮是一行高的小钮，靠右、与两行字竖向居中；进度那一组整体上移
+                                                        // community lines as an unobtrusive footer (user 2026-10-29: "too busy - smaller text, smaller button, more transparent text"): 12 pt, translucent, at the bottom across
+                                                        // the full content width (inside the safe area + margin), text left aligned; the copy button is a small one-line pill on the right, centred on the two lines; the progress group moves up
+        double ch = o->comm_pt * 1.4, cb_w = 108 * k, cb_h = 24 * k, cy = h - B - 16 * k - 2 * ch;
+        o->comm1 = (dm_lp_rect){ cx0, cy, cw - cb_w - 12 * k, ch };
+        o->comm2 = (dm_lp_rect){ cx0, cy + ch, cw - cb_w - 12 * k, ch };
+        o->copy = (dm_lp_rect){ cx0 + cw - cb_w, cy + ch - cb_h / 2, cb_w, cb_h };
+        y = cy - 14 * k;
+    }
+    o->sub = (dm_lp_rect){ bx, y - sub_h, bw, sub_h }; y -= sub_h + 6 * k;
+    o->body = (dm_lp_rect){ bx, y - body_h, bw, body_h }; y -= body_h + 10 * k;
+    o->bar = (dm_lp_rect){ bx, y - bh, bw, bh }; y -= bh + 12 * k;
+    o->title = (dm_lp_rect){ bx, y - title_h, bw * 0.72, title_h };
+    o->percent = (dm_lp_rect){ bx + bw * 0.72, y - title_h, bw * 0.28, title_h };
+    o->show_bar = g.prompt_title ? 0 : 1;   // 提示页不画条，标题占满条宽 | no bar on a notice page; the title takes the full bar width
+    if (g.prompt_title) { o->title.w = bw; o->percent.w = 0; }
+    double fill = g.overall < 0 ? 0 : g.overall > 1 ? 1 : g.overall;
+    o->bar_fill = (dm_lp_rect){ o->bar.x, o->bar.y, o->bar.w * fill, o->bar.h };
+    o->brand = (dm_lp_rect){ cx0, T + m, cw - 56 * k, o->brand_pt * 1.4 };   // 右边让出静音钮 | leave room for the mute button on the right
+    o->mute = (dm_lp_rect){ w - R - m - 40 * k, T + m - 6 * k, 40 * k, 40 * k };
+    if (g.prompt_title) o->mute = (dm_lp_rect){ 0, 0, 0, 0 };   // 提示页不放音乐，也不画静音钮（七审 Q7-03） | no music on a notice page, so no mute button either (seventh review Q7-03)
+    // 字标图：宽取内容宽的 58%（横屏）/ 86%（竖屏），不超过 560 点、不矮于能放下的高度；中心在 0.36h（横）/ 0.30h（竖），夹在安全区上沿 + 边距与标题上方 24 点之间
+    // Wordmark: width 58% of the content width (landscape) / 86% (portrait), at most 560 pt and never taller than the room available; centre at 0.36h (landscape) / 0.30h (portrait), clamped between the top safe edge + margin and 24 pt above the title
+    if (!g_wordmark) {   // 背景按图标外框放进「安全区顶 + 边距」到「标题上方 18 点」之间，不比 cover 更大；图外是底色（图边本来就渐隐到黑） | fit the icon box between the safe top + margin and 18 pt above the title, never larger than cover; outside the image is the base colour (the image edges already fade to black)
+        const double *ib = o->landscape ? k_icon_land : k_icon_port; double iw = o->bg_w, ih = o->bg_h;
+        double top = T + m, bot = o->title.y - 18 * k, ah = bot - top, aw = cw;
+        double cover = w / iw > h / ih ? w / iw : h / ih, sc = cover;
+        if (ah > 0 && sc * ih * (ib[3] - ib[1]) > ah) sc = ah / (ih * (ib[3] - ib[1]));
+        if (sc * iw * (ib[2] - ib[0]) > aw) sc = aw / (iw * (ib[2] - ib[0]));
+        // 大屏竖屏：竖图 cover 铺满屏宽时图标框会占到屏高的 58.6%（17 Pro 竖屏是 39%），封顶到 0.40h；横屏的 52.4% 由上面的标题位置自然给出。
+        // Large portrait screens: the portrait image's cover fills the width and grows the icon box to 58.6% of the height (the 17 Pro portrait is 39%), so cap it at 0.40h; landscape gets the Thor's 52.4% naturally from the title position above.
+        if (k > 1 && !o->landscape) { double cap = 0.40 * h; if (sc * ih * (ib[3] - ib[1]) > cap) sc = cap / (ih * (ib[3] - ib[1])); }
+        double icx = iw * (ib[0] + ib[2]) / 2 * sc, icy = ih * (ib[1] + ib[3]) / 2 * sc;   // 图标中心在缩放后图里的位置 | icon centre within the scaled image
+        double cx = cx0 + cw / 2, cy = (ah > 0 ? top + ah / 2 : h * 0.3);
+        o->bg_src = (dm_lp_rect){ 0, 0, iw, ih };
+        o->bg_dst = (dm_lp_rect){ cx - icx, cy - icy, iw * sc, ih * sc };
+        o->logo_name = NULL; o->logo = (dm_lp_rect){ 0, 0, 0, 0 };
+        return;
+    }
+    o->logo_name = dm_loadpage_logo_name(&o->logo_w, &o->logo_h);
+    { double lw = cw * (o->landscape ? 0.58 : 0.86); if (lw > 560) lw = 560; double lh = lw * o->logo_h / o->logo_w;
+      double top_lim = T + m + 46 * k, bot_lim = o->title.y - 24 * k, room = bot_lim - top_lim;
+      if (room > 0 && lh > room) { lh = room; lw = lh * o->logo_w / o->logo_h; }
+      double cy = h * (o->landscape ? 0.36 : 0.30), ly = cy - lh / 2; if (ly + lh > bot_lim) ly = bot_lim - lh; if (ly < top_lim) ly = top_lim;
+      o->logo = (dm_lp_rect){ cx0 + (cw - lw) / 2, ly, lw > 0 ? lw : 0, lh > 0 ? lh : 0 }; }
+}
+
+// ---- 对外函数：加锁的薄壳（见文件前面「线程」一节） | public functions: locked thin wrappers (see the "Threads" note above) ----
+void dm_loadpage_set_wordmark(int on) { lp_lock(); lpi_set_wordmark(on); lp_unlock(); }
+const char *dm_loadpage_ui(const char *key) { lp_lock(); const char *r = lpi_ui(key); lp_unlock(); return r; }
+void dm_loadpage_ui_set_group(int group) { lp_lock(); lpi_ui_set_group(group); lp_unlock(); }
+void dm_loadpage_begin(const int *kinds, int n, const int *weight_ms, uint64_t now_ms) { lp_lock(); lpi_begin(kinds, n, weight_ms, now_ms); lp_unlock(); }
+void dm_loadpage_set(int stage, double frac, const dm_lp_detail *d, uint64_t now_ms) { lp_lock(); lpi_set(stage, frac, d, now_ms); lp_unlock(); }
+void dm_loadpage_prompt(const char *title_key, const char *body, const char *sub_key) { lp_lock(); lpi_prompt(title_key, body, sub_key); lp_unlock(); }
+int dm_loadpage_prompting(void) { lp_lock(); int r = lpi_prompting(); lp_unlock(); return r; }
+void dm_loadpage_note(const char *text) { lp_lock(); lpi_note(text); lp_unlock(); }
+void dm_loadpage_hint(const char *key) { lp_lock(); lpi_hint(key); lp_unlock(); }
+const char *dm_loadpage_last_line(void) { lp_lock(); const char *r = lpi_last_line(); lp_unlock(); return r; }
+void dm_loadpage_fail(const char *reason, uint64_t now_ms) { lp_lock(); lpi_fail(reason, now_ms); lp_unlock(); }
+void dm_loadpage_finish(uint64_t now_ms) { lp_lock(); lpi_finish(now_ms); lp_unlock(); }
+int dm_loadpage_state(void) { lp_lock(); int r = lpi_state(); lp_unlock(); return r; }
+double dm_loadpage_overall(void) { lp_lock(); double r = lpi_overall(); lp_unlock(); return r; }
+int dm_loadpage_percent(void) { lp_lock(); int r = lpi_percent(); lp_unlock(); return r; }
+int dm_loadpage_stage(void) { lp_lock(); int r = lpi_stage(); lp_unlock(); return r; }
+int dm_loadpage_stage_kind(int stage) { lp_lock(); int r = lpi_stage_kind(stage); lp_unlock(); return r; }
+int dm_loadpage_stage_ms(int stage) { lp_lock(); int r = lpi_stage_ms(stage); lp_unlock(); return r; }
+int dm_loadpage_summary(char *buf, size_t n, uint64_t now_ms) { lp_lock(); int r = lpi_summary(buf, n, now_ms); lp_unlock(); return r; }
+void dm_loadpage_text(dm_lp_text *t, uint64_t now_ms) { lp_lock(); lpi_text(t, now_ms); lp_unlock(); }
+void dm_loadpage_community(const char *qq, const char *github, const char *site, const char *mirror) { lp_lock(); lpi_community(qq, github, site, mirror); lp_unlock(); }
+int dm_loadpage_community_shown(void) { lp_lock(); int r = lpi_community_shown(); lp_unlock(); return r; }
+const char *dm_loadpage_copy_value(void) { lp_lock(); const char *r = lpi_copy_value(); lp_unlock(); return r; }
+void dm_loadpage_copied(int ok, int pad, uint64_t now_ms) { lp_lock(); lpi_copied(ok, pad, now_ms); lp_unlock(); }
+void dm_loadpage_pad(int on) { lp_lock(); lpi_pad(on); lp_unlock(); }
+int dm_loadpage_pad_mode(void) { lp_lock(); int r = lpi_pad_mode(); lp_unlock(); return r; }
+void dm_loadpage_set_muted(int muted) { lp_lock(); lpi_set_muted(muted); lp_unlock(); }
+int dm_loadpage_muted(void) { lp_lock(); int r = lpi_muted(); lp_unlock(); return r; }
+int dm_loadpage_toggle_muted(void) { lp_lock(); int r = lpi_toggle_muted(); lp_unlock(); return r; }
+int dm_loadpage_music_wanted(void) { lp_lock(); int r = lpi_music_wanted(); lp_unlock(); return r; }
+void dm_loadpage_layout(const dm_lp_screen *s, dm_lp_layout *o) { lp_lock(); lpi_layout(s, o); lp_unlock(); }

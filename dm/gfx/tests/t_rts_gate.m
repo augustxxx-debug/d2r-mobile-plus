@@ -156,9 +156,11 @@ static void gpu_spin(void) {
 }
 
 int main(void) { @autoreleasepool {
-    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); setenv("DM_RT_SHADOW_CACHE_MB", "1", 1); setenv("DM_RT_SHADOW_DBG", "1", 1); setenv("DM_RT_SHADOW_PART", "0", 1); mtl_init();   // 前面各节测「整帧清图」对照模式（DM_RT_SHADOW_PART=0）；生产缺省的局部回退另有几节（g_rts.part = 1） | the earlier sections test the clear-the-frame comparison mode (DM_RT_SHADOW_PART=0); the production default, partial fallback, has sections of its own (g_rts.part = 1)   // rt2：测试里没有 _rt 变体，调试模式下用叠加合成（审计分支「无变体 = 叠加」的同一路径） | rt2: no _rt variants in the test; debug mode composites with the overlay (the audit branch's "no variants = overlay" path)
+    setvbuf(stdout, NULL, _IONBF, 0); unsetenv("DM_RT_SHADOW"); unsetenv("DM_RT_AUTO"); unsetenv("DM_RT_LEVEL"); setenv("DM_RT_SHADOW_CACHE_MB", "1", 1); setenv("DM_RT_SHADOW_DBG", "1", 1); setenv("DM_RT_SHADOW_PART", "0", 1); mtl_init();   // 前面各节测「整帧清图」对照模式（DM_RT_SHADOW_PART=0）；生产缺省的局部回退另有几节（g_rts.part = 1） | the earlier sections test the clear-the-frame comparison mode (DM_RT_SHADOW_PART=0); the production default, partial fallback, has sections of its own (g_rts.part = 1)   // rt2：测试里没有 _rt 变体，调试模式下用叠加合成（审计分支「无变体 = 叠加」的同一路径） | rt2: no _rt variants in the test; debug mode composites with the overlay (the audit branch's "no variants = overlay" path)
     if (!mtl_rt_shadow_supported()) { printf("SKIP：本机不支持光追阴影\n"); return 77; }
     setup(); rts_on(); g_rts.on = 1;
+    // B149：没设 DM_RT_AUTO 时自动调档缺省关（终审 P2-2：把缺省改回 1 这里会红）| B149: with DM_RT_AUTO unset the governor is off by default (final audit P2-2: reverting the default to 1 turns this red)
+    EXPECT("B149 缺省：自动调档关", 0, g_rts.auto_on); EXPECT("B149 缺省：不钉档位", -1, g_rts.lvl_pin);
     int ok, enc; int a[1] = {0};
     // 前面各节在自己的自动释放池里跑：生产里每帧都包在提交池里；测试里没开命令缓冲的那几帧产生的自动释放对象不能留到最外层，否则「关掉后释放」核不出来
     // The earlier sections run in their own autorelease pool: production wraps every frame in the submission's pool; autoreleased objects from the test's frames without a command buffer must not stay in the outermost pool, or "released after switch-off" cannot be checked
@@ -377,10 +379,10 @@ int main(void) { @autoreleasepool {
       { RTS_PAUSE_SET(600); int drawn = 0; for (int i = 0; i < 3; i++) { drawn += run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; }
         EXPECT("暂停：三帧六次都照原版画", 6, drawn); EXPECT("暂停：没用遮罩", 0, RTS_MAP_CLEARED()); RTS_PAUSE_SET(0); }
       // 20. 第 3 档（最低自动档）：镂空遮挡体照原版画进阴影图、不进 TLAS，其余照常光追（七审三轮第 5、8 条：森林的镂空判定最重） | 20. level 3 (the lowest automatic level): alpha-tested occluders go into the map as original and stay out of the TLAS, everything else is ray traced as usual (seventh review round 3 items 5, 8: the alpha judge is the heaviest part in the forest)
-      { RTS_HYST_RESET(); UNTIL_PART(b2, 2); int lv0 = g_rts.gov.lvl; g_rts.gov.lvl = 3; NvProg *ap = [NvProg new]; ap->sh[0] = g_pr->sh[0]; ap->sh[1] = [NvShader new]; ap->sh[1]->rf.may_discard = 1;
+      { RTS_HYST_RESET(); UNTIL_PART(b2, 2); int lv0 = g_rts.gov.lvl, lp0 = g_rts.lvl_pin; g_rts.lvl_pin = 3; g_rts.gov.lvl = 3; NvProg *ap = [NvProg new]; ap->sh[0] = g_pr->sh[0]; ap->sh[1] = [NvShader new]; ap->sh[1]->rf.may_discard = 1;
         uint64_t lw0 = g_rts.na_why[RA_LEVEL]; frame_open(); prepass(); shadow_pass(); int eo = sh(0); NvProg *keep = g_pr; g_pr = ap; int ea = sh(5); g_pr = keep; int nin = g_rts.ninst; main_pass(); hdr_again(); ok13 = frame_close() && ok13;
         EXPECT("第 3 档：镂空照原版画（返回 0）", 0, ea); EXPECT("第 3 档：镂空没进 TLAS", 1, nin); EXPECT("第 3 档：镂空记「降档照原版」1 次", 1, (long long)(g_rts.na_why[RA_LEVEL] - lw0));
-        EXPECT("第 3 档：不透明的照样不编码", 1, eo); EXPECT("第 3 档：照样是光追画面", 1, RTS_MAP_CLEARED()); g_rts.gov.lvl = lv0; }
+        EXPECT("第 3 档：不透明的照样不编码", 1, eo); EXPECT("第 3 档：照样是光追画面", 1, RTS_MAP_CLEARED()); g_rts.lvl_pin = lp0; g_rts.gov.lvl = lv0; rts_lvl_update(); }
       // 21. 开关关着时完全无副作用（CLAUDE.md 闸 3 · B 级）：阴影绘制全照原版编码，局部回退 / 太阳认图的计数一个不动，不写深度标志不置位 | 21. no side effect at all with the switch off (CLAUDE.md gate 3 · level B): every shadow draw is encoded as original, the partial-fallback / sun-map counters do not move, the no-depth-write flag is never set
       { uint64_t s0 = g_rts.n_skip_draws, r0 = g_rts.n_resid_draws, n0 = g_rts.n_nonsun_draws, k0 = g_rts.key_ns; g_rts.on = 0; int drawn = 0;
         for (int i = 0; i < 3; i++) { drawn += run_frame(1, b2, 2, &ok); ok13 = ok13 && ok; }
@@ -449,6 +451,27 @@ int main(void) { @autoreleasepool {
         #undef HOLD
         #undef SELECT
         memset(&R, 0, sizeof R); }
+#ifdef RTS_INDOOR_SET
+      // 26. 室内主光（七审三轮第 8 条，「按照暗黑 4 逻辑做」）：太阳图的绘制一律不画（没进 TLAS 的也不画），不追太阳、不用遮罩，不算失败；非太阳图（俯视接触软影）照画；
+      //     第 3 档也留 1 盏点光（室外第 3 档照旧关）；深度预渲染的绘制当点光遮挡体 | 26. indoor key light (seventh review round 3 item 8, "the Diablo IV way"): sun-map draws are never drawn (not even outside the TLAS), the sun is neither traced nor its mask used, not a failure; non-sun maps (top-down contact shadow) are drawn;
+      //     level 3 keeps 1 point light (outdoor level 3 still turns them off); depth-prepass draws serve as point-light occluders
+      { int po0 = g_rts.point_on; g_rts.point_on = 0; RTS_INDOOR_SET(1); run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("点光影关（B022 方案 A，缺省）：室内判定不进室内模式", 0, g_rts.indoor_on); EXPECT("点光影关：太阳照常追", 1, g_rts.have_sun); g_rts.point_on = 1;
+        RTS_INDOOR_SET(1); RTS_HYST_RESET(); int bo0 = g_rts.backoff; long long sw0 = RTS_SWITCHES(); uint64_t d0 = g_rts.n_indoor_drop, lost0 = g_rts.n_skip_lost;
+        run_frame(1, b2, 2, &ok); enc = run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("室内：太阳图两次绘制都不编码", 0, enc); EXPECT("室内：记了不画的太阳图绘制", 1, g_rts.n_indoor_drop - d0 >= 4); EXPECT("室内：太阳遮罩不用（绑全分辨率全亮那张）", 1, rts_mask_tex() == g_rts.mask_lit && g_rts.mask_lit.width == 640 && g_rts.mask_lit.height == 360);
+        { uint8_t px = 0; [g_rts.mask_lit getBytes:&px bytesPerRow:640 fromRegion:MTLRegionMake2D(600, 300, 1, 1) mipmapLevel:0];   // _rt 变体按像素坐标读：远处像素也得是 1.0（原先 1x1 白贴图越界读是 0 = 整屏全影） | the _rt variants read by pixel coordinates: a far pixel must be 1.0 too (the 1x1 white texture read out of bounds gives 0 = full shadow everywhere)
+          EXPECT("全亮遮罩：(600, 300) 处也是 1.0", 255, px); } EXPECT("室内：不追太阳", 0, g_rts.have_sun);
+        frame_open(); prepass(); shadow_pass(); int ep = sdraw(g_idx, 48, NVN_DRAW_PRIMITIVE_POINTS, 0x2b);
+        g_sp = &g_small; shadow_pass(); g_sp = &g_sdepth; g_dt = &g_small; g_lvp = other; int es = sh(2); g_dt = &g_sdepth; g_lvp = tilt; int npp = g_rts.nprepass; main_pass(); hdr_again(); ok13 = frame_close() && ok13;
+        EXPECT("室内：没进 TLAS 的太阳图绘制也不画", 1, ep); EXPECT("室内：非太阳图（俯视软影）照画", 0, es); EXPECT("室内：深度预渲染的绘制进了遮挡体", 1, npp >= 1);
+        run_frame(1, b2, 2, &ok); EXPECT("室内：不算失败（不退避）", bo0, g_rts.backoff); EXPECT("室内：画面没切换", sw0, RTS_SWITCHES()); EXPECT("室内：不记「省画后没追成」", lost0, g_rts.n_skip_lost);
+        int lv0 = g_rts.gov.lvl, lp0 = g_rts.lvl_pin; g_rts.lvl_pin = 3; g_rts.gov.lvl = 3; run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;   // 钉档用 lvl_pin（同 DM_RT_LEVEL）：自动调档关时 gov.lvl 每帧重算 | pin via lvl_pin (as DM_RT_LEVEL): with the governor off gov.lvl is recomputed every frame
+        EXPECT("室内第 3 档：点光留 1 盏、排除随身光", 1, g_rts.eff.point_on && g_rts.eff.point_n == 1 && g_rts.eff.excl_player);
+        RTS_INDOOR_SET(0); run_frame(1, b2, 2, &ok); ok13 = ok13 && ok;
+        EXPECT("回到室外第 3 档：点光照旧关", 0, g_rts.eff.point_on); EXPECT("回到室外：太阳图照常省画 / 光追", 1, RTS_MAP_CLEARED());
+        g_rts.lvl_pin = lp0; g_rts.gov.lvl = lv0; rts_lvl_update(); RTS_INDOOR_SET(-1); g_rts.point_on = po0; }
+#endif
       EXPECT("局部回退各节 GPU 无错", 1, ok13);
       #undef UNTIL_PART
       g_lvp = NULL; RTS_PART_SET(0); }
@@ -467,7 +490,8 @@ int main(void) { @autoreleasepool {
     //     the automatic downgrade cannot step above the floor; the budget plan (default fits → unchanged, otherwise AO off / mesh cache shrunk / floor 3 in order); level B: warnings while ray tracing is off do not touch it
     { int a1[1] = {0}; uint64_t b0 = g_rts.budget0; g_rts.budget0 = g_rts.budget = 64ull << 20; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0;   // 设置值换了：方案按新设置值重算 | the configured cap changed: the plan is redone for it
       #define FULL() do { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); } while (0)   // 帧开头的处理要有光追调用才进得去（空帧不经过模块） | the frame-start handling needs a ray-tracing call to run (an empty frame does not go through the module)
-      g_rts.memw = (rts_memw){0}; g_rts.gov.lvl = 0; g_rts.ao_on = 1; rts_lvl_update();
+      int auto0 = g_rts.auto_on; g_rts.auto_on = 1;   // 本节核的是自动调档开时的规则（DM_RT_AUTO=1）；关时见第 31 节 | this section checks the rules with the governor on (DM_RT_AUTO=1); off: section 31
+      g_rts.memw = (rts_memw){0}; g_rts.gov.lvl = 0; g_rts.ao_pin = 1; g_rts.ao_on = 1; rts_lvl_update();
       for (int i = 0; i < 6 && !g_rts.ao_full; i++) @autoreleasepool { frame_open(); prepass(); shadow_pass(); sh(0); main_pass(); hdr_again(); frame_close(); }
       EXPECT("26 告警前 AO 三张贴图在", 1, g_rts.ao_half && g_rts.ao_tmp && g_rts.ao_full);
       __weak id w_ao = nil; @autoreleasepool { w_ao = g_rts.ao_full; }
@@ -500,7 +524,46 @@ int main(void) { @autoreleasepool {
       uint64_t n0 = g_rts.memw.n, k0 = g_rts.key_ns; mtl_note_memory_warning(); for (int i = 0; i < 3; i++) @autoreleasepool { frame_open(); sh(0); frame_close(); }
       EXPECT("26 B 级 光追关：告警不处理（计数不变）", 0, (long long)(g_rts.memw.n - n0)); EXPECT("26 B 级 光追关：不建网格、不算键", 1, g_rts.nmesh == 0 && g_rts.key_ns == k0 && !g_rts.tlas);
       g_rts.on = 1; EXPECT("26 再开后光追生效", 1, until_applied(a1, 1)); EXPECT("26 再开后不按关着时的告警降档", 1, g_rts.memw.n == n0 && g_rts.gov.lvl == 0 && g_rts.memw.floor == 0);
-      g_rts.ao_on = 0; g_rts.budget0 = g_rts.budget = b0; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0; rts_lvl_update();
+      g_rts.ao_pin = -1; g_rts.ao_on = 0; g_rts.budget0 = g_rts.budget = b0; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0; g_rts.auto_on = auto0; rts_lvl_update();
+    }
+    // 31. 自动调档关（B149 缺省）时保护解除要回到玩家档（终审 P1-1：原先告警把档抬到保守档，解除只降下限，回升靠已关掉的降档器 → 回不去）：
+    //     单次告警 / 连续告警 / 预算方案收紧再放宽 / GPU 挂起暂停结束 / 保护期间玩家改档，全部走生产帧路径（帧开头 rts_mem_frame、rts_hang_check）；保护本身照旧生效
+    // 31. With the governor off (the B149 default) releasing a protection returns to the player level (final audit P1-1: a warning raised the level, the release only lowered the floor and the step back up relied on the disabled governor):
+    //     single / consecutive warnings, the budget plan tightened then loosened, the GPU-hang pause ending, the player changing level during a protection - all on the production frame path; the protections themselves still work
+    { int auto0 = g_rts.auto_on, on0 = g_rts.on, pin0 = g_rts.lvl_pin, pre0 = g_rts.preset, a1[1] = {0}; uint64_t b0 = g_rts.budget0;
+      g_rts.auto_on = 0; g_rts.lvl_pin = -1; g_rts.budget0 = g_rts.budget = 64ull << 20; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0; g_rts.memw = (rts_memw){0}; g_rts.hang_floor = 0;
+      rts_preset_set(3); g_rts.on = 1; EXPECT("31 玩家高档：第 0 档", 0, g_rts.gov.lvl);
+      // 单次告警：抬一档，60 秒后放宽到 0 → 回到玩家档 0 | single warning: one level up, loosened to 0 after 60 s -> back to player level 0
+      mtl_note_memory_warning(); @autoreleasepool { FULL(); }
+      EXPECT("31 单次告警：保护生效到第 1 档", 1, g_rts.gov.lvl); EXPECT("31 单次告警：下限第 1 档", 1, g_rts.memw.floor);
+      g_rts.memw.t_last -= 61; g_rts.memw.t_step -= 61; @autoreleasepool { FULL(); }
+      EXPECT("31 单次告警解除：回到玩家档 0（原先停在 1）", 0, g_rts.gov.lvl); EXPECT("31 单次告警解除：下限 0", 0, g_rts.memw.floor);
+      // 连续告警：到最低档 3，逐档放宽 3 → 2 → 1 → 0，每一步实际档都跟着降 | consecutive: lowest level 3, loosened 3 -> 2 -> 1 -> 0 with the effective level following every step
+      mtl_note_memory_warning(); @autoreleasepool { FULL(); } mtl_note_memory_warning(); @autoreleasepool { FULL(); }
+      EXPECT("31 连续告警：第 3 档", 3, g_rts.gov.lvl); EXPECT("31 连续告警：网格缓存上限减半", 32, (long long)(g_rts.budget >> 20));
+      g_rts.memw.t_last -= 61; g_rts.memw.t_step -= 61; @autoreleasepool { FULL(); } EXPECT("31 连续告警 61 秒：第 2 档", 2, g_rts.gov.lvl);
+      // 保护期间玩家改到中档（第 1 档）：仍按下限 2；解除后回到新玩家档 1，不回旧的 0 | the player switches to medium (level 1) during the protection: still floor 2; afterwards back to the new player level 1, not the old 0
+      rts_preset_set(2); EXPECT("31 保护期间改中档：仍按下限第 2 档", 2, g_rts.gov.lvl);
+      g_rts.memw.t_step -= 31; @autoreleasepool { FULL(); } EXPECT("31 再 30 秒：下限 1 = 中档第 1 档", 1, g_rts.gov.lvl);
+      g_rts.memw.t_step -= 31; @autoreleasepool { FULL(); } EXPECT("31 下限 0：回到新玩家档第 1 档", 1, g_rts.gov.lvl); EXPECT("31 网格缓存上限恢复", 64, (long long)(g_rts.budget >> 20));
+      rts_preset_set(3); EXPECT("31 改回高档：第 0 档", 0, g_rts.gov.lvl);
+      // 预算方案收紧再放宽 | the budget plan tightened, then loosened
+      g_rts.mem_avail = 400ull << 20; g_rts.plan_w = 0; rts_mem_replan(2852, 2006); EXPECT("31 预算 50 MB：最低第 3 档", 3, g_rts.gov.lvl);
+      g_rts.mem_avail = 0; g_rts.plan_w = 0; rts_mem_replan(640, 360); EXPECT("31 预算不限：回到玩家档 0", 0, g_rts.gov.lvl);
+      // GPU 挂起：暂停 120 秒（原版阴影），之后保护下限每 30 秒放宽一档回到玩家档 0；不降档器 | GPU hang: 120 s pause, then the protection floor loosens one level per 30 s back to player level 0; no governor
+      g_rts.hang_events = 0; g_rts.hang_t = 0; g_rts.hang_seen = atomic_load(&g_gpu_hang_n); g_rts.failed = 0;   // 前面各节可能记过挂起事件：从第一次算起 | earlier sections may have counted hang events: start from the first
+      atomic_fetch_add(&g_gpu_hang_n, 2); @autoreleasepool { FULL(); }
+      EXPECT("31 挂起：暂停中（光追关）", 1, g_rts.eff.off); EXPECT("31 挂起：保护下限第 3 档", 3, g_rts.hang_floor);
+      g_rts.pause_until = rts_now() - 1; g_rts.hang_next = rts_now() + 30; @autoreleasepool { FULL(); }
+      EXPECT("31 暂停结束：从第 3 档恢复光追", 1, !g_rts.eff.off && g_rts.gov.lvl == 3);
+      for (int k = 2; k >= 0; k--) { g_rts.hang_next = rts_now() - 1; @autoreleasepool { FULL(); } char nm[64]; snprintf(nm, sizeof nm, "31 挂起保护放宽：第 %d 档", k); EXPECT(nm, k, g_rts.gov.lvl); }
+      EXPECT("31 挂起保护解除后光追照常", 1, until_applied(a1, 1));
+      // DM_RT_AUTO=1 生产路径：同一次单次告警，解除后不自动回（升不升由降档器）——与关时对照 | DM_RT_AUTO=1 production path: the same single warning, not stepped back on release (up to the governor) - the contrast with off
+      g_rts.auto_on = 1; g_rts.memw = (rts_memw){0}; g_rts.hang_floor = 0; rts_preset_set(3); mtl_note_memory_warning(); @autoreleasepool { FULL(); }
+      g_rts.memw.t_last -= 61; g_rts.memw.t_step -= 61; @autoreleasepool { FULL(); }
+      EXPECT("31 DM_RT_AUTO=1：解除后档位等降档器（仍第 1 档）", 1, g_rts.gov.lvl); EXPECT("31 DM_RT_AUTO=1：下限已 0", 0, g_rts.memw.floor);
+      g_rts.auto_on = auto0; g_rts.lvl_pin = pin0; g_rts.memw = (rts_memw){0}; g_rts.hang_floor = 0; g_rts.hang_events = 0; g_rts.pause_until = 0; g_rts.budget0 = g_rts.budget = b0; g_rts.mplan = (rts_mem_plan){0}; g_rts.plan_w = 0;
+      if (pre0 >= 0) rts_preset_set(pre0); else { rts_gov_init(&g_rts.gov, RTS_LVL_MAX); rts_lvl_update(); } g_rts.on = on0;
       #undef FULL
     }
 #endif
@@ -533,6 +596,22 @@ int main(void) { @autoreleasepool {
       printf("28 稳定后 10 帧新建 BLAS %llu 个，缓存最多 %.2f MB\n", (unsigned long long)(g_rts.n_builds - nb0), worst / 1048576.0);
       EXPECT("28 工作集比预算大：稳定后 10 帧不再新建 BLAS（不每帧淘汰重建）", 0, (long long)(g_rts.n_builds - nb0)); EXPECT("28 帧末缓存不超预算 1 MB 太多（≤ 预算 + 一帧建的量）", 1, worst <= (2u << 20));
       EXPECT("28 GPU 无错", 1, ok28); g_rts.budget = b0; EXPECT("28 预算恢复后光追照常", 1, until_applied((int[]){0}, 1)); }
+    // 29. 玩家路径（没有 DM_RT_SHADOW，g_rts.on == -2）：启动读配置只跑一次，自动降档的状态不被每帧重置（RC1.x 玩家的光追因此永远不降档）
+    // 29. Player path (no DM_RT_SHADOW, g_rts.on == -2): the start-up configuration runs once and the automatic-downgrade state is not reset every frame (because of this, RC1.x players' ray tracing never stepped down)
+    { g_rts.on = -2; g_rts.gov.n = 77; g_rts.gov.lvl = 2; rts_on(); rts_on();
+      EXPECT("29 玩家路径：降档器样本不被重置", 77, g_rts.gov.n); EXPECT("29 玩家路径：档位不被重置", 2, g_rts.gov.lvl); EXPECT("29 玩家路径：仍是跟设置", -2, g_rts.on);
+      g_rts.ao_pin = -1; g_rts.ao_on = 1; rts_on(); EXPECT("29 光追 AO 跟设置（这里的弱定义 = 关）", 0, g_rts.ao_on); g_rts.ao_pin = 1; g_rts.ao_on = 1; rts_on(); EXPECT("29 DM_RT_AO 钉住时不看设置", 1, g_rts.ao_on); g_rts.ao_pin = -1; g_rts.ao_on = 0; }
+    // 30. 玩家档：低 / 中 / 高定上限与软影、AO；AO 被降档关掉后本关不再开回，换关再试一次
+    // 30. Player level: low / medium / high set the ceiling, soft shadows and AO; AO dropped by the downgrade stays off for the level, with one more try on the next level
+    { int pin0 = g_rts.ao_pin, on0 = g_rts.on, lp0 = g_rts.lvl_pin; g_rts.on = -2; g_rts.ao_pin = -1; g_rts.lvl_pin = -1;
+      rts_preset_set(1); EXPECT("30 低：最高第 2 档", 2, g_rts.gov.lvl); EXPECT("30 低：无软影", 0, g_rts.eff.soft); EXPECT("30 低：太阳半分辨率", 2, g_rts.eff.sun_div);
+      rts_preset_set(2); EXPECT("30 中：最高第 1 档", 1, g_rts.gov.lvl); EXPECT("30 中：无软影", 0, g_rts.eff.soft); EXPECT("30 中：太阳全分辨率", 1, g_rts.eff.sun_div); EXPECT("30 中：无 AO", 0, g_rts.eff.ao);
+      rts_preset_set(3); g_rts.ao_on = 1; rts_lvl_update(); EXPECT("30 高：第 0 档", 0, g_rts.gov.lvl); EXPECT("30 高：有软影", 1, g_rts.eff.soft); EXPECT("30 高：有 AO", 1, g_rts.eff.ao);
+      rts_area_note(5); double t0 = rts_now() - 100; g_rts.gov.t_change = t0; g_rts.gov.n = 100; g_rts.gov.fr = 30; g_rts.gov.rt = 8; g_rts.gov.t_over = t0; rts_gov_feed(8, 30, 60);
+      EXPECT("30 高超预算：降到第 1 档", 1, g_rts.gov.lvl); EXPECT("30 AO 被关后锁住", 1, g_rts.ao_latched); EXPECT("30 本关上限变第 1 档", 1, g_rts.gov.min_lvl);
+      rts_area_note(5); EXPECT("30 同一关不解锁", 1, g_rts.ao_latched); rts_area_note(0); EXPECT("30 局外不算换关", 1, g_rts.ao_latched);
+      rts_area_note(6); EXPECT("30 换关解锁", 0, g_rts.ao_latched); EXPECT("30 换关上限回第 0 档", 0, g_rts.gov.min_lvl);
+      rts_preset_set(0); EXPECT("30 关：玩家路径不开光追", 0, rts_on()); g_rts.ao_pin = pin0; g_rts.lvl_pin = lp0; g_rts.on = on0; rts_gov_init(&g_rts.gov, RTS_LVL_MAX); rts_lvl_update(); }
     printf("== %d 项，失败 %d ==\n", count, fail);
     return fail != 0;
 }}

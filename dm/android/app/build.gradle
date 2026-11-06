@@ -1,14 +1,42 @@
 // 安卓 App。原生库两种来法：
 //   缺省：externalNativeBuild 用 dm/android/CMakeLists.txt 现编（要 -PdmGenDir=<由游戏文件生成的宿主表头目录>，见该文件头）；
 //   -PdmPrebuiltJni=<目录>：直接打包已编好的 <目录>/arm64-v8a/libdm.so（构建机上 CMake 不可用时）。
-//   -PdmAppId=<包名>：换一个包名装（与别人签名的同名包并排装来对照时用；缺省 com.xiaoboluo.d2r）。
+//   -PdmAppId=<包名>：换一个包名装（与别人签名的同名包并排装来对照时用；缺省 com.augustusplay.d2rmobileplus）。
 // Android App. Two ways to get the native library:
 //   default: externalNativeBuild builds it with dm/android/CMakeLists.txt (needs -PdmGenDir=<directory of host headers generated from the game files>, see that file's header);
 //   -PdmPrebuiltJni=<dir>: package the already built <dir>/arm64-v8a/libdm.so directly (when CMake is unavailable on the build machine).
-//   -PdmAppId=<id>: install under another application id (to sit beside a same-name package signed by someone else; default com.xiaoboluo.d2r).
+//   -PdmAppId=<id>: install under another application id (to sit beside a same-name package signed by someone else; default com.augustusplay.d2rmobileplus).
+//   -PdmGenRuntime=<目录>：带上手机端生成导入包的运行时（dm/android/tools/gen_runtime.sh 的输出：jniLibs 里的 Python / 翻译工具 / SPIRV-Tools 可执行文件、
+//   assets/dmgen/runtime.zip），并现打本仓的生成脚本与 4 个查询核（tools/pack_gen_assets.py）；这时原生库按旧方式解到 nativeLibraryDir（才能 exec）。不给就没有手机端生成，只认电脑做的导入包。
+//   -PdmGenRuntime=<dir>: include the runtime for making the import pack on the phone (output of dm/android/tools/gen_runtime.sh: the Python / translator / SPIRV-Tools executables in jniLibs,
+//   assets/dmgen/runtime.zip), and pack this repo's generator scripts and the 4 query kernels (tools/pack_gen_assets.py); native libraries are then extracted to nativeLibraryDir the legacy way (so they can be exec'd).
+//   Without it there is no on-phone generation, and only an import pack made on a computer is accepted.
 plugins { id 'com.android.application' }
 
 def prebuilt = project.findProperty('dmPrebuiltJni')
+def genRuntime = project.findProperty('dmGenRuntime')
+if (genRuntime && !file("${genRuntime}/assets/dmgen/runtime.zip").isFile()) throw new GradleException("dmGenRuntime=${genRuntime} 里没有 assets/dmgen/runtime.zip（先跑 dm/android/tools/gen_runtime.sh）")
+
+// 版本号跟 iOS / Mac 同一来源（dm/tools/version.sh）：versionName = DM_VERSION（标签 vX.Y.Z），versionCode = DM_BUILD（沿提交历史单调递增的构建号，
+// 覆盖升级只增不减），BuildConfig.DM_VERSION_LABEL = 「1.0.0+91 · 674f5d5」给启动日志与分享摘要。没有 git 的源码副本（git archive 导出）读不到历史：
+// 退回 0.0.0 / 20000 并在构建输出里提醒；-PdmBuildNumber=<正整数> 可指定构建号（version.sh 的 DM_BUILD_NUMBER）
+// Version numbers from the same source as iOS / Mac (dm/tools/version.sh): versionName = DM_VERSION (tag vX.Y.Z), versionCode = DM_BUILD (build number
+// strictly increasing along the commit history, so upgrades only ever go up), BuildConfig.DM_VERSION_LABEL = "1.0.0+91 · 674f5d5" for the boot log and the share summary.
+// A source copy without git (git archive export) has no history: fall back to 0.0.0 / 20000 with a warning; -PdmBuildNumber=<positive integer> sets the build number (version.sh's DM_BUILD_NUMBER)
+def dmVersion = ['0.0.0', 20000, '0.0.0 · 无 git']
+// 出包脚本从 git 检出里算好后整套传入（shell_apk.sh：源码副本没有 git）：-PdmVersionName / -PdmBuildNumber / -PdmVersionLabel 三个都给就不再跑 version.sh
+// Packaging scripts pass the whole set computed in the git checkout (shell_apk.sh: the source copy has no git): with all of -PdmVersionName / -PdmBuildNumber / -PdmVersionLabel given, version.sh is not run
+if (project.findProperty('dmVersionName') && project.findProperty('dmBuildNumber') && project.findProperty('dmVersionLabel') && project.property('dmBuildNumber').toString().isInteger())
+    dmVersion = [project.property('dmVersionName').toString(), project.property('dmBuildNumber').toString().toInteger(), project.property('dmVersionLabel').toString()]
+else try {
+    def env = [:]; if (project.findProperty('dmBuildNumber')) env['DM_BUILD_NUMBER'] = project.property('dmBuildNumber').toString()
+    def out = providers.exec {
+        commandLine 'bash', '-c', 'eval "$(bash "$0")"; printf "%s\n%s\n%s\n%s\n" "$DM_VERSION" "$DM_BUILD" "$DM_BUILD_SOURCE" "$DM_VERSION_LABEL"', file('../../tools/version.sh').absolutePath
+        environment env; ignoreExitValue true
+    }.standardOutput.asText.get().readLines()
+    if (out.size() >= 4 && out[2] != 'none' && out[1].isInteger() && out[1].toLong() < 2100000000L) dmVersion = [out[0], out[1].toInteger(), out[3]]
+    else logger.warn("dm: version.sh gave no usable build number (${out}); using ${dmVersion}")
+} catch (Exception e) { logger.warn("dm: version.sh failed (${e.message}); using ${dmVersion}") }
 
 // 启动文案取自统一中英表，生成目录只在 build 下，不入库。
 // Startup text comes from the shared table; generated resources stay under build.
@@ -19,40 +47,58 @@ def generateStartupStrings = tasks.register('generateStartupStrings', Exec) {
     commandLine(project.findProperty('dmPython') ?: 'python3', '../tools/gen_strings.py', '--output', startupStrings.get().asFile)
 }
 
-// 复用仓库现有 iOS 图标，生成安卓资源，不重复提交图片。
-// Reuse the existing iOS icon as a generated Android resource without duplicating the image.
-def launcherIcon = layout.buildDirectory.dir('generated/launcherIcon')
-def generateLauncherIcon = tasks.register('generateLauncherIcon', Copy) {
-    from('../../ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png')
-    into(launcherIcon.map { it.dir('mipmap-nodpi') })
-    rename { 'ic_launcher.png' }
-}
+// 启动器图标：res/mipmap-anydpi-v26/ic_launcher.xml 自适应图标（三层 PNG 由 dm/android/tools/adaptive_icon.py 从 iOS AppIcon1024.png 生成并提交，
+// test_adaptive_icon.py 核对与源图一致）。minSdk 31 全部走 v26，旧的方形图生成任务已删，APK 不再带 1 MB 的整张图。
+// Launcher icon: the adaptive icon in res/mipmap-anydpi-v26/ic_launcher.xml (its PNG layers are generated from the iOS AppIcon1024.png by
+// dm/android/tools/adaptive_icon.py and committed; test_adaptive_icon.py checks they match the source). minSdk 31 always uses v26, so the old
+// square-icon task is gone and the APK no longer carries the 1 MB full image.
 
 android {
     namespace 'com.xiaoboluo.d2r'
     compileSdk 36
     ndkVersion '29.0.14206865'
     defaultConfig {
-        applicationId project.findProperty('dmAppId') ?: 'com.xiaoboluo.d2r'
+        // 包名 2026-10-29 起 com.augustusplay.d2rmobileplus（用户定；早先发的是 com.xiaoboluo.d2r，两者并排装、存档不互通）。代码包名（namespace，JNI 函数名跟它走）不变
+        // Application id from 2026-10-29: com.augustusplay.d2rmobileplus (user decision; the earlier release was com.xiaoboluo.d2r, the two install side by side and do not share saves). The code package (namespace, which the JNI function names follow) stays
+        applicationId project.findProperty('dmAppId') ?: 'com.augustusplay.d2rmobileplus'
         // 产物代号（dm/PRODUCT 首行）：导入包的 pack_info.txt 要与它相同（DmActivity.ensureImported）
         // Product code (first line of dm/PRODUCT): an import pack's pack_info.txt must match it (DmActivity.ensureImported)
         buildConfigField 'String', 'DM_PRODUCT', "\"${file('../../PRODUCT').readLines()[0].trim()}\""
         minSdk 31
         targetSdk 36
-        // 跟发布版本走：versionName = 发布版本号，versionCode = 主 × 10000 + 次 × 100 + 修订（2.0.0 → 20000），只增不减，旧版才能被覆盖升级
-        // Follows the release: versionName = release version, versionCode = major × 10000 + minor × 100 + patch (2.0.0 → 20000), only ever increasing so older installs upgrade in place
-        versionCode 20000
-        versionName '2.0.0'
+        // 版本号见上面 dmVersion（dm/tools/version.sh）| version numbers: dmVersion above (dm/tools/version.sh)
+        versionCode dmVersion[1]
+        versionName dmVersion[0]
+        buildConfigField 'String', 'DM_VERSION_LABEL', "\"${dmVersion[2]}\""
+        buildConfigField 'String', 'DM_SOURCE_COMMIT', "\"${project.findProperty('dmSourceCommit') ?: ''}\""   // 存档包 manifest 的 source.commit | source.commit in a save package manifest
+        manifestPlaceholders += [dmSourceCommit: project.findProperty('dmSourceCommit') ?: 'unknown']   // shell_apk.sh 传；直接跑 gradle 没有 | passed by shell_apk.sh; absent when gradle runs directly
+        // 更新清单地址（远端 latest.json，加载页页脚的官方免费渠道用，按顺序试：自己的服务器 → GitHub raw，CommunityFetch.java）：不进源码，
+        // 出包脚本读 DM_UPDATE_URLS 传 -PdmUpdateUrls（空格分隔）；只许 https:// 地址；没给 = 不联网、页脚不显示
+        // Update manifest addresses (remote latest.json, for the official free channels in the loading page footer, tried in order: own server → GitHub raw, CommunityFetch.java):
+        // not in the source; the packaging script reads DM_UPDATE_URLS and passes -PdmUpdateUrls (space separated); https:// addresses only; none = no network access, no footer
+        def dmUpdateUrls = (project.findProperty('dmUpdateUrls') ?: '').toString().trim().split('\\s+').findAll { it }
+        dmUpdateUrls.each { u -> if (!java.util.regex.Pattern.matches('https://[A-Za-z0-9._~:/?#@!$&\'()*+,;=%-]+', u)) throw new GradleException('dmUpdateUrls: not an https URL: ' + u) }
+        buildConfigField 'String', 'DM_UPDATE_URLS', "\"${dmUpdateUrls.join(' ')}\""
+        // 诊断上传地址（自动上报崩溃，CrashReportBridge）：不进源码，出包脚本读 DM_DIAGNOSTIC_ORIGIN 传 -PdmDiagnosticOrigin；只许 https:// 根地址；没给 = 不联网、开关只说明 | diagnostic upload origin: not in the source; https:// root only; none = no network, the switch only explains
+        def dmDiagOrigin = (project.findProperty('dmDiagnosticOrigin') ?: '').toString().trim()
+        if (dmDiagOrigin && !java.util.regex.Pattern.matches('https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?', dmDiagOrigin)) throw new GradleException('dmDiagnosticOrigin: not an https root URL')
+        buildConfigField 'String', 'DM_DIAGNOSTIC_ORIGIN', "\"${dmDiagOrigin}\""
+        // 统计的渠道与源码提交（TelemetryBridge）：出包脚本传 -PdmChannel / -PdmSourceCommit，源码缺省 unknown（看板 PRD U3） | the statistics' channel and source commit: passed by the packaging script, unknown in the source
+        def dmChannel = (project.findProperty('dmChannel') ?: 'unknown').toString().trim(), dmSourceCommit = (project.findProperty('dmSourceCommit') ?: 'unknown').toString().trim()
+        if (!java.util.regex.Pattern.matches('[a-z_]{1,16}', dmChannel) || !java.util.regex.Pattern.matches('[0-9a-f]{40}|unknown', dmSourceCommit)) throw new GradleException('dmChannel / dmSourceCommit: bad value')
+        buildConfigField 'String', 'DM_CHANNEL', "\"${dmChannel}\""
+        buildConfigField 'String', 'DM_SOURCE_COMMIT', "\"${dmSourceCommit}\""
         ndk { abiFilters 'arm64-v8a' }
         if (!prebuilt) externalNativeBuild { cmake {
             arguments "-DDM_GEN_DIR=${project.findProperty('dmGenDir') ?: ''}"
+            if (project.findProperty('dmQaBuild') == '1') arguments '-DDM_QA_BUILD=1'
             if (project.findProperty('dmPython')) arguments "-DPython3_EXECUTABLE=${project.property('dmPython')}"
-            targets 'dm'
+            targets 'dm', 'dmdeswizzle', 'dmload'
         } }
     }
     if (!prebuilt) externalNativeBuild { cmake { path '../CMakeLists.txt'; version '3.31.6' } }
     if (prebuilt) sourceSets { main { jniLibs.srcDirs = [prebuilt] } }
-    sourceSets { main { res.srcDir(startupStrings.get().asFile); res.srcDir(launcherIcon.get().asFile) } }
+    sourceSets { main { res.srcDir(startupStrings.get().asFile); assets.srcDir('../../assets/loadpage') } }   // 加载页自制素材（背景图 + 循环音乐）进 assets 根 | self-made loading page assets (backgrounds + loop music) at the assets root
     packaging { jniLibs { useLegacyPackaging false; keepDebugSymbols += ['**/*.so'] } }
     buildFeatures { buildConfig true }
     // 正式版签名：钥匙不进仓库，路径与密码从环境变量来（tools/shell_apk.sh release 读本机 ~/.config/dm-android/release.env）；没设就不签
@@ -66,4 +112,33 @@ android {
     buildTypes { release { minifyEnabled false; if (releaseKey) signingConfig signingConfigs.release } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }
-tasks.named('preBuild').configure { dependsOn(generateStartupStrings, generateLauncherIcon) }
+// 手机端生成：本仓的生成脚本（src.zip）与查询核，构建时现打，与 libdm 编入的覆盖层源指纹出自同一棵树
+// On-phone generation: this repo's generator scripts (src.zip) and the query kernels, packed at build time from the same tree as the overlay source fingerprint compiled into libdm
+def genAssets = layout.buildDirectory.dir('generated/dmgenAssets')
+def generateGenAssets = tasks.register('generateGenAssets', Exec) {
+    inputs.files(fileTree('../..') { include 'tools/**', 'ios/tools/**', 'gfx/**', 'host/**', 'i18n/**', 'data/**', 'verify/**', 'android/tools/**', 'PRODUCT'; exclude '**/__pycache__/**' })
+    outputs.dir(genAssets)
+    commandLine(project.findProperty('dmPython') ?: 'python3', '../tools/pack_gen_assets.py', '--output', genAssets.get().asFile,
+                '--glslc', "${androidComponents.sdkComponents.ndkDirectory.get().asFile}/shader-tools/${org.gradle.internal.os.OperatingSystem.current().isMacOsX() ? 'darwin-x86_64' : (org.gradle.internal.os.OperatingSystem.current().isWindows() ? 'windows-x86_64' : 'linux-x86_64')}/glslc",
+                // 开源楷体（-PdmFont=<.ttf> -PdmFontLicense=<OFL.txt> [-PdmFontWeight=0..8]）随包，手机端生成覆盖层时用 | the open-licence Kai font goes into the package for the on-phone overlay step
+                *(project.findProperty('dmFont') ? ['--font', project.findProperty('dmFont'), '--font-license', project.findProperty('dmFontLicense') ?: '', '--font-weight', project.findProperty('dmFontWeight') ?: '0'] : []))
+    if (project.findProperty('dmFont')) inputs.files(project.findProperty('dmFont'), project.findProperty('dmFontLicense') ?: [])
+    inputs.file('../THIRD_PARTY_NOTICES.txt')   // 随包第三方许可证清单（四审 A4-01）| licence notices of the bundled third-party components (fourth audit A4-01)
+}
+if (genRuntime) {
+    android.sourceSets.main.jniLibs.srcDir("${genRuntime}/jniLibs")
+    android.sourceSets.main.assets.srcDirs("${genRuntime}/assets", genAssets.get().asFile)
+    android.packaging.jniLibs.useLegacyPackaging = true
+}
+// 改了改写器却没升代号：手机上的生成结果只认代号，不会重新生成，和 iOS / Mac 入口的 product.sh lock 同一条（第八轮内审 P3-05）；这里不靠 bash / shasum，Docker 与 Windows 都能跑
+// Changed the rewriter without bumping the codename: generated content on the phone only follows the codename and would not regenerate. Same rule as product.sh lock on the iOS / Mac entries (round-eight internal audit P3-05); no bash / shasum here, so Docker and Windows run it too
+def productLock = tasks.register('productLock') {
+    def rewriter = file('../../tools/patch_nso.py'), product = file('../../PRODUCT')
+    inputs.files(rewriter, product)
+    doLast {
+        def want = java.security.MessageDigest.getInstance('SHA-256').digest(rewriter.bytes).encodeHex().toString()
+        def have = product.readLines().find { it.startsWith('patch_nso ') }?.substring(10)?.trim()
+        if (have != want) throw new GradleException("patch_nso.py changed (registered ${have ?: 'nothing'}, now ${want}): bump the codename on the first line of dm/PRODUCT if output changes, then run python3 dm/host/tests/product_lock.py")
+    }
+}
+tasks.named('preBuild').configure { dependsOn(productLock, generateStartupStrings); if (genRuntime) dependsOn(generateGenAssets) }

@@ -1,4 +1,5 @@
 #include "touch_android.h"
+#include <stdatomic.h>
 #include "../ios/Sources/dm_touch_controls.h"
 #include "../host/dm_input.h"
 #include "../host/dm_cursor.h"
@@ -52,6 +53,8 @@ static float fe_x0, fe_y0;
 /* 面板态的五个虚拟手柄圆钮：缺省不给（同 iOS front_ios.m navigationMode：点按 / 双击 / 拖放 / 点页签 / 面板外点按已全部替代）；DM_TOUCH_NAV_PAD=1 调试时叫回来
    The five virtual pad buttons in panel state: off by default (as iOS front_ios.m navigationMode: tap / double tap / drag / tab tap / tap outside
    the panel replace them all); DM_TOUCH_NAV_PAD=1 brings them back for debugging */
+/* 面板 / 读取画面 / 过场开着（非零）：手柄层 pad_android.c 据此只在游戏态接管 ZR（同 iOS front_ios.m dm_front_navigation）| a panel / loading screen / cinematic is open (non-zero): the controller layer pad_android.c claims ZR only in game state (as iOS front_ios.m dm_front_navigation) */
+static _Atomic int g_nav_pub; int dm_front_navigation(void) { return atomic_load(&g_nav_pub); }
 static int nav_pad(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_TOUCH_NAV_PAD"); v = e && e[0] == '1'; } return v; }
 static int touch_overlay(void) { static int v = -1; if (v < 0) { const char *o = getenv("DM_ROMFS_OVERLAY"); v = o && *o; } return v; }
 static void fe_end_locked(void) {
@@ -76,7 +79,7 @@ static void init_locked(void) {
     dm_tc_set_tall_scale(tablet_layout);
     dm_tc_init(&tc, width, height);
     tc.mouse_click_mode = 1;
-    dm_tc_set_navigation_mode(&tc, 1);
+    dm_tc_set_navigation_mode(&tc, 1); atomic_store(&g_nav_pub, 1);
     dm_tc_enable_targets(&tc, dm_tc_nav_mask(nav_pad()));   /* 开局读取期间也是面板态，同样不出圆钮 | loading at game start is panel state too, no buttons either */
     ready = 1;
 }
@@ -135,7 +138,7 @@ void dm_android_touch_uimsg(const char *cat, const char *act, const char *arg) {
     }
     int fe = !scene.game && touch_overlay();
     if (fe != frontend) { cancel_locked(); head = tail = 0; frontend = fe; }
-    dm_tc_set_navigation_mode(&tc, nav);
+    dm_tc_set_navigation_mode(&tc, nav); atomic_store(&g_nav_pub, nav != 0);
     dm_ui_map_hold(nav != 0);   /* 同 iOS：面板开着全屏地图先让成小地图，关掉回到玩家要的那档 | as iOS: while a panel is open the full-screen map steps aside to the minimap, and after it closes it returns to what the player wants */
     dm_tc_set_joy_block(&tc, !!(dm_ui_panel_state() & DM_PS_TEXT));
     /* 游戏态不要右上地图键（同 iOS front_ios.m navigationMode：点右上角小地图本身就开全屏地图，见 direct_begin）
@@ -173,7 +176,8 @@ static void requests(void) {
         float nx = tc.mouse_click_x / width, ny = tc.mouse_click_y / height;
         dm_ui_touch(0,nx,ny); dm_ui_touch(2,nx,ny);
     }
-    if (tc.diff_request) { dm_hud_request_players(tc.diff_request); tc.diff_request = 0; }
+    { static int was; if (tc.diff_open && !was) dm_diff_tip(0); was = tc.diff_open; }
+    if (tc.diff_request) { dm_diff_tip(tc.diff_request); dm_hud_request_players(tc.diff_request); tc.diff_request = 0; }
     if (tc.belt_request) {
         int br = tc.belt_request; tc.belt_request = 0;
         if (br == 1 || br == 2) dm_belt_expand(br == 1);
@@ -393,6 +397,7 @@ void dm_android_touch_layout(float out[DM_ANDROID_TOUCH_DRAW_FLOATS]) {
         if (frontend) p[3]=0;   /* 前端页面不画控件（见 frontend） | No controls drawn on front-end pages (see frontend) */
     }
     dm_tg_snapshot native; dm_touch_game_snapshot(&native);
+    dm_hud_info h; dm_hud_get(&h);
     for (int i=0;i<6;++i) {
         float *p=out+DM_ANDROID_TOUCH_GLYPHS+i*8;
         dm_ta_glyph g=i==5 ? dm_ta_skill(359) : dm_ta_current_set(&native,tc.layout.target[i].button,now_ns(),tc.skill_set);
@@ -402,9 +407,12 @@ void dm_android_touch_layout(float out[DM_ANDROID_TOUCH_DRAW_FLOATS]) {
         if (g.status==DM_TA_GLYPH && dm_ta_frame_at(g.atlas,held?g.pressed_frame:g.normal_frame,&frame)) {
             p[2]=frame.x; p[3]=frame.y; p[4]=frame.width; p[5]=frame.height;
             if (g.slot>=0) { int charges=0; p[6]=dm_swapskill_slot(g.slot,&charges); p[7]=charges; }
+            /* 免费回城关着（自定义页 free_tp）：回城钮用身上的回城书 / 卷轴，右下角标剩余次数（背包里书的次数 + 背包和腰带的卷轴张数，HUD 的 portal），用完变灰——同充能技能那套画法（同 iOS DmTouchOverlay）
+               Free town portal off (Custom page free_tp): the portal button uses the tome / scroll on the player, the badge shows what is left (tome charges +
+               scrolls in the inventory and belt, the HUD's portal) and the button greys out at zero, drawn like a charged skill (as iOS DmTouchOverlay) */
+            if (i==5) { int dm_freetp_enabled(void); if (!dm_freetp_enabled()) { p[6]=2; p[7]=h.portal; } }
         }
     }
-    dm_hud_info h; dm_hud_get(&h);
     float *hud=out+DM_ANDROID_TOUCH_HUD;
     hud[0]=!frontend && dm_hud_bar_visible(&h,tc.navigation_mode && !dm_tc_scene_dialog_only(&scene),hud_blocked>0);
     hud[1]=h.level; hud[2]=h.exp_permille;

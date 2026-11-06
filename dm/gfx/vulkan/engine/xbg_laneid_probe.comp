@@ -1,0 +1,15 @@
+// 启动自检：含 shuffle 的计算着色器里 gl_SubgroupInvocationID 可不可用（Adreno 740 512.676.53 读成 0）。64 个线程各写自己的 lane 号；xbg_game.cpp laneid_probe 数不同值。
+// 头文件 xbg_laneid_spv.h 由 gen_laneid_spv.py 从本文件生成（glslc --target-env=vulkan1.1 -O），改本文件要重生成。
+// Start-up self-test: whether gl_SubgroupInvocationID is usable in a compute shader that also shuffles (the Adreno 740 512.676.53 driver reads 0). 64 invocations write their lane id;
+// xbg_game.cpp laneid_probe counts the distinct values. xbg_laneid_spv.h is generated from this file by gen_laneid_spv.py (glslc --target-env=vulkan1.1 -O); regenerate after editing.
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) buffer Out { uint o[]; };
+void main() {
+    uint i = gl_LocalInvocationIndex;
+    uint id = gl_SubgroupInvocationID;
+    uint sh = subgroupShuffle(i + 1000u, (id + 16u) & 31u);   // 与游戏着色器同形：lane 号当 shuffle 下标 | the game's shape: the lane id as a shuffle index
+    o[i] = id | (sh << 16);
+}

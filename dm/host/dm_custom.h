@@ -7,13 +7,13 @@
 // 任意线程可调：第一次调用读一次文件，之后只是原子量读 + 几项字符串比较，无锁。iOS 上启动期（存档挂上之前）就能读。
 // 键：auto_mana 自动喝药水（红蓝两种，键名沿用）/ drop_light 高价值掉落光柱 / map_mark 小地图标注出入口、小站与任务终点 / item_notes 物品注释与旧译名 / icloud iCloud 同步存档（cloud_ios.m，启动时读）/ pot_pick 药水自动拾取（dm_potpick.c）/ drop_haptic 高价值掉落震动（dm_drophaptic.c） / gem_pick 符文宝石自动拾取进高级仓库（百宝囊）/ store_btn 背包「存放」按钮（dm_pouch.c）/ eco_fps 省电模式 30 帧（nvn_mtl.m，缺省关）
 // touch_swap_above：0 = 传送门左侧（默认），1 = 技能区上方；点「应用」后生效。
-// free_tp：免费回城（dm_freetp.c），缺省关；关时 ZR 空格交还原版、不挂回城技能 411、回城钮用身上的回城书 / 卷轴。
+// free_tp：免费回城（dm_freetp.c），缺省开；关时 ZR 空格交还原版、不挂回城技能 411、回城钮用身上的回城书 / 卷轴。
 // fps_hud：显示帧数（右上角半透明标签，UIKit 层，front_ios.m），缺省关；点「应用」后生效。
 // Effective value 0 / 1: changes only after the player taps Apply on the options page; Discard leaves it unchanged; Default = each key's default (power-saving mode off, the rest on). Returns 1 for an unknown key.
 // Callable from any thread: the first call reads the file once, after that it is an atomic read plus a few string comparisons, lock-free. On iOS it can be read during startup (before the save is mounted).
 // Keys: auto_mana auto-drink potions (red and blue; key name kept) / drop_light light beam on high-value drops / map_mark minimap markers for entrances and exits, waypoints and quest goals / item_notes item notes and old translated names / icloud iCloud save sync (cloud_ios.m, read at startup) / pot_pick potion auto-pickup (dm_potpick.c) / drop_haptic haptics on high-value drops (dm_drophaptic.c) / gem_pick auto-pickup of runes and gems into the advanced stash (pouch) / store_btn the inventory Deposit button (dm_pouch.c) / eco_fps power-saving mode at 30 fps (nvn_mtl.m, off by default)
 // touch_swap_above: 0 = left of portal (default), 1 = above the skill fan; applies after Apply.
-// free_tp: free town portal (dm_freetp.c), off by default; while off an empty ZR goes back to the original game, skill 411 is not attached and the portal button uses the tome / scroll on the player.
+// free_tp: free town portal (dm_freetp.c), on by default; while off an empty ZR goes back to the original game, skill 411 is not attached and the portal button uses the tome / scroll on the player.
 int dm_custom_get(const char *key);
 int dm_custom_lang_explicit(void);   // 语言开关（键 lang_en）在设置文件里写着的值：-1 没写过（不动原版设置）/ 0 简中 / 1 英文；hle_fs.c 挂存档时读 | Value of the language switch (key lang_en) as written in the settings file: -1 never written (original settings left alone) / 0 Simplified Chinese / 1 English; read by hle_fs.c at save mount
 int dm_custom_voice_explicit(void);   // 单独配音开关（键 voice）：-1 没写过 / 0 中文配音 / 1 英文配音；hle_fs.c 挂存档时读
@@ -23,7 +23,23 @@ int dm_3d_profile_get(void);
 int dm_render_res_level(void);   // 渲染分辨率档位（键 render_res，缺省 0）：0 自动 / 1 省电 / 2 均衡 / 3 原生；iOS 前端 front_game_res 按 dm_res_cap.h 的像素预算缩小整帧输出尺寸 | Render resolution level (key render_res, default 0): 0 Auto / 1 Eco / 2 Balanced / 3 Native; the iOS front end's front_game_res shrinks the whole-frame output size to the pixel budget in dm_res_cap.h
 int dm_render_res_rt_drop(void);   // 光追开时启动即降一档（启动第一次被问时定，整局不变）：1 = 降 | one tier down when RT is on at startup (decided on the first call, fixed for the run): 1 = drop
 int dm_custom_loaded(void);   // 设置文件读到了没有：iOS 前端在算启动预留前查（十四审 Q14-01 / 02）| whether the settings file has been read: the iOS front end checks it before computing the startup reserve (review 14 Q14-01 / 02)
-int dm_fps_setting(void);   // 帧率档（键 eco_fps：0 = 60 缺省 / 1 = 30 省电 / 2 = 120，120 只在屏幕最高刷新率 ≥ 120 时生效，否则按 60）；nvn_mtl.m mtl_fps_target 读 | Frame rate mode (key eco_fps: 0 = 60 default / 1 = 30 power saving / 2 = 120, 120 only when the screen's maximum refresh rate is >= 120, otherwise 60); read by mtl_fps_target in nvn_mtl.m
+int dm_fps_thermal_capped(void);   // B147 起恒 0（帧率不再按温控退回；分享摘要字段保留）| always 0 from B147 (the rate no longer falls back on heat; the share-summary field stays)
+int dm_thermal_eff(void);           // 温控档位 0–3（−1 未知），含测试开关 DM_TEST_THERMAL | thermal state 0-3 (-1 unknown), DM_TEST_THERMAL included
+int dm_thermal_hint_step(int *shown, int thermal);   // 过热提示：第一次到 ≥ 2 返回 1，之后 0 | overheating tip: 1 the first time it reaches >= 2, then 0
+int dm_dyn3d_setting(void);         // 动态 3D 分辨率（键 dyn3d，缺省关）：hle_oe.c 每帧读 | Dynamic 3D resolution (key dyn3d, off by default): read every frame by hle_oe.c
+#define DM_FPS_CAPTION_MAX 160   // 图形页帧率第三格文案「帧率：高刷 %d（实验性）」展开后的缓冲；六语最长俄语约 72 字节，t_fps_caption 核 | buffer for the expanded third-stop caption; the longest of six languages (Russian) is about 72 bytes, checked by t_fps_caption
+int dm_high_hz(int max_hz);
+int dm_fps_high_hz(void);   // 本机高刷档的帧率 = dm_high_hz(屏幕最高刷新率)，0 = 不开放 / 屏幕还不知道（遥测报选定帧率用）| this machine's high-refresh rate, 0 = not offered / screen unknown (for the telemetry selected rate)   // 纯函数：屏幕最高刷新率 < 89 → 0（不开放）/ 89–118 → 90 / ≥ 119 → 120（144 等封顶 120）| pure function: screen max < 89 -> 0 (not offered) / 89-118 -> 90 / >= 119 -> 120 (144 etc. cap at 120)
+int dm_fps_setting(void);   // 帧率档（键 eco_fps：0 = 60 缺省 / 1 = 30 省电 / 2 = 高刷档，按 dm_high_hz 取 90 或 120；高刷档只在屏幕最高刷新率 ≥ 89 且内存档 ≥ 2 时生效，否则按 60）；nvn_mtl.m / nvn_vk.c mtl_fps_target 读 | Frame rate mode (key eco_fps: 0 = 60 default / 1 = 30 power saving / 2 = the high-refresh stop, 90 or 120 from dm_high_hz; it takes effect only when the screen's maximum refresh rate is >= 89 and the memory tier is >= 2, otherwise 60); read by mtl_fps_target in nvn_mtl.m / nvn_vk.c
+// AI 帧生成档位（键 fgen_level，RC2 草案 §5）：0 关（缺省）/ 1 省电（枚举保留，本车不开放、图形页不出现）/ 2 平滑（渲染 60、插到 120）；
+// 3 保留给高倍，读到就当 0。旧键 fgen 只在新键没写时读一次（fgen=1 → 2）；存盘只写新键。安卓壳读到非 0 也按关生效、不改写设置文件。
+// AI frame generation level (key fgen_level, RC2 draft §5): 0 off (default) / 1 power saving (enum kept, not opened in this train, not on the Graphics tab) /
+// 2 smooth (render 60, interpolate to 120); 3 is reserved for higher multiples and reads as 0. The old key fgen is read once only when the new key is absent
+// (fgen=1 -> 2); only the new key is written. The Android shell treats any non-zero level as off and does not rewrite the settings file.
+#define DM_FGEN_OFF 0
+#define DM_FGEN_ECO 1
+#define DM_FGEN_SMOOTH 2
+int dm_fgen_level(void);   // 设置档位（已归一，含旧键迁移）：0 / 1 / 2；图形页勾选框只做关 / 平滑（勾 = 2）| setting level (normalised, migration included): 0 / 1 / 2; the Graphics checkbox only does off / smooth (checked = 2)
 int dm_mem_tier(void);   // 内存档位 0 / 1 / 2（按本进程内存上限：< 2600 / 2600–3199 / ≥ 3200 MB；没量到 = 2；DM_MEM_TIER 覆盖）| memory tier 0 / 1 / 2 by this process's memory limit; not measured = 2; DM_MEM_TIER overrides
 void dm_mem_measure_set(int limit_mb, int phys_mb, const char *model);   // iOS main.m 在游戏堆分配之前量一次交进来（上限 = phys_footprint + os_proc_available_memory）| measured once by iOS main.m before the game heap
 void dm_mem_boot_info(int *tier, int *limit_mb, int *phys_mb, int *res0, int *q3d0);   // 分享摘要：档位、上限、物理内存、启动时生效的渲染分辨率档 / 超分档（4 = 原版）| share summary: tier, limit, RAM, launch render level / profile (4 = Original)
@@ -31,6 +47,11 @@ const char *dm_mem_model(void);
 int dm_custom_mem_notice_due(void);    // 内存 0 档、低内存提示还没确认过 | memory tier 0 and the low-memory notice not yet confirmed
 void dm_custom_mem_notice_done(void);  // 玩家点了确定：记进设置文件，以后不再提示 | the player tapped OK: saved, never shown again
 
+// 设备与使用统计（键 tel_stats，缺省关，dm_telemetry.c）与告知框 v1（dm_telebox.c）：tel_notice 记答过的版本；同意 = 两个开关都开，不同意 = 都关，当场存盘 | device and usage statistics (key tel_stats, off by default) and notice v1: tel_notice records the answered version; agree = both switches on, decline = both off, saved at once
+int dm_custom_tel_stats(void);    // 开着且答过告知框 | on and the notice answered
+int dm_custom_tel_notice(void);   // 答过的告知版本，0 = 没答过 | the answered notice version, 0 = none
+void dm_custom_tel_answer(int yes);
+int dm_custom_auto_crash(void);   // 自动上报崩溃：开着且同意过（dm_crashreport.c） | automatic crash reports: on and agreed
 int dm_custom_dir(char *p, size_t n);   // 设置文件所在目录（iOS Documents；Mac 存档已提交目录的上一级，没挂上时按 $DM_SAVE）；0 = 还不知道 | directory of the settings file (iOS Documents; on Mac the parent of the committed save directory, $DM_SAVE before mounting); 0 = not known yet
 int dm_custom_safe_mode(char *what, size_t n);   // 崩溃围栏：实验性功能全关并写回（120 帧 → 60、光追阴影、MetalFX）；返回改了几项 | crash fence: turn every experimental feature off and save (120 fps -> 60, ray-traced shadows, MetalFX); returns how many items changed
 void dm_custom_init(const char *dir);   // 设置文件所在目录（iOS 外壳启动时给 Documents）；不调则用存档提交目录的上一级（Mac 宿主） | Directory holding the settings file (the iOS shell passes Documents at startup); if not called, the parent of the save commit directory is used (Mac host)

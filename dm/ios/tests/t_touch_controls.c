@@ -343,18 +343,18 @@ static void quest_button_timing(void) {
 }
 static void ui_drag_typing(void) {
     dm_tc_state s; dm_tc_init(&s,667,375); dm_tc_set_navigation_mode(&s,1); s.mouse_click_mode=1;
-    dm_tc_begin_at(&s,0,300,200,1.0); dm_tc_move_at(&s,0,302,209,1.1); CHECK(s.finger[0].ui_drag==0);            /* 位移 9.2 点：没过阈值 | Displacement 9.2 points: threshold not passed */
+    dm_tc_begin_at(&s,0,300,200,1.0); dm_tc_pointer_item(&s,0); dm_tc_move_at(&s,0,302,209,1.1); CHECK(s.finger[0].ui_drag==0);            /* 位移 9.2 点：没过阈值 | Displacement 9.2 points: threshold not passed */
     dm_tc_move_at(&s,0,303,212,1.2); CHECK(s.finger[0].ui_drag==1);                                              /* 过阈值，纵向为主 → 滚动 | Past the threshold, mainly vertical → scroll */
     dm_tc_move_at(&s,0,400,214,1.3); CHECK(s.finger[0].ui_drag==1); CHECK(s.buttons==0); CHECK(s.pulse_button==0); /* 之后横着走也不改型，不发键 | Moving sideways afterward does not change the type either, no key sent */
     dm_tc_move_at(&s,0,300,200,1.4); dm_tc_end_at(&s,0,1.45); CHECK(s.mouse_click_seq==0); CHECK(s.pulse_button==0); /* 拖回原处松手：不算点按 | Dragged back to the original spot and released: does not count as a tap */
-    dm_tc_begin_at(&s,0,300,200,2.0); dm_tc_move_at(&s,0,312,204,2.1); CHECK(s.finger[0].ui_drag==2);            /* 横向为主 → 滑块 | Mainly horizontal → slider */
+    dm_tc_begin_at(&s,0,300,200,2.0); dm_tc_pointer_item(&s,0); dm_tc_move_at(&s,0,312,204,2.1); CHECK(s.finger[0].ui_drag==2);            /* 横向为主 → 滑块 | Mainly horizontal → slider */
     dm_tc_end_at(&s,0,2.2); CHECK(s.mouse_click_seq==0); CHECK(s.pulse_button==0);
-    dm_tc_begin_at(&s,0,300,200,3.0); dm_tc_pointer_item(&s,1); dm_tc_move_at(&s,0,300,230,3.1); CHECK(s.finger[0].ui_drag==0); CHECK(s.finger[0].pointer_dragged);   /* 物品区起手：照旧拖放 | Touch starting in the item area: drag-and-drop as before */
+    dm_tc_begin_at(&s,0,300,200,3.0); dm_tc_pointer_item(&s,0); dm_tc_pointer_item(&s,1); dm_tc_move_at(&s,0,300,230,3.1); CHECK(s.finger[0].ui_drag==0); CHECK(s.finger[0].pointer_dragged);   /* 物品区起手：照旧拖放 | Touch starting in the item area: drag-and-drop as before */
     dm_tc_pointer_release(&s,1); dm_tc_end_at(&s,0,3.2); if (s.pulse_button) dm_tc_pulse_end(&s,s.pulse_epoch);
-    dm_tc_begin_at(&s,0,300,200,4.0); dm_tc_pointer_item(&s,3); dm_tc_move_at(&s,0,300,240,4.1); CHECK(s.finger[0].ui_drag==0);   /* 面板外起手：不当滚动 | Touch starting outside the panel: not treated as a scroll */
+    dm_tc_begin_at(&s,0,300,200,4.0); dm_tc_pointer_item(&s,0); dm_tc_pointer_item(&s,3); dm_tc_move_at(&s,0,300,240,4.1); CHECK(s.finger[0].ui_drag==0);   /* 面板外起手：不当滚动 | Touch starting outside the panel: not treated as a scroll */
     dm_tc_end_at(&s,0,4.2); if (s.pulse_button) dm_tc_pulse_end(&s,s.pulse_epoch);
     s.mouse_click_mode=0;
-    dm_tc_begin_at(&s,0,300,200,5.0); dm_tc_move_at(&s,0,300,240,5.1); CHECK(s.finger[0].ui_drag==0);            /* 没开鼠标点击模式（手柄光标拖放那条老路）：不定型 | Mouse click mode not on (the old controller-cursor drag-and-drop path): no type is fixed */
+    dm_tc_begin_at(&s,0,300,200,5.0); dm_tc_pointer_item(&s,0); dm_tc_move_at(&s,0,300,240,5.1); CHECK(s.finger[0].ui_drag==0);            /* 没开鼠标点击模式（手柄光标拖放那条老路）：不定型 | Mouse click mode not on (the old controller-cursor drag-and-drop path): no type is fixed */
     dm_tc_end_at(&s,0,5.2);
 }
 /* 拖放松手：落点是物品区 = 在落点按 A 放下；不是（拖到面板外）= 指针回起点、按 Y 丢弃（按住 0.15 秒） | Drag-and-drop release: the drop point is the item area = press A at the drop point to put down; it is not (dragged outside the panel) = the pointer returns to the start point and Y is pressed to discard (held 0.15 seconds) */
@@ -429,6 +429,26 @@ static void pointer_long(void) {
     dm_tc_begin_at(&s,0,300,180,10.0); dm_tc_tick(&s,10.5);
     CHECK(s.pointer_valid); NEAR(s.pointer_x,300,0.001); NEAR(s.pointer_y,180,0.001);
     CHECK(s.pulse_button==0); dm_tc_end_at(&s,0,10.6); CHECK(s.pulse_button==0);
+}
+static void pointer_late_hit(void) {   /* B169：命中结果晚于第一次过阈值的移动（iOS / 鸿蒙前端异步问宿主）：先不定型，结果到了补判；抬手挂起后才到的结果不补判 | B169: the hit result arrives after the first move past the threshold (iOS / Harmony front ends ask the host asynchronously): no gesture is fixed before it, and it is decided on arrival; a result that arrives only after the lift was suspended does not trigger the late decision */
+    dm_tc_state s; dm_tc_init(&s,667,375); s.mouse_click_mode=1; dm_tc_set_navigation_mode(&s,1);
+    dm_tc_begin_at(&s,0,150,200,10.0); dm_tc_move_at(&s,0,300,220,10.02);
+    CHECK(!s.finger[0].ui_drag); CHECK(!s.finger[0].pointer_dragged);   /* 原先这里定成了横向滑块手势（ui_drag 2），货上拖出去不买 | previously fixed here as a horizontal slider gesture (ui_drag 2), so dragging goods out did not buy */
+    dm_tc_pointer_item(&s,7); CHECK(s.finger[0].shop_drag); CHECK(s.pulse_button==0);   /* 结果到：货架上的货 → 购买拖动 | result arrives: goods on the shelf -> buy drag */
+    dm_tc_move_at(&s,0,480,280,10.3); dm_tc_end_at(&s,0,10.5); CHECK(s.shop_drop_seq==1);
+    dm_tc_begin_at(&s,0,150,200,11.0); dm_tc_move_at(&s,0,300,210,11.02); dm_tc_pointer_item(&s,1);
+    CHECK(s.finger[0].pointer_dragged); CHECK(!s.finger[0].shop_drag); CHECK(s.pulse_button!=0);   /* 背包物品：普通拖放（拿起） | inventory item: ordinary drag (pick up) */
+    dm_tc_cancel_all(&s);
+    dm_tc_begin_at(&s,0,150,200,12.0); dm_tc_move_at(&s,0,300,210,12.02); dm_tc_pointer_item(&s,0); CHECK(s.finger[0].ui_drag==2); CHECK(!s.finger[0].pointer_dragged);   /* 面板内别处：照原来定成界面手势 | elsewhere in the panel: a UI gesture as before */
+    dm_tc_end_at(&s,0,12.3);
+    dm_tc_begin_at(&s,0,150,200,13.0); dm_tc_move_at(&s,0,300,220,13.02); s.pointer_lift_pending=1; dm_tc_pointer_item(&s,7);
+    CHECK(s.finger[0].shop_drag); CHECK(s.pulse_button==0); dm_tc_end_at(&s,0,13.3); CHECK(s.shop_drop_seq==2); CHECK(s.pulse_button==0);   /* 抬手挂起后才到、是货架上的货：补判成购买拖动（不发键，前端按松手落点买） | arrives after the lift was suspended and is shelf goods: late-decided as a buy drag (no key; the front end buys by the release drop point) */
+    dm_tc_begin_at(&s,0,150,200,13.5); dm_tc_move_at(&s,0,300,220,13.52); s.pointer_lift_pending=1; dm_tc_pointer_item(&s,1);
+    CHECK(!s.finger[0].pointer_dragged); CHECK(s.pulse_button==0); dm_tc_end_at(&s,0,13.8); CHECK(s.pulse_button==0);   /* 普通物品：不补判（不在抬手时拿起） | ordinary item: no late decision (no pick-up at lift time) */
+    dm_tc_begin_at(&s,0,150,200,14.0); dm_tc_pointer_item(&s,7); dm_tc_move_at(&s,0,300,220,14.3); CHECK(s.finger[0].shop_drag);
+    dm_tc_end_at(&s,0,14.5);
+    { unsigned mc=s.mouse_click_seq, it=s.item_tap_seq; dm_tc_begin_at(&s,0,150,200,15.0); dm_tc_move_at(&s,0,300,220,15.02); dm_tc_move_at(&s,0,151,201,15.05); dm_tc_end_at(&s,0,15.1);
+      CHECK(s.mouse_click_seq==mc); CHECK(s.item_tap_seq==it); CHECK(s.pulse_button==0); }   /* 结果始终没到、拖出去又拖回原处松手：不算点按（同原来定成界面手势时） | result never arrived, dragged out and back to the start then released: not a tap (as when it used to be fixed as a UI gesture) */   /* 结果先到（原路径）不变 | result first (the old path) unchanged */
 }
 static void pointer_shop_drag(void) {   /* 从商人货架的货上起拖：不发「拿起」、光标留在货上；松手不发任何键、只计一次（买不买由前端按落点定） | Starting a drag on goods on the vendor shelf: no "pick up" is sent and the cursor stays on the goods; on release no key is sent, only one count is made (whether to buy is decided by the front end from the drop point) */
     dm_tc_state s; dm_tc_init(&s,667,375); s.mouse_click_mode=1; dm_tc_set_navigation_mode(&s,1);
@@ -670,12 +690,26 @@ static void modal_box_tap(void) {
     dm_tc_begin_at(&s,0,333,250,11.0); dm_tc_pointer_item(&s,6); dm_tc_end_at(&s,0,11.1);
     CHECK(s.mouse_click_seq==1); CHECK(s.pulse_button==0);   /* 答 6：什么都不发——复核 P1-2 的失败现象 | answer 6: nothing at all -- the failure seen in recheck P1-2 */
 }
+/* 冒烟 11-05：短点按不能丢——功能页 / 设置页里非物品区的点按（鼠标点击模式），按下到抬起 0 / 16 / 50 / 80 ms 都要记一次鼠标点击（真手指约 50–100 ms；
+   手势层没有最短按住时长，真机「瞬时点不认」是注入工具的接触 / 抬起被系统整下丢掉，App 收不到 touchesBegan） | Smoke 11-05: short taps must not be lost -- a tap outside the item area
+   in mouse-click mode, 0 / 16 / 50 / 80 ms from press to lift, records one mouse click each (real fingers are about 50-100 ms; the gesture layer has no minimum hold,
+   the device "instant tap not taken" was the injection tool's contact / release being dropped by the system before the App got touchesBegan) */
+static void short_taps(void) {
+    static const double hold[] = { 0.0, 0.016, 0.05, 0.08 };
+    for (unsigned i = 0; i < sizeof hold / sizeof hold[0]; i++) {
+        dm_tc_state s; dm_tc_init(&s,667,375); dm_tc_set_navigation_mode(&s,1); s.mouse_click_mode=1;
+        unsigned mc = s.mouse_click_seq; double t = 20.0 + i;
+        dm_tc_begin_at(&s,0,300,180,t); dm_tc_pointer_item(&s,0); dm_tc_end_at(&s,0,t + hold[i]);
+        CHECK(s.mouse_click_seq == mc + 1); NEAR(s.mouse_click_x,300,0.001); NEAR(s.mouse_click_y,180,0.001);
+    }
+}
 int main(void) {
     RUN(layout_667); RUN(layout_812); RUN(layout_956); RUN(layout_1024); RUN(layout_ipad169); RUN(layout_pixels); RUN(small_layout); RUN(difficulty_picker);
     RUN(hit_edges); RUN(key_hold_and_ownership); RUN(two_fingers_same_key); RUN(joystick_deadzone); RUN(joystick_clamp_956);
     RUN(joystick_axes); RUN(joystick_plus_skills); RUN(no_auto_handoff); RUN(background_no_key);
     RUN(circles_before_joystick); RUN(cancel_and_resize); RUN(deferred_skill_vs_belt); RUN(held_skill2_vs_belt); RUN(belt_single_double); RUN(no_ui_drag_outside_modal); RUN(invalid_slots_and_repeated_begin); RUN(all_slots_hold); RUN(enabled_targets); RUN(ui_scene_messages);
-    RUN(pointer_tap); RUN(world_tap); RUN(pointer_outside_close); RUN(scene_dialog_only); RUN(pointer_item_tap); RUN(pointer_stack_tap); RUN(pointer_over_disabled_target); RUN(ui_drag_typing); RUN(pointer_drag_out); RUN(pointer_drag); RUN(pointer_long); RUN(pointer_long_then_drag); RUN(pointer_long_seq); RUN(pointer_shop_drag); RUN(pointer_control_hit); RUN(pointer_game_mode); RUN(pointer_pulse_queue); RUN(safe_insets); RUN(swap_key); RUN(skill_cluster_clearance);
+    RUN(pointer_tap); RUN(world_tap); RUN(pointer_outside_close); RUN(scene_dialog_only); RUN(pointer_item_tap); RUN(pointer_stack_tap); RUN(pointer_over_disabled_target); RUN(ui_drag_typing); RUN(pointer_drag_out); RUN(pointer_drag); RUN(pointer_long); RUN(pointer_long_then_drag); RUN(pointer_long_seq); RUN(pointer_shop_drag); RUN(pointer_late_hit); RUN(pointer_control_hit); RUN(pointer_game_mode); RUN(pointer_pulse_queue); RUN(safe_insets); RUN(swap_key); RUN(skill_cluster_clearance);
     RUN(belt_expand); RUN(quest_button_timing); RUN(modal_box_tap);
+    RUN(short_taps);
     printf("PASS %d/%d cases; %d/%d checks\n",cases,cases,checks,checks); return 0;
 }

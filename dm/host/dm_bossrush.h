@@ -8,6 +8,9 @@ void dm_game_notice(uint8_t *main_base, const char *text);   // 原版系统提�
 // UI requests copy text from any producer; pump only on the guest main thread.
 // Chat remains on the server thread.
 void dm_game_notice_ui(uint8_t *main_base, const char *text);
+void dm_game_notice_ui_pair(uint8_t *main_base, const char *text, const char *sub);   // 正文 + 第二级灰副文（B035） | body + second-level grey subtext (B035)
+#include "dm_notice_pair.h"
+const dm_notice_pair *dm_game_notice_pair_for(const char *text, size_t len);   // 原版 Prompt 此刻显示的字属于哪条两级提示（NULL = 不属于，副文不用）；只许游戏主线程 | which two-level tip the native Prompt text belongs to (NULL = none, subtext unused); game main thread only
 void dm_game_notice_ui_pump(void);
 void dm_game_notice_chat(uint8_t *main_base, const char *text);
 int dm_bossrush_owns(uint32_t id);                            // 这个怪物单位是首领连战本关刷出来的 | this monster unit was spawned by the current boss rush stage

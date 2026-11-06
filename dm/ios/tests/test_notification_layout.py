@@ -16,6 +16,22 @@ for width in (1680, 1800):
     assert nodes['Prompt']['fields']['fitToText']
     assert nodes['Prompt']['fields']['style/options']['lineWrap']
     assert nodes['Prompt']['fields']['rect']['width'] == width - 128
+    # Prompt 一字不差照原版（审计 r2 P1-4）：只有 $StyleNotification，不改字号 / 间距 / 颜色，所有通知（原版系统提示、别的 Plus 通知）观感不变
+    # Prompt exactly as native (audit r2 P1-4): $StyleNotification only, no size / spacing / colour override, so every notice keeps its native look
+    assert nodes['Prompt'] == {'type': 'TextBoxWidget', 'name': 'Prompt', 'fields': {
+        'rect': {'x': 64, 'y': 12, 'width': width - 128, 'height': 220}, 'fitToText': True,
+        'style': '$StyleNotification', 'style/options': {'lineWrap': True, 'newlineHandling': 'standard'}}}, nodes['Prompt']
+    # B035 两级提示：自己的两个控件，正文 36 号主色、副文 28 号浅灰（CLAUDE.md §2.6，原版色票不手写 RGB）| B035 two-level tip: two widgets of our own, 36 pt primary body and 28 pt light-grey subtext (original colour tokens, no hand-written RGB)
+    body, sub = nodes['TouchNoticeBody'], nodes['TouchNoticeSub']
+    for w, size in ((body, 36), (sub, 28)):
+        assert w['type'] == 'TextBoxWidget' and w['fields']['fitToText'] and w['fields']['style/options']['lineWrap']
+        assert w['fields']['style'] == '$StyleNotification'   # 保留原版样式种类，原生文字度量才认（dm_cursor.c +0xb0 == 14） | keep the original style kind so native text measurement recognises it (dm_cursor.c +0xb0 == 14)
+        assert w['fields']['style/pointSize'] == size and w['fields']['style/spacing'] == '$ReducedSpacing'
+        assert w['fields']['rect']['x'] == 99999 and w['fields']['rect']['y'] == 99999 and w['fields']['rect']['width'] == width - 128   # 不用时在屏外，宿主只在两级提示时摆进来 | off screen while unused; the host places them only for a two-level tip
+        assert 'text' not in w['fields']   # 字只由宿主在两级提示时写 | text is written by the host only for a two-level tip
+    assert sub['fields']['style/fontColor'] == '$FontColorLightGray' and 'style/fontColor' not in body['fields']   # 正文主色 = $StyleNotification 的白 | body primary colour = $StyleNotification white
+    names = [x['name'] for x in frame['children']]
+    assert names.index('Prompt') < names.index('TouchNoticeBody') < names.index('TouchNoticeSub')   # 画在 Prompt 之后（同层后画的在上） | drawn after Prompt
     assert nodes['TouchNoticeTile00']['fields']['rect']['width'] == nodes['TouchNoticeTile02']['fields']['rect']['width'] == 52
     assert len([name for name in nodes if name.startswith('TouchNoticeTile')]) == 15
     assert all(x['type']=='ImageWidget' and 'tileScale' not in x['fields']
@@ -56,3 +72,16 @@ for controller in (False, True):
                 y = native_y(target, frame / hz, seconds, showing)
                 assert y in (0, target), ('notice crosses the bottom bar', controller, showing, frame, hz, y)
 print('PASS notice never slides through the bottom bar (Q4-05)')
+
+# 真包核对（DM_ROMFS 指到 3.3.94012 RomFS 时）：$StyleNotification 原值，Prompt 不改它 | real package check (when DM_ROMFS points at the 3.3.94012 RomFS): native $StyleNotification values that Prompt keeps
+import os
+romfs = os.environ.get('DM_ROMFS')
+if romfs and os.path.isdir(romfs):
+    import touch_layout
+    _, profile = touch_layout.read_layout(romfs, '_profilehd.json')
+    style = re.search(r'"StyleNotification"\s*:\s*\{(.*?)\}\s*,\s*"', profile, re.S)[1]
+    assert '"pointSize": "$MediumFontSize"' in style and '"fontColor": "$FontColorWhite"' in style and 'spacing' not in style, style
+    assert re.search(r'"MediumFontSize"\s*:\s*26\b', profile)
+    print('PASS native $StyleNotification (94012): Exocet $MediumFontSize 26, white, default spacing; Prompt does not override it')
+else:
+    print('SKIP native $StyleNotification check: DM_ROMFS not set')

@@ -11,8 +11,8 @@ int dm_rift_active(void);
 void dm_rift_gamble_vals(int best, uint32_t *uniq, uint32_t *set);   // 赌博加成：最高通关层 → 地狱暗金 / 套装值（十万分之一）；best < 1 = 0（不加） | Gambling bonus: highest cleared level -> Hell unique / set values (in units of 1/100000); best < 1 = 0 (no bonus)
 typedef struct { int menu, best, unlock, def; unsigned ms; int clvl, tier, done, secs_left; float progress; int inc, next, overtime; } dm_rift_menu_t;   // menu 1 = 选层页、2 = 继续 / 放弃、3 = 守护者处那扇门的确认页（next = 要进的层）；inc = 0 且 done = 超时打倒守护者（没过关） | menu 1 = level-selection page, 2 = Continue / Abandon, 3 = confirmation page of the door at the Guardian (next = the level to enter); inc = 0 and done = Guardian defeated overtime (not passed)
 int dm_rift_cleared_any(void);              // 这个角色打通过任意一层秘境没有（限时内过关才算：最高通关层 ≥ 1）——技能硬点上限的解锁条件（dm_actions.c） | has this character cleared any Greater Rift level (only clears within the time limit count: highest cleared level ≥ 1): the unlock condition for the hard skill point cap (dm_actions.c)
-int dm_rift_merc_unlocked(void);            // 佣兵新装备位解没解锁（秘境最高通关 ≥ 10 层） | Whether the new mercenary equipment slots are unlocked (highest rift level cleared ≥ 10)
-void dm_rift_merc_locked_hint(void);        // 没解锁时的提示「通关地狱后打通秘境10层解锁」 | Hint when not unlocked: 「通关地狱后打通秘境10层解锁」(Clear Greater Rift Level 10 to unlock)
+int dm_rift_merc_unlocked(void);            // 佣兵新装备位对所有角色缺省全开，恒为 1（REQ40；界面 / 触摸层仍在问） | The new mercenary equipment slots are open to every character by default and this always returns 1 (REQ40; the UI / touch layer still asks)
+void dm_rift_merc_locked_hint(void);        // 门槛已移除，空实现；旧调用方仍可调 | The threshold is gone; empty implementation, old callers may still call it
 int dm_rift_tier_level(int tier, int clvl);   // 这一层的怪物等级（9 层以下 0 = 不改） | this level's monster level (below level 9, 0 = unchanged)
 int dm_rift_tier_hp_x10(int tier, int clvl);  // 这一层怪物生命总倍率 ×10（相对地狱 /players 1 的原生怪） | total life multiplier of this level's monsters ×10 (relative to a native Hell /players 1 monster)
 int dm_rift_menu(dm_rift_menu_t *out);      // 前端每帧：要显示的页（0 = 不显示） | Front end every frame: the page to show (0 = none)

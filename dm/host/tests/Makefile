@@ -1,7 +1,8 @@
 DM_ROOT ?= $(HOME)/dm-work
 # dm/host 单测一条命令：make -C dm/host/tests run（秒级；产物放 build/ 不进仓）
 # dm/host unit tests in one command: make -C dm/host/tests run (takes seconds; build output goes to build/ and is not committed)
-PY ?= $(DM_ROOT)/build/cache/dm/venv/bin/python
+# 没有项目 venv（干净快照）时用系统 python3（内审 I-11）| without the project venv (a clean snapshot) use the system python3 (internal audit I-11)
+PY ?= $(if $(wildcard $(DM_ROOT)/build/cache/dm/venv/bin/python),$(DM_ROOT)/build/cache/dm/venv/bin/python,python3)
 EXEFS ?= $(DM_ROOT)/data/switch/3.3.94012/Update/ExeFS
 B = build
 MOVIE_PACKAGES = libavformat libavcodec libavutil libswscale
@@ -15,12 +16,17 @@ run: \
 	$(B)/t_notice_widgets \
 	$(B)/t_modal_input_gate \
 	$(B)/t_settings_modal_input \
+	$(B)/t_ui_gate \
+	$(B)/t_ql_cover \
+	$(B)/t_focus_clip \
+	$(B)/t_slider_part \
 	$(B)/t_metalfx_auto \
 	$(B)/main.orig.bin \
 	$(B)/subsdk0.orig.bin \
 	$(B)/t_altstack \
 	$(B)/t_audio \
 	$(B)/t_audio_spsc \
+	$(B)/t_b036 \
 	$(B)/t_cloudsync \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
@@ -29,10 +35,16 @@ run: \
 	$(B)/t_lock_stress_old \
 	$(B)/t_lock_stress_tsan \
 	$(B)/t_custom_readlog \
+	$(B)/t_custom_readlog_movie \
 	$(B)/t_community \
 	$(B)/t_stick_nav \
+	$(B)/t_diagup \
+	$(B)/t_crashreport \
+	$(B)/t_telemetry \
 	$(B)/t_crashfence \
 	$(B)/t_diffrow \
+	$(B)/t_crash_hang \
+	$(B)/t_crash_order \
 	$(B)/t_doorspot \
 	$(B)/t_fs \
 	$(B)/t_fs_case \
@@ -40,7 +52,12 @@ run: \
 	$(B)/t_hid_script \
 	$(B)/t_hud_dead \
 	$(B)/t_i18n \
+	$(B)/t_loadpage \
+	$(B)/t_loadpage_render \
+	$(B)/t_manifest \
+	$(B)/t_loadpage_race \
 	$(B)/t_minimap_lift \
+	$(B)/t_npcdlg_first_frame \
 	$(B)/t_loader_weak \
 	$(B)/t_mac_overlay \
 	$(B)/t_modetx \
@@ -49,17 +66,30 @@ run: \
 	$(B)/t_notice_geometry \
 	$(B)/t_oe \
 	$(B)/t_render_profile \
+	$(B)/t_fps_thermal \
+	$(B)/t_fps_caption \
 	$(B)/t_mem_tier \
 	$(B)/t_graphics_gate \
+	$(B)/t_m3_rows \
+	$(B)/t_m3_rows_m3 \
+	$(B)/t_fgen_level \
+	$(B)/t_ingame \
+	$(B)/t_options_android \
+	$(B)/t_padmode_pure \
 	$(B)/t_res_auto_policy \
 	$(B)/t_res_cap \
 	$(B)/t_update_appear \
+	$(B)/t_bright_cap \
+	$(B)/t_bright_lut \
 	$(B)/t_custom_scroll \
 	$(B)/t_sel_frame \
 	$(B)/t_hud_mask \
+	$(B)/t_fps_hud \
 	$(B)/t_uiscreen_frontend \
 	$(B)/t_padmap \
+	$(B)/t_pouch_name \
 	$(B)/t_pouch_notice \
+	$(B)/t_req40_merc_slots \
 	$(B)/t_rift_clock \
 	$(B)/t_rift_next \
 	$(B)/t_rift_oldrun \
@@ -68,6 +98,7 @@ run: \
 	$(B)/t_map_diag \
 	$(B)/t_warp_diag \
 	$(B)/t_romfs_validate \
+	$(B)/t_savepkg \
 	$(B)/t_rwlv \
 	$(B)/t_swkbd \
 	$(B)/t_target_rank \
@@ -77,17 +108,32 @@ run: \
 	$(B)/t_touch_mac \
 	$(B)/t_unit_level \
 	$(B)/t_widestash_restore \
-	$(B)/t_widget
+	$(B)/t_widget \
+	$(B)/t_stack_rule \
+	$(B)/t_pouch_own \
+	$(B)/t_pouch_proof \
+	$(B)/t_cursor_item_page \
+	$(B)/t_cursor_rescue \
+	$(B)/t_restart_hint \
+	$(B)/t_bag_rule \
+	$(B)/t_exitwait \
+	$(B)/t_charm_reload \
+	$(B)/t_store_padfocus
 	python3 native_write_scan.py --selftest ..
 	python3 widget_cache_scan.py --selftest ..
 	python3 mode_scan.py ../..
+	python3 test_b109_pouch_icon.py
+	python3 test_b181_weaponswap_rect.py
 	python3 ../../ios/tools/dm_i18n.py --check
 	python3 test_literal_scan.py
 	python3 ../../i18n/scan_literals.py
+	python3 t_stack_table.py
+	python3 t_charm_terms.py
 	$(B)/t_thread_leak
 	$(B)/t_loader_weak
 	$(B)/t_mac_overlay
 	$(PY) test_mac_features.py
+	$(B)/t_req40_merc_slots
 	$(B)/t_rift_clock
 	$(B)/t_rift_next
 	$(B)/t_rift_oldrun
@@ -106,22 +152,53 @@ run: \
 	$(B)/t_metalfx_handoff
 	$(B)/t_metalfx_handoff --disabled
 	$(B)/t_render_profile
+	$(B)/t_fps_thermal
+	$(B)/t_fps_caption
 	$(B)/t_mem_tier
 	$(B)/t_graphics_gate
+	$(B)/t_m3_rows
+	$(B)/t_m3_rows_m3
+	$(B)/t_fgen_level
+	$(B)/t_options_android
+	$(B)/t_padmode_pure
+	$(PY) test_padmode_focus.py
+	$(PY) test_b114_focus_bounds.py   # B114：任务日志左摇杆、角色页起始焦点 | quest log stick, character page starting focus
+	$(PY) test_b159_b160_entry_focus.py   # B159 / B160：手柄进任务日志 / 技能树的起始焦点 | controller quest log / skill tree starting focus
+	$(PY) test_b170_b171_shop_pad.py   # B170 / B171：商店里手柄到背包页签与百宝囊、丢下的符文不被自动捡回 | controller shop tabs / pouch, dropped runes not auto-picked back
+	$(PY) test_b204_pouch_track.py   # B204：放出的证据按所在存档找、找不到标离开、只有背包页的才发 0x63（补 t_pouch_proof 的缺口） | release evidence by save, gone marking, 0x63 only from the bag page
+	$(PY) test_b189_inv_focus.py   # B189：手柄物品栏第 0 行任意列进页签、页签 · 腰带一行、回原列 | controller tab row from any column, tabs and belt one row, back to the column
+	DM_MAIN_ORIG=$(B)/main.orig.bin $(PY) test_b099_b100_merc_pad.py   # B099 / B100：手柄佣兵页 | controller mercenary page
 	$(B)/t_custom_readlog
+	$(B)/t_custom_readlog_movie
 	$(B)/t_crashfence 2>/dev/null
 	$(B)/t_community 2>/dev/null
 	$(B)/t_stick_nav
+	$(B)/t_diagup 2>/dev/null
+	$(B)/t_crashreport 2>/dev/null
+	$(B)/t_telemetry 2>/dev/null
 	$(B)/t_diffrow
 	$(B)/t_res_cap
+	$(B)/t_bright_cap
+	$(B)/t_bright_lut ../../gfx/nvn/nvn_mtl.m ../../gfx/vulkan/engine/xbg_bright_lut.comp
 	$(B)/t_update_appear
+	$(B)/t_loadpage
+	mkdir -p $(B)/loadpage_render && $(B)/t_loadpage_render ../../assets/loadpage $(B)/loadpage_render zh
+	$(B)/t_manifest
+	TSAN_OPTIONS=halt_on_error=1 $(B)/t_loadpage_race > /dev/null
 	$(B)/t_custom_scroll
 	$(B)/t_sel_frame
 	$(B)/t_hud_mask
+	$(B)/t_fps_hud
+	$(B)/t_ingame
 	$(B)/t_res_auto_policy 2>/dev/null
+	$(B)/t_pouch_name
 	$(B)/t_pouch_notice
 	$(B)/t_modal_input_gate
 	$(B)/t_settings_modal_input
+	$(B)/t_ui_gate
+	$(B)/t_ql_cover
+	$(B)/t_focus_clip
+	$(B)/t_slider_part
 	$(B)/t_notice_geometry
 	$(B)/t_notice_dispatch
 	$(B)/t_notice_widgets
@@ -133,6 +210,8 @@ run: \
 	$(B)/t_audio_spsc
 	$(B)/t_swkbd
 	$(B)/t_altstack
+	$(B)/t_crash_hang
+	$(B)/t_crash_order
 	$(B)/t_movie
 	$(B)/t_condvar
 	$(B)/t_condvar_old
@@ -144,17 +223,34 @@ run: \
 	$(B)/t_hud_dead
 	$(B)/t_namegen
 	$(B)/t_minimap_lift
+	$(B)/t_npcdlg_first_frame
 	$(B)/t_widestash_restore
 	$(B)/t_modetx
+	$(B)/t_b036
 	$(B)/t_padmap
 	$(B)/t_unit_level
 	$(B)/t_widget
+	$(B)/t_stack_rule
+	$(B)/t_pouch_own
+	$(B)/t_pouch_proof   # B204：百宝囊放出 / 收进后存盘重进总数守恒（修前规则 -DPROOF_OLD 必红） | pouch release / stow conserved across save and re-entry (the pre-fix rule with -DPROOF_OLD must fail)
+	$(B)/t_cursor_item_page
+	$(B)/t_cursor_rescue
+	$(B)/t_restart_hint
+	$(B)/t_bag_rule
+	$(B)/t_exitwait
+	TMPDIR="$(abspath $(B))" $(B)/t_charm_reload 2>/dev/null
+	$(B)/t_store_padfocus
 	$(B)/t_doorspot
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
+	TMPDIR="$(abspath $(B))" $(B)/t_savepkg 2>/dev/null
+	python3 test_savepkg_gates.py
 	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
 	$(PY) movie_cut.py $(B)/main.orig.bin $(B)/subsdk0.orig.bin
 	$(PY) oe_notify.py $(B)/main.orig.bin
 	$(PY) notice_queue.py $(B)/main.orig.bin
+	$(PY) gpu_pool_budget.py $(B)/main.orig.bin
+	$(PY) product_lock.py
+	$(PY) product_gate.py
 $(B)/t_i18n: t_i18n.c ../dm_i18n.c ../dm_i18n.h ../dm_i18n_tab.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_i18n.c ../dm_i18n.c
 $(B)/t_mac_overlay: t_mac_overlay.m ../app_mac_overlay.h | $(B)
@@ -169,18 +265,46 @@ $(B)/t_doorspot: t_doorspot.c ../dm_doorspot.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_doorspot.c
 $(B)/t_widget: t_widget.c ../dm_widget.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_widget.c
+$(B)/t_stack_rule: t_stack_rule.c ../dm_stack_rule.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_stack_rule.c
+$(B)/t_pouch_own: t_pouch_own.c ../dm_pouch_own.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_pouch_own.c
+$(B)/t_pouch_proof: t_pouch_proof.c ../dm_pouch_proof.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_pouch_proof.c
+	clang -O1 -Wall -Werror -DPROOF_OLD -I.. -o $@_old t_pouch_proof.c && ! $@_old > /dev/null   # 修前规则必须红 | the pre-fix rule must fail
+$(B)/t_restart_hint: t_restart_hint.c ../dm_restart_hint.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_restart_hint.c
+$(B)/t_cursor_item_page: t_cursor_item_page.c ../dm_cursor_item.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_cursor_item_page.c
+$(B)/t_cursor_rescue: t_cursor_rescue.c ../dm_cursor_rescue.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_cursor_rescue.c
+$(B)/t_bag_rule: t_bag_rule.c ../dm_bag_rule.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_bag_rule.c
+$(B)/t_exitwait: t_exitwait.c ../dm_exitwait.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_exitwait.c
+$(B)/t_charm_reload: t_charm_reload.c t_charm_reload_stubs.c ../dm_bag.c ../dm_bag_layout.h ../dm_bag_rule.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wno-unused-variable -I.. -o $@ t_charm_reload.c t_charm_reload_stubs.c
+$(B)/t_store_padfocus: t_store_padfocus.c ../dm_store_nav.h | $(B)
+	clang -O1 -Wall -Werror -o $@ t_store_padfocus.c
 $(B)/t_unit_level: t_unit_level.c ../dm_unit.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_unit_level.c
 $(B)/t_padmap: t_padmap.c ../dm_padmap.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_padmap.c
 $(B)/t_minimap_lift: t_minimap_lift.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_minimap_lift.c
+$(B)/t_npcdlg_first_frame: t_npcdlg_first_frame.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_npcdlg_first_frame.c
 $(B)/t_widestash_restore: t_widestash_restore.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_widestash_restore.c
 $(B)/t_modetx: t_modetx.c ../dm_modetx.h | $(B)
 	clang -O1 -Wall -Werror -o $@ t_modetx.c
+$(B)/t_b036: t_b036.c ../dm_modetx.h ../dm_padfocus.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_b036.c
 $(B)/t_namegen: t_namegen.c ../dm_namegen.c | $(B)
 	clang -O1 -Wall -Werror -o $@ t_namegen.c ../dm_namegen.c
+$(B)/t_savepkg: t_savepkg.c ../dm_savepkg.c ../dm_savepkg.h ../dm_savejob.h ../dm.h | $(B)
+	clang -O1 -DDM_SAVEPKG_TEST_HOOKS -Wall -Werror -Wno-unused-result -Wno-unused-label -I.. -o $@ t_savepkg.c ../dm_savepkg.c ../../third_party/libdeflate/lib/deflate_decompress.c ../../third_party/libdeflate/lib/utils.c ../../third_party/libdeflate/lib/arm/cpu_features.c
+
 $(B)/t_cloudsync: t_cloudsync.c ../dm_cloudsync.c ../dm.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_cloudsync.c ../dm_cloudsync.c
 $(B)/t_touch: t_touch.c ../hle_touch.c ../front.h ../dm.h | $(B)
@@ -203,6 +327,13 @@ movie-real: $(B)/t_movie_real
 	$(PY) movie_real.py $(B)/t_movie_real
 $(B)/t_altstack: t_altstack.c t_altstack_stub.c ../crash.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_altstack.c t_altstack_stub.c ../crash.c
+# 崩溃处理不会把崩溃变成卡死（3 秒闹钟、第一段信号安全）；安卓同一份可用 NDK 静态编（-DDM_STATIC_TEST）在电脑上经 qemu 跑
+# The crash handler never turns a crash into a hang (3-second alarm, signal-safe first part); the same file builds for Android with the NDK statically
+# (-DDM_STATIC_TEST) and runs on a PC through qemu
+$(B)/t_crash_hang: t_crash_hang.c t_altstack_stub.c ../crash.c ../dm.h | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_crash_hang.c t_altstack_stub.c ../crash.c
+$(B)/t_crash_order: t_crash_order.c t_altstack_stub.c ../crash.c ../dm.h | $(B)
+	clang -O1 -Wno-unused-function -I.. -o $@ t_crash_order.c t_altstack_stub.c ../crash.c
 $(B)/%.orig.bin: $(EXEFS)/% | $(B)
 	$(PY) ../../tools/nso.py $< $@ > /dev/null
 $(B):
@@ -243,6 +374,8 @@ $(B)/t_touch_mac: t_uiscreen_fixture.h t_touch_mac.c ../touch_mac.c ../dm_cursor
 	clang -std=c11 -Wall -Wextra -Werror -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_touch_mac.c ../dm_cursor.c ../dm_hud.c -lm ../dm_prof.c
 $(B)/t_target_rank: t_target_rank.c ../hle_target.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_target_rank.c ../hle_target.c
+$(B)/t_req40_merc_slots: t_req40_merc_slots.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_req40_merc_slots.c ../hle_os.c
 $(B)/t_rift_clock: t_rift_clock.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_clock.c ../hle_os.c
 $(B)/t_rift_next: t_rift_next.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
@@ -268,12 +401,26 @@ $(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
 
 $(B)/t_mem_tier: t_mem_tier.c ../dm_custom.c ../dm_custom.h ../dm_crashfence.c ../dm_crashfence.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_mem_tier.c
+$(B)/t_fps_caption: t_fps_caption.c ../dm_custom.h ../dm_i18n_tab.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-const-variable -I.. -o $@ t_fps_caption.c
+$(B)/t_fps_thermal: t_fps_thermal.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_fps_thermal.c
 $(B)/t_render_profile: t_render_profile.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_render_profile.c
 $(B)/t_graphics_gate: t_graphics_gate.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_graphics_gate.c
+$(B)/t_m3_rows: t_m3_rows.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_m3_rows.c
+$(B)/t_m3_rows_m3: t_m3_rows.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -DDM_NVN_M3=1 -o $@ t_m3_rows.c
+$(B)/t_fgen_level: t_fgen_level.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_fgen_level.c
 $(B)/t_custom_readlog: t_custom_readlog.c ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_custom_readlog.c
+# 同一份测试再用 -DDM_MOVIE_FFMPEG=1 编一份：VOICE_ROW 必须仍为 1（配音行与过场解码开关无关）
+# the same test built with -DDM_MOVIE_FFMPEG=1: VOICE_ROW must still be 1 (the voice row is independent of the cutscene-decoding switch)
+$(B)/t_custom_readlog_movie: t_custom_readlog.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -DDM_MOVIE_FFMPEG=1 -I.. -o $@ t_custom_readlog.c
 $(B)/t_crashfence: t_crashfence.c ../dm_crashfence.c ../dm_crashfence.h ../dm_custom.c ../dm_custom.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_crashfence.c
 $(B)/t_diffrow: t_diffrow.c ../dm_hud.c ../dm_hud.h | $(B)
@@ -281,9 +428,20 @@ $(B)/t_diffrow: t_diffrow.c ../dm_hud.c ../dm_hud.h | $(B)
 
 $(B)/t_stick_nav: t_stick_nav.c ../dm_stick_nav.h ../dm_input.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_stick_nav.c
-$(B)/t_community: t_community.c ../dm_community.c ../dm_community.h ../dm_custom.c ../dm_custom.h ../../ios/Sources/dm_touch_controls.c ../../ios/Sources/dm_touch_controls.h | $(B)
-	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -I../../ios/Sources -o $@ t_community.c ../../ios/Sources/dm_touch_controls.c -lm
+$(B)/t_crashreport: t_crashreport.c ../dm_crashreport.c ../dm_crashreport.h ../dm_diagup.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_crashreport.c
 
+$(B)/t_telemetry: t_telemetry.c ../dm_telemetry.c ../dm_telemetry.h ../dm_telemetry_fields.h ../dm_crashreport.h ../dm_diagup.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_telemetry.c
+
+$(B)/t_diagup: t_diagup.c ../dm_diagup.c ../dm_diagup.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_diagup.c
+
+$(B)/t_community: t_community.c site_contract_cases.h ../dm_site.h ../dm_manifest.c ../dm_manifest.h ../dm_community.c ../dm_community.h ../dm_custom.c ../dm_custom.h ../../ios/Sources/dm_touch_controls.c ../../ios/Sources/dm_touch_controls.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -I../../ios/Sources -o $@ t_community.c ../dm_manifest.c ../../ios/Sources/dm_touch_controls.c -lm
+
+$(B)/t_ingame: t_ingame.c ../dm_hud.c ../dm_hud.h ../dm_ingame.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_ingame.c ../dm_hud.c
 $(B)/t_res_auto_policy: t_res_auto_policy.c t_metalfx_handoff_backend.c ../hle_oe.c ../dm_res_cap.h ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_res_auto_policy.c t_metalfx_handoff_backend.c
 
@@ -291,14 +449,37 @@ $(B)/t_res_cap: t_res_cap.c ../dm_res_cap.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_res_cap.c -lm
 $(B)/t_update_appear: t_update_appear.c ../dm_update.c | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_update_appear.c
+$(B)/t_bright_cap: t_bright_cap.c ../dm_bright_cap.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_bright_cap.c -lm
+$(B)/t_bright_lut: t_bright_lut.c | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_bright_lut.c -lm
+$(B)/t_loadpage: t_loadpage.c ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.h ../dm_i18n_tab.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -DDM_I18N_ALL -I.. -o $@ t_loadpage.c -lm
+# 加载页出图核对（不在 run 里：写 PNG 到指定目录）：make render-loadpage OUT=<目录> [LANG=zh]
+# Loading page render check (not part of run: writes PNGs to a given directory): make render-loadpage OUT=<dir> [LANG=zh]
+$(B)/t_manifest: t_manifest.c site_contract_cases.h ../dm_site.h ../dm_manifest.c ../dm_manifest.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -o $@ t_manifest.c
+
+$(B)/t_loadpage_race: t_loadpage_race.c ../dm_loadpage.c ../dm_loadpage.h | $(B)
+	clang -O1 -g -Wall -Werror -Wno-unused-function -fsanitize=thread -I.. -o $@ t_loadpage_race.c -lm
+
+$(B)/t_loadpage_render: t_loadpage_render.m ../dm_loadpage.c ../dm_loadpage.h ../dm_i18n.c ../dm_i18n_tab.h ../../ios/Sources/dm_loadpage_cg.m | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -fobjc-arc -I.. -o $@ t_loadpage_render.m ../dm_loadpage.c ../dm_i18n.c ../../ios/Sources/dm_loadpage_cg.m -framework Foundation -framework CoreGraphics -framework CoreText -framework ImageIO -lm
+.PHONY: render-loadpage
+render-loadpage: $(B)/t_loadpage_render
+	mkdir -p $(OUT) && $(B)/t_loadpage_render ../../assets/loadpage $(OUT) $(or $(LANG),zh)
 $(B)/t_custom_scroll: t_custom_scroll.c ../dm_custom_scroll.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_custom_scroll.c
 $(B)/t_sel_frame: t_sel_frame.c ../dm_sel_frame.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_sel_frame.c
 $(B)/t_hud_mask: t_hud_mask.c ../dm_hud_mask.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_hud_mask.c
+$(B)/t_fps_hud: t_fps_hud.c ../dm_fps_hud.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_fps_hud.c
 
-$(B)/t_pouch_notice: t_pouch_notice.c ../dm_pouch.c ../dm_widget.h ../hle.h | $(B)
+$(B)/t_pouch_name: t_pouch_name.c ../dm_pouch_name.h | $(B)
+	clang -O1 -Wall -Werror -o $@ t_pouch_name.c
+$(B)/t_pouch_notice: t_pouch_notice.c ../dm_pouch.c ../dm_pouch_name.h ../dm_widget.h ../hle.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_pouch_notice.c
 
 $(B)/t_notice_geometry: t_notice_geometry.c ../dm_notice_geometry.h | $(B)
@@ -309,14 +490,26 @@ $(B)/t_metalfx_auto: t_metalfx_auto.c ../../gfx/nvn/nvn_metalfx_policy.h | $(B)
 
 $(B)/t_modal_input_gate: t_modal_input_gate.c ../dm_cursor.c ../dm_cursor.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
+$(B)/t_slider_part: t_slider_part.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
+$(B)/t_focus_clip: t_focus_clip.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
+$(B)/t_ql_cover: t_ql_cover.c ../dm_cursor.c ../dm_cursor.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
+$(B)/t_ui_gate: t_ui_gate.c ../dm_ui_gate.h ../dm_cursor.c | $(B)
+	clang -std=c11 -O1 -Wall -Wextra -Werror -I.. -o $@ $<
 $(B)/t_settings_modal_input: t_settings_modal_input.c ../dm_custom.c ../dm_cursor.h ../dm_widget.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
 
-$(B)/t_notice_widgets: t_notice_widgets.c ../dm_cursor.c ../dm_cursor.h ../dm_widget.h | $(B)
+$(B)/t_notice_widgets: t_notice_widgets.c ../dm_cursor.c ../dm_cursor.h ../dm_widget.h ../dm_notice_pair.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ $<
 
-$(B)/t_notice_dispatch: t_notice_dispatch.c ../dm_bossrush.c ../dm_bossrush.h | $(B)
+$(B)/t_notice_dispatch: t_notice_dispatch.c ../dm_bossrush.c ../dm_bossrush.h ../dm_notice_pair.h ../dm_padmode_pure.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_notice_dispatch.c
+$(B)/t_padmode_pure: t_padmode_pure.c ../dm_padmode_pure.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_padmode_pure.c
+$(B)/t_options_android: t_options_android.c ../dm_custom.c ../dm_custom.h | $(B)
+	clang -O1 -Wall -Werror -Wno-unused-function -Wl,-dead_strip -D__ANDROID__ -I.. -o $@ t_options_android.c
 
 $(B)/t_metalfx_handoff: t_metalfx_handoff.c t_metalfx_handoff_backend.c ../hle_oe.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Werror -Wno-unused-function -I.. -Wl,-dead_strip -o $@ t_metalfx_handoff.c t_metalfx_handoff_backend.c

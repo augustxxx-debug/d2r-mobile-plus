@@ -38,13 +38,14 @@ bundle, generates the touch overlay and a few data tables, and writes
 script (Python packages, the .NET SDK, and `spirv-opt` / `spirv-val` / `glslc`
 from the Vulkan SDK); it reports anything missing.
 
-Copy the whole `android` folder to `Download/S2X/D2R Mobile/` on the phone, and
+Copy the whole `android` folder to `Download/S2X/D2R Mobile Plus/` on the phone, and
 your game resources (the whole `RomFS/data` directory) to `data` in the same
 place. Open the App: when it finds a new import pack it copies it into the
 internal `files/dm/` (with progress; the first time takes a minute or two), then
 starts. The import pack must come from the same release as the App (the product
-code in `pack_info.txt` must equal the one built into the App); otherwise the App
-says so. After the import you can delete the `android` folder on the phone. The
+code in `pack_info.txt` must equal the one built into the App); a pack from
+another release is ignored, and when content is missing the App generates it on
+the phone. After the import you can delete the `android` folder on the phone. The
 import pack contains game content; keep it to yourself.
 
 ## Build locally
@@ -95,7 +96,7 @@ it into the internal directories below.
 | App internal `files/dm/shaders/` | External `.xgs` bundles matching the game and Vulkan backend |
 | App internal `files/dm/overlay/` | Required CASC touch overlay, including `overlay.manifest`, generated from the matching source and the user's resources |
 | App internal `files/dm/overlay/touchart/`, `files/dm/overlay/hud_v4_ui/` | Skill atlases and their silver silhouettes, map icon, circle frame, bottom bar art, and the skill-button socket (the repository's `dm/ios/Sources/ControlArt/dm_mobile_socket.png`), staged by `stage_touch_assets.py`. The touch controls draw them the same way as iOS (`dm/ios/Sources/DmTouchControlArt.h`, `DmTouchOverlay.m`); the joystick is drawn in code |
-| Shared `Download/S2X/D2R Mobile/data/` | User's resource archives and `.build.config`; requires Android's all-files-access setting. When this directory does not exist but the earlier `Download/data/` does, the App keeps using `Download/data/` |
+| Shared `Download/S2X/D2R Mobile Plus/data/` | User's resource archives and `.build.config`; requires Android's all-files-access setting. When this directory does not exist but the earlier `Download/data/` does, the App keeps using `Download/data/` |
 | App internal `files/dm/derived.tsv`, `files/dm/pack_info.txt` | Data tables generated from game files (read at startup by the release APK without game content); the import pack's product code and creation time |
 | App internal `files/save/` | Saves; preserve during upgrades |
 | App internal `files/temp/`, `files/dm/boot.log` | Temporary files and appended startup logs |
@@ -155,6 +156,13 @@ javac -encoding UTF-8 -d /tmp/dm-input-tests \
   dm/android/app/src/main/java/com/xiaoboluo/d2r/TextInputRules.java \
   dm/android/tests/TextInputRulesTest.java
 java -cp /tmp/dm-input-tests com.xiaoboluo.d2r.TextInputRulesTest
+```
+
+The pre-start decision (`StartupDecision`) has its own Java unit test that runs the
+real code (JDK 17+; `JAVA_HOME` selects the JDK when set):
+
+```sh
+bash dm/android/tests/run_startup_decision_test.sh
 ```
 
 Device acceptance must separately record installation, genuine GPU output/FPS,

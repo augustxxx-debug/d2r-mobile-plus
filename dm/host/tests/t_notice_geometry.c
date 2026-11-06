@@ -16,5 +16,8 @@ int main(void) {
         checks++;
     }
     assert(!dm_notice_geometry(0,100,1680,tiles)); assert(!dm_notice_geometry(100,100,0,tiles));
+    // B185：社区框三行渠道要 922 高，上限 1200 时框按内容长高、下边框在「确定」之下；缺省上限仍是 800 | B185: with a 1200 cap the frame grows to fit 922; the default cap stays 800
+    { int h=dm_notice_geometry_h(1672,898,1800,1200,tiles); assert(h==922 && tiles[12][1]+tiles[12][3]==tiles[0][1]+922);
+      assert(dm_notice_geometry(1672,898,1800,tiles)==800); assert(!dm_notice_geometry_h(1672,898,1800,100,tiles)); checks++; }
     printf("PASS multilingual notice geometry: %d content sizes, intact caps/medallions, bounded height, centered coverage without gaps\n",checks);
 }

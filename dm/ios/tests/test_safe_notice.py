@@ -68,7 +68,7 @@ class Text(unittest.TestCase):
 class Host(unittest.TestCase):
     def test_host_handles_ok_and_pad_a(self):
         c = (DM / 'host' / 'dm_crashfence.c').read_text(encoding='utf-8')
-        self.assertIn('"TouchSafeOk"', c); self.assertIn('dm_padmode_page_keys(DM_BTN_A)', c)
+        self.assertIn('"TouchSafeOk"', c); self.assertIn('void dm_crashfence_input_gate(', c); self.assertIn('(*bt & ~prev & DM_BTN_A) && atomic_load(&g_pad)', c)   # B083：A 在输入闸门里算确定 | B083: A counts as OK inside the input gate
         self.assertIn('前端：提示已显示：', c); self.assertIn('玩家点了确定', c)
         # 显示前要写标题和按原因选的正文（曾在挪位置时误删，Mac 截图只剩空框） | title and the cause-picked body must be written before showing (once lost while moving the box: the Mac shot showed an empty frame)
         # 同一个框还给内存 0 档的一次性提示用（dm_custom.c 内存档位，2026-10-29）：正文按种类选，崩溃围栏仍按原因选 | the same box also carries the memory-tier-0 notice (2026-10-29): the body is picked by kind, the crash fence still by cause

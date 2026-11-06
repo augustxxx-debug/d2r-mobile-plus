@@ -7,6 +7,8 @@ static int g_nofile_was, g_nofile_now;   // 启动时的文件描述符软上限
 #import <BackgroundAssets/BackgroundAssets.h>
 #import <MetricKit/MetricKit.h>
 #import "asset_dl.h"
+#include "../../host/dm_loadpage.h"   // 加载页核心（两端共用）；画法在 dm_loadpage_cg.m | loading page core (shared by both platforms); drawing in dm_loadpage_cg.m
+UIView *dm_loadpage_view_new(CGRect frame); uint64_t dm_loadpage_now_ms(void); void dm_loadpage_view_shot(UIView *v, const char *path);
 #import <CommonCrypto/CommonDigest.h>
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -678,7 +680,7 @@ static void boot_prepare(void) {
         if ([fm fileExistsAtPath:sv]) writable();
         // 全新存档 = 新设备：iCloud 同步状态与同步备份（save.test.cloudstate / .cloudbak）一并清掉，否则旧局的同步记录还在，同步按「这台的存档被换了」处理（cfc：首装那条路没走到）
         // Brand-new save = new device: also clear the iCloud sync state and sync backup (save.test.cloudstate / .cloudbak); otherwise the old run's sync record is still there and sync treats it as "this device's save was replaced" (cfc: the first-install path was not reached)
-        for (NSString *x in @[@".cloudstate", @".cloudbak"]) { NSString *p = [sv stringByAppendingString:x]; if ([fm fileExistsAtPath:p]) [fm removeItemAtPath:p error:nil]; }
+        for (NSString *x in @[@".cloudstate", @".cloudbak", @".cloudstate.forceup", @".import", @".import.tmp", @".import.result", @".backups", @".imp"]) { NSString *p = [sv stringByAppendingString:x]; if ([fm fileExistsAtPath:p]) [fm removeItemAtPath:p error:nil]; }
         if ([fm fileExistsAtPath:sv] && ![fm removeItemAtPath:sv error:&e]) plog("boot: 删旧存档失败 %s", e.localizedDescription.UTF8String);
         else if (!strcmp(sf, "empty")) { [fm createDirectoryAtPath:sv withIntermediateDirectories:YES attributes:nil error:nil]; plog("boot: 本局从空存档起（Documents/save.test 已清空 = 首次启动；Documents/save 未动）"); }   // =empty：无存档（冒烟的触摸玩家路径：建角进局） | =empty: no save (the touch player path of the smoke test: create a character and enter a run)
         else if (![fm copyItemAtPath:ref toPath:sv error:&e]) plog("boot: 标准存档副本失败 %s", e.localizedDescription.UTF8String);
@@ -763,6 +765,7 @@ static void *boot_thread(void *arg) {
       plog("boot: 前端给游戏的输出分辨率 主机 %llux%llu / 掌机 %llux%llu", r & 0xffffffff, r >> 32, r0 & 0xffffffff, r0 >> 32); }
     g_T[6] = since_start();
     plog("启动计时 T5 boot_thread 入口 %.1f ms · T6 dm_main 前 %.1f ms", g_T[5], g_T[6]);
+    { void dm_savemgr_boot_ios(void); dm_savemgr_boot_ios(); }   // 待应用的存档导入：挂存档与 iCloud 同步之前换入（dm_savemgr_ios.m）| a pending save import: applied before mount and iCloud sync
     { void dm_cloud_boot(void); dm_cloud_boot(); }   // iCloud 同步：挂存档之前把云端更新的角色 / 共享仓库换进来（最多等 5 秒；cloud_ios.m） | iCloud sync: before mounting saves, swap in the characters / shared stash that are newer in the cloud (wait at most 5 seconds; cloud_ios.m)
     plog("boot: dm_main %s", argv[1]);
     int rc = dm_main(g_boot_argc, argv);
@@ -852,7 +855,7 @@ static void run_boot(void);
 // 资源下载界面（安装时系统不给进度，判断不了是在下还是卡住）：资源包不在本地时显示已下 / 总量 / 速度，出错把原因写在屏上并可重试；到了就地起宿主进游戏
 // Asset download screen (the system gives no progress during install, so you cannot tell downloading from stuck): when the asset pack is not local, show downloaded / total / speed; on error write the reason on screen and allow retry; once it arrives, start the host in place and enter the game
 @interface AssetVC : UIViewController <BAManagedAssetPackDownloadDelegate>
-@property (strong) UILabel *label; @property (strong) UIProgressView *bar; @property (strong) UIButton *retry;
+@property (strong) UILabel *label; @property (strong) UIProgressView *bar; @property (strong) UIButton *retry; @property (strong) UIView *page;
 @property (assign) int64_t last; @property (assign) CFAbsoluteTime lastT; @property (assign) double rate;
 @property (strong) nw_path_monitor_t netmon; @property (assign) int netDown, stopped;   // 守着网络：停在「下载没开始」那一页时，网络从不通变成通就自己重试 | network watch: while sitting on the "download did not start" page, retry automatically when the network goes from down to up
 // 托管下载（TestFlight）：进度到 100% 之后系统还要把资源包装进本地（头文件：完成通知 = 下完且本地可用），这段不给进度；完成回调 / 通知不来就会一直停在进度字上（线上玩家卡 10 分钟）。
@@ -886,8 +889,10 @@ static void run_boot(void);
 - (void)viewDidLoad {
     [super viewDidLoad]; self.view.backgroundColor = UIColor.blackColor;
     CGRect b = self.view.bounds;
+    self.page = dm_loadpage_view_new(b); [self.view addSubview:self.page];   // 加载页（背景图 / 进度条 / 阶段文字 / 音乐，dm_loadpage_cg.m）：说明与按钮叠在它上面 | the loading page (background / bar / stage text / music): the explanation label and the buttons sit on top of it
     self.label = [[UILabel alloc] initWithFrame:CGRectMake(40, b.size.height / 2 - 150, b.size.width - 80, 160)];   // 资源不完整时要列出缺的文件清单：最多 8 行，放不下就缩字（最小到一半） | When assets are incomplete, list the missing files: at most 8 lines, shrink the font if they do not fit (down to half size at minimum)
-    self.label.textColor = [UIColor colorWithRed:0.85 green:0.72 blue:0.45 alpha:1]; self.label.textAlignment = NSTextAlignmentCenter; self.label.numberOfLines = 8; self.label.adjustsFontSizeToFitWidth = YES; self.label.minimumScaleFactor = 0.5;
+    self.label.textColor = [UIColor colorWithRed:0xE3 / 255.0 green:0xD2 / 255.0 blue:0x9B / 255.0 alpha:1]; self.label.textAlignment = NSTextAlignmentCenter; self.label.numberOfLines = 8; self.label.adjustsFontSizeToFitWidth = YES; self.label.minimumScaleFactor = 0.5;   // 正文色同加载页（DM_LP_COL_BODY），带投影压在背景图上 | body colour as the loading page (DM_LP_COL_BODY), with a shadow over the picture
+    self.label.shadowColor = [UIColor colorWithWhite:0 alpha:0.85]; self.label.shadowOffset = CGSizeMake(0, 1);
     self.label.font = [UIFont systemFontOfSize:17 weight:UIFontWeightMedium]; self.label.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
     self.bar = [[UIProgressView alloc] initWithFrame:CGRectMake(b.size.width * 0.2, b.size.height / 2 + 24, b.size.width * 0.6, 4)];
     self.bar.progressTintColor = [UIColor colorWithRed:0.80 green:0.25 blue:0.10 alpha:1]; self.bar.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
@@ -899,15 +904,30 @@ static void run_boot(void);
     self.share = [UIButton buttonWithType:UIButtonTypeSystem]; [self.share setTitle:T("dmPauseShareLog") forState:UIControlStateNormal]; self.share.hidden = YES;
     [self.share addTarget:self action:@selector(shareTap) forControlEvents:UIControlEventTouchUpInside];
     [self.view addSubview:self.label]; [self.view addSubview:self.bar]; [self.view addSubview:self.retry]; [self.view addSubview:self.useDirect]; [self.view addSubview:self.share];
+    self.bar.hidden = YES;   // 旧的系统进度条不再露面：进度由加载页画（bar.progress 的赋值留着无害） | the old system bar no longer shows: the page draws the progress (assignments to bar.progress are harmless)
     UIApplication.sharedApplication.idleTimerDisabled = YES;
+    { const char *shot = getenv("DM_TEST_LOADPAGE_SHOT");   // 测试开关：1.5 秒后把加载页渲染成 PNG（Documents 下），不截屏 | test switch: after 1.5 s render the page to a PNG (under Documents), no screen capture
+      if (shot) { NSString *f = @(shot); dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ dm_loadpage_view_shot(self.page, f.fileSystemRepresentation); }); } }
     [self watchNet];
     [self start];
 }
 - (void)viewDidLayoutSubviews {   // 按钮一行居中排：重试 / 改用直接下载 / 分享诊断日志，只排露出来的 | buttons centred in one row: Retry / Use direct download / Share diagnostic log, only the ones showing
     [super viewDidLayoutSubviews]; CGRect b = self.view.bounds; NSMutableArray<UIButton *> *row = [NSMutableArray array]; CGFloat w = 0;
     for (UIButton *x in @[self.retry, self.useDirect, self.share]) if (!x.hidden) { [x sizeToFit]; [row addObject:x]; w += MAX(120, x.bounds.size.width + 24) + (row.count > 1 ? 16 : 0); }
+    // B173：按加载页的公共布局摆（dm_loadpage_layout，两端同一份）。背景图标美术填满「安全区顶 → 标题」，说明文字原先摆在屏幕正中偏上，正好压在图标上（全新安装无资源页）。
+    // 改成：按钮行紧贴进度条下面，说明文字放在按钮行以下到安全区底之间（这块在无资源 / 失败时没有别的字；下载中正文 / 副文由加载页画，说明框通常是空的）
+    // B173: lay out from the loading page's shared layout (dm_loadpage_layout, the same on both platforms). The icon art fills "safe top -> title", and the explanation used to sit just above the screen centre, right on
+    // the icon (fresh install, no assets page). Now the button row hugs the bar from below and the explanation takes the space between the button row and the safe bottom (empty when there are no assets / on failure;
+    // while downloading the page draws body / sub itself and the explanation is usually empty)
+    UIEdgeInsets si = self.view.safeAreaInsets; dm_lp_screen sc = { b.size.width, b.size.height, si.left, si.top, si.right, si.bottom }; dm_lp_layout L; dm_loadpage_layout(&sc, &L);
+    CGFloat by = L.bar.y + L.bar.h + 8; if (by < b.size.height * 0.45 || by > b.size.height - si.bottom - 80) by = b.size.height / 2 + 50;   // 布局算不出合理值时退回原位 | fall back to the old position when the layout gives nothing sensible
     CGFloat x0 = (b.size.width - w) / 2;
-    for (UIButton *x in row) { CGFloat bw = MAX(120, x.bounds.size.width + 24); x.frame = CGRectMake(x0, b.size.height / 2 + 50, bw, 44); x0 += bw + 16; }
+    for (UIButton *x in row) { CGFloat bw = MAX(120, x.bounds.size.width + 24); x.frame = CGRectMake(x0, by, bw, 44); x0 += bw + 16; }
+    CGFloat ly = by + (row.count ? 44 + 6 : 0), lb = b.size.height - si.bottom - 6;
+    self.label.frame = CGRectMake(40 + si.left, ly, b.size.width - 80 - si.left - si.right, MAX(44, lb - ly));
+    self.label.autoresizingMask = UIViewAutoresizingNone;   // 位置由这里每次布局算，不再随父视图弹性伸缩 | positioned here on every layout pass, no longer autoresized
+    // 手机横屏这块只有约 60 点高（17 Pro / Duo）：三行指引按 17 点要 61 点，改 15 点；更多行（缺文件清单）再靠 minimumScaleFactor 往下缩 | on phones this space is about 60 pt (17 Pro / Duo): three lines at 17 pt need 61 pt, so 15 pt; longer text (missing-file lists) still shrinks via minimumScaleFactor
+    self.label.font = [UIFont systemFontOfSize:(lb - ly < 80 ? 15 : 17) weight:UIFontWeightMedium];
 }
 - (void)showBtn:(UIButton *)x { dispatch_async(dispatch_get_main_queue(), ^{ x.hidden = NO; [self.view setNeedsLayout]; }); }
 - (void)shareTap { plog("assets: 玩家点了分享诊断日志"); void dm_sharelog_share(void); dm_sharelog_share(); }
@@ -992,6 +1012,7 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
 }
 - (void)watchPack {   // 托管下载开始后：守着系统状态（主线程定时器） | after the hosted download starts: watch the system state (main-thread timer)
     if (self.poll) return; self.packT = CFAbsoluteTimeGetCurrent(); self.logT = 0;
+    { int k = DM_LP_DOWNLOAD; dm_loadpage_begin(&k, 1, NULL, dm_loadpage_now_ms()); }   // 加载页：单阶段「下载」 | loading page: the single stage "download"
     dispatch_source_t s = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue()); self.poll = s; __weak AssetVC *w = self;
     dispatch_source_set_timer(s, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), 5 * NSEC_PER_SEC, NSEC_PER_SEC / 2);
     dispatch_source_set_event_handler(s, ^{ [w pollPack]; }); dispatch_resume(s);
@@ -1018,11 +1039,13 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
     // 直装包没有托管资源，这条路必然失败：报错只进日志，界面给玩家能照做的指引
     // A direct-install build has no hosted assets, so this path always fails: the error goes only to the log, and the screen gives the player instructions they can follow
     plog("assets: %s失败：%s（%s %ld）", what.UTF8String, e.localizedDescription.UTF8String, e.domain.UTF8String, (long)e.code);
+    dm_loadpage_fail("", dm_loadpage_now_ms());
     [self say:no_assets_text()];
     [self showBtn:self.retry];
 }
 - (void)start {
     self.retry.hidden = YES; self.stopped = 0; self.last = 0; self.lastT = CFAbsoluteTimeGetCurrent(); self.packStop = 0; self.textKind = 0;
+    dm_loadpage_begin(NULL, 0, NULL, dm_loadpage_now_ms());   // 页面回到空闲态（标题「准备游戏内容」，没有进度）；下载真正开始时再报阶段 | the page goes back to idle (title "Preparing game content", no progress); the stage is reported when a download really starts
     char why[2048];
     if (getenv("DM_TEST_BA") && !self.gone) { if (@available(iOS 26.0, *)) [self fakeBA:@(getenv("DM_TEST_BA"))]; return; }   // 测试：造托管下载现场（fakeBA） | test: stage a hosted download scene (fakeBA)
     if (!getenv("DM_ASSETS_TEST") && romfs_locate(why, sizeof why)) { [self ready]; return; }   // 重试时资源已到（如刚在「文件」里拷完） | Assets have already arrived on retry (e.g. just finished copying in the Files app)
@@ -1071,7 +1094,7 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
     [self say:T("dmDlConnecting")];
     [DmAssetDL.shared prepare:^(NSString *err, int64_t remain, int64_t total, BOOL cellular) {
         if (err && DmAssetDL.shared.shortBytes > 0) {   // 设备空间不够（原先只进日志、界面显示的是「先从内测页下载资源包」，跟真实原因无关）：系统提示写清还差多少 | Not enough space on the device (previously this only went to the log and the screen showed 「先从内测页下载资源包」(First download the asset pack from the beta page), unrelated to the real cause): the system prompt states exactly how much is missing
-            plog("assets: 直接下载走不了：%s", err.UTF8String);
+            plog("assets: 直接下载走不了：%s", err.UTF8String); dm_loadpage_fail("", dm_loadpage_now_ms());
             NSString *dev = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad ? @"iPad" : @"iPhone";   // 按设备写 | Wording depends on the device
             NSString *m = [NSString stringWithFormat:T("dmDlSpaceMsg"), DmAssetDL.shared.shortBytes / 1e9, remain / 1e9, dev, DmAssetDL.shared.freeBytes / 1e9, dev];
             NSString *title = [NSString stringWithFormat:T("dmDlSpaceTitle"), dev];
@@ -1085,19 +1108,21 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
         { static int once; const char *ot = getenv("DM_ASSET_OFFLINE_TEST"); if (ot && !once) { once = 1; err = T("dmDlNoServer"); self.netDown = 1;
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(ot) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [self netUp]; }); } }
         if (err) {   // 下载没开始：屏上写真实原因和下一步，不落回「还没有游戏资源」（没网时玩家看到的是「没有资源」，不知道是网络、也不知道能重试） | download did not start: show the real reason and the next step on screen instead of falling back to "no game assets yet" (with no network the player saw "no assets", not knowing it was the network or that a retry was possible)
-            plog("assets: 直接下载走不了：%s", err.UTF8String);
+            plog("assets: 直接下载走不了：%s", err.UTF8String); dm_loadpage_fail("", dm_loadpage_now_ms());
             [self say:[NSString stringWithFormat:T("dmDlNotStarted"), fallback ? [fallback stringByAppendingString:@"\n"] : @"", self.netDown ? T("dmDlNetDown") : err, self.netDown ? T("dmDlNextAuto") : T("dmDlNextRetry")]];
             [self showBtn:self.retry]; self.stopped = 1; return; }
         void (^go)(void) = ^{
             [self say:[NSString stringWithFormat:T("dmDlWill"), remain < 100000000 ? [NSString stringWithFormat:@"%.0f MB", remain / 1e6] : [NSString stringWithFormat:@"%.1f GB", remain / 1e9], total / 1e9]];   // 自动开始的大下载，开始前先把要下多少写在屏上 | A large download that starts automatically: show on screen how much will be downloaded before it starts
             self.last = total - remain; self.lastT = CFAbsoluteTimeGetCurrent(); self.rate = 0;
+            { int k = DM_LP_DOWNLOAD; dm_loadpage_begin(&k, 1, NULL, dm_loadpage_now_ms()); }   // 加载页：单阶段「下载」 | loading page: the single stage "download"
             [DmAssetDL.shared run:^(int64_t done, int64_t tot, NSString *note) {
                 CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
                 if (now - self.lastT >= 1.0) { self.rate = MAX(0, done - self.last) / (now - self.lastT); self.last = done; self.lastT = now; }
-                self.label.text = [NSString stringWithFormat:@"正在下载游戏资源（共 %.1f GB）\n%.2f / %.2f GB（%.0f%%）  %.1f MB/s%@", tot / 1e9, done / 1e9, tot / 1e9, tot ? 100.0 * done / tot : 0, self.rate / 1e6, note ? [@"\n" stringByAppendingString:note] : @""];
+                dm_lp_detail d = { 0, 0, done, tot }; dm_loadpage_set(0, tot ? (double)done / tot : 0, &d, dm_loadpage_now_ms());   // 已到手 / 总字节、速度、剩余都由页面算并画 | bytes done / total, speed and ETA are computed and drawn by the page
+                self.label.text = note ?: @"";   // 附注（断点续传等）仍在说明框里 | notes (resume etc.) stay in the explanation label
                 self.bar.progress = tot ? (float)done / tot : 0;
             } done:^(NSString *e2) {
-                if (e2) { [self say:[NSString stringWithFormat:T("dmDlStopped"), e2, self.last / 1e9, total / 1e9]]; [self showBtn:self.retry]; self.stopped = 1; return; }
+                if (e2) { dm_loadpage_fail("", dm_loadpage_now_ms()); [self say:[NSString stringWithFormat:T("dmDlStopped"), e2, self.last / 1e9, total / 1e9]]; [self showBtn:self.retry]; self.stopped = 1; return; }   // 页面标题换「无法继续」，原因在说明框 | the page title becomes "could not continue"; the reason is in the label
                 [self ready];
             }];
         };
@@ -1114,11 +1139,12 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
     self.packDone = done; if (total > 0) self.packBytes = total;
     if (total > 0 && done >= total) {   // 到 100%：之后是系统装包，屏上改说明（进度字不再刷） | reached 100%: from here the system installs the pack, the screen switches to an explanation (the progress text is no longer updated)
         if (!self.packFull) { self.packFull = now; plog("assets: 托管下载进度到 100%%（%.2f GB），等系统装进本地；可用空间 %.2f GB", total / 1e9, free_bytes() / 1e9);
+            dm_loadpage_set(0, 1.0, NULL, dm_loadpage_now_ms());
             dispatch_async(dispatch_get_main_queue(), ^{ self.bar.progress = 1; [self packText:free_bytes()]; [self showBtn:self.share]; }); }
         return; }
     if (now - self.lastT >= 1.0) { self.rate = (done - self.last) / (now - self.lastT); self.last = done; self.lastT = now; }
-    NSString *t = [NSString stringWithFormat:T("dmDlProgress"), done / 1e9, total / 1e9, total ? 100.0 * done / total : 0, self.rate / 1e6];
-    dispatch_async(dispatch_get_main_queue(), ^{ self.label.text = t; self.bar.progress = total ? (float)done / total : 0; });
+    { dm_lp_detail d = { 0, 0, done, total }; dm_loadpage_set(0, total ? (double)done / total : 0, &d, dm_loadpage_now_ms()); }   // 进度条、GB、速度、剩余由加载页画；说明框清空 | bar, GB, speed and ETA drawn by the page; the label is cleared
+    dispatch_async(dispatch_get_main_queue(), ^{ self.label.text = @""; self.bar.progress = total ? (float)done / total : 0; });
 }
 - (void)downloadOfAssetPackBegan:(BAAssetPack *)p API_AVAILABLE(ios(26.0)) { plog("assets: 系统通知托管下载开始 / 继续"); self.packStop = 0; self.textKind = 0; }
 - (void)downloadOfAssetPackFinished:(BAAssetPack *)p API_AVAILABLE(ios(26.0)) {
@@ -1141,6 +1167,7 @@ static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重
         [self say:[NSString stringWithFormat:T("dmDlNotReady"), @(why)]]; [self showBtn:self.retry]; return; }
     started = 1; if (self.poll) { dispatch_source_cancel(self.poll); self.poll = nil; }
     plog("assets: 资源就绪，就地起宿主");
+    dm_loadpage_finish(dm_loadpage_now_ms());   // 加载页：完成（写「加载页：」汇总行；换掉视图时音乐随之停） | loading page: done (writes the 「加载页：」 summary line; the music stops when the view is replaced)
     g_need_assets = 0;
     self.view = front_ios_view(self.view.window.windowScene.coordinateSpace.bounds);
     [self setNeedsUpdateOfScreenEdgesDeferringSystemGestures]; [self setNeedsUpdateOfHomeIndicatorAutoHidden];
@@ -1170,6 +1197,7 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
     plog("安全区 上 %.1f 左 %.1f 下 %.1f 右 %.1f（点）；视图 %.0fx%.0f；朝向 %ld", i.top, i.left, i.bottom, i.right, z.width, z.height, (long)self.view.window.windowScene.interfaceOrientation);
 }
 @end
+void dm_foldland_scene_update(UIWindowScene *ws);
 @interface SceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property (strong, nonatomic) UIWindow *window;
 @end
@@ -1177,6 +1205,7 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)s options:(UISceneConnectionOptions *)o {
     UIWindowScene *ws = (UIWindowScene *)scene;
     self.window = [[UIWindow alloc] initWithWindowScene:ws]; g_window = self.window;
+    dm_foldland_scene_update(ws);
     UIViewController *vc = [DmGameVC new];
     vc.view.backgroundColor = UIColor.blackColor;
     if ([g_mode isEqualToString:@"boot"] && g_block_title) { vc = [BlockVC new]; vc.view.backgroundColor = UIColor.blackColor; }   // 图形芯片不支持 / 安装包不完整：只弹框 | Graphics chip not supported / install package incomplete: only show the message
@@ -1193,6 +1222,7 @@ static void astc_handoff(UIWindow *w) {   // 补充包到位（玩家刚拷好 /
     g_T[4] = since_start();
     plog("启动计时 T4 willConnect 末 %.1f ms", g_T[4]);
 }
+- (void)windowScene:(UIWindowScene *)ws didUpdateEffectiveGeometry:(UIWindowSceneGeometry *)prev { dm_foldland_scene_update(ws); }   // iPhone Duo 内外屏切换（B115）| iPhone Duo inner / cover screen switch (B115)
 - (void)sceneWillResignActive:(UIScene *)s { if (g_host_up) front_ios_focus_event(0); }
 // 崩溃围栏：进后台清运行标记（后台被系统 / 玩家划掉是 SIGKILL、不走回调，不能算闪退；画面已卡住 5 秒的除外，记卡死），回前台再写回（dm_crashfence.c） | crash fence: clear the running marker on entering the background (being killed there by the system / a swipe is a SIGKILL without callbacks and must not count as a crash), write it again on returning to the foreground
 - (void)sceneDidEnterBackground:(UIScene *)s { if (g_host_up) { front_ios_focus_event(1); void dm_crashfence_background(void); dm_crashfence_background(); } }

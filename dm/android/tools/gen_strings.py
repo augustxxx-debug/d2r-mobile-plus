@@ -16,7 +16,9 @@ def generate(output):
     shared = {"dmInputTitle", "dmNameTitle", "dmNameRule", "dmQtyTitle", "dmNameBlankRandom",
               "dmNamePickIme", "dmNameTooShort", "dmNameEdge", "dmCancel", "dmConfirm", "dmTcCancel", "dmHudLife", "dmHudMana"}
     rows = [r for r in table.rows() if r[0].startswith("dmAndroid") or r[0] in shared]
-    for folder, column in (("values", 2), ("values-zh", 1)):
+    # 六套：英文（缺省）、中文、西语、拉美西语（表里空着时 rows() 已回落成西语）、俄语、韩语
+    # Six sets: English (default), Chinese, Spanish, Latin American Spanish (rows() already falls back to Spanish when empty), Russian, Korean
+    for folder, column in (("values", 2), ("values-zh", 1), ("values-es", 3), ("values-es-rMX", 4), ("values-ru", 5), ("values-ko", 6)):
         lines = ['<?xml version="1.0" encoding="utf-8"?>', '<resources>']
         for row in rows:
             value = escape(row[column]).replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"').replace("\n", "\\n")

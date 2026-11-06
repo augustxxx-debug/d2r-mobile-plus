@@ -20,7 +20,7 @@ int main(void) { @autoreleasepool {
 #if !DM_NVN_M3
     unsetenv("DM_RT_SHADOW"); rts_on(); g_rts.on = 1; int rt_gate = g_rts.gate;   // 光追阴影开着（本机可用时） | ray-traced shadows on (where the machine supports them)
 #else
-    int rt_gate = 0;
+    int rt_gate = 0; (void)rt_gate;   // 旧接口版不用（tests_m3 -Werror，B211）| unused in the older-API pass
 #endif
     id<MTLBuffer> b = [g_dev newBufferWithLength:65536 options:MTLResourceStorageModePrivate]; res_add(b);
     // 1. 没有请求 | 1. no request

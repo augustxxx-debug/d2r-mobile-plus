@@ -11,7 +11,7 @@ HAVE_BINDING_FIXTURES := $(and $(wildcard fixtures/native_binding/mapping.bin),$
 fixture_test = $(if $(HAVE_BINDING_FIXTURES),./$(1) $(BINDING_FIXTURES),@echo "跳过 $(1)：没有夹具 $(BINDING_FIXTURES)（公开仓库不带，要自己从运行中的游戏抓，见 fixtures/native_binding/README）")
 
 .PHONY: all run test clean
-all: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL_CACHE_TARGET)
+all: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_foldland $(METAL_CACHE_TARGET)
 run: test
 $(TARGET): t_touch_controls.c $(wildcard ../Sources/dm_touch_controls.[ch]) ../../host/dm_input.h
 	$(CC) $(CFLAGS) -I../Sources t_touch_controls.c ../Sources/dm_touch_controls.c -lm -o $@
@@ -40,10 +40,13 @@ t_skill_aim: t_skill_aim.c ../Sources/dm_touch_controls.c ../Sources/dm_touch_co
 	$(CC) $(CFLAGS) -I../Sources t_skill_aim.c ../Sources/dm_touch_controls.c -lm -o $@
 t_joy_travel: t_joy_travel.c ../Sources/dm_touch_controls.c ../Sources/dm_touch_controls.h ../../host/dm_input.h
 	$(CC) $(CFLAGS) -I../Sources t_joy_travel.c ../Sources/dm_touch_controls.c -lm -o $@
+t_foldland: t_foldland.c ../Sources/dm_foldland.c ../Sources/dm_foldland.h
+	$(CC) $(CFLAGS) -I../Sources t_foldland.c ../Sources/dm_foldland.c -o $@
 t_metal_cache_guard: t_metal_cache_guard.c ../Sources/dm_metal_cache_guard.c ../Sources/dm_metal_cache_guard.h
 	$(CC) $(CFLAGS) -I../Sources t_metal_cache_guard.c ../Sources/dm_metal_cache_guard.c -o $@
-test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL_CACHE_TARGET)
+test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel t_foldland $(METAL_CACHE_TARGET)
 	./$(METAL_CACHE_TARGET)
+	./t_foldland
 	./$(TARGET)
 	./t_skill_aim
 	./t_joy_travel
@@ -58,9 +61,12 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_safe_notice.py
 	python3 test_charsel_pad_font.py
 	python3 test_bliss_key_glyphs.py
+	python3 test_pad_belt_hint.py
 	@if [ "$$(uname -s)" = Darwin ]; then \
 	  clang -fobjc-arc -framework Foundation t_diagnostic_scrub.m -o /tmp/dm-test-diagnostic-scrub && /tmp/dm-test-diagnostic-scrub; \
 	  clang -fobjc-arc -framework Foundation t_crashlog.m -o /tmp/dm-test-crashlog && /tmp/dm-test-crashlog; \
+	  xcrun swiftc -swift-version 6 -parse-as-library ../Sources/dm_diag_upload.swift t_diag_upload.swift -o /tmp/dm-test-diag-upload && /tmp/dm-test-diag-upload; \
+	  S=$$(xcrun --sdk macosx --show-sdk-path) && F=$$S/System/iOSSupport/System/Library/Frameworks && for m in 0 1; do xcrun clang -isysroot $$S -target arm64-apple-ios18.0-macabi -iframework $$F -F $$F -fobjc-arc -Wall -Werror -Wno-unused-function -DDM_NVN_M3=$$m -I../../host -framework UIKit -framework Network -framework Foundation t_update_channel.m -o /tmp/dm-test-update-channel-$$m && /tmp/dm-test-update-channel-$$m || exit 1; done; \
 	else echo "Skip diagnostic export redaction test: requires Apple Foundation"; fi
 	python3 test_casc_add_paths.py
 	python3 test_bench_device.py
@@ -76,10 +82,18 @@ test: $(TARGET) $(BINDING_TARGETS) t_native_art t_skill_aim t_joy_travel $(METAL
 	python3 test_version.py
 	python3 test_touch_layout_options.py
 	python3 test_options_divider_rows.py
+	python3 test_skill_quantity_rect.py
+	python3 test_options_table.py
 	python3 test_touch_layout_language.py
 	python3 test_community_entry.py
+	python3 test_restart_hint.py   # B151：重启后生效提示（橙色、28 号、按启动值显隐） | B151: restart hints (orange, 28 pt, shown by launch value)
+	python3 test_community_layout.py   # 社区框：渠道卡张数与宿主一致、宿主找的控件都在、网盘行已撤（B154） | community box: card count matches host, host widget names present, drive rows gone (B154)
 	python3 test_difficulty_row.py
+	python3 test_desecrated_entry.py   # 「进入恐惧区域」入口（方案 C §3.2）| the Terror Zones entry (plan C 3.2)
 	python3 test_padmode_compare_hint.py   # B014：手柄提示条「比较（按住）」 | B014: controller legend "Compare (hold)"
+	python3 test_b101_ident_hint.py   # B101：手柄提示条「捡起(按住鉴定)」不超宽 | B101: controller legend "Pick Up (Hold to ID)" fits
+	python3 test_telemetry_notice_layout.py   # 统计告知框：布局控件、六语字宽、接线与隐私（dm_telebox.c） | statistics notice: widgets, six-language widths, wiring and privacy
+	python3 test_diag_upload_layout.py   # 上传诊断报告提示框：布局控件、文案键、宿主接线（dm_diagup.c） | diagnostic upload box: widgets, text keys, host wiring
 	$(call fixture_test,t_native_binding)
 	$(call fixture_test,t_game_bridge)
 	./t_binding_freshness

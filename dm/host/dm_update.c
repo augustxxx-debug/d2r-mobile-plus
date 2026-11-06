@@ -17,18 +17,23 @@
 #include "dm_i18n.h"
 #include "dm_cursor.h"
 #include "dm_uiscreen.h"
+#include "dm_crashreport.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdatomic.h>
 #include <pthread.h>
 
+__attribute__((weak)) const char *dm_crashreport_note(void) { return NULL; }   // 不带自动上报模块的单测用；产品里 dm_crashreport.c 的强定义替换 | for unit tests without that module
+__attribute__((weak)) const char *dm_crashreport_note_arg(void) { return ""; }
 static int g_own = -1; static char g_label[64]; static void (*g_on_select)(void);   // g_own 只用来判「初始化过没有」，比新旧在外壳 | g_own only tells whether init ran; comparing versions is on the shell side
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER; static struct { int build, urgent; char ver[24], note[160]; } g_offer;   // g_mu 护 g_offer | g_mu guards g_offer
 static _Atomic int g_safe_l = -1, g_dirty, g_appear, g_fg;   // g_safe_l < 0 = 外壳还没给左安全区，先不写字（免得字先出在安全区里再跳一下）。g_dirty：还要重写几帧（>0 时每帧找控件、写字、摆位置；写完一次后再跟 30 帧，等文字框量出新宽度） | g_safe_l < 0 = the shell has not supplied the left safe area yet, so do not write text for now (to avoid the text first showing inside the safe area and then jumping). g_dirty: how many more frames to rewrite (when >0, every frame find widgets, write text, set positions; after one write keep following for 30 more frames, waiting for the text box to measure the new width)
 
 // label = 显示版本（空 = 退回写构建号） | label = display version (empty = fall back to the build number)
 void dm_update_init(int own_build, const char *label, void (*on_select)(void)) { g_own = own_build; if (label && *label) strlcpy(g_label, label, sizeof g_label); else snprintf(g_label, sizeof g_label, "%d", own_build); g_on_select = on_select; atomic_store(&g_dirty, 30); }   // 不在这里置「选角页出现」：启动时游戏自己会发一次 OpenPanel CharacterSelectPanel，这里再置就每次启动查两遍 | Do not set "character select page appears" here: at startup the game sends OpenPanel CharacterSelectPanel once by itself, and setting it here too would check twice on every startup
+// 只给显示版本（安卓：没有 iOS 那套更新提示，只要提示框「关于」段的版本行），不算初始化 | the display version only (Android: no update note like iOS, only the About section's version line); does not count as init
+void dm_update_set_label(const char *label) { if (label && *label) strlcpy(g_label, label, sizeof g_label); }
 // 外壳查完的结果：任意线程调。new_build > 0 = 有比自己新的构建（ver = 版本文件里给人看的版本号，空 = 写构建号；note = 一句话更新说明，UTF-8；urgent = 建议立即更新）；0 = 没有，撤掉已有提示
 // Result of the shell's check: callable from any thread. new_build > 0 = there is a build newer than ours (ver = the human version from the version file, empty = show the build number; note = one-sentence update note, UTF-8; urgent = immediate update recommended); 0 = none, remove any existing notice
 void dm_update_offer(int new_build, const char *ver, const char *note, int urgent) {
@@ -54,6 +59,10 @@ void dm_update_safe_left(int units) { atomic_store(&g_safe_l, units < 0 ? 0 : un
 void dm_update_foreground(void) { if (g_own >= 0) atomic_store(&g_fg, 1); }
 // 模式切换事务完成、界面整套重建之后（dm_mode_items.h 登记的「进」）：控件全是新的、字是空的，重写一遍。重建时游戏不发 OpenPanel MainMenuPanel，等不到下面那条消息
 // After the mode switch transaction completes and the whole UI has been rebuilt (the "enter" registered in dm_mode_items.h): the widgets are all new and their text is empty, so write it again. During the rebuild the game does not send OpenPanel MainMenuPanel, so the message below never arrives
+// 安卓没有更新提示，这一行平时不写（dm_update_init 不调）；外壳调了这个，自动上报崩溃有结果要显示时才开，显示版本跟着出现 | Android has no update note and never calls dm_update_init, so this line stays unwritten; once the shell calls this, the line opens only when a crash report result is due, and the display version appears with it
+static _Atomic int g_note_only;
+void dm_update_note_only(void) { atomic_store(&g_note_only, 1); }
+void dm_update_redraw(void) { if (g_own < 0 && atomic_load(&g_note_only)) { g_own = 1; atomic_store(&g_safe_l, 0); } if (g_own >= 0) atomic_store(&g_dirty, 30); }   // 选角页那行字要重写（自动上报崩溃的结果提示来了 / 到时了） | the select-page line needs rewriting (automatic crash report notice arrived / expired)
 void dm_update_mode_enter(void) { if (g_own >= 0) atomic_store(&g_dirty, 30); }
 void dm_update_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c 转来，游戏主线程） | UI message callback (forwarded from diag.c, game main thread)
     if (g_own < 0 || strcmp(cat, "PanelManager")) return;
@@ -80,7 +89,7 @@ static void test_on_select(void) { LOG("更新：测试开关的外壳回调—�
 void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Called every frame at the controller poll (game main thread)
     if (g_own < 0) {   // 测试开关 DM_TEST_UPDATE_LABEL=<字串>：没有包信息的宿主（Mac 原生宿主 dmhost）也按这串字写选角页版本标签，用来核两种布局下的位置 | test switch DM_TEST_UPDATE_LABEL=<text>: a host without bundle info (the Mac native host dmhost) also writes the character-select version label with this text, to check its position in both layouts
         static int once; const char *e = once++ ? NULL : getenv("DM_TEST_UPDATE_LABEL"); if (!e || !*e) return;
-        dm_update_init(1, e, test_on_select); LOG("更新：测试开关 DM_TEST_UPDATE_LABEL，版本标签写「%s」（安全区同 iOS 外壳：等选页回调再给）", e); }
+        dm_update_init(1, e, test_on_select); LOG("更新：测试开关 DM_TEST_UPDATE_LABEL，版本标签写「%s」（安全区同真机外壳：等选页回调再给）", e); }
     if (atomic_exchange(&g_fg, 0)) {   // 选角列表面板在且显示着（可见位 +0x50）、构建号控件也在 = 人停在选角页 | Character select list panel present and shown (visible bit +0x50) and the build number widget also present = the user is sitting on the character select page
         uint8_t *fb = tb(); uint64_t fr = fb ? *(uint64_t *)(fb + 0x2f05458) : 0, fm = fr ? find(fr, "MainMenuPanel", 0) : 0, fl = fr ? find(fr, "CharacterSelectPanel", 0) : 0;
         if (fm && find(fm, "TouchBuild", 0) && fl && *(uint8_t *)(fl + 0x50)) { atomic_store(&g_appear, 1); atomic_store(&g_dirty, 30); LOG("更新：回到前台时停在选角页，重查一次新版本"); } }
@@ -108,7 +117,14 @@ void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Ca
     int normal = build > 0 && !urgent, urg = build > 0 && urgent, fail = build > 0 ? 0 : atomic_load(&g_fail);
     snprintf(t, sizeof t, dm_str(b, "dmUpdNew"), ver);
     char ft[192]; if (g_site[0]) snprintf(ft, sizeof ft, dm_str(b, "dmUpdFailSite"), g_site); else snprintf(ft, sizeof ft, "%s", dm_str(b, "dmUpdFail"));
-    set_text(b, nt, normal ? t : fail == 1 ? dm_str(b, "dmUpdNoNet") : fail ? ft : "");
+#ifdef __ANDROID__
+    const char *nonet = ft;   // dmUpdNoNet 指的是 iOS 系统设置，只有 iOS 外壳会置 fail = 1 | dmUpdNoNet points at the iOS system settings and only the iOS shell sets fail = 1
+#else
+    const char *nonet = dm_str(b, "dmUpdNoNet");
+#endif
+    // 自动上报崩溃的结果（dm_crashreport.c）只占这一行、只在没有新版本提示时显示 20 秒，排在「查更新失败」前面（它只有一次机会被看到） | the automatic crash report result (dm_crashreport.c) uses this line only, for 20 s, only without a new-version notice, ahead of the update-check failure (it gets one chance to be seen)
+    char cr[96]; const char *crk = normal ? NULL : dm_crashreport_note(); if (crk) { const char *fm = dm_str(b, crk); if (strstr(fm, "%s")) snprintf(cr, sizeof cr, fm, dm_crashreport_note_arg()); else snprintf(cr, sizeof cr, "%s", fm); }
+    set_text(b, nt, normal ? t : crk ? cr : fail == 1 ? nonet : fail ? ft : "");
     snprintf(t, sizeof t, dm_str(b, "dmUpdNewUrgent"), ver, note); set_text(b, de, urg ? t : ""); set_text(b, ti, urg ? dm_str(b, "dmUpdUrgentTitle") : "");
     if (pad) { place(bg, urg ? xr / 2 - 700 : 99999, urg ? 1506 : 99999); place(ti, xr / 2 - 700, 1524); place(de, xr / 2 - 700, 1610); }
     else place(bg, urg ? -700 : 99999, urg ? 1506 : 99999);

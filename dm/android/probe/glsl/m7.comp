@@ -1,0 +1,20 @@
+// M7 子组逐项（warp32 改写依赖的每个构造各自一测；64 线程，含 ballot / LtMask / shuffle，即游戏计算着色器的形状）：
+//   o[2i].x = gl_SubgroupSize | id<<8 | gl_NumSubgroups<<16 | gl_SubgroupID<<24；.y = ballot(偶数 lane) 按 id>>5 选的字；.z = LtMask 按 id>>5 选的字；.w = 本 32 道线程束内 shuffle((id&0x60)|((id+16)&31))
+//   o[2i+1] = (LtMask.x, LtMask.y, bitCount(LtMask 全部), ballot(true).y)
+// M7 subgroup items (one test per construct the warp32 rewrite relies on; 64 invocations with ballot / LtMask / shuffle, the game's compute shader shape):
+//   o[2i].x = gl_SubgroupSize | id<<8 | gl_NumSubgroups<<16 | gl_SubgroupID<<24; .y = word id>>5 of ballot(even lane); .z = word id>>5 of LtMask; .w = shuffle within the 32-lane warp ((id&0x60)|((id+16)&31))
+//   o[2i+1] = (LtMask.x, LtMask.y, bitCount(whole LtMask), ballot(true).y)
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) buffer Out { uvec4 o[]; };
+void main() {
+    uint i = gl_LocalInvocationIndex, id = gl_SubgroupInvocationID, w = id >> 5;
+    uvec4 b = subgroupBallot((id & 1u) == 0u), bt = subgroupBallot(true), lt = gl_SubgroupLtMask;
+    uint bw = w == 1u ? b.y : b.x, ltw = w == 1u ? lt.y : lt.x;
+    uint sh = subgroupShuffle(1000u + i, (id & 0x60u) | ((id + 16u) & 31u));
+    o[2u * i] = uvec4(gl_SubgroupSize | (id << 8) | (gl_NumSubgroups << 16) | (gl_SubgroupID << 24), bw, ltw, sh);
+    o[2u * i + 1u] = uvec4(lt.x, lt.y, bitCount(lt.x) + bitCount(lt.y) + bitCount(lt.z) + bitCount(lt.w), bt.y);
+}

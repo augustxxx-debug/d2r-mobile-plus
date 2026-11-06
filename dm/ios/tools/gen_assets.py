@@ -21,7 +21,7 @@ import hashlib, os, shutil, subprocess, sys, time
 import gen_paths
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')   # 工作区根目录（游戏文件、产物、运行现场都在它下面） | Workspace root (game files, build outputs and run artifacts are all under it)
 HERE = os.path.dirname(os.path.abspath(__file__))
-STEPS = [('加宽储藏箱', ['gen_widestash_art.py', '{R}']), ('编年史盖板', ['gen_vault_cover.py']), ('百宝囊框', ['gen_pouch_art.py', '{R}']),
+STEPS = [('加宽储藏箱', ['gen_widestash_art.py', '{R}']), ('编年史盖板', ['gen_vault_cover.py']), ('百宝囊框', ['gen_pouch_art.py', '{R}']), ('大背包底图', ['gen_bag_art.py', '{R}']),
          ('选角右侧面板', ['gen_fe_rightpanel.py', '{R}']), ('小地图终点', ['gen_map_goal_art.py', '{R}']), ('佣兵面板底图', ['gen_merc_art.py', '{R}']),
          ('技能图集与索引', ['native_art/generate.py', '{R}']), ('底部 UI v4', ['gen_hud_v4.py', '{R}'])]
 

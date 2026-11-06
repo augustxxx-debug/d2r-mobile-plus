@@ -2,7 +2,7 @@
 # 源文件按通配纳入，口径与宿主 Makefile 的 GFX 一致（hle_nvn.c 由 t_nvn.c 直接 #include，故剔除）；新增源文件无需改这里
 # Unit tests: make compiles and runs them (seconds)
 # Source files are included by wildcard, same convention as GFX in the host Makefile (hle_nvn.c is #included directly by t_nvn.c, so it is excluded); adding new source files needs no change here
-CFLAGS=-O1 -g -Wall -Wno-unused-function -I../nvn/include
+CFLAGS=-O1 -g -Wall -Wno-unused-function -Werror=unused-variable -I../nvn/include
 GFX=$(filter-out ../nvn/hle_nvn.c,$(sort $(wildcard ../nvn/*.c ../nvn/*.m ../nvn/*.S ../tex/*.c ../tex/*.m)))
 GFX_H=$(wildcard ../nvn/*.h ../nvn/*.inc ../nvn/include/*.h ../tex/*.h)
 FW=-framework Metal -weak_framework MetalFX -framework Foundation -framework QuartzCore -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
@@ -26,6 +26,9 @@ t_refl: t_refl.m ../nvn/nvn_refl.m ../nvn/nvn_refl.h ../nvn/dmsh_chain.h
 	clang -O1 -g -Wall -fobjc-arc -o $@ t_refl.m ../nvn/nvn_refl.m -framework Metal -weak_framework MetalFX -framework Foundation
 t_hmap: t_hmap.c ../nvn/nvn_hmap.h
 	clang -O1 -Wall -o $@ t_hmap.c
+# 光追本帧实例去重：判定与朴素扫描一致、每次登记的工作量有上限（怪群场景）| ray-tracing per-frame instance dedupe: decisions match the naive scan and the work per registration is bounded (swarm scene)
+t_rts_tags: t_rts_tags.c ../nvn/nvn_rtshadow_util.h
+	clang -O1 -Wall -o $@ t_rts_tags.c
 t_cover: t_cover.c ../nvn/nvn_cover.h
 	clang -O1 -Wall -o $@ t_cover.c
 t_pace: t_pace.c ../nvn/nvn_pace.h
@@ -41,12 +44,17 @@ t_ltring_tsan: t_ltring.c ../nvn/nvn_ltring.h
 	clang -O1 -g -Wall -fsanitize=thread -o $@ t_ltring.c
 t_adaptive_pace: t_adaptive_pace.c ../nvn/nvn_adaptive_pace.h ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_adaptive_pace.c
+# Mac 的 pthread_setname_np 只收一个参数；dm_prof_add 是 xbg_texture.c 的弱引用，Mac 链接要显式放行（内审 I-01）| Mac pthread_setname_np takes one argument; dm_prof_add is a weak reference in xbg_texture.c that the Mac linker must be told to allow (internal audit I-01)
+t_bc8: t_bc8.c ../vulkan/engine/xbg_texture.c ../vulkan/engine/xbg_texture.h ../nvn/nvn_tex.c ../tex/nvn_deswizzle.h
+	clang -O1 -Wall -Wno-unused-function -fsigned-char -I../vulkan/engine -include ../vulkan/engine/tests/macos_pthread_name.h -Wl,-U,_dm_prof_add -o $@ t_bc8.c ../vulkan/engine/xbg_texture.c ../nvn/nvn_tex.c -lpthread
 t_completion_wait: t_completion_wait.cpp ../vulkan/engine/xbg_completion_wait.h
 	clang++ -std=c++17 -O1 -Wall -pthread -DDM_COMPLETION_WAIT_SELFTEST -DDM_COMPLETION_WAIT_MAIN -o $@ t_completion_wait.cpp
 t_fuse_check: t_fuse_check.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_fuse_check.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rt_srgb_view: t_rt_srgb_view.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rt_srgb_view.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_fgen: t_fgen.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_fgen.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_present_crop: t_present_crop.m ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_present_crop.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
 t_reorder_chain: t_reorder_chain.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -93,6 +101,8 @@ t_defer_drain: t_defer_drain.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_defer_drain.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rts_gate: t_rts_gate.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rts_gate.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+t_rts_point_env: t_rts_point_env.m t_rts_gate.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_rts_point_env.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_pso_skey: t_pso_skey.m ../nvn/nvn_pso_skey.h ../nvn/nvn_obj.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_skey.m -framework Foundation
 t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -107,6 +117,7 @@ t_memwarn: t_memwarn.m ../../host/crash.c $(GFX) $(GFX_H)
 # Dependencies one per line in alphabetical order (so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
 run: \
 	t_adaptive_pace \
+	t_bc8 \
 	t_completion_wait \
 	t_copy_pitch \
 	t_builtin \
@@ -126,6 +137,7 @@ run: \
 	t_pfv \
 	t_pqdone \
 	t_present_crop \
+	t_fgen \
 	t_pso_skey \
 	t_refl \
 	t_reorder_chain \
@@ -136,11 +148,12 @@ run: \
 	t_memwarn \
 	t_mp_grid \
 	t_gcap \
-	t_rts_gate \
+	t_rts_gate t_rts_point_env \
 	t_rts_flicker \
 	t_rts_span \
 	t_rts_span_asan \
 	t_rts_state \
+	t_rts_tags \
 	t_rts_upsample \
 	t_rtshadow \
 	t_rt_depth_ro \
@@ -163,12 +176,14 @@ run: \
 	TSAN_OPTIONS=halt_on_error=1 ./t_ltring_tsan
 	TSAN_OPTIONS=halt_on_error=1 ./t_rts_gpustat_tsan
 	./t_adaptive_pace
+	./t_bc8
 	./t_completion_wait
 	./t_refl
 	./t_hmap
 	./t_cover
 	./t_fuse_check
 	./t_present_crop
+	MTL_DEBUG_LAYER=1 ./t_fgen; s=$$?; [ $$s -eq 0 ] || [ $$s -eq 77 ]
 	MTL_DEBUG_LAYER=1 ./t_reorder_chain
 	MTL_DEBUG_LAYER=1 ./t_defer_chain
 	./t_zskip
@@ -193,8 +208,9 @@ run: \
 	./t_memwarn   # 系统内存告警累计不封顶，进每 300 帧内存行 | uncapped system memory-warning total on the every-300-frames memory line
 	@for a in "" --off; do ./t_cmdalloc $$a; s=$$?; if [ $$s = 77 ]; then echo "SKIP t_cmdalloc"; break; elif [ $$s != 0 ]; then exit $$s; fi; done   # 命令分配器超阈值换新；--off 证明分得出；77 = 旧接口版 | command allocators replaced above a threshold; --off proves it discriminates; 77 = older-API build
 	./t_gcap   # GPU 抓帧（DM_GPU_CAPTURE）；测试自己设 METAL_CAPTURE_ENABLED | GPU capture (DM_GPU_CAPTURE); the test sets METAL_CAPTURE_ENABLED itself
-	@for t in t_rts_gate t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rts_upsample t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
+	@for t in t_rts_gate t_rts_point_env t_rts_flicker t_rts_span t_rts_span_asan t_rts_state t_rts_tags t_rts_upsample t_rtshadow; do MTL_DEBUG_LAYER=1 ./$$t; s=$$?; if [ $$s = 77 ]; then echo "SKIP $$t"; elif [ $$s != 0 ]; then exit $$s; fi; done   # 77 = 机器不支持光追 / 旧接口版 | 77 = no ray tracing on this machine / older-API build
 	python3 test_tbdr_budget.py
+	python3 test_fgen_wiring.py   # 帧生成 P1 调用点接线（显示节拍 !submitted 分支只能靠源码形状） | frame-generation P1 call-site wiring (the display-link !submitted branch can only be checked by source shape)
 	./t_mp_grid
 	python3 test_present_line.py   # 上屏行全程带 footprint（真机长测 7500 帧后断） | the present line carries footprint throughout (cut after frame 7500 in the device long test)
 .PHONY: run
@@ -220,5 +236,6 @@ t_metalfx_m3: t_metalfx.m ../nvn/nvn_metalfx.m ../nvn/nvn_metalfx.h
 METALFX_CHECKS = $(if $(findstring -DDM_NVN_M3=1,$(CFLAGS)),t_metalfx_m3,t_metalfx t_metalfx_m3)
 .PHONY: check-metalfx
 check-metalfx: $(METALFX_CHECKS)
-	@for test in $(METALFX_CHECKS); do MTL_DEBUG_LAYER=1 ./$$test; status=$$?; if [ $$status -eq 77 ]; then echo "SKIP $$test: unsupported GPU/backend"; elif [ $$status -ne 0 ]; then exit $$status; fi; done
+# 调试层下 MetalFX 内部崩（只认这个已知异常：调试层的 MTL4 编码器没有 globalTraceObjectID，macOS 26.7 / Xcode 27.1 上基线也是，内审 I-10 / J-02）：不开调试层再跑一遍，这一遍必须过；其他信号退出照旧失败，校验层报的真错不能被吞 | MetalFX crashes inside itself under the debug layer (exit by signal, also on the baseline with macOS 26.7 / Xcode 27.1, internal audit I-10): run once more without the layer, and that run must pass
+	@for test in $(METALFX_CHECKS); do err=$$(mktemp); MTL_DEBUG_LAYER=1 ./$$test 2> $$err; status=$$?; cat $$err >&2; if [ $$status -gt 128 ] && grep -q "globalTraceObjectID.*unrecognized selector" $$err; then echo "WARN $$test: 调试层下崩溃（$$status，已知异常），不开调试层重跑"; ./$$test; status=$$?; fi; rm -f $$err; if [ $$status -eq 77 ]; then echo "SKIP $$test: unsupported GPU/backend"; elif [ $$status -ne 0 ]; then exit $$status; fi; done
 run: check-metalfx

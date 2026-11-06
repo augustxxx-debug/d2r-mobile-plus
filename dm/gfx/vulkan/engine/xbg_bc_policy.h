@@ -66,3 +66,14 @@ static inline int xbg_bc_copy_transfer(void *destination,size_t destination_byte
     }
     return 0;
 }
+
+// B150：差分重传（#184：只重解压缩字节有变化的 BC 块）只适用于「BC 解成像素」的图。没有原生 BC、改走 BC3→ASTC 的图（Mali 等，
+// im.astc）在上传循环里走自己的分支、不写差分缓冲，也不更新累计长度，差分路径下上传字节数会停在 0（真机 FATAL：Invalid or excessive
+// buffer size）；所以 ASTC 图不进差分路径，每次整张转码上传。
+// B150: differential re-upload (#184: re-decode only the BC blocks whose bytes changed) only fits images decoded to pixels. Images that
+// take BC3 -> ASTC instead of native BC (Mali and similar, im.astc) use their own branch of the upload loop, which neither writes the
+// differential buffer nor advances its running length, so the upload size stayed 0 on that path (device FATAL: Invalid or excessive
+// buffer size). ASTC images therefore stay off the differential path and transcode the whole image each time.
+static inline bool xbg_up_diff_eligible(bool decoded,bool astc,uint32_t depth,uint64_t payload,uint64_t budget,unsigned seen){
+    return decoded && !astc && depth==1 && payload>=16ull*1024 && payload<=budget/32 && seen>=3;
+}

@@ -9,6 +9,7 @@ int dm_ui_modal_active(uint64_t root) { assert(root); return blocked; }
 int dm_padmode_current(void) { return 1; }
 uint64_t dm_padmode_page_keys(uint64_t mask) { key_reads++;return keys&mask; }
 int dm_community_available(void) { return 0; }
+int dm_uiscreen_ingame(void) { return 1; }   // B184：选项页按局内算（存档管理组不是停靠点） | B184: treat the options page as in a run
 int dm_community_shown(void) { return 0; }   // 社区入口（dm_community.c）：这里没有可显示的值，自定义页不多出「关于」行 | community entry (dm_community.c): no value here, so the Custom page gets no extra About row
 void dm_community_open(int from) { (void)from; assert(0); }
 uint32_t dm_ui_gen(void) { return 1; }

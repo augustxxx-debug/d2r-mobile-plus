@@ -5,6 +5,7 @@
 #include "dm_crashfence.h"
 #include "dm_uctx.h"
 #include "dm_hud.h"
+#include "dm_ingame.h"
 #include "dm_cursor.h"
 #include "dm_hud_exp.h"
 #include "dm_elysium.h"
@@ -80,7 +81,7 @@ static void l3mem_report(uint32_t tick, uint64_t seq) {
     if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &count) == KERN_SUCCESS)
         footprint = vi.phys_footprint;
     uint64_t task_ns = now_ns() - t;
-    LOG("[dm] L3MEM 拍 %u 堆在用 %llu Metal已分配 %llu 句柄 %d phys_footprint %llu 耗时_ns %llu malloc_ns %llu metal_ns %llu fd_ns %llu task_ns %llu 线程 dm-l3mem 序号 %llu",
+    LOG("[dm] L3MEM 拍 %u 堆在用 %llu " DM_STR_METAL "已分配 %llu 句柄 %d phys_footprint %llu 耗时_ns %llu malloc_ns %llu " DM_STR_METAL_NS " %llu fd_ns %llu task_ns %llu 线程 dm-l3mem 序号 %llu",
         tick,
         (unsigned long long)ms.size_in_use, (unsigned long long)metal, handles,
         (unsigned long long)footprint, (unsigned long long)(now_ns() - started),
@@ -461,6 +462,7 @@ void probe_install(void) {
     if (gate_obs_present(OBS_SETLANG)) gate_obs_set(OBS_SETLANG, setlang_obs);
     if (gate_obs_present(OBS_EVENT_MSG)) gate_obs_set(OBS_EVENT_MSG, event_msg_obs);
     { void dm_ui_tooltip_obs(const uint64_t *regs); if (gate_obs_present(OBS_TOOLTIP)) gate_obs_set(OBS_TOOLTIP, dm_ui_tooltip_obs); }   // 说明框停靠（dm_cursor.c） | tooltip docking (dm_cursor.c)
+    { void render_gate_install(void); render_gate_install(); }   // 渲染每帧入口：冻结 + 界面当帧换算（见 render_obs） | render per-frame entry: freezing + same-frame UI conversion (see render_obs)
     const char *ui = getenv("DM_UIMSG");
     if (ui && strcmp(ui, "1") && !(g_uifp = fopen(ui, "w"))) die("DM_UIMSG 打不开 %s", ui);
     g_ui_print = ui != NULL;
@@ -1023,15 +1025,20 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     if (main && player) DM_PROF(1, "s.elysium", dm_elysium_stash_step(G, player, (uint8_t *)main->base));   // 新建极乐世界角色后补齐共享仓库（dm_elysium.c） | Fill in the shared stash after a new Elysium character is created (dm_elysium.c)
     { void dm_townwp_tick(uint64_t, uint64_t, uint8_t *); if (main && player) DM_PROF(1, "s.townwp", dm_townwp_tick(G, player, (uint8_t *)main->base)); }   // 进局落在城镇小站旁（dm_townwp.c） | Land next to the town waypoint on joining a run (dm_townwp.c)
     { int dm_cloud_conflict_take(void); static int shown;   // iCloud 共享仓库分叉、本机那份收进了待合并收件箱（dm_cloudsync.c）：进局后弹一次原版系统提示（每次启动一次） | the iCloud shared stash forked and the local copy was put in the to-merge inbox (dm_cloudsync.c): one original system notice after entering a run (once per launch)
-      if (main && player && !shown && dm_cloud_conflict_take()) { shown = 1; dm_game_notice((uint8_t *)main->base, dm_str((uint8_t *)main->base, "dmCloudConflict")); LOG("iCloud 同步：弹了共享仓库收进收件箱的提示"); } }
+      if (main && player && !shown && dm_cloud_conflict_take()) { shown = 1; dm_game_notice((uint8_t *)main->base, dm_str((uint8_t *)main->base, "dmCloudConflict")); LOG(DM_STR_ICLOUD " 同步：弹了共享仓库收进收件箱的提示"); } }
     { int dm_cloud_char_conflict_take(char *, size_t); char nm[256], msg[400];   // iCloud 首次同步遇到同名角色、用了云端那份（dm_cloudsync.c）：进局后提示一次 | iCloud first sync met a character with the same name and used the cloud copy (dm_cloudsync.c): one notice after entering a run
-      if (main && player && dm_cloud_char_conflict_take(nm, sizeof nm)) { snprintf(msg, sizeof msg, dm_str((uint8_t *)main->base, "dmCloudCharConflict"), nm); dm_game_notice((uint8_t *)main->base, msg); LOG("iCloud 同步：弹了同名角色用云端那份的提示（%s）", nm); } }
+      if (main && player && dm_cloud_char_conflict_take(nm, sizeof nm)) { snprintf(msg, sizeof msg, dm_str((uint8_t *)main->base, "dmCloudCharConflict"), nm); dm_game_notice((uint8_t *)main->base, msg); LOG(DM_STR_ICLOUD " 同步：弹了同名角色用云端那份的提示（%s）", nm); } }
+    { int dm_thermal_eff(void), dm_thermal_hint_step(int *, int); static int shown;   // 过热提示（B147 ③，用户 2026-11-04）：温控第一次到严重（≥ 2）时局内弹一次原版系统提示，不改任何设置（每次启动一次） | overheating tip (B147 ③): one original-game notice in a run the first time thermal reaches serious (>= 2); changes no setting (once per launch)
+      if (main && player && !shown) { int th = dm_thermal_eff(); if (dm_thermal_hint_step(&shown, th)) { dm_game_notice((uint8_t *)main->base, dm_str((uint8_t *)main->base, "dmThermalHotHint")); LOG("过热提示：温控 %d，弹了一次「设备较热」提示（不改设置）", th); } } }
     if (main && player) DM_PROF(1, "s.bossrush", dm_bossrush_tick(G, player, (uint8_t *)main->base));   // 首领连战（dm_bossrush.c） | Boss rush (dm_bossrush.c)
     if (main && player) { void dm_rift_tick(uint64_t, uint64_t, uint8_t *); DM_PROF(1, "s.rift", dm_rift_tick(G, player, (uint8_t *)main->base)); }   // 秘境爬塔（dm_rift.c） | Rift tower climb (dm_rift.c)
     { void dm_pages_tick(uint64_t, uint64_t, uint8_t *); if (main) DM_PROF(1, "s.pages", dm_pages_tick(G, player, (uint8_t *)main->base)); }   // 个人仓库 2–5 页（dm_pages.c）；不在局内 player 为 0，模块自己清状态 | Personal stash pages 2–5 (dm_pages.c); player is 0 when not in a run, and the module clears its own state
     { void dm_vault_tick(uint64_t, uint64_t, uint8_t *); if (main) DM_PROF(1, "s.vault", dm_vault_tick(G, player, (uint8_t *)main->base)); }
     { void dm_autobuff_srv_tick(uint8_t *, uint64_t, uint64_t); if (main && player) DM_PROF(1, "s.autobuff", dm_autobuff_srv_tick((uint8_t *)main->base, G, player)); }   // 增益技能自动补：放主线程点名的技能 | Buff auto-recast: cast the skill named by the main thread
     { void dm_pouch_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) DM_PROF(1, "s.pouch", dm_pouch_srv_tick((uint8_t *)main->base, G, player)); }
+    { void dm_bag_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) dm_bag_srv_tick((uint8_t *)main->base, G, player); }   // 大背包：页 0 护身符搬进页 5（dm_bag.c） | Large bag: page 0 charms move to page 5 (dm_bag.c)
+    { void dm_cursor_rescue_tick(uint8_t *, uint64_t, uint64_t); if (main) dm_cursor_rescue_tick((uint8_t *)main->base, G, player); }   // B163：读档后看不见的手上物品放回背包页（dm_bag.c） | B163: the invisible held item after loading goes back to the bag page (dm_bag.c)
+    { void dm_stack_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) dm_stack_srv_tick((uint8_t *)main->base, G, player); }   // 药水真堆叠（dm_stack.c） | True potion stacking (dm_stack.c)
     { void dm_cloudmerge_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) DM_PROF(1, "s.cloudmerge", dm_cloudmerge_srv_tick((uint8_t *)main->base, G, player)); }   // iCloud 收件箱局内并回（dm_cloudmerge.c）；不在局内 player 为 0   // 百宝囊收 / 放、存放的系统提示（dm_pouch.c）；不在局内 player 为 0   // 编年史仓库存取（dm_vault.c）；同上 | iCloud inbox in-game merge (dm_cloudmerge.c); player is 0 when not in game   // System notices for pouch take / put and deposit (dm_pouch.c); player is 0 when not in game   // Chronicle stash take / store (dm_vault.c); same as above
     if (main && player) DM_PROF(1, "s.kills", dm_kills_tick(G, player, (uint8_t *)main->base)); dm_ipf_frame(1);   // 刷怪积分牌（dm_kills.c）：在首领连战之后，连战本关的首领它已记好 id | Kill board (dm_kills.c): runs after boss rush, which has already recorded the id of the boss of the current boss rush stage
     cube_diag_tick(G, player);   // 合成读数 | Transmute readout
@@ -1203,6 +1210,8 @@ static void c2s_obs(const uint64_t *regs) {
     if (n >= 1 && b[0] == 0x20) cube_diag_req(regs[0], regs[1], b, n);   // 合成读数 | Transmute readout
     dm_bossrush_c2s(regs[0], regs[1], b, n);
     { void dm_rift_c2s(uint64_t, const uint8_t *, uint32_t); dm_rift_c2s(regs[0], b, n); }
+    { void dm_bag_c2s(uint64_t *); dm_bag_c2s((uint64_t *)(uintptr_t)regs); }   // 护身符页放置过滤（dm_bag.c） | Charm page placement filter (dm_bag.c)
+    { void dm_stack_c2s(uint64_t *); dm_stack_c2s((uint64_t *)(uintptr_t)regs); }   // 药水真堆叠：喝一口只扣 1（dm_stack.c；会换掉 x2 / x3 指向的包） | True potion stacking: one sip takes off just 1 (dm_stack.c; replaces the packet x2 / x3 point to)
     { void dm_pouch_c2s(uint64_t *); dm_pouch_c2s((uint64_t *)(uintptr_t)regs); }   // 珍宝匣：符文 / 宝石 / 材料拖进共享页时改道进高级仓库（dm_pouch.c；会换掉 x2 / x3 指向的包） | Trove: runes / gems / materials dragged into the shared tab are rerouted into the advanced stash tabs (dm_pouch.c; replaces the packet x2 / x3 point to)
     { void dm_shoprefresh_c2s(uint64_t, uint64_t, const uint8_t *, uint32_t); dm_shoprefresh_c2s(regs[0], regs[1], b, n); }   // 商人交易页「刷新货架」（dm_shoprefresh.c）   // 首领连战：玩家点了连战的门（门只是外观，换关由 dm_bossrush.c 做） | Vendor trade page 「刷新货架」(Refresh Stock) (dm_shoprefresh.c)   // Boss rush: the player tapped the boss rush door (the door is appearance only; the level change is done by dm_bossrush.c)
     if (!g_c2sfp) return;                       // 门在产品里常挂（首领连战要看），没开 DM_C2S_LOG 时不记 | The gate is usually installed in the product (boss rush needs it); nothing is logged when DM_C2S_LOG is not on
@@ -1224,12 +1233,12 @@ static void c2s_obs(const uint64_t *regs) {
 // 没有活的局号 ⇒ 局已结束（存盘退出、致命错误踢出等任何路径），G 已不可读：清 g_lastG。离局后拍号是固定垃圾值
 // Whether we are in a run: the server run loop 0x5d5120 walks 1024 run-number slots starting at main+0x2d665d8 (0 / -1 = empty), looks up the run object by run number, and calls the tick entry 0x5d3bc0 with object+0x10 as G.
 // No live run number ⇒ the run has ended (save-and-exit, kicked by a fatal error, or any other path) and G is no longer readable: clear g_lastG. After leaving a run the tick number is a fixed garbage value
-static int game_live(void) {
+static const uint64_t *run_slots(void) {
     static const uint64_t *slots;
-    if (!slots) { for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) slots = (const uint64_t *)(g_mod[i].base + 0x2d665d8); if (!slots) return 1; }
-    for (int i = 0; i < 0x400; i++) if (slots[i] + 1 >= 2) return 1;
-    return 0;
+    if (!slots) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) slots = (const uint64_t *)(g_mod[i].base + 0x2d665d8);
+    return slots;
 }
+static int game_live(void) { return dm_run_live(run_slots()); }
 static int in_game(void) { if (g_lastG && !game_live()) g_lastG = 0; return g_lastG != 0; }
 // 让游戏现在就走一次它自己的定时自动存盘（前端进后台时调）：游戏每拍在拍入口函数（main+0x5d3bc0，G = 第一个参数）里判
 // 「现在 − 上次存盘时刻 [G+0x5800]（毫秒）> 300000」就把本局全部玩家序列化存盘并提交（main+0x5d4284–0x5d4c20）。原版没有「按 HOME / 进后台存盘」这条路
@@ -1554,7 +1563,7 @@ static void hold_on_uimsg(const char *cat, const char *act, const char *arg) {
 #include <sys/stat.h>
 #include <time.h>
 int dm_thermal_now(void);
-int dm_ingame_now(void) { dm_hud_info h; dm_hud_get(&h); return h.valid; }   // 当前是否在局内（读到受控玩家）：动态 3D 比例只在局内判 | Whether we are in a run right now (the controlled player was read): the dynamic 3D scale is only evaluated in a run
+int dm_ingame_now(void) { dm_hud_info h; dm_hud_get(&h); return dm_ingame_from(h.valid, run_slots()); }   // 快照有效且局号槽里有活局（dm_ingame.h：离局后快照不再更新） | snapshot valid and a live run in the run-number slots (dm_ingame.h: the snapshot stops updating after leaving a run)   // 当前是否在局内（读到受控玩家）：动态 3D 比例只在局内判 | Whether we are in a run right now (the controlled player was read): the dynamic 3D scale is only evaluated in a run
 // ---- 长帧日志：hle_nvn.c 在某帧 > 20 ms（或 GPU > 16.7 ms）时调一次；这里补上「读取画面是否盖着 / 当前面板 / 区域号」，
 // 写进 boot.txt（LOG）并追加到 perf.txt（行首「长帧」，与每 10 秒的汇总行同一文件，实玩后取回能直接看见卡在哪一帧、卡在什么上）----
 // ---- Long-frame log: hle_nvn.c calls this once when a frame is > 20 ms (or GPU > 16.7 ms); this adds "whether the loading screen is covering / current panel / area number",
@@ -1573,9 +1582,11 @@ void dm_longframe_note(const char *what) {
     time_t w = time(NULL); struct tm tmv; localtime_r(&w, &tmv); char ts[16]; strftime(ts, sizeof ts, "%H:%M:%S", &tmv);
     fprintf(fp, "长帧\t%s\t%s；%s\n", ts, what, ctx); fclose(fp);
 }
+__attribute__((weak)) void dm_perfhint_frame(void) {}   // 弱定义 = 不做；安卓 perfhint_android.c 的强定义每帧向系统报帧预算与关键路径工作量（ADPF）。只有弱引用时 macOS 上链接不过 | weak definition = no-op; the strong one in Android perfhint_android.c reports the frame budget and critical-path work each frame (ADPF). A bare weak reference fails to link on macOS
 void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 帧的实际上屏间隔 ms；−1 = 被系统丢弃，0 = 无读数） | Called once per frame by the present thread (the actual present interval in ms, lagging by 8 frames; −1 = dropped by the system, 0 = no reading)
     static const char *path; static int init; static unsigned c16, c25, c33, disc; static double sum; static uint64_t t0, f0, cpu0, tstart;
     if (!init) { init = 1; const char *e = getenv("DM_PERF_FILE"); path = e ? (strcmp(e, "0") ? e : NULL) : (DM_PHONE ? "perf.txt" : NULL); t0 = tstart = now_ns(); f0 = dm_nvn_frame_count(); cpu0 = dm_nvn_sub_cpu_ns(); }
+    dm_perfhint_frame();
     dm_3d_scale_feed(iv);   // 动态 3D 比例的控制器吃同一份上屏间隔（hle_oe.c） | The dynamic 3D scale controller consumes the same present intervals (hle_oe.c)
     if (!path) return;
     if (iv < 0) disc++; else if (iv > 0) { sum += iv; if (iv <= 20.8) c16++; else if (iv <= 29.2) c25++; else c33++; }
@@ -1678,11 +1689,16 @@ void dm_freeze_frame(int want) { static int idle;
     if (!atomic_load(&g_dm_frozen) || !atomic_load(&g_frz_by_panel) || want) { idle = 0; return; }
     if (++idle < 10) return; idle = 0; atomic_store(&g_dm_frozen, 0); atomic_store(&g_frz_by_panel, 0); if (mtl_world_frozen) mtl_world_frozen(0);
     LOG("面板冻结：解冻（面板已不在屏上而拍入口没在走：原版暂停 / 退出 / 换角色）"); }
+// 门 13（渲染每帧入口）两家共用，常挂：冻结那一份只在冻着时动（freeze_render_obs 自己看 g_dm_frozen）；界面那一份把 NPC 对话菜单的位置换算赶在第一次上屏之前（dm_cursor.c ui_npcdlg_pump）
+// Gate 13 (render per-frame entry) is shared and always attached: the freezing part only acts while frozen (freeze_render_obs checks g_dm_frozen itself); the UI part gets the
+// NPC dialog menu's position conversion done before its first time on screen (dm_cursor.c ui_npcdlg_pump)
+static void render_obs(const uint64_t *rc) { freeze_render_obs(rc); void dm_ui_render_entry(void); dm_ui_render_entry(); }
+void render_gate_install(void) { if (gate_obs_present(OBS_FREEZE_RENDER)) gate_obs_set(OBS_FREEZE_RENDER, render_obs); }
 static int g_frz_on;   // 四个冻结入口门已挂上（freeze_attach） | The four freeze entry gates are attached (freeze_attach)
 static int freeze_attach(void) {   // 挂冻结用的四个入口门（产物里有门 10–13 才行），挂过就不再挂。返回 1 = 能冻 | Attach the four entry gates used for freezing (needs gates 10–13 in the product); attached only once. Returns 1 = can freeze
     static int tried; if (tried) return g_frz_on; tried = 1;
     g_frz_on = gate_obs_present(OBS_FREEZE_WORLD) && gate_obs_present(OBS_FREEZE_CLIENT) && gate_obs_present(OBS_FREEZE_ANIM) && gate_obs_present(OBS_FREEZE_RENDER);
-    if (g_frz_on) { gate_obs_set(OBS_FREEZE_WORLD, freeze_world_obs); gate_obs_set(OBS_FREEZE_CLIENT, freeze_client_obs); gate_obs_set(OBS_FREEZE_ANIM, freeze_anim_obs); gate_obs_set(OBS_FREEZE_RENDER, freeze_render_obs); }
+    if (g_frz_on) { gate_obs_set(OBS_FREEZE_WORLD, freeze_world_obs); gate_obs_set(OBS_FREEZE_CLIENT, freeze_client_obs); gate_obs_set(OBS_FREEZE_ANIM, freeze_anim_obs); gate_obs_set(OBS_FREEZE_RENDER, render_obs); }
     return g_frz_on;
 }
 // 暂停菜单开着进后台时存一次盘：原版单机暂停时游戏不走拍，前端请的那次存盘要等下一拍，进后台 2.5 秒等不到（10142104 日志 4 次），
@@ -1860,7 +1876,10 @@ static void loadscreen_on_uimsg(const char *cat, const char *act, const char *ar
     { void dm_textinput_on_uimsg(const char *, const char *, const char *); dm_textinput_on_uimsg(cat, act, arg); }
     { void dm_update_on_uimsg(const char *, const char *, const char *); dm_update_on_uimsg(cat, act, arg); }
     { void dm_crashfence_on_uimsg(const char *, const char *, const char *); dm_crashfence_on_uimsg(cat, act, arg); }
+    { void dm_savemgr_on_uimsg(const char *, const char *, const char *); dm_savemgr_on_uimsg(cat, act, arg); }   // 存档管理的两个入口（dm_savemgr.c）| the two save-management entries
     { void dm_community_on_uimsg(const char *, const char *, const char *); dm_community_on_uimsg(cat, act, arg); }   // 社区入口的两个按钮与提示框的复制 / 确定（dm_community.c） | the community entry's two buttons and the box's Copy / OK (dm_community.c)   // 崩溃围栏提示框的「确定」 | OK of the crash-fence notice box
+    { void dm_telebox_on_uimsg(const char *, const char *, const char *); dm_telebox_on_uimsg(cat, act, arg); }   // 统计告知框的两颗按钮（dm_telebox.c） | the statistics notice's two buttons
+    { void dm_diagup_on_uimsg(const char *, const char *, const char *); dm_diagup_on_uimsg(cat, act, arg); }   // 上传诊断报告提示框的按钮（dm_diagup.c） | buttons of the diagnostic upload box (dm_diagup.c)   // 社区入口的两个按钮与提示框的复制 / 确定（dm_community.c） | the community entry's two buttons and the box's Copy / OK (dm_community.c)   // 崩溃围栏提示框的「确定」 | OK of the crash-fence notice box
     { void dm_kills_on_uimsg(const char *, const char *, const char *); dm_kills_on_uimsg(cat, act, arg); } { void dm_rift_ui_on_uimsg(const char *, const char *, const char *); dm_rift_ui_on_uimsg(cat, act, arg); }   // 编年史「首领」页签（dm_kills.c） | The chronicle's 「首领」(Bosses) tab (dm_kills.c)
     { void dm_vault_on_uimsg(const char *, const char *, const char *); dm_vault_on_uimsg(cat, act, arg); }
     { void dm_pouch_on_uimsg(const char *, const char *, const char *); dm_pouch_on_uimsg(cat, act, arg); }   // 百宝囊框 / 存放按钮（dm_pouch.c）   // 储藏箱第六页「编年史」（dm_vault_ui.c） | Pouch frame / deposit button (dm_pouch.c)   // stash page six 「编年史」(Chronicle) (dm_vault_ui.c)
@@ -1869,7 +1888,9 @@ static void loadscreen_on_uimsg(const char *cat, const char *act, const char *ar
     { void dm_beltauto_on_uimsg(const char *, const char *, const char *); dm_beltauto_on_uimsg(cat, act, arg); }   // 开背包自动补腰带（dm_beltauto.c） | Auto-refill the belt when the inventory opens (dm_beltauto.c)
     { extern void (*g_dm_charsel_hook)(void); if (g_dm_charsel_hook && !strcmp(cat, "FrontEndNavigation") && !strcmp(act, "ToFrontEnd")) g_dm_charsel_hook(); }   // 退出这一局、回到前端（主菜单 / 选角页）：iOS 把这一局攒下的存档传 iCloud（cloud_ios.m）   // 构建号 + 新版本提示（dm_update.c） | Exiting this run and returning to the front end (main menu / character select page): iOS uploads the saves accumulated during this run to iCloud (cloud_ios.m)   // build number + new version notice (dm_update.c)
     if (!strcmp(cat, "PanelManager") && !strcmp(act, "ClosePanel") && !strcmp(arg, "TouchShareLog")) {   // 暂停菜单「分享诊断日志」（按钮发这条空操作，布局见 touch_layout.py _pause_no_help） | Pause menu 「分享诊断日志」(Share Diagnostics) (the button sends this no-op; for the layout see touch_layout.py _pause_no_help)
-        LOG("诊断日志：点了「分享诊断日志」%s", g_sharelog_cb ? "" : "（外壳没登记，不弹）"); if (g_sharelog_cb) g_sharelog_cb(); }
+        // 配了上传地址：先开游戏内提示框（上传 / 导出到本地 / 取消，dm_diagup.c）；没配照旧直接导出 | upload configured: open the in-game box first (Upload / Export locally / Cancel, dm_diagup.c); otherwise export directly as before
+        int dm_diagup_open(int from); int boxed = dm_diagup_open(1);
+        LOG("诊断日志：点了「分享诊断日志」%s", boxed ? "（交给上传提示框）" : g_sharelog_cb ? "" : "（外壳没登记，不弹）"); if (!boxed && g_sharelog_cb) g_sharelog_cb(); }
     {   // DM_TEST_FRZ=<开消息>[><关消息>]（测试用）：界面消息子串命中就置 / 清图形后端的「世界已冻结」状态位（nvn_mtl.m frz_op）——没有真正的冻结握手时用它顶替 | DM_TEST_FRZ=<open message>[><close message>] (for testing): when a UI message substring hits, set / clear the graphics backend's "world frozen" status bit (nvn_mtl.m frz_op) -- used as a stand-in when there is no real freeze handshake
         static const char *on, *off; static int rd; void mtl_world_frozen(int);
         if (!rd) { rd = 1; const char *e = getenv("DM_TEST_FRZ"); if (e && *e) { char *d = strdup(e), *g = strchr(d, '>'); if (g) { *g = 0; off = g + 1; } on = d; } }

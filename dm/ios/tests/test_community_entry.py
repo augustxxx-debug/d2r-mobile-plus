@@ -124,9 +124,10 @@ class FrontEnd(unittest.TestCase):
                                      ('row_center', (-(PW + GAP + MW) // 2, 1865), (-(PW + GAP + MW) // 2 + PW + GAP, 1865 + PH - MH))):   # 同行整体居中 | same row centred
                 touch_layout.FE_TOUCH_ROW = mode
                 out, n = touch_layout._pc_mainmenu(self.FAKE_MAIN)
-                self.assertEqual(self.rect(out, 'PlayTab'), play, mode); self.assertEqual(self.rect(out, 'TouchCommunityFe'), join, mode)
-                self.assertEqual(out.count('"name": "TouchCommunityFe"'), 1, mode); self.assertNotIn('TouchAboutFe', out, mode); self.assertNotIn('ClosePanel:TouchAbout"', out, mode)
-                self.assertIn('"onClickMessage": "PanelManager:ClosePanel:TouchCommunityFe"', out); self.assertIn('"textString": "@dmCommunityFe"', out)
+                self.assertEqual(self.rect(out, 'PlayTab'), play, mode); self.assertEqual(self.rect(out, 'TouchOptionsFe'), join, mode)
+                self.assertEqual(out.count('"name": "TouchOptionsFe"'), 1, mode); self.assertNotIn('TouchCommunityFe', out, mode);   # B186：触屏首页是「选项」，不再有社区钮 | B186: Options on the touch front page, no Join
+                self.assertNotIn('TouchAboutFe', out, mode); self.assertNotIn('ClosePanel:TouchAbout"', out, mode)
+                self.assertIn('"onClickMessage": "PanelManager:OpenPanel:SettingsPanel"', out); self.assertIn('"textString": "@OptionsHD"', out)   # 原版键鼠版 Settings 的字与消息 | the original Settings text and message
                 self.assertIn('"filename": "FrontEnd\\\\HD\\\\Final\\\\FrontEnd_ButtonMed"', out)   # 次级钮 = 中号（小一号） | the secondary is medium (one size smaller)
                 (px, py), (jx, jy) = play, join
                 self.assertTrue(jy >= py + PH or jx >= px + PW or jx + MW <= px, (mode, 'overlap'))   # 两颗不叠 | the two never overlap
@@ -143,12 +144,12 @@ class FrontEnd(unittest.TestCase):
         out, _ = touch_layout._pc_mainmenu(self.FAKE_MAIN)
         added = set(re.findall(r'"name": "(Touch\w+)"', out))
         listed = set(re.findall(r'"name": "(Touch\w+)"', touch_layout._PCMAIN_STUB))
-        self.assertEqual(added - listed, set()); self.assertIn('TouchCommunityFe', listed); self.assertIn('TouchCommTitle', listed)
+        self.assertEqual(added - listed, set()); self.assertIn('TouchOptionsFe', listed); self.assertIn('TouchCommTitle', listed)
         self.assertIn('_PCMAIN_STUB + mid[i:]', (DM / 'ios' / 'tools' / 'touch_layout.py').read_text(encoding='utf-8'))
 
     def test_host_moves_join_with_play(self):   # 手机上宿主把「进入游戏」按底部安全区往上抬，社区钮要一起抬 | on phones the host lifts Play for the bottom safe area; Join must move with it
         c = (DM / 'host' / 'dm_cursor.c').read_text(encoding='utf-8')
-        self.assertIn('{"MainMenuPanel","TouchCommunityFe"}', c); self.assertIn('!strcmp(nm,"TouchCommunityFe")', c)
+        self.assertIn('{"MainMenuPanel","TouchOptionsFe"}', c); self.assertIn('!strcmp(nm,"TouchOptionsFe")', c)
 
 
 class PauseMenu(unittest.TestCase):
@@ -221,7 +222,7 @@ class OptionsPage(unittest.TestCase):
         # 关于组接在最后一行（含测试假行）之后，容器高度把它算进去 | the About group follows the last row (including test dummy rows) and the container height includes it
         h = int(re.search(r'"name": "TouchCustomRows", "fields": \{ "rect": \{ "x": 0, "y": 0, "width": 1500, "height": (\d+)', out).group(1))
         y_about = int(re.search(r'"name": "TouchAboutRow", "fields": \{ "rect": \{ "x": 0, "y": (\d+)', out).group(1))
-        self.assertEqual(y_about, touch_layout._CUSTOM_H); self.assertEqual(h, touch_layout._CUSTOM_H + touch_layout._ABOUT_H)
+        self.assertEqual(y_about, touch_layout._CUSTOM_H + touch_layout._SAVES_H); self.assertEqual(h, touch_layout._CUSTOM_H + touch_layout._SAVES_H + touch_layout._ABOUT_H)
         self.assertEqual(touch_layout.pad_custom_page('"name": "VideoOptionsPanel", "name": "OptionsTable"'), out)
 
 
@@ -273,14 +274,14 @@ class Host(unittest.TestCase):
     def test_host_wiring(self):
         c = (DM / 'host' / 'dm_community.c').read_text(encoding='utf-8')
         for s in ('"TouchCommunity"', '"TouchCommunityOpt"', '"TouchCommunityFe"', '"TouchAbout"', '"TouchCommCopy"', '"TouchCommOk"', '"TouchCommTitle"', 'dm_community_input_gate(uint64_t *bt', 'atomic_exchange(&g_md_ev, 0)', 'dm_update_label()', '"dmAboutVersion"',
-                  '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : ch[row] == DM_CH_SITE ? "官网" : "GitHub"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
+                  '社区入口：已显示', '"主菜单"', '"暂停菜单"', '"自定义页"', '社区入口：复制 %s %s', '"群号" : ch[row] == DM_CH_SITE ? "官网" : ch[row] == DM_CH_MIRROR ? "国内镜像" : "GitHub"', '社区入口：清单有字段', '社区入口：清单无字段', '"PauseLayout"', '"PauseLayoutGarden"', '"VideoOptionsPanel"', '"MainMenuButtonRibbon"', '"MainMenuPanel"',
                   '"TouchAboutRow"', '"dmCreditsSpecial"', '"dmCreditsMaker"', 'k_maker_default[] = { "Augustus" }', '"dmCreditsThanks"', '"dmCreditsUpstreamNote"', '"dmCreditsSep"', '"jhaizhou-ops"'):
             self.assertIn(s, c, s)
         self.assertNotIn('credits_render', c); self.assertNotIn('TouchCredit', c)   # RC1.1 B008：自定义页鸣谢块删了 | B008: the Custom page credits block is gone
         self.assertIn('dm_community_pump()', (DM / 'host' / 'hle_hid.c').read_text(encoding='utf-8'))
         self.assertIn('"TouchCommDivider"', c); self.assertIn('co_divider(', c)   # 分隔线按原图宽度居中摆，收起时挪出屏 | divider centred by its native width, moved away on dismiss
         self.assertNotIn('co_text(b, de[2], dm_str(b, "dmCommunityAbout"))', c)   # 社区框不再写「关于」子标题 | the community box no longer writes the About sub-title
-        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 42)
+        self.assertEqual(touch_layout._COMM_STUB.count('\n'), 50 + 42)   # 社区框 50（42 + 第三张渠道卡 8：3a730854 起宿主收三张；网盘行 B154 已撤）+ 存档管理列表框 42 | community box 50 (42 + third channel card 8; drive rows removed in B154) + save-management list box 42
         self.assertIn('dm_community_on_uimsg(cat, act, arg)', (DM / 'host' / 'diag.c').read_text(encoding='utf-8'))
         self.assertIn('dm_community.c', (DM / 'host' / 'Makefile').read_text(encoding='utf-8'))
         self.assertIn('t_community', (DM / 'host' / 'tests' / 'Makefile').read_text(encoding='utf-8'))
@@ -309,6 +310,14 @@ class Host(unittest.TestCase):
             self.assertIn('community', (DM.parent / rel).read_text(encoding='utf-8').lower(), rel)
         sample = (DM.parent / 'docs' / 'community_manifest.sample.json').read_text(encoding='utf-8')
         self.assertIn('"community"', sample); self.assertIn('"qq_group"', sample); self.assertIn('"github"', sample)
+
+
+class SaveEntryPad(unittest.TestCase):
+    def test_pad_class_select_has_entry_and_box(self):   # 手柄版职业选择页是单独一份布局：入口和存档框都要在 | the controller class-select page is its own layout: both the entry and the save box must be there
+        out = touch_layout.pad_charcreate('{\n    "children": [\n        { "name": "x" }\n    ]\n}\n')
+        for nm in ('TouchSavesCcPad', 'TouchSaveTitle', 'TouchSaveBtn0', 'TouchSaveFocusT'): self.assertIn('"name": "%s"' % nm, out)
+        self.assertLess(out.index('"name": "x"'), out.index('TouchSavesCcPad'))
+        self.assertIn('touch_layout.pad_charcreate(lt)', (DM / 'ios' / 'tools' / 'gen_romfs_overlay.py').read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':

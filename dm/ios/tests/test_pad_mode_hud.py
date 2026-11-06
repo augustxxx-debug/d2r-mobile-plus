@@ -13,8 +13,7 @@ FRONT = (ROOT / 'ios' / 'Sources' / 'front_ios.m').read_text(encoding='utf-8')
 OVERLAY = (ROOT / 'ios' / 'Sources' / 'DmTouchOverlay.m').read_text(encoding='utf-8')
 HEADER = (ROOT / 'ios' / 'Sources' / 'DmTouchOverlay.h').read_text(encoding='utf-8')
 MASK = (ROOT / 'host' / 'dm_hud_mask.h').read_text(encoding='utf-8')
-_ANDROID = ROOT / 'android' / 'pad_android.c'   # iOS 审计分支不带安卓线（CLAUDE.md §6），没有就跳过那一项 | the iOS audit branch carries no Android line; skip that check when absent
-ANDROID = _ANDROID.read_text(encoding='utf-8') if _ANDROID.exists() else None
+ANDROID = (ROOT / 'android' / 'pad_android.c').read_text(encoding='utf-8')
 
 
 def block(src, start):
@@ -47,8 +46,7 @@ class PadModeHud(unittest.TestCase):
 
     def test_mask_table_shared_with_android(self):
         self.assertIn('return pad_mode ? DM_HUD_EXPLINE : DM_HUD_CONTROLS | DM_HUD_BAR | DM_HUD_EXPLINE', MASK)
-        if ANDROID is not None:
-            self.assertIn('return dm_hud_draw_mask(pad_mode)', ANDROID)
+        self.assertIn('return dm_hud_draw_mask(pad_mode)', ANDROID)
 
 
 if __name__ == '__main__':

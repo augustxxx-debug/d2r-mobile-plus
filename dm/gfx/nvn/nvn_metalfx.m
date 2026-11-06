@@ -12,6 +12,7 @@
 #else
     id<MTL4FXSpatialScaler> _scaler;
     id<MTL4ArgumentTable> _arguments;
+    BOOL _primed;
 #endif
     id<MTLTexture> _scaled;
     id<MTLRenderPipelineState> _pipeline;
@@ -74,6 +75,13 @@
     return _pipeline && _sampler ? self : nil;
 }
 - (NSArray<id<MTLResource>> *)resources { return @[_scaled]; }
+- (id<MTLTexture>)scaledTexture { return _scaled; }
+- (BOOL)encodeScaleOnly:(id)commandBuffer input:(id<MTLTexture>)input contentWidth:(NSUInteger)width contentHeight:(NSUInteger)height {
+    if (!commandBuffer || !input || input.width != _width || input.height != _height || input.pixelFormat != _inputFormat || !width || !height || width > _width || height > _height) return NO;
+    _scaler.colorTexture = input; _scaler.inputContentWidth = width; _scaler.inputContentHeight = height; _scaler.outputTexture = _scaled;
+    [_scaler encodeToCommandBuffer:commandBuffer];
+    return YES;
+}
 - (BOOL)matchesInput:(id<MTLTexture>)input output:(id<MTLTexture>)output {
     return input.width == _width && input.height == _height && input.pixelFormat == _inputFormat && output.width == _outWidth && output.height == _outHeight && output.pixelFormat == _outputFormat;
 }
@@ -81,6 +89,11 @@
     if (![self matchesInput:input output:output] || !mask || !commandBuffer || !width || !height || width > _width || height > _height) return NO;
     _scaler.colorTexture = input; _scaler.inputContentWidth = width; _scaler.inputContentHeight = height; _scaler.outputTexture = _scaled;
     [_scaler encodeToCommandBuffer:commandBuffer];
+#if !DM_NVN_M3
+    // Metal 4 放大器新建后第一次编码约两到三成写出全黑（M4 Pro 实测，等完成后再读也是黑，不是时序；B119）；同一命令缓冲里再编码一次就对。只有第一次多这一遍
+    // A newly created Metal 4 scaler writes all black on its first encode about a fifth to a third of the time (measured on M4 Pro; still black when read long after completion, so not timing; B119); encoding again in the same command buffer gives the right result. Only the first encode pays for this
+    if (!_primed) { _primed = YES; [_scaler encodeToCommandBuffer:commandBuffer]; }
+#endif
 #if DM_NVN_M3
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor new];
 #else

@@ -34,6 +34,16 @@ public final class TouchOverlay extends View {
     private static native void nativeEvent(int phase, int slot, float x, float y);
     private static native void nativeResize(float width, float height, float left, float right, float bottom, boolean tablet);
     private static native void nativeLayout(float[] out);
+    // 画面在窗口里的矩形（窗口像素）：控件按它摆、按下按它换回画面坐标，与游戏呈现的 blit 矩形同一个来源。
+    // The picture's rectangle inside the window, in window pixels: controls are placed by it and presses are converted
+    // back through it, the same source as the game's blit rectangle.
+    private static native boolean nativeViewport(float[] out);
+    // 窗口点 → 矩形内的点：p = {窗口 x, 窗口 y, 矩形内 x, 矩形内 y, 在画面里}。黑边上的按下第三个值为 0。
+    // Window point -> point inside the rectangle: p = {window x, window y, x inside, y inside, inside}.
+    private static native boolean nativeMap(float[] p);
+    private static native int nativeFpsHud();   // 「显示帧数」：要画的数，0 = 不画（fps_hud.h 每 0.5 秒更新）| "Show frame rate": the number to draw, 0 = none (fps_hud.h updates every 0.5 s)
+    private int fpsHud, hudMask=7;
+    private static native int nativeHudMask();   // 各模式画什么（pad_android.h DM_PAD_HUD_*）：手柄模式只画经验行 / 生命法力文字，触点照收（碰屏回触屏模式）| what to draw per mode (pad_android.h DM_PAD_HUD_*): controller mode draws only the experience / life / mana texts, touches still received (a touch returns to touch mode)
     private final float density;
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private static final int GLYPHS=119, HUD=167, DRAW_FLOATS=185;
@@ -43,17 +53,36 @@ public final class TouchOverlay extends View {
     // Coordinates, visibility, pressed state and skill set all participate in that snapshot.
     private final float[] probe = new float[DRAW_FLOATS], drawn = new float[DRAW_FLOATS];
     private boolean drawnValid;
+    // 重绘对齐游戏上屏：内容变了也要等游戏交换链出了新的一帧才重绘（每个游戏帧最多一次）。Choreographer 跟着屏幕 120 Hz 走、游戏 60 帧时，
+    // 原先触控层在游戏两帧之间的节拍上也重绘，系统按「任一图层更新」多合成一次（奥丁实测：游戏层 59.7 / 窗口层 26.5 → 合成 68.8 次 / 秒，系统帧率监控显示的就是它）。
+    // 游戏卡住（交换链 200 ms 没新帧：读取画面、暂停）时照常按内容变化重绘，触控不受影响。
+    // Redraws follow the game's presents: even when the content changed, wait until the game's swapchain presented a new frame (at most once per game frame). With
+    // Choreographer at the screen's 120 Hz and the game at 60, the overlay used to redraw on ticks between two game frames and the system composed once more for "any
+    // layer updated" (Thor: game layer 59.7 / window layer 26.5 -> 68.8 compositions / s, which is what the system frame-rate monitor shows). When the game is stalled
+    // (no new swapchain frame for 200 ms: loading screen, pause) the overlay redraws on content changes as before, so touch is unaffected.
+    private static native long nativePresentCount();
+    private long lastPresent=-1, seenPresent=-1, seenPresentNs;   // lastPresent：上次重绘时的游戏帧号；seenPresent / seenPresentNs：最近一次看到游戏帧号变化的时刻（判游戏卡住） | lastPresent: the game frame number at the last redraw; seenPresent / seenPresentNs: when the frame number last changed (stall detection)
     private final Choreographer.FrameCallback poll = new Choreographer.FrameCallback() {
         @Override public void doFrame(long frameTimeNanos) {
             if (!running) return;
-            if (inputEnabled && isShown()) { nativeLayout(probe); if (!drawnValid || !Arrays.equals(probe, drawn)) invalidate(); }
+            long pc=nativePresentCount(); if (pc!=seenPresent) { seenPresent=pc; seenPresentNs=frameTimeNanos; }
+            boolean gameFrame = pc!=lastPresent || frameTimeNanos-seenPresentNs>200_000_000L;
+            if (inputEnabled && isShown() && gameFrame) {
+                // 首个游戏帧 / 折叠 / 旋转 / 分辨率档变了：先取消全部触点（Java 槽位、原生、原始触屏），再重摆。
+                // First frame, fold, rotation, resolution step: cancel every touch (Java slots, native, raw) first,
+                // then lay out again.
+                if (viewportChanged()) { resizeNative(); drawnValid=false; }
+                nativeLayout(probe); int f=nativeFpsHud(), hm=nativeHudMask(); if (!drawnValid || f!=fpsHud || hm!=hudMask || !Arrays.equals(probe, drawn)) { fpsHud=f; hudMask=hm; lastPresent=pc; invalidate(); } }
             Choreographer.getInstance().postFrameCallback(this);
         }
     };
-    private final int[] pointerIds = new int[16];
-    private final float[] lastX = new float[16], lastY = new float[16];
-    private final int[] rawIds = new int[16];
-    private final float[] rawX = new float[16], rawY = new float[16];
+    private final TouchDispatch touches;
+    // 画面矩形（窗口像素）与换算用的暂存：矩形由原生（dm_vp_fit）给，画与触摸都用同一份。
+    // The picture rectangle (window pixels) and scratch for the conversion: native (dm_vp_fit) gives the rectangle,
+    // and both drawing and touch use that one copy.
+    private final float[] vp = new float[4], vpProbe = new float[4];
+    private final float[] mapP = new float[5];
+    private boolean vpValid;
     private final String[] gameLabels, menuLabels;
     private final File overlayRoot;
     private final HashMap<String,Bitmap> images=new HashMap<>(), art=new HashMap<>(), glyphs=new HashMap<>();
@@ -70,7 +99,17 @@ public final class TouchOverlay extends View {
     public TouchOverlay(Context context, String[] labels, String[] menuLabels) {
         super(context);
         density = getResources().getDisplayMetrics().density;
-        Arrays.fill(pointerIds,-1);
+        touches = new TouchDispatch(density, new TouchDispatch.Out() {
+            @Override public void event(int phase,int slot,float x,float y) { nativeEvent(phase,slot,x,y); }
+            @Override public void raw(int count,int[] ids,float[] xs,float[] ys) { DmActivity.nativeTouch(count,ids,xs,ys); }
+        }, new TouchDispatch.Projection() {
+            @Override public boolean map(float vx,float vy,float[] out) {
+                mapP[0]=vx; mapP[1]=vy;
+                if (!nativeMap(mapP)) { out[0]=vx; out[1]=vy; return true; }   // 没有矩形（还没呈现过）：整窗即画面 | no rectangle yet: the window is the picture
+                out[0]=mapP[2]; out[1]=mapP[3];
+                return mapP[4]!=0;
+            }
+        });
         gameLabels = labels == null ? new String[15] : labels.clone();
         this.menuLabels = menuLabels == null ? new String[5] : menuLabels.clone();
         lifeFormat=context.getString(R.string.dmHudLife); manaFormat=context.getString(R.string.dmHudMana);
@@ -102,8 +141,30 @@ public final class TouchOverlay extends View {
         }
     }
     private void resizeNative() {
-        if (inputEnabled && getWidth()>0 && getHeight()>0) nativeResize(getWidth()/density,getHeight()/density,safeLeft,safeRight,safeBottom,
+        if (!(inputEnabled && getWidth()>0 && getHeight()>0)) return;
+        int wpx=getWidth(), hpx=getHeight();
+        touches.setViewSize(wpx,hpx);
+        // 画面矩形每次重新问：内外屏切换、旋转、渲染分辨率档变化都会改它，控件按矩形内的点数摆。
+        // Ask for the picture rectangle every time: a fold switch, a rotation or a render-resolution step changes it,
+        // and the controls are laid out in points inside that rectangle.
+        vpValid = nativeViewport(vp) && vp[2]>=1 && vp[3]>=1;
+        float x=vpValid?vp[0]:0, y=vpValid?vp[1]:0, w=vpValid?vp[2]:wpx, h=vpValid?vp[3]:hpx;
+        // 安全区从窗口边缘量；画面矩形把黑边挡掉的那部分先减掉，剩下的才是矩形内的安全距离。
+        // Safe insets are measured from the window edges; subtract what the bars already cover, and what is left is
+        // the safe distance inside the rectangle.
+        float l=Math.max(0,safeLeft-x/density), r=Math.max(0,safeRight-(wpx-x-w)/density), b=Math.max(0,safeBottom-(hpx-y-h)/density);
+        nativeResize(w/density,h/density,l,r,b,
                 getResources().getConfiguration().smallestScreenWidthDp>=600);
+    }
+    private float viewW() { return vpValid ? vp[2]/density : getWidth()/density; }
+    private float viewH() { return vpValid ? vp[3]/density : getHeight()/density; }
+    /** 画面矩形变了（首个游戏帧、折叠、旋转、分辨率档）：先取消全部触点，再按新矩形重摆控件。
+        The rectangle changed: cancel every touch first, then lay the controls out again. */
+    private boolean viewportChanged() {
+        if (!nativeViewport(vpProbe) || vpProbe[2]<1 || vpProbe[3]<1) return false;
+        if (!touches.updatePicture(vpProbe)) return false;   // 内部先 cancel：手指按住不动时也不会留旧坐标 | cancels inside
+        System.arraycopy(vpProbe,0,vp,0,4); vpValid=true;
+        return true;
     }
     @Override protected void onSizeChanged(int w,int h,int oldw,int oldh) {
         cancelTouches(); resizeNative();
@@ -115,41 +176,24 @@ public final class TouchOverlay extends View {
         running=false; Choreographer.getInstance().removeFrameCallback(poll); cancelTouches(); super.onDetachedFromWindow();
     }
     public void cancelTouches() {
-        if (!inputEnabled) { Arrays.fill(pointerIds,-1); return; }
-        for (int i=0;i<16;++i) if (pointerIds[i]>=0) {
-            nativeEvent(3,i,lastX[i],lastY[i]); pointerIds[i]=-1;
-        }
-        publishRaw();
-    }
-    private void publishRaw() {
-        int count=0;
-        if (getWidth()>0 && getHeight()>0) for (int s=0;s<16;++s) if (pointerIds[s]>=0) {
-            rawIds[count]=s; rawX[count]=lastX[s]*density/getWidth(); rawY[count]=lastY[s]*density/getHeight(); ++count;
-        }
-        DmActivity.nativeTouch(count,rawIds,rawX,rawY);
-    }
-    private int slot(int id) {
-        for (int i=0;i<16;++i) if (pointerIds[i]==id) return i;
-        return -1;
-    }
-    private void event(MotionEvent e,int index,int phase,int s) {
-        lastX[s]=e.getX(index)/density; lastY[s]=e.getY(index)/density;
-        nativeEvent(phase,s,lastX[s],lastY[s]);
+        if (!inputEnabled) { touches.reset(); return; }
+        touches.cancel();   // Java 槽位 + 原生 phase 3 + 原始触屏空集 | Java slots + native phase 3 + empty raw set
     }
     @Override public boolean onTouchEvent(MotionEvent e) {
         if (!inputEnabled) return false;
         int action=e.getActionMasked(), index=e.getActionIndex();
         if (action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN) {
-            for (int s=0;s<16;++s) if (pointerIds[s]<0) {
-                pointerIds[s]=e.getPointerId(index); event(e,index,0,s); break;
-            }
+            // 黑边上的按下在 TouchDispatch 里丢掉（不占手指、不发事件）：那里没有画面，按钮也不该被它碰到。
+            // A press on the black bars is dropped in TouchDispatch (no finger taken, no event sent): there is no
+            // picture there, and it must not reach a button.
+            touches.down(e.getPointerId(index),e.getX(index),e.getY(index));
         } else if (action==MotionEvent.ACTION_MOVE) {
-            for (int i=0;i<e.getPointerCount();++i) { int s=slot(e.getPointerId(i)); if (s>=0) event(e,i,1,s); }
+            for (int i=0;i<e.getPointerCount();++i) touches.move(e.getPointerId(i),e.getX(i),e.getY(i));
         } else if (action==MotionEvent.ACTION_UP || action==MotionEvent.ACTION_POINTER_UP) {
-            int s=slot(e.getPointerId(index)); if (s>=0) { event(e,index,2,s); pointerIds[s]=-1; }
+            touches.up(e.getPointerId(index),e.getX(index),e.getY(index));
             if (action==MotionEvent.ACTION_UP) performClick();
         } else if (action==MotionEvent.ACTION_CANCEL) cancelTouches();
-        publishRaw(); return true;
+        return true;
     }
     @Override public boolean performClick() { super.performClick(); return true; }
     private String label(int i,boolean navigation) {
@@ -358,12 +402,12 @@ public final class TouchOverlay extends View {
             float ts=br*1.15f; caption(c,"Ⅱ",bx,by-ts*.62f,ts,1);
         }
         if((kind&2)!=0 && hudUi!=null) {
-            float u=getHeight()/density/1320, W=getWidth()/density;
+            float u=viewH()/1320, W=viewW();
             try { JSONObject bd=hudUi.getJSONObject("badge"); hudText(c,Integer.toString(Math.max(0,(int)layout[p+7])),bd.getJSONObject("glyphs"),(x+r*.66f-W/2)/u+1434,(y+r*.42f)/u,true,u); }
             catch(Exception ignored) { }
         }
     }
-    private float hudX(double x,float u) { return getWidth()/density/2+((float)x-1434)*u; }
+    private float hudX(double x,float u) { return viewW()/2+((float)x-1434)*u; }
     private void hudImage(Canvas c,String name,double x,double y,float u) {
         Bitmap b=image("hud_v4_ui/"+name); if(b==null)return;
         float left=hudX(x,u),top=(float)y*u;
@@ -383,21 +427,24 @@ public final class TouchOverlay extends View {
     }
     private void hud(Canvas c) {
         if(hudUi==null || layout[HUD]==0) return;
-        float u=getHeight()/density/1320;
+        float u=viewH()/1320; boolean bar=(hudMask&2)!=0, text=(hudMask&4)!=0;   // 手柄模式：原版手柄底栏自己在，只补文字 | controller mode: the original controller bar is there, only the texts are added
         try {
-            JSONObject base=hudUi.getJSONObject("base");hudImage(c,"base_full.png",base.getDouble("x"),base.getDouble("y"),u);
+            JSONObject base=hudUi.getJSONObject("base");if(bar)hudImage(c,"base_full.png",base.getDouble("x"),base.getDouble("y"),u);
             JSONArray slots=hudUi.getJSONArray("slots"), inner=hudUi.getJSONArray("inner"), menu=slots.getJSONArray(5);
             boolean alert=layout[HUD+12]>0 || layout[HUD+13]>0, held=layout[4+10*5+4]!=0;
             Bitmap button=image("hud_v4_ui/"+(alert?"lvl_":"lvl_d")+(held?1:0)+".png");
-            if(button!=null) c.drawBitmap(button,null,new RectF(hudX(menu.getDouble(0),u),(float)menu.getDouble(1)*u,hudX(menu.getDouble(2),u),(float)menu.getDouble(3)*u),paint);
+            if(bar && button!=null) c.drawBitmap(button,null,new RectF(hudX(menu.getDouble(0),u),(float)menu.getDouble(1)*u,hudX(menu.getDouble(2),u),(float)menu.getDouble(3)*u),paint);
             JSONObject e=hudUi.getJSONObject("exp");
             float x=hudX(e.getDouble("x0"),u),y=(float)e.getDouble("y")*u,w=(float)(e.getDouble("x1")-e.getDouble("x0"))*u,h=(float)e.getDouble("h")*u;
-            paint.setColor(0xff16120e);c.drawRect(x,y,x+w,y+h,paint);
+            if(bar){paint.setColor(0xff16120e);c.drawRect(x,y,x+w,y+h,paint);
             paint.setColor(0xffc4a046);c.drawRect(x+u,y+u,x+u+(w-2*u)*Math.max(0,Math.min(1000,layout[HUD+2]))/1000,y+h-u,paint);
             paint.setColor(0xff463a28);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(u);c.drawRect(x,y,x+w,y+h,paint);paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xff16120e);for(int i=1;i<20;i++)c.drawRect(x+w*i/20,y+u,x+w*i/20+u,y+h-u,paint);
+            paint.setColor(0xff16120e);for(int i=1;i<20;i++)c.drawRect(x+w*i/20,y+u,x+w*i/20+u,y+h-u,paint);}
             JSONObject lv=hudUi.getJSONObject("lv"), vital=hudUi.getJSONObject("vital"),badge=hudUi.getJSONObject("badge");
-            hudText(c,String.format(Locale.ROOT,levelFormat,(int)layout[HUD+1],(int)layout[HUD+2]/10),lv.getJSONObject("glyphs"),lv.getDouble("x"),lv.getDouble("baseline"),false,u);
+            // 显示帧数（同 iOS DmTouchOverlay）：接在经验行末尾、同一套字形，不另起标签 | Show frame rate (as iOS DmTouchOverlay): appended to the experience line with the same glyphs, no separate label
+            String lvs=String.format(Locale.ROOT,levelFormat,(int)layout[HUD+1],(int)layout[HUD+2]/10); if(fpsHud>0) lvs=lvs+" · "+fpsHud+" FPS";
+            if(text)hudText(c,lvs,lv.getJSONObject("glyphs"),lv.getDouble("x"),lv.getDouble("baseline"),false,u);
+            if(!bar) return;   // 手柄模式：原版手柄底栏自带生命 / 法力数字，这里不再画（画了会叠字）| controller mode: the original controller bar has its own life / mana numbers, drawing ours overlaps them
             hudText(c,String.format(Locale.ROOT,lifeFormat,(int)layout[HUD+8],(int)layout[HUD+9]),vital.getJSONObject("glyphs"),vital.getDouble("left_x"),vital.getDouble("baseline"),false,u);
             hudText(c,String.format(Locale.ROOT,manaFormat,(int)layout[HUD+10],(int)layout[HUD+11]),vital.getJSONObject("glyphs"),vital.getDouble("right_x"),vital.getDouble("baseline"),false,u);
             for(int i=1;i<=4;i++) if(layout[HUD+2+i]>0) {
@@ -427,6 +474,11 @@ public final class TouchOverlay extends View {
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas); if (!inputEnabled) return; nativeLayout(layout); System.arraycopy(layout, 0, drawn, 0, layout.length); drawnValid=true;
         canvas.save(); canvas.scale(density,density);
+        // 控件画在画面矩形里，黑边不画东西：与按下换算同一个矩形，按钮画在哪就能按在哪。
+        // Controls are drawn inside the picture rectangle and nothing on the bars: the same rectangle the presses are
+        // converted through, so a button is where it is drawn.
+        if (vpValid) { canvas.translate(vp[0]/density,vp[1]/density); canvas.clipRect(0,0,vp[2]/density,vp[3]/density); }
+        if ((hudMask&1)==0) { hud(canvas); canvas.restore(); return; }   // 手柄模式：不画触屏控件与摇杆，只画 hud() 里的文字部分 | controller mode: no touch controls or joystick, only the text part of hud()
         boolean navigation=layout[2]!=0;
         float k=layout[4+12*5+2]/60;   // 与 iOS 同一个字号 / 粗细单位：摇杆半径 / 60 | the same size unit as iOS: joystick radius / 60
         // 同 iOS drawRect：底栏六格（腰带 / 十字）由底栏画、这里只留命中区；难度与 1–8 选择条也由底栏画（hud）。

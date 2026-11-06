@@ -96,8 +96,16 @@ static void belt_text(uint8_t *b, const snap *S, char *o, size_t cap) {   // 「
             uint32_t cd = it ? code_of(b, it) : 0; (void)kd; k += (size_t)snprintf(o + k, k < cap ? cap - k : 0, "%s%.3s", r ? "," : "", it ? (char *)&cd : "_"); } }
 }
 
+// 不开背包也补（自定义页 belt_refill，缺省开）：某列已有药、还有空格、背包有同族的 → 走下面同一条路补一轮。空列不补，空列只在开背包那一下认领（规则见文件头）。喝药的帧里不抢：每 30 帧看一次，开着面板也不动
+// Refill without opening the inventory (Custom page belt_refill, on by default): a column that has potions and a free cell, with the same family in the inventory -> one round along the same path below. Empty columns are not filled; they are claimed only when the inventory opens (rules in the file header). Checked every 30 frames, not while a panel is open
+static int need_refill(uint8_t *b, uint64_t pl) {
+    snap S; if (!take_snap(b, pl, &S)) return 0; uint64_t inv = rd(pl + 0x90); if (rd(inv + 0x40)) return 0;
+    for (int c = 0; c < 4; c++) { int r, kd = S.belt[c] ? kind_rank(code_of(b, S.belt[c]), &r) : 0; if (!kd || kd == OTHER || !S.best[kd]) continue;
+        for (int row = 1; row * 4 + c < S.boxes; row++) if (!S.belt[row * 4 + c]) return 1; }
+    return 0;
+}
 void dm_beltauto_step(uint8_t *b) {   // 游戏主线程每帧（dm_world.c） | every frame on the game main thread (dm_world.c)
-    static int active, moves, want_slot = -1; static uint64_t next, deadline; static uint32_t want_id; static char want_cli[64]; static int fails;   // fails = 本轮放失败的瓶数（moves 含它们） | fails = number of bottles that failed to be placed this round (moves includes them)
+    static int active, moves, want_slot = -1, quiet; static uint64_t next, deadline, chk; static uint32_t want_id; static char want_cli[64]; static int fails;   // fails = 本轮放失败的瓶数（moves 含它们） | fails = number of bottles that failed to be placed this round (moves includes them)
     if (!b) return;
     // 测试开关 DM_TEST_BELT_DRINK=<帧>:<列号…>（造现场：如 120:134 = 第 120 帧起把第 1、3、4 列的药喝光；写 0 = 背包里的红 / 蓝也喝光）：每 15 帧对这些列各喝最底下一瓶（dm_belt_use，原版喝药路径），喝空为止
     // Test switch DM_TEST_BELT_DRINK=<frame>:<column numbers...> (sets up a scenario: e.g. 120:134 = starting at frame 120 drink up the potions in columns 1, 3 and 4; writing 0 = also drink up the red / blue ones in the inventory): every 15 frames drink the bottom-most bottle of each of these columns (dm_belt_use, the original game's potion-drinking path), until empty
@@ -108,18 +116,21 @@ void dm_beltauto_step(uint8_t *b) {   // 游戏主线程每帧（dm_world.c） |
               if (*q == '0' && (D.best[RED] || D.best[BLUE])) { ((void (*)(uint64_t, int))(b + 0x3c0098))(D.best[RED] ? D.best[RED] : D.best[BLUE], 3); any = 1; break; }   // 0 = 背包里的红 / 蓝也喝掉（原版背包格使用物品，同 dm_actions.c） | 0 = also drink up the red / blue ones in the inventory (the original game's inventory cell item use, same as dm_actions.c)
               if (c >= 0 && c < 4 && D.belt[c]) { dm_belt_use(c, 0); any = 1; break; } }
           if (!any) { st = 2; LOG("DM_TEST_BELT_DRINK：第 %s 列喝空了（帧 %llu）", cols, (unsigned long long)f); } } }
-    if (atomic_exchange(&g_req, 0)) {
+    if (atomic_exchange(&g_req, 0)) { quiet = 0;
         static int env = -2; if (env == -2) { const char *e = getenv("DM_POT_PICK"); env = e ? e[0] != '0' : -1; }   // 同药水自动拾取：测试强制开关优先于自定义页 | same as potion auto-pickup: the test force switch takes priority over the custom settings page
         if (env >= 0 ? env : dm_custom_get("pot_pick")) { active = 1; moves = 0; want_slot = -1; next = 0; deadline = 0; g_ntried = 0; fails = 0; }
         else LOG("开背包补腰带：开关关着，不动");
     }
+    if (!active && b && dm_guest_frame() >= chk) { chk = dm_guest_frame() + 30; int dm_ui_panel_state(void);
+        uint64_t p = ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(uintptr_t)(b + 0x2d20e4c)); uint32_t pm = p ? *(uint32_t *)(uintptr_t)(p + 0xc) : 0;
+        if (p && pm != 0 && pm != 17 && !dm_ui_panel_state() && dm_custom_get("belt_refill") && need_refill(b, p)) { LOG("补腰带：腰带有空位，背包有同类 → 补一轮"); active = 1; quiet = 1; moves = 0; want_slot = -1; next = 0; deadline = 0; g_ntried = 0; fails = 0; } }
     if (!active) return;
     uint64_t fr = dm_guest_frame(); if (fr < next) return;
     uint64_t pl = ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(uintptr_t)(b + 0x2d20e4c)); snap S; char t[160];
     if (!pl || !take_snap(b, pl, &S)) { active = 0; LOG("开背包补腰带：读不到玩家 / 物品栏，不动"); return; }
     if (rd(rd(pl + 0x90) + 0x40)) { active = 0; LOG("开背包补腰带：手上拿着东西，停（已放 %d 瓶）", moves); return; }
     int dm_ui_panel_shown(const char *name);
-    if (!moves && want_slot < 0 && !dm_ui_panel_shown("PlayerInventoryExpansionLayout")) { if (!deadline) deadline = fr + 60; if (fr < deadline) return; active = 0; LOG("开背包补腰带：物品栏 60 帧没显示出来，不补"); return; }   // 等物品栏真显示出来再看同时开着的面板：底座 / 方块的开面板消息先到，但面板树里要晚几帧才可见 | wait until the inventory panel is really shown before looking at panels open at the same time: the pedestal / cube open-panel message arrives first, but it only becomes visible in the panel tree a few frames later
+    if (!quiet && !moves && want_slot < 0 && !dm_ui_panel_shown("PlayerInventoryExpansionLayout")) { if (!deadline) deadline = fr + 60; if (fr < deadline) return; active = 0; LOG("开背包补腰带：物品栏 60 帧没显示出来，不补"); return; }   // 等物品栏真显示出来再看同时开着的面板：底座 / 方块的开面板消息先到，但面板树里要晚几帧才可见 | wait until the inventory panel is really shown before looking at panels open at the same time: the pedestal / cube open-panel message arrives first, but it only becomes visible in the panel tree a few frames later
     if (dm_ui_panel_shown("ImbueItemsPanel") || dm_ui_panel_shown("HoradricCubeLayout")) { active = 0; LOG("开背包补腰带：开着底座 / 方块（物品栏随它一起开），不补（已放 %d 瓶）", moves); return; }   // 原版此时不收进腰带：0x3c1b28 照样放行，但发出的 0x53 不生效（dz 局，第 2 瓶 60 帧没进） | the original game does not accept items into the belt at this time: 0x3c1b28 still lets it through, but the 0x53 sent has no effect (dz run, the 2nd bottle did not go in within 60 frames)
     if (want_slot >= 0 && !S.belt[want_slot]) { if (fr < deadline) return;
         uint64_t dm_diag_srv_item(uint32_t id); char srv[64], now[64]; item_where(dm_diag_srv_item(want_id), srv, sizeof srv);
@@ -156,6 +167,7 @@ void dm_beltauto_step(uint8_t *b) {   // 游戏主线程每帧（dm_world.c） |
         int kd = order[oi]; uint64_t it = S.best[kd]; uint32_t ns = 0; if (!it) continue;
         if (!((int (*)(uint64_t, uint64_t, uint32_t *, int))(b + 0x561de0))(inv_c, it, &ns, 1) || (int)ns >= S.boxes) continue;   // 原版说这瓶进不了腰带（没有同类空位、也没有空列） | The original says this potion cannot go into the belt (no free slot of the same kind and no empty column)
         int c = (int)ns % 4, r = (int)ns / 4;
+        if (!r && quiet) continue;   // 不开背包的那一轮：空列不补 | The round without an open inventory: empty columns are not filled
         if (!r) { int want = c < 2 ? RED : BLUE;   // 空列：先认领色；认领色背包里没有 → 紫；紫也没有 → 让给背包里有的那种 | Empty column: claimed color first; claimed color not in the inventory → purple; no purple either → give the column to whichever kind the inventory has
             if (kd != want && S.best[want]) continue;                       // 认领色有货：别的颜色不顶 | Claimed color in stock: other colors do not substitute
             if (kd != want && kd != PURPLE && S.best[PURPLE]) continue; }   // 认领色没货但有紫：先补紫 | Claimed color out of stock but purple available: fill purple first
@@ -168,6 +180,6 @@ void dm_beltauto_step(uint8_t *b) {   // 游戏主线程每帧（dm_world.c） |
         LOG("开背包补腰带：背包「%.4s」→ 列 %d 第 %d 格（槽 %d，%s列）；物品 id %u，%s", (char *)&(uint32_t){ code_of(b, it) }, c + 1, r + 1, slot, r ? "同类" : "空", want_id, want_cli);
         return;
     }
-    active = 0; belt_text(b, &S, t, sizeof t);
+    active = 0; quiet = 0; belt_text(b, &S, t, sizeof t);
     LOG("开背包补腰带：完成，放了 %d 瓶；腰带（%s），背包剩 红 %d 蓝 %d 紫 %d（%s），药水合计 %d", moves - fails, t, S.n[RED], S.n[BLUE], S.n[PURPLE], S.bag, S.nbelt + S.n[RED] + S.n[BLUE] + S.n[PURPLE]);
 }

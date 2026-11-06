@@ -10,7 +10,7 @@ module_t *module_of(const void *p) { (void)p; return NULL; }
 module_t g_mod[MAX_MOD]; int g_nmod;
 void svc_thread_dump(void) {}
 uint64_t now_ns(void) { return bp_now(); }
-static int fail, count;
+static int fail __attribute__((unused)), count __attribute__((unused));   // 旧接口版这两个不用（tests_m3 -Werror，B211）| unused in the older-API pass
 #define EXPECT(name, want, got) do { long long w_=(long long)(want), g_=(long long)(got); count++; printf("%s 期望 %lld → 真结果 %lld %s\n", name, w_, g_, w_==g_?"✓":"✗"); fail += w_ != g_; } while (0)
 #if !DM_NVN_M3
 static uint64_t main_alloc_bytes(void) { uint64_t s = 0; for (int i = 0; i < g_alloc_n; i++) if (g_alloc4[i]) s += g_alloc4[i].allocatedSize; return s; }

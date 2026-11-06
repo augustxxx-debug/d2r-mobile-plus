@@ -33,6 +33,7 @@
 // The read-only data segment is writable by the host (loader.c only seals the code region and the patch region); the original value of each string is
 // verified one by one, and nothing is written on a mismatch (wrong game version).
 #include "dm_stick_nav.h"
+#include "dm_padmode_pure.h"
 #include "dm_custom_scroll.h"
 #include "hle.h"
 #include "dm_hud.h"
@@ -42,6 +43,7 @@
 #include "dm_i18n.h"
 #include "dm_modetx.h"
 #include "dm_mode_items.h"
+#include "dm_padfocus.h"
 #include <stdatomic.h>
 #include <string.h>
 #include <unistd.h>
@@ -84,6 +86,9 @@ static const char *const k_glyph_name[DM_GLYPH_N] = { "Switch", "keyboard", "Xbo
 #if TARGET_OS_OSX
 static int g_app;   // Mac App 形态 | the overlay carries keyboard key caps; the current path points at keyboard key caps; whether the next path write should point at keyboard key caps; Mac App form
 #endif
+// 统计的设置快照（dm_telemetry.c）：手柄模式下按当前键帽报手柄类型 | for the statistics' settings snapshot: the controller type by the current glyph set in controller mode
+int dm_padmode_current(void);
+const char *dm_padmode_pad_type(void) { if (!dm_padmode_current()) return "none"; int g = atomic_load(&g_glyph_want); return g == DM_GLYPH_XBOX ? "xbox" : g == DM_GLYPH_PS ? "ps" : "other"; }
 void dm_padmode_request_glyph(int g) { if (g < 0 || g >= DM_GLYPH_N || !g_glyph_have[g]) g = DM_GLYPH_PAD; atomic_store(&g_glyph_want, g); }   // 前端（任意线程）：键盘有输入 → 键盘，实体手柄有输入 → 按它的类型。覆盖层没有那套就用原版键帽。这里不立输入冻结：换键帽要等面板都关了才起（见 glyph_swap_ok），等的时候玩家照常操作；事务起的那一帧才冻结 | Front end (any thread): keyboard input -> keyboard, physical controller input -> by its type. Without that set in the overlay the original glyphs are used. No input freeze here: the glyph swap waits until all panels are closed (see glyph_swap_ok), the player keeps playing meanwhile; input freezes only on the frame the transaction starts
 int dm_padmode_kbd(void) { return g_glyph == DM_GLYPH_KBD; }
 // 只换键帽的重载只在「没有面板开着」时起：重载布局会把开着的页重建一遍，设置页的勾选框会全显示成未勾、还多出「全部接受」（实测），
@@ -192,6 +197,90 @@ static const struct { const char *name; int side; void (*enter)(void), (*leave)(
 #undef X
 };
 static void items_run(int side, int leave) { for (unsigned i = 0; i < sizeof k_items / sizeof *k_items; i++) { if (k_items[i].side != 2 && k_items[i].side != side) continue; void (*f)(void) = leave ? k_items[i].leave : k_items[i].enter; if (f) f(); } }
+// ---- B036：切到手柄版后把开着网格面板的手柄焦点放回合法格子 ----
+// 事务重载整套布局：旧控件全被释放，游戏不会为「本来开着的」面板重走开页时的缺省焦点，焦点管理器的焦点
+// （[界面根+0xd0]+0x190）留空，方向键 / 左摇杆没有起点——商人货架、交易、储物箱、方块这些网格页都动不了。
+// 事务开始前记下开着的网格面板与光标在网格内的相对位置，两次重建完成后用原版悬停刷新（dm_ui_hover_now）
+// 落回同一格；记不到位置就落第一格。纯策略在 dm_padfocus.h（tests/t_b036.c 测），这里只读写游戏内存。
+// ---- B036: after switching to the controller layout, put the controller focus of open grid panels back on a valid cell ----
+// The transaction reloads the whole layout: every old widget is freed, and the game does not replay the default focus a panel gets when it
+// is opened for a panel that was already open; the focus manager's focus ([UI root+0xd0]+0x190) stays empty and the D-pad / left stick has no
+// starting point -- the vendor shelf, trade, stash and Cube grid pages cannot move. Before the transaction starts we record the open grid panel
+// and the cursor's position inside the grid; after both rebuilds the original hover refresh (dm_ui_hover_now) puts the focus back on the same
+// cell, or on the first cell when no position was recorded. The pure policy is in dm_padfocus.h (tested by tests/t_b036.c); this file only
+// reads and writes game memory.
+static const char *const k_focus_panel[] = { "VendorPanelLayout", "TradeLayout", "BankExpansionLayout", "BankOriginalLayout", "HoradricCubeLayout" };   // 商人 / 赌博同页 | vendor / gambling share the panel
+enum { FOCUS_PANEL_N = (int)(sizeof k_focus_panel / sizeof *k_focus_panel) };
+static dm_padfocus_mem g_focus_mem = { -1, 0, 0.0, 0.0 };
+static int g_focus_wait;   // 还要重试的帧数（0 = 没有待恢复） | frames left to retry (0 = nothing pending)
+static uint64_t focus_item_find(uint8_t *b, uint64_t w, int dep) {   // 面板里第一个可见的物品格 / 网格控件 | first visible item-cell / grid widget in the panel
+    if (!w || dep > 14 || !*(uint8_t *)(w + 0x50)) return 0;
+    uint64_t vt = *(uint64_t *)w - (uint64_t)(uintptr_t)b;
+    if (vt == 0x2089ab8 || vt == 0x2088fc8 || vt == 0x2089fa0 || vt == 0x20892f8) return w;   // 多格格子 / 腰带 / 装备位 / 高级仓库成叠格（同 dm_cursor_item.c） | multi-cell grid / belt / equipment slot / advanced stash stack (same as dm_cursor_item.c)
+    uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
+    for (uint64_t i = 0; i < n; i++) { uint64_t r = focus_item_find(b, *(uint64_t *)(ch + 8 * i), dep + 1); if (r) return r; }
+    return 0;
+}
+static int focus_panel_of(uint64_t root, uint64_t w) {   // 控件挂在前面的顶层面板（父链 +0x30，同 dm_cursor.c） | top-level panel the widget hangs under (parent chain +0x30, same as dm_cursor.c)
+    for (int n = 0; w && w != root && n < 64; n++) {
+        const char *nm = (const char *)*(uint64_t *)(w + 8);
+        if (nm) for (int i = 0; i < FOCUS_PANEL_N; i++) if (!strcmp(nm, k_focus_panel[i])) return i;
+        w = *(uint64_t *)(w + 0x30);
+    }
+    return -1;
+}
+static uint64_t focus_panel_grid(uint8_t *b, uint64_t root, int idx, uint64_t *panel) {
+    uint64_t p = dm_ui_top(root, k_focus_panel[idx]);
+    if (!p || !*(uint8_t *)(p + 0x50)) return 0;   // 面板没开（同 dm_actions.c 判商人页开的同一字节） | panel not open (same byte dm_actions.c uses to tell the vendor page is open)
+    uint64_t g = focus_item_find(b, p, 0); if (!g) return 0;
+    if (panel) *panel = p; return g;
+}
+#define FOCUS_HIT(g, px, py) (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)(g) + 0x48))((g), (uint64_t)(uint32_t)(px) | ((uint64_t)(uint32_t)(py) << 32)) & 1)
+static int focus_rect(uint8_t *b, uint64_t g, int *x0, int *y0, int *x1, int *y1) {   // 网格的屏幕命中矩形（同 dm_bag.c ui_test 的探法） | screen hit rect of the grid (same probing as ui_test in dm_bag.c)
+    int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c); if (!g || vw <= 0 || vh <= 0) return 0;
+    int st = vh / 64 + 1, fx = -1, fy = -1;
+    for (int y = 0; y < vh && fx < 0; y += st) for (int x = 0; x < vw; x += st) if (FOCUS_HIT(g, x, y)) { fx = x; fy = y; break; }
+    if (fx < 0) return 0;
+    int ax = fx, ay = fy, bx = fx, by = fy;
+    while (ax > 0 && FOCUS_HIT(g, ax - 1, ay)) ax--;
+    while (ay > 0 && FOCUS_HIT(g, ax, ay - 1)) ay--;
+    while (bx + 1 < vw && FOCUS_HIT(g, bx + 1, ay)) bx++;
+    while (by + 1 < vh && FOCUS_HIT(g, ax, by + 1)) by++;
+    if (bx <= ax || by <= ay) return 0;
+    *x0 = ax; *y0 = ay; *x1 = bx; *y1 = by; return 1;
+}
+static void focus_capture(uint8_t *b) {   // 切换开始前：记下开着的网格面板与光标位置 | before the switch: record the open grid panel and the cursor position
+    dm_padfocus_capture(&g_focus_mem, -1, 0, 0, 0.0, 0.0); g_focus_wait = 0;
+    uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)); if (!root) return;
+    uint64_t fm = rd8(root + 0xd0), fw = fm ? rd8(fm + 0x190) : 0, hw = fm ? rd8(fm + 0x178) : 0;
+    int pref = focus_panel_of(root, fw); if (pref < 0) pref = focus_panel_of(root, hw);   // 光标在哪一侧就先恢复哪一侧 | restore the side the cursor is on first
+    int order[FOCUS_PANEL_N], n = 0; if (pref >= 0) order[n++] = pref; for (int i = 0; i < FOCUS_PANEL_N; i++) if (i != pref) order[n++] = i;
+    for (int k = 0; k < n; k++) {
+        int idx = order[k]; uint64_t p = 0, g = focus_panel_grid(b, root, idx, &p); if (!g) continue;
+        int x0, y0, x1, y1; if (!focus_rect(b, g, &x0, &y0, &x1, &y1)) continue;
+        int cx = *(int32_t *)(b + 0x2d128f8), cy = *(int32_t *)(b + 0x2d128fc);
+        int in = cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1 && FOCUS_HIT(g, cx, cy);
+        double u = in ? (double)(cx - x0) / (double)(x1 - x0) : 0.0, v = in ? (double)(cy - y0) / (double)(y1 - y0) : 0.0;
+        dm_padfocus_capture(&g_focus_mem, idx, 1, in, u, v);
+        LOG("手柄 / 触屏布局：记下%s的网格焦点（%s，格内 %.2f,%.2f）", k_focus_panel[idx], in ? "光标原格" : "落第一格", u, v);
+        return;
+    }
+}
+static int focus_restore_once(uint8_t *b) {   // 重建完成后：把焦点放回网格；返回 1 = 处理完 / 没得处理，0 = 下一帧再试 | after the rebuild: put the focus back on the grid; 1 = done / nothing to do, 0 = retry next frame
+    if (g_focus_mem.panel < 0) return 1;
+    uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)); if (!root) return 0;   // 界面根还没就位：下一帧再试 | UI root not in place yet: retry next frame
+    { uint64_t fm = rd8(root + 0xd0); if (fm && rd8(fm + 0x190)) { LOG("手柄 / 触屏布局：切到手柄版后焦点已在（原版自己恢复了），不改"); g_focus_mem.panel = -1; return 1; } }   // 只补空焦点，不和原版抢（只读指针值、不解引用；Opus 审 P2-1） | only fill an empty focus, never fight the original (reads the pointer value, no dereference; Opus review P2-1)
+    int idx = g_focus_mem.panel; uint64_t p = dm_ui_top(root, k_focus_panel[idx]);
+    if (!p) return 0;   // 新布局还没把这个面板建出来：下一帧再试 | the new layout has not built this panel yet: retry next frame
+    if (!*(uint8_t *)(p + 0x50)) { g_focus_mem.panel = -1; return 1; }   // 面板已经关了：不硬塞 | panel closed: do not force it
+    uint64_t g = focus_item_find(b, p, 0); if (!g) return 0;   // 面板在、网格还没就位：下一帧再试（重试用尽会报红） | panel is there but the grid is not ready: retry next frame (report red when retries run out)
+    int x0, y0, x1, y1; if (!focus_rect(b, g, &x0, &y0, &x1, &y1)) return 0;   // 布局还没摆好 | layout not laid out yet
+    int x = 0, y = 0; if (!dm_padfocus_restore(&g_focus_mem, idx, 1, x0, y0, x1, y1, &x, &y)) { g_focus_mem.panel = -1; return 1; }
+    int dm_ui_hover_now(int, int);
+    if (!dm_ui_hover_now(x, y)) return 0;   // 原版手柄光标模式还没就位 | the original controller cursor mode is not ready yet
+    LOG("手柄 / 触屏布局：切到手柄版后把%s的焦点放回网格（%d,%d，格内 %.2f,%.2f）", k_focus_panel[idx], x, y, g_focus_mem.u, g_focus_mem.v);
+    g_focus_mem.panel = -1; return 1;
+}
 // 我们自己的页在手柄模式下接管按键（自定义页、积分牌…；原版的焦点导航不认识我们加的控件）：页在屏上时每帧声明要哪些键（dm_padmode_page_keys，游戏主线程），
 // 取手柄处（hle_hid.c fill）把这些键扣下不交给原版、按下沿攒给页（dm_padmode_page_keys 的返回值）。页不再声明（3 帧）就失效；失效时还按着的键松开前仍不交给原版。同一时刻只有一页在屏上
 // 页接管了的键还想让原版照常收到一次短按时（如编年史仓库页的 Y：短按仍是原版的「丢弃」，按住才是我们的「存入」）：dm_padmode_page_pulse 让取手柄处替玩家按几次采样
@@ -221,6 +310,12 @@ void dm_padmode_page_pulse(uint64_t mask) { atomic_store(&g_pg_pulse, mask); ato
 // a page that declared up (down) gets the stick's upward (downward) push zeroed, likewise left / right (the original game no longer sees it; an undeclared direction still reaches it, audit P1-1), and a push past half (hysteresis: resets inside a quarter;
 // the dominant axis only) becomes that direction key "held", from which the filter below derives press edges exactly as for real keys -- on our pages the stick behaves like the D-pad. Called before the filter
 static _Atomic uint64_t g_pg_stick;   // 左摇杆折算出的方向键位 | direction bits derived from the left stick
+// 原版菜单把左摇杆当方向键（B071，dm_stick_nav.h）：菜单在屏上时每帧声明（游戏主线程），3 帧不声明就失效。和上面的页接管不同：方向键照常归原版（按住连发也是原版的），不进页的按下沿
+// The left stick as D-pad for an original menu (B071, dm_stick_nav.h): declared every frame while the menu is up (game main thread), lapses after 3 frames. Unlike the page takeover above, the D-pad stays the game's (including its own hold-repeat) and nothing goes to a page's press edges
+static _Atomic uint64_t g_nav_frame = UINT64_MAX, g_nav4_frame = UINT64_MAX, g_nav_keys;
+void dm_padmode_stick_as_dpad(void) { atomic_store(&g_nav_frame, dm_guest_frame()); }
+// 四个方向都交（B114 任务日志：原版十字键在任务格间走，左摇杆却是自由光标，推出任务格金框就没了） | all four directions (B114 quest log: the D-pad walks the quests, the stick is a free cursor that loses the frame)
+void dm_padmode_stick_as_dpad4(void) { uint64_t f = dm_guest_frame(); atomic_store(&g_nav4_frame, f); atomic_store(&g_nav_frame, f); }
 void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
     static dm_stick_nav nav; const uint64_t V = DM_BTN_UP | DM_BTN_DOWN, H = DM_BTN_LEFT | DM_BTN_RIGHT;
     uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
@@ -228,22 +323,35 @@ void dm_padmode_page_stick(int32_t *lx, int32_t *ly) {
     // In controller mode convert on every sample, not reset by the declaration (P1-1 follow-up): the direction bits are not masked, so the filter derives edges continuously -- a push held across a
     // declaration change (the game has just moved the focus to the table's first row and only now does the page declare Up) is not a new press
     static uint64_t eat;
-    if (!g_cur || !lx || !ly) { dm_stick_nav_reset(&nav); eat = 0; atomic_store(&g_pg_stick, 0); return; }
+    static uint64_t nav_hold;
+    if (!g_cur || !lx || !ly) { dm_stick_nav_reset(&nav); eat = 0; nav_hold = 0; atomic_store(&g_nav_keys, 0); atomic_store(&g_pg_stick, 0); return; }
     uint64_t d = dm_stick_nav_dirs(&nav, *lx, *ly);   // 公共折算（dm_stick_nav.h） | shared conversion
     atomic_store(&g_pg_stick, d);
+    { uint64_t nf = atomic_load(&g_nav_frame), n4 = atomic_load(&g_nav4_frame), out = 0; int want = nf != UINT64_MAX && dm_guest_frame() - nf <= 3 && !m;   // 页接管时归页 | a page's takeover wins
+      if (want && n4 != UINT64_MAX && dm_guest_frame() - n4 <= 3) want = 2;   // 四个方向都交（B114） | all four directions (B114)
+      if (dm_stick_nav_as_dpad(&nav_hold, want, d, &out)) { atomic_store(&g_nav_keys, out); *lx = *ly = 0; return; }
+      atomic_store(&g_nav_keys, 0); }
     dm_stick_nav_withhold(dm_stick_nav_take(&eat, d, m & (V | H)), lx, ly);   // 只扣声明了的方向（审计 P1-1）与推着期间页收过的方向（P1-1 补） | withhold the declared directions (audit P1-1) and those the page took while held (follow-up)
 }
+// 右摇杆上下（方案 C 游戏页跳组，主会话 11-01：局内 LB / RB 翻外层页签，不抢）：页声明 g_rs_frame 期间扣下右摇杆竖直量（探针：原版选项页对它无反应），推过一半算一次，回到四分之一内复位
+// Right stick up / down (plan C group jumps on the Gameplay page; LB / RB flip the outer tabs in a run, so they stay): while a page declares it, the vertical axis is withheld (probe: the original options pages ignore it), a push past half counts once and resets inside a quarter
+static _Atomic uint64_t g_rs_frame; static _Atomic int g_rs_ev;
+void dm_padmode_page_rstick(int32_t *ry) { static int held; if (!ry || !g_cur || dm_guest_frame() - atomic_load(&g_rs_frame) > 3) { held = 0; return; }
+    int v = *ry; *ry = 0; if (!held && (v > 16383 || v < -16383)) { held = 1; atomic_store(&g_rs_ev, v > 0 ? -1 : 1); } else if (held && v < 8192 && v > -8192) held = 0; }
+static _Atomic uint64_t g_raw_bt;   // 这一拍手柄的真按键（过滤前）：只给「旁听不接管」的页看（B170 商店里 L / R 点按切背包页，按住 R 仍是原版排序） | this sample's real buttons (before filtering): for pages that only listen without taking (B170)
+uint64_t dm_padmode_raw_buttons(void) { return g_cur ? atomic_load(&g_raw_bt) : 0; }
 uint64_t dm_padmode_page_filter(uint64_t bt) {
+    atomic_store(&g_raw_bt, bt);
     static uint64_t prev, eat; uint64_t vb = bt | atomic_load(&g_pg_stick), down = vb & ~prev; prev = vb;   // 摇杆折出的方向位只用来算页的按下沿 / 按着，不交给游戏 | stick-derived bits only feed the page's edges / held state, never the game
     uint64_t m = g_cur && dm_guest_frame() - atomic_load(&g_pg_frame) <= 3 ? atomic_load(&g_pg_mask) : 0;
     uint64_t pulse = 0; { int n = atomic_load(&g_pg_pulse_n); if (n > 0) { atomic_store(&g_pg_pulse_n, n - 1); pulse = atomic_load(&g_pg_pulse); } }
     eat &= bt;   // 声明换了键（如难度行按下 = 焦点交回原版表格、只剩「上」）时，前一份声明里还按着的键同样松开前不交原版（否则这一下下键又让原版焦点再走一格，B015） | keys still held from a previous, different declaration are withheld until released too (B015)
     if (m) { atomic_fetch_or(&g_pg_ev, down & m); atomic_store(&g_pg_held, vb & m); eat |= bt & m; return (bt & ~eat) | pulse; }
-    atomic_store(&g_pg_ev, 0); atomic_store(&g_pg_held, 0); return (bt & ~eat) | pulse;
+    atomic_store(&g_pg_ev, 0); atomic_store(&g_pg_held, 0); return (bt & ~eat) | pulse | atomic_load(&g_nav_keys);
 }
 // 编年史仓库页开着时（手柄模式）把原版「按住 Y」那半句提示的字换成我们实际做的事：原版在储藏箱各页对背包物品的提示是「丢弃（按住移动到私人储藏箱）」，
 // 第六页上按住 Y 被我们接管成存入编年史仓库（dm_vault_ui.c）。这半句只写「存入」：原版那条本来就超宽、在限宽里滚动（截图对照），写短到不滚，人就在编年史页上。换法同上面的手柄 / 触屏说法：只换当前语言串表里这个键的串指针，离开那一页换回
-// 同一个换法现在有两条（一张小表）：编年史页的「存入」，和光标停在未鉴定物品上时把「捡起」换成「捡起（按住鉴定）」（手柄按住 A = 免费鉴定，dm_cursor.c；
+// 同一个换法现在有两条（一张小表）：编年史页的「存入」，和光标停在未鉴定物品上时把「捡起」换成「捡起(按住鉴定)」（半角括号、不比原版「捡起(按住装备)」宽：再宽就在提示条的限宽里滚动，看着像截断，B101）（手柄按住 A = 免费鉴定，dm_cursor.c；
 // 原版对未鉴定装备只提示「A 捡起」，往提示条里加条目会被原版每帧按光标下的物品重建盖掉，所以换它取的那条串）
 // While the Chronicle vault page is open (controller mode), replace the text of the original "hold Y" half of the hint with what we actually do:
 // on every stash page the original hint for an inventory item is "Drop (hold to move to private stash)",
@@ -269,7 +377,7 @@ uint64_t dm_padmode_page_filter(uint64_t bt) {
 // pl / ja / pt have the original's own "Compare" / "Pick Up", and English there would be a step back, so the original stays (the hint lacks "hold", the behavior
 // is unchanged). "Deposit" is still swapped in every language: the Chronicle page is our own page and the original half-sentence (hold to move to private stash) is wrong there
 enum { HINT_VAULT, HINT_IDENT, HINT_CMP, NHINT };
-static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[48]; } g_hint[NHINT] = {
+static struct { const char *key, *ours_key; _Atomic int on; uint64_t node, orig, olen; char ours[96]; } g_hint[NHINT] = {   // ours：俄文「Взять (держать — опознать)」48 字节，原先 48 的缓冲截掉了末尾「)」（B101 实测） | ours: the Russian text is 48 bytes; the old 48-byte buffer dropped the final ")" (measured in B101)
     { "ControllerPromptItemMoveToPrivateStash", "dmPadHintDeposit" }, { "ControllerPromptItemPickUpFromInventory", "dmPadLegIdentify" },
     { "ControllerPromptItemCompare", "dmPadLegCompare" } };   // [0]「按住 Y」那半句、[1]「捡起」、[2]「比较」（手柄模式常换） | [0] the "hold Y" half of the sentence, [1] "Pick Up", [2] "Compare" (always in controller mode)
 void dm_padmode_vault_hint(int on) { atomic_store(&g_hint[HINT_VAULT].on, on ? 3 : 0); }   // 游戏主线程，页在屏上时每帧调（3 帧不调就算离开） | Game main thread; called every frame while the page is on screen (3 frames without a call counts as having left)
@@ -493,12 +601,25 @@ static void diff_set_text(uint8_t *b, uint64_t w, const char *t) {   // 只写�
     size_t L = strlen(t); if (rd8(w + 0x90) == L && !memcmp((const void *)(uintptr_t)rd8(w + 0x88), t, L)) return;
     ((void (*)(uint64_t, const char *, uint64_t))(b + 0x136e5c))(w + 0x88, t, L); ((void (*)(uint64_t))(b + 0xadc434))(w);
 }
+// 触屏底栏难度格的说明（B034 / B035，用户 2026-10-30）：用原版提示框，不挡操作；选择条展开时一句副文，选中一档时正文 + 副文。秘境恢复档位不走这里
+// The touch difficulty cell's explanation (B034 / B035): shown in the original notice box, which does not block; one subtext line when the selector opens, body + subtext when a level is picked. Rift level restores do not come through here
+static _Atomic int g_diff_tip = -1;
+void dm_diff_tip(int n) { atomic_store(&g_diff_tip, n); }
+static void diff_tip_pump(uint8_t *b) {
+    // 测试开关 DM_TEST_DIFF_TIP=<帧>[:<档>][,<帧>[:<档>]…]（最多 4 个，档 0 = 选择条刚展开）；DM_TEST_NATIVE_NOTICE=<帧>[,<帧>…]：到帧直接调原版通知（不经我们的泵、不记两级提示），扮演原版自己的系统提示
+    // test switches DM_TEST_DIFF_TIP=<frame>[:<level>][,...] (up to 4; level 0 = selector just opened); DM_TEST_NATIVE_NOTICE=<frame>[,...]: at that frame call the original notice directly (not through our pump, no two-level record), standing in for the game's own system notices
+    { static int n = -1, k; static long at[4], v[4]; if (n < 0) { n = 0; const char *e = getenv("DM_TEST_DIFF_TIP"); for (const char *q = e; q && *q && n < 4; ) { char *c; at[n] = strtol(q, &c, 10); v[n] = *c == ':' ? strtol(c + 1, &c, 10) : 3; n++; q = strchr(q, ','); if (q) q++; } }
+      if (k < n && (long)dm_guest_frame() >= at[k]) { LOG("测试 DM_TEST_DIFF_TIP：帧 %llu 发难度说明 %ld", (unsigned long long)dm_guest_frame(), v[k]); dm_diff_tip((int)v[k]); k++; } }
+    { static int n = -1, k; static long at[4]; if (n < 0) { n = 0; const char *e = getenv("DM_TEST_NATIVE_NOTICE"); for (const char *q = e; q && *q && n < 4; ) { at[n++] = strtol(q, NULL, 10); q = strchr(q, ','); if (q) q++; } }
+      if (k < n && (long)dm_guest_frame() >= at[k]) { void dm_game_notice_native_test(uint8_t *, const char *); k++; LOG("测试 DM_TEST_NATIVE_NOTICE：帧 %llu 直接调原版通知", (unsigned long long)dm_guest_frame()); dm_game_notice_native_test(b, "TEST native system notice: no grey second line here"); } }
+    int n = atomic_exchange(&g_diff_tip, -1); if (n < 0) return; void dm_game_notice_ui_pair(uint8_t *, const char *, const char *);
+    dm_diff_tip_send(b, n, dm_str(b, "dmDiffTipBody"), dm_str(b, "dmDiffTipSub"), dm_game_notice_ui_pair); }   // 正文 36 号主色、副文 28 号浅灰两级（B035，dm_padmode_pure.h） | 36 pt primary body plus 28 pt light-grey subtext (B035, dm_padmode_pure.h)
 static void diff_pump(uint8_t *b, uint64_t frame) {
     uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), gp = root ? dm_ui_top(root, "GameplayOptionsPanel") : 0;
     if (!gp || !*(uint8_t *)(uintptr_t)(gp + 0x50)) { g_diff_w.w = 0; g_diff_last = -1; return; }
     uint64_t w = pm_find(gp, "TouchDiffSlider", 0); if (!w || !DM_WIDGET_OK(b, w, DM_VT_SLIDER, "游戏难度行")) return;
-    dm_hud_info h; dm_hud_get(&h); int cur = h.valid ? h.players : 0;
-    if (g_diff_pend && g_diff_pend == cur) g_diff_pend = 0;   // 请求已落地 | the request has landed
+    dm_hud_info h; dm_hud_get(&h); int dm_ingame_now(void), live = dm_ingame_now(), cur = live ? h.players : 0;   // 快照 valid 离局后不清（B066、N13 R13-03）| the snapshot's valid is not cleared after leaving a run
+    if (g_diff_pend && (g_diff_pend == cur || !live)) g_diff_pend = 0;   // 请求已落地；或已不在局内（退回主菜单时没落地的请求作废，否则局外仍当作局内，B066） | the request has landed; or no longer in a run (a request that never landed is dropped on return to the main menu, else the page would still count as in a run, B066)
     int shown = g_diff_pend ? g_diff_pend : cur, setv = -1;
     int v = *(int32_t *)(uintptr_t)(w + 0x5c4);
     if (dm_wref_get(&g_diff_w) != w) {
@@ -522,20 +643,54 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
     // A = +1 level (back to 1 after 8), taking effect at once like the other rows; Down = the focus goes back to the row it came from; Up does nothing.
     // The focus moved elsewhere (page rebuilt, a touch on another row) counts as leaving the row. If the table was scrolled down, the original scroll area is made to scroll back to the
     // top by itself (as on the Custom page: wheel notches, reading only, never writing original widgets)
+    // 进页时原版把缺省焦点放到表格第一行，滚动区跟着滚过了 Plus 行：触屏这边没有焦点链，让原版滚动区滚回顶（发滚轮，只读不写原版控件）
+    // On entry the game's default focus on the table's first row scrolls the view past the Plus rows: touch has no focus chain, so wheel the original scroll view back to the top (reading only, never writing original widgets)
+    if (!pad && g_diff_home) { uint64_t rows = pm_find(gp, "TouchDiffRows", 0), view = rows ? rd8(rows + 0x30) : 0, sv = view ? rd8(view + 0x30) : 0; static uint64_t at;
+        if (frame > g_diff_home) g_diff_home = 0; else if (sv && frame - at >= 2 && *(int32_t *)(uintptr_t)(view + 0x74) < 0) { void dm_ui_wheel_on(uint64_t, int); at = frame; dm_ui_wheel_on(sv, 1); } }
+    // 方案 C：难度行之后还有 Plus 勾选行（dm_custom.c dm_custom_game_stops）：同一套焦点交接，上下在这些停靠点之间走，末行再下才回表格；A 翻勾选
+    // Plan C: Plus checkbox rows follow the difficulty row (dm_custom_game_stops): same focus hand-over, Up / Down walk these stops, Down on the last one returns to the table; A flips the checkbox
     { static int on_row, last_dir, last_off = -1; static uint64_t wheel_at; static char back_nm[64]; uint64_t fm = rd8(root + 0xd0), F = fm ? rd8(fm + 0x190) : 0;
+      int dm_custom_game_stops(unsigned long long, unsigned long long *, int); void dm_custom_game_press(unsigned long long); void dm_ui_send(const char *, const char *, const char *);   // dm_ui_send：dm_cursor.c，往界面根发一条原版界面消息（只许游戏主线程调） | dm_ui_send: dm_cursor.c, sends one original UI message to the UI root (game main thread only)
+      // 停靠点：难度滑块 → 「进入恐惧区域」入口钮（方案 C：原版设置页从页签拿掉后，那个开关只剩这一条路进去）→ Plus 行 / 折叠钮 | stops: difficulty slider -> the 「Terror Zones」 entry button (plan C: with the original settings page gone from the tabs this is its only way in) -> Plus rows / fold buttons
+      unsigned long long st[33]; st[0] = w; st[1] = pm_find(gp, "TouchDesecratedOpen", 0); int ns = 2 + dm_custom_game_stops(gp, st + 2, 31), si = -1; for (int k = 0; k < ns; k++) if (st[k] && st[k] == F) si = k;
+      int rs = 0; if (pad && fm && !dm_ui_modal_active(root)) { atomic_store(&g_rs_frame, frame); rs = atomic_exchange(&g_rs_ev, 0); void dm_padmode_legend(int, const char *); dm_padmode_legend(4, dm_str(b, "dmPadLegGroups")); }
+      // 跳组：Plus 这边跳到相邻的分组折叠钮；原版表格（探针 2）里跳到相邻小组的第一行 | group jump: on the Plus side to the adjacent fold button; inside the original table to the first row of the adjacent subgroup
+      if (rs) { int to = -1; for (int k = si + rs; si >= 0 && k > 0 && k < ns && to < 0; k += rs) { const char *nm = st[k] ? (const char *)rd8(st[k] + 8) : NULL; if (nm && !strncmp(nm, "TouchFold", 9)) to = k; }
+          // 往上没有折叠钮时回到停靠点组的头：局外难度行不可调（B066 / 审计 P2-2），落到第一条可操作的行（入口钮 / Plus 停靠点），不落在死行上；局内难度行照常
+          // no fold button above: back to the head of the stop group; outside a run the difficulty row cannot be changed (B066 / audit P2-2), so land on the first actionable stop (entry button / Plus stops), never on the dead row; inside a run the difficulty row as usual
+          if (si >= 0 && rs < 0 && to < 0) { to = shown ? 0 : 1; while (to < ns && !st[to]) to++; if (to >= ns) to = 0; }
+          if (to >= 0) { *(uint64_t *)(uintptr_t)(fm + 0x190) = st[to]; F = st[to]; si = to; on_row = 1; last_dir = 0; last_off = -1; LOG("选项页：右摇杆跳组 → %s", (const char *)rd8(st[to] + 8)); }
+          else if (pm_find(gp, "TouchTableHolder", 0) && *(uint8_t *)(uintptr_t)(pm_find(gp, "TouchTableHolder", 0) + 0x50)) {   // 原版表格那组收起时没有可跳的 | nothing to jump to while the original table's group is collapsed
+              uint64_t tb = pm_find(gp, "OptionsTable", 0), ch = tb ? rd8(tb + 0x58) : 0, n = tb ? rd8(tb + 0x60) : 0, heads[12]; int nh = 0, cur = -1;
+              for (uint64_t i = 0; ch && i + 1 < n && i < 64 && nh < 12; i++) { uint64_t r = rd8(ch + 8 * i), kids = r ? rd8(r + 0x58) : 0; if (!r || !*(uint8_t *)(uintptr_t)(r + 0x50) || !kids) continue;
+                  uint64_t first = rd8(kids); if (first && pm_find(first, "Divider", 0)) { uint64_t nx = 0; for (uint64_t j = i + 1; j < n && j < 64 && !nx; j++) { uint64_t q = rd8(ch + 8 * j); if (q && *(uint8_t *)(uintptr_t)(q + 0x50) && rd8(q + 0x60) > 1) nx = rd8(rd8(q + 0x58) + 8); } if (nx) heads[nh++] = nx; } }
+              for (int k = 0; k < nh && F; k++) { uint64_t row = rd8(heads[k] + 0x30); if (row && pm_find(tb, (const char *)rd8(F + 8), 0) == F) { int32_t a = *(int32_t *)(uintptr_t)(row + 0x74), c = *(int32_t *)(uintptr_t)(rd8(F + 0x30) + 0x74); if (c >= a) cur = k; } }
+              int nxt = cur + rs; if (si >= 0 && rs > 0) nxt = 0;
+              if (nxt >= 0 && nxt < nh) { *(uint64_t *)(uintptr_t)(fm + 0x190) = heads[nxt]; F = heads[nxt]; si = -1; on_row = 0; LOG("选项页：右摇杆跳到原版小组第 %d 组", nxt + 1); }
+              else if (si < 0 && rs < 0 && ns > 1) { for (int k = ns - 1; k > 0; k--) { const char *nm = (const char *)rd8(st[k] + 8); if (nm && !strncmp(nm, "TouchFold", 9)) { *(uint64_t *)(uintptr_t)(fm + 0x190) = st[k]; F = st[k]; si = k; on_row = 1; last_dir = 0; last_off = -1; break; } } } } }
       if (!pad || !fm || dm_ui_modal_active(root)) on_row = 0;
-      else if (on_row && F != w) { on_row = 0; LOG("游戏难度：手柄焦点离开难度行（被改到 %s）", F ? (const char *)rd8(F + 8) : "-"); }
+      else if (on_row && si < 0) { on_row = 0; LOG("游戏难度：手柄焦点离开难度行（被改到 %s）", F ? (const char *)rd8(F + 8) : "-"); }
       else if (on_row) {
           uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A);
-          if (ev & DM_BTN_DOWN) { uint64_t tb = pm_find(gp, "OptionsTable", 0), bw = tb && back_nm[0] ? pm_find(tb, back_nm, 0) : 0;   // 按名字在这页的表格里找回那一行（页重建过指针会变，B064） | find that row again by name in this page's table (pointers change when the page is rebuilt, B064)
-              if (bw) *(uint64_t *)(uintptr_t)(fm + 0x190) = bw;
-              on_row = 0; LOG("游戏难度：手柄焦点下移回 %s", bw ? back_nm : "-（表格里找不到）"); }
-          else if (shown && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A))) {
+          uint64_t tb = 0, hd = 0; if (ev & DM_BTN_DOWN) { tb = pm_find(gp, "OptionsTable", 0); hd = pm_find(gp, "TouchTableHolder", 0); }   // 按名字在这页的表格里找回那一行（页重建过指针会变，B064） | find that row again by name in this page's table (pointers change when the page is rebuilt, B064)
+          int down = (ev & DM_BTN_DOWN) ? dm_pm_down_target(si, ns, si + 1 < ns && st[si + 1], hd && *(uint8_t *)(uintptr_t)(hd + 0x50), tb && back_nm[0]) : -1;
+          if (down == DM_PM_DOWN_NEXT) { *(uint64_t *)(uintptr_t)(fm + 0x190) = st[++si]; last_dir = 0; last_off = -1; }
+          else if ((ev & DM_BTN_UP) && si > 0 && st[si - 1] && (si > 1 || shown)) {   // 局外不上到难度行（B066） | outside a run, not up onto the difficulty row (B066)
+            *(uint64_t *)(uintptr_t)(fm + 0x190) = st[--si]; last_dir = 0; last_off = -1; }
+          else if (si == 1 && (ev & DM_BTN_A)) { dm_ui_send("SettingsPanelMessage", "CheckChanges", "OnlineGameOptionsPanel"); LOG("恐惧区域入口：手柄 A → 打开原版「游戏设定」页（开关自己读写设置）"); }
+          else if (si > 1 && (ev & DM_BTN_A)) dm_custom_game_press(st[si]);
+          else if (down >= 0) { uint64_t bw = 0;
+              // 原版表格那一组收起时它是藏着的：焦点不往里走，留在末个停靠点（dm_pm_down_target）| while the original table's group is collapsed it is hidden: the focus stays on the last stop (dm_pm_down_target)
+              if (down == DM_PM_DOWN_TABLE) bw = pm_find(tb, back_nm, 0);
+              if (bw) { *(uint64_t *)(uintptr_t)(fm + 0x190) = bw; on_row = 0; LOG("游戏难度：手柄焦点下移回 %s", back_nm); }
+              else LOG("游戏难度：原版表格组收起，焦点留在 %s（不往藏起来的行里走）", st[si] ? (const char *)rd8(st[si] + 8) : "-"); }
+          else if (si == 0 && shown && (ev & (DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_A))) {
               int n = (ev & DM_BTN_A) ? shown % 8 + 1 : shown + ((ev & DM_BTN_RIGHT) ? 1 : -1);
               if (n >= 1 && n <= 8 && n != shown) { dm_hud_request_players(n); g_diff_pend = n; LOG("游戏难度：选项页手柄 %d → %d 档（下一拍生效）", shown, n); shown = n; setv = dm_hud_slider_value(0, 7, n); } }
           uint64_t rows = pm_find(gp, "TouchDiffRows", 0), view = rows ? rd8(rows + 0x30) : 0, sv = view ? rd8(view + 0x30) : 0;   // +0x30 = 父控件 | +0x30 = parent widget
-          if (on_row && sv && frame - wheel_at >= 4) { int off = -*(int32_t *)(uintptr_t)(view + 0x74), vh = *(int32_t *)(uintptr_t)(sv + 0x7c); if (vh <= 0) vh = 1260;
-              int dir = dm_custom_scroll_step(0, 460, off, vh, last_dir, last_off); if (dir) { void dm_ui_wheel_on(uint64_t, int); wheel_at = frame; last_dir = dir; last_off = off; dm_ui_wheel_on(sv, dir); } } }
+          if (on_row && sv && frame - wheel_at >= 2) { int off = -*(int32_t *)(uintptr_t)(view + 0x74), vh = *(int32_t *)(uintptr_t)(sv + 0x7c); if (vh <= 0) vh = 1260;
+              int top = 0, bot = 460; if (si > 0) { const char *snm = (const char *)rd8(st[si] + 8); top = snm && (!strncmp(snm, "TouchFold", 9) || !strncmp(snm, "TouchDesecratedOpen", 19)) ? -30 : -55; for (uint64_t a = st[si]; a && a != view; a = rd8(a + 0x30)) top += *(int32_t *)(uintptr_t)(a + 0x74); bot = top + 180; }   // 行上下沿（内容坐标）：勾选框在行内 55，入口钮在行内 30、逐级加父容器的 y | row edges (content coordinates): the checkbox sits 55 into the row, the entry button 30, adding each parent's y
+              int dir = dm_custom_scroll_step(top, bot, off, vh, last_dir, last_off); if (dir) { void dm_ui_wheel_on(uint64_t, int); wheel_at = frame; last_dir = dir; last_off = off; dm_ui_wheel_on(sv, dir); } } }
       else { uint64_t tb = pm_find(gp, "OptionsTable", 0), ch = tb ? rd8(tb + 0x58) : 0, n = tb ? rd8(tb + 0x60) : 0, first = 0;
           for (uint64_t i = 1; ch && i < n && i < 64 && !first; i++) { uint64_t r = rd8(ch + 8 * i); if (r && *(uint8_t *)(uintptr_t)(r + 0x50)) first = r; }   // 第 0 行是分节标题「游戏选项」 | row 0 is the "Gameplay Options" section header
           const char *fn = F ? (const char *)rd8(F + 8) : NULL; int in_first = first && fn && pm_find(first, fn, 0) == F;
@@ -550,12 +705,15 @@ static void diff_pump(uint8_t *b, uint64_t frame) {
           // 焦点已经在难度行的滑块上、行处理却没开（触屏模式下关掉了，切回手柄后焦点指针还留在滑块上；B064 Mac 实测）：接回来，否则金框在难度行、左右 / A / 下却交给了原版
           // the focus is already on the difficulty slider but the row handler is off (it was switched off in touch mode and the pointer stayed on the slider after switching back; B064,
           // measured on the Mac host): take it back over, otherwise the gold frame sits on the row while Left / Right / A / Down go to the original game
-          if (F == w) { on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; g_diff_home = 0; LOG("游戏难度：焦点已在难度行，接回手柄行处理（回到 %s）", back_nm[0] ? back_nm : "-"); }
+          if (si >= 0) { on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; g_diff_home = 0; LOG("游戏难度：焦点已在难度行，接回手柄行处理（回到 %s）", back_nm[0] ? back_nm : "-"); }
           int in_page = fn && pm_find(gp, fn, 0) == F;
           if (g_diff_home && (frame > g_diff_home || !shown || (in_page && !in_first))) g_diff_home = 0;
           if (g_diff_home && in_first) { g_diff_home = 0; snprintf(back_nm, sizeof back_nm, "%s", fn); *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：进页缺省焦点放到难度行（原版给的是 %s）", fn); }
-          else if (in_first && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
-              snprintf(back_nm, sizeof back_nm, "%s", fn); *(uint64_t *)(uintptr_t)(fm + 0x190) = w; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：手柄焦点上移到难度行（从 %s）", fn); } } }
+          // 方案 C：首行按上进 Plus 停靠点的末个（局外 Plus 行照样可调）；局外难度行不可调，再往上也不进它（B066：427328d 只挡了缺省焦点那条路，见下面停靠点上移）
+          // plan C: Up on the first row enters the last Plus stop (Plus rows can be changed outside a run too); outside a run the difficulty row cannot be changed, so walking further up
+          // does not enter it either (B066: 427328d only blocked the default-focus path; see the stop walk above). With no stop to go to, Up is not declared and the original keeps it
+          else if (in_first && st[ns - 1] && (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP)) {
+              snprintf(back_nm, sizeof back_nm, "%s", fn); *(uint64_t *)(uintptr_t)(fm + 0x190) = st[ns - 1]; on_row = 1; last_dir = 0; last_off = -1; wheel_at = 0; LOG("游戏难度：手柄焦点上移到难度行（从 %s）", fn); } } }
     if (setv >= 0 && setv != v) ((void (*)(uint64_t, int, int, int))(b + 0xad7028))(w, setv, 0, 0);
     g_diff_last = *(int32_t *)(uintptr_t)(w + 0x5c4);
     // 滑块自己不显示数字：行名写「游戏难度：N」；说明行局外写「进入游戏后可调整」，局内两种模式同一句（RC1.1 B015 起手柄也走焦点链，不再有「按 Y」那句）
@@ -577,7 +735,7 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
       if (at > 0 && frame >= (uint64_t)at) { at = 0; dm_padmode_lang_reset(); } }
     { uint64_t tc = atomic_exchange(&g_test_cur, 0); if (tc >> 63) { int dm_ui_hover_now(int, int); int W = *(int32_t *)(b + 0x211da38), H = *(int32_t *)(b + 0x211da3c), x = (int)(((tc >> 16) & 0xffff) / 65535.0 * W), y = (int)((tc & 0xffff) / 65535.0 * H);
         int ok = dm_ui_hover_now(x, y); LOG("测试 padcur：手柄光标放到 (%d,%d) → %d", x, y, ok); } }
-    diff_pump(b, frame);
+    diff_tip_pump(b); diff_pump(b, frame);
     legend_pump(b, frame);
     if (g_have) hint_pump();
     void dm_oe_ui_opmode(int m); int dm_opmode(void);
@@ -607,6 +765,7 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
       if (k < n && frame >= ev[k].f) { LOG("DM_TEST_GLYPH：帧 %llu 请求键帽样式 %d", (unsigned long long)frame, ev[k].m); dm_padmode_request_glyph(ev[k].m); k++; } }
     if (g_have && frame % 30 == 0) str_apply(g_cur);   // 串表开机后才装、切语言会重装：定期核 | The string table is loaded only after boot and reloaded on a language switch: check periodically
     if (!g_have) return;
+    if (g_focus_wait && !atomic_load(&g_freeze)) { if (focus_restore_once(b)) g_focus_wait = 0; else if (!--g_focus_wait) LOG("【红】手柄 / 触屏布局：网格焦点恢复重试 16 帧仍未成（面板 / 网格 / 手柄光标模式没就位）"); }   // B036 重试 | B036 retry
     { uint32_t dm_oe_ui_opmode_reads(void); static uint64_t fp0; static uint32_t nfp; uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), ch = root ? rd8(root + 0x58) : 0, n = root ? rd8(root + 0x60) : 0, fp = n * 0x9e3779b97f4a7c15ull;
       for (uint64_t i = 0; ch && i < n && i < 256; i++) fp = (fp << 7 | fp >> 57) ^ rd8(ch + 8 * i);
       if (fp != fp0) { fp0 = fp; nfp++; } g_sig = dm_oe_ui_opmode_reads() + nfp; }
@@ -617,6 +776,7 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
     if (act == DM_TXA_BEGIN) { g_glyph_next = wx >> 1; w = wx & 1; }
     if (act == DM_TXA_NONE) { if (g_tx.st == DM_TX_IDLE && atomic_load(&g_freeze)) { atomic_store(&g_freeze, 0); if (atomic_load(&g_want) != w) atomic_store(&g_freeze, 1); } return; }   // 没在切：请求时立的冻结（想要的就是当前模式 / 又改回来了）撤掉；撤的同时又来了新请求的重新立上 | Not switching: the freeze set at request time (the wanted mode is the current one / it was changed back) is lifted; if a new request arrives at the same time as the lift, it is set again
     if (act == DM_TXA_BEGIN) {
+        focus_capture(b);   // 改前缀 / 报运行模式之前记下开着的网格面板与光标位置（B036） | record the open grid panel and cursor position before the prefixes change / the run mode is reported (B036)
         if (!pfx_write(b, w)) { g_tx.st = DM_TX_IDLE; atomic_store(&g_want, -1); atomic_store(&g_freeze, 0); return; }
         atomic_store(&g_freeze, 1); g_tx_from = frame;
         items_run(g_cur, 1);   // 旧一侧各登记项收手（dm_mode_items.h）：在途的替按键作废、挪过的控件写回、缓存的控件地址清掉 | Registered items of the old side stand down (dm_mode_items.h): in-flight key presses on the player's behalf are voided, moved widgets written back, cached widget addresses cleared
@@ -630,6 +790,8 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
     if (atomic_load(&g_want) == g_cur) atomic_store(&g_want, -1);
     atomic_store(&g_freeze, 0);   // 放开输入：冻结期间按着过的键先松开过一次才交给游戏（dm_modegate）；事务中又来了反向请求的，下一帧接着起下一次（请求时已重新立冻结） | Release input: keys held during the freeze must be let go once before being handed to the game (dm_modegate); if an opposite request arrived during the transaction, the next switch starts on the next frame (the freeze was already set again at request time)
     if (atomic_load(&g_want) >= 0 && atomic_load(&g_want) != g_cur) atomic_store(&g_freeze, 1);
+    if (g_cur && !atomic_load(&g_freeze)) g_focus_wait = focus_restore_once(b) ? 0 : 16;   // 切到手柄版：把开着的网格面板焦点放回合法格子（B036）；还不成就再试几帧 | switched to controller: restore the focus of open grid panels to a valid cell (B036); retry a few frames if not yet possible
+    else if (!g_cur) { g_focus_mem.panel = -1; g_focus_wait = 0; }   // 切到触屏版：手柄焦点不用恢复，触屏行为不变 | switched to touch: no controller focus to restore, touch behavior unchanged
     LOG("手柄 / 触屏布局：切到%s版——完成（%llu 帧，两次重建里 %d 次靠超时）", g_cur ? "原版手柄" : "触屏", (unsigned long long)(frame - g_tx_from), g_tx.timeouts);
     if (g_cur) {   // 切到手柄版时记一行六个技能格各绑的技能号（第二组 = 按着 ZL）：面 → 格表 main+0x2d13cbc（6 × {逻辑键, 普通格, 替代格}）、格 → 技能表 main+0x2d5f0c0（每格 28 字节，武器第二组在 +16 格），读法同 dm_freetp.c | On switching to the controller layout, log one line with the skill number bound to each of the six skill slots (second set = ZL held): face button -> slot table main+0x2d13cbc (6 x {logical key, normal slot, alternate slot}), slot -> skill table main+0x2d5f0c0 (28 bytes per slot, the second weapon set is at +16 slots), read the same way as dm_freetp.c
         int dm_swapskill_wset(void); int bank = dm_swapskill_wset() ? 16 : 0; char o[240]; size_t L = 0; o[0] = 0;

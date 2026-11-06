@@ -17,10 +17,23 @@ def notification(width, center_x, controller=False):
         'name': 'TouchNoticeTile%d%d' % (row,col), 'fields': {
         'rect': {'x': xs[col], 'y': ys[row], 'width': xs[col+1]-xs[col], 'height': ys[row+1]-ys[row]},
         'filename': 'Ztouch_notification/tile%d%d' % (row,col)}} for row in range(5) for col in range(3)]
+    # Prompt 原样（$StyleNotification，94012 的 _profileHD.json：Exocet、$MediumFontSize、$FontColorWhite）：原版和其它 Plus 通知的观感一字不差。
+    # B035 的两级提示另起两个控件（CLAUDE.md §2.6，原版色票），只在 Prompt 正显示那条提示时由宿主摆出来（dm_cursor.c ui_notice_prompt_center，dm_notice_pair.h），其余时候在屏外、没字：
+    # TouchNoticeBody 正文 36 号主色，TouchNoticeSub 副文 28 号浅灰。两个都沿用 $StyleNotification 再逐个字段改：原生文字度量认这个样式种类（ui_notice_text_width 的 +0xb0 == 14）
+    # Prompt stays native ($StyleNotification; 94012 _profileHD.json: Exocet, $MediumFontSize, $FontColorWhite), so original and other Plus notices look exactly as before.
+    # B035's two-level tip gets two extra widgets (CLAUDE.md section 2.6, original colour tokens) that the host shows only while Prompt displays that tip
+    # (ui_notice_prompt_center in dm_cursor.c, dm_notice_pair.h); otherwise they are off screen and empty: TouchNoticeBody body at 36 pt primary colour, TouchNoticeSub
+    # subtext at 28 pt light grey. Both keep $StyleNotification and override single fields: native text measurement recognises that style kind (+0xb0 == 14)
     children.append({'type': 'TextBoxWidget', 'name': 'Prompt', 'fields': {
         'rect': {'x': 64, 'y': 12, 'width': width - 128, 'height': 220},
         'fitToText': True,
         'style': '$StyleNotification', 'style/options': {'lineWrap': True, 'newlineHandling': 'standard'}}})
+    for name, extra in (('TouchNoticeBody', {'style/pointSize': 36, 'style/spacing': '$ReducedSpacing'}),
+                        ('TouchNoticeSub', {'style/pointSize': 28, 'style/fontColor': '$FontColorLightGray', 'style/spacing': '$ReducedSpacing'})):
+        children.append({'type': 'TextBoxWidget', 'name': name, 'fields': {
+            'rect': {'x': 99999, 'y': 99999, 'width': width - 128, 'height': 100},   # 布局里的 visible:false 不生效：不用时挪出屏（同 touch_layout.py） | layout "visible": false is ignored: parked off screen when unused (as in touch_layout.py)
+            'fitToText': True, 'style': '$StyleNotification', **extra,
+            'style/options': {'lineWrap': True, 'newlineHandling': 'standard'}}})
     if controller:
         # Native dismissal is owned by NotificationPanel, not a custom message.
         children.append({'type': 'ButtonWidget', 'name': 'Confirm',

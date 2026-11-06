@@ -1,6 +1,6 @@
 # 在安卓手机上玩
 
-安卓版的做法和 iOS 的「壳」一样：我们在发布页放一个**不含任何游戏内容的 APK**，你用自己的游戏文件在电脑上做一个**导入包**，拷进手机，App 打开时自己导入。不用 adb，不用 Android Studio，也不用自己编 APK。
+安卓版的做法和 iOS 的「壳」一样：我们在发布页放一个**不含任何游戏内容的 APK**。最简单的路线不用电脑：把自己的游戏文件放进手机，App 第一次打开时自己生成**导入包**（见「不用电脑」一节）。也仍可以用自己的游戏文件在电脑上做导入包、拷进手机，App 打开时自己导入。不用 adb，不用 Android Studio，也不用自己编 APK。
 
 English: [ANDROID.md](ANDROID.md)
 
@@ -13,9 +13,28 @@ English: [ANDROID.md](ANDROID.md)
 | 装 APK、导入、进局 | vivo X200 Ultra（Android 16）上走通：授权、导入、建角、进局、各面板、NPC 对话 |
 | 帧率 | 移植作者实测：Redmi K50 Ultra（骁龙 8+ 一代）营地与战斗中位 60 帧；OnePlus 13 能玩 |
 
+## 不用电脑：让 App 在手机上自己生成
+
+APK 里带着生成工具。你只要把游戏文件放进手机，不用做导入包：
+
+```
+Download/S2X/D2R Mobile Plus/ExeFS/   你游戏文件里的 ExeFS 文件夹（至少要有 main 和 sdk，约 24 MB）
+Download/S2X/D2R Mobile Plus/data/    游戏资源，与下面第二步相同
+```
+
+如果你的文件已经放在旧的 `Download/S2X/D2R Mobile/`，不用搬：`D2R Mobile Plus` 里没东西时，App 会用旧文件夹。
+
+**推荐：拷一个 zip。** 在电脑上把整个 `S2X` 文件夹压成 `S2X.zip`，放进手机 `Download`。zip 不会漏掉 `data/.build.config` 这类点开头的隐藏文件（直接手拷文件夹常会漏）。游戏文件还没放齐时，App 首次打开会自己解开，屏幕上有进度（已解 / 总 GB 和当前文件名）。解压中按 B 或返回键暂停，点「继续解压」接着解，下次打开 App 也会接着解。zip 解完保留着，可以自己删掉。逐个拷文件的方法仍然可用，见下。
+
+打开 App，它发现还没有导入包，会提示「正在生成着色器缓存」并自己开始：用你的游戏文件在手机上做出与电脑上逐字节相同的内容，约 5–15 分钟，只做一次，期间留在这个页面。生成要约 3 GB 剩余空间（做完删掉中间文件，只留约 0.7 GB）。缺文件、空间不够或某一步失败时，页面会直接说原因，日志放在 `Download/S2X/D2R Mobile Plus/gen_log.txt`。换新版 APK 后会自动重新生成，不用再做什么。
+
+`ExeFS` 与 `data` 来自同一次解包（见 [GAME_FILES.zh-CN.md](GAME_FILES.zh-CN.md)）。手机端生成用 APK 随附的霞鹜文楷（LXGW WenKai，SIL OFL 1.1）替换界面里的中日文字形，与电脑流程的缺省一致；想用其他界面字体，仍按下面的电脑流程做导入包。
+
+想在电脑上做（更快，或手机空间不够），照下面三步做即可；手机上放了 `android` 导入包时，App 优先用它。
+
 ## 手机要求
 
-- ARM64，Android 12（API 31）及以上，显卡支持 Vulkan 1.1
+- ARM64，Android 12（API 31）及以上，显卡支持 Vulkan 1.1：高通 Adreno 或 Arm Mali（联发科 / 三星 Exynos）
 - 约 7 GB 空间：游戏资源约 5.6 GB，导入后的内容约 0.7 GB（导入完可以删掉手机上的导入包，省回 0.7 GB）
 
 ## 你需要准备的
@@ -51,11 +70,11 @@ android/pack_info.txt 这份导入包是给哪个版本做的
 
 ## 第二步：把文件拷进手机
 
-用 USB 连电脑（手机选「文件传输」），在手机存储的 `Download` 里建 `S2X/D2R Mobile/`，放两样东西：
+用 USB 连电脑（手机选「文件传输」），在手机存储的 `Download` 里建 `S2X/D2R Mobile Plus/`，放两样东西：
 
 ```
-Download/S2X/D2R Mobile/android/   第一步做出来的 android 文件夹，整个拷过去
-Download/S2X/D2R Mobile/data/      游戏资源：你游戏文件 RomFS/data 里的 18 个 .data 档案和 .build.config
+Download/S2X/D2R Mobile Plus/android/   第一步做出来的 android 文件夹，整个拷过去
+Download/S2X/D2R Mobile Plus/data/      游戏资源：你游戏文件 RomFS/data 里的 18 个 .data 档案和 .build.config
 ```
 
 `data` 里要的 18 个档案见 [GAME_FILES.zh-CN.md](GAME_FILES.zh-CN.md) 的「手机上要放的那个游戏资源文件夹」；另外别漏了 `.build.config`（点开头的隐藏文件，电脑上常看不见；存成不带点的 `build.config` 也认）。有 `.data.holes` 文件的话一起拷，不拷也行。
@@ -65,6 +84,8 @@ Download/S2X/D2R Mobile/data/      游戏资源：你游戏文件 RomFS/data 里
 1. 从[发布页](https://github.com/jhaizhou-ops/d2r-mobile/releases)下载 `D2RMobile-android.apk`，拷进手机，在「文件管理」里点它安装。手机可能先要你允许「安装未知应用」，也可能弹安全检测页，按提示确认即可。
 2. 打开 App。它要「所有文件访问」权限才能读 `Download` 里的游戏资源：点屏幕进系统设置，打开后返回。
 3. App 发现 `android` 导入包，会带进度条把它导入到自己的内部目录（第一次一两分钟，留在这个页面），然后进游戏。
+
+联网：只在游戏内容还没准备好的启动里（首启，或生成没做完又重开），从权限提示页开始读一个小文件（更新清单 `latest.json`），在加载页底部显示官方免费渠道（官网 · QQ 群，复制按钮复制群号）；先试我们自己的服务器，连不上再试 GitHub，都取不到就不显示。内容准备好之后的启动都不联网（App 升级后如果触屏资源有变，会自动重新准备一次，那一次也会联网取清单）；网络很差时拉取最长约 2 分钟，可能进游戏后还没结束。
 
 导入完，手机上的 `android` 文件夹可以删掉；`data` 文件夹要留着，游戏一直从那里读资源。
 
@@ -88,9 +109,9 @@ APK 与导入包不是同一版本时，App 会提示「导入包与这版 App �
 | 提示 | 怎么办 |
 |---|---|
 | 需要「所有文件访问」权限 | 点屏幕进设置打开，再回到 App |
-| 未找到游戏资源 | `data` 文件夹不在 `Download/S2X/D2R Mobile/data`，或里面没有 `.data` 档案 |
+| 未找到游戏资源 | `data` 文件夹不在 `Download/S2X/D2R Mobile Plus/data`，或里面没有 `.data` 档案 |
 | 缺少 .build.config | 把游戏文件 `RomFS/data` 里的 `.build.config` 也拷进 `data` |
-| 还没有导入游戏内容 | `android` 文件夹不在 `Download/S2X/D2R Mobile/android`，或没拷全 |
+| 还没有导入游戏内容 | `android` 文件夹不在 `Download/S2X/D2R Mobile Plus/android`，或没拷全 |
 | 导入包与这版 App 不配套 | 用与 APK 同一版本的源码重做第一步 |
 | 导入没有完成 | 多半是手机空间不够，腾出约 1 GB 再打开 |
 

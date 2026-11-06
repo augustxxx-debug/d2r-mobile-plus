@@ -11,6 +11,11 @@ dm/android/app/build/
 dm/android/.kotlin/
 dm/android/app/.cxx/
 dm/android/.cxx/
+dm/android/probe/.gradle/
+dm/android/probe/build/
+dm/android/probe/app/build/
+dm/android/probe/app/.cxx/
+dm/android/probe/.cxx/
 # 本地交付、游戏派生文件与签名材料不入库 | Keep local deliverables, game-derived files, and signing material out of Git.
 *.apk
 *.aab

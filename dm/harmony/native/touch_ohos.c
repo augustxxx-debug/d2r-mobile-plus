@@ -53,7 +53,7 @@ static dm_tc_state _controls;
 static int g_ready;
 static int _padMode, _feMode = 1, _navigation = -1;
 static int _swallow[16], _nswallow;
-static int _pendEnd = NOT; static double _pendEndTime, _pendWall; static int _pendFire, _finalAsked;
+static int _pendEnd = NOT; static double _pendEndTime, _pendWall; static int _pendFire, _finalAsked; static float _pendPx, _pendPy; static int _pendDrop;   // B169：判类没回就抬手时记下的松手点 | B169: release point recorded when lifting before classification
 static int _uiFinger = NOT; static float _uiFeOx, _uiFeOy; static int _uiFeDrag, _uiDragOn;
 static int _mapTouch = NOT, _mapBackTouch = NOT, _bindTouch = NOT;
 static uint64_t _bindKey; static uint32_t _selId; static double _statNext, _tipUntil, _addAt;
@@ -318,11 +318,14 @@ static void finish_touch(int id, const char *phase) {
         if (!strcmp(phase, "ended") && !_navigation && dm_ui_map_is_full() && hypotf(px - _mapP0x, py - _mapP0y) <= 14 && media_time() - _mapT0 < 0.6) { dm_ui_map_full(0); LOG("前端：全屏地图开着，点空处 (%.0f,%.0f) → 回小地图", px, py); } }
     if (!_pendFire && _pendEnd == NOT && !strcmp(phase, "ended") && _controls.navigation_mode && _controls.pointer_slot >= 0 && _slot[_controls.pointer_slot] == id && BW > 0) {
         dm_tc_finger *pf = &_controls.finger[_controls.pointer_slot]; int wait = 0;
-        if (_itemAsked && dm_ui_item_result(_itemSeq) < 0) wait = 1;
+        if (_itemAsked && dm_ui_item_result(_itemSeq) < 0) { wait = 1;
+            // B169（同 iOS front_ios.m）：判类没回、手指已拖过阈值：按松手位置先问落点，判类回来若是货架上的货就按它买 | B169 (same as iOS front_ios.m): classification not back and the finger dragged past the threshold: ask the drop point at the release position first; if it comes back as shelf goods, buy by it
+            // 只记下松手点：落点查询与判类共用宿主一个应答位，现在问会顶掉还没答的判类；判类回来补判成购买拖动后再问（见 tick） | only record the release point: the drop query shares the host's single answer slot with classification and would supersede it now; ask once it is back and late-decided as a buy drag (see tick)
+            _pendDrop = 0; if (hypotf(px - pf->aim_origin_x, py - pf->aim_origin_y) > DM_TC_POINTER_MOVE_PT * dm_tc_scale_for_size(BW, BH)) { dm_tc_move_at(&_controls, _controls.pointer_slot, px, py, media_time()); _pendPx = px; _pendPy = py; _pendDrop = 1; } }
         else if (pf->pointer_dragged) {
             dm_tc_move_at(&_controls, _controls.pointer_slot, px, py, media_time());
             _relSeq = dm_ui_drop_query(px / BW, (py - DM_TC_POINTER_LIFT_PT * dm_tc_scale_for_size(BW, BH)) / BH, py / BH); _relAsked = 1; _finalAsked = 1; wait = 1; }
-        if (wait) { _pendEnd = id; _pendEndTime = media_time(); _pendWall = media_time(); return; }   // 触点记录留着，放行时再删 | keep the touch record until released
+        if (wait) { _controls.pointer_lift_pending = 1; _pendEnd = id; _pendEndTime = media_time(); _pendWall = media_time(); return; }   // 触点记录留着，放行时再删 | keep the touch record until released
     }
     for (int i = 0; i < 16; i++) if (_slot[i] == id) {
         if (!strcmp(phase, "cancelled")) { dm_tc_finger *cf = &_controls.finger[i]; int drag = _controls.navigation_mode && _controls.pointer_slot == i && (cf->pointer_dragged || cf->shop_drag);
@@ -342,7 +345,7 @@ static void finish_touch(int id, const char *phase) {
             if ((rr == 5 && dm_ui_drop_point(&dx, &dy)) || (rr == 0 && dm_ui_origin_point(&dx, &dy))) dm_tc_pointer_release_at(&_controls, dx * BW, dy * BH);
             else { if (rr == 7) { dm_shop_sell_cursor(); rr = 0; } dm_tc_pointer_release(&_controls, rr < 0 ? 1 : rr); } }
         _relAsked = 0;
-        if (_controls.navigation_mode && _controls.pointer_slot == i && _itemAsked) { _itemAsked = 0; dm_tc_pointer_item(&_controls, dm_ui_item_result(_itemSeq)); bind_tap_sync(); }
+        if (_controls.navigation_mode && _controls.pointer_slot == i && _itemAsked) { _itemAsked = 0; _controls.pointer_lift_pending = 1; dm_tc_pointer_item(&_controls, dm_ui_item_result(_itemSeq)); bind_tap_sync(); }
         unsigned wt = _controls.world_tap_seq, mc = _controls.mouse_click_seq, tt = _controls.tab_tap_seq, us = _controls.use_seq, ids = _controls.ident_seq, sts = _controls.stack_take_seq, lps = _controls.long_press_seq, its = _controls.item_tap_seq;
         int dragged = _uiDragOn && _controls.pointer_slot == i;
         if (_uiDragOn && _controls.pointer_slot == i) { _uiDragOn = 0; dm_ui_drag_end(); }
@@ -393,7 +396,9 @@ static void tick_touch_controls(double now) {
     { int hide = _feMode || _padMode || dm_padmode_busy(); if (ov_hidden != hide) { ov_hidden = hide; g_dirty = 1; } }
     dm_tc_set_tap_box(dm_ui_tap_box()); dm_tc_set_cur_stack(dm_ui_cur_stack_id()); dm_tc_set_hover_unid(dm_ui_hover_unid());
     { dm_hud_info hi; dm_hud_get(&hi); dm_tc_set_holding(&_controls, hi.valid && hi.holding && !dm_ui_targeting()); }
-    if (_itemAsked && _controls.navigation_mode && _controls.pointer_slot >= 0) { int ir = dm_ui_item_result(_itemSeq); if (ir >= 0) { _itemAsked = 0; _itemKind = ir; dm_tc_pointer_item(&_controls, ir); } }
+    if (_itemAsked && _controls.navigation_mode && _controls.pointer_slot >= 0) { int ir = dm_ui_item_result(_itemSeq); if (ir >= 0) { _itemAsked = 0; _itemKind = ir; dm_tc_pointer_item(&_controls, ir);
+        if (_pendEnd != NOT && _pendDrop && _controls.finger[_controls.pointer_slot].shop_drag && !_finalAsked && BW > 0) { _pendDrop = 0;   // B169：同 iOS——判类刚回、补判成购买拖动：按记下的松手点问落点，挂起再等它 | B169: same as iOS -- ask the drop point at the recorded release point and keep the lift pending for it
+            _relSeq = dm_ui_drop_query(_pendPx / BW, (_pendPy - DM_TC_POINTER_LIFT_PT * dm_tc_scale_for_size(BW, BH)) / BH, _pendPy / BH); _relAsked = 1; _finalAsked = 1; _pendWall = media_time(); } } }
     if (_pendEnd != NOT) {
         int ready = !(_itemAsked && dm_ui_item_result(_itemSeq) < 0) && !(_finalAsked && dm_ui_item_result(_relSeq) < 0);
         if (ready || media_time() - _pendWall > 0.25) { int pt = _pendEnd;

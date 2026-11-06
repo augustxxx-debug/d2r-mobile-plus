@@ -38,6 +38,29 @@ static NSString *g_cloud, *g_save, *g_bak, *g_state;   // 云端目录 / 本地�
 static dispatch_queue_t g_q;
 static uint64_t now_ms(void) { return (uint64_t)([NSDate date].timeIntervalSince1970 * 1000); }
 
+// 选项页系统页：没登录 iCloud 或这个包没有 iCloud 权限（免费签名）时这一行置灰（dm_custom.c）。ubiquityIdentityToken 同步、不访问网络 | System page: the row is greyed when not signed in to iCloud or this build lacks the entitlement (free signing). ubiquityIdentityToken is synchronous and does no network I/O
+// B021（c0140d6 移植进方案 C）：只看 ubiquityIdentityToken 不能保证认出「签名不含 iCloud 权限」的包（免费 Apple ID 签名），所以先读签名权限：
+// 明确没有 iCloud 容器权限 = 不可用（置灰 + 副文「未登录 iCloud，或这个安装包不支持 iCloud」），有或读不到再看登录。权限进程内不变，只读一次。
+// 测试开关 DM_TEST_ICLOUD_AVAIL=0|1：不探，直接当作这个结果（Mac 宿主 / 真机验置灰）
+// B021 (c0140d6 ported onto plan C): the identity token alone does not reliably catch a build signed without the iCloud entitlement (free Apple ID), so the signing
+// entitlements are read first: no iCloud container entitlement = unavailable (greyed, note "not signed in to iCloud, or this build does not support iCloud"); present or unknown = then the
+// sign-in check. Entitlements do not change within a process, read once. Test switch DM_TEST_ICLOUD_AVAIL=0|1: no probe, taken as this result
+#include <dlfcn.h>
+static int icloud_entitled(void) {   // 1 有 / 0 没有 / -1 不知道 | 1 yes / 0 no / -1 unknown
+    void *sec = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY); if (!sec) return -1;
+    void *(*create)(CFAllocatorRef) = (void *(*)(CFAllocatorRef))dlsym(sec, "SecTaskCreateFromSelf");
+    CFTypeRef (*copy)(void *, CFStringRef, CFErrorRef *) = (CFTypeRef (*)(void *, CFStringRef, CFErrorRef *))dlsym(sec, "SecTaskCopyValueForEntitlement");
+    if (!create || !copy) return -1;
+    void *task = create(NULL); if (!task) return -1;
+    int has = 0; CFStringRef keys[2] = { CFSTR("com.apple.developer.icloud-container-identifiers"), CFSTR("com.apple.developer.ubiquity-container-identifiers") };
+    for (int k = 0; k < 2 && !has; k++) { CFTypeRef v = copy(task, keys[k], NULL); if (v) { has = CFGetTypeID(v) == CFArrayGetTypeID() ? CFArrayGetCount((CFArrayRef)v) > 0 : 1; CFRelease(v); } }
+    CFRelease((CFTypeRef)task); return has;
+}
+int dm_icloud_available(void) {
+    const char *t = getenv("DM_TEST_ICLOUD_AVAIL"); if (t && *t) return atoi(t) != 0;
+    static int ent = -2; if (ent == -2) { ent = icloud_entitled(); LOG("iCloud：签名权限 %s", ent > 0 ? "含 iCloud 容器" : ent == 0 ? "不含 iCloud（免费签名？）→ 系统页这一行置灰" : "读不到，按登录状态判"); }
+    return ent != 0 && NSFileManager.defaultManager.ubiquityIdentityToken != nil;
+}
 // 云端某个单位的包是否已在本机（iCloud 里没下载的文件是占位：旧系统是「.<名>.icloud」，新系统是同名但下载状态不是「最新」）
 // Whether a given unit's package in the cloud is already on this device (undownloaded files in iCloud are placeholders: on older systems ".<name>.icloud", on newer systems the same name with a download status other than "current")
 static int pack_ready(const char *unit) {
@@ -149,6 +172,9 @@ int dm_cloud_flush_wait(double sec) {
     return 1;
 }
 void dm_cloud_foreground(void) { atomic_store(&g_bg, 0); }
+// 这台不同步（测试存档 / 自定义页关了 / 没登录）：导入留下的强传标记作废。不然以后打开同步，那时本地可能早已旧于云端，还会按标记强传
+// This device does not sync (test save / switched off / not signed in): the force-upload marks from an import lapse. Otherwise turning sync on later would force up a local copy that may by then be older than the cloud
+static void forceup_drop(NSString *save) { unlink([save stringByAppendingString:@".cloudstate.forceup"].fileSystemRepresentation); }
 static void cloud_ingame(int on) { if (on) atomic_store(&g_session, 1); }
 static void cloud_charsel(void) { if (atomic_exchange(&g_session, 0)) dm_cloud_flush(0); }   // 退出这一局回到前端（主菜单 / 选角页）：这一局结束 | Left this run back to the front end (main menu / character select page): this run has ended
 
@@ -292,7 +318,7 @@ void dm_cloud_boot(void) {
 #if TARGET_OS_OSX
         else LOG("iCloud 同步：测试用的存档目录（DM_APP_SUPPORT），本局不同步");
 #endif
-        return; }
+        forceup_drop(save); return; }
     // Mac 上跑的 iOS 包：缺省整个不连真实 iCloud。这个包只发 iPhone / iPad，Mac 上跑的全是开发与测试；开发机登着真实账号时，
     // 它就是那个账号的又一台设备，任何脚本、手点图标都会和真实云端双向同步（出过把测试存档传进真实云端）。本地测试云端（DIR / ROOT）不受影响；
     // 真要在 Mac 上连真实云端：同时给 DM_REAL_ICLOUD=1 与 DM_REAL_ICLOUD_CONFIRM=写入真实云端。真机不走这一支。
@@ -303,11 +329,11 @@ void dm_cloud_boot(void) {
         if (!(r1 && !strcmp(r1, "1") && r2 && !strcmp(r2, "写入真实云端"))) { LOG("iCloud 同步：Mac 上运行：缺省不同步 iCloud"); return; }
         LOG("【红】iCloud 同步：Mac 上运行，已显式放开（DM_REAL_ICLOUD）：本局连真实云端"); }
     if (off) { LOG("iCloud 同步：测试开关 DM_TEST_ICLOUD_OFF，本局不同步"); return; }
-    if (!dm_custom_get("icloud")) { LOG("iCloud 同步：自定义页已关，不同步"); return; }
+    if (!dm_custom_get("icloud")) { LOG("iCloud 同步：自定义页已关，不同步"); forceup_drop(save); return; }
     double t0 = CFAbsoluteTimeGetCurrent(), limit = 5.0;
     if (ldir) g_cloud = test_path(ldir);                             // 测试：本地目录当云端（没有 iCloud 权限的开发包也能验整条链） | Test: use a local directory as the cloud (a dev build without iCloud entitlement can also verify the whole chain)
     else if (sub) { NSURL *ct = container(limit); if (!ct) return; g_cloud = [[ct.path stringByAppendingPathComponent:@"Documents"] stringByAppendingPathComponent:@(sub)]; }
-    else { NSString *docs = test_path(lroot); if (!lroot) { NSURL *ct = container(limit); if (!ct) return; docs = [ct.path stringByAppendingPathComponent:@"Documents"]; }
+    else { NSString *docs = test_path(lroot); if (!lroot) { NSURL *ct = container(limit); if (!ct) { forceup_drop(save); return; } docs = [ct.path stringByAppendingPathComponent:@"Documents"]; }
         if (never_synced([save stringByAppendingString:@".cloudstate"]) && (!lroot || getenv("DM_TEST_ICLOUD_FIRST")) && !first_listing_ok(t0 + limit)) return;
         if (!migrate_v2(docs, t0 + limit)) return;
         NSString *nw = [docs stringByAppendingPathComponent:@"saves_v2"]; if (!v2_ready(nw, [save stringByAppendingString:@".cloudv2ok"])) return;
@@ -315,6 +341,7 @@ void dm_cloud_boot(void) {
     [NSFileManager.defaultManager createDirectoryAtPath:g_cloud withIntermediateDirectories:YES attributes:nil error:nil];
     g_save = save; g_bak = [save stringByAppendingString:@".cloudbak"]; g_state = [save stringByAppendingString:@".cloudstate"];
     if (ldir) { g_bak = [g_cloud stringByAppendingString:@".cloudbak"]; g_state = [g_cloud stringByAppendingString:@".cloudstate"]; }   // 测试的本地云端：状态与备份跟云端目录走，不与真存档（同一路径、连真实 iCloud 时）共用——共用的话测试局会改写真存档的同步状态 | Local cloud for tests: state and backup follow the cloud directory and are not shared with the real save (same path, when connected to real iCloud) -- if shared, test runs would rewrite the real save's sync state
+    if (ldir) rename([save stringByAppendingString:@".cloudstate.forceup"].fileSystemRepresentation, [g_state stringByAppendingString:@".forceup"].fileSystemRepresentation);   // 本地测试云端的状态文件不在存档旁，标记跟过去 | the local test cloud keeps its state elsewhere; the marks follow it
     g_q = dispatch_queue_create("dm.cloud", DISPATCH_QUEUE_SERIAL);
     for (NSString *f in [NSFileManager.defaultManager contentsOfDirectoryAtPath:save.stringByDeletingLastPathComponent error:nil] ?: @[])   // 上次被杀时没删掉的提交快照 | Commit snapshots not deleted when we were last killed
         if ([f hasPrefix:[save.lastPathComponent stringByAppendingString:@".cloudsnap"]]) [NSFileManager.defaultManager removeItemAtPath:[save.stringByDeletingLastPathComponent stringByAppendingPathComponent:f] error:nil];

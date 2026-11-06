@@ -44,8 +44,34 @@ else:
 # 崩溃围栏提示框（dm_crashfence.c 1 处）：按模式选挂哪个面板、手柄模式接管 A；每帧按名字现找控件、不缓存地址，切换重建后新控件照样写字摆位，不用进 / 出钩子
 # Crash fence notice box (dm_crashfence.c, 1): picks the panel by mode and takes over A in controller mode; it looks widgets up by name every frame and caches no address, so after a switch rebuild the new widgets get text and placement as usual, no enter / leave hook needed
 # 社区入口提示框（dm_community.c 1 处）：同崩溃围栏提示框——按名字现找控件、手柄模式接管 A 复制 / B 收起，不缓存地址，不用进 / 出钩子 | community entry box (dm_community.c, 1): as the crash-fence box - widgets found by name every frame, controller A copies / B dismisses, no cached address, no enter / leave hook
-PADMODE = {'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_cursor.c': 9, 'host/dm_custom.c': 3, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1}
-AUTOKEY = {'host/dm_cursor.c': 39, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
+# 存档管理面板（dm_savemgr.c 2 处）：同社区框——每帧按当前模式摆入口和焦点框，弹窗开着时手柄键由闸门截给面板；来回切模式只换焦点框显隐，没有要清理的状态，不用进 / 出钩子 | save-management panel (2 places): as the community box -- entries and the focus frame follow the current mode each frame; a switch only shows or hides the focus frame, nothing to clean up, no enter / leave hooks
+# 上传诊断报告提示框（dm_diagup.c 1 处）：同社区入口提示框——每帧按名字现找控件、不缓存地址；手柄模式接管 A 主操作 / X 导出 / B 关闭、副文换成按键说明，状态机本身与模式无关 | diagnostic upload box (dm_diagup.c, 1): as the community box - widgets looked up by name every frame, no cached address; controller mode takes over A / X / B and swaps the secondary line for the key legend; the state machine itself is mode-independent
+# 统计告知框（dm_telebox.c 2 处）：同上传诊断报告提示框，每帧按名字现找控件；手柄模式接管 A / B，副文下面多一行按键说明 | statistics notice (dm_telebox.c, 2): as the diagnostic upload box, widgets found by name every frame; controller mode takes over A / B and adds the key legend line
+# 「存放」按钮的手柄焦点进出（dm_pouch.c 1 处，REQ12）：同大背包页签（dm_bag.c）——每帧按名字现找控件，缓存的两块矩形只是屏幕坐标、
+# 视口一变就作废，切换重建后新控件照样能量，没有要清理的东西，不进 dm_mode_items.h；「存放」按钮两种模式都在屏上，只有按键接管是手柄模式专属
+# Controller focus in / out of the Deposit button (dm_pouch.c, 1, REQ12): as the bag tabs (dm_bag.c) -- widgets found by name every frame,
+# the two cached rects are screen coordinates invalidated when the viewport changes, and the rebuilt widgets measure the same, so nothing
+# needs cleaning up and there is no dm_mode_items.h row; the button is on screen in both modes, only the key takeover is controller-only
+# 手柄佣兵页（dm_cursor.c +2 处，B099 / B100）：ui_pad_merc_pump 一处（副手格按上 → 头盔格、拿着物品时页签上的 A 不换页），ui_target_pump 一处（拿着未鉴定物品在佣兵格上按 A → 提示）。
+#   都是每帧现判、收下当拍的键（dm_padmode_page_keys），控件每帧按名字现找、不缓存地址、不留跨帧状态，切模式后下一帧自然不再接管，不用进 / 出钩子
+# Controller mercenary page (dm_cursor.c +2, B099 / B100): one in ui_pad_merc_pump (Up on the off-hand cell -> helm cell, A on the tabs with an item in hand does not switch page), one in
+#   ui_target_pump (A on a mercenary cell holding an unidentified item -> notice). Both decide every frame and take only that frame's keys (dm_padmode_page_keys); widgets are found by name each
+#   frame, no address is cached and no state crosses frames, so after a mode switch the next frame simply stops taking keys -- no enter / leave hook needed
+# 手柄角色页（dm_cursor.c +1 处，B114）：ui_pad_charstats_pump 没有起始焦点时收十字键下、把光标放到第一个「+」；同上每帧现判、不留跨帧状态，不用进 / 出钩子
+# Controller character page (dm_cursor.c +1, B114): ui_pad_charstats_pump takes D-pad down with no starting focus and puts the cursor on the first "+"; decided every frame, no state, no hooks
+# 手柄进页起始焦点（dm_cursor.c +1 处，B159 / B160）：ui_pad_entry_focus_pump 在任务日志 / 技能树刚成为最上一页、焦点还在上一页时把光标放到本页起始控件。
+# 跨帧只留「哪一页、进页那一帧、试到第几个候选」，触屏模式（及页关掉）一进来就清零，切回手柄模式重新按「刚进页」算，不用进 / 出钩子
+# Controller page-entry focus (dm_cursor.c +1, B159 / B160): ui_pad_entry_focus_pump puts the cursor on the page's starting widget when the quest log / skill tree has just become the top page
+# with the focus still on the previous page. The only cross-frame state is which page, the entry frame and the candidate index; touch mode (or the page closing) clears it at once, no hooks
+PADMODE = {'host/dm_stack.c': 1, 'host/dm_bag.c': 1, 'host/dm_savemgr.c': 2, 'host/dm_community.c': 1, 'host/dm_crashfence.c': 1, 'host/dm_diagup.c': 1, 'host/dm_telebox.c': 2, 'host/dm_telemetry.c': 1, 'host/dm_cursor.c': 14, 'host/dm_custom.c': 4, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 1, 'host/hle_tact.c': 1, 'host/dm_pouch.c': 1}
+# 「进入恐惧区域」入口（dm_padmode.c 1 处，方案 C）：手柄 A 在我们自己的入口钮上时由宿主发原版设置页的切页消息（dm_ui_send）。只在手柄模式发—
+# 这一句在 diff_pump 的 on_row 分支里，而 on_row 在触屏模式 / 弹窗开着时被强制清零；触屏点这颗钮由游戏自己按 onClickMessage 发同一条消息，不走宿主。
+# 控件每帧按名字现找，不缓存地址，切换重建后新控件同样能发，不用进 / 出钩子
+# 「Terror Zones」 entry (dm_padmode.c, 1, plan C): with controller A on our own entry button the host sends the original settings page's switch-tab message (dm_ui_send).
+# It only fires in controller mode -- the statement sits in diff_pump's on_row branch, and on_row is forced to 0 in touch mode / while a modal is up; a touch tap on that
+# button is sent by the game itself through onClickMessage, not by the host. Widgets are looked up by name every frame and no address is cached, so after a switch
+# rebuild the new widgets can send it too, no enter / leave hook needed
+AUTOKEY = {'host/dm_cursor.c': 39, 'host/dm_padmode.c': 1, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
 def count(pat, skip_defs):
     out = {}
     for f in sorted(glob.glob(os.path.join(root, 'host', '*.c')) + glob.glob(os.path.join(root, 'ios', 'Sources', '*.m')) + glob.glob(os.path.join(root, 'ios', 'Sources', '*.c'))):

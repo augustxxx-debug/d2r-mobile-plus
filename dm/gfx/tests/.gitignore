@@ -5,6 +5,7 @@ t_deswz_gpu
 t_deswz_gpu.dSYM/
 t_builtin.dSYM/
 t_pace
+t_bc8
 t_pqdone
 t_adaptive_pace
 t_completion_wait
@@ -13,6 +14,7 @@ t_completion_wait
 t_refl
 t_refl.dSYM
 t_hmap
+t_rts_tags
 t_cover
 t_fuse_check
 t_fuse_check.dSYM/
@@ -81,3 +83,7 @@ t_cmdalloc.dSYM/
 t_memwarn
 t_memwarn.dSYM/
 t_mp_grid
+t_rts_point_env
+t_rts_point_env.dSYM/
+t_fgen
+t_fgen.dSYM/

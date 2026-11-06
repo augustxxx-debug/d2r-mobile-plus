@@ -102,7 +102,7 @@ static NSString *share_logs(NSString *to) {
     // Settings summary (same as perf_block in the iOS share log): the last "custom settings: load", "Graphics", frame-rate-mode (effective value, present path) and ray-traced-shadow (machine gate, effective value, latest fallback, latest picture switch between ray traced and original, 600-frame statistics) lines of this run's log, so what the player turned on (including the frame-rate display, 120 fps and ray tracing) is visible at a glance; the whole info still goes through scrub below
     NSData *cur = [NSData dataWithContentsOfFile:[logd stringByAppendingPathComponent:@"host.log"] options:NSDataReadingMappedIfSafe error:nil];
     NSMutableString *sum = [NSMutableString stringWithFormat:@"\n—— 设置摘要 ——\n%@\n", crash_sum];
-    for (NSString *k in @[@"崩溃围栏：", @"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"超分档位：", @"内存档位：", @"光追阴影：机器判定", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：画面", @"光追阴影：第", @"光追点光：光源记录", @"光追阴影：建好", @"光追阴影：没进原因", @"光追阴影：局部回退 至第", @"光追阴影：阴影图 第", @"光追镂空：第", @"光追镂空：判定库", @"光追降档：", @"光追 AO：", @"光追质量：", @"光追阴影：GPU", @"社区入口：清单", @"社区入口：已显示", @"社区入口：复制", @"Metal 抓帧层：", @"光追内存：预算", @"光追内存：第", @"光追内存：告警", @"内存 至帧", @"游戏难度：", @"线程同步："]) {
+    for (NSString *k in @[@"崩溃围栏：", @"自定义设置：读盘", @"图形设置：", @"帧率档：生效", @"帧率档：出图", @"超分档位：", @"内存档位：", @"光追阴影：机器判定", @"光追档位：", @"光追阴影：生效", @"光追阴影：回退", @"光追阴影：画面", @"光追阴影：第", @"光追点光：光源记录", @"光追阴影：建好", @"光追阴影：没进原因", @"光追阴影：局部回退 至第", @"光追阴影：主光", @"光追阴影：阴影图 第", @"光追镂空：第", @"光追镂空：判定库", @"光追降档：", @"光追 AO：", @"光追质量：", @"光追阴影：GPU", @"社区入口：清单", @"社区入口：已显示", @"社区入口：复制", @"Metal 抓帧层：", @"光追内存：预算", @"光追内存：第", @"光追内存：告警", @"内存 至帧", @"游戏难度：", @"线程同步：", @"帧生成：状态", @"帧生成：插值器", @"帧生成：插值 至帧", @"帧生成：耗时", @"帧生成：节奏", @"帧生成：内存退避", @"帧生成：帧率退避"]) {
         NSRange r = cur.length ? [cur rangeOfData:[k dataUsingEncoding:NSUTF8StringEncoding] options:NSDataSearchBackwards range:NSMakeRange(0, cur.length)] : NSMakeRange(NSNotFound, 0);
         if (r.location == NSNotFound) { [sum appendFormat:@"（没有「%@」行）\n", k]; continue; }
         const char *b = cur.bytes; NSUInteger ls = r.location, le = r.location; while (ls > 0 && b[ls - 1] != '\n') ls--; while (le < cur.length && b[le] != '\n') le++;
@@ -202,7 +202,10 @@ void front_run(void (*guest)(void)) {
     if (!getenv("DM_WINDOW")) { guest(); return; }
     @autoreleasepool {
         [NSApplication sharedApplication];
-        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        // DM_NO_ACTIVATE=1（自动化测试用）：窗口照常显示、能截图，但不抢前台与键盘焦点、不出 Dock 图标——跑测试时用户还能在别的 App 里打字；不设 = 原样
+        // DM_NO_ACTIVATE=1 (for automated runs): the window still shows and can be captured, but never takes the foreground or keyboard focus and has no Dock icon, so the user can keep typing elsewhere; unset = unchanged
+        const int no_act = getenv("DM_NO_ACTIVATE") && *getenv("DM_NO_ACTIVATE") == '1';
+        [NSApp setActivationPolicy:no_act ? NSApplicationActivationPolicyAccessory : NSApplicationActivationPolicyRegular];
         full_setup();
         NSRect r = NSMakeRect(0, 0, 1280, floor(1280 / g_aspect));
         NSWindow *win = [[NSWindow alloc] initWithContentRect:r
@@ -232,10 +235,10 @@ void front_run(void (*guest)(void)) {
           { NSMenu *hm = add(ui("dmAppMenuHelp")); [[hm addItemWithTitle:@(ui("dmAppKeysTitle")) action:@selector(keys:) keyEquivalent:@""] setTarget:ctl]; [[hm addItemWithTitle:@(ui("dmAppShareLog")) action:@selector(share:) keyEquivalent:@""] setTarget:ctl]; }
           NSApp.mainMenu = bar; }
         { void dm_gamepad_start(void (*on_mode)(int pad)); dm_gamepad_start(NULL); }   // 手柄（与 iOS 壳共用 ios/Sources/dm_gamepad.m）：连上即用，与键盘并存 | Gamepad (ios/Sources/dm_gamepad.m, shared with the iOS shell): works as soon as it is connected, alongside the keyboard
-        [win makeKeyAndOrderFront:nil];
+        if (no_act) [win orderFrontRegardless]; else [win makeKeyAndOrderFront:nil];
         screen_note();
         [NSNotificationCenter.defaultCenter addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) { (void)n; screen_note(); }];
-        [NSApp activateIgnoringOtherApps:YES];
+        if (!no_act) [NSApp activateIgnoringOtherApps:YES];
         [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskKeyDown | NSEventMaskKeyUp handler:^NSEvent *(NSEvent *e) {
             if (e.window != win) return e;   // 只吃游戏窗口的键；软键盘输入框等其他窗口照常收字 | Only swallow keys for the game window; other windows such as the software keyboard input box receive typing as usual
             if (e.modifierFlags & NSEventModifierFlagCommand) return e;   // 带 ⌘ 的留给菜单（⌘Q、⌃⌘F） | Keys with ⌘ are left to the menu (⌘Q, ⌃⌘F)

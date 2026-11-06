@@ -9,6 +9,9 @@ static int checks, fails;
 #define CHECK(x) do { checks++; if (!(x)) { fails++; fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #x); } } while (0)
 static void cb(void) {}
 int main(void) {
+    dm_update_redraw(); CHECK(g_own < 0); CHECK(atomic_load(&g_dirty) == 0);   // 没人开：这一行不动 | nobody opened it: the line stays untouched
+    dm_update_note_only(); CHECK(g_own < 0);   // 安卓：登记时还不开 | Android: registering alone does not open it
+    dm_update_redraw(); CHECK(g_own >= 0); CHECK(atomic_load(&g_safe_l) == 0); CHECK(atomic_load(&g_dirty) == 30);   // 有结果才开，不等外壳给安全区 | opens when a result is due, without waiting for a shell safe area
     dm_update_init(1, "1.0.0", cb);
     const char *pages[] = { "CharacterSelectPanel", "MainMenuButtonRibbon" };
     for (int i = 0; i < 2; i++) {

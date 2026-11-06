@@ -34,6 +34,7 @@ else
   unset MOVIE_PREFIX
 fi
 if [ "$1" = build ]; then
+  bash ../tools/product.sh lock || exit 1   # 改写器改了没升代号：不出包，DM_OUT 也一样（外审 X-05） | rewriter changed without a codename bump: no package, DM_OUT included (external review X-05)
   # 生成：宿主源文件/头路径/框架（取自 dm/host/Makefile）+ 映像三段内嵌汇编与 -segprot + 装载表头/门表进 App 资源 dm/
   # Generate: host source files/header paths/frameworks (taken from dm/host/Makefile) + embedded assembly for the three image segments and -segprot + load table header/gate table into the App resources dm/
   mkdir -p Gen; for x in Gen/* Gen/.[!.]*; do [ -e "$x" ] && [ "$x" != Gen/assets ] && rm -rf "$x"; done; mkdir -p Gen/dm   # 每次重建 Gen，但留着 Gen/assets：原版衍生资源有自己的输入指纹与锁（tools/gen_assets.py），删了会和并行读它的功能用例撞（accept 红） | Rebuild Gen every time but keep Gen/assets: assets derived from the original game have their own input fingerprint and lock (tools/gen_assets.py); deleting them would collide with functional cases reading them in parallel (accept fails)
@@ -49,7 +50,10 @@ if [ "$1" = build ]; then
   python3 tools/gen_build.py ../host Gen > Gen/dm.xcconfig || { t "🔴 gen_build 失败"; exit 1; }
   # 测量包：DM_DIAG_SAMPLING=1 时编入同名宏，main.m 启动即打开逐通道 GPU / 逐线程 CPU / 发热归因采样（写 Documents/diag/）。正式包不要设
   # Measurement build: with DM_DIAG_SAMPLING=1 the macro of the same name is compiled in, and main.m turns on per-pass GPU / per-thread CPU / heat attribution sampling at launch (written to Documents/diag/). Never set for release builds
+  if [ "${DM_QA_BUILD:-0}" = 1 ]; then sed -i '' 's/^OTHER_CFLAGS = /OTHER_CFLAGS = -DDM_QA_BUILD=1 /' Gen/dm.xcconfig; grep -q 'DDM_QA_BUILD' Gen/dm.xcconfig || { t "🔴 QA 开关没写进 xcconfig"; exit 1; }; t "QA 构建：带脚本驱动入口（CLAUDE.md §2.9），不发布"; fi
   if [ "${DM_DIAG_SAMPLING:-0}" = 1 ]; then sed -i '' 's/^OTHER_CFLAGS = /OTHER_CFLAGS = -DDM_DIAG_SAMPLING=1 /' Gen/dm.xcconfig; grep -q 'DDM_DIAG_SAMPLING' Gen/dm.xcconfig || { t "🔴 测量开关没写进 Gen/dm.xcconfig"; exit 1; }; t "测量包：编入 DM_DIAG_SAMPLING（逐通道 GPU / 逐线程 CPU / 发热归因写到 Documents/diag/）"; fi
+  # 改写器改了、本机产物还是旧的：别打进包（内审 M-03）。DM_OUT 是手工指定的实验产物，只提醒 | the rewriter changed but the local output is old: keep it out of the package (internal audit M-03). DM_OUT is a hand-picked experimental output, so only a warning
+  bash ../tools/product.sh fresh "$OUT" || { [ -n "${DM_OUT:-}" ] && t "⚠️ DM_OUT 产物不是当前改写器出的，按指定继续" || exit 1; }
   F=$(python3 tools/gen_embed.py $OUT Gen/embed.S $MODS) || { t "🔴 gen_embed 失败"; exit 1; }
   echo "OTHER_LDFLAGS = \$(inherited) \$(DM_FRAMEWORKS) $F $MOVIE_LDFLAGS" >> Gen/dm.xcconfig
   for m in $MODS; do cp $OUT/$m.fixups.tsv $OUT/$m.gates.tsv Gen/dm/; done
@@ -67,7 +71,7 @@ if [ "$1" = build ]; then
   # with the capture layer on, resident memory grows every frame (device a8161cb: about 190 MB per 300 frames even with ray tracing off), so dev packages do not carry it by default either; only a "capture package" built with an explicit DM_METAL_CAPTURE=1 does, for DM_GPU_CAPTURE only, never for memory / long tests
   MCAP=NO
   if [ "${DM_METAL_CAPTURE:-}" = 1 ] && [ "${DM_GEN_ONLY:-}" != 1 ]; then MCAP=YES; t "⚠️ 抓帧包（DM_METAL_CAPTURE=1）：Info.plist 带 MetalCaptureEnabled，常驻内存逐帧上涨，只用于 DM_GPU_CAPTURE，不能测内存 / 长测"; fi
-  BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default};capture=${MCAP}"
+  BINPUTS="chain=${CHAIN:-unknown};font=${FONTFP};weight=${DM_UI_FONT_WEIGHT:-0};diag=${DM_DIAG_SAMPLING:-0};qa=${DM_QA_BUILD:-0};movie=${MOVIE_FFMPEG:-0};free=${DM_FREE_ACCOUNT:-0};m3=${DM_IOS_M3:-0};family=${DM_DEVICE_FAMILY:-default};capture=${MCAP}"
   printf 'DM_SOURCE_COMMIT = %s\nDM_SOURCE_DIRTY = %s\nDM_BUILD_INPUTS = %s\n' "$SC" "$SDIRTY" "$BINPUTS" >> Gen/dm.xcconfig
   printf 'DM_METAL_CAPTURE = %s\n' "$MCAP" >> Gen/dm.xcconfig
   t "产物身份：源码 ${SC}，工作区 ${SDIRTY}，构建输入 ${BINPUTS}"
@@ -161,7 +165,7 @@ if [ "$1" = build ]; then
     else t "⚠ 免费账号第一次构建要把手机连上，并在本机配置里填 DM_IOS_UDID（见 local.env.example）；没填，先按通用目标试"; fi
   fi
   xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination "$DEST" \
-    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
+    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} ${DM_DEVICE_FAMILY:+DM_DEVICE_FAMILY=$DM_DEVICE_FAMILY} ${DM_CHANNEL:+DM_CHANNEL=$DM_CHANNEL} ${DM_DIAGNOSTIC_ORIGIN:+DM_DIAGNOSTIC_ORIGIN=$DM_DIAGNOSTIC_ORIGIN} build > "$R/build.log" 2>&1 || { t "🔴 构建失败"; grep -E "error:" "$R/build.log" | head -5
       grep -q 'no devices from which to generate a provisioning profile' "$R/build.log" && t "原因：这个团队名下还没有设备。把手机用数据线连上并解锁，在本机配置里填 DM_IOS_UDID、DM_FREE_ACCOUNT=1，再构建一次"; exit 1; }
   codesign -d --entitlements :- $APP 2>/dev/null | plutil -p - ; t "构建完成"
   # DM_NOINSTALL 保持兼容；build 现在本来就只编译，不触碰设备。

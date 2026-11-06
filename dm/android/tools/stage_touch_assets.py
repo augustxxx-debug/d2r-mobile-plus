@@ -4,6 +4,7 @@ Stage externally generated skill atlases and HUD into Android's overlay, leaving
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -12,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'ios/tools'))
 import overlay_contract
 
 
-def stage(native_art, hud, overlay):
+def stage(native_art, hud, overlay, dm_target='android'):
     """只接收生成器的固定PNG及HUD引用，不接收源码、存档或签名文件。
     Accept generator PNGs and HUD references only, never source code, saves or signing files.
     """
@@ -55,7 +56,7 @@ def stage(native_art, hud, overlay):
     if not socket.is_file() or socket.is_symlink():
         raise ValueError('missing or unsafe socket art: dm_mobile_socket.png')
     shutil.copyfile(socket, overlay / 'touchart' / 'dm_mobile_socket.png')
-    source_sha = overlay_contract.source_fingerprint(Path(__file__).resolve().parents[3])
+    source_sha = overlay_contract.source_fingerprint(Path(__file__).resolve().parents[3], dm_target)
     overlay_contract.write_manifest(overlay, source_sha)
     entries = overlay_contract.verify_manifest(overlay, source_sha)
     print(json.dumps({'source_sha256': source_sha, 'overlay_files': len(entries), 'native_art': len(required), 'hud': len(files)}, sort_keys=True))
@@ -67,4 +68,4 @@ if __name__ == '__main__':
     parser.add_argument('--hud', required=True, type=Path, help='Generated hud_v4_ui directory')
     parser.add_argument('--overlay', required=True, type=Path, help='New candidate overlay, never a live imported directory')
     args = parser.parse_args()
-    stage(args.native_art, args.hud, args.overlay)
+    stage(args.native_art, args.hud, args.overlay, os.environ.get('DM_TARGET', 'android'))

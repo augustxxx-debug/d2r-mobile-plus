@@ -27,6 +27,7 @@ void dm_gamepad_start(void (*on_mode)(int pad)); void dm_gamepad_touched(void); 
 #include "../../host/dm_world.h"
 #include "../../host/dm_uiscreen.h"
 #include "../../host/dm_res_cap.h"
+#include "../../host/dm_fps_hud.h"
 #include "../../host/dm_actions.h"
 #include "../../host/dm_i18n.h"
 static NSString *SWT(const char *k) { return @(dm_ui(k)); }   // 我们自己的界面文字（中英表 dm/i18n/ui_text.tsv，语言跟原版设置走） | our own UI text (Chinese-English string table dm/i18n/ui_text.tsv, language follows the original game's setting)
@@ -139,8 +140,9 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     NSMutableDictionary<NSString *,UIImage *> *_mgImg;
     uint64_t _modifierPublishEndNS,_modifierPublishEpoch;
     uint64_t _touchEventSeq,_touchReceiptSeq,_touchPublishedEventSeq; // 仅 DM_TOUCH_CONTROL_LOG 开启时推进 | Advanced only when DM_TOUCH_CONTROL_LOG is on
-    UITouch *_pendEnd; double _pendEndTime,_pendWall; BOOL _pendFire,_finalAsked;   // 松手了但宿主的答案还没回：这根手指的「抬起」先挂着（见 finishTouches） | Released but the host's answer is not back yet: this finger's "lift" is held pending (see finishTouches)
-    int32_t _minLeft,_maxLeft; uint64_t _lastButtons; unsigned _touchAPresses,_touchShots; UITouch *_uiFinger; CGPoint _uiFeO; BOOL _uiFeDrag; BOOL _uiDragOn; UITouch *_mapTouch, *_mapBackTouch, *_bindTouch; UIView *_ghostDim; BOOL _ghostOn; uint64_t _bindKey; uint32_t _selId; double _statNext; double _tipUntil, _addAt; unsigned _mapWorldSeq; BOOL _mapWorldAsked; CGPoint _mapWorldPt; CGPoint _mapP0, _bindP0; double _mapT0; BOOL _pulseTicking; uint64_t _pulseEpoch,_pulseS0; double _pulseT0,_pulseSeen,_pulseFree; unsigned _itemSeq,_relSeq; BOOL _relAsked,_itemAsked; int _itemKind;
+    UITouch *_pendEnd; double _pendEndTime,_pendWall; BOOL _pendFire,_finalAsked; CGPoint _pendPt; BOOL _pendDrop;   // _pendPt / _pendDrop：判类没回就抬手、手指拖过阈值时记下的松手点（B169） | release point recorded when lifting before classification with the finger past the threshold (B169)
+       // 松手了但宿主的答案还没回：这根手指的「抬起」先挂着（见 finishTouches） | Released but the host's answer is not back yet: this finger's "lift" is held pending (see finishTouches)
+    int32_t _minLeft,_maxLeft; uint64_t _lastButtons; unsigned _touchAPresses,_touchShots; UITouch *_uiFinger; CGPoint _uiFeO; BOOL _uiFeDrag; BOOL _uiDragOn; UITouch *_mapTouch, *_mapBackTouch, *_bindTouch; UIView *_ghostDim; BOOL _ghostOn; uint64_t _bindKey; uint32_t _selId; double _statNext; double _tipUntil, _tipOpenT, _addAt; unsigned _mapWorldSeq; BOOL _mapWorldAsked; CGPoint _mapWorldPt; CGPoint _mapP0, _bindP0; double _mapT0; BOOL _pulseTicking; uint64_t _pulseEpoch,_pulseS0; double _pulseT0,_pulseSeen,_pulseFree; unsigned _itemSeq,_relSeq; BOOL _relAsked,_itemAsked; int _itemKind;
 }
 + (Class)layerClass { return CAMetalLayer.class; }
 - (instancetype)initWithFrame:(CGRect)f {
@@ -244,7 +246,8 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     dm_input_set(_controls.buttons,_controls.lx,_controls.ly,_controls.rx,_controls.ry);
     if (_controls.belt_request) { int br=_controls.belt_request; _controls.belt_request=0;   // 腰带展开 / 收起 / 喝上面几排的药（dm_actions.c） | Belt expand / collapse / drink a potion from the upper rows (dm_actions.c)
         if (br==1 || br==2) dm_belt_expand(br==1); else dm_belt_use(br&0xf, br>>4&0xf); }   // 腰带点按一律给玩家喝 | belt taps always go to the player
-    if (_controls.diff_request) { dm_hud_request_players(_controls.diff_request); _controls.diff_request=0; }   // 难度选择条选中档位：宿主下一拍走原版 /players 路径 | Difficulty selector strip picked a level: the host takes the original game's /players path on the next tick
+    { static int was; if (_controls.diff_open && !was) dm_diff_tip(0); was=_controls.diff_open; }
+    if (_controls.diff_request) { dm_diff_tip(_controls.diff_request); dm_hud_request_players(_controls.diff_request); _controls.diff_request=0; }   // 难度选择条选中档位：宿主下一拍走原版 /players 路径 | Difficulty selector strip picked a level: the host takes the original game's /players path on the next tick
     uint64_t publishEnd=(diagnostic || _controls.portal_pending)?now_ns():0;
     if(_controls.portal_pending && _modifierPublishEpoch!=_controls.gesture_epoch) {
         _modifierPublishEpoch=_controls.gesture_epoch;_modifierPublishEndNS=publishEnd;
@@ -429,6 +432,12 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     [CATransaction commit];
     static int lm=-1, ln=-1, lc; int m2=show ? mode : 0; if((m2!=lm || n!=ln) && lc<40) { lm=m2; ln=n; lc++; LOG("小地图终点：%s %d 个（地图 %d，每格 %.2f 像素 = %.2f 点）", show ? "画" : "不画", n, mode, cell, c); }
 }
+// 测试开关 DM_TOUCH_ITEM_DELAY_MS=<毫秒>（B169 回归）：判类答案到了也要等到按下后这么久才算「到了」（交给手势层、松手挂起都按它判），模拟出帧慢时答案晚到；缺省 0 = 答案一到就算
+// Test switch DM_TOUCH_ITEM_DELAY_MS=<ms> (B169 regression): even once the classification answer is back it counts as "arrived" only this long after the press (both handing it to the gesture layer and the lift-pending wait go by it), simulating a late answer when frames are slow; default 0 = arrived as soon as it is back
+- (BOOL)itemAnswerDue {
+    static double d=-1; if(d<0) { const char *dv=getenv("DM_TOUCH_ITEM_DELAY_MS"); d=dv ? atof(dv)/1000.0 : 0; if(d>0) LOG("前端：DM_TOUCH_ITEM_DELAY_MS 判类答案晚 %.0f ms 才算到", d*1000); }
+    return d<=0 || _controls.pointer_slot<0 || CACurrentMediaTime()-_controls.finger[_controls.pointer_slot].start_time_s>=d;
+}
 - (void)tickTouchControls:(double)now {
     [self mapGoalSync];
     { int dm_padmode_busy(void); BOOL hide=_feMode || dm_padmode_busy(); if(_overlay.hidden!=hide) _overlay.hidden=hide; if(_overlay.padMode!=_padMode) { _overlay.padMode=_padMode; [_overlay setNeedsDisplay]; } }   // 切换事务进行中也藏触屏层；宿主自己发起的切换（测试开关 DM_TEST_PADMODE 等）由注册表项「触屏控件层随模式」经 front_touch_overlay_mode 通知，见下 | Also hidden while a switch transaction is in progress; switches the host starts itself (DM_TEST_PADMODE and the like) reach us through the registry item "touch overlay follows the mode" via front_touch_overlay_mode, see below
@@ -439,9 +448,13 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
             [g[t] impactOccurred]; LOG("掉落震动：前端震第 %d 档", t); } }
     dm_tc_set_tap_box(dm_ui_tap_box()); dm_tc_set_cur_stack(dm_ui_cur_stack_id()); dm_tc_set_hover_unid(dm_ui_hover_unid());
     { dm_hud_info hi; dm_hud_get(&hi); dm_tc_set_holding(&_controls,hi.valid && hi.holding && !dm_ui_targeting()); }   // 鉴定态下游戏的「手上物品」是那张卷轴 / 那本书，但它没在手上：不算拿着 | In identify mode the game's "item in hand" is that scroll / tome, but it is not actually in hand: not counted as holding
-    if(_itemAsked && _controls.navigation_mode && _controls.pointer_slot>=0) { int ir=dm_ui_item_result(_itemSeq); if(ir>=0) { _itemAsked=NO; _itemKind=ir; dm_tc_pointer_item(&_controls,ir); } }   // 命中答案一出来就告诉手势层（物品区才驱动手柄光标、才算拖放） | Tell the gesture layer as soon as the hit answer arrives (only the item area drives the controller cursor and counts as drag and drop)
+    // 测试开关 DM_TOUCH_ITEM_DELAY_MS=<毫秒>（B169 回归）：判类答案到了也至少等这么久（从按下算）才交给手势层，模拟出帧慢时答案晚到 | Test switch DM_TOUCH_ITEM_DELAY_MS=<ms> (B169 regression): even once the classification answer is back, hand it to the gesture layer only this long after the press, simulating a late answer when frames are slow
+    if(_itemAsked && _controls.navigation_mode && _controls.pointer_slot>=0 && [self itemAnswerDue]) { int ir=dm_ui_item_result(_itemSeq); if(ir>=0) { _itemAsked=NO; _itemKind=ir; dm_tc_pointer_item(&_controls,ir);
+        // B169：抬手挂着、判类刚回来且补判成了购买拖动：现在按记下的松手点问落点，挂起再等它（重新计 0.25 秒） | B169: lift pending, classification just back and late-decided as a buy drag: ask the drop point at the recorded release point now and keep waiting for it (the 0.25 seconds restart)
+        if(_pendEnd && _pendDrop && _controls.finger[_controls.pointer_slot].shop_drag && !_finalAsked && self.bounds.size.width>0) { CGSize z=self.bounds.size; _pendDrop=NO;
+            _relSeq=dm_ui_drop_query((float)(_pendPt.x/z.width),(float)((_pendPt.y-DM_TC_POINTER_LIFT_PT*dm_tc_scale_for_size(z.width,z.height))/z.height),(float)(_pendPt.y/z.height)); _relAsked=YES; _finalAsked=YES; _pendWall=CACurrentMediaTime(); } } }   // 命中答案一出来就告诉手势层（物品区才驱动手柄光标、才算拖放） | Tell the gesture layer as soon as the hit answer arrives (only the item area drives the controller cursor and counts as drag and drop)
     if(_pendEnd) {   // 挂着的抬起：判类与松手落点的答案都回了就结束这根手指；0.25 秒还不回就照旧按没答上处理 | Pending lift: end this finger once both the classification and the release drop-point answers are back; if still not back after 0.25 seconds, handle as no answer as before
-        BOOL ready=!(_itemAsked && dm_ui_item_result(_itemSeq)<0) && !(_finalAsked && dm_ui_item_result(_relSeq)<0);
+        BOOL ready=!(_itemAsked && (dm_ui_item_result(_itemSeq)<0 || ![self itemAnswerDue])) && !(_finalAsked && dm_ui_item_result(_relSeq)<0);
         if(ready || CACurrentMediaTime()-_pendWall>0.25) { UITouch *pt=_pendEnd;
             // 留一行：这一下抬手等了多久、最后按什么处理（判类 1 物品区 / 2 页签 / 0 面板内控件 / 3 面板外 / 6 不点 / 7 货架 / 8 成叠格 / -1 没答上；落点 5 放下 / 3 丢 / 0 放回 / 7 卖）
             // Leave one line: how long this lift waited and how it was finally handled (classification 1 item area / 2 tab / 0 widget inside panel / 3 outside panel / 6 no tap / 7 shelf / 8 stacked cell / -1 no answer; drop point 5 put down / 3 drop / 0 put back / 7 sell)
@@ -476,10 +489,15 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     // The tooltip cannot be closed, so the approach is the same as binding mode: when the time is up, park the cursor at the left edge of the screen (outside the panel). Do nothing while holding an item, in binding mode, or while keys are still being delivered.
     // Panel just opened and not tapped yet: the game puts the controller cursor on the belt by default, and with a multi-row belt the belt stays expanded over the ring slot, so tapping the ring hits a potion and a double tap drinks it -- park the cursor away at the moment the panel opens too
     if(!_controls.navigation_mode || _padMode) _tipUntil=-2;   // 手柄模式：光标归原版手柄管，不发停靠请求（停靠请求一直有效，物品栏里十字键 / 摇杆挪不动光标） | Controller mode: the cursor belongs to the original controller handling, so no park request is sent (a park request stays in effect indefinitely, and the D-pad / stick could not move the cursor in the inventory)
-    else if(_controls.pointer_slot>=0) _tipUntil=-1;   // 手指按着：不收（松手时重新计时） | Finger down: do not close (timing restarts on release)
-    else if(_tipUntil==-2) { if(dm_ui_free_cursor()) _tipUntil=now+0.3; }   // 只在有自由光标的页停（暂停菜单 / 主菜单这类不动：冒烟玩家路径红） | Park only on pages with a free cursor (pause menu / main menu and the like stay put: smoke test player path fails)
-    else if(_tipUntil>0 && now>=_tipUntil && !_controls.holding && !dm_ui_bind_active() && !dm_ui_touch_active() && !_controls.pulse_button && !dm_tc_pulse_pending(&_controls) && !dm_cursor_pending()) {   // dm_ui_touch_active：这一下点击宿主还没处理完（点绑定框格子要等它处理了才进绑定态）——不等的话光标先被挪走，游戏的绑定框就不认随后的键 | dm_ui_touch_active: the host has not finished handling this click (tapping a binding box cell enters binding mode only after it is handled) -- without waiting, the cursor is moved away first and the game's binding box does not accept the following key
-        CGSize z=self.bounds.size; _controls.pointer_valid=1; _controls.pointer_x=0.02f*(float)z.width; _controls.pointer_y=0.5f*(float)z.height; _tipUntil=0; }   // 选中的标识留着：看完说明（框已收）再点同一个仍是加点 | The selected ID is kept: after reading the tooltip (already closed), tapping the same one again still adds a point
+    else if(_controls.pointer_slot>=0) { _tipUntil=-1; _tipOpenT=0; }   // 手指按着：不收（松手时重新计时） | Finger down: do not close (timing restarts on release)
+    else if(_tipUntil==-2) { if(dm_ui_free_cursor()) { _tipUntil=now; _tipOpenT=now; } }   // 只在有自由光标的页停（暂停菜单 / 主菜单这类不动：冒烟玩家路径红） | Park only on pages with a free cursor (pause menu / main menu and the like stay put: smoke test player path fails)
+    // B177：面板刚打开就停走，不再等 0.3 秒——光标还停在开面板前最后点的地方（局内点地走路的落点），那里正好是物品栏里某件装备（Duo 上是副手盾牌）时，
+    // 它的说明框会一闪而过。这里不用 else：打开这一拍条件满足就当拍停走（键脉冲 / 光标请求没送完时照旧等它们）
+    // B177: park as soon as the panel opens instead of waiting 0.3 seconds -- the cursor is still where the player last tapped before opening (the walk target in the world), and when that spot is an equipped item in the inventory (the off-hand shield on the Duo)
+    // its tooltip flashes. No else here: if the conditions hold on the opening tick, park on that tick (still waits for a key pulse / cursor request that has not been delivered)
+    if(_tipUntil>0 && now>=_tipUntil && !_controls.holding && !dm_ui_bind_active() && !dm_ui_touch_active() && !_controls.pulse_button && !dm_tc_pulse_pending(&_controls) && !dm_cursor_pending()) {   // dm_ui_touch_active：这一下点击宿主还没处理完（点绑定框格子要等它处理了才进绑定态）——不等的话光标先被挪走，游戏的绑定框就不认随后的键 | dm_ui_touch_active: the host has not finished handling this click (tapping a binding box cell enters binding mode only after it is handled) -- without waiting, the cursor is moved away first and the game's binding box does not accept the following key
+        CGSize z=self.bounds.size; _controls.pointer_valid=1; _controls.pointer_x=0.02f*(float)z.width; _controls.pointer_y=0.5f*(float)z.height; _tipUntil=0;
+        if(_tipOpenT>0) { LOG("前端：面板打开 → 光标停到左缘（开后 %.0f 毫秒）",(now-_tipOpenT)*1000); _tipOpenT=0; } }   // 选中的标识留着：看完说明（框已收）再点同一个仍是加点 | The selected ID is kept: after reading the tooltip (already closed), tapping the same one again still adds a point
     uint64_t tb=_controls.buttons;
     dm_tc_tick(&_controls, now);
     { int fg=0; for(int i=0;i<DM_TC_MAX_TOUCH;i++) fg|=_controls.finger[i].active; dm_ui_hand_idle(!fg && !_controls.pulse_button && !dm_tc_pulse_pending(&_controls) && !dm_cursor_pending() && !dm_ui_touch_active()); }   // 手上物品守门：触摸空闲才收手上那件 | Held-item guard: the item in hand is put away only when touch is idle
@@ -616,11 +634,17 @@ static BOOL touch_done(UITouch *t) { UITouchPhase ph=t.phase; return ph==UITouch
         // Gesture layer state is untouched while pending; once the answer is back (or after a 0.25-second timeout) tick lets it through, and the lift time is still the real release time (double tap / long press judgment unaffected)
         if(!_pendFire && !_pendEnd && !strcmp(phase,"ended") && _controls.navigation_mode && _controls.pointer_slot>=0 && _slot[_controls.pointer_slot]==t && self.bounds.size.width>0) {
             dm_tc_finger *pf=&_controls.finger[_controls.pointer_slot]; BOOL wait=NO;
-            if(_itemAsked && dm_ui_item_result(_itemSeq)<0) wait=YES;
+            if(_itemAsked && (dm_ui_item_result(_itemSeq)<0 || ![self itemAnswerDue])) { wait=YES;
+                // B169：判类还没回、手指已拖过阈值：按松手这一刻的位置先把落点问上。判类回来若是货架上的货（手势层补判成购买拖动），按这个落点买；不是就用不上
+                // B169: classification not back yet and the finger has been dragged past the threshold: ask the drop point at the release position now. If the classification comes back as shelf goods (the gesture layer late-decides a buy drag), buy by this drop point; otherwise it goes unused
+                // 只记下松手点：落点查询与判类共用宿主那一个应答位，这时就问会顶掉还没答的判类（判类永远 -1、等到超时）；判类回来、补判成购买拖动后再问（见 tickTouchControls）
+                // Only record the release point: the drop query shares the host's single answer slot with classification, so asking now would supersede the unanswered classification (it stays -1 until the timeout); ask once it is back and late-decided as a buy drag (see tickTouchControls)
+                CGPoint ep=[t locationInView:self]; CGSize z=self.bounds.size; _pendDrop=NO;
+                if(hypot(ep.x-pf->aim_origin_x,ep.y-pf->aim_origin_y) > DM_TC_POINTER_MOVE_PT*dm_tc_scale_for_size(z.width,z.height)) { dm_tc_move_at(&_controls,_controls.pointer_slot,ep.x,ep.y,CACurrentMediaTime()); _pendPt=ep; _pendDrop=YES; } }
             else if(pf->pointer_dragged) { CGPoint ep=[t locationInView:self]; CGSize z=self.bounds.size;
                 dm_tc_move_at(&_controls,_controls.pointer_slot,ep.x,ep.y,CACurrentMediaTime());   // 抬起点可能比最后一次移动更远 | The lift point may be farther than the last move
                 _relSeq=dm_ui_drop_query((float)(ep.x/z.width),(float)((ep.y-DM_TC_POINTER_LIFT_PT*dm_tc_scale_for_size(z.width,z.height))/z.height),(float)(ep.y/z.height)); _relAsked=YES; _finalAsked=YES; wait=YES; }
-            if(wait) { _pendEnd=t; _pendEndTime=CACurrentMediaTime(); _pendWall=CACurrentMediaTime(); continue; }
+            if(wait) { _controls.pointer_lift_pending=1; _pendEnd=t; _pendEndTime=CACurrentMediaTime(); _pendWall=CACurrentMediaTime(); continue; }
         }
         for(int i=0;i<16;i++) if(_slot[i]==t) {
             // 系统取消触摸（通知横幅、系统手势）不当松手：拖着的物品放回原处、货架 / 成叠格拖出不买不取，别的手指只放掉按着的东西，不补脉冲、不点世界、不点界面
@@ -634,7 +658,7 @@ static BOOL touch_done(UITouch *t) { UITouchPhase ph=t.phase; return ph==UITouch
             if(_controls.navigation_mode && _controls.pointer_slot==i && _controls.finger[i].shop_drag) { int rk=_relAsked ? dm_ui_item_result(_relSeq) : 0; if(rk<0) rk=dm_ui_drop_last(); if(rk==5 && !dm_ui_drop_bag()) LOG("前端：%s拖出后松在背包格以外的物品区 → 不%s",_itemKind==8?"一叠":"货架上的货",_itemKind==8?"取":"买");   /* 装备槽、腰带格、那一叠自己身上都不成交 | Equipment slots, belt cells and that stack itself do not complete a deal */ else if((rk==5 || rk==11) && self.bounds.size.width>0) { dm_tc_finger *sf=&_controls.finger[i]; if(rk==11) { dm_ui_stack_cube_at((float)(sf->aim_origin_x/self.bounds.size.width),(float)(sf->aim_origin_y/self.bounds.size.height)); LOG("前端：高级仓库里的一叠拖到魔盒格上松手 → 1 件进魔盒"); } else if(_itemKind==8) { dm_ui_stack_take_at((float)(sf->aim_origin_x/self.bounds.size.width),(float)(sf->aim_origin_y/self.bounds.size.height)); LOG("前端：高级仓库里的一叠拖到背包松手 → 取 1 件"); } else { LOG("前端：货架上的货拖到背包松手 → 买"); dm_ui_shop_buy_at((float)(sf->aim_origin_x/self.bounds.size.width),(float)(sf->aim_origin_y/self.bounds.size.height)); } _controls.pointer_x=sf->aim_origin_x; _controls.pointer_y=sf->aim_origin_y;   /* 光标目标也改回那件货：否则宿主放回去后，落位逻辑又把它往屏幕角上推，买的那一刻已经不在货上（mini：3 次里 1 次「没选中」） | Also set the cursor target back to that item: otherwise after the host puts it back, the placement logic pushes it toward the screen corner again and at the moment of buying it is no longer on the goods (observed on the second Mac: 1 in 3 times 「没选中」(not selected)) */ } }   // 从货架起拖：落在背包类物品区 = 买光标选中的那件（光标一直留在货上）；别处松手不买 | Drag started from the shelf: dropped on an inventory-type item area = buy the item selected by the cursor (the cursor stays on the goods throughout); releasing elsewhere does not buy
             else if(_controls.navigation_mode && _controls.pointer_slot==i && _controls.finger[i].pointer_dragged && _relAsked) { int rr=dm_ui_item_result(_relSeq); if(rr<0) rr=dm_ui_drop_last(); if(rr<0) rr=0; float dx,dy;   /* 这次的落点还没答上：用上一次移动时答过的；一次都没答过 = 放回原处。不再当「物品区」在落点硬按放下 | The drop point of this time has no answer yet: use the one answered at the last move; never answered = put back. No longer force a put-down at the drop point as "item area" */ if((rr==5 && dm_ui_drop_point(&dx,&dy)) || (rr==0 && dm_ui_origin_point(&dx,&dy))) dm_tc_pointer_release_at(&_controls,dx*self.bounds.size.width,dy*self.bounds.size.height);   /* 0 = 放回原处：放回物品原位的中心（宿主在「拿起」时记下的），不是手指最初按下的点 | 0 = put back: put back at the center of the item's original position (recorded by the host at "pick up"), not the point where the finger first pressed */ else { if(rr==7) { dm_shop_sell_cursor(); rr=0; } dm_tc_pointer_release(&_controls,rr<0?1:rr); } }   // 7 = 松在商人货架上：卖手上那件（没卖掉的由随后那下 A 放回原处）   // 没答上按物品区处理（照旧放下） | 7 = released on the vendor shelf: sell the item in hand (if not sold, the following A puts it back in place)   // No answer: handle as item area (put down as before)
             _relAsked=NO;
-            if(_controls.navigation_mode && _controls.pointer_slot==i && _itemAsked) { _itemAsked=NO; dm_tc_pointer_item(&_controls,dm_ui_item_result(_itemSeq)); [self bindTapSync]; }   // 松手时还没告诉过：现在取（没答上 = 按别处处理） | Not yet told at release: fetch now (no answer = handle as elsewhere)
+            if(_controls.navigation_mode && _controls.pointer_slot==i && _itemAsked) { _itemAsked=NO; _controls.pointer_lift_pending=1; dm_tc_pointer_item(&_controls,dm_ui_item_result(_itemSeq)); [self bindTapSync]; }   // 松手时还没告诉过：现在取（没答上 = 按别处处理） | Not yet told at release: fetch now (no answer = handle as elsewhere)
             unsigned wt=_controls.world_tap_seq;
             unsigned mc=_controls.mouse_click_seq; unsigned tt=_controls.tab_tap_seq; unsigned us=_controls.use_seq; unsigned ids=_controls.ident_seq; unsigned sts=_controls.stack_take_seq; unsigned lps=_controls.long_press_seq; unsigned its=_controls.item_tap_seq;
             BOOL dragged=_uiDragOn && _controls.pointer_slot==i;
@@ -856,10 +880,17 @@ static void touch_ui_message(const char *cat,const char *act,const char *arg) {
 - (void)tick:(CADisplayLink *)l;
 - (void)work;
 @end
+// 刷新率表态（纯函数，test_present_hud 编出来逐项核，审计 P2-2）：disp = 显示帧率（mtl_display_fps，帧生成生效时 = 渲染 × 倍数），render = 渲染帧率（mtl_fps_target）。
+// 换成显示帧率是帧生成必需的：渲染 60、显示 120 时表态还按 60，ProMotion 屏停在 60 Hz，插值帧根本上不了屏。30 → 30；≥ 120 → 120；
+// 40（量测档，120 Hz 的三分之一）与帧生成带出来的非 60 显示帧率（40×2 = 80、30×3 = 90）→ 120；其余（含没有帧生成时的 90）→ 60，与基线一致
+// Rate declaration (pure; test_present_hud compiles and checks it, audit P2-2): disp = the display rate (mtl_display_fps, render x multiple while frame generation is in effect), render = the render rate.
+// The display rate is required by frame generation: rendering 60 and showing 120 with a 60 declaration keeps a ProMotion screen at 60 Hz and the interpolated frames never reach it. 30 -> 30; >= 120 -> 120;
+// 40 (measurement, a third of 120 Hz) and the non-60 display rates frame generation produces (40x2 = 80, 30x3 = 90) -> 120; everything else (90 without frame generation included) -> 60, as the baseline
+static int dm_rate_hint_hz(int disp, int render) { return disp == 30 ? 30 : disp >= 120 || disp == 40 || (disp != render && disp != 60) ? 120 : 60; }
 @implementation DmRateHint
 - (void)tick:(CADisplayLink *)l {
-    extern int mtl_fps_target(void);
-    { static int last = -1; int f = mtl_fps_target(); if (f != last) { last = f; l.preferredFrameRateRange = f == 30 ? CAFrameRateRangeMake(30, 30, 30) : f == 120 ? CAFrameRateRangeMake(120, 120, 120) : CAFrameRateRangeMake(60, 60, 60); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
+    extern int mtl_display_fps(void), mtl_fps_target(void);   // 显示帧率：帧生成生效时 = 渲染帧率 × 2 | display rate: render rate x 2 while frame generation is in effect
+    { static int last = -1; int f = mtl_display_fps(), hz = dm_rate_hint_hz(f, mtl_fps_target()); if (hz != last) { last = hz; l.preferredFrameRateRange = CAFrameRateRangeMake(hz, hz, hz); } }   // 省电模式（30 帧）：帧率提示一起降，ProMotion 屏才会真降刷新率 | Power-saving mode (30 fps): lower the frame rate hint as well; only a ProMotion screen actually lowers the refresh rate
     [self work];
 }
 // 驱动方式：1 = 刷新率表态显示链接（缺省），2 = DM_RATE_HINT=0 时的定时器；每 30 秒记一行实际 work 频率，便于实验报告核对（二审 R03）
@@ -954,13 +985,10 @@ static UIView *test_fold(UIView *top) {
 // frame rate. The switch is read on every refresh, so "Apply" takes effect at once
 static UIView *attach_fps_hud(UIView *top) {
     if (!top) return top;
-    __block uint64_t lp = 0, lt = 0;
-    [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *tm) {
+    static dm_fps_hud s;   // 两端共用的采样（dm/host/dm_fps_hud.h）：交换链实际上屏、1 秒滑动窗口、显示值最多 2 Hz | shared sampler (dm/host/dm_fps_hud.h): actually presented frames, sliding 1 s window, shown value at most 2 Hz
+    [NSTimer scheduledTimerWithTimeInterval:0.25 repeats:YES block:^(NSTimer *tm) {
         int dm_custom_get(const char *); uint64_t mtl_presented_count(void);   // 系统确认真正上屏的帧（复审 F08），不是出图尝试 | frames the system confirms on screen (re-audit F08), not present attempts
-        if (!dm_custom_get("fps_hud")) { g_fps_hud = 0; lt = 0; return; }
-        uint64_t t = now_ns(), p = mtl_presented_count();
-        if (lt && t > lt) g_fps_hud = (int)lround((double)(p - lp) * 1e9 / (double)(t - lt));
-        lt = t; lp = p; }];
+        g_fps_hud = dm_fps_hud_sample(&s, now_ns(), mtl_presented_count(), dm_custom_get("fps_hud") > 0); }];
     return top;
 }
 UIView *front_ios_view(CGRect frame) {
@@ -978,7 +1006,7 @@ UIView *front_ios_view(CGRect frame) {
                // Remaining differences from the default path: no rate declaration, and the timer is not phase-aligned with the display refresh (not vsync-aligned); interpret results with both, never as "a single variable"
         static DmRateHint *worker; static dispatch_source_t timer; static int cur_hz; worker = [DmRateHint new]; g_work_driver = 2;
         timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
-        void (^retime)(void) = ^{ extern int mtl_fps_target(void); int f = mtl_fps_target(), hz = f == 30 ? 30 : f == 120 ? 120 : 60;
+        void (^retime)(void) = ^{ extern int mtl_display_fps(void); int f = mtl_display_fps(), hz = f == 30 ? 30 : f == 120 ? 120 : 60;
             if (hz != cur_hz) { cur_hz = hz; uint64_t iv = NSEC_PER_SEC / (uint64_t)hz; dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)iv), iv, iv / 10);
                 LOG("DM_RATE_HINT=0：触控 / 布局定时器 %d Hz（跟随目标帧率，不对齐屏幕刷新）", hz); } };
         dispatch_source_set_event_handler(timer, ^{ retime(); [worker work]; });
@@ -1231,7 +1259,7 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
 // 焦点（场景生命周期）：sceneWillResignActive → 2；sceneDidEnterBackground → 3 + 音频暂停 + GPU 挂起；sceneWillEnterForeground → GPU 恢复 + 音频恢复 + 2；sceneDidBecomeActive → 1。
 //   iOS 27 真机实测：无场景清单的旧式 App 启动后 applicationState 恒为 1（前台未激活），收不到激活 / 失活，故改走 UIScene。
 //   游戏收到焦点 3 只发 0x2c 事件、不自停渲染⇒ 进后台由宿主挡 GPU：dm_gfx_suspend(1) 等在途命令完成才返回（后台提交 GPU 会被系统杀）。
-// 过热：thermalState 变化只记日志。3D 渲染比例的降 / 升由实际掉帧驱动（hle_oe.c 动态比例，0.75 → 0.72 → 0.70；界面始终原生）。
+// 过热：thermalState 变化只记日志，不改任何设置（B147：帧率不再遇热退回 60；第一次到严重时局内提示一次，diag.c）。3D 渲染比例只在图形页「动态 3D 分辨率」开着时按实际掉帧降 / 升（hle_oe.c，缺省关；界面始终原生）。
 // 之前是切掌机模式：那会连界面一起降，且运行中切模式的路径有宽度掩码缺陷（main+0xe10e48，r27 修）。
 //   DM_THERMAL_NOFALLBACK=1：过热不切掌机（只供原生功耗测量，读数不混入别的分辨率）。
 // 音频会话：Playback（开着静音开关也出声，只听音量键——手游的行业惯例；和原先的 SoloAmbient 一样会停掉其它 App 的音乐）。
@@ -1241,7 +1269,7 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
 // Focus (scene lifecycle): sceneWillResignActive → 2; sceneDidEnterBackground → 3 + audio pause + GPU suspend; sceneWillEnterForeground → GPU resume + audio resume + 2; sceneDidBecomeActive → 1.
 //   Measured on a real device with iOS 27: for a legacy App without a scene manifest, applicationState stays 1 (foreground inactive) after launch and activation / deactivation never arrive, hence the switch to UIScene.
 //   On focus 3 the game only sends event 0x2c and does not stop rendering by itself ⇒ on entering background the host blocks the GPU: dm_gfx_suspend(1) returns only after in-flight commands complete (submitting GPU work in background gets killed by the system).
-// Overheating: thermalState changes are only logged. Lowering / raising the 3D render scale is driven by actual dropped frames (hle_oe.c dynamic scale, 0.75 → 0.72 → 0.70; the UI is always native).
+// Overheating: thermalState changes are only logged and change no setting (B147: the rate no longer falls back to 60 when hot; the first serious state shows one in-game tip, diag.c). The 3D render scale is lowered / raised by actual dropped frames only while Graphics "Dynamic 3D resolution" is on (hle_oe.c, off by default; the UI is always native).
 // Previously it switched to handheld mode: that lowered the UI too, and the path that switches mode while running had a width mask bug (main+0xe10e48, fixed in r27).
 //   DM_THERMAL_NOFALLBACK=1: do not switch to handheld on overheating (only for native power measurement, so readings are not mixed with other resolutions).
 // Audio session: Playback (sound plays even with the mute switch on and only the volume keys are obeyed -- the industry convention for mobile games; like the earlier SoloAmbient it stops other Apps' music).

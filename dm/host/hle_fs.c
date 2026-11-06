@@ -367,6 +367,15 @@ static int voice_chunk_present(int chunk) {
     char b[1024], p[1100]; snprintf(p, sizeof p, "%s/data/%02d-00000001.data", envdir("DM_ROMFS", "data/switch/3.3.94012/Update/RomFS", b, sizeof b), chunk);
     return !access(p, F_OK);
 }
+// 英文配音没有自己的分块：开发方说它在基底档案（00-00000001.data）里。这里只查这份档案文件在不在，不打开档案、也不核对里面有没有英文语音资源；
+// 「英文配音在基底档案里」是开发方的断言，本函数并不证明它——这是本判定的局限，真机上英文语音是否真的可放仍待验证。
+// 另外 00-00000001.data 在原版的必需档案列表里（romfs_validate.c 的 need[]），没有它游戏本身起不来，所以这条回落实际几乎只在单测「删掉档案」的场景里触发。
+// 单独选了 English 配音却读不到这份基底（资源被换掉 / 没拷完）时回落中文配音（8），不写 0——否则对话与过场没有可放的语音
+// The English voice-over has no chunk of its own: the developer says it lives in the base archive (00-00000001.data). This only checks that the archive file exists; it does not open the archive or verify that English voice assets are inside.
+// "The English voice is in the base archive" is the developer's assertion, and this function does not prove it -- that is the limitation of this check; whether the English voice is really playable on a device still needs verification.
+// Also, 00-00000001.data is in the original's required archive list (need[] in romfs_validate.c); the game cannot start without it, so this fallback is in practice almost only reachable in the unit test that deletes the archive.
+// If English voice is picked but that base archive cannot be read (resources replaced / incomplete copy), fall back to the Chinese voice (8) instead of writing 0 -- otherwise dialogue and cinematics would have no voice to play
+static int voice_english_present(void) { return voice_chunk_present(0); }
 static int voice_for(int lang) { return lang == 8 ? 8 : lang == 7 && voice_chunk_present(16) ? 7 : lang == 5 && voice_chunk_present(11) ? 5 : 0; }
 static void settings_seed(const char *save_dir) {
     const char *e = getenv("DM_TOUCH_DEFAULTS"); int on = e ? strcmp(e, "0") != 0 : DM_PHONE; if (!on) return;
@@ -406,7 +415,7 @@ static int json_int_set(char *buf, size_t cap, const char *key, int val) {   // 
     memmove(v + nl, e, strlen(e) + 1); memcpy(v, num, nl); return 1; }
 static void settings_lang_apply(const char *save_dir) {
     int dm_custom_lang_explicit(void); int sel = dm_custom_lang_explicit(); if (sel > 4) sel = -1;
-    int dm_custom_voice_explicit(void); int vsel = dm_custom_voice_explicit(); if (vsel > 1) vsel = -1;   // 单独配音（只有编进过场解码的包才有这一行，缺省包恒为 -1）
+    int dm_custom_voice_explicit(void); int vsel = dm_custom_voice_explicit(); if (vsel > 1) vsel = -1;   // 单独配音（缺省包也有这一行；旧文件没有 voice 键时是 -1 = 跟随语言）| separate voice-over (also on default builds; -1 = follow the language when an old file has no voice key)
     if (sel < 0 && vsel < 0) return;
     char path[1200]; snprintf(path, sizeof path, "%s/Settings/Settings.json", save_dir); static char buf[66000]; FILE *f = fopen(path, "rb"); if (!f) return;
     size_t n = fread(buf, 1, 65535, f); fclose(f); if (n == 65535) return; buf[n] = 0;
@@ -414,13 +423,15 @@ static void settings_lang_apply(const char *save_dir) {
     int in = sel == 0 ? (cur == 8 || cur == 9) : sel == 1 ? cur == 0 : sel == 3 ? cur == 7 : sel == 4 ? cur == 5 : (cur == 2 || cur == 10);   // 文字语言已落在选中的那一项里 | The text language already falls within the selected option
     int dm_sys_lang(void); int want = sel < 0 || in ? cur : sel == 0 ? 8 : sel == 1 ? 0 : sel == 3 ? 7 : sel == 4 ? 5 : (dm_sys_lang() == 10 ? 10 : 2);
     const char *vk = strstr(buf, "\"VoiceLanguage\""), *vc = vk ? strchr(vk + 15, ':') : NULL; int vcur = vc ? atoi(vc + 1) : -1;
-    int voice = vsel == 0 ? 8 : vsel == 1 ? 0 : in && sel == 0 && vcur > 0 ? vcur : voice_for(want);   // 明确选了配音就用它；没选时维持原来的跟随规则
+    int en = voice_english_present();
+    int voice = vsel == 0 ? 8 : vsel == 1 ? (en ? 0 : 8) : in && sel == 0 && vcur > 0 ? vcur : voice_for(want);   // 明确选了配音就用它（资源里没有英文配音时回落中文）；没选时维持原来的跟随规则
     int ch = json_int_set(buf, sizeof buf, "\"Language\"", want) | json_int_set(buf, sizeof buf, "\"VoiceLanguage\"", voice); if (!ch) return;
     char tmp[1300]; snprintf(tmp, sizeof tmp, "%s.lang", path); f = fopen(tmp, "wb"); size_t m = strlen(buf);
     if (!f || fwrite(buf, 1, m, f) != m) { if (f) fclose(f); LOG("【红】语言开关：写 %s 失败", tmp); return; }
     fclose(f); if (rename(tmp, path)) { LOG("【红】语言开关：改名到 %s 失败", path); return; }
     static const char *const nm[5] = { "中文", "English", "Español", "Русский", "한국어" };
-    LOG("语言开关：设置文件的 Language / VoiceLanguage 改成 %d / %d（%s；单独配音 %s；原文字语言 %d）", want, voice, sel < 0 ? "不改文字" : nm[sel], vsel < 0 ? "跟随语言" : vsel ? "English" : "中文", cur);
+    LOG("语言开关：设置文件的 Language / VoiceLanguage 改成 %d / %d（%s；单独配音 %s%s；原文字语言 %d）", want, voice, sel < 0 ? "不改文字" : nm[sel], vsel < 0 ? "跟随语言" : vsel ? "English" : "中文",
+        vsel == 1 && !en ? "（资源里没有英文配音，回落中文）" : "", cur);
 }
 // 事务式存档当前的工作目录（游戏读写的那份；宿主自己的旁路文件写在这里才会随 Commit 进已提交版）。没挂载存档时返回 NULL
 // The current working directory of the transactional save (the copy the game reads and writes; the host's own side files must be written here to enter the committed version with Commit). Returns NULL when no save is mounted
@@ -428,6 +439,8 @@ const char *dm_save_workdir(void) { for (int i = 0; i < g_nmnt; i++) if (g_mnt[i
 // 事务式存档的已提交目录（盘上那份，上次 Commit 的版本）。没挂载存档时返回 NULL
 // The committed directory of the transactional save (the copy on disk, the version from the last Commit). Returns NULL when no save is mounted
 const char *dm_save_commitdir(void) { for (int i = 0; i < g_nmnt; i++) if (g_mnt[i].commit[0]) return g_mnt[i].commit; return NULL; }
+// 已提交目录的快照（存档管理导出 / 手动备份用）：持存档锁克隆，打包时再有提交也不会混入新旧文件。还没挂存档时就是 $DM_SAVE。dst 不得已存在 | Snapshot of the committed directory (save management export / manual backup): cloned under the save lock, so a later commit cannot mix old and new files into the package. Before mount it is $DM_SAVE. dst must not exist
+int dm_save_snapshot(const char *dst) { PATH_LOCK(); pthread_mutex_lock(&g_lock); const char *c = dm_save_commitdir(); if (!c) c = getenv("DM_SAVE"); int rc = c ? clonefile(c, dst, 0) : -1; pthread_mutex_unlock(&g_lock); if (rc) LOG("【红】存档快照失败 errno=%d", errno); return rc; }
 void (*g_dm_mount_seed_hook)(const char *save_dir);   // 挂存档前调（存档目录）：往存档里补宿主要的文件 | called before mounting the save (save dir): adds the files the host needs to the save
 HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv；存档 → 宿主目录（单用户）", Result, h_fs_MountSave, const char *name, const void *uid) {
     (void)uid;
@@ -446,7 +459,7 @@ HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv；存档 �
     { const char *e = getenv("DM_TOUCH_DEFAULTS"); if (g_dm_mount_seed_hook && (e ? strcmp(e, "0") != 0 : DM_PHONE)) g_dm_mount_seed_hook(dd); }
     return mount_ex(name, dd, 0, 1);
 }
-void (*g_dm_pre_commit_hook[5])(const char *workdir);   // 提交前调（工作目录）：宿主旁路文件按工作目录里的存档内容核对后再写（[0] 个人仓库多页 dm_pages.c、[2] 百宝囊 dm_pouch.c、[1] 编年史仓库 dm_vault.c、[3] 秘境进度 dm_rift.c、[4] iCloud 收件箱并回 dm_cloudmerge.c） | Called before commit (working directory): host side files are checked against the save content in the working directory before being written ([0] personal stash multi-page dm_pages.c, [2] pouch dm_pouch.c, [1] Chronicle stash dm_vault.c, [3] Rift progress dm_rift.c, [4] iCloud inbox merge dm_cloudmerge.c)
+void (*g_dm_pre_commit_hook[6])(const char *workdir);   // 提交前调（工作目录）：宿主旁路文件按工作目录里的存档内容核对后再写（[0] 个人仓库多页 dm_pages.c、[2] 百宝囊 dm_pouch.c、[1] 编年史仓库 dm_vault.c、[3] 秘境进度 dm_rift.c、[4] iCloud 收件箱并回 dm_cloudmerge.c） | Called before commit (working directory): host side files are checked against the save content in the working directory before being written ([0] personal stash multi-page dm_pages.c, [2] pouch dm_pouch.c, [1] Chronicle stash dm_vault.c, [3] Rift progress dm_rift.c, [4] iCloud inbox merge dm_cloudmerge.c)
 void (*g_dm_save_commit_hook)(const char *commit_dir);   // 存档提交成功后调（已提交目录）；iOS 的 iCloud 同步设它，宿主为空 | called after a save commit succeeds (committed directory); the iOS iCloud sync sets it, NULL on the host
 static _Atomic uint64_t g_save_commits;   // 成功提交过几次（前端进后台时等「游戏这次存盘已提交」用） | number of successful commits (used by the front end when going to background to wait for "the game's current save has been committed")
 uint64_t dm_fs_commit_count(void) { return atomic_load(&g_save_commits); }
@@ -455,7 +468,11 @@ HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv；事务式存档：工作目录整�
     int i = 0; while (i < g_nmnt && strcmp(g_mnt[i].name, name)) i++;
     if (i == g_nmnt || !g_mnt[i].commit[0]) { pthread_mutex_unlock(&g_lock); return RES_OK; }   // 非事务挂载：无可提交 | non-transactional mount: nothing to commit
     uint64_t tc0 = clock_gettime_nsec_np(CLOCK_MONOTONIC), tw0 = atomic_exchange(&g_txn_first_ns, 0);
-    for (int k = 0; k < 5; k++) if (g_dm_pre_commit_hook[k]) g_dm_pre_commit_hook[k](g_mnt[i].dir);
+#ifdef DM_QA_BUILD
+    { static int dly = -1; if (dly < 0) { const char *e = getenv("DM_TEST_COMMIT_DELAY_MS"); dly = e ? atoi(e) : 0; }   // 测试开关：每次提交先等 N 毫秒再跑提交前钩子（造「写盘慢于服务端拍」，验退局那次提交与各模块清状态的先后，B203）| test switch: wait N ms before the pre-commit hooks of every commit (a disk write slower than the server tick)
+      if (dly > 0) { LOG("DM_TEST_COMMIT_DELAY_MS：提交前等 %d 毫秒", dly); usleep((useconds_t)dly * 1000); } }   // 持着锁等，同一次慢的写盘 | waits holding the locks, like a slow disk write
+#endif
+    for (int k = 0; k < 6; k++) if (g_dm_pre_commit_hook[k]) g_dm_pre_commit_hook[k](g_mnt[i].dir);
     uint64_t tc1 = clock_gettime_nsec_np(CLOCK_MONOTONIC);   // 写进工作目录的旁路文件随这次提交一起原子换入 | side files written into the working directory are swapped in atomically together with this commit
     int perr = atomic_exchange(&g_save_poison, 0);
     if (perr) {                                                         // 本事务有写失败：拒绝提交、丢弃工作目录 | a write failed in this transaction: refuse the commit, discard the working directory

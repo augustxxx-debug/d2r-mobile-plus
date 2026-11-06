@@ -12,6 +12,7 @@
 //   符文 / 宝石是简单物品，同种的字节一样，不能像编年史那样只认「在不在」；但位流前 8 字节带着位置（方式 / x / y / 页），背包同一格同一时刻只有一件，
 //   所以按整串位流（含背包格位）只在本角色档里找：
 //   收进囊：这次要提交的角色档里已没有那一串 → 并进盘上状态；放到背包：角色档里已有放好的那一串 → 从盘上状态去掉，之后才发 0x63（0x63 之后的事全在原版存档里）。
+//   放出的那颗按新物品 id 跟着走（B204，pouch_track / dm_pouch_proof.h）：在玩家物品栏 → 在本角色档里找它此刻那一串；进了共享仓库 / 高级仓库 → 在共享仓库档里找；卖掉 / 丢地 / 用掉 → 离开后第二次提交并进。原先只找放出时那一串，拖走 / 卖掉 / 丢地 / 挪格后永远证明不了，侧文件一直留着它 = 复制。
 //   都在提交前钩子里判，侧文件与角色档同一次提交原子换入：杀进程只会回到某次提交的一致状态，不丢、不复制。没证明的留着等下一次存盘（服务端拍每 2 秒再请一次）。
 //   开箱放之前先等收进囊的都证明完（同一件不会同时挂着收和放）。
 // 界面：物品栏面板里我们自己的控件（布局 dm/ios/tools/pouch_layout.py）：TouchPouch / TouchStore 两个按钮发 ClosePanel:TouchPouch / TouchStore（空操作，这里当信号收）。
@@ -33,6 +34,7 @@
 //   runes / gems are simple items and same-kind bytes are identical, so "present or not" alone cannot be used as with the chronicle; but the first 8 bytes of the bitstream carry the position (placement / x / y / page), and one inventory cell holds only one item at a time,
 //   so search for the whole bitstream (including the inventory cell position) in this character's save only:
 //   stow into the pouch: the character save about to be committed no longer contains that bitstream -> merge into the on-disk state; release to the inventory: the character save already contains the placed bitstream -> remove from the on-disk state, and only then send 0x63 (everything after 0x63 lives in the original save).
+//   A released rune is followed by its new item id (B204, pouch_track / dm_pouch_proof.h): in the player's container -> its current bitstream in this character's save; in the shared / advanced stash -> in the shared stash save; sold / dropped / used -> merged from the second commit after it left. Before, only the release-time bitstream was searched: dragged away / sold / dropped / moved, it was never proven and the side file kept it = duplication.
 //   All decided in the pre-commit hook; the sidecar file and the character save are swapped in atomically in the same commit: killing the process only returns to the consistent state of some commit, nothing lost, nothing duplicated. Unproven entries wait for the next save (the server tick requests one again every 2 seconds).
 //   Before releasing on stash open, wait until everything stowed into the pouch is proven (the same item is never pending both stow and release).
 // UI: our own widgets in the inventory panel (layout dm/ios/tools/pouch_layout.py): the two buttons TouchPouch / TouchStore send ClosePanel:TouchPouch / TouchStore (a no-op, received here as a signal).
@@ -41,6 +43,12 @@
 // Threads: dm_pouch_step on the game main thread (dm_world.c); UI message callback dm_pouch_on_uimsg (diag.c); stow / release / system notices in the server tick dm_pouch_srv_tick (hud_tick in diag.c);
 // persistence in the pre-commit hook pouch_hook on the disk-write thread (start of Commit in hle_fs.c, [2]).
 #include "dm_widget.h"
+#include "dm_exitwait.h"
+#include "dm_pouch_name.h"
+#include "dm_pouch_proof.h"
+#include "dm_bag_layout.h"
+#include "dm_input.h"
+#include "dm_store_nav.h"
 #include "hle.h"
 #include "dm_i18n.h"
 #include <stdatomic.h>
@@ -95,9 +103,13 @@ static uint64_t bag_item(uint64_t pl, uint32_t id) {
 #define UMAX 1024
 #define UBYTES 64          // 符文 / 宝石是简单物品，位流很短（宿主实测：十几字节） | Runes / gems are simple items with very short bitstreams (measured on the host: a dozen or so bytes)
 typedef struct { uint32_t code; uint16_t len; uint8_t bits[UBYTES]; } uitem;
-typedef struct { int put; uitem it; uint16_t plen; uint8_t pb[UBYTES]; uint32_t nid; } upend;   // put：收进囊（证据 pb = 背包里那一串，要「没有」）；否则放到背包（pb = 放好后那一串，要「有」，nid = 新物品 id） | put: stow into the pouch (evidence pb = that bitstream in the inventory, must be "absent"); otherwise release to the inventory (pb = the bitstream after placement, must be "present", nid = new item id)
-static uitem g_u[UMAX], g_ud[UMAX]; static int g_nu, g_nud, g_uload; static char g_uchar[64];   // g_u = 囊里（界面看的）；g_ud = 盘上状态（侧文件写它） | g_u = in the pouch (what the UI sees); g_ud = on-disk state (what the sidecar file writes)
+typedef struct { int put; uitem it; uint16_t plen; uint8_t pb[UBYTES]; uint32_t nid; uint8_t where, gone, inbag; uint64_t h0; uint32_t sess; } upend;   // 放出的跟踪（B204，pouch_track）：where 0 = 证据在本角色档 / 1 = 在共享仓库档，gone = 已不在任何容器、h0 / sess = 离开时角色档指纹 / 局代号（终审 P1），inbag = 在背包页（才发 0x63）；put：收进囊（证据 pb = 背包里那一串，要「没有」）；否则放到背包（pb = 放好后那一串，要「有」，nid = 新物品 id） | put: stow into the pouch (evidence pb = that bitstream in the inventory, must be "absent"); otherwise release to the inventory (pb = the bitstream after placement, must be "present", nid = new item id)
+static uitem g_u[UMAX], g_ud[UMAX]; static int g_nu, g_nud, g_uload; static char g_uchar[64], g_ustash[64];   // g_ustash：共享仓库名（放出的那颗进了共享仓库时在它的档里找） | shared stash name (searched when a released rune went into the shared stash)
+   // g_u = 囊里（界面看的）；g_ud = 盘上状态（侧文件写它） | g_u = in the pouch (what the UI sees); g_ud = on-disk state (what the sidecar file writes)
 static upend g_up[256]; static int g_nup, g_udirty;   // g_udirty：盘上状态 g_ud 变了但侧文件还没写成（上次写失败），下次提交再写 | g_udirty: the on-disk state g_ud changed but the side file has not been written successfully yet (the last write failed); it is written again at the next commit
+static _Atomic uint32_t g_sess; static _Atomic int g_live, g_kept, g_gone_save;   // g_gone_save：看到离开、要马上请一次存盘（缩小「卖 / 丢后很快退局」留在囊里的窗口，交叉审 r2 F1） | seen leaving: request a save at once (narrows the quick-exit window, review r2 F1)   // 局代号（进局加一）/ 在局内 / 跨局遗留、保守留在囊里的离开条目累计（终审 P1） | run number (incremented on entry) / in a run / gone entries left over from a previous run and kept in the pouch (final review P1)
+int dm_pouch_kept(void) { return atomic_load(&g_kept); }
+uint64_t dm_fnv64(const uint8_t *d, size_t n); int dm_ser_state(void);   // dm_pages.c
 static uint32_t g_ready[64]; static int g_nready;   // 已证明放进背包、等发 0x63 的新物品 id（钩子写、服务端拍取） | New item ids proven to be in the inventory and waiting for 0x63 to be sent (written by the hook, taken by the server tick)
 static pthread_mutex_t g_umu = PTHREAD_MUTEX_INITIALIZER;   // 服务端拍与写盘线程（提交前钩子）都碰；界面读清单也拿它 | Touched by both the server tick and the disk-write thread (pre-commit hook); the UI also takes it when reading the list
 static _Atomic int g_ucount, g_ugen;   // 囊里件数 / 内容一变就加一（界面读） | Item count in the pouch / incremented by one whenever the contents change (read by the UI)
@@ -130,17 +142,26 @@ static int char_blob(const char *wd, dm_blob *o) {   // 本角色档 <角色>/<�
 static void pouch_hook(const char *wd) {   // 提交前钩子（写盘线程，持存档锁） | Pre-commit hook (disk-write thread, holding the save lock)
     pthread_mutex_lock(&g_umu);
     if (g_uload && (g_nup || g_udirty)) {
-        dm_blob bl; int hb = char_blob(wd, &bl), done = 0; uint64_t cno = dm_fs_commit_count() + 1;
+        dm_blob bl; int hb = char_blob(wd, &bl), done = 0; uint64_t cno = dm_fs_commit_count() + 1, fp = hb ? dm_fnv64(bl.d, bl.n) : 0; uint32_t ss = atomic_load(&g_sess); int live = atomic_load(&g_live);
+        int need_s = 0; for (int i = 0; i < g_nup; i++) need_s |= !g_up[i].put && !g_up[i].gone && g_up[i].where;   // 只有跟到共享仓库 / 高级仓库的才读共享仓库档（审计 F8） | read the shared stash save only when something was followed there (audit F8)
+        dm_blob sb[2]; int ns = 0; if (need_s && g_ustash[0]) { char sp[1200]; const char *fm[2] = { "%s/%s/%s.d2i", "%s/%s.d2i" };   // 共享仓库档（同 dm_save_blobs 的两处位置） | the shared stash save (the same two places as dm_save_blobs)
+            for (int q = 0; q < 2; q++) { if (q) snprintf(sp, sizeof sp, fm[1], wd, g_ustash); else snprintf(sp, sizeof sp, fm[0], wd, g_ustash, g_ustash);
+                FILE *f = fopen(sp, "rb"); if (!f) continue; fseek(f, 0, SEEK_END); long L = ftell(f); fseek(f, 0, SEEK_SET); uint8_t *m = L > 0 && L < (16 << 20) ? malloc((size_t)L) : NULL; size_t got = m ? fread(m, 1, (size_t)L, f) : 0; fclose(f);
+                if (got) { sb[ns].d = m; sb[ns].n = got; ns++; } else free(m); } }
         if (!hb) LOG("【红】百宝囊：提交前核对 #%llu —— 读不到 %s 的角色档，这次不判", (unsigned long long)cno, g_uchar);
-        for (int i = 0; hb && i < g_nup; ) { upend *p = &g_up[i]; int have = dm_memfind(bl.d, bl.n, p->pb, p->plen) != NULL;
-            if (p->put == have) { i++; continue; }
+        if (need_s && !ns) LOG("【红】百宝囊：提交前核对 #%llu —— 有跟到共享仓库的放出，但读不到共享仓库档（%s），这几条这次不判（审计 F5）", (unsigned long long)cno, g_ustash[0] ? g_ustash : "没有名字");
+        for (int i = 0; hb && i < g_nup; ) { upend *p = &g_up[i]; int have = 0;
+            if (p->put || !p->where) have = dm_memfind(bl.d, bl.n, p->pb, p->plen) != NULL; else for (int q = 0; q < ns && !have; q++) have = dm_memfind(sb[q].d, sb[q].n, p->pb, p->plen) != NULL;
+            int how = dm_pouch_proven(p->put, have, p->gone, p->gone && p->h0 && live && p->sess == ss && fp != p->h0);   // 离开：本局内、角色档已不是离开时那份（终审 P1） | gone: in this run, and the character save is no longer the one at leaving (final review P1)
+            if (!how) { i++; continue; }
             if (p->put) { if (g_nud < UMAX) g_ud[g_nud++] = p->it; else LOG("【红】百宝囊：盘上状态已满 %d 件", UMAX); }
             else { int k = -1; for (int j = 0; j < g_nud && k < 0; j++) if (g_ud[j].len == p->it.len && !memcmp(g_ud[j].bits, p->it.bits, p->it.len)) k = j;
                 if (k >= 0) g_ud[k] = g_ud[--g_nud]; else LOG("【红】百宝囊：放到背包的 %.3s 在盘上状态里找不到", (const char *)&p->it.code);
-                if (g_nready < 64) g_ready[g_nready++] = p->nid; }
-            LOG("百宝囊：提交前核对 #%llu —— %.3s %s → 并进盘上状态", (unsigned long long)cno, (const char *)&p->it.code, p->put ? "收进囊：角色档里已没有背包那一串" : "放到背包：角色档里已有放好的那一串");
+                if (how == 1 && p->inbag && g_nready < 64) g_ready[g_nready++] = p->nid; }   // 只有还在背包页的才发「移到仓库」（拖去别处 / 离开了的不发） | only one still on the bag page gets "move to stash" (not one taken elsewhere / gone)
+            if (how == 2) LOG("百宝囊：提交前核对 #%llu —— %.3s 放到背包：那颗已不在任何容器（卖掉 / 丢地 / 用掉），本局内角色档已不是离开时那份 → 并进盘上状态（B204）", (unsigned long long)cno, (const char *)&p->it.code);
+            else LOG("百宝囊：提交前核对 #%llu —— %.3s %s → 并进盘上状态", (unsigned long long)cno, (const char *)&p->it.code, p->put ? "收进囊：角色档里已没有背包那一串" : p->where ? "放到背包：共享仓库档里已有它此刻那一串（B204）" : "放到背包：角色档里已有它此刻那一串");
             g_up[i] = g_up[--g_nup]; done++; }
-        free(bl.d);
+        free(bl.d); for (int q = 0; q < ns; q++) free(sb[q].d);
         // 侧文件没写成：同编年史（dm_vault.c vault_pre_commit）——这次提交拒绝、盘上状态标脏，服务端拍接着请存盘，写成为止
         // The side file failed to write: same as the Chronicle (dm_vault.c vault_pre_commit) -- this commit is refused, the on-disk state is marked dirty, and the server tick keeps requesting a save until the write succeeds
         if (done || g_udirty) { if (pouch_save(wd) == 0) { LOG("百宝囊：侧文件随这次提交落盘（盘上 %d 件、囊里 %d 件、还有 %d 条待证明）", g_nud, g_nu, g_nup); g_udirty = 0; }
@@ -148,7 +169,7 @@ static void pouch_hook(const char *wd) {   // 提交前钩子（写盘线程，�
     }
     pthread_mutex_unlock(&g_umu);
 }
-__attribute__((constructor)) static void pouch_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[2] = pouch_hook; }
+__attribute__((constructor)) static void pouch_hook_install(void) { extern void (*g_dm_pre_commit_hook[6])(const char *); g_dm_pre_commit_hook[2] = pouch_hook; }
 
 // 收进囊：背包里的这件符文 / 宝石（服务端物品）→ 写位流 → 摘下 → 通知 → 释放；记一条「收」（持 g_umu 调）
 // Stow into the pouch: this rune / gem in the inventory (server item) -> write bitstream -> remove -> notify -> free; record one "stow" entry (called holding g_umu)
@@ -180,7 +201,7 @@ static int pouch_take(uint8_t *b, uint64_t G, uint64_t player) {
     if (!*(uint64_t *)(nd + 0xa0)) { ((void (*)(uint64_t, uint64_t))(b + 0x658be0))(G, nu); LOG("【红】百宝囊：%.3s 放进背包没成（格 %u,%u），留在囊里", (const char *)&u.code, fx, fy); return 0; }
     ((void (*)(uint64_t, uint64_t, uint64_t, int, int, int, int, int, uint64_t))(b + 0x642f70))(G, player, nu, 1, 2, 0, 0, 0, (uint64_t)(fx & 0xffff) | (uint64_t)fy << 16);
     uint8_t buf[1024]; int len = dm_item_write(b, nu, buf);
-    upend *p = &g_up[g_nup++]; memset(p, 0, sizeof *p); p->put = 0; p->it = u; p->nid = *(uint32_t *)(nu + 8);
+    upend *p = &g_up[g_nup++]; memset(p, 0, sizeof *p); p->put = 0; p->inbag = 1; p->it = u; p->nid = *(uint32_t *)(nu + 8);
     if (len > 0 && len <= UBYTES) { p->plen = (uint16_t)len; memcpy(p->pb, buf, (size_t)len); } else { p->plen = u.len; memcpy(p->pb, u.bits, u.len); LOG("【红】百宝囊：放好后的位流 %d 字节，用囊里那串作证据", len); }
     g_nu--; pouch_pub(); LOG("百宝囊：%.3s 放到背包格 %u,%u（新 id %u）→ 囊里还剩 %d 件，等落盘证明后进高级仓库", (const char *)&u.code, fx, fy, p->nid, g_nu);
     return 1;
@@ -193,6 +214,38 @@ static uint32_t adv_stash_unit(uint64_t pl) {   // 玩家自己的高级仓库�
 static void move_to_stash(uint8_t *b, uint64_t G, uint64_t player, uint32_t id, uint32_t unit) {   // 原版「移到仓库」0x63：服务端代发，照收包函数 0x632510 的做法调用期间 [G+0x19050] = 1（同 diag.c DM_TEST_GIVE_INV） | The original game's "move to stash" 0x63: sent by the server on the player's behalf; following what the packet receive function 0x632510 does, [G+0x19050] = 1 during the call (same as DM_TEST_GIVE_INV in diag.c)
     uint8_t pk[25] = { 0x63 }; memcpy(pk + 5, &id, 4); memcpy(pk + 9, &unit, 4);
     *(uint32_t *)(G + 0x19050) = 1; ((void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(b + 0x6e5b40))(G, player, pk, 25); *(uint32_t *)(G + 0x19050) = 0;
+}
+
+// ---- 放出的那颗跟到哪（B204，规则见 dm_pouch_proof.h）：服务端拍里按新物品 id 找它此刻在哪，把证据换成它此刻那一串、记下该到哪份存档里找。持 g_umu 调。
+//   玩家自己的物品栏（方式 0：背包 / 个人仓库页 / 方块）→ 本角色档；附属单位（共享仓库页 / 高级仓库，物品栏 +0x68 那张表）的物品栏 → 共享仓库档；
+//   在手上（服务端光标）→ 不动（还会落到别处）；都不在（卖掉 / 丢地 / 镶进孔里 / 用掉）→ 离开，记下这时的提交次数。离开了就不再跟（同一 id 不会回来）。
+// ---- Follow a released rune (B204, rules in dm_pouch_proof.h): in the server tick find where the new item id is right now, switch the evidence to its current bitstream and note which save to search. Called holding g_umu.
+//   The player's own item container (mode 0: inventory / personal stash page / cube) -> this character's save; an attached unit's container (shared stash tabs / advanced stash, the table at item container +0x68) -> the shared stash save;
+//   in hand (server cursor) -> unchanged (it will land somewhere); none of these (sold / dropped / socketed / used) -> gone, noting the commit count. Once gone it is no longer followed (the same id does not come back).
+static uint64_t list_item(uint64_t inv, uint32_t id) {
+    for (uint64_t it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0, k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break;
+        if (*(uint32_t *)(it + 8) == id && *(uint32_t *)(it + 0xc) == 0) return it; it = *(uint64_t *)(d + 0xb0); }
+    return 0;
+}
+static void pouch_track(uint8_t *b, uint64_t G, uint64_t player) {
+    uint64_t inv = *(uint64_t *)(player + 0x90); if (!inv || *(uint32_t *)inv != 0x01020304) return;
+    uint64_t held = *(uint64_t *)(inv + 0x40);
+    for (int i = 0; i < g_nup; i++) { upend *p = &g_up[i]; if (p->put || p->gone || !p->nid) continue;
+        if (held && *(uint32_t *)(held + 8) == p->nid) continue;
+        uint64_t it = list_item(inv, p->nid); int where = 0;
+        for (uint64_t en = it ? 0 : *(uint64_t *)(inv + 0x68), n = 0; en && n < 16 && !it; en = *(uint64_t *)(en + 0x10), n++) {
+            uint32_t ui = *(uint32_t *)en; uint64_t u = *(uint64_t *)(G + 0x2230 + 8 * (ui & 0x7f)); while (u && *(uint32_t *)(u + 8) != ui) u = *(uint64_t *)(u + 0x158);
+            if (u && (it = list_item(*(uint64_t *)(u + 0x90), p->nid))) where = 1; }
+        if (!it) { int st = dm_ser_state(); if (st == 1) continue;   // 有在途存盘（已序列化、角色档还没写完）：等它写完再记，离开前那份才唯一（同 dm_pages.c 翻页顺延） | a save in flight: wait until it is written so the pre-leaving copy is unique (as the page-turn deferral in dm_pages.c)
+            dm_blob cb; const char *wd = dm_save_workdir(); uint64_t h = st == 0 && wd && char_blob(wd, &cb) ? dm_fnv64(cb.d, cb.n) : 0; if (h) free(cb.d);
+            p->gone = 1; p->h0 = h; p->sess = atomic_load(&g_sess); if (h) atomic_store(&g_gone_save, 1);
+            if (h) LOG("百宝囊：放出的 %.3s（id %u）已不在任何容器（卖掉 / 丢地 / 用掉）→ 本局内角色档变了（序列化晚于离开）才并进（B204）", (const char *)&p->it.code, p->nid);
+            else LOG("【红】百宝囊：放出的 %.3s（id %u）已不在任何容器，但拿不到离开时的角色档指纹（在途存盘过久 / 读不到）→ 不落定，退局后留在囊里（B204）", (const char *)&p->it.code, p->nid);
+            continue; }
+        uint64_t d = *(uint64_t *)(it + 0x10); int inbag = !where && d && *(uint8_t *)(d + 0x55) == 0;
+        uint8_t buf[1024]; int len = dm_item_write(b, it, buf); if (len <= 0 || len > UBYTES) continue;
+        if (where != p->where || len != p->plen || memcmp(buf, p->pb, (size_t)len)) { LOG("百宝囊：放出的 %.3s（id %u）现在在%s → 换成它此刻那一串作证据（B204）", (const char *)&p->it.code, p->nid, where ? "共享仓库 / 高级仓库" : inbag ? "背包" : "个人仓库页 / 方块"); }
+        p->where = (uint8_t)where; p->inbag = (uint8_t)inbag; p->plen = (uint16_t)len; memcpy(p->pb, buf, (size_t)len); }
 }
 
 // ---- 仓库页里新落下的符文 / 宝石 / 材料自动转进高级仓库（珍宝匣）：玩家把它们拖进个人页 / 共享页的格子、或按住确认键移到当前页，落下后由这里代发原版「移到仓库」。
@@ -287,6 +340,8 @@ static uint32_t g_gnd[128]; static int g_ngnd;   // 在地上见过的符文 / �
 static int gnd_has(uint32_t id) { for (int i = 0; i < 128; i++) if (g_gnd[i] == id) return 1; return 0; }
 static void gnd_add(uint32_t id) { if (!gnd_has(id)) g_gnd[g_ngnd++ % 128] = id; }
 static void gnd_del(uint32_t id) { for (int i = 0; i < 128; i++) if (g_gnd[i] == id) g_gnd[i] = 0; }
+#include "dm_pouch_own.h"
+static dm_pouch_own g_own;   // 在玩家物品栏里见过的符文 / 宝石 id：丢到地上的不自动捡回（B171，dm_pouch_own.h） | rune / gem ids seen in the player's inventory: not auto-picked back once dropped (B171)
 static void auto_pick(uint64_t pl, uint64_t fr) {
     if (!adv_stash_unit(pl)) return;   // 没有高级仓库的角色（毁灭之王类型只有 3 页共享、经典类型都没有，宿主逐个载入存档实测）：不捡、不收 | Characters without an advanced stash (the Lord of Destruction type has only 3 shared pages, the classic type has none; measured on the host by loading saves one by one): no pickup, no stow
     for (int i = 0; i < 16; i++) { pick *p = &g_pk[i]; if (!p->st) continue; uint64_t it = bag_item(pl, p->id);
@@ -294,6 +349,9 @@ static void auto_pick(uint64_t pl, uint64_t fr) {
         else if (!it) p->st = 0;
         else if (fr - p->fr > 120) { p->st = 0; LOG("【红】百宝囊：%.3s（id %u）交服务端 2 秒还在背包", (const char *)&p->code, p->id); } }
     static uint64_t next; if (fr < next) return; next = fr + 10;
+    {   // 物品栏里的符文 / 宝石都记进「自己的」名单（B171：实测手柄丢弃一枚 El，下一拍自动捡回收进囊，玩家看来像丢不掉） | record every rune / gem in the inventory as "own" (B171: a dropped El was auto-picked back on the next tick and stowed, so to the player it looked undroppable)
+        uint64_t inv = *(uint64_t *)(pl + 0x90), it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0;
+        for (int k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; if (is_rune_gem(it)) dm_pouch_own_add(&g_own, *(uint32_t *)(it + 8), fr); it = *(uint64_t *)(d + 0xb0); } }
     {   // 背包里有在地上见过的符文 / 宝石 → 交服务端收（储藏箱旁直接进高级仓库，别处进囊） | The inventory contains a rune / gem that was seen on the ground -> hand it to the server to stow (next to the stash straight into the advanced stash, elsewhere into the pouch)
         uint64_t inv = *(uint64_t *)(pl + 0x90), it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0;
         for (int k = 0; it && k < 2048; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; uint32_t id = *(uint32_t *)(it + 8);
@@ -310,12 +368,16 @@ static void auto_pick(uint64_t pl, uint64_t fr) {
           uint32_t c = item_code(it); uint64_t ip = *(uint64_t *)(it + 0x38); if (*(uint32_t *)(it + 0xc) != 3 || !ip || memcmp(&c, code, strlen(code))) continue;
           uint32_t id = *(uint32_t *)(it + 8), one = 1; int x = *(int32_t *)(ip + 0x10), y = *(int32_t *)(ip + 0x14); uint8_t pk[17] = { 0x16 }; memcpy(pk + 1, &id, 4); memcpy(pk + 5, &x, 4); memcpy(pk + 9, &y, 4); memcpy(pk + 13, &one, 4);
           ((void (*)(const uint8_t *, int))(B + 0x2ceab0))(pk, 17); LOG("测试 DM_TEST_PICK：帧 %llu 替玩家捡地上 %s（id %u）", (unsigned long long)fr, code, id); at = 0; break; } }
+    dm_pouch_own_sweep(&g_own, fr);   // 既不在物品栏也不在地上 5 秒的删掉（换区域 / 被捡走）| drop entries seen nowhere for 5 s
     uint32_t want = 0, wcode = 0; int wx = 0, wy = 0;
     for (int k = 0; k < 128; k++) for (uint64_t it = *(uint64_t *)(B + 0x2d603a0 + 4 * 0x400 + k * 8); it; it = *(uint64_t *)(it + 0x158)) {
         if (*(uint32_t *)(it + 0xc) != 3 || !is_rune_gem(it)) continue;   // 地上的符文 / 宝石：都记下 | Runes / gems on the ground: record them all
         uint32_t id = *(uint32_t *)(it + 8); gnd_add(id);
-        uint64_t ip = *(uint64_t *)(it + 0x38); if (want || !ip) continue; int x = *(int32_t *)(ip + 0x10), y = *(int32_t *)(ip + 0x14);
+        uint64_t ip = *(uint64_t *)(it + 0x38); if (!ip) continue; int x = *(int32_t *)(ip + 0x10), y = *(int32_t *)(ip + 0x14);
+        if (dm_pouch_own_has(&g_own, id)) { dm_pouch_own_touch(&g_own, id, fr); if (dm_pouch_own_far(x - px, y - py)) { dm_pouch_own_del(&g_own, id); LOG("百宝囊：玩家离开自己丢的 %.3s（id %u）%d 格外，恢复自动捡（B171）", (const char *)&(uint32_t){ item_code(it) }, id, DM_POUCH_OWN_LEAVE); } }
+        if (want) continue;
         if (abs(x - px) > PICK_R || abs(y - py) > PICK_R || !auto_ok(it)) continue;
+        if (dm_pouch_own_has(&g_own, id)) { static uint32_t lg_id; if (lg_id != id) { lg_id = id; LOG("百宝囊：地上 %.3s（id %u）是玩家自己丢的，不自动捡（B171）", (const char *)&(uint32_t){ item_code(it) }, id); } continue; }
         { int dm_lootfilter_hidden(uint8_t *, uint64_t); if (dm_lootfilter_hidden(B, it)) continue; }   // 被原版掉落过滤藏着的不自动捡（现行规则不藏符文宝石，守的是以后改规则） | items hidden by the game's loot filter are not auto-picked (current rules do not hide runes or gems; this guards future rule changes)
         int seen = 0; for (int i = 0; i < 16; i++) if (g_pk[i].id == id && (g_pk[i].st || fr - g_pk[i].fr < 120)) seen = 1;
         if (!seen) { want = id; wx = x; wy = y; wcode = item_code(it); }
@@ -428,7 +490,7 @@ static void tip_show(uint64_t root, int on) {
     pthread_mutex_lock(&g_umu); for (int i = 0; i < g_nu; i++) { int j = 0; while (j < nc && cc[j] != g_u[i].code) j++; if (j == nc) { if (nc == 64) continue; cc[nc] = g_u[i].code; cn[nc++] = 0; } cn[j]++; } pthread_mutex_unlock(&g_umu);
     char s[1024]; int k = snprintf(s, sizeof s, "%s", dm_str(B, "dmPouchTitle"));
     if (!nc) k += snprintf(s + k, sizeof s - k, "\n%s", dm_str(B, "dmPouchEmpty"));
-    for (int i = 0; i < nc && k < (int)sizeof s - 64; i++) k += snprintf(s + k, sizeof s - k, "\n%s ×%d", str_of(cc[i]), cn[i]);
+    for (int i = 0; i < nc && k < (int)sizeof s - 64; i++) { char nm[256]; dm_pouch_clean_name(str_of(cc[i]), nm, sizeof nm); k += snprintf(s + k, sizeof s - k, "\n%s ×%d", nm, cn[i]); }   // 高号符文名带颜色码 / 换行 / 框线，先清洗成单行「名字 #号」 | High-rune names carry colour codes / newlines / frame lines: clean them to one "name #N" line first
     w_text(tb, s); g_tip = 1;
     int32_t *br = (int32_t *)(box + 0x70), w = *(int32_t *)(tb + 0x78), h = *(int32_t *)(tb + 0x7c); if (w <= 0 || h <= 0) { w = 500; h = 300; }
     int x = br[0] + br[2] / 2 - w / 2, y = br[1] - h - 70; if (x < 40) x = 40;
@@ -441,22 +503,153 @@ int dm_pouch_tip_gate(int x, int y) {
     if (box && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)box + 0x48))(box, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32)) & 1)) return 0;
     tip_show(root, 0); LOG("百宝囊：点了清单外 → 收起清单，这一下不做别的"); return 1;
 }
+// ---- 「存放」按钮进手柄焦点链（照大背包页签的做法，dm_bag.c pad_nav）
+// 两种输入模式叠同一份布局（pouch_layout.py 写进手柄版物品栏布局），手柄模式下按钮本来就在屏上，只是原版焦点导航走不到我们加的控件。
+// 这里只接两个方向（其余照常交原版）：网格最下一行、光标 x 在按钮水平范围 → ↓ 接管，按下把原版光标放到按钮中心；
+// 悬停在按钮上 → ↑ 接管，按下回网格最下一行（进来前那一格优先，没有记录就回按钮正上方那格、列夹在网格内）。
+// A / ← / → / B 不接管：按钮被悬停时原版 A 照常发它的 onClickMessage（ClosePanel:TouchStore，dm_pouch_on_uimsg 当信号收）。
+// 控件每帧按名字现找、不留控件地址；缓存的两块矩形只是屏幕坐标，视口大小一变就作废重量。
+// ---- Controller focus chain for the 「存放」(Deposit) button (same approach as pad_nav for the bag tabs in dm_bag.c)
+// Both input modes stack the same layout (pouch_layout.py writes into the controller inventory layout), so in controller mode the
+// button is already on screen; the original focus navigation just cannot reach widgets we add.
+// Only two directions are taken over (the rest stays with the original): grid's last row with the cursor x within the button's
+// horizontal range -> Down takes over and puts the original cursor on the button centre; on the button -> Up takes over and
+// returns to the grid's last row (the cell we came from wins; with no record, the cell above the button, column clamped inside).
+// A / left / right / B are not taken over: while the button is hovered the original A sends its onClickMessage
+// (ClosePanel:TouchStore, received as a signal by dm_pouch_on_uimsg).
+// Widgets are found by name every frame and no widget address is kept; the two cached rects are screen coordinates only and are
+// invalidated when the viewport size changes.
+int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t mask);
+int dm_ui_hover_now(int x, int y); int dm_ui_modal_active(uint64_t root);
+#define HIT(w, px, py) (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)(w) + 0x48))((w), (uint64_t)(uint32_t)(px) | ((uint64_t)(uint32_t)(py) << 32)) & 1)
+static dm_store_grid g_sgrid; static dm_store_rect g_sbtn; static int g_sgrid_ok, g_sbtn_ok, g_svw, g_svh;
+static int g_sprev_ok, g_sprev_x, g_sprev_y;   // 进来前网格上那一格 | the grid cell we came from
+static int panel_up(uint64_t w) { return w && *(uint8_t *)(w + 0x50) && *(uint8_t *)(w + 0x51); }
+
+// 网格屏幕矩形：光标在网格上时用原版命中函数往四边二分量（同 dm_cursor.c dm_ui_bag_point）；格距 = 宽 / 列数，行数 = 高 / 格距。
+// Grid screen rect: with the cursor on the grid, binary-search the four edges with the original hit test (same as dm_ui_bag_point
+// in dm_cursor.c); cell pitch = width / column count, rows = height / cell pitch.
+static int store_grid_rect(uint64_t grid, int px, int py) {
+    int vw = *(int32_t *)(B + 0x211da38), vh = *(int32_t *)(B + 0x211da3c);
+    if (px < 0 || py < 0 || px >= vw || py >= vh || !HIT(grid, px, py)) return 0;
+    int a, b, x0, x1, y0, y1;
+    for (a = 0, b = px; a < b;) { int mid = (a + b) / 2; if (HIT(grid, mid, py)) b = mid; else a = mid + 1; } x0 = a;
+    for (a = px, b = vw - 1; a < b;) { int mid = (a + b + 1) / 2; if (HIT(grid, mid, py)) a = mid; else b = mid - 1; } x1 = a;
+    for (a = 0, b = py; a < b;) { int mid = (a + b) / 2; if (HIT(grid, px, mid)) b = mid; else a = mid + 1; } y0 = a;
+    for (a = py, b = vh - 1; a < b;) { int mid = (a + b + 1) / 2; if (HIT(grid, px, mid)) a = mid; else b = mid - 1; } y1 = a;
+    int w = x1 - x0 + 1, h = y1 - y0 + 1, cell = (w + DM_BAG_COLS / 2) / DM_BAG_COLS; if (cell < 1) return 0;   // 大背包网格列数（布局 cellCount）| the big-bag grid's column count (layout cellCount)
+    g_sgrid = (dm_store_grid){ { x0, y0, w, h }, cell, (h + cell / 2) / cell }; g_sgrid_ok = 1; return 1;
+}
+
+// 按钮屏幕矩形：布局单位（1 格 = 98，见 dm_bag_layout.h）按网格量出的比例换算到屏幕，再用按钮自己的命中函数往四边二分量准。
+// 光标已经在按钮上就直接从光标量。量不到（不在屏上 / 布局变了）返回 0，调用处就不接管。
+// Button screen rect: layout units (1 cell = 98, see dm_bag_layout.h) converted to the screen with the scale measured from the
+// grid, then the four edges refined with the button's own hit test. When the cursor is already on the button, measure from it.
+// Returns 0 when it cannot be measured (not on screen / layout changed) and the caller then does not take over.
+static int store_btn_rect_to(uint64_t btn, const dm_store_grid *g, int px, int py, dm_store_rect *out) {
+    int vw = *(int32_t *)(B + 0x211da38), vh = *(int32_t *)(B + 0x211da3c), sx, sy;
+    if (HIT(btn, px, py)) { sx = px; sy = py; }
+    else {
+        if (!g || g->cell <= 0) return 0;
+        int32_t *r = (int32_t *)(btn + 0x70); double u = g->cell / (double)DM_STORE_CELL_UNITS;   // 1 面板单位 = u 像素 | 1 panel unit = u pixels
+        sx = g->r.x + (int)((r[0] + r[2] / 2 - DM_BAG_GRID_X) * u);
+        sy = g->r.y + (int)((r[1] + 20 - DM_BAG_GRID_Y) * u);
+        if (sx < 0 || sy < 0 || sx >= vw || sy >= vh) return 0;
+        int st = (int)(2 * u); if (st < 1) st = 1; if (st > 4) st = 4;   // 按钮高度从布局推不出，竖着探一小段 | the height is not in the layout, probe a short vertical span
+        int got = 0; for (int y = sy; y < sy + (int)(90 * u) && y < vh; y += st) if (HIT(btn, sx, y)) { sy = y; got = 1; break; }
+        if (!got) return 0;
+    }
+    int a, b, x0, x1, y0, y1;
+    for (a = 0, b = sx; a < b;) { int mid = (a + b) / 2; if (HIT(btn, mid, sy)) b = mid; else a = mid + 1; } x0 = a;
+    for (a = sx, b = vw - 1; a < b;) { int mid = (a + b + 1) / 2; if (HIT(btn, mid, sy)) a = mid; else b = mid - 1; } x1 = a;
+    for (a = 0, b = sy; a < b;) { int mid = (a + b) / 2; if (HIT(btn, sx, mid)) b = mid; else a = mid + 1; } y0 = a;
+    for (a = sy, b = vh - 1; a < b;) { int mid = (a + b + 1) / 2; if (HIT(btn, sx, mid)) a = mid; else b = mid - 1; } y1 = a;
+    *out = (dm_store_rect){ x0, y0, x1 - x0 + 1, y1 - y0 + 1 }; return 1;
+}
+static int store_btn_rect(uint64_t btn, const dm_store_grid *g, int px, int py) { if (!store_btn_rect_to(btn, g, px, py, &g_sbtn)) return 0; g_sbtn_ok = 1; return 1; }
+
+int dm_bag_pad_last(int *x, int *y);   // dm_bag.c
+static void store_pad_nav(uint64_t root, uint64_t inv, uint64_t boxw) {
+    if (!root || !panel_up(inv)) return;
+    uint64_t grid = find_w(inv, "grid", 1), btn = find_w(boxw, "TouchStore", 1);
+    uint64_t fm = *(uint64_t *)(root + 0xd0), hov = fm ? *(uint64_t *)(fm + 0x178) : 0;
+    if (!grid || !btn || !hov) return;
+    int vw = *(int32_t *)(B + 0x211da38), vh = *(int32_t *)(B + 0x211da3c);
+    if (vw != g_svw || vh != g_svh) { g_svw = vw; g_svh = vh; g_sgrid_ok = g_sbtn_ok = g_sprev_ok = 0; }
+    int cx = *(int32_t *)(B + 0x2d128f8), cy = *(int32_t *)(B + 0x2d128fc);
+    if (hov == grid && HIT(grid, cx, cy)) {
+        if (!store_grid_rect(grid, cx, cy)) return;
+        if (dm_store_row(&g_sgrid, cy) != g_sgrid.rows - 1) return;   // 不在最下一行：↓ 交原版，不量按钮 | not the last row: Down stays with the original, do not measure the button
+        if (!store_btn_rect(btn, &g_sgrid, cx, cy)) return;
+        int x, y; if (!dm_store_down_target(&g_sgrid, &g_sbtn, cx, cy, &x, &y)) return;   // x 不在按钮范围：↓ 交原版 | x outside the button: Down stays with the original
+        if (dm_padmode_page_keys(DM_BTN_DOWN) & DM_BTN_DOWN) {
+            g_sprev_x = cx; g_sprev_y = cy; g_sprev_ok = 1;
+            if (dm_ui_hover_now(x, y)) LOG("存放：手柄 ↓ 进按钮中心 (%d,%d)，记住网格点 (%d,%d)", x, y, cx, cy);
+        }
+        return;
+    }
+    if (hov == btn) { void dm_padmode_legend(int, const char *); dm_padmode_legend(0, dm_str(B, "dmPadLegStore")); }   // 焦点在钮上：底部按键条 A =「存放」（键帽图标原版按当前手柄出；本函数只在手柄模式跑，触屏不显示）| focus on the button: the bottom legend's A reads Deposit (the original draws the glyph for the current controller; this runs only in controller mode)
+    if (hov != btn || !g_sgrid_ok) return;   // 没量过网格（不是从 ↓ 进来的）：不接管 | grid never measured (did not come in through Down): do not take over
+    if (!g_sbtn_ok || !dm_store_in_rect(&g_sbtn, cx, cy)) { if (!store_btn_rect(btn, &g_sgrid, cx, cy)) return; }
+    if (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP) {
+        int lx, ly, last = dm_bag_pad_last(&lx, &ly) && dm_store_in_rect(&g_sgrid.r, lx, ly) && dm_store_row(&g_sgrid, ly) == g_sgrid.rows - 1;   // B189：原版 ↓ 进来的也回进来那一列（大背包记的停稳格） | B189: also back to the entry column when the original Down brought it here (the settled cell dm_bag.c remembers)
+        int x, y; dm_store_back(&g_sgrid, &g_sbtn, last || g_sprev_ok, last ? lx : g_sprev_x, last ? ly : g_sprev_y, &x, &y);
+        if (dm_ui_hover_now(x, y)) LOG("存放：手柄 ↑ 回网格 (%d,%d)%s", x, y, g_sprev_ok && dm_store_in_rect(&g_sgrid.r, g_sprev_x, g_sprev_y) ? "（进来前那一格）" : "（按钮正上方那格）");
+    }
+}
+
+// ---- 商店开着时百宝囊图标进手柄焦点链（B170，Duo 用户：手柄在商店里光圈到不了背包 / 符文包图标）。照「存放」按钮的做法（同一套网格量法与 dm_store_nav.h）：
+// 网格最下一行、光标 x 在百宝囊图标水平范围 → ↓ 接管，放到图标中心；悬停在图标上 → ↑ 回网格（进来前那一格优先）。A 不接管：悬停时原版 A 发它的 onClickMessage
+// （ClosePanel:TouchPouch，开 / 收清单）。只在商店开着时（不开商店时行为不变，OMP 11-05 定）
+// ---- With a shop open the pouch icon joins the controller focus chain (B170). Same as the Deposit button (same grid measurement, dm_store_nav.h): grid's last row with the cursor x within the icon
+// -> Down is taken and the cursor goes to the icon centre; on the icon -> Up returns to the grid (the cell we came from wins). A is not taken: while hovered the original A sends its onClickMessage
+// (ClosePanel:TouchPouch, opens / closes the list). Shop open only (behaviour without a shop is unchanged, OMP 11-05)
+static dm_store_rect g_pbtn; static int g_pprev_ok, g_pprev_x, g_pprev_y;
+static void pouch_pad_nav(uint64_t root, uint64_t inv, uint64_t boxw) {
+    if (!root || !panel_up(inv)) return;
+    uint64_t grid = find_w(inv, "grid", 1), btn = find_w(boxw, "TouchPouch", 1);
+    uint64_t fm = *(uint64_t *)(root + 0xd0), hov = fm ? *(uint64_t *)(fm + 0x178) : 0;
+    if (!grid || !btn || !hov) return;
+    int cx = *(int32_t *)(B + 0x2d128f8), cy = *(int32_t *)(B + 0x2d128fc);
+    if (hov == grid && HIT(grid, cx, cy)) {
+        if (!store_grid_rect(grid, cx, cy) || dm_store_row(&g_sgrid, cy) != g_sgrid.rows - 1) return;
+        if (!store_btn_rect_to(btn, &g_sgrid, cx, cy, &g_pbtn)) return;
+        int x, y; if (!dm_store_down_target(&g_sgrid, &g_pbtn, cx, cy, &x, &y)) return;
+        if (dm_padmode_page_keys(DM_BTN_DOWN) & DM_BTN_DOWN) { g_pprev_x = cx; g_pprev_y = cy; g_pprev_ok = 1; if (dm_ui_hover_now(x, y)) LOG("百宝囊图标：商店里手柄 ↓ 进图标中心 (%d,%d)（B170）", x, y); }
+        return;
+    }
+    if (hov != btn || !g_sgrid_ok) return;
+    if (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP) {
+        int lx, ly, last = dm_bag_pad_last(&lx, &ly) && dm_store_in_rect(&g_sgrid.r, lx, ly) && dm_store_row(&g_sgrid, ly) == g_sgrid.rows - 1;   // 同上（B189） | same as above (B189)
+        int x, y; dm_store_back(&g_sgrid, &g_pbtn, last || g_pprev_ok, last ? lx : g_pprev_x, last ? ly : g_pprev_y, &x, &y);
+        if (dm_ui_hover_now(x, y)) LOG("百宝囊图标：手柄 ↑ 回网格 (%d,%d)（B170）", x, y);
+    }
+}
+
 static void ui_pump(void) {
     // 百宝囊的控件全部插在物品栏布局里（pouch_layout.py）：先取物品栏面板（界面根的直接子控件，dm_widget.h），再在面板里找；物品栏没开就不扫整棵界面树
     // All of the pouch widgets are inserted into the inventory layout (pouch_layout.py): first get the inventory panel (a direct child of the UI root, dm_widget.h), then search inside it; when the inventory is not open, the whole UI tree is not scanned
     uint64_t root = *(uint64_t *)(B + 0x2f05458), inv = root ? dm_ui_top(root, "PlayerInventoryExpansionLayout") : 0, boxw = inv ? find_w(inv, "TouchPouchBox", 3) : 0;
     if (dm_ui_top_chk_on()) { uint64_t old = root ? find_w(root, "TouchPouchBox", 2) : 0; if (old != boxw) { static int k; if (k++ < 20) LOG("【红】百宝囊对拍：TouchPouchBox 新找法 %#llx、旧找法 %#llx", (unsigned long long)boxw, (unsigned long long)old); } }
-    if (!boxw) return;
+    if (!boxw) { void dm_stack_panel_closed(void); dm_stack_panel_closed(); return; }
     int gp = dm_custom_get("gem_pick"), sb = dm_custom_get("store_btn");
-    w_move(find_w(boxw, "TouchPouch", 1), gp ? 222 : 99999, 1294); w_move(find_w(boxw, "TouchPouchIcon", 1), gp ? 246 : 99999, 1310); w_move(find_w(boxw, "TouchPouchCount", 1), gp ? 350 : 99999, 1294);
+    w_move(find_w(boxw, "TouchPouch", 1), gp ? 222 : 99999, 1294); w_move(find_w(boxw, "TouchPouchIcon", 1), gp ? 275 : 99999, 1320); w_move(find_w(boxw, "TouchPouchCount", 1), gp ? 350 : 99999, 1294);
     w_move(find_w(boxw, "TouchStore", 1), sb ? 916 : 99999, 1323);
     static int shown = -1; int gen = atomic_load(&g_ugen); if (gen != shown) { char n[16]; snprintf(n, sizeof n, "%d", atomic_load(&g_ucount)); w_text(find_w(boxw, "TouchPouchCount", 1), n); shown = gen; if (g_tip) tip_show(root, 1); }
     if (atomic_exchange(&g_pouch_tap, 0)) tip_show(root, !g_tip);
     if (g_tip) tip_show(root, 1);   // 文字控件量尺寸要晚一两帧（fitToText）：开着时每帧对齐 | Text widgets measure their size a frame or two late (fitToText): align every frame while open
+    { void dm_bag_ui(uint8_t *, uint64_t, uint64_t, uint64_t); dm_bag_ui(B, inv, boxw, cli_player()); }   // 大背包图标条（dm_bag.c） | Large-bag strip (dm_bag.c)
+    // 「存放」按钮的手柄焦点进出：物品栏开着、手柄模式、无模态框、按钮开着才跑（触屏模式原版光标不归这里）| controller focus in / out of the Deposit button: only with the inventory open, in controller mode, no modal, and the button on
+    { int padn = inv && dm_padmode_current() && !dm_ui_modal_active(root);   // 手柄焦点链（触屏模式原版光标不归这里） | controller focus chain (touch mode is not ours)
+      if (padn && sb) store_pad_nav(root, inv, boxw);
+      if (padn && gp && panel_up(dm_ui_top(root, "VendorPanelLayout"))) pouch_pad_nav(root, inv, boxw); }   // 百宝囊图标：只在商店里（B170） | the pouch icon: shop only (B170)
+    { void dm_stack_ui(uint8_t *, uint64_t, uint64_t); dm_stack_ui(B, boxw, cli_player()); }   // 药水叠数与拆分框（dm_stack.c） | Potion counts and the split box (dm_stack.c)
 }
 
 void dm_pouch_on_uimsg(const char *cat, const char *act, const char *arg) {   // 界面消息回调（diag.c）：我们的两个按钮发 ClosePanel:TouchPouch / TouchStore | UI message callback (diag.c): our two buttons send ClosePanel:TouchPouch / TouchStore
+    { void dm_stack_on_uimsg(const char *, const char *, const char *); dm_stack_on_uimsg(cat, act, arg); }
     if (!cat || !act || !arg || strcmp(cat, "PanelManager") || strcmp(act, "ClosePanel")) return;
+    { void dm_bag_on_uimsg(const char *); dm_bag_on_uimsg(arg); }
     if (!strcmp(arg, "TouchPouch")) atomic_store(&g_pouch_tap, 1);
     else if (!strcmp(arg, "TouchStore") || !strcmp(arg, "TouchPadStore")) atomic_store(&g_store_req, 1);   // TouchPadStore = 手柄版暂停菜单的「存放」行（touch_layout.py pad_pause） | TouchPadStore = the "Deposit" row of the controller pause menu (touch_layout.py pad_pause)
 }
@@ -464,6 +657,7 @@ void dm_pouch_step(uint8_t *b) {   // 游戏主线程每帧（dm_world.c） | ev
     if (!b) return; B = b; uint64_t fr = dm_guest_frame();
     atomic_store(&g_stash_open, (dm_ui_panel_state() & 1) != 0);   // 储藏箱开着：服务端拍把囊里的放进高级仓库 | Stash open: the server tick moves what is in the pouch into the advanced stash
     ui_pump();
+    { void dm_stack_test(uint8_t *, uint64_t, uint64_t); uint64_t p = cli_player(); if (p) dm_stack_test(b, p, fr); }
     uint64_t pl = cli_player(); if (!pl) { memset(g_pk, 0, sizeof g_pk); memset(g_gnd, 0, sizeof g_gnd); g_ist = -1; return; }
     uint32_t pm = *(uint32_t *)(pl + 0xc); if (pm == 0 || pm == 17) return;   // 死亡中 / 已死 | Dying / dead
     uint64_t inv = *(uint64_t *)(pl + 0x90); if (!inv || *(uint32_t *)inv != 0x01020304) return;
@@ -475,12 +669,19 @@ void dm_pouch_step(uint8_t *b) {   // 游戏主线程每帧（dm_world.c） | ev
     if (dm_custom_get("gem_pick") && g_ist < 0) auto_pick(pl, fr);
 }
 void dm_pouch_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {   // 服务端拍（diag.c hud_tick；不在局内 player 为 0）：收 / 放 / 系统提示（系统提示只许服务端线程发） | Server tick (hud_tick in diag.c; player is 0 when not in a run): stow / release / system notices (system notices may only be sent from the server thread)
-    static uint64_t lp; if (!player) {
+    static uint64_t lp; static dm_exitwait ew; if (!player) {
         pthread_mutex_lock(&g_store_notice_lock); g_store_notice_pending = 0; pthread_mutex_unlock(&g_store_notice_lock);
-        lp = 0; pthread_mutex_lock(&g_umu); g_uload = 0; pthread_mutex_unlock(&g_umu); return; }
+        dm_exitwait_leave(&ew, lp != 0, dm_fs_commit_count()); atomic_store(&g_live, 0); lp = 0; return; }   // 出局：之后的提交不再算「本局内」（终审 P1） | out of the run: later commits no longer count as "in this run" (final review P1)   // B203：空玩家拍不清，退局那次提交还没来、还有没证明的就先不读（dm_exitwait.h）| B203: kept on the empty-player tick; the load waits for the exit commit while something is unproven
     store_notice_chat(b);
     B = b; uint32_t tq = *(uint32_t *)(G + 0x170);
-    if (player != lp) { lp = player; uint64_t pd = *(uint64_t *)(player + 0x10); pthread_mutex_lock(&g_umu); strlcpy(g_uchar, pd ? (const char *)pd : "", sizeof g_uchar); pouch_load(); g_uload = 1; pthread_mutex_unlock(&g_umu); }   // 进局（换了玩家单位）读一次 | Read once on entering a run (the player unit changed)
+    if (player != lp) { int to = 0; pthread_mutex_lock(&g_umu); int ng = 0; for (int i = 0; i < g_nup; i++) ng += !g_up[i].put && g_up[i].gone; int pend = g_uload && (g_nup - ng || g_udirty); pthread_mutex_unlock(&g_umu);   // 跨局遗留的离开条目不等（等不来本局的事实） | gone entries from the previous run are not waited for (no in-run fact can come)
+        if (dm_exitwait_defer(&ew, pend, dm_fs_commit_count(), &to)) { if (dm_exitwait_kick(&ew)) LOG("百宝囊：等退局前的待证明，补请一次存盘 → %d", dm_request_save()); return; } if (to) LOG("【红】百宝囊：退局后 %d 拍还有没证明的，照读（%d 条可能丢）", DM_EXITWAIT_MAX, g_nup); else { int n = dm_exitwait_took(&ew); if (n) LOG("百宝囊：退局前的收进 / 放出都在提交里证明了，读入（等了 %d 拍，提交 #%llu）", n, (unsigned long long)dm_fs_commit_count()); } }
+    if (player != lp) { lp = player; uint64_t pd = *(uint64_t *)(player + 0x10); pthread_mutex_lock(&g_umu);
+        { int ng = 0; for (int i = 0; i < g_nup; i++) if (!g_up[i].put && g_up[i].gone) { ng++; LOG("【红】百宝囊：上一局放出的 %.3s（id %u）离开后没等到本局内的存盘证明 → 保守留在囊里（可能多一颗，不丢；B204 终审 P1）", (const char *)&g_up[i].it.code, g_up[i].nid); }
+          if (ng) LOG("【红】百宝囊：跨局遗留的离开条目 %d 条留在囊里（累计 %d）", ng, atomic_fetch_add(&g_kept, ng) + ng); }
+        atomic_fetch_add(&g_sess, 1); atomic_store(&g_live, 1); strlcpy(g_uchar, pd ? (const char *)pd : "", sizeof g_uchar); { const char *dm_stash_name(uint8_t *); const char *sn = dm_stash_name(b); strlcpy(g_ustash, sn ? sn : "", sizeof g_ustash); } pouch_load(); g_uload = 1; pthread_mutex_unlock(&g_umu); }   // 进局（换了玩家单位）读一次 | Read once on entering a run (the player unit changed)
+    pthread_mutex_lock(&g_umu); pouch_track(b, G, player); pthread_mutex_unlock(&g_umu);
+    if (atomic_exchange(&g_gone_save, 0)) LOG("百宝囊：放出的那颗离开了，马上请一次存盘 → %d（交叉审 r2 F1）", dm_request_save());   // B204：放出的那颗跟到哪 | B204: follow the released runes
     int near = ((int (*)(uint64_t, uint64_t, int, int))(b + 0x650d10))(G, player, 0x10b, 0x32) & 1; atomic_store(&g_near_pub, near);   // 原版「移到仓库」用的同一个判断：50 以内有储藏箱物件 267 | The same check the original game's "move to stash" uses: a stash object 267 within 50
     uint32_t unit = adv_stash_unit(player); int go63 = near && unit;
     typedef struct { uint32_t id, t; } watch; static watch wl[64]; static int nw;   // 发了 0x63、等它离开背包的 | Items for which 0x63 was sent, waiting for them to leave the inventory

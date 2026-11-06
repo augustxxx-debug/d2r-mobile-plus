@@ -30,6 +30,7 @@ static long mtime(const char *dev, const char *rel) { char p[1024]; struct stat 
 static int dsync(const char *dev, int down, uint64_t now) { char s[1024], c[1024], b[1024], t[1024]; path(s, dev, "save"); snprintf(c, sizeof c, "%s/cloud", R); path(b, dev, "bak"); path(t, dev, "state"); return dm_cloud_sync(s, c, b, t, down, now, NULL); }
 static int count_bak(const char *dev, const char *pre) { char d[1024]; path(d, dev, "bak"); DIR *dp = opendir(d); struct dirent *e; int n = 0; while (dp && (e = readdir(dp))) n += !strncmp(e->d_name, pre, strlen(pre)); if (dp) closedir(dp); return n; }
 static int no_skip(const char *u) { return strcmp(u, "Alice"); }
+static int no_skip_bob(const char *u) { return strcmp(u, "Bob"); }
 // 共享仓库档：一页物品（items 件，只写页头与件数）+ 一段编年史（chron 字节）；侧文件：n 件。只造结构，同步那边只看结构（dm_cloudsync.c rich_of）
 // Shared stash file: one page of items (items pieces, only the page header and item count are written) + one chronicle section (chron bytes); side file: n pieces. Only the structure is built, as the sync side only looks at structure (dm_cloudsync.c rich_of)
 static void put_bin(const char *dev, const char *rel, const uint8_t *d, size_t n, long sec) {
@@ -298,6 +299,33 @@ int main(void) {
       CHECK(S8("N8", 1) == 1 && !strcmp(chron_str("N8"), "1@100 2@150 3@300 4@400 5@500"), "㉒③ N 启动拿到五条，实为 %s", chron_str("N8"));
       #undef S8
     }
+    {   // ㉓ 存档导入的强传标记（dm_savepkg.c）：导入的不许被云端盖掉；云端原版进备份 | ㉓ force-upload marks from a save import: what was imported must not be overwritten by the cloud; the cloud copy goes into the backup
+      #define FU(dev, txt) do { char _p[1024]; path(_p, dev, "state.forceup"); FILE *_f = fopen(_p, "w"); fputs(txt, _f); fclose(_f); } while (0)
+      #define FU_LEFT(dev) ({ char _p[1024]; struct stat _s; path(_p, dev, "state.forceup"); !stat(_p, &_s); })
+      char cl[1024]; snprintf(cl, sizeof cl, "rm -rf '%s/cloud'; mkdir '%s/cloud'", R, R); system(cl);
+      // 无记录（新设备首次同步）且云端有同名：没标记时云端赢（对照），有标记时导入赢 | no record (a new device's first sync) with the same name in the cloud: without a mark the cloud wins (control), with a mark the import wins
+      put("F1", "save/Zed/Zed.d2s", "cloud-version", 5000); CHECK(dsync("F1", 1, 5000) == 1, "㉓ 准备：云端有 Zed");
+      put("F2", "save/Zed/Zed.d2s", "imported-a", 100); CHECK(dsync("F2", 1, 6000) == 1 && !strcmp(get("F2", "save/Zed/Zed.d2s"), "cloud-version"), "㉓ 对照：无标记首次同步云端赢");
+      put("F3", "save/Zed/Zed.d2s", "imported-b", 100); FU("F3", "Zed\n"); CHECK(dsync("F3", 1, 6000) == 1 && !strcmp(get("F3", "save/Zed/Zed.d2s"), "imported-b"), "㉓ 有标记：导入没被盖"); CHECK(!FU_LEFT("F3"), "㉓ 传完划掉标记"); CHECK(count_bak("F3", "Zed") == 1, "㉓ 云端原版进备份");
+      CHECK(dsync("F1", 1, 7000) == 1 && !strcmp(get("F1", "save/Zed/Zed.d2s"), "imported-b"), "㉓ 另一台拿到导入的"); CHECK(dsync("F3", 1, 8000) == 0, "㉓ 之后不再反复传");
+      // 有记录、两边都改、云端更晚：有标记时仍是导入赢 | a record exists, both changed, the cloud is later: with a mark the import still wins
+      put("F1", "save/Zed/Zed.d2s", "cloud-newer", 90000); CHECK(dsync("F1", 0, 90000) == 1, "㉓ 准备：云端更新"); put("F3", "save/Zed/Zed.d2s", "imported-old", 100); FU("F3", "Zed\n"); CHECK(dsync("F3", 1, 91000) == 1 && !strcmp(get("F3", "save/Zed/Zed.d2s"), "imported-old"), "㉓ 云端更晚也不盖导入");
+      // 云端墓碑：导入可以把删掉的角色恢复回来 | cloud tombstone: an import can bring a deleted character back
+      dsync("F1", 1, 91500); snprintf(cl, sizeof cl, "%s/F1/save/Zed/Zed.d2s", R); unlink(cl); CHECK(dsync("F1", 0, 92000) == 1, "㉓ 准备：另一台删了（墓碑）"); put("F3", "save/Zed/Zed.d2s", "restored", 100); FU("F3", "Zed\n"); CHECK(dsync("F3", 1, 93000) == 1 && !strcmp(get("F3", "save/Zed/Zed.d2s"), "restored"), "㉓ 墓碑挡不住导入");
+      // 云端没下载好：跳过，标记留到下次 | cloud not downloaded yet: skip, the mark stays for next time
+      struct stat fs; put("F4", "save/Bob/Bob.d2s", "imported-c", 100); FU("F4", "Bob\n"); { char s4[1024], c4[1024], b4[1024], t4[1024]; path(s4, "F4", "save"); snprintf(c4, sizeof c4, "%s/cloud", R); path(b4, "F4", "bak"); path(t4, "F4", "state"); dm_cloud_sync(s4, c4, b4, t4, 1, 94000, no_skip_bob); snprintf(cl, sizeof cl, "%s/cloud/Bob.pack", R); CHECK(stat(cl, &fs), "㉓ 没下载好不动"); } CHECK(FU_LEFT("F4"), "㉓ 标记还在"); dsync("F4", 1, 95000); CHECK(!stat(cl, &fs) && !FU_LEFT("F4"), "㉓ 下次传掉");
+      // 共享仓库：不走分叉（玩家明确恢复旧仓库）；运行中也生效 | shared stash: skips the fork logic (the player explicitly restored an old stash); works while running too
+      put("F5", "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i", "stash-cloud-big", 96000); dsync("F5", 1, 96000); dm_cloud_conflict_take(); put("F6", "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i", "stash-imported", 100); FU("F6", "_stash\n"); dsync("F6", 1, 97000); CHECK(!strcmp(get("F6", "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i"), "stash-imported"), "㉓ 仓库导入没被盖"); CHECK(!dm_cloud_conflict_take(), "㉓ 不算分叉");
+      // 本地又没了：标记作废，不写坏 | gone locally again: the mark lapses
+      put("F7", "save/Keep/Keep.d2s", "keep", 100); FU("F7", "Nobody\n"); dsync("F7", 1, 98000); CHECK(!FU_LEFT("F7"), "㉓ 本地没有的标记作废");
+      #undef FU
+      #undef FU_LEFT
+    }
+    // 魔数：只写 SWPK2；SWPK1 能读；更新的魔数读不了时这个单位两边都不动（旧版遇到 SWPK2 就是这条路）| magic: only SWPK2 is written; SWPK1 is readable; with a newer magic the unit is left alone on both sides (the path an old build takes on SWPK2)
+    { char zp[1100]; snprintf(zp, sizeof zp, "%s/cloud/Mgc.pack", R); put("MG0", "save/Mgc/Mgc.d2s", "z1", 5000); dsync("MG0", 0, 0); char hd[6] = {0}; FILE *f = fopen(zp, "r+b"); CHECK(f && fread(hd, 5, 1, f) == 1 && !strcmp(hd, "SWPK2"), "魔数：新包应写 SWPK2，实为 %s", hd);
+      if (f) { fseek(f, 0, SEEK_SET); fwrite("SWPK1", 5, 1, f); fclose(f); } put("MG1", "save/Settings/Settings.json", "{}", 1000); dsync("MG1", 1, 0); CHECK(get("MG1", "save/Mgc/Mgc.d2s") && !strcmp(get("MG1", "save/Mgc/Mgc.d2s"), "z1"), "魔数：SWPK1 的包应能下载");
+      f = fopen(zp, "r+b"); if (f) { fwrite("SWPK9", 5, 1, f); fclose(f); } put("MG0", "save/Mgc/Mgc.d2s", "z2", 6000); dsync("MG0", 1, 0); f = fopen(zp, "rb"); memset(hd, 0, sizeof hd); if (f) { CHECK(fread(hd, 5, 1, f) == 1 && !strcmp(hd, "SWPK9"), "魔数：读不了的包不该被上传覆盖，实为 %s", hd); fclose(f); }
+      CHECK(get("MG0", "save/Mgc/Mgc.d2s") && !strcmp(get("MG0", "save/Mgc/Mgc.d2s"), "z2"), "魔数：读不了的包不该动本地"); remove(zp); }
     printf("t_cloudsync: %d 项，%d 失败\n", checks, fails);
     return fails != 0;
 }

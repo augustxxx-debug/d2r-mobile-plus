@@ -8,7 +8,7 @@
 
 static JavaVM *vm;
 static jclass activity_class;
-static jmethodID show_input, report_failure;
+static jmethodID show_input, report_failure, share_file, copy_text, save_pick, save_pick_folder, save_export;
 static pthread_mutex_t input_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t input_done = PTHREAD_COND_INITIALIZER;
 static pthread_cond_t work_ready = PTHREAD_COND_INITIALIZER;
@@ -116,7 +116,12 @@ JNIEXPORT jint JNI_OnLoad(JavaVM *java_vm, void *reserved) {
     show_input = (*env)->GetStaticMethodID(env, activity_class, "showNativeInput",
         "(JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;III)V");
     report_failure = (*env)->GetStaticMethodID(env, activity_class, "showNativeFailure", "(I)V");
-    if (!show_input || !report_failure) return JNI_ERR;
+    share_file = (*env)->GetStaticMethodID(env, activity_class, "shareDiagnostics", "(Ljava/lang/String;Ljava/lang/String;)V");
+    copy_text = (*env)->GetStaticMethodID(env, activity_class, "copyToClipboard", "(Ljava/lang/String;)V");
+    save_pick = (*env)->GetStaticMethodID(env, activity_class, "savePick", "()V");
+    save_pick_folder = (*env)->GetStaticMethodID(env, activity_class, "savePickFolder", "()V");
+    save_export = (*env)->GetStaticMethodID(env, activity_class, "saveExport", "(Ljava/lang/String;)V");
+    if (!show_input || !report_failure || !share_file || !copy_text || !save_pick || !save_pick_folder || !save_export) return JNI_ERR;
     vm = java_vm;
     pthread_t worker;
     if (pthread_create(&worker, NULL, input_worker, NULL)) worker_state = -1;
@@ -185,3 +190,53 @@ JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeTextResult(
     }
     pthread_mutex_unlock(&input_lock);
 }
+
+// 社区弹窗的复制（jni_android.c 的工作线程调，不是客体线程）：挂到 JVM，调 DmActivity.copyToClipboard(文字)，再脱开
+// Community box copy (called from a jni_android.c worker thread, never a guest thread): attach to the JVM, call DmActivity.copyToClipboard(text), detach
+void dm_android_copy_text(const char *text) {
+    if (!vm || !activity_class || !copy_text) { __android_log_write(ANDROID_LOG_ERROR, "dm", "copy: JNI bridge not ready"); return; }
+    JNIEnv *env = NULL; int attached = (*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK;
+    if (attached && (*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) { __android_log_write(ANDROID_LOG_ERROR, "dm", "copy: AttachCurrentThread failed"); return; }
+    jstring jt = (*env)->NewStringUTF(env, text);
+    if (jt) (*env)->CallStaticVoidMethod(env, activity_class, copy_text, jt);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionDescribe(env); (*env)->ExceptionClear(env); }
+    if (jt) (*env)->DeleteLocalRef(env, jt);
+    if (attached) (*vm)->DetachCurrentThread(vm);
+}
+
+// 分享诊断日志（jni_android.c 的工作线程调，不是客体线程）：挂到 JVM，调 DmActivity.shareDiagnostics(路径, 标题)，再脱开
+// Share diagnostics (called from jni_android.c's worker thread, never a guest thread): attach to the JVM, call DmActivity.shareDiagnostics(path, title), detach
+void dm_android_share_file(const char *path, const char *title) {
+    if (!vm || !activity_class || !share_file) { __android_log_write(ANDROID_LOG_ERROR, "dm", "share: JNI bridge not ready"); return; }
+    JNIEnv *env = NULL; int attached = (*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK;
+    if (attached && (*vm)->AttachCurrentThread(vm, &env, NULL) != JNI_OK) { __android_log_write(ANDROID_LOG_ERROR, "dm", "share: AttachCurrentThread failed"); return; }
+    jstring jp = (*env)->NewStringUTF(env, path), jt = (*env)->NewStringUTF(env, title ? title : "");
+    if (jp && jt) (*env)->CallStaticVoidMethod(env, activity_class, share_file, jp, jt);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionDescribe(env); (*env)->ExceptionClear(env); }
+    if (jp) (*env)->DeleteLocalRef(env, jp); if (jt) (*env)->DeleteLocalRef(env, jt);
+    if (attached) (*vm)->DetachCurrentThread(vm);
+}
+
+// 存档管理的系统面板（jni_android.c 的工作线程调，不是客体线程）：path 空指针 = 选文件（DmActivity.savePick），空串 = 选文件夹（savePickFolder），否则 = 存到玩家选的位置（saveExport）；调不到时直接报结果，免得界面一直等
+// Save management's system panels (called from a jni_android.c worker thread, never a guest thread): NULL path = pick a file (DmActivity.savePick), empty string = pick a folder (savePickFolder), otherwise save to a place the player picks (saveExport); when Java cannot be reached the result is reported at once so the page does not wait forever
+void dm_savemgr_picked(const char *path); void dm_savemgr_picked_from(const char *path, const char *origin); void dm_savemgr_share_done(int saved);
+void dm_android_save_panel(const char *path) {
+    JNIEnv *env = NULL; int attached = vm && (*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK, ok = 0;
+    if (vm && (!attached || (*vm)->AttachCurrentThread(vm, &env, NULL) == JNI_OK)) {
+        jstring jp = path ? (*env)->NewStringUTF(env, path) : NULL;
+        if (!path) { (*env)->CallStaticVoidMethod(env, activity_class, save_pick); ok = 1; }
+        else if (!*path) { (*env)->CallStaticVoidMethod(env, activity_class, save_pick_folder); ok = 1; }
+        else if (jp) { (*env)->CallStaticVoidMethod(env, activity_class, save_export, jp); ok = 1; }
+        if ((*env)->ExceptionCheck(env)) { (*env)->ExceptionDescribe(env); (*env)->ExceptionClear(env); ok = 0; }
+        if (jp) (*env)->DeleteLocalRef(env, jp);
+        if (attached) (*vm)->DetachCurrentThread(vm);
+    }
+    if (!ok) { if (path && *path) dm_savemgr_share_done(0); else dm_savemgr_picked(NULL); }
+}
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSavePicked(JNIEnv *env, jclass cls, jstring path) {
+    (void)cls; const char *p = path ? (*env)->GetStringUTFChars(env, path, NULL) : NULL; dm_savemgr_picked(p); if (p) (*env)->ReleaseStringUTFChars(env, path, p);
+}
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSavePickedFrom(JNIEnv *env, jclass cls, jstring path, jstring origin) {
+    (void)cls; const char *p = path ? (*env)->GetStringUTFChars(env, path, NULL) : NULL, *o = origin ? (*env)->GetStringUTFChars(env, origin, NULL) : NULL; dm_savemgr_picked_from(p, o); if (p) (*env)->ReleaseStringUTFChars(env, path, p); if (o) (*env)->ReleaseStringUTFChars(env, origin, o);
+}
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSaveExported(JNIEnv *env, jclass cls, jboolean saved) { (void)env; (void)cls; dm_savemgr_share_done(saved); }

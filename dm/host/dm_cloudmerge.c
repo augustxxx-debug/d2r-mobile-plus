@@ -33,6 +33,7 @@
 //   List empty = this stash type is fully merged. mine.pack / base.pack are kept for part three (Chronicle segment union); the entry directory is not deleted.
 // Threads: dm_cloudmerge_srv_tick runs on the server tick (diag.c hud_tick); the pre-commit hook cm_hook runs on the disk write thread (holding the save lock); both take g_mu.
 #include "hle.h"
+#include "dm_exitwait.h"
 #include "dm_i18n.h"
 #include <dirent.h>
 #include <stdatomic.h>
@@ -151,11 +152,11 @@ static int entry_pick(const char *wd) {   // 1 = 找到（g_entry 设好，g_hav
     closedir(dp); qsort(nm, (size_t)n, 128, cmp_name);
     for (int i = 0; i < n; i++) { char ent[300], pp[1500]; snprintf(ent, sizeof ent, "_cloudinbox/%s", nm[i]); plan_path(pp, sizeof pp, wd, ent);
         cm_list l = {0}; long long gold = 0; int r = plan_read(pp, &l, &gold);
-        if (r < 0) { LOG("【红】iCloud 并回：清单 %s 坏了，跳过这个条目（文件不动）", pp); continue; }
+        if (r < 0) { LOG("【红】" DM_STR_ICLOUD " 并回：清单 %s 坏了，跳过这个条目（文件不动）", pp); continue; }
         if (r == 1) { if (!l.n && gold <= 0) { cl_free(&l); continue; }   // 这一类并完了 | This type is fully merged
             strlcpy(g_entry, ent, sizeof g_entry); cl_free(&g_plan); g_plan = l; g_gold = gold; g_have = 1; plan_prune(wd); return 1; }
         char mp[1500]; snprintf(mp, sizeof mp, "%s/%s/mine.pack", wd, ent); pick_ctx c = { g_stash, 0, 0, 0 };
-        if (dm_cloud_pack_each(mp, pick_cb, &c) < 0) { LOG("【红】iCloud 并回：%s 读不了，跳过", mp); continue; }
+        if (dm_cloud_pack_each(mp, pick_cb, &c) < 0) { LOG("【红】" DM_STR_ICLOUD " 并回：%s 读不了，跳过", mp); continue; }
         vpick_ctx vc = { g_stash, 0, 0 }; if (!c.copy) dm_cloud_pack_each(mp, vpick_cb, &vc);
         if (!c.copy && !vc.copy) continue;   // 这个条目里没有这一类仓库（共享仓库档、编年史仓库侧文件都没有） | This entry has no stash of this type (neither a shared stash file nor a Chronicle stash side file)
         free(c.copy); free(vc.copy); strlcpy(g_entry, ent, sizeof g_entry); g_have = 0; return 1; }
@@ -176,7 +177,7 @@ static int plan_compute(uint64_t G, uint64_t player, const char *wd) {
     // Chronicle stash (items in the side file, bitstreams written by the original game): local / baseline are each merged into the same table and compared together; the cloud one reads the current side file in the working directory
     int nvm = vm.copy ? vault_split(vm.copy, vm.n, &mine) : 0, nvb = vb.copy ? vault_split(vb.copy, vb.n, &base) : 0, nvc = 0;
     { char vp[1400]; uint8_t *d; size_t n; snprintf(vp, sizeof vp, "%s/%s.swvault", wd, g_stash); if (file_blob(vp, &d, &n)) { nvc = vault_split(d, (uint32_t)n, &cloud); free(d); } }
-    if (nvm < 0 || nvb < 0 || nvc < 0) LOG("【红】iCloud 并回：编年史仓库侧文件坏了（本机 %d、基准 %d、云端 %d；-1 = 坏），坏的那份不算", nvm, nvb, nvc);
+    if (nvm < 0 || nvb < 0 || nvc < 0) LOG("【红】" DM_STR_ICLOUD " 并回：编年史仓库侧文件坏了（本机 %d、基准 %d、云端 %d；-1 = 坏），坏的那份不算", nvm, nvb, nvc);
     if (vb.copy && !cb.copy) hb = 1;   // 基准里只有侧文件（没有共享仓库档）也算有基准 | A baseline with only the side file (no shared stash file) also counts as having a baseline
     // 云端的编年史段长：读工作目录里现在这一份共享仓库档（编年史不在服务端单位里）
     // Chronicle segment length in the cloud: reads the current shared stash file in the working directory (the Chronicle is not in the server units)
@@ -193,12 +194,12 @@ static int plan_compute(uint64_t G, uint64_t player, const char *wd) {
         int have = cl_count(&mine, it), ref = cl_count(use_base ? &base : &cloud, it);
         for (int k = 0; k < have - ref; k++) cl_add(&g_plan, it->bits, it->len); }
     long long g = sm.gold - (use_base ? sb.gold : seed); g_gold = g > 0 ? g : 0;
-    LOG("iCloud 并回：%s 的 %s —— 本机 %d 件、金币 %lld；云端 %d 件、金币 %lld、编年史 %d 字节 → 要还 %d 件、金币 %lld", g_entry, g_stash, mine.n, sm.gold, cloud.n, cg, sc.chron, g_plan.n, g_gold);
-    if (use_base) LOG("iCloud 并回：按基准（%d 件、金币 %lld）只还本机新增", base.n, sb.gold);
-    else if (hb) LOG("iCloud 并回：基准不能用（云端编年史比基准短 / 基准坏）→ 按并集，金币比预置 %lld 多出的才还", seed);
-    else LOG("iCloud 并回：没有基准 → 按并集，金币比预置 %lld 多出的才还", seed);
-    if (sm.bad) LOG("【红】iCloud 并回：本机那份有 %d 处拆不开的物品（拆开的照还）", sm.bad);
-    if (nvm > 0) LOG("iCloud 并回：本机那份编年史仓库 %d 件、基准 %d 件、云端 %d 件，一起按同一件比", nvm, nvb, nvc);
+    LOG(DM_STR_ICLOUD " 并回：%s 的 %s —— 本机 %d 件、金币 %lld；云端 %d 件、金币 %lld、编年史 %d 字节 → 要还 %d 件、金币 %lld", g_entry, g_stash, mine.n, sm.gold, cloud.n, cg, sc.chron, g_plan.n, g_gold);
+    if (use_base) LOG(DM_STR_ICLOUD " 并回：按基准（%d 件、金币 %lld）只还本机新增", base.n, sb.gold);
+    else if (hb) LOG(DM_STR_ICLOUD " 并回：基准不能用（云端编年史比基准短 / 基准坏）→ 按并集，金币比预置 %lld 多出的才还", seed);
+    else LOG(DM_STR_ICLOUD " 并回：没有基准 → 按并集，金币比预置 %lld 多出的才还", seed);
+    if (sm.bad) LOG("【红】" DM_STR_ICLOUD " 并回：本机那份有 %d 处拆不开的物品（拆开的照还）", sm.bad);
+    if (nvm > 0) LOG(DM_STR_ICLOUD " 并回：本机那份编年史仓库 %d 件、基准 %d 件、云端 %d 件，一起按同一件比", nvm, nvb, nvc);
     cl_free(&mine); cl_free(&base); cl_free(&cloud); free(cm.copy); free(cb.copy); free(vm.copy); free(vb.copy);
     g_have = 1; g_dirty = 1; plan_prune(wd); return 0;
 }
@@ -210,26 +211,26 @@ static int plan_compute(uint64_t G, uint64_t player, const char *wd) {
 //   1 = after the first item is put into the inventory (not yet saved); 2 = pre-commit hook found the proof, list not yet written; 3 = list written into the working directory, this commit not yet swapped in;
 //   4 = after gold was added a save commit already happened, gold not yet proven (the item commit is on disk, the gold one is not)
 static void cm_kill(int at) { static int k = -1; if (k < 0) { const char *e = getenv("DM_TEST_KILL_AT"); k = e && !strncmp(e, "cm:", 3) ? atoi(e + 3) : 0; }
-    if (k == at) { LOG("DM_TEST_KILL_AT：iCloud 并回时刻 %d，对自己发 SIGKILL", at); kill(getpid(), SIGKILL); for (;;) pause(); } }   // 信号送达前不再往下跑 | Do not continue until the signal is delivered
+    if (k == at) { LOG("DM_TEST_KILL_AT：" DM_STR_ICLOUD " 并回时刻 %d，对自己发 SIGKILL", at); kill(getpid(), SIGKILL); for (;;) pause(); } }   // 信号送达前不再往下跑 | Do not continue until the signal is delivered
 // ---- 放一件进背包（同百宝囊 pouch_take）：1 = 放了，0 = 放不下 / 建不出
 // ---- Put one item into the inventory (same as pouch pouch_take): 1 = placed, 0 = no room / could not be created
 static int take_one(uint64_t G, uint64_t player, int idx) {
     cm_item *u = &g_plan.v[idx]; uint64_t pp = *(uint64_t *)(player + 0x38), room = pp ? *(uint64_t *)(pp + 0x20) : 0; if (!room) return 0;
     int used = 0; uint64_t nu = dm_item_make_n(B, G, room, u->bits, u->len, NULL, &used);
-    if (!nu) { static int said; if (!said++) LOG("【红】iCloud 并回：清单第 %d 件建不出物品，留在清单里不放", idx + 1); return -1; }
+    if (!nu) { static int said; if (!said++) LOG("【红】" DM_STR_ICLOUD " 并回：清单第 %d 件建不出物品，留在清单里不放", idx + 1); return -1; }
     uint64_t inv = *(uint64_t *)(player + 0x90); uint32_t cls = *(uint32_t *)(player + 4), fx = 0, fy = 0;
     if (!inv || cls > 7 || !((int (*)(uint64_t, uint64_t, int, uint32_t *, uint32_t *, int))(B + 0x55f620))(inv, nu, *(int32_t *)(B + 0x1dae684 + cls * 8 + 4), &fx, &fy, 0)) {
         ((void (*)(uint64_t, uint64_t))(B + 0x658be0))(G, nu); return 0; }
     uint64_t nd = *(uint64_t *)(nu + 0x10), ip = *(uint64_t *)(nu + 0x38); if (!nd || !ip) { ((void (*)(uint64_t, uint64_t))(B + 0x658be0))(G, nu); return 0; }
     *(uint8_t *)(nd + 0x55) = 0; *(int32_t *)(ip + 0x10) = (int32_t)fx; *(int32_t *)(ip + 0x14) = (int32_t)fy;
     uint64_t one = nu, ox = 0; ((int (*)(uint64_t, uint64_t, uint64_t *, uint64_t *))(B + 0x6f1940))(G, player, &one, &ox);
-    if (!*(uint64_t *)(nd + 0xa0)) { ((void (*)(uint64_t, uint64_t))(B + 0x658be0))(G, nu); LOG("【红】iCloud 并回：清单第 %d 件放进背包没成（格 %u,%u）", idx + 1, fx, fy); return 0; }
+    if (!*(uint64_t *)(nd + 0xa0)) { ((void (*)(uint64_t, uint64_t))(B + 0x658be0))(G, nu); LOG("【红】" DM_STR_ICLOUD " 并回：清单第 %d 件放进背包没成（格 %u,%u）", idx + 1, fx, fy); return 0; }
     ((void (*)(uint64_t, uint64_t, uint64_t, int, int, int, int, int, uint64_t))(B + 0x642f70))(G, player, nu, 1, 2, 0, 0, 0, (uint64_t)(fx & 0xffff) | (uint64_t)fy << 16);
     cm_pend *p = &g_pend[g_npend++]; memset(p, 0, sizeof *p); p->idx = idx; p->nid = *(uint32_t *)(nu + 8); { const char *wd = dm_save_workdir(); p->h0 = wd && dm_ser_state() == 0 ? char_h(wd) : 0; }
-    int len = dm_item_write(B, nu, p->pb); if (len > 0) p->plen = (uint16_t)len; else { p->plen = u->len; memcpy(p->pb, u->bits, u->len); LOG("【红】iCloud 并回：放好后的位流写不出，用清单那串作证据"); }
-    LOG("iCloud 并回：清单第 %d 件（%d 字节）放到背包格 %u,%u（新 id %u），等落盘证明", idx + 1, u->len, fx, fy, p->nid);
+    int len = dm_item_write(B, nu, p->pb); if (len > 0) p->plen = (uint16_t)len; else { p->plen = u->len; memcpy(p->pb, u->bits, u->len); LOG("【红】" DM_STR_ICLOUD " 并回：放好后的位流写不出，用清单那串作证据"); }
+    LOG(DM_STR_ICLOUD " 并回：清单第 %d 件（%d 字节）放到背包格 %u,%u（新 id %u），等落盘证明", idx + 1, u->len, fx, fy, p->nid);
     cm_kill(1);
-    { cm_item a = { p->plen, p->pb }; if (!key_eq(&a, u)) LOG("【红】iCloud 并回：清单第 %d 件放好后的那一串与清单去位置键不同（落盘证明照用放好后的那一串）", idx + 1); }
+    { cm_item a = { p->plen, p->pb }; if (!key_eq(&a, u)) LOG("【红】" DM_STR_ICLOUD " 并回：清单第 %d 件放好后的那一串与清单去位置键不同（落盘证明照用放好后的那一串）", idx + 1); }
     return 1;
 }
 static int pend_has(int idx) { for (int i = 0; i < g_npend; i++) if (g_pend[i].idx == idx) return 1; return 0; }
@@ -237,9 +238,9 @@ static void add_gold(uint64_t G, uint64_t player) {   // 加到有空的共享�
     uint64_t pg[8]; uint32_t id[8]; int n = dm_stash_pages(G, player, pg, id); long long left = g_gold, put = 0;
     for (int k = 0; k < n && left > 0; k++) { int g = ((int (*)(uint64_t, int, int))(B + 0x5b9290))(pg[k], 15, 0), room = PAGE_GOLD - g; if (room <= 0) continue; int add = left < room ? (int)left : room;
         ((void (*)(uint64_t, int, int, int))(B + 0x5bc1f0))(pg[k], 15, g + add, 0); dm_stash_gold_notify(B, G, player, id[k], g + add); left -= add; put += add;
-        LOG("iCloud 并回：共享页 %d（单位 id %u）金币 %d → %d", k + 1, id[k], g, g + add); }
+        LOG(DM_STR_ICLOUD " 并回：共享页 %d（单位 id %u）金币 %d → %d", k + 1, id[k], g, g + add); }
     if (put) { g_gold_sent = put; clock_gettime(CLOCK_REALTIME, &g_gold_at); g_gold_cno = dm_fs_commit_count(); }
-    if (left) LOG("iCloud 并回：共享页金币都满了，还有 %lld 金币留到下次", left);
+    if (left) LOG(DM_STR_ICLOUD " 并回：共享页金币都满了，还有 %lld 金币留到下次", left);
 }
 
 // ---- 提交前钩子（写盘线程）
@@ -255,9 +256,9 @@ int dm_blobs_have(const dm_blob *bl, int nb, const uint8_t *bits, int len); int 
 // Previously only this character's .d2s was checked: if the player dragged the item into the shared stash / personal stash pages 2–5 / the Chronicle vault before the next save, the list was never crossed off and another copy was returned on every entry (duplication; later the personal stash dedup removed the item with the same bytes)
 static uint64_t char_h(const char *wd) { char p[1400]; uint8_t *d; size_t n; snprintf(p, sizeof p, "%s/%s/%s.d2s", wd, g_char, g_char); uint64_t h = file_blob(p, &d, &n) ? dm_fnv64(d, n) : 0; free(d); return h; }   // 本角色档整份指纹，读不到 0 | Fingerprint of this character's whole file; 0 if it cannot be read
 static int proof_blobs(const char *wd, dm_blob *bl, int max) {
-    int nb = dm_save_blobs(wd, g_stash, bl, max - 3); char p[1400]; uint8_t *d; size_t n;
-    const char *ext[2] = { "swpage", "swpouch" };
-    for (int k = 0; k < 2 && nb < max; k++) { snprintf(p, sizeof p, "%s/%s/%s.%s", wd, g_char, g_char, ext[k]); if (file_blob(p, &d, &n)) { bl[nb].d = d; bl[nb].n = n; nb++; } else free(d); }
+    int nb = dm_save_blobs(wd, g_stash, bl, max - 4); char p[1400]; uint8_t *d; size_t n;
+    const char *ext[3] = { "swpage", "swpouch", "swcharm" };
+    for (int k = 0; k < 3 && nb < max; k++) { snprintf(p, sizeof p, "%s/%s/%s.%s", wd, g_char, g_char, ext[k]); if (file_blob(p, &d, &n)) { bl[nb].d = d; bl[nb].n = n; nb++; } else free(d); }
     if (nb < max && g_stash[0]) { snprintf(p, sizeof p, "%s/%s.swvault", wd, g_stash); if (file_blob(p, &d, &n)) { bl[nb].d = d; bl[nb].n = n; nb++; } else free(d); }
     return nb; }
 // 进局核清单：有自己身份的件（简单物品字节相同认不出是哪一件，不判）已经在上面这些文件里 = 以前还过、证明没划掉，划掉不再还
@@ -266,7 +267,7 @@ static void plan_prune(const char *wd) {
     dm_blob bl[70]; int nb = proof_blobs(wd, bl, 70), drop = 0;
     for (int i = 0; i < g_plan.n; ) { cm_item *it = &g_plan.v[i]; if (!dm_bits_simple(it->bits, it->len) && dm_blobs_have(bl, nb, it->bits, it->len)) { cl_del(&g_plan, i); drop++; } else i++; }
     dm_blobs_free(bl, nb);
-    if (drop) { g_dirty = 1; LOG("iCloud 并回：清单里 %d 件已经在存档里（以前还过、没划掉）→ 划掉不再还，还剩 %d 件", drop, g_plan.n); } }
+    if (drop) { g_dirty = 1; LOG(DM_STR_ICLOUD " 并回：清单里 %d 件已经在存档里（以前还过、没划掉）→ 划掉不再还，还剩 %d 件", drop, g_plan.n); } }
 static void cm_hook(const char *wd) {
     pthread_mutex_lock(&g_mu);
     if (g_entry[0] && g_have && (g_npend || g_gold_sent || g_dirty)) {
@@ -285,31 +286,33 @@ static void cm_hook(const char *wd) {
                 cm_kill(2);
                 int k = q->idx < g_plan.n ? q->idx : -1;
                 if (k >= 0) { for (int j = 0; j < g_npend; j++) if (g_pend[j].idx == g_plan.n - 1) g_pend[j].idx = k; cl_del(&g_plan, k); }   // 清单删件是「拿最后一件补位」：补位那件的待证明下标跟着改 | Removing an item from the list "moves the last item into the gap": the pending-proof index of the moved item is updated accordingly
-                LOG("iCloud 并回：提交前核对 #%llu —— 新 id %u %s → 从清单划掉，还剩 %d 件", (unsigned long long)cno, q->nid, at ? "已在存档里" : "放好之后游戏已序列化并落盘", g_plan.n);
+                LOG(DM_STR_ICLOUD " 并回：提交前核对 #%llu —— 新 id %u %s → 从清单划掉，还剩 %d 件", (unsigned long long)cno, q->nid, at ? "已在存档里" : "放好之后游戏已序列化并落盘", g_plan.n);
                 g_pend[i] = g_pend[--g_npend]; g_dirty = 1; }
             dm_blobs_free(bl, nb); }
         if (g_gold_sent) { char a[1400], b2[1400]; struct stat st; snprintf(a, sizeof a, "%s/%s/%s.d2i", wd, g_stash, g_stash); snprintf(b2, sizeof b2, "%s/%s.d2i", wd, g_stash);
             if ((!stat(a, &st) || !stat(b2, &st)) && (st.st_mtimespec.tv_sec > g_gold_at.tv_sec || (st.st_mtimespec.tv_sec == g_gold_at.tv_sec && st.st_mtimespec.tv_nsec > g_gold_at.tv_nsec))) { g_gold -= g_gold_sent; if (g_gold < 0) g_gold = 0; g_gold_sent = 0; g_dirty = 1;
-                LOG("iCloud 并回：提交前核对 #%llu —— 共享仓库档在加金币之后重写过 → 金币划掉，还剩 %lld", (unsigned long long)cno, g_gold); } }
+                LOG(DM_STR_ICLOUD " 并回：提交前核对 #%llu —— 共享仓库档在加金币之后重写过 → 金币划掉，还剩 %lld", (unsigned long long)cno, g_gold); } }
         if (g_dirty) { plan_path(p, sizeof p, wd, g_entry);
-            if (plan_write(p) == 0) { g_dirty = 0; cm_kill(3); LOG("iCloud 并回：清单随这次提交落盘（还剩 %d 件、金币 %lld）%s", g_plan.n, g_gold, !g_plan.n && g_gold <= 0 ? "—— 这一类仓库并完" : ""); }
-            else { void dm_fs_save_poison(int e); dm_fs_save_poison(5); LOG("【红】iCloud 并回：清单写不进 %s → 这次存档提交拒绝，之后重试", p); } }
+            if (plan_write(p) == 0) { g_dirty = 0; cm_kill(3); LOG(DM_STR_ICLOUD " 并回：清单随这次提交落盘（还剩 %d 件、金币 %lld）%s", g_plan.n, g_gold, !g_plan.n && g_gold <= 0 ? "—— 这一类仓库并完" : ""); }
+            else { void dm_fs_save_poison(int e); dm_fs_save_poison(5); LOG("【红】" DM_STR_ICLOUD " 并回：清单写不进 %s → 这次存档提交拒绝，之后重试", p); } }
     }
     pthread_mutex_unlock(&g_mu);
 }
-__attribute__((constructor)) static void cm_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[4] = cm_hook; }
+__attribute__((constructor)) static void cm_hook_install(void) { extern void (*g_dm_pre_commit_hook[6])(const char *); g_dm_pre_commit_hook[4] = cm_hook; }
 
 // ---- 服务端拍（diag.c hud_tick；不在局内 player 为 0）
 // ---- Server tick (diag.c hud_tick; player is 0 when not in game)
 static char g_notice[256]; static _Atomic int g_notice_req;
 void dm_cloudmerge_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
-    static uint64_t lp; static int none;
-    if (!player) { if (lp) { pthread_mutex_lock(&g_mu); g_entry[0] = 0; g_have = 0; g_npend = 0; g_gold_sent = 0; cl_free(&g_plan); pthread_mutex_unlock(&g_mu); } lp = 0; return; }
+    static uint64_t lp; static int none; static dm_exitwait ew;
+    if (!player) { dm_exitwait_leave(&ew, lp != 0, dm_fs_commit_count()); lp = 0; return; }   // B203：空玩家拍不清，退局那次提交还没来、还有没证明的就先不读（dm_exitwait.h）| B203: kept on the empty-player tick; the load waits for the exit commit while something is unproven
     B = b; uint32_t tq = *(uint32_t *)(G + 0x170); const char *wd = dm_save_workdir(); if (!wd) return;
+    if (player != lp) { int to = 0; pthread_mutex_lock(&g_mu); int pend = g_entry[0] && g_have && (g_npend || g_gold_sent || g_dirty); pthread_mutex_unlock(&g_mu);
+        if (dm_exitwait_defer(&ew, pend, dm_fs_commit_count(), &to)) { if (dm_exitwait_kick(&ew)) LOG(DM_STR_ICLOUD " 并回：等退局前的待证明，补请一次存盘 → %d", dm_request_save()); return; } if (to) LOG("【红】" DM_STR_ICLOUD " 并回：退局后 %d 拍还有没证明的，照读", DM_EXITWAIT_MAX); else { int n = dm_exitwait_took(&ew); if (n) LOG(DM_STR_ICLOUD " 并回：退局前的并回都证明了，读入（等了 %d 拍）", n); } }
     if (player != lp) { lp = player; none = 0; const char *sn = dm_stash_name(b); uint64_t pd = *(uint64_t *)(player + 0x10);
-        pthread_mutex_lock(&g_mu); g_entry[0] = 0; g_have = 0; g_npend = 0; g_gold_sent = 0; strlcpy(g_char, pd ? (const char *)pd : "", sizeof g_char);
+        pthread_mutex_lock(&g_mu); g_entry[0] = 0; g_have = 0; g_npend = 0; g_gold_sent = 0; cl_free(&g_plan); strlcpy(g_char, pd ? (const char *)pd : "", sizeof g_char);
         strlcpy(g_stash, sn ? sn : "", sizeof g_stash); if (!sn || !entry_pick(wd)) none = 1;
-        else LOG("iCloud 并回：进局 —— 收件箱条目 %s 有 %s 要并（清单%s）", g_entry, g_stash, g_have ? "已有" : "开箱时算");
+        else LOG(DM_STR_ICLOUD " 并回：进局 —— 收件箱条目 %s 有 %s 要并（清单%s）", g_entry, g_stash, g_have ? "已有" : "开箱时算");
         pthread_mutex_unlock(&g_mu); }
     int open = (dm_ui_panel_state() & 1) != 0, near = ((int (*)(uint64_t, uint64_t, int, int))(b + 0x650d10))(G, player, 0x10b, 0x32) & 1;
     // 测试开关 DM_TEST_CM_KEYS=1：第一次开箱时把工作目录里现在这一份共享仓库档也按同一套拆开，与服务端共享页 + 高级仓库逐件对键（核拆位流与去位置的键）
@@ -332,8 +335,8 @@ void dm_cloudmerge_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {
     int left = g_plan.n - g_npend, done = !g_plan.n && g_gold <= 0 && !g_npend && !g_dirty, pend = g_npend || g_gold_sent || g_dirty;
     static int said; if (saved && !said) { said = 1; snprintf(g_notice, sizeof g_notice, "%s", dm_str(b, "dmCloudMergeBack")); atomic_store(&g_notice_req, 1); }
     if (full && left) { static uint32_t fl; if (!fl || tq - fl > 750) { fl = tq; snprintf(g_notice, sizeof g_notice, "%s", dm_str(b, "dmCloudMergeFull")); atomic_store(&g_notice_req, 1); } }
-    if (done) { LOG("iCloud 并回：%s 的 %s 并完", g_entry, g_stash); none = !entry_pick(wd); said = 0; }
+    if (done) { LOG(DM_STR_ICLOUD " 并回：%s 的 %s 并完", g_entry, g_stash); none = !entry_pick(wd); said = 0; }
     pthread_mutex_unlock(&g_mu);
     { static uint32_t lastreq; if (saved || (pend && tq - lastreq >= 50)) { lastreq = tq; dm_request_save(); } }
-    if (atomic_exchange(&g_notice_req, 0)) { dm_game_notice(b, g_notice); LOG("iCloud 并回：系统提示「%s」", g_notice); }
+    if (atomic_exchange(&g_notice_req, 0)) { dm_game_notice(b, g_notice); LOG(DM_STR_ICLOUD " 并回：系统提示「%s」", g_notice); }
 }

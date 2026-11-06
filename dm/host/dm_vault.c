@@ -42,6 +42,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include "dm.h"
+#include "dm_exitwait.h"
 
 #define VMAX 1024
 #define VBYTES 1024   // 同 dm_pages.c：单件位流上限（含孔里的） | Same as dm_pages.c: upper limit of a single item's bitstream (including socketed ones)
@@ -240,9 +241,11 @@ static void item_dump(uint8_t *b, uint64_t player) {
         snprintf(who, sizeof who, "附属单位 %u（类 %u）", uid, *(uint8_t *)(en + 0xa)); item_dump_list(b, u, who); }
 }
 void dm_vault_tick(uint64_t G, uint64_t player, uint8_t *b) {   // 服务端拍（diag.c hud_tick）；不在局内 player 为 0 | Server tick (hud_tick in diag.c); player is 0 when not in a run
-    static uint64_t lastp;
-    if (!player) { lastp = 0; g_loaded = 0; return; }
+    static uint64_t lastp; static dm_exitwait ew;
+    if (!player) { dm_exitwait_leave(&ew, lastp != 0, dm_fs_commit_count()); lastp = 0; return; }   // B203：空玩家拍不清，退局那次提交还没来、还有没证明的就先不读（dm_exitwait.h）| B203: kept on the empty-player tick; the load waits for the exit commit while something is unproven
     { static int done; const char *e = getenv("DM_TEST_ITEM_DUMP"); if (e && !done && *(uint32_t *)(G + 0x170) >= (uint32_t)atoi(e)) { done = 1; item_dump(b, player); } }
+    if (player != lastp) { int to = 0; pthread_mutex_lock(&g_vmu); int pend = g_loaded && (g_npend || g_ddirty); pthread_mutex_unlock(&g_vmu);
+        if (dm_exitwait_defer(&ew, pend, dm_fs_commit_count(), &to)) { if (dm_exitwait_kick(&ew)) LOG("编年史仓库：等退局前的待证明，补请一次存盘 → %d", dm_request_save()); return; } if (to) LOG("【红】编年史仓库：退局后 %d 拍还有没证明的，照读（待落盘 %d 条可能丢）", DM_EXITWAIT_MAX, g_npend); else { int n = dm_exitwait_took(&ew); if (n) LOG("编年史仓库：退局前的存取都证明了，读入（等了 %d 拍）", n); } }
     if (player != lastp) { lastp = player; pthread_mutex_lock(&g_vmu); const char *nm = vault_name(b); g_loaded = nm != NULL; if (nm) { strlcpy(g_vname, nm, sizeof g_vname); vault_load(nm); } else vault_clear(); pthread_mutex_unlock(&g_vmu); atomic_fetch_add(&g_vgen, 1); }   // 进局（换了玩家单位）读一次 | Read once on entering a run (the player unit changed)
     { uint32_t dq = atomic_exchange(&g_desc_req, 0); if (dq) { pthread_mutex_lock(&g_vmu); vault_desc(b, G, player, dq); pthread_mutex_unlock(&g_vmu); } }
     { static uint32_t last; uint32_t t = *(uint32_t *)(G + 0x170); if (atomic_load(&g_vretry) && t - last >= 250) { last = t; LOG("编年史仓库：侧文件上次没写成，再请一次存盘 → %d", dm_request_save()); } }
@@ -295,4 +298,4 @@ static void vault_pre_commit(const char *wd) {
     }
     pthread_mutex_unlock(&g_vmu);
 }
-__attribute__((constructor)) static void vault_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[1] = vault_pre_commit; }
+__attribute__((constructor)) static void vault_hook_install(void) { extern void (*g_dm_pre_commit_hook[6])(const char *); g_dm_pre_commit_hook[1] = vault_pre_commit; }

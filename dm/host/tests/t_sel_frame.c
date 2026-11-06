@@ -24,6 +24,13 @@ int main(void) {
     CHECK(row_x(1110, 1) == 1110 && row_x(1315, 1) == 1315, "sliders / checkboxes not at x = 0 stay put");
     CHECK(row_x(99999, 1) == 99999, "off-screen widgets stay off screen");
     CHECK(dm_sel_frame_x(-100) == DM_SEL_FRAME_MIN_X, "frame never goes left of the bound");
+    // B087：语言行最后一格（勾选框 x 1219 宽 70，字框 x 1299 宽 166，touch_layout.py _LANG_OPTS）——框右缘要盖住字框；别的行照旧勾选框右边 30
+    // B087: the language row's last cell (checkbox x 1219 width 70, text box x 1299 width 166, touch_layout.py _LANG_OPTS) -- the frame's right edge covers the text box; other rows stay checkbox + 30
+#ifndef DM_SEL_FRAME_OLD
+    CHECK(dm_sel_frame_right(1219 + 70, 1299 + 166) >= 1299 + 166, "language row: frame right edge takes in the 한국어 text");
+    CHECK(dm_sel_frame_right(1219 + 70, 0) == 1219 + 70 + 30, "ordinary row: frame right edge = checkbox + 30");
+    CHECK(dm_sel_frame_right(1219 + 70, 1200) == 1219 + 70 + 30, "text left of the checkbox does not shrink the frame");
+#endif
     printf("%s t_sel_frame: %d/%d\n", fails ? "FAIL" : "PASS", checks - fails, checks);
     return fails != 0;
 }

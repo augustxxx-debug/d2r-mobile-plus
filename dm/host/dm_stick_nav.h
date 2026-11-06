@@ -44,3 +44,17 @@ static inline uint64_t dm_stick_nav_take(uint64_t *eat, uint64_t dirs, uint64_t 
     *eat = (*eat & dirs) | (dirs & declared);
     return declared | *eat;
 }
+// 原版菜单把左摇杆当方向键（B071，手柄暂停菜单：原版把摇杆当自由光标，推出七行之外金框就消失）：页声明了 want 时只把上下交给原版当方向键按着，摇杆本身一律不交。
+// 推着跨过声明结束（如按 A 进了选项页）：松开前摇杆仍不交，否则还推着的这一下把下一页的光标推走。*out 是这一拍要加给原版的方向键，返回 1 = 把摇杆清零。
+// The left stick as D-pad for an original menu (B071, controller pause menu: the game treats the stick as a free cursor and the focus frame vanishes once it leaves the rows): while declared, only up / down reach the game, as held D-pad keys, and the stick itself never does.
+// Held across the end of the declaration (e.g. A opened the options page): the stick stays withheld until released, or that push would move the next page's cursor. *out = direction keys to add for the game this sample; returns 1 = zero the stick.
+// want：0 不声明；1 只交上下（暂停菜单，B071）；2 四个方向都交（任务日志的任务格是 3 × 2，B114）
+// want: 0 not declared; 1 only up / down reach the game (pause menu, B071); 2 all four directions (the quest log's quests are a 3 × 2 grid, B114)
+static inline int dm_stick_nav_as_dpad(uint64_t *hold, int want, uint64_t dirs, uint64_t *out) {   // *hold：位 0 = 松开前不交，位 1 = 上一拍推着，位 2 = 这一推是进页前开始的（N11-07、N12-08：不算方向键），位 3 = 上一拍页在 | bit 0 = withheld until release, bit 1 = pushed last sample, bit 2 = this push began before the page (N11-07, N12-08: not a D-pad press), bit 3 = page up last sample
+    uint64_t v = dirs & (want == 2 ? DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT : DM_BTN_UP | DM_BTN_DOWN), h = *hold;
+    int pre = dirs && (h & 4 || (want && !(h & 8) && (h & 2)));
+    int withheld = dirs && (want || (h & 1));
+    *hold = (uint64_t)(withheld ? 1 : 0) | (dirs ? 2 : 0) | (pre ? 4 : 0) | (want ? 8 : 0);
+    *out = want && !pre ? v : 0;
+    return want || withheld;
+}

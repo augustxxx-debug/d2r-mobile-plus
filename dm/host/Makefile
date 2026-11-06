@@ -5,6 +5,12 @@ DM_ROOT ?= $(HOME)/dm-work
 # The packaging script (tools/mac_app.sh) takes the same number through print-macos-min, writes it into Info.plist, and checks that the number in the executable equals it
 MACOS_MIN ?= 26.0
 CFLAGS=-O1 -g -Wall -Wno-unused-function -mmacosx-version-min=$(MACOS_MIN)
+ifeq ($(DM_QA_BUILD),1)
+CFLAGS += -DDM_QA_BUILD=1   # QA 构建：脚本驱动入口（CLAUDE.md §2.9），玩家包不带 | QA build: scripted driver entries, not in player packages
+QA_STAMP = .qa_build_on
+else
+QA_STAMP = .qa_build_off
+endif
 MOVIE_FFMPEG ?= 0
 MOVIE_PREFIX ?=
 ifeq ($(MOVIE_FFMPEG),1)
@@ -38,11 +44,16 @@ SRC=\
 	romfs_validate.c \
 	dm_actions.c \
 	dm_autobuff.c \
+	dm_bag.c \
 	dm_beltauto.c \
 	dm_bossrush.c \
 	dm_bright.c \
 	dm_cloudsync.c \
 	dm_community.c \
+	dm_diagup.c \
+	dm_crashreport.c \
+	dm_telemetry.c \
+	dm_telebox.c \
 	dm_cursor.c \
 	dm_cursor_item.c \
 	dm_custom.c \
@@ -54,6 +65,7 @@ SRC=\
 	dm_hud.c \
 	dm_i18n.c \
 	dm_kills.c \
+	dm_loadpage.c \
 	dm_lootfilter.c \
 	dm_movie_decode.c \
 	dm_namegen.c \
@@ -65,7 +77,10 @@ SRC=\
 	dm_rift.c \
 	dm_rift_ui.c \
 	dm_runeword.c \
+	dm_stack.c \
 	dm_rwlv_core.c \
+	dm_savemgr.c \
+	dm_savepkg.c \
 	dm_shoprefresh.c \
 	dm_textbox.c \
 	dm_textbox_core.c \
@@ -116,9 +131,20 @@ dm_hud_exp.h: ../ios/tools/gen_hud_exp.py ../ios/tools/romfs_art.py
 dm_bright_levels.inc: ../tools/gen_bright_levels.py ../ios/tools/touch_layout.py
 	$(NEED_ROMFS)
 	python3 ../tools/gen_bright_levels.py "$(ROMFS)" > $@.tmp && mv $@.tmp $@
-dmhost: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
+# 玩家 / QA 形态切换时重新编译：产物同名，不靠这个戳文件切回玩家形态会留着 QA 入口 | switching between player and QA forms rebuilds: the output has one name, and without this stamp a switch back keeps the QA entries
+$(QA_STAMP):
+	rm -f .qa_build_on .qa_build_off && sleep 1 && touch $@   # 等 1 秒：make 的时间精度是秒，戳文件要严格新于上一次的产物 | wait a second: make's timestamps are in seconds and the stamp must be strictly newer than the last output
+dmhost: $(QA_STAMP) $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
 	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -weak_framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
 # 旧接口版宿主（图形后端不用 Metal 4，目标 macOS 15.0）：同一棵树、同一份源码，只多一个编译开关；不在缺省目标里，要用时 make dmhost_m3
 # Older-API host (graphics backend without Metal 4, target macOS 15.0): the same tree and the same source, with just one more compile switch; not in the default targets, run make dmhost_m3 when needed
-dmhost_m3: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
+dmhost_m3: $(QA_STAMP) $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
 	clang $(CFLAGS_M3) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) -framework Cocoa -framework QuartzCore -framework Metal -weak_framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network
+
+# 上传诊断报告的 Mac 验收宿主（diagup_mac.m + iOS 同一份 Swift 网络代码编成的 dylib）：普通 dmhost 不带；DM_DIAG_ORIGIN 没设时行为同 dmhost
+# Mac acceptance host for the diagnostic upload (diagup_mac.m + a dylib built from the same Swift network code as iOS): plain dmhost does not carry it; without DM_DIAG_ORIGIN it behaves as dmhost
+DIAG_UPLOAD_LIB = dm_diag_upload.dylib
+$(DIAG_UPLOAD_LIB): ../ios/Sources/dm_diag_upload.swift
+	swiftc -emit-library -O -swift-version 6 -module-name DmDiagUpload -Xlinker -install_name -Xlinker @rpath/dm_diag_upload.dylib $< -o $@
+dmhost_diag: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_movie_decode.h dm_i18n_tab.h app_mac_overlay.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH) diagup_mac.m dm_diagup.h $(DIAG_UPLOAD_LIB)
+	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) diagup_mac.m $(GFX) $(LIBDEFLATE) $(MOVIE_LIBS) ./$(DIAG_UPLOAD_LIB) -Wl,-rpath,@loader_path -framework Cocoa -framework QuartzCore -framework Metal -weak_framework MetalFX -framework AudioToolbox -framework CoreAudio -framework ImageIO -framework UniformTypeIdentifiers -framework GameController -framework Network

@@ -55,6 +55,8 @@ with tempfile.TemporaryDirectory() as t:
     REPL.update(notification_layout.build_notice_slices(romfs,t,nw))
     REPL.update(notification_layout.build_notice_slices(romfs,t,nw,folder='ztouch_safe',prefix='safe_'))
     REPL.update(notification_layout.build_notice_slices(romfs,t,nw,folder='ztouch_comm',prefix='comm_'))   # 社区入口提示框的边框（同一套美术，自己一套切片；dm_community.c） | frame of the community entry's notice box (same art, its own slices; dm_community.c)   # 崩溃围栏主菜单提示框的边框（同一套美术，自己一套切片） | frame of the crash fence's main-menu notice box (same art, its own slices)
+    REPL.update(notification_layout.build_notice_slices(romfs,t,nw,folder='ztouch_tele',prefix='tele_'))   # 统计告知框的边框（同一套美术，自己一套切片；dm_telebox.c） | frame of the statistics notice (same art, its own slices; dm_telebox.c)
+    REPL.update(notification_layout.build_notice_slices(romfs,t,nw,folder='ztouch_diag',prefix='diag_'))   # 上传诊断报告提示框的边框（同一套美术，自己一套切片；dm_diagup.c） | frame of the diagnostic upload box (same art, its own slices; dm_diagup.c)
     REPL.update(notification_layout.build_line_slices(romfs,t,folder='ztouch_comm',prefix='comm_'))   # 社区 / 关于弹窗的卡片边框与手柄焦点框（RC1.1 重构） | card border and controller focus frame of the community box (RC1.1 redesign)
     MODAL_LAYERS=notification_layout.build_modal_layers(romfs,t)
     REPL.update(MODAL_LAYERS)
@@ -100,6 +102,7 @@ with tempfile.TemporaryDirectory() as t:
     import drop_light; dl,dls=drop_light.build(romfs,t,REPL); REPL.update(dl)   # 掉落光的带光模型变体（新增路径，常驻；宿主运行时按规则 / 开关改指，dm_dropfilter.c） | Lit model variants for drop lights (new paths, always present; the host repoints at runtime by rule / switch, dm_dropfilter.c)
     import pouch_layout; pl,pls=pouch_layout.build(romfs,t,REPL); REPL.update(pl)   # 百宝囊框与「存放」按钮（物品栏，叠在触摸布局之后） | Pouch box and 「存放」(Deposit) button (inventory, stacked after the touch layout)
     import wide_stash; ws,wss=wide_stash.build(romfs,t,REPL); REPL.update(ws)
+    import stack_potions; _,sps=stack_potions.wire(romfs,t,REPL)   # 药水真堆叠（两份 misc.bin / itemtypes.bin；wire = build + REPL.update） | True potion stacking (both misc.bin / itemtypes.bin; wire = build + REPL.update)
     # 手柄版布局：手柄模式读原版路径上的布局（触屏版挪进了触屏目录，见下面 TDIR）。我们的功能改动两种模式都要——符文之语清单、百宝囊框与「存放」、
     # 储藏箱 14 列（数据表已是 14 列，布局只有 10 列时第 11–14 列的物品看不到）与宽外框、编年史仓库页签——所以按同一套功能模块在原版布局上再出一份，放在原版路径；触屏改动不带
     # Controller layouts: controller mode reads the layouts at the original paths (the touch version was moved into the touch directories, see TDIR below). Our
@@ -128,7 +131,7 @@ with tempfile.TemporaryDirectory() as t:
     # the Mac App is the gamepad layout plus a mouse, where clicking the Druid selected the Warlock and all four classes on the right half were off by one
     lp,lt=touch_layout.read_layout(romfs,'controller/console/charactercreatepanelhd.json')
     for nm,x0,x1 in touch_layout.CLASS_STRIPS: lt=touch_layout.set_rect(lt,nm,x0,450,x1-x0,1300)
-    o=os.path.join(tpad,'pad_charcreate.json'); open(o,'w',encoding='utf-8').write(lt); PR[lp.lower()]=o
+    o=os.path.join(tpad,'pad_charcreate.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_charcreate(lt)); PR[lp.lower()]=o
     # 手柄版选角页：列表三行字号同触屏版（touch_layout.CHARSEL_FONTS，原因见那里）；字号档两种模式共用，原版字节下第三行被下一行盖住半截
     # Gamepad-layout character select page: the list's three font sizes as in the touch version (touch_layout.CHARSEL_FONTS, see there); the font profiles are shared by both modes and with the original bytes the third line is half covered by the next row
     lp,lt=touch_layout.read_layout(romfs,'controller/console/characterselectpanelhd.json'); _,base=touch_layout.read_layout(romfs,'characterselectpanelhd.json')
@@ -136,6 +139,7 @@ with tempfile.TemporaryDirectory() as t:
     PR.update(touch_layout.build_ingame(romfs,tpad,touch_layout.PAD_VENDOR,present=False)[0])   # 手柄版商人页：刷新货架钮 | Controller layout vendor page: the refresh shop stock button
     lp,lt=touch_layout.read_layout(romfs,'controller/console/mainmenupanelhd.json'); o=os.path.join(tpad,'pad_mainmenu.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_info_sizes(touch_layout.pad_legend_size(touch_layout.pad_mainmenu(lt)))); PR[lp.lower()]=o   # 手柄版主菜单：构建号与新版本提示、底部提示条与角色信息框字号 | Controller layout main menu: build number and new version notice, bottom legend and info box sizes
     lp,lt=touch_layout.read_layout(romfs,'controller/console/mainmenubuttonribbonhd.json'); o=os.path.join(tpad,'pad_ribbon.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_ribbon(lt, movies=os.environ.get('MOVIE_FFMPEG')=='1')); PR[lp.lower()]=o   # 手柄版主菜单按钮栏；不解码过场时拿掉「电影动画」
+    lp,lt=touch_layout.read_layout(romfs,'controller/hudpanelhd.json'); o=os.path.join(tpad,'pad_hud.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_hud(lt)); PR[lp.lower()]=o   # 手柄版底栏：腰带下的十字键提示上提（B030） | Controller bottom bar: raise the D-pad hints under the belt (B030)
     lp,lt=touch_layout.read_layout(romfs,'controller/hudmonsterhealthhd.json'); o=os.path.join(tpad,'pad_bosspct.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_boss_pct(lt)); PR[lp.lower()]=o   # 手柄版怪物血条：加百分比 | Controller layout monster health bar: add the percentage
     lp,lt=touch_layout.read_layout(romfs,'controller/console/characteroptionspanelhd.json'); o=os.path.join(tpad,'pad_charopt.json'); open(o,'w',encoding='utf-8').write(touch_layout.pad_bliss(lt)); PR[lp.lower()]=o   # 手柄版建角模式页：加「极乐世界」一行 | Controller-version character-creation mode page: add the "Elysium" row
     for rel,fn in (('controller/console/settingspanelhd.json',touch_layout.pad_settings),('controller/console/videooptionspanelhd.json',touch_layout.pad_custom_page)):   # 手柄版选项页：「视频」页签换成「自定义」页 | Controller options page: the "Video" tab is replaced by the "Custom" page
@@ -210,6 +214,10 @@ with tempfile.TemporaryDirectory() as t:
     SHARED_TODO=('chroniclebaselistpanelhd.json','chroniclepanelhd.json','controller/_profileconsolehd.json','controller/_profilehandheldhd.json','dropdownlistcontentshd.json')
     PADROOT=touch_layout.build_pad_root(romfs,tpad)
     PADROOT.update({key:value for key,value in MODAL_LAYERS.items() if key[len(LAY):] in ('confirmationmodalhd.json','dismissablemodalhd.json','youdiedmodalhd.json')})
+    # B070：手柄版确认框（专家模式警告等）正文区与字号同触屏那份（touch_layout.PRESENT 的同一个变换，套在叠层优先级那份上）：原版正文区高 170、大字号档 40 号，长句压到按钮上
+    # B070: the controller confirmation box (Hardcore warning and others) gets the touch copy's body area and size (the same touch_layout.PRESENT transform, on top of the modal-priority copy): the stock area is 170 high at size 40 and long prompts ran onto the buttons
+    _k=LAY+'confirmationmodalhd.json'; _t,_n=touch_layout.PRESENT['confirmationmodalhd.json'](open(PADROOT[_k],encoding='utf-8').read()); assert _n
+    _o=os.path.join(tpad,'padroot_confirmationmodalhd.json'); open(_o,'w',encoding='utf-8').write(_t); PADROOT[_k]=_o
     # 两种模式分别显式复制，宿主保护初始位置；保持根布局隔离检查。
     # Explicit copies for both modes: constructor placement is guarded by the
     # host in either mode. Keep the root-layout isolation checks intact.
@@ -221,7 +229,7 @@ with tempfile.TemporaryDirectory() as t:
     # 手柄专用清单：手柄模式下不是原版字节的布局就这几份，一份不许多、一份不许少（改上面某一行时把相邻一行整行替掉过，商人页的刷新钮就从包里掉了）
     # Controller-only list: these are the only layouts that are not original bytes in controller mode, not one more and not one fewer (once, when a line above was edited, the adjacent line was replaced whole, and the vendor page's refresh button dropped out of the package)
     PAD_PAGES=('controller/bankexpansionlayouthd.json','controller/console/charactercreatepanelhd.json','controller/console/characteroptionspanelhd.json','controller/console/characterselectpanelhd.json','controller/console/loadscreenpanelhd.json','controller/console/mainmenubuttonribbonhd.json','controller/console/mainmenupanelhd.json','controller/console/settingspanelhd.json','controller/console/switch/playerinventoryexpansionlayouthd.json','controller/console/videooptionspanelhd.json',
-               'controller/controlleroverlayhd.json','controller/hirelinginventorypanelhd.json','controller/hudmonsterhealthhd.json','controller/messagelogpanelhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json','controller/vendorpanellayouthd.json')
+               'controller/controlleroverlayhd.json','controller/hirelinginventorypanelhd.json','controller/hudmonsterhealthhd.json','controller/hudpanelhd.json','controller/messagelogpanelhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json','controller/vendorpanellayouthd.json')
     PAD_PAGES=PAD_PAGES+notification_layout.MODAL_CONTROLLER_PAGES
     if sorted(k[len(LAY):] for k in PADLAY)!=sorted(PAD_PAGES): raise SystemExit('gen_romfs_overlay：手柄专用布局与清单 PAD_PAGES 不一致：多 %s，少 %s' % (sorted(set(k[len(LAY):] for k in PADLAY)-set(PAD_PAGES)), sorted(set(PAD_PAGES)-set(k[len(LAY):] for k in PADLAY))))
     def emit(repl, dst, tag, prebuilt=None):   # repl → 覆盖层（新 .build.config + 一个新数据档）写到 dst/data | repl → overlay (a new .build.config + one new data archive) written to dst/data
@@ -262,7 +270,14 @@ with tempfile.TemporaryDirectory() as t:
                     repl[key]=output
         with open(os.path.join(t,tag+'repl.tsv'),'w') as f:
             for k,v in repl.items(): f.write(f'{"" if k in MAN else "+"}{k}\t{os.path.join(t,v)}\n')   # 新增路径前加「+」（casc_overlay.py） | New paths are prefixed with "+" (casc_overlay.py)
-        subprocess.run(gen_assets.python_command(os.path.join(HERE,'..','..','tools','casc_overlay.py'),romfs,os.path.join(t,tag+'ov'),os.path.join(t,tag+'repl.tsv'),'--thin')+(['--prebuilt',prebuilt] if prebuilt else []),check=True,stdout=subprocess.DEVNULL)
+        # 写覆盖层：成功时它的输出不要（很长）；失败时原样转到本进程的 stderr 再以「[x] …」退出，里层的回溯与报错跟着进生成日志（以前 stdout 丢掉、只剩外层
+        # CalledProcessError，缺陷台账 B026）
+        # Write the overlay: its output is dropped on success (it is long); on failure it is passed through to this process's stderr unchanged and we exit with "[x] ...",
+        # so the inner traceback and error reach the generation log (previously stdout was dropped and only the outer CalledProcessError was left, defect ledger B026)
+        cp=subprocess.run(gen_assets.python_command(os.path.join(HERE,'..','..','tools','casc_overlay.py'),romfs,os.path.join(t,tag+'ov'),os.path.join(t,tag+'repl.tsv'),'--thin')+(['--prebuilt',prebuilt] if prebuilt else []),stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+        if cp.returncode:
+            sys.stderr.write(cp.stdout.decode('utf-8','replace')); sys.stderr.flush()
+            raise SystemExit('[x] 写覆盖层（casc_overlay.py）退出码 %d，它的输出见上' % cp.returncode)
         src=os.path.join(t,tag+'ov','data'); new=[n for n in os.listdir(src) if n.endswith('.data') and not os.path.islink(os.path.join(src,n))]
         assert len(new)==1, new
         shutil.rmtree(dst,ignore_errors=True); os.makedirs(os.path.join(dst,'data'))
@@ -317,7 +332,7 @@ with tempfile.TemporaryDirectory() as t:
 # Finalize after all sidecars/ASTC metadata; each variant has its own complete manifest.
 import overlay_contract
 from pathlib import Path
-source_sha = overlay_contract.source_fingerprint(Path(__file__).resolve().parents[3])
+source_sha = overlay_contract.source_fingerprint(Path(__file__).resolve().parents[3], os.environ.get('DM_TARGET'))
 for directory in GENERATED_OVERLAYS:
     overlay_contract.write_manifest(directory, source_sha)
     overlay_contract.verify_manifest(directory, source_sha)

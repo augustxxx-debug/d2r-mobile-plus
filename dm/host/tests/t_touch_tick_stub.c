@@ -12,12 +12,16 @@ void dm_world_walk(float nx, float ny) { (void)nx; (void)ny; } unsigned dm_world
 void dm_textinput_pump(void) {}   // 文本框接法（dm_textinput.c）：同上，给空桩 | text box hookup (dm_textinput.c): same as above, an empty stub
 void dm_update_pump(void) {}      // 选角页构建号与新版本提示（dm_update.c）：同上，给空桩 | build number and new-version notice on the character select page (dm_update.c): same as above, an empty stub
 void dm_crashfence_pump(void) {}   // 崩溃围栏的主菜单游戏内提示框（dm_crashfence.c）：同上，给空桩 | the crash fence's main-menu notice box (dm_crashfence.c): same as above, an empty stub
-void dm_community_pump(void) {}   // 社区入口的入口显隐与提示框（dm_community.c）：同上，给空桩 | the community entry's show / hide and notice box (dm_community.c): likewise an empty stub
+void dm_community_pump(void) {}
+void dm_telemetry_pump(void) {} void dm_telebox_pump(void) {} void dm_crashreport_pump(void) {} void dm_diagup_pump(void) {}   // 上传诊断报告（dm_diagup.c）：同上 | diagnostic upload (dm_diagup.c): likewise   // 社区入口的入口显隐与提示框（dm_community.c）：同上，给空桩 | the community entry's show / hide and notice box (dm_community.c): likewise an empty stub
 void dm_num_set(int n) { (void)n; }
 void dm_actions_pump(void) {}
 uint64_t dm_swapskill_filter(uint64_t b) { return b; }   // 副手组技能（dm_actions.c）：不压键 | swap-set skill (dm_actions.c): does not suppress keys
 uint64_t dm_runeword_pad_filter(uint64_t b) { return b; }   // 手柄模式符文之语清单（dm_runeword.c）：不吃键 | Runeword list in controller mode (dm_runeword.c): swallow no buttons
+void dm_padmode_stick_as_dpad(void) {} void dm_padmode_stick_as_dpad4(void) {}
 void dm_padmode_page_stick(int32_t *lx, int32_t *ly) { (void)lx; (void)ly; }   // 页接管摇杆（B006b）：这些单测不带页，不动 | page stick takeover: no page in these tests
+void dm_padmode_page_rstick(int32_t *ry) { (void)ry; }   // 页接管右摇杆跳组：同上，不动 | page right-stick group jump: likewise, does nothing
+void dm_diff_tip(int n) { (void)n; }   // 难度说明提示（dm_padmode.c）：这些单测不带页 | the difficulty tip (dm_padmode.c): no page in these tests
 uint64_t dm_padmode_page_filter(uint64_t b) { return b; }   // 手柄模式我们自己的页（dm_padmode.c）：不吃键 | Our own pages in controller mode (dm_padmode.c): swallow no buttons
 int dm_padmode_input_gate(uint64_t *b) { (void)b; return 0; }   // 手柄 / 触屏切换事务的输入闸（dm_padmode.c）：没在切 | Input gate of the controller / touch switch transaction (dm_padmode.c): not switching
 int dm_padmode_current(void) { return 0; }   // 手柄 / 触屏模式（dm_padmode.c）：触屏 | Controller / touch mode (dm_padmode.c): touch
@@ -90,6 +94,8 @@ void dm_held_stow(void) {}
 int dm_held_stow_result(void) { return -1; }
 void dm_test_swap_held(void) {}
 int dm_held_pending(void) { return 0; }
+int dm_held_unid(void) { return 0; }   // 手上那件未鉴定（dm_cursor_item.c，B099）：没拿着 | held item unidentified (B099): nothing held
+void dm_game_notice_ui(uint8_t *b, const char *t) { (void)b; (void)t; }   // 游戏内提示（dm_bossrush.c）：不弹 | in-game notice: none
 void uimsg_emit(const char *cat, const char *act, const char *arg) { (void)cat; (void)act; (void)arg; }
 void dm_item_identify_free(unsigned id) { (void)id; }   // 免费鉴定（dm_actions.c）的桩 | stub for free identify (dm_actions.c)
 int dm_runeword_long_press(const void *ci) { (void)ci; return 0; }   // 符文之语助手（dm_runeword.c）的桩 | stub for the runeword helper (dm_runeword.c)
@@ -98,4 +104,7 @@ void dm_runeword_button(const char *name) { (void)name; }
 void dm_runeword_list_close(void) {}
 int dm_test_game_paused;
 void dm_game_notice_ui_pump(void) {}
+#include "../dm_notice_pair.h"
+const dm_notice_pair *dm_game_notice_pair_for(const char *text, size_t len) { (void)text; (void)len; return NULL; }   // 两级提示绑定表（dm_bossrush.c）：这些单测没有两级提示 | two-level tip binding (dm_bossrush.c): none in these tests
 uint64_t dm_padmode_legend_click(float nx, float ny) { (void)nx; (void)ny; return 0; } int dm_padmode_hud_click(float nx, float ny, uint64_t *b) { (void)nx; (void)ny; (void)b; return 0; } int dm_padmode_legend_has(uint32_t g) { (void)g; return 0; } int dm_game_paused(void) { return dm_test_game_paused; }   // Native pause state is controlled by the HID regression, without a game image.
+int dm_stack_box_gate(int x, int y) { (void)x; (void)y; return 0; } int dm_stack_open(const void *ci) { (void)ci; return 0; } void dm_stack_pad(uint64_t *buttons, uint64_t now_ns) { (void)buttons; (void)now_ns; }   // 药水拆分框（dm_stack.c）：给空桩 | potion split box (dm_stack.c): empty stubs

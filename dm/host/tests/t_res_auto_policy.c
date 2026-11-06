@@ -5,6 +5,9 @@
 // Policy: the loop is active only while render resolution = Auto, 3D is not quality-first, the loop switch is not off and the dynamic controller is on; as soon as any condition fails the extra
 // downstep is cleared, pushing 31 once (if it was non-zero) so the game re-reads the output size; when the conditions hold again the loop restarts at step 0 instead of resuming the old step.
 #define DM_RES_LEVEL_TEST_HOOK 1
+#define DM_DYN3D_TEST_HOOK 1   // B147：动态 3D 分辨率缺省关，测试自己给开关 | B147: Dynamic 3D resolution is off by default; the test supplies the switch
+static int test_dyn3d = 1;
+int dm_dyn3d_setting(void) { return test_dyn3d; }
 #include "../hle_oe.c"
 #include <assert.h>
 #include <math.h>
@@ -31,6 +34,7 @@ static int checks;
 static void feed(double ms, double seconds) { for (double t = 0; t < seconds * 1000; t += ms) { test_clock += (uint64_t)(ms * 1e6); dm_3d_scale_feed(ms); } }
 static int pending31(void) { int n = 0; pthread_mutex_lock(&g_mq_lock); for (int i = 0; i < g_mqn; i++) n += g_mq[(g_mqh + i) % MQ] == MSG_PERFMODE; g_mqn = 0; pthread_mutex_unlock(&g_mq_lock); return n; }
 // 把闭环推到第 2 步：持续 30 fps（33.33 ms），3D 先降到下限，之后输出档再降两步 | Push the loop to step 2: sustained 30 fps, 3D falls to its floor first, then the output level drops twice
+static float dm_3d_scale_target_for_test(void) { return s3_target_scale(-1); }
 static int drive_down(void) { for (int i = 0; i < 400 && dm_res_auto_step_get() < 2; i++) feed(33.333333, 2); return dm_res_auto_step_get(); }
 
 int main(void) {
@@ -80,6 +84,11 @@ int main(void) {
     // ⑩ 回前台同样作废证据 | returning to the foreground voids the evidence too
     for (int i = 0; i < 400 && dm_res_auto_step_get() < 2; i++) feed(33.333333, 2); pending31();
     feed(16.666667, 58); dm_3d_scale_resumed(); feed(16.666667, 4); CHECK(dm_res_auto_step_get() == 2);
-    printf("PASS auto output loop exit policy: %d checks (quality-first, manual level, re-entry, no spurious 31)\n", checks);
+    // ⑪ B147 ②：图形页关掉动态 3D 分辨率 = 闭环退出：立即清零并通知一次，之后持续 30 帧也不再降；再打开从第 0 步重新开始 | B147 ②: switching Dynamic 3D resolution off exits the loop: cleared at once with one notification, no further drops at sustained 30 fps; switching back on restarts at step 0
+    CHECK(dm_res_auto_step_get() == 2); pending31();
+    test_dyn3d = 0; feed(16.666667, 1); CHECK(dm_res_auto_step_get() == 0); CHECK(pending31() == 1);
+    feed(33.333333, 300); CHECK(dm_res_auto_step_get() == 0); CHECK(pending31() == 0); CHECK(fabsf(dm_3d_scale_target_for_test() - s3_effective_cfg()) < 1e-4f);
+    test_dyn3d = 1; CHECK(drive_down() == 2);
+    printf("PASS auto output loop exit policy: %d checks (quality-first, manual level, re-entry, no spurious 31, dyn3d off)\n", checks);
     return 0;
 }

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 背景 = AppIcon1024.png 四角 64×64 块的暗色均值。 -->
+    <color name="ic_launcher_background">#090606</color>
+</resources>

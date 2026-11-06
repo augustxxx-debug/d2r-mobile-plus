@@ -28,6 +28,20 @@ class RateHint(unittest.TestCase):
         self.assertIn('preferredFrameRateRange', tick); self.assertIn('[self work]', tick)
         self.assertNotIn('tickTouchControls', tick)
 
+    def test_rate_hint_table(self):
+        # 审计 P2-2：表态换成显示帧率（帧生成必需），没有帧生成时 90 仍按 60（基线）；把纯函数编成 C 逐项核 | audit P2-2: the declaration uses the display rate (needed by frame generation); 90 without frame generation stays 60 (baseline); compile the pure function as C and check each case
+        import re, subprocess, tempfile, os
+        fn = re.search(r'static int dm_rate_hint_hz\(int disp, int render\) \{.*?\}\n', FRONT, re.S)[0]
+        tick = block(FRONT, '- (void)tick:(CADisplayLink *)l {')
+        self.assertIn('dm_rate_hint_hz(f, mtl_fps_target())', tick); self.assertIn('mtl_display_fps()', tick)
+        cases = [(30, 30, 30), (60, 60, 60), (90, 90, 60), (120, 120, 120), (120, 60, 120), (40, 40, 120), (80, 40, 120), (90, 30, 120), (60, 30, 60), (120, 30, 120)]
+        src = fn + 'int main(void) { int c[][3] = {' + ','.join('{%d,%d,%d}' % t for t in cases) + '}; for (unsigned i = 0; i < sizeof c / sizeof *c; i++) if (dm_rate_hint_hz(c[i][0], c[i][1]) != c[i][2]) return 1 + (int)i; return 0; }\n'
+        with tempfile.TemporaryDirectory() as d:
+            c, exe = os.path.join(d, 'r.c'), os.path.join(d, 'r')
+            open(c, 'w').write(src)
+            subprocess.run(['cc', '-Wall', '-Werror', '-o', exe, c], check=True)
+            self.assertEqual(subprocess.run([exe]).returncode, 0)
+
     def test_work_does_touch_and_layout(self):
         work = block(FRONT, '- (void)work {')
         for needed in ('tickTouchControls', 'refreshPortalBinding', 'setNeedsLayout'):
@@ -41,7 +55,7 @@ class RateHint(unittest.TestCase):
         self.assertIn('[worker work]', off)
         # 二审 R03：不得固定 60 Hz；定时器频率跟随目标帧率 30 / 60 / 120，并在目标变化时重设 | second review R03: no fixed 60 Hz; the timer follows the 30 / 60 / 120 target and is re-armed on change
         self.assertNotRegex(off, r'1\.0 / 60\b')
-        self.assertIn('mtl_fps_target()', off)
+        self.assertIn('mtl_display_fps()', off)   # 显示帧率：AI 帧生成生效时 = 渲染帧率 × 2 | display rate: render rate x 2 while AI frame generation is in effect
         self.assertRegex(off, r'f == 30 \? 30 : f == 120 \? 120 : 60')
         self.assertRegex(off, r'if \(hz != cur_hz\).*dispatch_source_set_timer', 're-arm on change')
         self.assertIn('dispatch_get_main_queue()', off)

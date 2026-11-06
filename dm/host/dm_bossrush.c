@@ -36,6 +36,7 @@
 //       on finishing, the forcing is removed and it is applied once more by the real clock, so zones outside the run and after the boss rush rotate as usual.
 #include "dm_bossrush.h"
 #include "dm_unit.h"
+#include "dm_notice_pair.h"
 #include "hle.h"
 #include "dm.h"
 #include "dm_i18n.h"
@@ -98,28 +99,44 @@ void dm_game_notice_chat(uint8_t *main_base, const char *text) {
 // NotificationPanel queue from both threads. Copy requests, then deliver them
 // only at the guest's controller poll before UI layout/rendering.
 enum { NOTICE_UI_CAPACITY=64, NOTICE_UI_BYTES=1024 };
-typedef struct { uint8_t *base; char text[NOTICE_UI_BYTES]; } notice_ui_request;
+typedef struct { uint8_t *base; char text[NOTICE_UI_BYTES]; char sub[NOTICE_UI_BYTES]; } notice_ui_request;   // sub = 第二级灰副文（B035），空串 = 不用 | sub = the second-level grey subtext (B035), empty = unused
 static notice_ui_request notice_ui_queue[NOTICE_UI_CAPACITY];
 static unsigned notice_ui_read,notice_ui_count;
 static pthread_mutex_t notice_ui_lock=PTHREAD_MUTEX_INITIALIZER;
-void dm_game_notice_ui(uint8_t *base, const char *text) {
-    if (!base || !text || !*text) return;
-    size_t length=strnlen(text,NOTICE_UI_BYTES);
-    if (length==NOTICE_UI_BYTES) { LOG("Notification UI request exceeds byte limit; chat remains available"); return; }
+static void notice_ui_enqueue(uint8_t *base, const char *text, const char *sub) {
+    text=text?text:""; sub=sub?sub:"";
+    if (!base || (!*text && !*sub)) return;
+    size_t length=strnlen(text,NOTICE_UI_BYTES), sublength=strnlen(sub,NOTICE_UI_BYTES);
+    if (length==NOTICE_UI_BYTES || sublength==NOTICE_UI_BYTES) { LOG("Notification UI request exceeds byte limit; chat remains available"); return; }
     pthread_mutex_lock(&notice_ui_lock);
     if (notice_ui_count==NOTICE_UI_CAPACITY) {
         pthread_mutex_unlock(&notice_ui_lock);
         LOG("Notification UI request queue full; chat remains available"); return;
     }
     notice_ui_request *request=&notice_ui_queue[(notice_ui_read+notice_ui_count)%NOTICE_UI_CAPACITY];
-    request->base=base;memcpy(request->text,text,length+1);notice_ui_count++;
+    request->base=base;memcpy(request->text,text,length+1);memcpy(request->sub,sub,sublength+1);notice_ui_count++;
     pthread_mutex_unlock(&notice_ui_lock);
 }
-static void notice_ui_native(uint8_t *base,const char *text) {
+void dm_game_notice_ui(uint8_t *base, const char *text) { notice_ui_enqueue(base,text,NULL); }
+// 两级提示（B035）：交给原版通知的是 dm_notice_pair_key（正文，正文为空时用副文），排队、显示时长、滑入滑出都照原版；正文 / 副文另记一条，
+// 由提示框排版（dm_cursor.c）在 Prompt 正好显示这串字时写进布局里的 TouchNoticeBody（36 号主色）/ TouchNoticeSub（28 号浅灰）。这里不碰任何控件
+// Two-level tip (B035): the original notice receives dm_notice_pair_key (the body, or the subtext when the body is empty), so queueing, display time and slide
+// in / out stay native; body / subtext are recorded separately and the notice layout (dm_cursor.c) writes them into TouchNoticeBody (36 pt primary) /
+// TouchNoticeSub (28 pt light grey) only while Prompt shows exactly that text. No widget is touched here
+static dm_notice_pairs notice_pairs;   // 只许游戏主线程（投递与排版都在主线程） | game main thread only (delivery and layout both run there)
+const dm_notice_pair *dm_game_notice_pair_for(const char *text, size_t len) { return dm_notice_pair_find(&notice_pairs, text, len); }
+static void notice_ui_post_native(uint8_t *base,const char *text) {
     uint64_t msg[4] = { 0xd106c9eabf113da5ull, 0x8fa6af1ab5b75b23ull, 0, 1 };
     ((void (*)(const char *, void *))(base + 0x3d8b74))(text, msg);
 }
-static void notice_ui_drain(void (*deliver)(uint8_t *,const char *)) {
+static void (*notice_ui_post)(uint8_t *,const char *)=notice_ui_post_native;   // 单测换成记录函数（t_notice_dispatch） | the unit test swaps in a recorder (t_notice_dispatch)
+static void notice_ui_native(uint8_t *base,const char *text,const char *sub) {
+    dm_notice_pair_add(&notice_pairs,text,sub);
+    notice_ui_post(base,dm_notice_pair_key(text,sub));
+}
+void dm_game_notice_ui_pair(uint8_t *base,const char *text,const char *sub) { notice_ui_enqueue(base,text,sub); }
+void dm_game_notice_native_test(uint8_t *base,const char *text) { notice_ui_post(base,text); }   // 测试开关 DM_TEST_NATIVE_NOTICE（dm_padmode.c）：直接走原版通知，扮演原版系统提示 | test switch DM_TEST_NATIVE_NOTICE (dm_padmode.c): straight to the original notice, standing in for a native system notice
+static void notice_ui_drain(void (*deliver)(uint8_t *,const char *,const char *)) {
     // Bound one poll even if a callback queues another request. Release the
     // mutex before calling the game: message callbacks may enqueue recursively.
     pthread_mutex_lock(&notice_ui_lock);unsigned count=notice_ui_count;pthread_mutex_unlock(&notice_ui_lock);
@@ -129,7 +146,7 @@ static void notice_ui_drain(void (*deliver)(uint8_t *,const char *)) {
         if (!notice_ui_count) { pthread_mutex_unlock(&notice_ui_lock);break; }
         request=notice_ui_queue[notice_ui_read];notice_ui_read=(notice_ui_read+1)%NOTICE_UI_CAPACITY;notice_ui_count--;
         pthread_mutex_unlock(&notice_ui_lock);
-        deliver(request.base,request.text);
+        deliver(request.base,request.text,request.sub);
     }
 }
 void dm_game_notice_ui_pump(void) { notice_ui_drain(notice_ui_native); }

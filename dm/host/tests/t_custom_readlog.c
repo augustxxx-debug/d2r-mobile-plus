@@ -21,6 +21,10 @@ int main(void) {
     int fps=dm_custom_get("fps_hud");
     fflush(stderr); dup2(saved,2); close(saved);
     CHECK(fps==1);
+    CHECK(dm_custom_voice_explicit()==-1);   // 旧文件没有 voice 键：保持「不改原版设置」（不把缺省英文当玩家选过）| an old file without voice keeps "do not touch the original settings" (the English default is not taken as a choice)
+    // VOICE_ROW 的定义本身恒为 1，与 DM_MOVIE_FFMPEG 无关：本测试在缺省与 -DDM_MOVIE_FFMPEG=1 两种编译下各跑一次（Makefile 的 t_custom_readlog_movie），两次都必须成立
+    // VOICE_ROW itself is always 1, independent of DM_MOVIE_FFMPEG: this test runs in both builds (default and -DDM_MOVIE_FFMPEG=1, see t_custom_readlog_movie in the Makefile) and must hold in both
+    CHECK(VOICE_ROW == 1);
     file=fopen(logp,"r"); CHECK(file); char text[8192]={0}; fread(text,1,sizeof text-1,file); fclose(file);
     char *line=strstr(text,"自定义设置：读盘"); CHECK(line); char *end=strchr(line,'\n'); if (end) *end=0;
     for (int i=1+VOICE_ROW;i<NK;i++) {
@@ -29,6 +33,9 @@ int main(void) {
         checks++;
     }
     CHECK(strstr(line," fps_hud=1")); CHECK(strstr(line," render_res=2")); CHECK(strstr(line," q3d=2")); CHECK(strstr(line," upscale=1")); CHECK(strstr(line," touch_swap_above=1"));
+    save();   // 没选过配音：存盘也不写 voice 键 | voice never picked: saving does not write the key either
+    file=fopen(path,"r"); CHECK(file); char savedtext[8192]={0}; fread(savedtext,1,sizeof savedtext-1,file); fclose(file);
+    CHECK(!strstr(savedtext,"voice="));
     unlink(path); unlink(logp); rmdir(directory);
     printf("t_custom_readlog: %d checks, 0 failures\n",checks);
     return 0;

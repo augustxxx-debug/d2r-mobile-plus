@@ -2,7 +2,7 @@
 
 English: [README.md](README.md)
 
-D2R Mobile 的 iOS App：把宿主（`dm/host`）、图形层（`dm/gfx`）和改写后的游戏程序装进一个 App，负责启动、找游戏资源、把触摸变成游戏能懂的输入，并在原版界面上摆出触摸控件。
+D2R Mobile Plus 的 iOS App（桌面与「文件」App 里显示为「D2R Mobile Plus」）：把宿主（`dm/host`）、图形层（`dm/gfx`）和改写后的游戏程序装进一个 App，负责启动、找游戏资源、把触摸变成游戏能懂的输入，并在原版界面上摆出触摸控件。
 
 先读这几份，本文不重复它们：
 

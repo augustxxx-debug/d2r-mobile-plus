@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import os
 from pathlib import Path
 import re
@@ -55,7 +56,8 @@ SOURCE_INPUTS = tuple(sorted((
     "dm/ios/tools/touchrectv1_patch.json", "dm/ios/tools/touch_layout.py",
     "dm/ios/tools/touch_strings.py", "dm/ios/tools/romfs_art.py",
     "dm/ios/tools/dm_i18n.py", "dm/ios/tools/merc_slots.py",
-    "dm/ios/tools/pouch_layout.py", "dm/ios/tools/wide_stash.py",
+    "dm/ios/tools/pouch_layout.py", "dm/ios/tools/wide_stash.py", "dm/ios/tools/stack_potions.py",
+    "dm/ios/tools/bag_layout.py", "dm/host/dm_bag_layout.h", "dm/ios/tools/gen_bag_art.py", "dm/ios/tools/bag_icons.py",   # 大背包控件（pouch_layout 导入，读宿主那份页签参数）：手机端生成要带上（RC2 并线） | large-bag widgets (imported by pouch_layout, read the host tab parameters): the on-phone generator needs them (RC2 merge)
     "dm/ios/tools/drop_light.py", "dm/ios/tools/kbd_glyphs.py",
     "dm/ios/tools/gen_widestash_art.py", "dm/ios/tools/gen_vault_cover.py",
     "dm/ios/tools/gen_trove_art.py", "dm/ios/tools/gen_pouch_art.py",
@@ -112,7 +114,16 @@ def _within(root: Path, relative: str) -> Path:
     return here / parts[-1]
 
 
-def source_fingerprint(repo_root: str | Path) -> str:
+def _android_view(text: str) -> str:
+    """ui_text.tsv as the Android package's on-phone generator carries it (no iOS-only rows, dm/android/tools/pack_gen_assets.py).
+    Filtering is idempotent, so the App built from the full table and the phone holding the filtered one agree."""
+    spec = importlib.util.spec_from_file_location("dm_i18n", Path(__file__).resolve().parent / "dm_i18n.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.filter_table(text, "ios")
+
+
+def source_fingerprint(repo_root: str | Path, target: str | None = None) -> str:
     root = Path(repo_root).absolute()
     _regular_info(root, directory=True)
     digest = hashlib.sha256(b"DM_OVERLAY_SOURCE_V1\0")
@@ -129,7 +140,10 @@ def source_fingerprint(repo_root: str | Path) -> str:
             text = raw.decode("utf-8-sig")
         except UnicodeError as error:
             raise ContractError(f"source is not UTF-8: {relative}") from error
-        data = text.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        if target == "android" and relative == "dm/i18n/ui_text.tsv":
+            text = _android_view(text)
+        data = text.encode("utf-8")
         digest.update(relative.encode("ascii") + b"\0")
         digest.update(len(data).to_bytes(8, "big"))
         digest.update(data)
@@ -334,13 +348,14 @@ def main(argv=None) -> int:
     parser.add_argument("--write", type=Path, action="append", default=[])
     parser.add_argument("--verify", type=Path, action="append", default=[])
     parser.add_argument("--inputs", action="store_true", help="print fixed repo-relative dependency paths")
+    parser.add_argument("--target", help="DM_TARGET of the overlay; android fingerprints the filtered string table")
     args = parser.parse_args(argv)
     if args.inputs:
         print("\n".join(SOURCE_INPUTS))
         if not (args.header or args.write or args.verify):
             return 0
     try:
-        source_sha = source_fingerprint(args.repo_root)
+        source_sha = source_fingerprint(args.repo_root, args.target)
         if args.header:
             write_header(args.header, source_sha)
         for overlay in args.write:

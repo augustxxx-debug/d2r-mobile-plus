@@ -1,0 +1,65 @@
+// Adreno 740 / 750（骁龙 8 Gen 2 / 8 Gen 3）收下两个安卓着色器改写后生成的 SPIR-V，运行时却在驱动里出错：kgsl 报 GPU
+// 页错误（gpu timeout ... status 00EF1087），驱动丢掉设备，下一次提交返回 VK_ERROR_DEVICE_LOST（-4），启动约两秒、主菜单
+// 出现之前就崩（#141）。两个改写本来是给 Adreno 730 写的，730 与 830 上都能跑，所以只在 750–799 这一族上缺省关掉（740 例外：上游在 740 上挂起的根因本分支已修，7579f5a；例外本身在 8dfeb6c），
+// 标记文件仍可显式打开（见 xbg_game_initialize 里的两个开关）。
+// Adreno 740 / 750 (Snapdragon 8 Gen 2 / 8 Gen 3) accept the SPIR-V of the two Android shader rewrites and then fault in the
+// driver: kgsl reports a GPU page fault (gpu timeout ... status 00EF1087), the driver drops the device, and the next submit
+// fails with VK_ERROR_DEVICE_LOST (-4) about two seconds into the boot, before the main menu (#141). Both rewrites were written
+// for Adreno 730, which runs them, as does Adreno 830, so they default off on the 750-799 family only (740 excepted: the cause of the upstream 740 hang is fixed on this branch, 7579f5a; the exception itself is 8dfeb6c); an explicit marker file
+// still turns either one on (see the two switches in xbg_game_initialize).
+#pragma once
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+// 设备名形如 "Adreno (TM) 740"：取 "Adreno" 之后的第一段数字。不是三段数字（例如 "Adreno X1-85"）时当作认不出来。
+// Device names look like "Adreno (TM) 740": take the first run of digits after "Adreno". Anything that is not three digits
+// (for example "Adreno X1-85") counts as unrecognized.
+inline int xbg_adreno_model(const char *device_name){
+    if(!device_name)return 0;
+    const char *at=strstr(device_name,"Adreno");
+    if(!at)at=strstr(device_name,"adreno");
+    if(!at)return 0;
+    at+=6;
+    while(*at && (*at<'0' || *at>'9'))++at;
+    int model=0,digits=0;
+    while(*at>='0' && *at<='9' && digits<4){model=model*10+(*at-'0');++at;++digits;}
+    return digits==3?model:0;
+}
+
+// 厂商 0x5143 是高通；只有 750–799 这一族缺省关掉这两个改写（740 例外：根因 7579f5a 已修，例外见 8dfeb6c）。
+// Vendor 0x5143 is Qualcomm; only the 750-799 family defaults both rewrites off (740 excepted: root cause fixed in 7579f5a, exception in 8dfeb6c).
+inline bool xbg_adreno_rewrites_fault(uint32_t vendor_id,const char *device_name){
+    if(vendor_id!=0x5143)return false;
+    const int model=xbg_adreno_model(device_name);
+    // D2R Mobile Plus：740 不在内。我们的 warp32 改写已不读 SubgroupLtMask 第 1 字（按车道号算掩码，7579f5a），上游 #141 在 740 上的 GPU 挂起
+    // 就是读这个字引起的；奥丁（Adreno 740，驱动 512.676.53）两个改写都开着长测无挂起，关掉 quad 会回到单位周围的黑方块。
+    // D2R Mobile Plus: 740 is excluded. Our warp32 rewrite no longer reads SubgroupLtMask word 1 (masks from the lane id, 7579f5a), the read
+    // behind upstream #141's GPU hang on the 740; the Thor (Adreno 740, driver 512.676.53) soaks with both rewrites on, and quad off brings
+    // back the black squares around units.
+    return model>=750 && model<800;
+}
+
+// 与其它 gfx 开关相同的优先顺序：标记文件优先（只有明确的 0 关闭），其次是机型判断，最后才看环境变量。安卓端
+// jni_android.c 对所有机型都设 DM_GFX_*_=1，所以机型判断必须排在环境变量前面，否则这两个缺省会失效。
+// The same precedence as the other gfx switches: an existing marker wins (only an explicit 0 turns it off), then the device
+// family, and the environment last. The Android JNI sets DM_GFX_* to 1 on every phone, so the device check has to come before
+// the environment or these defaults would never take effect.
+inline bool xbg_adreno_rewrite_option(bool marker_present,int marker,const char *environment,bool driver_faults){
+    if(marker_present)return marker!='0';
+    if(driver_faults)return false;
+    return environment && atoi(environment)!=0;
+}
+
+// Adreno 750–799 这一族（骁龙 8 Gen 3 等）的高通着色器编译器 libllvm-qgl.so，遇到「子组指令写在被调用的
+// 辅助函数里」的着色器会在建管线时段错误（addr=0x48，#123、#153、#166 与一份私下反馈，三星与小米共四台机器）。这一族上引擎
+// 载入这种着色器时先把辅助函数内联进入口（导入包不变）；标记文件 gfx-inline 可显式开关（1 / 0）。
+// The Qualcomm shader compiler of the Adreno 750-799 family (Snapdragon 8 Gen 3 and others; libllvm-qgl.so) segfaults while building a pipeline from a shader
+// whose subgroup instructions sit in a called helper function (addr=0x48; #123, #153, #166 and one private report: four
+// Samsung and Xiaomi phones). On this family the engine inlines the helpers into the entry point when it loads such a shader
+// (the import pack is unchanged); the marker file gfx-inline turns it on or off explicitly (1 / 0).
+inline bool xbg_adreno_compiler_needs_inline(uint32_t vendor_id,const char *device_name){
+    if(vendor_id!=0x5143)return false;
+    const int model=xbg_adreno_model(device_name);
+    return model>=750 && model<800;
+}

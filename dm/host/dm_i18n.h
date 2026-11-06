@@ -1,5 +1,18 @@
 // 我们自己加的界面文字取串（中 / 英 / 西 / 俄 / 韩；表 = dm/i18n/ui_text.tsv，生成器 dm/ios/tools/dm_i18n.py）
 #pragma once
+// 只有一端有的功能名，写进两端共用代码的日志时用这几个宏：另一端的二进制里不留这个词（CLAUDE.md §2.8，内审 I-02）
+// Names of features only one platform has, for logs in shared code: the word does not stay in the other platform's binary (CLAUDE.md section 2.8, internal audit I-02)
+#ifdef __ANDROID__
+#define DM_STR_ICLOUD "云同步"
+#define DM_STR_METALFX "超分"
+#define DM_STR_METAL "GPU"
+#define DM_STR_METAL_NS "gpu_ns"
+#else
+#define DM_STR_ICLOUD "iCloud"
+#define DM_STR_METALFX "MetalFX"
+#define DM_STR_METAL "Metal"
+#define DM_STR_METAL_NS "metal_ns"
+#endif
 #include <stdatomic.h>
 #include <stdint.h>
 extern _Atomic int g_dm_lang;                         // 原版当前语言号（0 enUS 1 deDE 2 esES 3 frFR 4 itIT 5 koKR 6 plPL 7 ruRU 8 zhCN 9 zhTW 10 esMX 11 jaJP 12 ptBR），SetLanguage 观测门写（diag.c）；-1 = 游戏还没设过 | Original current language number (0 enUS 1 deDE 2 esES 3 frFR 4 itIT 5 koKR 6 plPL 7 ruRU 8 zhCN 9 zhTW 10 esMX 11 jaJP 12 ptBR), written by the SetLanguage observation gate (diag.c); -1 = the game hasn't set it yet

@@ -1,5 +1,6 @@
 #include "t_uiscreen_fixture.h"
 #include <stdio.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 #include "../dm.h"
 #define dm_ui_item_at_now test_ui_item_at_now
@@ -36,6 +37,10 @@ void dm_world_walk(float nx, float ny) { walks++; walk_x = nx; walk_y = ny; } un
 uint64_t dm_padmode_legend_click(float nx, float ny) { (void)nx; (void)ny; return 0; } int dm_padmode_hud_click(float nx, float ny, uint64_t *b) { (void)nx; (void)ny; if (test_hud) *b = DM_BTN_A; return test_hud; } int dm_padmode_legend_has(uint32_t g) { (void)g; return 0; } int dm_game_paused(void) { return test_paused; }
 int dm_shop_open(void) { return 0; }   // 商人页（dm_actions.c）的桩：没开 | stub for the vendor page (dm_actions.c): not open
 int dm_padmode_current(void) { return 0; }   // 手柄 / 触屏模式（dm_padmode.c）的桩：触屏 | Stub for controller / touch mode (dm_padmode.c): touch
+void dm_padmode_stick_as_dpad(void) {} void dm_padmode_stick_as_dpad4(void) {}
+void dm_diff_tip(int n) { (void)n; }   // 难度说明提示（dm_padmode.c）：触点单测不带提示框 | the difficulty tip (dm_padmode.c): the touch unit test has no notice box
+#include "../dm_notice_pair.h"
+const dm_notice_pair *dm_game_notice_pair_for(const char *text, size_t len) { (void)text; (void)len; return NULL; }   // 两级提示绑定表（dm_bossrush.c）：触点单测没有 | two-level tip binding (dm_bossrush.c): none in the touch unit test
 uint64_t dm_padmode_page_keys(uint64_t m) { (void)m; return 0; } void dm_padmode_legend_hide(const char *l, int a) { (void)l; (void)a; } int dm_padmode_busy(void) { return 0; } uint64_t dm_padmode_page_held(void) { return 0; } void dm_padmode_page_pulse(uint64_t m) { (void)m; } void dm_padmode_ident_hint(int on) { (void)on; } void dm_padmode_legend(int a, const char *t) { (void)a; (void)t; } const char *dm_str(uint8_t *b, const char *k) { (void)b; return k; }   // 手柄页键 / 提示条 / 取串的桩（个人仓库手柄翻页用，触屏下不走） | Stubs for controller page keys / button legend / string fetch (used by controller paging of the personal stash, not reached under touch)
 int dm_swapskill_wset(void) { return -1; }
 int dm_pages_cur(void) { return 0; } int dm_pages_count(void) { return 5; } void dm_pages_request_flip(int d) { (void)d; }   // 个人仓库多页（dm_pages.c）桩 | stubs for the multi-page personal stash (dm_pages.c)
@@ -47,6 +52,7 @@ int dm_vault_ui_over(int x, int y) { (void)x; (void)y; return 0; }
 int dm_vault_ui_tip_gate(int x, int y) { (void)x; (void)y; return 0; }
 int dm_pouch_tip_gate(int x, int y) { (void)x; (void)y; return 0; }
 int dm_vault_ui_blocks(int x, int y) { (void)x; (void)y; return 0; }
+int dm_stack_box_gate(int x, int y) { (void)x; (void)y; return 0; } int dm_stack_open(const void *ci) { (void)ci; return 0; } void dm_stack_pad(uint64_t *buttons, uint64_t now_ns) { (void)buttons; (void)now_ns; }   // 药水拆分框（dm_stack.c）：给空桩 | potion split box (dm_stack.c): empty stubs
 int dm_vault_ui_tap(int x, int y) { (void)x; (void)y; return 0; }
 int dm_vault_ui_drag(int phase, int x, int y) { (void)phase; (void)x; (void)y; return 0; }
 uint32_t dm_swapskill_itemsig(void) { return 0; }   // 副手组技能当前武器组（dm_actions.c）的桩：读不到 | stub for the current weapon set of the swap-set skill (dm_actions.c): cannot be read
@@ -184,7 +190,8 @@ static void test_live_hover(void) {
 
 int main(void) {
     const char *path = "build/touch_host.script";
-    FILE *f = fopen(path, "w"); if (!f) return 2;
+    mkdir("build", 0755);   // 干净快照里没有这个目录（内审 I-11）| a clean snapshot does not have this directory (internal audit I-11)
+    FILE *f = fopen(path, "w"); if (!f) { perror(path); return 2; }
     fputs("0 down 0 90,1220\n0.1 move 0 150,1220\n2.1 up 0\n", f); fclose(f);
     setenv("DM_TOUCH_SCRIPT", path, 1); unsetenv("DM_TOUCH_TEST_DROP");
     uint64_t b = 0; int32_t lx = 0, ly = 0, rx = 0, ry = 0;
@@ -232,6 +239,8 @@ void dm_item_compare(int on) { (void)on; }
 void dm_held_stow(void) {}
 int dm_held_stow_result(void) { return -1; }
 int dm_held_pending(void) { return 0; }
+int dm_held_unid(void) { return 0; }   // B099 桩 | B099 stub
+void dm_game_notice_ui(uint8_t *b, const char *t) { (void)b; (void)t; }
 void uimsg_emit(const char *cat, const char *act, const char *arg) { (void)cat; (void)act; (void)arg; }
 void dm_item_identify_free(unsigned id) { (void)id; }   // 免费鉴定（dm_actions.c）的桩 | stub for free identify (dm_actions.c)
 int dm_runeword_long_press(const void *ci) { (void)ci; return 0; }   // 符文之语助手（dm_runeword.c）的桩 | stub for the runeword helper (dm_runeword.c)

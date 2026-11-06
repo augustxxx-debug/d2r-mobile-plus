@@ -316,6 +316,11 @@ int dm_res_auto_step_get(void) { return atomic_load(&g_res_auto_step); }
 // Loop exit policy (audit P1, 2026-10-27): active only while render resolution = Auto, 3D not quality-first, DM_RES_AUTO_OFF unset and the dynamic controller on.
 // When any condition fails: clear the state and the extra downstep immediately, pushing 31 once (if it was non-zero) so the game re-reads the output size at the generation budget. When the conditions hold again it restarts at step 0.
 // dm_3d_scale_feed returns early in quality-first, so this check sits at the top of the function and runs every frame
+#ifndef DM_DYN3D_TEST_HOOK   // 单测要自己给开关时打开 | defined by unit tests that supply the switch themselves
+__attribute__((weak)) int dm_dyn3d_setting(void) { return 0; }   // 宿主 dm_custom.c 强定义（键 dyn3d）；不链它的单测按缺省关 | strong definition in dm_custom.c (key dyn3d); unit tests without it see the default (off)
+#else
+int dm_dyn3d_setting(void);
+#endif
 int dm_render_res_level(void);   // 定义在下面（弱）或 dm_custom.c（强） | defined below (weak) or in dm_custom.c (strong)
 static dm_res_auto_state g_res_ra;
 // 前端每拍报来的当前有效基础预算（像素）；0 = 没有前端报（Mac 宿主等），闭环不降（复审 F05） | Current effective base budget reported by the front end every tick; 0 = no front end reports it (Mac host etc.), the loop never steps (re-audit F05)
@@ -340,12 +345,17 @@ __attribute__((weak)) int dm_render_res_level(void) { return 0; }   // 宿主 dm
 int dm_render_res_level(void);
 #endif
 void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_perf_present 转来）：实际上屏间隔 ms，−1 = 被丢弃，0 = 无读数 | called by the present thread every frame (forwarded from diag.c dm_perf_present): actual present interval in ms, −1 = dropped, 0 = no reading
-    static scale3d_ctl c; static float floor = S3_FLOOR_DEF; static int on = -1; static long inj0 = -1, inj1 = -1;
-    if (on < 0) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT"); on = !(e && !strcmp(e, "0")) && !getenv("DM_THERMAL_NOFALLBACK");
+    static scale3d_ctl c; static float floor = S3_FLOOR_DEF; static int pin = -2; static long inj0 = -1, inj1 = -1;
+    if (pin == -2) { const char *e = getenv("DM_3D_SCALE_DYN"), *j = getenv("DM_3D_SCALE_DYN_INJECT");
+        pin = getenv("DM_THERMAL_NOFALLBACK") ? 0 : e ? strcmp(e, "0") != 0 : -1;   // 钉住：1 开 / 0 关；−1 = 跟图形页设置 | pinned: 1 on / 0 off; -1 = follow the Graphics setting
         if (j) { inj0 = atol(j); inj1 = strchr(j, '-') ? atol(strchr(j, '-') + 1) : inj0; }
         const char *fe = getenv("DM_3D_SCALE_FLOOR"); floor = fe ? strtof(fe, NULL) : S3_FLOOR_DEF;   // 下限：档位表里不低于它的最深一档 | Floor: the deepest level in the level table that is not below it
         c.max_level = s3_max_level(s3_cfg(), floor);
-        LOG("3D 比例控制：%s，配置 %.2f，下限 %.2f（第 %d 档）", on ? "开" : "关", s3_cfg(), s3_level_scale(s3_cfg(), c.max_level), c.max_level); }
+        LOG("3D 比例控制：%s，配置 %.2f，下限 %.2f（第 %d 档）", pin > 0 ? "测试开关钉住开" : pin == 0 ? "测试开关钉住关" : "跟图形页「动态 3D 分辨率」", s3_cfg(), s3_level_scale(s3_cfg(), c.max_level), c.max_level); }
+    // B147 ②：开关每帧读（图形页改了当场生效）。关 = 3D 比例固定为设置值、输出闭环退出（res_auto_eligible 不满足即清零）；从开切到关时档位清零回配置值
+    // B147 ②: the switch is read every frame (a Graphics change takes effect at once). Off = the 3D scale stays at the configured value and the output loop exits (res_auto_eligible fails and clears it); switching on -> off resets the level to the configured value
+    int on = pin >= 0 ? pin : dm_dyn3d_setting();
+    { static int was = -1; if (on != was) { if (was >= 0) LOG("3D 比例控制：动态 3D 分辨率 %s（%s）%s", on ? "开" : "关", pin >= 0 ? "测试开关" : "图形页设置", !on && c.level ? "，3D 比例回到配置值" : ""); if (!on) c.level = 0; if (was >= 0) scale3d_ctl_hold(&c, now_ns(), 3 * S3_SEC); was = on; } }   // 切换后停判 3 秒、窗记录清空（scale3d_ctl_hold），开关之前的掉帧不算 | after a switch: 3 s hold with the windows cleared, drops from before the switch do not count
     if (!res_auto_eligible(on)) res_auto_disarm();
     float effective = s3_effective_cfg();
     if (!on) { scale3d_publish(effective,0);return; }
@@ -362,7 +372,7 @@ void dm_3d_scale_feed(double iv_ms) {   // 出图线程每帧调（diag.c dm_per
     { static int was; int in = dm_ingame_now();   // 不在局内（菜单 / 读取）不判；刚进局的 20 秒也不判（进局头十几秒的慢帧是装载，不是 GPU 吃紧） | not judged outside a run (menu / loading); not judged in the first 20 seconds of a run either (slow frames in the first ten-odd seconds of a run are loading, not GPU pressure)
       if (!in) { was = 0; scale3d_ctl_hold(&c, now, S3_SEC); res_auto_forget(); scale3d_publish(effective,c.level);return; }
       if (!was) { was = 1; if (inj0 < 0) scale3d_ctl_hold(&c, now, 20 * S3_SEC); } }
-    { int mtl_fps_target(void); double mtl_display_refresh(void), dm_pace_hz(double, double), r = mtl_display_refresh(); int f = mtl_fps_target(); double hz = dm_pace_hz(r, f == 30 ? 30 : f == 120 ? 120 : 60);
+    { int mtl_fps_target(void); double mtl_display_refresh(void), dm_pace_hz(double, double), r = mtl_display_refresh(); int f = mtl_fps_target(); double hz = dm_pace_hz(r, f == 30 || f == 40 ? f : f == 120 ? 120 : 60);
       double p = hz != 60 ? 1000.0 / hz : 0;   /* 30 / 120 实验档与非 60 倍数屏的整除档都走这里 | 30 fps, the 120 Hz experiment and non-60-multiple screens all take this path */ if (p != c.period_ms) { c.period_ms = p; scale3d_ctl_hold(&c, now, 2 * S3_SEC); res_auto_forget(); } }   // 目标周期跟着出图帧率换（省电 30 帧、非 60 倍数的屏取整除档，如 144 Hz 屏 72），切换后停判 2 秒 | The target period follows the present frame rate (power saving 30 fps; screens not a multiple of 60 take the evenly dividing tier, e.g. 72 on a 144 Hz screen); checking pauses for 2 seconds after a switch
     if (inj0 >= 0) { long f = (long)dm_nvn_frame_count(); double per = c.period_ms > 0 ? c.period_ms : 1000.0 / 60; iv_ms = f >= inj0 && f <= inj1 ? 2 * per : per; }   // 注入：段内每帧当掉一帧（两个周期） | Injection: every frame within the segment counts as a dropped frame (two periods)
     int was = c.level, lv = scale3d_ctl_step(&c, iv_ms, now);

@@ -109,7 +109,7 @@ static void *nvn_lookup(const char *name) {
 
 // nvnBootstrapLoader 由 main 导入（sdk 定义）；强制接管后 sdk 的 NVN 驱动不再被引用
 // nvnBootstrapLoader is imported by main (defined in sdk); after it is forcibly taken over, the NVN driver in sdk is no longer referenced
-HLE_FORCE("nvnBootstrapLoader", "NVN 图形接口整块换成宿主空设备（后续 Metal），sdk 的 NVN 驱动不执行",
+HLE_FORCE("nvnBootstrapLoader", "NVN 图形接口整块换成宿主空设备（后续图形后端），sdk 的 NVN 驱动不执行",
           void *, h_nvnBootstrapLoader, const char *name) { return nvn_lookup(name); }
 
 // ---------- 布尔参数：Switch 调用方不扩展，只看低 8 位 ----------
@@ -167,8 +167,8 @@ NVN(nvnDeviceGetSeparateSamplerHandle, NVNseparateSamplerHandle, const NVNdevice
 NVN(nvnDeviceInstallDebugCallback, void, NVNdevice *d, const PFNNVNDEBUGCALLBACKPROC cb, void *data, uint32_t enable) {
     dev_t_ *o = (dev_t_ *)d; o->dbg_cb = B(enable) ? (void *)cb : NULL; o->dbg_data = data;
 }
-NVN(nvnDeviceSetWindowOriginMode, void, NVNdevice *d, NVNwindowOriginMode m) { ((dev_t_ *)d)->origin = m; LOG("[nvn] 窗口原点 %s", m ? "左上（同 D3D / Metal）" : "左下（GL）"); }
-NVN(nvnDeviceSetDepthMode, void, NVNdevice *d, NVNdepthMode m) { ((dev_t_ *)d)->depth_mode = m; LOG("[nvn] 深度模式 %s", m ? "近=0（同 D3D / Metal）" : "近=-w（GL）"); }
+NVN(nvnDeviceSetWindowOriginMode, void, NVNdevice *d, NVNwindowOriginMode m) { ((dev_t_ *)d)->origin = m; LOG("[nvn] 窗口原点 %s", m ? "左上（同 D3D）" : "左下（GL）"); }
+NVN(nvnDeviceSetDepthMode, void, NVNdevice *d, NVNdepthMode m) { ((dev_t_ *)d)->depth_mode = m; LOG("[nvn] 深度模式 %s", m ? "近=0（同 D3D）" : "近=-w（GL）"); }
 NVN(nvnDeviceFinalizeCommandHandle, void, NVNdevice *d, NVNcommandHandle h) { (void)d; (void)h; }
 
 // ---------- 内存池 ----------
@@ -932,7 +932,7 @@ static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
     for (int i = 0; i < n; i++) { mtl_exec_rest(h + i + 1, n - i - 1); mtl_exec((const uint8_t *)h[i]); }
     mtl_exec_rest(NULL, 0);
     uint64_t f = mtl_sub_commit();
-    if (f != sub) { static int red; if (!red++) LOG("【红】翻译队列：第 %llu 次提交的 Metal 栅栏是 %llu，栅栏与提交数对不上，游戏等同步会提前 / 推迟放行", (unsigned long long)sub, (unsigned long long)f); }
+    if (f != sub) { static int red; if (!red++) LOG("【红】翻译队列：第 %llu 次提交的后端栅栏是 %llu，栅栏与提交数对不上，游戏等同步会提前 / 推迟放行", (unsigned long long)sub, (unsigned long long)f); }
     snap_tick(sub);
     uint64_t dw = now_ns() - t0;
     atomic_fetch_add(&g_nvn_ns, dw); atomic_fetch_add(&g_sub_wall_ns, dw);
@@ -1002,7 +1002,7 @@ static void x_start(void) {
     pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0);
 #endif
     pthread_attr_setstacksize(&at, 8 << 20);
-    pthread_t t; if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
+    if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
     pthread_attr_destroy(&at);
 }
 static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
@@ -1261,11 +1261,11 @@ static void tsummary(uint64_t frame) {
       double br = dm_brightness_now();   // footprint / 亮度随上屏行带出：不依赖拍入口观测门（营地局也有） | footprint / brightness are carried on the on-screen present row: does not depend on the tick-entry observation gate (camp runs have it too)
       // 上屏间隔 p5 / p50 / p95：整除的帧率三个数相同（144 Hz 屏 72 帧都是 13.9）；不整除时两档交替（60 帧在 144 Hz 屏上 13.9 / 20.8）
       // Present interval p5 / p50 / p95: with an evenly dividing frame rate all three are equal (72 fps on a 144 Hz screen is 13.9 for all); otherwise two tiers alternate (60 fps on a 144 Hz screen gives 13.9 / 20.8)
-      if (k) { qsort(v, k, sizeof *v, dcmp); LOG("[nvn] 上屏 至帧 %llu：%u 帧，掉帧 %u（丢弃 %u），间隔 p5 %.2f / p50 %.2f / p95 %.2f，p99 %.2f ms；footprint %.0f MiB；亮度 %.2f；温控 %d", frame, k + discard, drop, discard,
+      if (k) { qsort(v, k, sizeof *v, dcmp); LOG("[nvn] 上屏 至帧 %llu：%u 帧，掉帧 %u（丢弃 %u），间隔 p5 %.2f / p50 %.2f / p95 %.2f，p99 %.2f ms；footprint %.0f MiB；亮度 %.2f；温控 %d", (unsigned long long)frame, k + discard, drop, discard,
           v[(k * 5) / 100], v[k / 2], v[(k * 95) / 100 < k ? (k * 95) / 100 : k - 1], v[(k * 99) / 100 < k ? (k * 99) / 100 : k - 1], fp, br, dm_thermal_now()); }
       // 没有呈现时间读数（120 帧走显示节拍时真机 7500 帧后呈现回调不再给时间）也照样每 300 帧记一行：footprint 不能跟着断（真机长测 6a777d0：之后 1300 秒没有 footprint 采样，只能从余量倒推）
       // no presentation-time reading (on the device at 120 fps through the display link the presented callback stops giving times after frame 7500) still logs one line every 300 frames: footprint must not stop with it (device long test 6a777d0: no footprint sample for the following 1300 s, it could only be inferred from the headroom)
-      else LOG("[nvn] 上屏 至帧 %llu：%u 帧，掉帧 %u（丢弃 %u），呈现时间无读数；footprint %.0f MiB；亮度 %.2f；温控 %d", frame, discard, discard, discard, fp, br, dm_thermal_now());
+      else LOG("[nvn] 上屏 至帧 %llu：%u 帧，掉帧 %u（丢弃 %u），呈现时间无读数；footprint %.0f MiB；亮度 %.2f；温控 %d", (unsigned long long)frame, discard, discard, discard, fp, br, dm_thermal_now());
       g_presn = 0; }
     { static uint64_t pi, pc, pd, pf; uint64_t ci = atomic_load(&g_cum_sub_instr), cc = atomic_load(&g_cum_sub_cpu_ns), ps_, dr_; mtl_stats(&ps_, &dr_);   // 翻译层 | translation layer
       if (pf && frame > pf && dr_ > pd) LOG("[nvn] 翻译 至帧 %llu：每次绘制 %.0f 条指令，每帧提交 %.2f M 条 / CPU %.3f ms，每帧绘制 %.0f", frame,
@@ -1385,10 +1385,20 @@ static int pace_adapt_enabled(void) {
     return g_pa;
 }
 static double present_auto_hz(double screen_hz) {
+#ifdef __ANDROID__
+    // Android has no Metal display-link pacer, so apply the power-saving target here.
+    if (mtl_fps_target() == 30) return dm_pace_hz(screen_hz, 30);
+#endif
     // 自适应目标是最高60，而旧Apple策略是至少60；两者不共用取整方向。首帧/刷新率改变也受上限约束。
     // Adaptive pacing caps at 60; the legacy Apple policy has a floor of 60. Cap the first frame and refresh changes too.
     if (pace_adapt_enabled() && screen_hz > 0) return screen_hz / nvn_adaptive_divisor(screen_hz, g_pa_k, g_pa_screen_hz);
-    return dm_pace_hz(screen_hz, nvn_present_floor_hz(mtl_fps_target()));   // 120 帧档 = 120（与显示节拍同速，见 nvn_pace.h nvn_present_floor_hz），其余 60 | 120 fps mode = 120 (same rate as the display link, see nvn_pace.h nvn_present_floor_hz), otherwise 60
+    // 120 帧档 = 120（与显示节拍同速，见 nvn_pace.h nvn_present_floor_hz），其余 60。90 帧档走 60 这一支也是对的：
+    // dm_pace_hz 取「屏幕刷新率的整数分之一里不低于下限的最小一档」，89–118 Hz 屏除以 60 的整数部分是 1 → 直接返回屏幕刷新率，
+    // 90 Hz 屏就是 90（每节拍一帧），与下限换成 90 的结果逐字相同；安卓 Java 侧把窗口切到该模式（DmActivity.applyPreferredMode）
+    // 120 fps mode = 120 (same rate as the display link, see nvn_pace.h nvn_present_floor_hz), otherwise 60. The 90 fps stop is right on the 60 branch too:
+    // dm_pace_hz takes the smallest tier among integer fractions of the screen refresh rate that is not below the floor; for an 89-118 Hz screen the integer part of refresh/60 is 1,
+    // so it returns the screen refresh rate itself -- 90 on a 90 Hz screen (one frame per tick), byte-identical to passing 90 as the floor; the Android Java side switches the window to that mode (DmActivity.applyPreferredMode)
+    return dm_pace_hz(screen_hz, nvn_present_floor_hz(mtl_fps_target()));
 }
 static int g_hz = -1, g_display_mode, g_hz_auto;   // g_hz_auto：有窗口、没用 DM_PRESENT_HZ 钉住——帧率跟着窗口所在屏的刷新率取整除档（每帧重读，换屏即换） | g_hz_auto: has a window and not pinned by DM_PRESENT_HZ; the frame rate takes the evenly dividing tier of the refresh rate of the screen the window is on (re-read every frame, changes with the screen)
 void nvn_present_config(int hz, int display_mode) { g_hz = hz; g_display_mode = display_mode; g_hz_auto = 0; }
@@ -1467,7 +1477,7 @@ static void pace_adapt_tick(double screen_hz) {
 }
 static uint64_t present_period(const win_t *o) {
     present_cfg(o);
-    int itv = g_display_mode ? 1 : o->interval > 0 ? o->interval : 1; double hz = g_hz_auto ? present_auto_hz(mtl_display_refresh()) : g_hz;   // 自适应档（见 pace_adapt_tick） | adaptive tier (see pace_adapt_tick)   // 省电模式的 30 帧由显示节拍决定，这里照旧按 60 档（60 / 120 Hz 屏与原先逐字相同） | Power saving 30 fps is determined by display pacing; here the 60 tier is used as before (identical to before on 60 / 120 Hz screens)
+    int itv = g_display_mode ? 1 : o->interval > 0 ? o->interval : 1; double hz = g_hz_auto ? present_auto_hz(mtl_display_refresh()) : g_hz;
     return hz > 0 ? (uint64_t)(itv * 1e9 / hz) : 0;
 }
 int (*g_nvn_loadscreen_up)(void);   // 宿主登记：读取画面此刻是否开着（diag.c 订阅界面消息时填；图形单测里为空 = 不设闸） | host registration: whether the loading screen is up right now (filled in when diag.c subscribes to UI messages; null in graphics unit tests = no gate)

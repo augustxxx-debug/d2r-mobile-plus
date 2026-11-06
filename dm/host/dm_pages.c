@@ -22,6 +22,7 @@
 #include <pthread.h>
 #include <dirent.h>
 #include "dm.h"
+#include "dm_exitwait.h"
 
 #define VBYTES 1024   // 单件位流上限（含孔里的） | Upper limit of a single item's bitstream (including socketed ones)
 const char *dm_save_workdir(void);   // hle_fs.c：事务式存档的工作目录 | hle_fs.c: the working directory of the transactional save
@@ -316,8 +317,10 @@ static void pg_sock_test(uint64_t G, uint64_t player, uint8_t *b, uint32_t tq) {
     LOG("镶孔测试：背包里没有能镶的装备（%d 件装备、%d 颗宝石）", nq, ng);
 }
 void dm_pages_tick(uint64_t G, uint64_t player, uint8_t *b) {   // 服务端拍（diag.c hud_tick）；不在局内 player 为 0 | Server tick (hud_tick in diag.c); player is 0 when not in a run
-    static uint64_t lp; if (!player) { lp = 0; g_pload = 0; return; }
+    static uint64_t lp; static dm_exitwait ew; if (!player) { dm_exitwait_leave(&ew, lp != 0, dm_fs_commit_count()); lp = 0; return; }   // B203：空玩家拍不清，退局那次提交还没来、还有没证明的就先不读（dm_exitwait.h）| B203: kept on the empty-player tick; the load waits for the exit commit while something is unproven
     uint32_t tq = *(uint32_t *)(G + 0x170);
+    if (player != lp) { int to = 0; pthread_mutex_lock(&g_pmu); int pend = g_pload && (g_ppend || g_pdirty); pthread_mutex_unlock(&g_pmu);
+        if (dm_exitwait_defer(&ew, pend, dm_fs_commit_count(), &to)) { if (dm_exitwait_kick(&ew)) LOG("个人仓库：等退局前的待证明，补请一次存盘 → %d", dm_request_save()); return; } if (to) LOG("【红】个人仓库：退局后 %d 拍翻页还没证明，照读（可能丢）", DM_EXITWAIT_MAX); else { int n = dm_exitwait_took(&ew); if (n) LOG("个人仓库：退局前的翻页证明了，读入（等了 %d 拍）", n); } }
     if (player != lp) { lp = player; uint64_t pd = *(uint64_t *)(player + 0x10); pthread_mutex_lock(&g_pmu); strlcpy(g_pchar, pd ? (const char *)pd : "", sizeof g_pchar);
         { const char *sn = dm_stash_name(b); strlcpy(g_pstash, sn ? sn : "", sizeof g_pstash); } pages_load(b, player); g_pload = 1; pthread_mutex_unlock(&g_pmu); }
     { pthread_mutex_lock(&g_pmu);
@@ -348,4 +351,4 @@ void dm_pages_tick(uint64_t G, uint64_t player, uint8_t *b) {   // 服务端拍�
     if (dir) { pthread_mutex_lock(&g_pmu); pages_flip(b, G, player, dir); pthread_mutex_unlock(&g_pmu); }
 }
 static void pages_hook(const char *wd) { pthread_mutex_lock(&g_pmu); pages_pre_commit(wd); pthread_mutex_unlock(&g_pmu); }
-__attribute__((constructor)) static void pages_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[0] = pages_hook; }
+__attribute__((constructor)) static void pages_hook_install(void) { extern void (*g_dm_pre_commit_hook[6])(const char *); g_dm_pre_commit_hook[0] = pages_hook; }

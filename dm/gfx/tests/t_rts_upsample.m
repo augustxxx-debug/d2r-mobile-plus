@@ -1,9 +1,9 @@
-// 低分辨率太阳（第 2 / 3 档）+ rts_pup 上采样不把背光面的 0 漏到相邻受光面（十六审 Q16-02，审计方 harness 收进仓库）：球体（角色 / 岩石近似）站在地面上、正交俯视，
+// 低分辨率太阳（第 2 / 3 档都是 1/2；1/4 只作压力指标）+ rts_pup 上采样不把背光面的 0 漏到相邻受光面（十六审 Q16-02，审计方 harness 收进仓库）：球体（角色 / 岩石近似）站在地面上、正交俯视，
 // 生产核 rts_trace（全 / 1/2 / 1/4 分辨率，nlmin = 0 背光写 0）+ rts_pup；四个太阳角，量低分辨率上采样相对全分辨率「受光处被压暗、且在背光面 3 像素内」的像素。
-// 块左上取样（老的错位）时 1/4 分辨率这类像素 193–395 个；块中心取样（与 rts_pup 的块中心深度权重一致）45–97 个。门槛：每个太阳角 1/4 ≤ 150、1/2 ≤ 120，1/4 总不同 ≤ 850
-// Reduced-resolution sun (levels 2 / 3) + rts_pup upsampling must not leak back-face 0 into adjacent lit surfaces (16th review Q16-02; the auditor's harness, taken into the repository): spheres (characters / rocks) on the ground, orthographic top view,
+// 块左上取样（老的错位）时 1/4 分辨率这类像素 193–395 个；块中心取样 45–97 个，但 1/2 分辨率上块中心像素比几何中心偏半个像素，个别方向（60°/110°）仍漏 74 个；rts_pup 按实际取样点插值后 1/2 为 13 / 12 / 4 / 10、1/4 为 69 / 59 / 20 / 62（B022）。门槛：每个太阳角 1/2 ≤ 40、1/4 ≤ 100，1/4 总不同 ≤ 700
+// Reduced-resolution sun (1/2 at both levels 2 and 3; 1/4 only as a stress metric) + rts_pup upsampling must not leak back-face 0 into adjacent lit surfaces (16th review Q16-02; the auditor's harness, taken into the repository): spheres (characters / rocks) on the ground, orthographic top view,
 // production kernels rts_trace (full / 1/2 / 1/4, nlmin = 0, back faces written 0) + rts_pup; for four sun angles, counts pixels lit at full resolution but darkened after upsampling within 3 px of a back face.
-// Sampling the block's top-left (the old misalignment) gives 193–395 such pixels at 1/4; sampling the block centre (matching rts_pup's block-centre depth weights) 45–97. Thresholds: per angle 1/4 ≤ 150, 1/2 ≤ 120, 1/4 total differences ≤ 850
+// Sampling the block's top-left (the old misalignment) gives 193–395 such pixels at 1/4; sampling the block centre 45–97, but at 1/2 the block-centre pixel sits half a pixel off the geometric centre and one direction (60°/110°) still leaks 74; with rts_pup interpolating at the actual sample positions, 1/2 gives 13 / 12 / 4 / 10 and 1/4 69 / 59 / 20 / 62 (B022). Thresholds: per angle 1/2 ≤ 40, 1/4 ≤ 100, 1/4 total differences ≤ 700
 #import <Metal/Metal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -106,7 +106,7 @@ int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
     static const double ang[4][2] = {{45, 20}, {30, 200}, {60, 110}, {40, 300}}; int fail = 0;
     for (int a = 0; a < 4; a++) { int r[3] = {0}; int rc = one(ang[a][0], ang[a][1], r); if (rc) return rc;
-        if (r[0] > 120 || r[1] > 150 || r[2] > 850) { printf("FAIL 太阳 %.0f° / %.0f°：邻近背光面被压暗 1/2 %d（≤ 120）、1/4 %d（≤ 150），1/4 总不同 %d（≤ 850）| back-face 0 leaked into lit pixels\n", ang[a][0], ang[a][1], r[0], r[1], r[2]); fail++; } }
+        if (r[0] > 40 || r[1] > 100 || r[2] > 700) { printf("FAIL 太阳 %.0f° / %.0f°：邻近背光面被压暗 1/2 %d（≤ 40）、1/4 %d（≤ 100），1/4 总不同 %d（≤ 700）| back-face 0 leaked into lit pixels\n", ang[a][0], ang[a][1], r[0], r[1], r[2]); fail++; } }
     if (fail) return 1;
     puts("PASS t_rts_upsample: reduced-resolution sun + rts_pup keeps back-face 0 off adjacent lit pixels (4 sun angles, 1/2 and 1/4)");
     return 0; }

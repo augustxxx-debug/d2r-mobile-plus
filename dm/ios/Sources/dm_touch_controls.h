@@ -39,6 +39,7 @@ typedef struct {
        Continuous UI gesture (mouse click mode, started neither in the item area nor outside the panel; when displacement crosses the threshold the type is fixed by the initial direction and does not change afterwards): 1 = vertical drag (scroll), 2 = horizontal drag (slider).
               The gesture layer only fixes the type; on seeing it the front end forwards the start point and current point to the host (dm_ui_drag_*), and the scroll / slider is done by the host according to the game's own hit testing */
     int ui_drag;
+    int late_moved;   /* 命中结果到之前已经过过移动阈值（B169）：补判按它算，拖出去又拖回原处也不算点按 | Crossed the move threshold before the hit result arrived (B169): the late decision goes by it, and dragging out and back to the start does not count as a tap */
     int shop_drag;   /* 从商人货架的货上起拖（不拿起）：松手按落点买 / 不买 | Drag starting from goods on the vendor shelf (not picked up): on release, buy / do not buy by the drop point */
     int locked_drag; /* 单件任务槽占用时从别的物品上起拖：不拿起，松手不发任何键 | Drag starting from another item while the single-item quest slot is occupied: do not pick up, and send no key on release */
 } dm_tc_finger;
@@ -78,6 +79,8 @@ typedef struct {
               double tap = hold A (game hint: hold = open / use / equip; with the stash open, hold Y = move to the other side); a single tap outside the item area is as before = move the cursor + press A.
               pulse_hold_s > 0 = this pulse must be held this long, and the front end waits it out in full in addition to "the game has consumed it" before releasing */
     int pointer_item;
+    int pointer_lift_pending;   /* 前端已收到这根指针手指的抬起、在等宿主答案（或正在按抬起处理）：命中结果这时才到就不补判拖放（B169），照原来按点按 / 没答上处理 | The front end has received this pointer finger's lift and is waiting for the host's answer (or is processing the lift): a hit result that only arrives now does not trigger the late drag decision (B169); it is handled as a tap / no answer as before */
+    int pointer_item_known;   /* 这根指针手指的命中结果已经到了（dm_tc_pointer_item 调过；B169）。没到之前过了移动阈值也不定型拖放 / 界面手势，等结果到了再定 | The hit result for this pointer finger has arrived (dm_tc_pointer_item was called; B169). Until then crossing the move threshold fixes neither a drag nor a UI gesture; it is decided when the result arrives */
     /* 非物品区的点按走鼠标点击（暂停菜单按钮、布局里插回的关闭 / 修理等按钮只认鼠标）：mouse_click_mode 由前端打开；
        每次这样的点按 mouse_click_seq 加一，前端看到变化就在 (mouse_click_x, mouse_click_y) 发一次界面鼠标点击，不再按 A
        Taps outside the item area go through mouse clicks (pause menu buttons and the close / repair buttons inserted back into the layout only respond to the mouse): mouse_click_mode is turned on by the front end;
@@ -149,6 +152,7 @@ void dm_tc_set_safe_insets(float left, float right);
 void dm_tc_set_edge_bottom(float bottom);   /* 屏幕底边归系统的那一条的高度（点）；0 = 没有。只约束移动摇杆的起手 | Height (points) of the strip along the bottom edge of the screen that belongs to the system; 0 = none. Constrains only where the movement stick may start */
 void dm_tc_layout_make(dm_tc_layout *layout, float width, float height);
 int dm_tc_hit(const dm_tc_layout *layout, float x, float y);
+#define DM_TC_POINTER_MOVE_PT 10.0f   // 指针手指移动超过这么多点（× 控件缩放）算拖动 / 界面手势；前端松手挂起时也用它判「拖过阈值」（B169） | A pointer finger moving more than this many points (× widget scale) counts as a drag / UI gesture; the front end also uses it to judge "dragged past the threshold" while the lift is pending (B169)
 #define DM_TC_POINTER_LIFT_PT 40.0f   // 功能页拖动时物品抬在手指上方的点数（× 控件缩放） | Number of points the item is lifted above the finger while dragging on function pages (× widget scale)
 void dm_tc_set_swap_above(int above);   // 0：传送门左侧外弧，1：技能区上方；修改后调用 resize | 0: left of portal on outer arc, 1: above skill fan; call resize after changing.
 void dm_tc_set_safe_bottom(float bottom);

@@ -115,8 +115,16 @@ ios/tools/gen_romfs_overlay.py	ASTC 版覆盖层的新数据档	构建期一致�
 ios/tools/drop_light.py	掉落光变体：	构建期生成数量统计，仅写终端，不显示给玩家
 host/dm_custom.c	设置文件还没法读	崩溃围栏关实验项的说明，只拼进日志行（dm_crashfence.c LOG）
 host/dm_custom.c	120 帧档 → 60	同上，只进日志
-host/dm_custom.c	光追阴影 → 关	同上，只进日志
-host/dm_custom.c	MetalFX 空间超分 → 关	同上，只进日志
+host/dm_custom.c	光追 → 关	同上，只进日志
+host/dm_custom.c	空间超分 → 关	同上，只进日志
+host/dm_custom.c	AI 帧生成 → 关	同上，只进日志
+host/dm_custom.c	开关关着	AI 帧生成状态原因，只进日志（帧生成：状态）
+host/dm_custom.c	本机不支持（插值器 / 屏幕 / 内存档位）	同上，只进日志
+host/dm_custom.c	30 帧档下不可用	同上，只进日志
+host/dm_custom.c	高刷档下不可用	同上，只进日志
+host/dm_custom.c	光追开着	同上，只进日志
+host/dm_custom.c	本端暂未接入	同上：AI 帧生成状态原因（安卓 / 鸿蒙壳按关生效），只进日志
+host/dm_custom.c	（钉住 %d）	同上：钉住的档位（DM_TEST_FG / DM_FGEN_PRESET）写进「帧生成：状态」行
 host/dm_custom.c	=、	同上：日志里各项之间的分隔
 host/dm_custom.c	实验性功能本来都关着	同上，只进日志
 host/hle_lifecycle.c	@dm_crashfence_clean	崩溃围栏清标记的原因，只进日志
@@ -136,3 +144,26 @@ host/dm_custom.c	高画质	超分档位名（dm_3d_profile_get 的「超分档�
 host/dm_custom.c	原版	超分档位名（dm_3d_profile_get 的「超分档位：」日志行），只拼进日志
 host/dm_custom.c	缺省不变	内存档位的说明（load_once 的「内存档位：」日志行），只拼进日志
 host/dm_custom.c	玩家改过的保留，缺省没动	同上，只进日志
+host/dm_loadpage.c	=下载	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=导入	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=处理文件	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=整理资源	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=触屏资源	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=着色器打包	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=着色器缓存	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=安装	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	=校验	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行；上屏的阶段标题走 dmLoadStage* 多语键）
+host/dm_loadpage.c	@snprintf	dm_loadpage_summary 拼「加载页：」汇总日志行（分享诊断日志摘要取它），不上屏
+host/dm_loadpage.c	=准备	阶段名的日志用中文表 k_kind_zh（只进「加载页：」日志行）
+host/dm_manifest.c	*	远端清单校验的不合规原因，只进日志（社区信息 / 更新检查的诊断行），不上屏
+host/diagup_mac.m	*	Mac 开发验收宿主（dmhost_diag），不进 iOS 产品；诊断内容是给开发看的
+host/dm_crashreport.c	放弃上一份报告（到了重试上限或存放期限）	只进日志（自动上报：）
+host/dm_crashreport.c	重试到上限，放弃	只进日志（自动上报：）
+host/dm_crashreport.c	上传成功	只进日志（自动上报：）
+host/dm_crashreport.c	不再重试	只进日志（自动上报：）
+host/dm_diagup.c	*	结果名与状态只进日志（诊断上传：）；上屏文案都走 ui_text.tsv 的键
+host/dm_crashreport.c	放弃完整版（摘要已送达）	只进日志（自动上报：）
+host/dm_crashreport.c	等 Wi-Fi 发完整版	只进日志（自动上报：）
+host/dm_crashreport.c	等 Wi-Fi	只进日志（自动上报：）
+host/dm_crashreport.c	服务端暂停（%s）	只进日志（自动上报：）
+host/dm_telemetry.c	*	原因与状态只进日志（统计上报：）；这个模块没有上屏文字

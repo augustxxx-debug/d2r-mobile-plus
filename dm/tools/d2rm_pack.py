@@ -21,34 +21,10 @@
 # Requires: Python 3.9+ with pillow numpy lz4 capstone unicorn; a C compiler (clang or gcc, for a small C texture decoder); the .NET SDK (to build the shader translator);
 #   spirv-cross; Apple's Metal shader compiler (comes with Xcode on a Mac). The tool lists anything missing at the start.
 # It does the same as the generation part of ./setup.sh + dm/ios/run.sh build, except that instead of building with Xcode it puts the results into the shell.
-import hashlib, json, os, re, runpy, shutil, subprocess, sys, time, zipfile
+import hashlib, json, os, re, shutil, subprocess, sys, time, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__)); DM = os.path.dirname(HERE); IOS = os.path.join(DM, 'ios'); GT = os.path.join(DM, 'gfx', 'tools')
-ROOT = os.path.abspath(os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work'))
-PY = sys.executable
-WINLF = os.path.join(HERE, 'winlf'); runpy.run_path(os.path.join(WINLF, 'sitecustomize.py'))   # Windows 上统一用 \n 换行（见该目录的说明）：本进程在这里加载，子脚本经 PYTHONPATH 自动加载 | Use LF line endings on Windows (see the note in that directory): loaded here for this process, and automatically through PYTHONPATH for child scripts
-MODS = ['main', 'sdk']
-
-
-def say(s): print('[%s] %s' % (time.strftime('%H:%M:%S'), s), flush=True)
-
-
-def die(s): sys.exit('[x] ' + s)   # 不用 ✗：中文 Windows 的控制台（GBK）打不出来，会在报错的地方再抛一个编码异常 | no ✗: the console of Chinese Windows (GBK) cannot print it, and would raise another encoding exception at the point of the error report
-
-
-def run(cmd, env=None, cwd=None, log=None, what=None):
-    e = dict(os.environ, DM_ROOT=ROOT, PYTHONUTF8='1', PYTHONPATH=os.pathsep.join(filter(None, [WINLF, os.environ.get('PYTHONPATH')]))); e.update(env or {})   # 子脚本一律按 UTF-8 读写与打印（Windows 缺省是本地编码，读我们的源文件、打 ✓ 都会出错） | child scripts always read, write and print in UTF-8 (the Windows default is the local encoding, and both reading our source files and printing ✓ would fail)
-    r = subprocess.run(cmd, env=e, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if log: open(log, 'wb').write(r.stdout)
-    if r.returncode: die('%s 没成功（退出码 %d）：%s%s' % (what or cmd[0], r.returncode, r.stdout.decode('utf-8', 'replace').strip().splitlines()[-1:] or '', '；完整输出 ' + log if log else ''))
-    return r.stdout.decode('utf-8', 'replace')
-
-
-def step(name, done, fn):
-    if done(): say('%s：已有，跳过' % name); return
-    t0 = time.time(); say(name); fn()
-    if not done(): die('%s 做完了但没看到产物' % name)
-    say('%s 完成（%d 秒）' % (name, time.time() - t0))
+sys.path.insert(0, HERE); from gen_common import ROOT, PY, WINLF, MODS, say, die, run, step
 
 
 def read_shell(ipa):

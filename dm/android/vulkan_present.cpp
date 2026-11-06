@@ -2,6 +2,7 @@
 // Android Vulkan presentation and window lifetimes, based on the original WSI bridge and reversible PR9/10 overlap/affinity experiments.
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include "vulkan_present.h"
+#include "viewport.h"
 #include "../gfx/vulkan/nvn_vk.h"
 #include "../gfx/xtrace.h"
 #include <android/log.h>
@@ -14,6 +15,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -25,8 +27,21 @@ extern "C" double dm_present_period(void);
 // 错过上屏节拍的帧数（晚于「上次期望时刻 + 周期」2 ms 以上）；自适应出图档按它降档 / 试升
 // Frames that missed their display slot (more than 2 ms later than "previous desired time + period"); the adaptive present tier steps down / probes up by it
 static std::atomic<uint64_t> dm_present_late{0};
+// 交换链实际上屏的帧数（vkQueuePresentKHR 成功或 SUBOPTIMAL）：「显示帧数」按它算，与系统帧率监控同口径（dm/host/dm_fps_hud.h）
+// Frames actually presented by the swapchain (vkQueuePresentKHR success or SUBOPTIMAL): "Show frame rate" counts these, the same measure as system frame-rate monitors (dm/host/dm_fps_hud.h)
+static std::atomic<uint64_t> dm_presents{0};
+extern "C" uint64_t dm_present_count(void){return dm_presents.load(std::memory_order_relaxed);}
 extern "C" uint64_t dm_present_late_count(void){return dm_present_late.load(std::memory_order_relaxed);}
 namespace {
+// 图形日志写 stderr：jni_android.c 已把它接到 logcat 标签 dm 与日志文件，玩家按 `adb logcat -s dm` 或拉日志文件都能拿全。
+// 以前单独用标签 dm-vulkan，-s dm 抓不到「NVN caps」「gfx-pipe」这些定位驱动问题的行。整行一次写出，多线程不交错。
+// Graphics log lines go to stderr: jni_android.c connects it to the logcat tag dm and the log file, so `adb logcat -s dm` or the
+// log file has them all. They used to have their own tag dm-vulkan, which -s dm missed, along with the "NVN caps" and
+// "gfx-pipe" lines that pin down driver problems. Each line is written in one call, so threads do not interleave.
+__attribute__((format(printf,1,2))) void vlog(const char *format,...){
+    char text[1100];va_list a;va_start(a,format);int n=vsnprintf(text,sizeof text-1,format,a);va_end(a);
+    if(n<0)return;size_t len=std::min(size_t(n),sizeof text-2);text[len]='\n';fwrite(text,1,len+1,stderr);
+}
 std::mutex window_mutex;std::condition_variable window_cv;
 // Vulkan状态仅宿主线程使用；UI锁只保护窗口快照，不跨GPU等待。
 // Serialize Vulkan callers separately; never hold the UI window lock across GPU waits.
@@ -35,6 +50,14 @@ ANativeWindow *desired=nullptr,*active=nullptr;uint64_t generation=0,active_gene
 VkInstance instance;VkPhysicalDevice physical;VkDevice device;VkQueue queue;uint32_t family;
 VkSurfaceKHR surface;VkSwapchainKHR swapchain;VkFormat swap_format;VkExtent2D extent;
 VkSurfaceTransformFlagBitsKHR created_transform;VkExtent2D created_surface_extent;
+// 窗口像素尺寸与画面矩形在 viewport_android.c（无 Android 依赖，宿主测试直接编）：present 每帧写交换链与内容的
+// 实际像素，Java 的 surfaceChanged 写窗口像素，触控层取矩形。窗口尺寸必须由 Java 交：present_native 生效时
+// ANativeWindow_getWidth 返回的是被改写的缓冲尺寸（= 游戏出图），读不出窗口本身。
+// Window size and the picture rectangle live in viewport_android.c (no Android dependency; the host test compiles
+// that file): present stores the swapchain's and the content's actual pixels every frame, Java's surfaceChanged
+// stores the window's, and the touch layer reads the rectangle. The window size must come from Java: with
+// present_native in effect ANativeWindow_getWidth reports the rewritten buffer size (= the game's output), not the
+// window.
 // 无旋转 blit 由系统合成器旋转；记录属性以免 SUBOPTIMAL 触发逐帧重建。
 // The compositor rotates our unrotated blit; cache properties to avoid rebuilding every SUBOPTIMAL frame.
 bool surface_properties_changed(){
@@ -81,10 +104,10 @@ void pin_update(){
     int r=sched_setaffinity(0,sizeof set,&set),err=r?errno:0;pin_state=want;if(r)++pin_failures;
     // Refused while the app's cpuset lacks the cores (Android moves the app between cpusets, at start for one): the kernel
     // keeps the request and applies it again when the cpuset allows, and the next check retries.
-    if(changed || pin_drifts<=4 || (r && pin_failures<=4))__android_log_print(ANDROID_LOG_INFO,"dm-vulkan","NVN pin tid=%d %s mask=%x result=%d errno=%d drifts=%u failures=%u",int(gettid()),want?"pinned":"released",want?pin_mask:0u,r,err,pin_drifts,pin_failures);
+    if(changed || pin_drifts<=4 || (r && pin_failures<=4))vlog("NVN pin tid=%d %s mask=%x result=%d errno=%d drifts=%u failures=%u",int(gettid()),want?"pinned":"released",want?pin_mask:0u,r,err,pin_drifts,pin_failures);
 }
-void log_message(void*,const char *text){__android_log_print(ANDROID_LOG_INFO,"dm-vulkan","%s",text);}
-[[noreturn]] void fatal(void*,const char *text){__android_log_print(ANDROID_LOG_FATAL,"dm-vulkan","%s",text);abort();}
+void log_message(void*,const char *text){vlog("%s",text);}
+[[noreturn]] void fatal(void*,const char *text){vlog("%s",text);__android_log_print(ANDROID_LOG_FATAL,"dm","%s",text);abort();}
 void destroy_present_semaphores(){for(auto s:finished)if(s)vkDestroySemaphore(device,s,nullptr);finished.clear();}
 // 调用者先等队列空闲；基础WSI销毁仍沿用WaitIdle惯例，不声称提供呈现栅栏保证。
 // Call only after queue idle. Base WSI teardown follows the WaitIdle convention,
@@ -116,15 +139,14 @@ bool present_native=false;   // 鸿蒙：缓冲尺寸与合成缩放未在真机
 #else
 bool present_native=true;
 #endif
-int native_w=0,native_h=0;
 int create_surface(){
-    destroy_swap();native_w=native_h=0;
+    destroy_swap();
     {std::lock_guard<std::mutex> lock(window_mutex);if(!desired)return VK_NOT_READY;active=desired;ANativeWindow_acquire(active);active_generation=generation;}
     if(frame_rate_vote>0){
         // 运行时查询API，系统拒绝投票不会中止Vulkan初始化。 | Resolve the API at runtime; a refused vote does not abort Vulkan initialization.
         static auto set_rate=[]{void *lib=dlopen("libnativewindow.so",RTLD_NOW);return reinterpret_cast<int32_t(*)(ANativeWindow*,float,int8_t)>(lib?dlsym(lib,"ANativeWindow_setFrameRate"):nullptr);}();
         int fr=set_rate?set_rate(active,frame_rate_vote,ANATIVEWINDOW_FRAME_RATE_COMPATIBILITY_DEFAULT):-1;
-        __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","Frame rate vote %.0f Hz result=%d (marker gfx-frame-rate; display request, not FPS)",double(frame_rate_vote),fr);
+        vlog("Frame rate vote %.0f Hz result=%d (marker gfx-frame-rate; display request, not FPS)",double(frame_rate_vote),fr);
     }
     VkAndroidSurfaceCreateInfoKHR ci{VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR};ci.window=active;
     VkResult r=vkCreateAndroidSurfaceKHR(instance,&ci,nullptr,&surface);if(r)return r;
@@ -152,7 +174,7 @@ int create_swap(){
     // Even failed creation retires oldSwapchain; never pass that retired handle on retry.
     destroy_present_semaphores();if(swapchain)vkDestroySwapchainKHR(device,swapchain,nullptr);swapchain=r?VK_NULL_HANDLE:replacement;images.clear();if(r)return r;swap_format=sf.format;
     created_transform=cap.currentTransform;created_surface_extent=cap.currentExtent;
-    __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","Swapchain: window=%dx%d extent=%ux%u currentTransform=%u supported=%u selected=%u",ANativeWindow_getWidth(active),ANativeWindow_getHeight(active),extent.width,extent.height,unsigned(cap.currentTransform),unsigned(cap.supportedTransforms),unsigned(ci.preTransform));
+    vlog("Swapchain: window=%dx%d extent=%ux%u currentTransform=%u supported=%u selected=%u",ANativeWindow_getWidth(active),ANativeWindow_getHeight(active),extent.width,extent.height,unsigned(cap.currentTransform),unsigned(cap.supportedTransforms),unsigned(ci.preTransform));
     r=vkGetSwapchainImagesKHR(device,swapchain,&n,nullptr);if(r)return r;images.resize(n);r=vkGetSwapchainImagesKHR(device,swapchain,&n,images.data());if(r)return r;images.resize(n);
     // 呈现完成信号量按交换链图像分配；重新获取该图像后才能再次发信号。
     // Index present-wait semaphores by acquired image, not by CPU frame/fence.
@@ -185,7 +207,7 @@ void membench(){
             double t0=now();if(!coherent)vkInvalidateMappedMemoryRanges(device,1,&mr);double t1=now();memcpy(back.data(),p,n);double t2=now();
             rd=std::min(rd,t2-t1);inv=std::max(inv,t1-t0);uint32_t got;memcpy(&got,back.data()+n-4,4);ok=ok&&got==value;
         }
-        __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","NVN membench type=%u flags=%#x write=%.2f GB/s (flush %.0f us) read=%.2f GB/s read_after_gpu=%.2f GB/s (invalidate %.0f us) ok=%d",
+        vlog("NVN membench type=%u flags=%#x write=%.2f GB/s (flush %.0f us) read=%.2f GB/s read_after_gpu=%.2f GB/s (invalidate %.0f us) ok=%d",
             t,unsigned(f),double(n)/w,flush/1e3,double(n)/rc,double(n)/rd,inv/1e3,int(ok));
         vkUnmapMemory(device,m);vkFreeMemory(device,m,nullptr);vkDestroyBuffer(device,b,nullptr);
     }
@@ -202,9 +224,38 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
     VkFormatProperties sp;vkGetPhysicalDeviceFormatProperties(physical,source_format,&sp);if(!(sp.optimalTilingFeatures&VK_FORMAT_FEATURE_BLIT_SRC_BIT))return VK_ERROR_FORMAT_NOT_SUPPORTED;
     int x=0,y=0,w=int(width),h=int(height);if(crop&&crop[2]>0&&crop[3]>0){x=std::clamp(crop[0],0,w);y=std::clamp(crop[1],0,h);w=std::min(crop[2],int(width)-x);h=std::min(crop[3],int(height)-y);}if(w<=0||h<=0)return VK_ERROR_INITIALIZATION_FAILED;
     for(;;){
-    if(present_native && surface && active && (native_w!=w || native_h!=h)){   // the next swapchain takes this size (currentExtent follows the buffer geometry)
-        int g=ANativeWindow_setBuffersGeometry(active,w,h,0);native_w=w;native_h=h;swap_dirty=true;
-        __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","Present at the game's output size %dx%d result=%d (marker gfx-present-native)",w,h,g);}
+    // 窗口缓冲尺寸由显示硬件铺满窗口只在比例对得上时成立（present_native）；比例对不上就按画面矩形居中 blit、
+    // 四周留黑边，触控层按同一个矩形换算。否则 16:9 的游戏画面会被合成器拉满近 4:3 的折叠内屏，画面与手指都走形。
+    // Handing the window buffer to the display hardware, which fills the window, only holds when the aspects match
+    // (present_native); otherwise the picture is blitted centred into the window with bars around it, and the touch
+    // layer converts through that same rectangle. Left alone, a 16:9 picture on a fold inner screen near 4:3 is
+    // stretched to fill by the compositor, and both the picture and the fingers are distorted.
+    int win_w=0,win_h=0;dm_android_vk_window_size(&win_w,&win_h);
+    // 窗口缓冲现在实际多大：读回几何，不按上一次请求记账。被驱动拒绝时这里仍是旧值，下一帧继续请求；
+    // 呈现与触控都按实际尺寸走，"画面拉满而触控按 letterbox" 就不会出现。
+    // What the window buffer actually is: read the geometry back rather than trusting the last request. A refused
+    // request leaves the old value here, so the next frame asks again; presentation and touch then both follow
+    // the actual size, and "picture stretched while touch uses letterbox" cannot arise.
+    int buf_w=0,buf_h=0;
+    if(surface&&active){buf_w=ANativeWindow_getWidth(active);buf_h=ANativeWindow_getHeight(active);}
+    int native_on=(w>0&&buf_w==w&&buf_h==h)?1:0;
+    int req_w=0,req_h=0;
+    if(surface&&active&&dm_vp_geometry_request(present_native?1:0,win_w,win_h,w,h,native_on,&req_w,&req_h)){
+        int g=ANativeWindow_setBuffersGeometry(active,req_w,req_h,0);
+        int aw=ANativeWindow_getWidth(active),ah=ANativeWindow_getHeight(active);
+        // 生效 = 调用成功 **且** 读回的几何就是请求的几何（请求 0,0 = 窗口尺寸）；失败不得冒充成功。
+        // Applied = the call succeeded *and* the geometry read back is the requested one (a request of 0,0 means
+        // the window size); a failure is never recorded as success.
+        int applied=g==0 && ((req_w>0&&req_h>0)?(aw==req_w&&ah==req_h):(aw==win_w&&ah==win_h));
+        if(aw!=buf_w||ah!=buf_h)swap_dirty=true;   // 交换链跟实际缓冲尺寸重建 | rebuild the swapchain at the actual size
+        // 同样的失败逐帧重试时不刷日志：前 3 次与每 300 次记一行；一旦生效就清零，下次失败还会立刻记。
+        // A failure retried every frame does not flood the log: the first 3 tries and every 300th are recorded;
+        // a success resets the count, so a later failure is logged at once.
+        static int geom_attempts=0;
+        if(applied||aw!=buf_w||ah!=buf_h||geom_attempts<3||geom_attempts%300==0)
+            vlog("Present geometry: window %dx%d content %dx%d request %dx%d result=%d buffers now %dx%d applied=%d",win_w,win_h,w,h,req_w,req_h,g,aw,ah,applied);
+        geom_attempts=applied?0:geom_attempts+1;
+    }
     // 后台等待释放UI锁；保留同一源帧，恢复并真正呈现后才返回成功。
     // Suspend without the UI lock; keep this source frame until it is presented.
     wait_window();
@@ -229,7 +280,7 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
     unsigned f=overlap?flight:0;VkCommandPool pool=f?overlap_pool:command_pool;VkCommandBuffer cmd=f?overlap_command:command;VkSemaphore acq=f?overlap_acquired:acquired;VkFence done=f?overlap_fence:fence;
     if(in_flight[f]){XTRACE_BEGIN("dm-present-fence");r=vkWaitForFences(device,1,&done,VK_TRUE,10000000000ull);XTRACE_END();if(r)return r;if((r=vkResetFences(device,1,&done)))return r;in_flight[f]=false;
         if(present_stamped[f]){uint64_t t[2]{};if(vkGetQueryPoolResults(device,present_queries,f*2,2,sizeof t,t,8,VK_QUERY_RESULT_64_BIT)==VK_SUCCESS && t[1]>=t[0]){present_gpu_ns+=double(t[1]-t[0])*present_tick_ns;
-            if(++present_timed==300){__android_log_print(ANDROID_LOG_INFO,"dm-vulkan","NVN PERF present_gpu_us=%.0f extent=%ux%u (marker gfx-present-timing)",present_gpu_ns/present_timed/1e3,extent.width,extent.height);present_gpu_ns=0;present_timed=0;}}present_stamped[f]=false;}}
+            if(++present_timed==300){vlog("NVN PERF present_gpu_us=%.0f extent=%ux%u (marker gfx-present-timing)",present_gpu_ns/present_timed/1e3,extent.width,extent.height);present_gpu_ns=0;present_timed=0;}}present_stamped[f]=false;}}
     uint32_t index=0;XTRACE_BEGIN("dm-acquire");r=vkAcquireNextImageKHR(device,swapchain,50000000ull,acq,VK_NULL_HANDLE,&index);XTRACE_END();
     if(r==VK_TIMEOUT||r==VK_NOT_READY)continue;
     if(r==VK_ERROR_OUT_OF_DATE_KHR){swap_dirty=true;wait_resize();continue;}
@@ -246,7 +297,17 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
     // TOP_OF_PIPE as the source stage it does not wait for the semaphore and can happen before the presentation engine has
     // finished reading the image (synchronization validation: SYNC-HAZARD-WRITE-AFTER-READ).
     vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);
-    double scale=std::min(double(extent.width)/w,double(extent.height)/h);int dw=std::max(1,int(w*scale)),dh=std::max(1,int(h*scale)),dx=(int(extent.width)-dw)/2,dy=(int(extent.height)-dh)/2;
+    // 目标矩形与触控换算同出一处（viewport.h）：显示与触摸不再各算一套尺寸。
+    // The destination rectangle comes from the same place as the touch conversion (viewport.h): display and touch no longer compute separate sizes.
+    dm_vp_rect vp=dm_vp_fit(int(extent.width),int(extent.height),w,h);int dw=vp.w,dh=vp.h,dx=vp.x,dy=vp.y;
+    // 交给触控层的同一份数据：交换链**实际**的像素尺寸（这一帧 blit 进的就是它）和内容尺寸。触控据此先取
+    // blit 矩形再按合成器的缩放换到窗口，于是几何被驱动拒绝（缓冲仍是旧尺寸、被拉满窗口）、或比例不同而仍被
+    // 拉满这类情况，触控都与屏幕上真实所见一致；两个比例条件不再承担这个判断。
+    // The same data for the touch layer: the swapchain's *actual* pixel size (what this frame blits into) and the
+    // content size. Touch takes the blit rectangle from them and then scales it to the window as the compositor
+    // does, so a refused geometry (the old buffer stretched to the window) or a mismatched buffer being stretched
+    // still leaves touch with what is really on screen; the two aspect-ratio conditions no longer carry that load.
+    dm_android_vk_set_present_geometry(int(extent.width),int(extent.height),w,h);
     if(dx || dy || dw!=int(extent.width) || dh!=int(extent.height)){   // letterbox bars only where the blit leaves part of the image
         VkClearColorValue black{};vkCmdClearColorImage(cmd,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&black,1,&barrier.subresourceRange);
         barrier.oldLayout=barrier.newLayout;barrier.srcAccessMask=barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);}
@@ -276,6 +337,7 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
       if(tgt&&now>tgt+p+2000000)dm_present_late.fetch_add(1,std::memory_order_relaxed);if(next<now)next=now;if(next>now+2*p)next=now+p;tgt=next;OH_NativeWindow_NativeWindowHandleOpt(active,SET_DESIRED_PRESENT_TIMESTAMP,next);}}
 #endif
     XTRACE_BEGIN("dm-queue-present");VkResult pr=vkQueuePresentKHR(queue,&pi);XTRACE_END();
+    if(pr==VK_SUCCESS||pr==VK_SUBOPTIMAL_KHR)dm_presents.fetch_add(1,std::memory_order_relaxed);
     // 呈现失败时先排空，拆除路径要求队列空闲。
     // Drain a failed present before teardown, which requires an idle queue.
     if(overlap){flight^=1;if(pr!=VK_SUCCESS && pr!=VK_SUBOPTIMAL_KHR && (r=vkQueueWaitIdle(queue)))return r;}
@@ -291,8 +353,16 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
 }
 }
 extern "C" void dm_android_vk_set_window(ANativeWindow *window){if(window)ANativeWindow_acquire(window);{std::lock_guard<std::mutex> l(window_mutex);if(desired)ANativeWindow_release(desired);desired=window;++generation;}window_cv.notify_all();}
+// 画面在窗口里的矩形（窗口像素）与窗口尺寸都在 viewport_android.c：present 每帧写交换链与内容的实际像素，
+// 触控层每次取布局前问一次。没呈现过 / 尺寸未知时返回 0，调用方按整个视图算。
+// The picture's rectangle inside the window and the window size live in viewport_android.c: present stores the
+// swapchain's and content's actual pixels every frame, and the touch layer asks before every layout pass. Returns 0
+// before the first present or when a size is unknown, and the caller then uses the whole view (today's behaviour).
 extern "C" int dm_android_vk_has_window(){return has_window(nullptr);}
 extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t bytes){
+    // 「Viewport:」走同一条日志（stderr → logcat 标签 dm / 日志文件），整行一次写出。
+    // The "Viewport:" line takes the same log path (stderr -> logcat tag dm / the log file), written in one call.
+    dm_android_vk_set_viewport_log([](const char *line){vlog("%s",line);});
     if(path){std::string dir=path;size_t cut=dir.find_last_of('/');if(FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-present-native").c_str(),"rb")){present_native=fgetc(m)!='0';fclose(m);}
         if(FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-present-timing").c_str(),"rb")){present_timing=true;fclose(m);}}
     std::lock_guard<std::mutex> render_lock(render_mutex);
@@ -314,10 +384,16 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
     VkPhysicalDeviceShaderDrawParametersFeatures draw{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES};VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};features.pNext=&draw;vkGetPhysicalDeviceFeatures2(physical,&features);
     vkEnumerateDeviceExtensionProperties(physical,nullptr,&n,nullptr);std::vector<VkExtensionProperties> available(n);vkEnumerateDeviceExtensionProperties(physical,nullptr,&n,available.data());bool mirror=false;for(auto e:available)if(std::string(e.extensionName)==VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME)mirror=true;
     {std::string all;for(auto &e:available){all+=e.extensionName;all+=' ';}   // 诊断：设备扩展全表（每次启动一行）| Diagnostics: the full device extension list (one line per launch)
-     for(size_t at=0;at<all.size();at+=900)__android_log_print(ANDROID_LOG_INFO,"dm-vulkan","Device extensions [%zu]: %s",at/900,all.substr(at,900).c_str());
+     for(size_t at=0;at<all.size();at+=900)vlog("Device extensions [%zu]: %s",at/900,all.substr(at,900).c_str());
      VkPhysicalDeviceExternalMemoryHostPropertiesEXT host{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};VkPhysicalDeviceProperties2 pr{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};pr.pNext=&host;vkGetPhysicalDeviceProperties2(physical,&pr);
-     __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","Device %s api=%u.%u.%u driver=%#x minImportedHostPointerAlignment=%llu",pr.properties.deviceName,VK_VERSION_MAJOR(pr.properties.apiVersion),VK_VERSION_MINOR(pr.properties.apiVersion),VK_VERSION_PATCH(pr.properties.apiVersion),pr.properties.driverVersion,(unsigned long long)host.minImportedHostPointerAlignment);}
+     vlog("Device %s api=%u.%u.%u driver=%#x minImportedHostPointerAlignment=%llu",pr.properties.deviceName,VK_VERSION_MAJOR(pr.properties.apiVersion),VK_VERSION_MINOR(pr.properties.apiVersion),VK_VERSION_PATCH(pr.properties.apiVersion),pr.properties.driverVersion,(unsigned long long)host.minImportedHostPointerAlignment);}
     std::vector<const char*> dext={VK_KHR_SWAPCHAIN_EXTENSION_NAME};if(mirror)dext.push_back(VK_KHR_SAMPLER_MIRROR_CLAMP_TO_EDGE_EXTENSION_NAME);
+    // ASTC 解码精度（VK_EXT_astc_decode_mode）：有就开，引擎给 ASTC UNORM 视图挂「解到 RGBA8」（BC3 转 ASTC 的图，见 xbg_game.cpp）；
+    // 开没开经 DM_VK_ASTC_DECODE_MODE 告诉引擎（只在本进程里）。
+    // ASTC decode precision (VK_EXT_astc_decode_mode): enabled where available; the engine then decodes ASTC UNORM views to RGBA8 (the BC3
+    // textures transcoded to ASTC, see xbg_game.cpp); whether it is on reaches the engine through DM_VK_ASTC_DECODE_MODE (this process only).
+    {bool astc_decode=false;for(auto e:available)if(std::string(e.extensionName)==VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME)astc_decode=true;
+     if(astc_decode)dext.push_back(VK_EXT_ASTC_DECODE_MODE_EXTENSION_NAME);setenv("DM_VK_ASTC_DECODE_MODE",astc_decode?"1":"0",1);}
     // Diagnostic (marker gfx-pipe-stats): the driver's per-pipeline statistics (VK_KHR_pipeline_executable_properties).
     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pef{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
     if(FILE *ps=[&]{std::string dir=path;size_t cut=dir.find_last_of('/');return fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-pipe-stats").c_str(),"rb");}()){fclose(ps);dext.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);pef.pipelineExecutableInfo=VK_TRUE;pef.pNext=draw.pNext;draw.pNext=&pef;}
@@ -343,11 +419,11 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
      if(FILE *p=open_marker("/gfx-pin-cpu")){if(fscanf(p,"%x",&pin_mask)!=1)pin_mask=0;fclose(p);}
      if(FILE *n=open_marker("/gfx-no-pin")){pin_mask=0;fclose(n);}
      if(FILE *t=open_marker("/gfx-ab-target")){char target[16]={0};if(fscanf(t,"%15s",target)==1 && !strcmp(target,"pin"))if(FILE *a=open_marker("/gfx-ab-toggle")){if(fscanf(a,"%d",&pin_ab)!=1)pin_ab=0;fclose(a);}fclose(t);}
-     __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","NVN pin mask=%x ab=%d (markers gfx-no-pin, gfx-pin-cpu, gfx-ab-target=pin)",pin_mask,pin_ab);
+     vlog("NVN pin mask=%x ab=%d (markers gfx-no-pin, gfx-pin-cpu, gfx-ab-target=pin)",pin_mask,pin_ab);
      if(FILE *b=open_marker("/gfx-membench")){fclose(b);membench();}}
     if(overlap){if((r=vkCreateCommandPool(device,&cp,nullptr,&overlap_pool)))return fail("Present command pool",r);ca.commandPool=overlap_pool;if((r=vkAllocateCommandBuffers(device,&ca,&overlap_command)))return fail("Present command",r);
         if((r=vkCreateSemaphore(device,&sc,nullptr,&overlap_acquired)))return fail("Acquire semaphore",r);if((r=vkCreateFence(device,&fc,nullptr,&overlap_fence)))return fail("Present fence",r);}
-    __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","Present overlap=%d (marker gfx-present-overlap)",int(overlap));
+    vlog("Present overlap=%d (marker gfx-present-overlap)",int(overlap));
     shader_path=path;dm_vk_config config{};config.size=sizeof(config);config.game.size=sizeof(config.game);config.game.physical=physical;config.game.device=device;config.game.queue=queue;config.game.queue_family=family;config.game.enabled_core=features.features;config.game.enabled_shader_draw_parameters=draw.shaderDrawParameters;config.game.fence_timeout_ns=10000000000ull;config.game.shader_directory=shader_path.c_str();config.game.present=present;config.game.log=log_message;config.game.fatal=fatal;config.sampler_mirror_clamp_to_edge=mirror;config.has_window=has_window;config.display_hz=0; // Query actual display refresh in frontend; do not guess 60 Hz.
     int status=dm_vk_initialize(&config,error,bytes);if(!status)ready=true;else cleanup_initialization();return status;
 }

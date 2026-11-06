@@ -2,7 +2,7 @@
 // Warp diagnostic regression: execute the real observer; preserve ordinary destinations and existing Rift rerouting, without native calls.
 // Warp diagnostic regression: execute the real observer; preserve ordinary destinations and existing Rift rerouting, without native calls.
 #include "../dm_rift.c"
-void (*g_dm_pre_commit_hook[5])(const char *);
+void (*g_dm_pre_commit_hook[6])(const char *);
 uint64_t dm_fs_commit_count(void) { return 0; }
 static int checks, fails;
 #define CHECK(x) do { checks++; if (!(x)) { fails++; printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)

@@ -84,6 +84,7 @@ static void ui_taps_step(void) {
         if (k == 'N') { void dm_num_set(int); dm_num_set(tp[i].arg); tp[i].st = -1; continue; }   // 数量框设值（dm_textinput.c；-1 全部、-2 一半） | set the quantity box value (dm_textinput.c; -1 all, -2 half)
         if (k == 'A') { void dm_shop_buy(void), dm_shop_sell_cursor(void), dm_stat_add(int, int), dm_skill_add_selected(void); int v = tp[i].arg;   // 动作入口（dm_actions.c）：A1 买、A2 卖手上的、A3 技能 +1、A4 把背包里第一件能卖的拿到手上（测试用）、A5 把背包里第一瓶药水放进腰带（测试用）、A6 直接卖身上第一件能卖的（测试用）、A21–A24 立即使用背包里第一件药水 / 卷轴 / 书 / 方块（测试用，dm_item_use）、A1000+id 把该物品放进腰带、A1xy 属性 x（0–3）加 y（1 / 5 / 9 = 全部） | action entries (dm_actions.c): A1 buy, A2 sell what is on the cursor, A3 skill +1, A4 pick up the first sellable item in the inventory (for testing), A5 put the first potion in the inventory into the belt (for testing), A6 directly sell the first sellable item carried (for testing), A21-A24 immediately use the first potion / scroll / tome / cube in the inventory (for testing, dm_item_use), A1000+id put that item into the belt, A1xy add y (1 / 5 / 9 = all) to stat x (0–3)
             if (v == 1) dm_shop_buy(); else if (v == 2) dm_shop_sell_cursor(); else if (v == 3) dm_skill_add_selected(); else if (v == 4) { void dm_test_hold_first_sellable(void); dm_test_hold_first_sellable(); } else if (v == 6) { void dm_test_sell_first(void); dm_test_sell_first(); } else if (v == 5) { void dm_test_belt_first_potion(void); dm_test_belt_first_potion(); } else if (v == 35 || v == 38 || v == 39) { void dm_inv_sort(int); dm_inv_sort(v == 35 ? 0 : v == 38 ? 3 : 4); } else if (v == 36) { void dm_name_random(void); dm_name_random(); } else if (v >= 44 && v <= 46) { void dm_test_identify(int); dm_test_identify(v - 43); } else if (v == 74) { void dm_held_stow(void); dm_held_stow(); } else if (v == 75) { void dm_test_swap_held(void); dm_test_swap_held(); } else if (v >= 70 && v <= 73) { dm_uiscreen_enable(v - 70); }   /* A70–A73：界面画面 关 / 贴顶 / 居中 / 贴底（走前端用的同一个入口） | A70-A73: UI picture off / top-aligned / centered / bottom-aligned (through the same entry the front end uses) */ else if (v == 47 || v == 48) { dm_stash_take(v == 47 ? 1 : 3); } else if (v == 43) { dm_cursor_item_info ci; int hw = 0, hh = 0, c = dm_cursor_item(&ci), hd = dm_held_size(&hw, &hh); LOG("测试：光标物品 %s 容器 %d 格 %d,%d 占 %dx%d 叠数 %d；手上 %d（%dx%d）；等目标 %d", c ? ci.code : "无", c ? ci.container : 0, c ? ci.gx : 0, c ? ci.gy : 0, c ? ci.gw : 0, c ? ci.gh : 0, c ? ci.stack : 0, hd, hw, hh, dm_item_targeting()); } else if (v >= 50 && v <= 69) { void dm_test_stash_take(int); dm_test_stash_take(v - 50 ? v - 50 : 1); } else if (v >= 40 && v <= 42) { void dm_test_equip(int); dm_test_equip(v - 39); } else if (v == 33 || v == 34) { void dm_belt_expand(int); dm_belt_expand(v == 33); } else if (v == 31 || v == 32) { void dm_item_compare(int); dm_item_compare(v == 31); } else if (v == 30) { void dm_test_hover_at(float, float); dm_test_hover_at(x, y); } else if (v >= 21 && v <= 26) { void dm_test_use_first(int); dm_test_use_first(v - 20); } else if (v >= 1000) { void dm_belt_put(uint32_t); dm_belt_put((uint32_t)(v - 1000)); } else if (v >= 100) dm_stat_add(v / 10 % 10, v % 10 == 9 ? -1 : v % 10); tp[i].st = -1; continue; }
+        if (k == 'L') { void dm_ui_long_press(void); if (tp[i].st == 0) { tp[i].st = 1; dm_ui_item_query(x, y); dm_ui_ptr(DM_UP_HOVER, x, y, 0); } else if (d >= 12) { tp[i].st = -1; dm_ui_long_press(); } continue; }   // L = 在这一点长按（手势层判定之后的那一步，宿主自测用） | L = long press at this point (the step after the gesture layer decides; for host self-tests)
         if (k == 'W') { unsigned dm_world_tap(float, float); dm_world_tap(x, y); tp[i].st = -1; continue; }   // 点游戏世界（dm_world.c：点目标 = 交互） | tap the game world (dm_world.c: tapping a target = interact)
         if (k == 'g') { float t = d / 60.0f; if (t > 1) t = 1;
             if (tp[i].st == 0) { tp[i].st = 1; int hz = fabsf(tp[i].x2 - x) * 16 > fabsf(tp[i].y2 - y) * 9; dm_ui_drag_begin(hz ? 2 : 1, x, y, tp[i].arg ? tp[i].arg / 1000.0f : 0.05f); }
@@ -143,8 +144,8 @@ static const struct { uint32_t mask; const char *name; } k_names[] = {
 #undef K
 // 左摇杆伪键（只在脚本里用）：按住期间摇杆推满该方向；位在 DM_BTN_* 之外，不进按钮位
 // Left stick pseudo-keys (used only in scripts): while held the stick is pushed fully in that direction; the bits lie outside DM_BTN_* and do not enter the button bits
-enum { PK_LSL = 1u << 24, PK_LSR = 1u << 25, PK_LSU = 1u << 26, PK_LSD = 1u << 27, PK_MASK = 0xFu << 24, PK_TOUCH = 1u << 28, PK_MSG = 1u << 29, PK_CLICK = 1u << 30 };   // PK_CLICK：界面点击步（C<x>:<y>，经 dm_ui_touch = 与 iOS 前端真手指同一条注入鼠标消息的路）   // PK_TOUCH：触点步（T<x>:<y>，经 dm_touch_set） | PK_CLICK: UI click step (C<x>:<y>, via dm_ui_touch = the same injected mouse message path as a real finger on the iOS front end)   // PK_TOUCH: touch point step (T<x>:<y>, via dm_touch_set)
-static const struct { uint32_t mask; const char *name; } k_stick[] = {{PK_LSL, "LSL"}, {PK_LSR, "LSR"}, {PK_LSU, "LSU"}, {PK_LSD, "LSD"}};
+enum { PK_LSL = 1u << 24, PK_LSR = 1u << 25, PK_LSU = 1u << 26, PK_LSD = 1u << 27, PK_RSU = 1u << 22, PK_RSD = 1u << 23, PK_MASK = (0xFu << 24) | (3u << 22), PK_TOUCH = 1u << 28, PK_MSG = 1u << 29, PK_CLICK = 1u << 30 };   // PK_CLICK：界面点击步（C<x>:<y>，经 dm_ui_touch = 与 iOS 前端真手指同一条注入鼠标消息的路）   // PK_TOUCH：触点步（T<x>:<y>，经 dm_touch_set） | PK_CLICK: UI click step (C<x>:<y>, via dm_ui_touch = the same injected mouse message path as a real finger on the iOS front end)   // PK_TOUCH: touch point step (T<x>:<y>, via dm_touch_set)
+static const struct { uint32_t mask; const char *name; } k_stick[] = {{PK_LSL, "LSL"}, {PK_LSR, "LSR"}, {PK_LSU, "LSU"}, {PK_LSD, "LSD"}, {PK_RSU, "RSU"}, {PK_RSD, "RSD"}};
 #define KMAX 256
 static struct { uint32_t mask; uint64_t t0, t1; } g_keys[KMAX];
 static int g_nkeys;
@@ -302,7 +303,7 @@ static void keys_parse(void) {
         const char *msg = NULL;   // 发界面消息的步：MSG:<类别>:<动作>[:<参数>]@前置[>确认]——不按键，到点往界面根控件发这条消息（选角页换成键鼠版界面后手柄确认键进不了局，测试进局的最后一步改发 MainMenuHD:Play） | step that sends a UI message: MSG:<category>:<action>[:<argument>]@pre[>confirm] -- presses no key, at the due time sends this message to the UI root widget (after the character select page was switched to the keyboard-and-mouse UI the controller confirm key can no longer enter a run, so the last step of test run entry sends MainMenuHD:Play instead)
         if (!strncmp(tok, "MSG:", 4)) { if (!strchr(tok + 4, ':') || strlen(tok + 4) >= sizeof g_steps[0].msg) die("DM_KEYS 消息项「%s」格式：MSG:<类别>:<动作>[:<参数>]@前置[>确认]", tok); msg = tok + 4; mask = PK_MSG; }
         for (int i = 0; i < (int)(sizeof k_names / sizeof *k_names); i++) if (!strcmp(tok, k_names[i].name)) mask = k_names[i].mask;
-        for (int i = 0; i < 4; i++) if (!strcmp(tok, k_stick[i].name)) mask = k_stick[i].mask;
+        for (int i = 0; i < 6; i++) if (!strcmp(tok, k_stick[i].name)) mask = k_stick[i].mask;
         if (!mask) die("DM_KEYS 未知键名「%s」", tok);
         const char *v = at + 1;
         if ((*v >= '0' && *v <= '9') || *v == '.') {
@@ -373,11 +374,16 @@ static void receipt(const NpadState *s, uint32_t id, uint32_t style, uint64_t km
     pthread_mutex_unlock(&g_receipt_lock);
 }
 
+__attribute__((weak)) void dm_savemgr_pump(void) {}   // 没有存档管理模块（单测）| no save-management module (unit tests)
 void (*dm_pad_hook)(uint64_t, uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *);
 // 社区 / 关于弹窗的手柄闸门（dm_community.c）：弱定义的缺省 = 原样放过；产品里由 dm_community.c 的强定义替换（不带社区模块的单测用这份）
 // controller gate of the community / About box (dm_community.c): weak defaults pass everything through; the strong definitions in dm_community.c replace them in the product
 __attribute__((weak)) void dm_community_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) { (void)bt; (void)lx; (void)ly; (void)rx; (void)ry; }
 __attribute__((weak)) void dm_community_input_leak(int leaked) { (void)leaked; }
+__attribute__((weak)) void dm_diagup_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) { (void)bt; (void)lx; (void)ly; (void)rx; (void)ry; }   // 上传诊断 / 自动上报确认框的同款闸门（dm_diagup.c） | the same gate for the diagnostic upload / crash report consent box
+__attribute__((weak)) void dm_diagup_input_leak(int leaked) { (void)leaked; }
+__attribute__((weak)) void dm_telebox_input_gate(uint64_t *bt, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) { (void)bt; (void)lx; (void)ly; (void)rx; (void)ry; }   // 统计告知框（dm_telebox.c） | the statistics notice
+__attribute__((weak)) void dm_telebox_input_leak(int leaked) { (void)leaked; }
 static void fill(NpadState *s, uint32_t id, uint32_t style) {
     pthread_once(&g_receipt_once, receipt_init);
     DM_PROF(0, "taps", ui_taps_step());
@@ -385,7 +391,12 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     { void dm_textinput_pump(void); DM_PROF(0, "textinput", dm_textinput_pump()); }   // 文本框补「弹键盘」那一下、数量框设值（dm_textinput.c） | the extra "bring up keyboard" press for text boxes, setting the value of quantity boxes (dm_textinput.c)
     { void dm_update_pump(void); DM_PROF(0, "update", dm_update_pump()); }
     { void dm_crashfence_pump(void); dm_crashfence_pump(); }
+    { void dm_savemgr_pump(void); dm_savemgr_pump(); }   // 存档管理：入口显隐与面板（dm_savemgr.c）| save management: entries and the panel
     { void dm_community_pump(void); dm_community_pump(); }   // 社区入口：入口显隐与游戏内提示框（dm_community.c） | community entry: entry show / hide and the in-game notice box (dm_community.c)   // 崩溃围栏的主菜单游戏内提示框（dm_crashfence.c） | the crash fence's in-game notice box on the main menu       // 选角页的构建号与新版本提示（dm_update.c） | build number and new-version notice on the character select page (dm_update.c)
+    { void dm_crashreport_pump(void); dm_crashreport_pump(); }   // 自动上报崩溃：启动判定、后台尝试的结果、重试（dm_crashreport.c） | automatic crash reports: launch decision, results of background attempts, retries
+    { void dm_telemetry_pump(void); dm_telemetry_pump(); }   // 设备与使用统计：队列与闲时发送（dm_telemetry.c） | device and usage statistics: queue and idle sending
+    { void dm_telebox_pump(void); dm_telebox_pump(); }       // 统计告知框（dm_telebox.c） | the statistics notice
+    { void dm_diagup_pump(void); dm_diagup_pump(); }   // 上传诊断报告：结果、看门狗与游戏内提示框（dm_diagup.c） | diagnostic upload: results, watchdog and the in-game box (dm_diagup.c)   // 社区入口：入口显隐与游戏内提示框（dm_community.c） | community entry: entry show / hide and the in-game notice box (dm_community.c)   // 崩溃围栏的主菜单游戏内提示框（dm_crashfence.c） | the crash fence's in-game notice box on the main menu       // 选角页的构建号与新版本提示（dm_update.c） | build number and new-version notice on the character select page (dm_update.c)
     { void dm_actions_pump(void); DM_PROF(0, "actions", dm_actions_pump()); }     // 商人买卖 / 加点入口与读数（dm_actions.c） | vendor buy/sell / stat point entry and readout (dm_actions.c)
     { void dm_world_pump(void); DM_PROF(0, "world", dm_world_pump()); }   // 点世界目标 = 交互（dm_world.c） | tapping a world target = interact (dm_world.c)
     { void dm_game_notice_ui_pump(void); dm_game_notice_ui_pump(); }
@@ -420,11 +431,12 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     // script stick pseudo-keys: push to full. Applied where the real controller stick is merged, so the switch freeze / page stick takeover (B006b) / box gate treat it like a real stick
     // (it used to be applied last, after the page takeover, so scripts could not exercise left-stick navigation)
     if (km & PK_LSL) s->lx = -32767; if (km & PK_LSR) s->lx = 32767;
+    if (km & PK_RSU) s->ry = 32767; if (km & PK_RSD) s->ry = -32767;
     if (km & PK_LSU) s->ly = 32767;  if (km & PK_LSD) s->ly = -32767;
     { int dm_padmode_input_gate(uint64_t *); if (dm_padmode_input_gate(&s->buttons)) s->lx = s->ly = s->rx = s->ry = 0; }   // 手柄 / 触屏切换事务进行中：键和摇杆都不交给游戏；触发切换时按着的键松开前也不交（dm_padmode.c） | Controller / touch switch transaction in progress: neither keys nor sticks are handed to the game; keys held when the switch was triggered are not handed over either until released (dm_padmode.c)
     if (dm_pad_hook) dm_pad_hook(guest_ns(), &s->buttons, &s->lx, &s->ly, &s->rx, &s->ry);
     { uint64_t dm_runeword_pad_filter(uint64_t); s->buttons = dm_runeword_pad_filter(s->buttons); }   // 手柄模式符文之语清单开着时十字键 / A / B / L / R 归清单（dm_runeword.c） | While the runeword list is open in controller mode, the D-pad / A / B / L / R belong to the list (dm_runeword.c)
-    { void dm_padmode_page_stick(int32_t *, int32_t *); dm_padmode_page_stick(&s->lx, &s->ly); }   // 页接管方向键时左摇杆归页（dm_padmode.c，RC1.1 B006b） | the left stick goes to the page when it takes the directions (B006b)
+    { void dm_padmode_page_stick(int32_t *, int32_t *), dm_padmode_page_rstick(int32_t *); dm_padmode_page_stick(&s->lx, &s->ly); dm_padmode_page_rstick(&s->ry); }   // 页接管方向键时左摇杆归页（dm_padmode.c，RC1.1 B006b） | the left stick goes to the page when it takes the directions (B006b)
     { uint64_t dm_padmode_page_filter(uint64_t); s->buttons = dm_padmode_page_filter(s->buttons); }   // 手柄模式我们自己的页（自定义页等）开着时，页声明的键归页（dm_padmode.c） | While one of our own pages (the Custom page etc.) is open in controller mode, the buttons the page declares belong to the page (dm_padmode.c)
     { uint64_t dm_swapskill_filter(uint64_t); s->buttons = dm_swapskill_filter(s->buttons); }   // 副手组技能：换武器好之前压住那个键（dm_actions.c） | off-hand set skill: hold that key back until the weapon swap is done (dm_actions.c)
     { static int trx, tryy, tdelay, held, tset = -1; if (tset < 0) { const char *e = getenv("DM_TEST_RSTICK"); tset = e && sscanf(e, "%d,%d,%d", &trx, &tryy, &tdelay) >= 2; }   // 测试开关 DM_TEST_RSTICK=rx,ry[,延迟次数]：按键脚本按着 A / B / X / Y 时把右摇杆置成这个值（模拟「按住技能钮拖动」，游戏自己也看得到右摇杆）；延迟 = 按下后第几次取手柄才开始给（真手指是先按下、再拖出方向） | test switch DM_TEST_RSTICK=rx,ry[,delay count]: while the key script holds A / B / X / Y, set the right stick to this value (simulates "hold a skill button and drag", the game itself also sees the right stick); delay = on which controller read after the press it starts being given (a real finger presses first, then drags out a direction)
@@ -436,6 +448,10 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     // community / About box up: every key and both sticks go to the box, none to the game (RC1.1, dm_community.c); placed after every rewrite, then checks what reaches the game is all zero (counted, should be 0)
     { void dm_community_input_gate(uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *), dm_community_input_leak(int);
       dm_community_input_gate(&s->buttons, &s->lx, &s->ly, &s->rx, &s->ry); dm_community_input_leak(s->buttons || s->lx || s->ly || s->rx || s->ry); }
+    { void dm_diagup_input_gate(uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *), dm_diagup_input_leak(int);
+      dm_diagup_input_gate(&s->buttons, &s->lx, &s->ly, &s->rx, &s->ry); dm_diagup_input_leak(s->buttons || s->lx || s->ly || s->rx || s->ry); }
+    { void dm_telebox_input_gate(uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *), dm_telebox_input_leak(int);
+      dm_telebox_input_gate(&s->buttons, &s->lx, &s->ly, &s->rx, &s->ry); dm_telebox_input_leak(s->buttons || s->lx || s->ly || s->rx || s->ry); }
     s->attributes = ATTR_CONNECTED;
     atomic_store_explicit(&g_sampled_right,(uint32_t)s->rx|((uint64_t)(uint32_t)s->ry<<32),memory_order_release);
     receipt(s, id, style, km, read_start_ns);

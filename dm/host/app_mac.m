@@ -98,7 +98,16 @@ static int mac_copy(const char *s) {
     if (NSThread.isMainThread) w(); else dispatch_sync(dispatch_get_main_queue(), w);
     return ok ? 1 : 0;
 }
+// 存档管理的系统面板（Mac）：主线程上开，结果回调给宿主（dm_savemgr.c）| save management's system panels (Mac): opened on the main thread, the result goes back to the host
+void dm_savemgr_shell(void (*)(void), void (*)(const char *)); void dm_savemgr_picked(const char *); void dm_savemgr_share_done(int); void dm_savemgr_set_source(const char *, const char *, const char *, const char *);
+static void mac_pick(void) { dispatch_async(dispatch_get_main_queue(), ^{ NSOpenPanel *p = NSOpenPanel.openPanel; p.identifier = @"dmSavePicker"; p.allowedFileTypes = @[@"zip", @"d2s", @"d2i"]; p.canChooseDirectories = YES; p.allowsMultipleSelection = NO; dm_savemgr_picked([p runModal] == NSModalResponseOK ? p.URL.fileSystemRepresentation : NULL); }); }
+static void mac_share(const char *path) { NSString *src = @(path); dispatch_async(dispatch_get_main_queue(), ^{ NSSavePanel *p = NSSavePanel.savePanel; p.identifier = @"dmSaveShare"; p.nameFieldStringValue = src.lastPathComponent;
+#ifdef DM_QA_BUILD
+    { const char *qa = getenv("DM_TEST_SHARE_CLOSE"); if (qa) [p performSelector:@selector(cancel:) withObject:nil afterDelay:atoi(qa) inModes:@[NSModalPanelRunLoopMode]]; }   // 同 iOS：QA 构建到点收起 | as on iOS: QA builds close it on time
+#endif
+    if ([p runModal] != NSModalResponseOK) { dm_savemgr_share_done(0); return; } [NSFileManager.defaultManager removeItemAtURL:p.URL error:nil]; dm_savemgr_share_done([NSFileManager.defaultManager copyItemAtPath:src toPath:p.URL.path error:nil]); }); }
 int dm_app_bootstrap(int *argc, char ***argv) {
+    dm_savemgr_shell(mac_pick, mac_share); { NSDictionary *d = NSBundle.mainBundle.infoDictionary; dm_savemgr_set_source("macos", [d[@"DMSourceCommit"] description].UTF8String ?: "", [d[@"CFBundleVersion"] description].UTF8String ?: "", [d[@"DMVersionLabel"] description].UTF8String ?: ""); }
     { void dm_community_copy_init(int (*)(const char *)); dm_community_copy_init(mac_copy); }   // App 形态与命令行宿主都登记（Mac 上复制走 NSPasteboard） | registered for both the App form and the command-line host (copy on Mac goes through NSPasteboard)
     @autoreleasepool {
         NSString *bp = NSBundle.mainBundle.bundlePath;
@@ -122,7 +131,7 @@ int dm_app_bootstrap(int *argc, char ***argv) {
         // No system "window state restoration": after a forced quit / crash the system shows a modal "the app quit unexpectedly, reopen windows?" at launch - the game has no window to restore,
         // yet the dialog covers the main window, which then receives no mouse or keyboard (the game keeps running behind it). Equivalent to the launch argument -ApplePersistenceIgnoreState YES; must be set before NSApplication is created
         [NSUserDefaults.standardUserDefaults setVolatileDomain:@{ @"ApplePersistenceIgnoreState": @YES } forName:NSArgumentDomain];
-        [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]; [NSApp activateIgnoringOtherApps:YES];
+        [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]; if (!(getenv("DM_NO_ACTIVATE") && *getenv("DM_NO_ACTIVATE") == '1')) [NSApp activateIgnoringOtherApps:YES];   // DM_NO_ACTIVATE=1：自动化测试不抢前台 | automated runs do not take the foreground
         NSString *prod = res_item(@"product");
         if (!prod || ![fm fileExistsAtPath:[prod stringByAppendingPathComponent:@"main.patched.bin"]]) {
             alert(T("dmAppBrokenTitle"), T("dmAppBroken")); exit(1);

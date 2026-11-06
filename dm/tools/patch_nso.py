@@ -50,11 +50,21 @@ PATCH_OFF = (len(IMG) + 0xFFFF) & ~0xFFFF
 # Networking cuts (excluded scope: Battle.net / online play): taken from a community offline fix (LFS Mod Offline Fix for v2228224, which differs from the official 94012 main in only these 7 words).
 # Measured: the system service layer (nifm offline / DNS black hole / account service) cannot get around it: the game itself sends Battle.net requests directly and allows offline play according to the "last online" time.
 CUTS = {'db0507f36b84200ac05f75d76ed5026f': [
+    # 物品栏快照（0x64890c，搬动 / 拿放 / 买卖都先做）只认页 0、3、4（0x566270），护身符页 5 有物品时快照失败，所有搬动都被拒。循环里跳过页 5（宿主 dm_bag.c 自己管这一页）
+    # The inventory snapshot (0x64890c, taken before every move / pickup / trade) accepts only pages 0, 3 and 4 (0x566270), so an item on charm page 5 fails it and every move is refused. Its loop now skips page 5 (the host's dm_bag.c manages that page)
+    (0x64903c, '02000014', '1f150071', '快照循环：b 0x649044 → cmp w8,#5（w8 = 物品页号）'),
+    (0x649040, 'e81f8052', '80040054', '快照循环：mov w8,#0xff → b.eq 0x6490d0（页 5 跳到取下一件）；循环里的都是物品，走不到原来的 0xff'),
     # （放进所有产物共用的基础改写）：游戏显存分配器预算 260 MB → 512 MB
     # (Placed in the base rewrite shared by all build outputs): game video memory allocator budget 260 MB → 512 MB
     (0x8524c4, '0808a2d2', '0800a4d2', '显存分配器初始化配置：mov x8,#0x10400000（260 MB）→ mov x8,#0x20000000（512 MB），随后 movk #0xa0,lsl48 与 str [sp,#0x238] 不变；'
      '原预算下内部分辨率 > 约 345 万像素时（2736x1260 过、2864x1240 崩）渲染目标放不下，main+0x174b018 返回空、main+0x17417a4 读空崩溃；'
      '只是显存预算，不进游戏逻辑：cvd5 逐拍对拍在 1600x900 与 2868x1320 两档均一致'),
+    # （放进所有产物共用的基础改写）：CPU 可见显存池（池 0，每帧临时常量 / 骨骼矩阵的 8 MiB 环从这里取块）400 MB → 512 MB（B085）
+    # (Placed in the base rewrite shared by all build outputs): CPU-visible video memory pool (pool 0, where the per-frame 8 MiB rings for transient constants / bone matrices take their blocks) 400 MB → 512 MB (B085)
+    (0x8524d0, '0820a3d2', '0800a4d2', '显存池 0 预算：mov x8,#0x19000000（400 MB）→ mov x8,#0x20000000（512 MB），随后 movk #0x10,lsl48（高 32 位 1 MB 不变）与 str [sp,#0x240] 不变；'
+     '池 0 装每帧临时数据：环 0x15f1864 建的 8 MiB 块（0x15f2618 取块、0x15f24e0 按 3 帧轮转回收、每环最多留 10 块备用），每个动画单位每帧每个视图约 12.7 KB（0x16892b0：0x1d0 材质 + 0x120 物体 + 0x3000 骨骼），'
+     '画面里同时动着的单位多了，三帧在途 + 备用的块会把 400 MB 用完：0x174aed0 取不到页、0x174b018 返回空、0x173e6d4 在 0x173e808 读空崩溃（B085，Mac 宿主 72 只同屏 145 秒必崩）；'
+     '改成 512 MB 后同一场景跑满 300 秒、峰值 417 MB；只是显存预算（从游戏堆多划 112 MB），不进游戏逻辑'),
     (0x1979bc, 'e8a79f1a', 'e8d79f1a', '离线放行窗口：读存档设置键（0x1d53e80 处字串）的上次在线时刻，'
      '「当前时刻 − 上次在线 < 0x0009356907420000 ns（= 30 天）」置位 [x20+0x2c]；lt→gt'),
     (0x5b14dc, 'e8a79f1a', 'e8d79f1a', '调 0xddab50（缓冲区 [x10+0x138]+x25、剩余长度、回调 0x527d50、表 0x209cdb8、9 项）返回值 <1 置位，'
@@ -730,6 +740,21 @@ for a in sorted(kinds):
     elif k == 'svc': st = site_gate(ins, 'svc', arg); stat(k)
     elif k in ('cntpct', 'cntvct'): st = site_gate(ins, k, arg); stat(k)
     put_branch(a, st)
+
+# 护身符页 5 = 背包页 0（B174）：原版判「护身符生效」的九处都在「物品类 13 护身符」之后只认页号 [物品数据+0x55] == 0，
+# 大背包把护身符放在页 5，客户端角色页（属性聚合 0x46a950 里的 0x46ad48 等）就不算它们（毒抗 / 伤害少了），与服务端不一致。
+# 每处原指令 ldrb w8,[x8,#0x55] 改跳到桩：照读页号，页 5 当 0（cmp + csel），跳回下一条。九处之后到下一次写标志之前都不读 NZCV（逐处核过）。
+# Charm page 5 = inventory page 0 (B174): the nine original "charm is active" checks, after "item type 13 charm", only accept page [item data+0x55] == 0;
+# the large bag keeps charms on page 5, so the client's character sheet (stat aggregation 0x46a950, site 0x46ad48 etc.) left them out (poison res / damage short), unlike the server.
+# Each original ldrb w8,[x8,#0x55] now jumps to a stub: load the page as before, treat page 5 as 0 (cmp + csel), jump back to the next instruction. At all nine sites NZCV is not read before it is next written (checked one by one).
+CHARM_PAGE_SITES = (0x46ad48, 0x46bde8, 0x473c64, 0x474014, 0x578c98, 0x643a34, 0x64b464, 0x6bd594, 0x7ed8fc)
+if BUILD_ID == 'db0507f36b84200ac05f75d76ed5026f':
+    for s in CHARM_PAGE_SITES:
+        w = struct.unpack_from('<I', IMG, s)[0]
+        assert w == 0x39415508, f'护身符页号检查原指令不符 {s:#x}：{w:08x}'
+        assert s not in kinds and not any(seg[0].address <= s < seg[-1].address + 4 for seg in windows), f'护身符页号检查落在已改写处 {s:#x}'
+        st = here(); emit(w); emit(0x7100151F); emit(0x1A8803E8); emit(B(here(), s + 4))   # ldrb w8,[x8,#0x55]; cmp w8,#5; csel w8,wzr,w8,eq; b s+4
+        put_branch(s, st); stat('charm_page5')
 
 # 私有视觉分支；非OBS，0x85只读查询。只有本实验构建显式opt-in；原Qty/children和Update不变。
 # Private visual branch; not OBS, 0x85 is a read-only query. Only this experimental build explicitly opts in; the original Qty/children and Update are unchanged.

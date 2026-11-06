@@ -1,0 +1,26 @@
+// M7.fluid：照 cs_fluid_sim_accumulate_c 的形状（LocalSize 8x8，LtMask 字经 float 中转、bitCount、线程束聚合追加：最高活跃 lane 原子加预留，各 lane 写 基址 + bitCount(LtMask 字 & 选票)），
+// 再读一次 LtMask.y 放进一个永远选不中的 select（2026-10-28 奥丁二分：游戏里这一读就挂 GPU）。o[i] = (写到的槽, LtMask 字, 选票字, 基址)；o[64].x = 原子计数终值。
+// M7.fluid: the shape of cs_fluid_sim_accumulate_c (LocalSize 8x8, the LtMask word through a float, bitCount, warp-aggregated append: the highest active lane reserves with one atomic add,
+// each lane writes base + bitCount(LtMask word & ballot)), plus a read of LtMask.y in a select that is never taken (the Thor bisection of 2026-10-28: that read hangs the GPU in the game).
+// o[i] = (slot written, LtMask word, ballot word, base); o[64].x = final atomic counter.
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+#extension GL_KHR_shader_subgroup_shuffle : require
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(std430, binding = 0) buffer Out { uvec4 o[]; };
+void main() {
+    uint i = gl_LocalInvocationIndex, id = gl_SubgroupInvocationID, w = id >> 5;
+    uvec4 lt = gl_SubgroupLtMask;
+    float ltf = uintBitsToFloat(w == 5u ? lt.y : lt.x);   // 永远取 .x，但 .y 被读了 | always .x, but .y is read
+    uvec4 b = subgroupBallot((i & 3u) != 3u);
+    uint bw = b.x, ltw = floatBitsToUint(ltf);
+    uint base = 0u;
+    if ((i & 3u) != 3u) {
+        uint top = findMSB(bw);
+        if ((id & 31u) == top) base = atomicAdd(o[64].x, uint(bitCount(bw)));
+        base = subgroupShuffle(base, (id & 0x60u) | top);
+        uint slot = base + uint(bitCount(bw & ltw));
+        o[i] = uvec4(slot, ltw, bw, base);
+    } else o[i] = uvec4(0xffffffffu, ltw, bw, 0u);
+}
