@@ -126,15 +126,21 @@ int main(int argc, char **argv) {
     // B139 返工根因守卫：iPad 的静态尺寸按安全内容高缩放——横屏 k = (834 − 20) / 500 = 1.628（24 → 39.07 pt），
     // 竖屏 k = (1194 − 20) / 840 = 1.3976（24 → 33.54 pt）。进度组不再贴底：横屏标题在 63.1% 屏高、条 71.8%（奥丁 62.2% / 71.7%）；
     // 竖屏 77.6% / 82.8%（17 Pro 竖 75.9% / 81.0%）。上一版按长边 k = 1.194 时是横屏 72.3% / 78.7%、竖屏 80.6% / 85.1%。
-    // 安卓参照（奥丁 832.5×468.3、Fold8 934.2×841.7、出图的 873×393）长边都 ≤ 1000，字号仍是 24 pt、矩形逐位不变。
+    // 安卓参照（奥丁 832.5×468.3、出图的 873×393）横屏内容高 ≤ 500，字号仍是 24 pt、矩形逐位不变；折叠屏内屏（Fold8、Duo）横屏内容高 > 500，按同一系数放大（B140，见 t_loadpage）。
     // B139 rework root-cause gate: the iPad's static metrics scale with the safe content height - landscape k = (834 - 20) / 500 = 1.628
     // (24 → 39.07 pt), portrait k = (1194 - 20) / 840 = 1.3976 (24 → 33.54 pt). The progress group no longer hugs the bottom: landscape
     // title at 63.1% of the height, bar 71.8% (Thor 62.2% / 71.7%); portrait 77.6% / 82.8% (17 Pro portrait 75.9% / 81.0%). The previous
-    // long side / 1000 rule (k = 1.194) gave 72.3% / 78.7% and 80.6% / 85.1%. The Android references (Thor 832.5×468.3, Fold8 934.2×841.7,
-    // the 873×393 shot) all have a long side ≤ 1000: their fonts stay 24 pt and every rectangle is bit-identical.
+    // long side / 1000 rule (k = 1.194) gave 72.3% / 78.7% and 80.6% / 85.1%. The Android references (Thor 832.5×468.3, the 873×393 shot) have a
+    // landscape content height ≤ 500: their fonts stay 24 pt and every rectangle is bit-identical; fold inner screens (Fold8, Duo) are above 500 and
+    // take the same factor (B140, see t_loadpage).
     {
         dm_lp_screen ip[2] = { { 1194, 834, 0, 24, 0, 20 }, { 834, 1194, 0, 24, 0, 20 } };
-        const double kt[2] = { 39.072, 33.542857142857 }, want[2][2] = { { 0.6309, 0.7176 }, { 0.7763, 0.8283 } };
+        // B140（d99c0b5a / c8201af6）：k = min(内容高 / 500 | 840, 内宽 / 762 | 402)，横屏宽系数 1194 / 762 = 1.567 先封顶（24 → 37.61 pt，
+        // 原来 39.07 pt 时提示页最长一行溢出 104%），进度组抬到参照标题高（奥丁 62.2%，条 70.5%）；竖屏字号不变，进度组按平板规则抬到 17 Pro 竖的 75.9% / 81.1%。
+        // B140 (d99c0b5a / c8201af6): k = min(content height / 500 | 840, inner width / 762 | 402); in landscape the width factor 1194 / 762 = 1.567
+        // binds first (24 -> 37.61 pt; at 39.07 pt the notice page's longest line overflowed by 104%) and the progress group is lifted to the reference
+        // title height (Thor 62.2%, bar 70.5%); portrait keeps its font, and the tablet rule lifts the group to 17 Pro portrait's 75.9% / 81.1%.
+        const double kt[2] = { 24.0 * 1194 / 762, 33.542857142857 }, want[2][2] = { { 0.622, 0.705 }, { 0.759, 0.811 } };
         for (int i = 0; i < 2; i++) {
             dm_lp_layout L; dm_loadpage_layout(&ip[i], &L);
             printf("  iPad %s：标题 %.2f pt，标题在 %.1f%% 高，条在 %.1f%% 高\n", i ? "竖" : "横", L.title_pt, L.title.y / ip[i].h * 100, L.bar.y / ip[i].h * 100);

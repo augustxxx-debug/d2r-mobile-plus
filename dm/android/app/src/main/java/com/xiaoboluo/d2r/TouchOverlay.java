@@ -34,10 +34,16 @@ public final class TouchOverlay extends View {
     private static native void nativeEvent(int phase, int slot, float x, float y);
     private static native void nativeResize(float width, float height, float left, float right, float bottom, boolean tablet);
     private static native void nativeLayout(float[] out);
-    // 画面在窗口里的矩形（窗口像素）：控件按它摆、按下按它换回画面坐标，与游戏呈现的 blit 矩形同一个来源。
-    // The picture's rectangle inside the window, in window pixels: controls are placed by it and presses are converted
-    // back through it, the same source as the game's blit rectangle.
+    // 画面在窗口里的矩形（窗口像素）：前 4 个 = 控件坐标系（自适应全屏下是界面矩形，其余情况就是画面），
+    // 后 4 个 = 画面矩形。控件按前者摆、按下按前者换，世界点选按后者归一。
+    // The rectangles in window pixels: the first four are the control coordinate system (the UI rectangle in
+    // adaptive fullscreen, the picture otherwise), the last four the picture rectangle. Controls are placed and
+    // presses converted through the first, world taps normalised by the second.
     private static native boolean nativeViewport(float[] out);
+    // 画面矩形与界面矩形在画面里的偏移（dp）：世界点选要真实画面归一化坐标。
+    // The picture rectangle and the UI rectangle's offset inside it, in dp: world taps need picture-normalised coords.
+    private static native void nativePicture(float wDp, float hDp, float xDp, float yDp);
+    private static native void nativeCutouts(float[] rectsDp, float gestureBottomDp);
     // 窗口点 → 矩形内的点：p = {窗口 x, 窗口 y, 矩形内 x, 矩形内 y, 在画面里}。黑边上的按下第三个值为 0。
     // Window point -> point inside the rectangle: p = {window x, window y, x inside, y inside, inside}.
     private static native boolean nativeMap(float[] p);
@@ -77,10 +83,12 @@ public final class TouchOverlay extends View {
         }
     };
     private final TouchDispatch touches;
-    // 画面矩形（窗口像素）与换算用的暂存：矩形由原生（dm_vp_fit）给，画与触摸都用同一份。
-    // The picture rectangle (window pixels) and scratch for the conversion: native (dm_vp_fit) gives the rectangle,
-    // and both drawing and touch use that one copy.
-    private final float[] vp = new float[4], vpProbe = new float[4];
+    // 画面矩形（窗口像素）与换算用的暂存：矩形由原生（dm_vp_fit / dm_ui_rect）给，画与触摸都用同一份。
+    // 前 4 个 = 控件坐标系（自适应全屏下是界面矩形，其余情况就是画面），后 4 个 = 画面矩形。
+    // The rectangles (window pixels) and scratch for the conversion: native (dm_vp_fit / dm_ui_rect) gives them and
+    // both drawing and touch use that one copy. The first four are the control coordinate system (the UI rectangle
+    // in adaptive fullscreen, the picture otherwise), the last four the picture rectangle.
+    private final float[] vp = new float[8], vpProbe = new float[8];
     private final float[] mapP = new float[5];
     private boolean vpValid;
     private final String[] gameLabels, menuLabels;
@@ -119,6 +127,14 @@ public final class TouchOverlay extends View {
         setFocusable(false);
         setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
+    private final java.util.ArrayList<android.graphics.Rect> cutRects = new java.util.ArrayList<>();
+    private int gestureBottomPx;
+    /** 挖孔矩形（窗口像素）与底部手势条高；由 resizeNative 换到控件坐标交给原生（B140）。
+        Cutout rectangles (window px) and the bottom gesture bar; resizeNative converts them to control coordinates (B140). */
+    public void setCutouts(java.util.List<android.graphics.Rect> rects, int gestureBottom) {
+        cutRects.clear(); if (rects != null) for (android.graphics.Rect r : rects) if (r != null && !r.isEmpty() && cutRects.size() < 4) cutRects.add(new android.graphics.Rect(r));
+        gestureBottomPx = Math.max(0, gestureBottom);
+    }
     public void setSafeInsets(int leftPx, int rightPx, int bottomPx) {
         safeLeft=leftPx/density; safeRight=rightPx/density; safeBottom=bottomPx/density;
         resizeNative();
@@ -144,15 +160,30 @@ public final class TouchOverlay extends View {
         if (!(inputEnabled && getWidth()>0 && getHeight()>0)) return;
         int wpx=getWidth(), hpx=getHeight();
         touches.setViewSize(wpx,hpx);
-        // 画面矩形每次重新问：内外屏切换、旋转、渲染分辨率档变化都会改它，控件按矩形内的点数摆。
-        // Ask for the picture rectangle every time: a fold switch, a rotation or a render-resolution step changes it,
-        // and the controls are laid out in points inside that rectangle.
+        // 控件坐标系每次重新问：内外屏切换、旋转、渲染分辨率档变化都会改它（自适应全屏下是界面上那块 16:9），
+        // 控件按它里面的点数摆。画面矩形跟着一起取（世界点选要用它的归一化坐标）。
+        // Ask for the coordinate system every time: a fold switch, a rotation or a render-resolution step changes it
+        // (in adaptive fullscreen it is the 16:9 UI block), and the controls are laid out in its points. The picture
+        // rectangle comes along (world taps need its normalised coordinates).
         vpValid = nativeViewport(vp) && vp[2]>=1 && vp[3]>=1;
         float x=vpValid?vp[0]:0, y=vpValid?vp[1]:0, w=vpValid?vp[2]:wpx, h=vpValid?vp[3]:hpx;
+        // 画面矩形（后 4 个）；没取到就按控件那块算（旧行为：两者相同）。
+        // The picture rectangle (the last four); if it did not come back, use the control block (the old behaviour:
+        // the two were the same).
+        float pw=vpValid&&vp[6]>=1?vp[6]:w, ph=vpValid&&vp[7]>=1?vp[7]:h;
+        float px=vpValid&&vp[6]>=1?vp[4]:x, py=vpValid&&vp[7]>=1?vp[5]:y;
+        nativePicture(pw/density,ph/density,(x-px)/density,(y-py)/density);
         // 安全区从窗口边缘量；画面矩形把黑边挡掉的那部分先减掉，剩下的才是矩形内的安全距离。
         // Safe insets are measured from the window edges; subtract what the bars already cover, and what is left is
         // the safe distance inside the rectangle.
         float l=Math.max(0,safeLeft-x/density), r=Math.max(0,safeRight-(wpx-x-w)/density), b=Math.max(0,safeBottom-(hpx-y-h)/density);
+        // 挖孔矩形换到控件坐标（dp）；手势条从窗口底边量，减掉控件区下面已经让出的那部分。
+        // Cutout rectangles in control coordinates (dp); the gesture bar is measured from the window bottom, minus what the
+        // control area already leaves below it.
+        float[] cuts = new float[cutRects.size() * 4];
+        for (int i = 0; i < cutRects.size(); i++) { android.graphics.Rect c = cutRects.get(i);
+            cuts[4*i] = (c.left - x)/density; cuts[4*i+1] = (c.top - y)/density; cuts[4*i+2] = (c.right - x)/density; cuts[4*i+3] = (c.bottom - y)/density; }
+        nativeCutouts(cuts, Math.max(0, gestureBottomPx - (hpx - y - h))/density);
         nativeResize(w/density,h/density,l,r,b,
                 getResources().getConfiguration().smallestScreenWidthDp>=600);
     }
@@ -163,7 +194,7 @@ public final class TouchOverlay extends View {
     private boolean viewportChanged() {
         if (!nativeViewport(vpProbe) || vpProbe[2]<1 || vpProbe[3]<1) return false;
         if (!touches.updatePicture(vpProbe)) return false;   // 内部先 cancel：手指按住不动时也不会留旧坐标 | cancels inside
-        System.arraycopy(vpProbe,0,vp,0,4); vpValid=true;
+        System.arraycopy(vpProbe,0,vp,0,8); vpValid=true;
         return true;
     }
     @Override protected void onSizeChanged(int w,int h,int oldw,int oldh) {

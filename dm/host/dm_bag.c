@@ -1,17 +1,24 @@
 // 大背包物品栏：两枚页签（背包 / 护身符两页，同一块网格切换显示），用户 11-01 定稿方案 ④，坐在腰带行左侧。布局和底图见 dm/ios/tools/bag_layout.py、gen_bag_art.py。
 // 切页：格子控件 grid 的页号 +0x630 每帧写（页 0 背包 / 页 5 护身符），原版按它画格子和物品、算命中。
-// 手柄（探针见设计稿 §4.1）：
-//   页签是布局里的 ButtonWidget，原版光标悬停、按 A 发 onClickMessage（ClosePanel:TouchBagTab0/1），触屏点按走同一条。原版焦点导航不认识它，方向键这里接：
-//   网格第 0 行任意一列 ↑ 进当前页的页签（手上拿着物品时不接管、照原版进装备格；B189：原先只有前三列，其余列原版往上进腰带 / 装备栏，页签是盲区）；页签、腰带四格是同一行：←→ 依次走 背包页签 · 护身符页签 · 腰带 0–3 格，
-//   ↓ 回网格第 0 行上次离开的那一列；页签 ↑、腰带 ↑ 照旧交原版（进装备栏）。手上拿着物品时，页签上的 A 宿主吞掉（不切页、不放下）。
-//   ZL / ZR：对面面板的页签条要用（原版不看光标在哪，见设计稿实测表），所以只有对面没有页签时才归物品栏，键帽也按这个显隐。
+// 手柄（探针见设计稿 §4.1；规则表与期望在 dm_bag_nav.h / tests/t_bag_nav.c，Mac 整机判据 ui_regress bag_nav_judge.py）：
+//   页签是布局里的 ButtonWidget，原版光标悬停、按 A 发 onClickMessage（ClosePanel:TouchBagTab0/1），触屏点按走同一条。原版焦点导航把页签当普通停靠点，
+//   页签正压在网格第 0–2 列上方，从背包按上先跳到页签（B235）。现在物品栏里装备格、武器 I / II 钮、页签、腰带、网格第 0 行的 ↑、底排钮的 ↑ 都由宿主按 dm_bag_nav.h 的表走：
+//   页签不是几何候选（从背包按上直接进正上方的装备格 / 腰带）；页签与腰带同一行，腰带第 0 格 ← 进护身符页签、← 背包页签，→ 回腰带，↓ 回第 0 行；腰带两排 ↓ 都走得出去（B239）；
+//   往下回网格、底排钮按上回「进来那一格」（原版的选中格，不等光标停稳，B189 ③）；物品栏开 / 关时记忆清空（B189 ①）。表里写「交原版」的方向（对面面板、顶栏、边界、腰带 ↑）不接管。
+//   手上拿着物品时页签是死路（A 宿主吞掉，不切页不放下），腰带第 0 格 ← 不动。
+//   切页：ZL / ZR（Xbox LT / RT）——对面面板的页签条要用（原版不看光标在哪，见设计稿实测表），所以只有对面没有页签时才归物品栏，键帽也按这个显隐；商店开着时 L / R 点按（B170）。
 // Large-bag inventory: two tabs (bag and charms pages, shown in the same grid area), user-approved option 4 (11-01), on the left of the belt row. Layout and art: dm/ios/tools/bag_layout.py, gen_bag_art.py.
 // Page switching: the grid widget's page +0x630 is written every frame (page 0 bag / page 5 charms); the original draws cells and items and hit-tests by it.
-// Controller (probes in design doc §4.1):
-//   The tabs are ButtonWidgets in the layout: the original cursor hovers them and A sends onClickMessage (ClosePanel:TouchBagTab0/1), touch taps take the same path. The original focus navigation does not know them, so directions are handled here:
-//   Up from any column of grid row 0 enters the current page's tab (not with an item in hand: the original goes to the equipment slots; B189: only the first three columns did; the others went up into the belt / equipment and the tabs were a blind spot); the tabs and the four belt cells form one row:
-//   left / right walk bag tab, charm tab, belt cells 0-3, and down returns to the column of grid row 0 last left; up from a tab or the belt stays with the original (into the equipment). With an item in hand, A on a tab is swallowed (no page change, no drop).
-//   ZL / ZR: the opposite panel's tab bar needs them (the original ignores where the cursor is, measured table in the design doc), so they belong to the inventory only when the opposite panel has no tabs, and the keycaps follow.
+// Controller (probes in design doc §4.1; the rule table and expectations are dm_bag_nav.h / tests/t_bag_nav.c, the Mac whole-machine judge is ui_regress bag_nav_judge.py):
+//   The tabs are ButtonWidgets in the layout: the original cursor hovers them and A sends onClickMessage (ClosePanel:TouchBagTab0/1), touch taps take the same path. The original focus
+//   navigation treats the tabs as ordinary stops and they sit right over grid columns 0-2, so Up from the bag jumped to a tab first (B235). Now the equipment slots, weapon I / II buttons,
+//   tabs, belt, Up on grid row 0 and Up on the bottom buttons follow the table in dm_bag_nav.h, driven by the host: tabs are no geometric candidates (Up from the bag goes straight to the
+//   slot / belt above); tabs and belt share one row, Left on belt cell 0 enters the charm tab, then the bag tab, Right goes back to the belt, Down back to row 0; Down leaves both belt rows
+//   (B239); going down back to the grid and Up on a bottom button return to the entry cell (the original's selected cell, not waiting for the cursor to settle, B189 item 3); the memory is
+//   cleared when the inventory opens / closes (B189 item 1). Directions the table leaves to the original (opposite panel, top bar, borders, belt Up) are not taken.
+//   With an item in hand a tab is a dead end (A is swallowed by the host: no page change, no drop) and Left on belt cell 0 does not move.
+//   Pages: ZL / ZR (Xbox LT / RT) -- the opposite panel's tab bar needs them (the original ignores where the cursor is, measured table in the design doc), so they belong to the inventory only
+//   when the opposite panel has no tabs, and the keycaps follow; with a shop open, L / R taps (B170).
 #include "dm_bag_layout.h"
 #include "dm_bag_rule.h"
 #include "dm_widget.h"
@@ -37,7 +44,7 @@ enum { OFF = 99999, COLS = DM_BAG_COLS, ROWS = DM_BAG_ROWS, CHARM_PAGE = 5, CAP 
 static const struct { const char *panel; int theirs; } k_tab_owner[] = {
     { "VendorPanelLayout", 1 }, { "BankExpansionLayout", 1 }, { "HoradricCubeLayout", 0 }, { "TradeLayout", 0 },
 };
-static uint8_t *B; static int g_page; static _Atomic int g_last_x = -1, g_last_y = -1;   // 手柄最近一次停稳的网格格子中心（屏幕坐标，B189；dm_pouch.c 两个底排按钮 ↑ 回格子用） | the grid cell centre the controller cursor last settled on (screen, B189; used by the two bottom buttons in dm_pouch.c for Up)
+static uint8_t *B; static int g_page; static _Atomic int g_last_x = -1, g_last_y = -1;   // 「进来那一格」：最近一次从网格最下一行往下离开时那一格的中心（屏幕坐标，B189 ③；dm_pouch.c 两个底排按钮 ↑ 回格子用），没有 = -1 | the entry cell: centre of the cell last left downward from the grid's last row (screen, B189 item 3; used by the two bottom buttons in dm_pouch.c for Up), none = -1
 int dm_bag_pad_last(int *x, int *y) { int a = atomic_load(&g_last_x), b = atomic_load(&g_last_y); if (a < 0) return 0; *x = a; *y = b; return 1; }
  static _Atomic int g_tap, g_restore_fail, g_full, g_only, g_rescue_ground;   // g_rescue_ground：救回落到脚边时提示一次（B205） | g_rescue_ground: one notice when a rescue drops to the ground (B205)
 int dm_bag_take_full(void) { return atomic_exchange(&g_full, 0); } int dm_bag_take_restore_fail(void) { return atomic_exchange(&g_restore_fail, 0); }
@@ -77,26 +84,69 @@ static int tabs_theirs(uint64_t root) { for (unsigned i = 0; i < sizeof k_tab_ow
 
 // 网格左上角：原版命中函数（虚表 +0x48）从光标点往左上量 | Grid top-left: measured up and left from the cursor with the original hit test (vtable +0x48)
 #define HIT(w, px, py) (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)(w) + 0x48))((w), (uint64_t)(uint32_t)(px) | ((uint64_t)(uint32_t)(py) << 32)) & 1)
+#include "dm_bag_nav.h"
+int dm_custom_get(const char *key);
+// 导航记忆与网格量值（游戏主线程）：g_nav 见 dm_bag_nav.h；g_nav_prev = 上一帧焦点所在元素；g_gx0 / g_gy0 / g_k = 网格左上角（屏幕）与屏幕像素 / 面板单位
+// Navigation memory and grid measurement (game main thread): g_nav see dm_bag_nav.h; g_nav_prev = the element focused last frame; g_gx0 / g_gy0 / g_k = grid top-left (screen) and screen pixels per panel unit
+static dm_bag_nav_state g_nav = { 0, 1, 1, -1, -1 }; static int g_nav_prev = BN_ORIG, g_gx0 = -1, g_gy0 = -1; static double g_k; static int g_logic = -1;   // 网格逻辑格（dm_bag_nav_track） | the grid logical cell (dm_bag_nav_track)
+static void nav_export(void) {   // 进来那一格 → dm_bag_pad_last（屏幕坐标）；只在焦点正是从那一格一步下来的钮上时给 | the entry cell -> dm_bag_pad_last (screen coordinates); only while the focus is on the button one step down from it
+    if (g_nav.entry_bot < 0 || g_gx0 < 0 || dm_bag_nav_geo(&g_nav, dm_bag_nav_cell(g_nav.entry_bot, ROWS - 1), BN_DOWN) != g_nav_prev) { atomic_store(&g_last_x, -1); atomic_store(&g_last_y, -1); return; }
+    atomic_store(&g_last_x, g_gx0 + (int)((g_nav.entry_bot * 98 + 49) * g_k)); atomic_store(&g_last_y, g_gy0 + (int)(((ROWS - 1) * 98 + 49) * g_k));
+}
+// B189 ①：物品栏开 / 关时清空记忆（换角色必经关面板） | B189 item 1: clear the memory when the inventory opens / closes (a character switch always closes it)
+static void nav_reset(int open) { dm_bag_nav_panel(&g_nav, open); g_nav_prev = BN_ORIG; g_logic = -1; nav_export(); static int lg; if (lg++ < 50) LOG("手柄物品栏：记忆清空（物品栏%s）", open ? "打开" : "关上"); }
+// 焦点所在元素：网格按逻辑格（g_logic，dm_bag_nav_track；没有就用光标所在格），腰带按光标所在排分最下一排 / 第二排，其余按控件名
+// The focused element: the grid by the logical cell (g_logic, dm_bag_nav_track; the cursor's cell when there is none),
+// the belt by the cursor's row (bottom / second row), the rest by widget name
+static int nav_elem(uint64_t grid, uint64_t hov, const char *hn, int cx, int cy, double k) {
+    if (hov == grid) {
+        if (g_logic >= 0) return g_logic;
+        if (g_gx0 < 0) return BN_ORIG;
+        int c = (int)((cx - g_gx0) / (98 * k)), r = (int)((cy - g_gy0) / (98 * k));
+        if (c < 0) c = 0; if (c > COLS - 1) c = COLS - 1; if (r < 0) r = 0; if (r > ROWS - 1) r = ROWS - 1;
+        return dm_bag_nav_cell(c, r);
+    }
+    if (!strcmp(hn, "Belt")) {
+        if (g_gx0 < 0) return BN_ORIG;
+        int i = (int)((cx - g_gx0 - (DM_BAG_BELT_X - DM_BAG_GRID_X) * k) / (DM_BAG_BELT_CELL * k)); if (i < 0) i = 0; if (i > BN_BELT_N - 1) i = BN_BELT_N - 1;
+        int bottom = cy > g_gy0 + (int)((DM_BAG_BELT_Y - DM_BAG_GRID_Y) * k) - (int)(7 * k);   // 最下一排（和页签同一行）；上面是展开后的几排 | the bottom row (on the tabs' row); above it the expanded rows
+        return (bottom ? BN_BELT0 : BN_BELTU0) + i;
+    }
+    for (int e = BN_CELLS; e < BN_N; e++) if (!dm_bag_nav_is_belt(e) && !dm_bag_nav_is_beltu(e) && !strcmp(dm_bag_nav_rect_of(e).name, hn)) return e;
+    return BN_ORIG;
+}
+// 哪些方向由宿主接管：网格只管第 0 行 ↑（内部、左右边、↓ 都是原版）；底排钮只管 ↑，「存放」与商店里的百宝囊图标归 dm_pouch.c（B170）；腰带第二排只管 ↓；其余元素四向都管（表里交原版的除外）
+// Which directions the host takes: the grid only Up on row 0 (inside, side edges and Down are the original's); bottom buttons only Up, with Deposit and the pouch icon in a shop belonging to dm_pouch.c (B170);
+// the belt's second row only Down; all four for the other elements (except where the table says original)
+static int nav_owned(int e, int d, int shop) {
+    if (e < BN_CELLS) return d == BN_UP && e / COLS == 0;
+    if (dm_bag_nav_is_bottom(e)) return d == BN_UP && (e == BN_GOLD || (e == BN_POUCH && !shop));
+    if (dm_bag_nav_is_beltu(e)) return d == BN_DOWN;
+    return 1;
+}
 static void pad_nav(uint64_t root, uint64_t panel, uint64_t grid, int held, int shop) {
-    uint64_t fm = *(uint64_t *)(root + 0xd0), hov = fm ? *(uint64_t *)(fm + 0x178) : 0; const char *hn = w_name(hov); if (!hn) return;
+    uint64_t fm = *(uint64_t *)(root + 0xd0), hov = fm ? *(uint64_t *)(fm + 0x178) : 0; const char *hn = w_name(hov); if (!hn) { g_nav_prev = BN_ORIG; return; }
     int cx = *(int32_t *)(B + 0x2d128f8), cy = *(int32_t *)(B + 0x2d128fc);
-    double k = *(float *)(panel + 0x80) * *(int32_t *)(B + 0x211da3c) / 2160.0; static int gx0 = -1, gy0 = -1, col_x = -1, row_y = -1;   // k = 屏幕像素 / 面板单位；gx0 / gy0 = 网格左上角，最近一次在网格上量的；col_x / row_y = 最近一次在网格上的光标 | k = screen pixels per panel unit; gx0 / gy0 = grid top-left, from the latest measurement on the grid; col_x / row_y = the cursor last seen on the grid
-    const int vert = DM_BAG_TAB_DX == 0; const uint64_t ENTER = vert ? DM_BTN_LEFT : DM_BTN_UP, EXIT = vert ? DM_BTN_RIGHT : DM_BTN_DOWN, PREV = vert ? DM_BTN_UP : DM_BTN_LEFT, NEXT = vert ? DM_BTN_DOWN : DM_BTN_RIGHT;
-#define TAB_SX(t) (gx0 + (int)((DM_BAG_TAB_X + (t) * DM_BAG_TAB_DX + DM_BAG_TAB_W / 2 - DM_BAG_GRID_X) * k))
-#define TAB_SY(t) (gy0 + (int)((DM_BAG_TAB_Y + (t) * DM_BAG_TAB_DY + DM_BAG_TAB_H / 2 - DM_BAG_GRID_Y) * k))
-#define BELT_SX(u) (gx0 + (int)(((u) - DM_BAG_GRID_X) * k))
-#define BELT_SY (gy0 + (int)((DM_BAG_BELT_Y + 49 - DM_BAG_GRID_Y) * k))
-#define BELT_CX(i) BELT_SX(DM_BAG_BELT_X + (i) * DM_BAG_BELT_CELL + DM_BAG_BELT_CELL / 2)
-    if (hov == grid && HIT(grid, cx, cy)) {
-        int x0 = cx, y0 = cy; while (x0 > 1 && HIT(grid, x0 - 2, cy)) x0 -= 2; while (y0 > 1 && HIT(grid, cx, y0 - 2)) y0 -= 2;
-        gx0 = x0; gy0 = y0; double cell = 98 * k;
-        // 记列：光标停稳了才记（原版移光标有过渡动画，离开网格前最后一帧在两格之间），记成那一格中心 | remember the cell only once the cursor has settled (the game animates it, so the last frame before leaving the grid sits between cells), as the cell centre
-        { static int px = -1, py = -1; if (cx == px && cy == py) { col_x = x0 + (int)(((int)((cx - x0) / cell) + 0.5) * cell); row_y = y0 + (int)(((int)((cy - y0) / cell) + 0.5) * cell); g_last_x = col_x; g_last_y = row_y; } px = cx; py = cy; }
-        // 第 0 行任意列按上都进当前页的页签（B189；商店开着时 B170 已是这样） | Up from any column of row 0 enters the current page's tab (B189; already so with a shop open since B170)
-        // 手上拿着物品时不接管（B189 复核）：页签上的 A 那时被吞、切不了页，页签是死路；交原版几何导航，第 9–11 列 ↑ 直接进鞋格 / 副手格放装备（原版行为）
-        // not with an item in hand (B189 recheck): A on a tab is swallowed then and the page cannot change, so the tab is a dead end; the original geometry takes over and columns 9-11 go straight up to the boots / off-hand slots to equip (original behaviour)
-        if (!held && (vert ? cx < x0 + cell : cy < y0 + cell)) { uint64_t ev = dm_padmode_page_keys(ENTER); if (ev & ENTER) dm_ui_hover_now(TAB_SX(g_page), TAB_SY(g_page)); }
-        return; }
+    double k = *(float *)(panel + 0x80) * *(int32_t *)(B + 0x211da3c) / 2160.0;   // k = 屏幕像素 / 面板单位 | screen pixels per panel unit
+    // 网格左上角：光标在网格上时用原版命中函数往左上量（物品栏开着时每次在网格上都重量） | grid top-left: measured up and left with the original hit test whenever the cursor is on the grid
+    if (hov == grid && HIT(grid, cx, cy)) { int x0 = cx, y0 = cy; while (x0 > 1 && HIT(grid, x0 - 2, cy)) x0 -= 2; while (y0 > 1 && HIT(grid, cx, y0 - 2)) y0 -= 2; g_gx0 = x0; g_gy0 = y0; g_k = k; }
+    g_nav.held = held != 0; g_nav.pouch = dm_custom_get("gem_pick") != 0; g_nav.store = dm_custom_get("store_btn") != 0;
+    // 网格逻辑格：方向键按下沿推算，光标停稳 20 帧后以实测为准，刚进网格（宿主放的光标在格心）直接取实测 | grid logical cell: advanced on direction press edges,
+    //   resynced to the measured cell once the cursor has rested 20 frames, taken as measured right after entering the grid (the host places the cursor at the cell centre)
+    { uint64_t dm_padmode_raw_dirs(void); static uint64_t rprev, last_edge, still; static int px = -1, py = -1;
+      uint64_t rb = dm_padmode_raw_dirs(), edge = rb & ~rprev, fr = dm_guest_frame(); rprev = rb; if (edge) last_edge = fr;
+      if (cx != px || cy != py) still = fr; px = cx; py = cy;
+      if (hov == grid && g_gx0 >= 0 && HIT(grid, cx, cy)) {
+          int c = (int)((cx - g_gx0) / (98 * k)), r = (int)((cy - g_gy0) / (98 * k)); if (c > COLS - 1) c = COLS - 1; if (r > ROWS - 1) r = ROWS - 1;
+          if (g_logic < 0 || g_nav_prev < 0 || g_nav_prev >= BN_CELLS || (fr - last_edge > 20 && fr - still > 3)) g_logic = dm_bag_nav_cell(c < 0 ? 0 : c, r < 0 ? 0 : r);
+          static const uint64_t B4[4] = { DM_BTN_UP, DM_BTN_DOWN, DM_BTN_LEFT, DM_BTN_RIGHT };
+          for (int d = 0; d < 4; d++) if (edge & B4[d]) g_logic = dm_bag_nav_track(g_logic, d);
+      } else g_logic = -1; }
+    int cur = nav_elem(grid, hov, hn, cx, cy, k);
+    if (cur != g_nav_prev && g_gx0 >= 0) { int fx = dm_bag_nav_held_fix(&g_nav, g_nav_prev, cur);   // ③ 拿着物品被原版放到页签上：放回原处 | item 3: the original put the focus on a tab with an item in hand: put it back
+        if (fx >= 0) { char a[16], b[16], c[16]; dm_bag_nav_rect r = dm_bag_nav_rect_of(fx); int x = g_gx0 + (int)((r.x + r.w / 2.0 - DM_BAG_GRID_X) * k), y = g_gy0 + (int)((r.y + r.h / 2.0 - DM_BAG_GRID_Y) * k);
+            if (dm_ui_hover_now(x, y)) { LOG("手柄物品栏：拿着物品从 %s 落到了 %s（页签是死路）→ 放回 %s", dm_bag_nav_name(g_nav_prev, a, sizeof a), dm_bag_nav_name(cur, b, sizeof b), dm_bag_nav_name(fx, c, sizeof c)); cur = fx; } } }
+    if (cur != g_nav_prev) { if (g_nav_prev >= 0 && cur >= 0) dm_bag_nav_moved(&g_nav, g_nav_prev, cur); g_nav_prev = cur; nav_export(); }
     // B222：手上拿着进不了腰带的物品（不是药水 / 卷轴）、光标在某个装备槽里、悬停的却是 Belt——腰带控件的命中范围连展开后的上几排也算，盖住鞋格 / 戒指位 / 腰带位
     //   （大背包方案把腰带挪到了页签行）。这时 A 交原版会往腰带里放、被拒；改由宿主直接调原版放下到那个槽（dm_held_equip，同触屏松手兜底 dm_cursor.c）。药水 / 卷轴照原版进腰带
     // B222: holding an item that cannot go into the belt (not a potion / scroll), the cursor inside an equipment slot, but the hovered widget is Belt -- the belt widget's hit range includes the rows above it when expanded and covers the
@@ -107,32 +157,22 @@ static void pad_nav(uint64_t root, uint64_t panel, uint64_t grid, int held, int 
             for (uint64_t i = 0; ch && i < n && n <= 256 && !slot; i++) { uint64_t c = *(uint64_t *)(ch + 8 * i); const char *nm = w_name(c); if (c && nm && !strncmp(nm, "slot_", 5) && *(uint8_t *)(c + 0x50) && HIT(c, cx, cy)) slot = c; }
             if (slot) { if (dm_padmode_page_keys(DM_BTN_A) & DM_BTN_A) { void dm_held_equip(int); int loc = *(int32_t *)(slot + 0x5d8); dm_held_equip(loc); LOG("大背包：手上 id %d 在 %s 上（悬停被腰带盖住）按 A → 直接放到栏位 %d（B222）", held, w_name(slot), loc); }
                 return; } } }
-    // ↓ 回网格第 0 行：回上次离开的那一列（B189：原先回页签正下方那列） | Down back to grid row 0, in the column last left (B189: it used to be the column under the tab)
-#define BACK_TO_GRID() do { if (vert) dm_ui_hover_now(gx0 + (int)(49 * k), cy); else dm_ui_hover_now(col_x >= 0 ? col_x : cx, gy0 + (int)(49 * k)); } while (0)
-    // 腰带四格（横排布局才和页签同一行）：← 前一格 / 第 0 格回护身符页签，→ 后一格（第 3 格 → 下到网格第 0 行腰带右边那列，B222；原版这里跳回网格第 0 行中间，B189），↓ 回网格；↑ 交原版 | Belt cells (on the tabs' row only in the horizontal layout): left = previous cell / cell 0 back to the charm tab, right = next cell (cell 3: down to grid row 0 just right of the belt, B222; the original jumped back to the middle of grid row 0, B189), down back to the grid; up stays with the original
-    if (!vert && gx0 >= 0 && !strcmp(hn, "Belt") && cy > BELT_SY - (int)(56 * k)) {   // 只管最下一排（和页签同一行）；腰带上面几排照原版 | only the bottom row (on the tabs' row); the belt rows above stay the game's
-        int i = (int)((cx - BELT_SX(DM_BAG_BELT_X)) / (DM_BAG_BELT_CELL * k)); if (i < 0) i = 0; if (i > BELT_N - 1) i = BELT_N - 1;
-        uint64_t ev = dm_padmode_page_keys(PREV | NEXT | EXIT);
-        if (ev & PREV) { if (i) dm_ui_hover_now(BELT_CX(i - 1), BELT_SY); else dm_ui_hover_now(TAB_SX(1), TAB_SY(1)); }
-        else if ((ev & NEXT) && i < BELT_N - 1) dm_ui_hover_now(BELT_CX(i + 1), BELT_SY);
-        // 第 3 格 →：腰带右边这一行没有控件，下到网格第 0 行、腰带右缘右边那一列（B222 / G11：原先停住，光标困在腰带上、腰带展开盖着装备区收不起来）
-        // Right on cell 3: nothing to the belt's right on this row, so drop to grid row 0 in the column just right of the belt's right edge (B222 / G11: it used to stay put, trapping the cursor on the belt with the belt expanded over the equipment band)
-        else if (ev & NEXT) { int c = (int)((BELT_SX(DM_BAG_BELT_X + BELT_N * DM_BAG_BELT_CELL) - gx0) / (98 * k)) + 1; if (c > COLS - 1) c = COLS - 1;
-            dm_ui_hover_now(gx0 + (int)((c * 98 + 49) * k), gy0 + (int)(49 * k)); LOG("大背包：腰带第 3 格 → 下到网格第 0 行第 %d 列（腰带收起，B222）", c); }
-        else if (ev & EXIT) BACK_TO_GRID();
-        return; }
-    // 底排按钮 ↑ 回网格最下一行进来的那一列（B189：原版金币钮 ↑ 固定回第 6 列、百宝囊图标 ↑ 回第 2 列）。商店开着时百宝囊图标归 dm_pouch.c pouch_pad_nav（B170，同样回进来那格）；「存放」钮归 store_pad_nav
-    // Bottom buttons: Up returns to the column of the grid's last row it came from (B189: the original gold button always went back to column 6, the pouch icon to column 2). With a shop open the pouch icon belongs to pouch_pad_nav in dm_pouch.c (B170, which also returns to the entry cell); Deposit belongs to store_pad_nav
-    if (!vert && gx0 >= 0 && col_x >= 0 && row_y > gy0 + (int)((ROWS - 1) * 98 * k) && (!strcmp(hn, "gold_button") || (!shop && !strcmp(hn, "TouchPouch")))) {
-        if (dm_padmode_page_keys(DM_BTN_UP) & DM_BTN_UP) dm_ui_hover_now(col_x, row_y);
-        return; }
-    int tab = !strcmp(hn, "TouchBagTab0") ? 0 : !strcmp(hn, "TouchBagTab1") ? 1 : -1; if (tab < 0) return;
-    // 背包页签 ←、页签 ↑ 不接管，光标照常往对面面板、装备带走 | Left on the bag tab and up on the tabs stay with the original, so the cursor still reaches the opposite panel and the equipment band
-    uint64_t ev = dm_padmode_page_keys((tab == 1 || vert ? PREV : 0) | NEXT | EXIT | (held ? DM_BTN_A : 0));
-    if (gx0 >= 0) { if ((ev & PREV) && tab == 1) dm_ui_hover_now(TAB_SX(0), TAB_SY(0)); if ((ev & NEXT) && tab == 0) dm_ui_hover_now(TAB_SX(1), TAB_SY(1)); if ((ev & NEXT) && tab == 1 && !vert) dm_ui_hover_now(BELT_CX(0), BELT_SY); }
-    if ((ev & EXIT) && gx0 >= 0) BACK_TO_GRID();
-    if ((ev & DM_BTN_A) && held) { static int lg; if (lg++ < 20) LOG("大背包：手上有物品（id %d），图标上的 A 不切页不放下", held); }
-#undef BACK_TO_GRID
+    if (cur < 0 || g_gx0 < 0) return;   // 不是物品栏里的元素（对面面板 / 顶栏）或还没量过网格：交原版 | not an inventory element (opposite panel / top bar) or grid not measured yet: the original's
+    // 手上有物品时页签上的 A 吞掉（不切页、不放下） | with an item in hand, A on a tab is swallowed (no page change, no drop)
+    uint64_t a_mask = held && dm_bag_nav_is_tab(cur) ? DM_BTN_A : 0;
+    static const uint64_t BTN[4] = { DM_BTN_UP, DM_BTN_DOWN, DM_BTN_LEFT, DM_BTN_RIGHT }; int to[4]; uint64_t want = a_mask;
+    for (int d = 0; d < 4; d++) { to[d] = dm_bag_nav_step(&g_nav, cur, d); if (to[d] != BN_ORIG && nav_owned(cur, d, shop)) want |= BTN[d]; }
+    if (!want) return;
+    uint64_t ev = dm_padmode_page_keys(want);
+    if (ev & a_mask) { static int lg; if (lg++ < 20) LOG("大背包：手上有物品（id %d），图标上的 A 不切页不放下", held); }
+    for (int d = 0; d < 4; d++) if (ev & BTN[d] & want) {
+        char a[16], b[16]; static int lg;
+        if (to[d] == BN_STAY) { if (lg++ < 200) LOG("手柄物品栏：%s %c → 不动（手上有物品，页签是死路）", dm_bag_nav_name(cur, a, sizeof a), "UDLR"[d]); break; }
+        dm_bag_nav_rect r = dm_bag_nav_rect_of(to[d]);
+        int x = g_gx0 + (int)((r.x + r.w / 2.0 - DM_BAG_GRID_X) * k), y = g_gy0 + (int)((r.y + r.h / 2.0 - DM_BAG_GRID_Y) * k);
+        int ok = dm_ui_hover_now(x, y);
+        if (lg++ < 200) LOG("手柄物品栏：%s %c → %s（%d,%d）%s", dm_bag_nav_name(cur, a, sizeof a), "UDLR"[d], dm_bag_nav_name(to[d], b, sizeof b), x, y, ok ? "" : "【光标没就位】");
+        break; }
 }
 
 void dm_bag_set_opp(int v); int dm_bag_opp_of(uint64_t root); int dm_bag_take_full(void); int dm_bag_take_restore_fail(void);
@@ -159,8 +199,8 @@ static void ui_test(uint64_t panel, uint64_t grid) { (void)panel; (void)grid; }
 // Game main thread every frame (ui_pump in dm_pouch.c); box = our container TouchPouchBox in the inventory, whose visible bit does not mean the panel is open; that is the panel's own +0x50 / +0x51.
 void dm_bag_ui(uint8_t *b, uint64_t inv_panel, uint64_t box, uint64_t pl) {
     B = b; uint64_t root = *(uint64_t *)(b + 0x2f05458), grid = find_w(inv_panel, "grid", 1); static int was_up; int open = up(inv_panel);
-    if (open && !was_up) { LOG("大背包：物品栏打开，页 %d", g_page); }
-    if (!open && was_up) set_page(0, "closed");
+    if (open && !was_up) { LOG("大背包：物品栏打开，页 %d", g_page); nav_reset(1); }
+    if (!open && was_up) { set_page(0, "closed"); nav_reset(0); }
     was_up = open;
     dm_hud_info hi; dm_hud_get(&hi); int held = hi.valid ? hi.holding : 0;
     { static int lh; if (held != lh) { LOG("大背包：客户端手上 id %d → %d", lh, held); lh = held; } }
@@ -197,7 +237,9 @@ void dm_bag_ui(uint8_t *b, uint64_t inv_panel, uint64_t box, uint64_t pl) {
       w_move(find_w(box, "TouchBagFocus", 1), ft >= 0 ? DM_BAG_TAB_X + ft * DM_BAG_TAB_DX - DM_BAG_FOCUS_PAD : OFF, DM_BAG_TAB_Y + (ft > 0 ? ft : 0) * DM_BAG_TAB_DY - DM_BAG_FOCUS_PAD); }
     w_move(find_w(box, "TouchBagKeyL", 1), mine ? DM_BAG_KEYL_X : OFF, DM_BAG_KEYL_Y);
     w_move(find_w(box, "TouchBagKeyR", 1), mine ? DM_BAG_KEYR_X : OFF, DM_BAG_KEYR_Y);
-    if (mine) { uint64_t ev = dm_padmode_page_keys(DM_BTN_ZL | DM_BTN_ZR); if (ev & DM_BTN_ZL) set_page(0, "ZL"); if (ev & DM_BTN_ZR) set_page(1, "ZR"); }
+    if (mine) { uint64_t ev = dm_padmode_page_keys(DM_BTN_ZL | DM_BTN_ZR); int p;   // 切页键规则见 dm_bag_nav_page_key | page key rules: dm_bag_nav_page_key
+        if ((ev & DM_BTN_ZL) && (p = dm_bag_nav_page_key(BN_KEY_ZL, 0, 0, held, 1)) >= 0) set_page(p, "ZL");
+        if ((ev & DM_BTN_ZR) && (p = dm_bag_nav_page_key(BN_KEY_ZR, 0, 0, held, 1)) >= 0) set_page(p, "ZR"); }
     int shop = open && up(dm_ui_top(root, "VendorPanelLayout"));
     if (open && pad && grid && !dm_ui_modal_active(root)) pad_nav(root, inv_panel, grid, held, shop);
     // 商店开着时 L / R 点按切背包页（B170）：ZL / ZR 归商店页签条（k_tab_owner），L / R 原版在商店里点按无反应（实测 b170 09_L / 09_R），按住 R 是原版「按住排序」——
@@ -207,7 +249,7 @@ void dm_bag_ui(uint8_t *b, uint64_t inv_panel, uint64_t box, uint64_t pl) {
     { uint64_t dm_padmode_raw_buttons(void); static uint64_t prev, down_fr[2]; uint64_t bt = shop && pad && !dm_ui_modal_active(root) ? dm_padmode_raw_buttons() : 0, fr = dm_guest_frame();
       const uint64_t K[2] = { DM_BTN_L, DM_BTN_R };
       for (int i = 0; i < 2; i++) { if ((bt & K[i]) && !(prev & K[i])) down_fr[i] = fr;
-          if (shop && !(bt & K[i]) && (prev & K[i]) && down_fr[i] && fr - down_fr[i] < 18 && !held) set_page(i, i ? "shop R" : "shop L");
+          if (shop && !(bt & K[i]) && (prev & K[i]) && down_fr[i]) { int p = dm_bag_nav_page_key(i ? BN_KEY_R : BN_KEY_L, 1, 1, held, fr - down_fr[i] < 18); if (p >= 0) set_page(p, i ? "shop R" : "shop L"); }
           if (!(bt & K[i])) down_fr[i] = 0; }
       prev = bt; }
 }

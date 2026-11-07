@@ -3,6 +3,8 @@
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include "vulkan_present.h"
 #include "viewport.h"
+#include "viewport_android.h"
+#include "../host/dm_uiscreen.h"
 #include "../gfx/vulkan/nvn_vk.h"
 #include "../gfx/xtrace.h"
 #include <android/log.h>
@@ -238,10 +240,13 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
     // the actual size, and "picture stretched while touch uses letterbox" cannot arise.
     int buf_w=0,buf_h=0;
     if(surface&&active){buf_w=ANativeWindow_getWidth(active);buf_h=ANativeWindow_getHeight(active);}
-    int native_on=(w>0&&buf_w==w&&buf_h==h)?1:0;
+    // B141：读回值之外，驱动接受过的同一请求（窗口没变）也算生效，见 viewport.h dm_vp_native_on。
+    // B141: besides the read-back, the same request the driver accepted (window unchanged) counts too, see viewport.h dm_vp_native_on.
+    static dm_vp_geom_memo geom_memo;   // 换了 surface 就清掉（交叉审 P1），见 dm_vp_geom_frame | a new surface clears it (cross-review P1), see dm_vp_geom_frame
     int req_w=0,req_h=0;
-    if(surface&&active&&dm_vp_geometry_request(present_native?1:0,win_w,win_h,w,h,native_on,&req_w,&req_h)){
+    if(surface&&active&&dm_vp_geom_frame(&geom_memo,active_generation,present_native?1:0,win_w,win_h,w,h,buf_w,buf_h,&req_w,&req_h)){
         int g=ANativeWindow_setBuffersGeometry(active,req_w,req_h,0);
+        dm_vp_geom_note(&geom_memo,g,req_w,req_h,win_w,win_h);
         int aw=ANativeWindow_getWidth(active),ah=ANativeWindow_getHeight(active);
         // 生效 = 调用成功 **且** 读回的几何就是请求的几何（请求 0,0 = 窗口尺寸）；失败不得冒充成功。
         // Applied = the call succeeded *and* the geometry read back is the requested one (a request of 0,0 means
@@ -308,6 +313,10 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
     // does, so a refused geometry (the old buffer stretched to the window) or a mismatched buffer being stretched
     // still leaves touch with what is really on screen; the two aspect-ratio conditions no longer carry that load.
     dm_android_vk_set_present_geometry(int(extent.width),int(extent.height),w,h);
+    // 界面矩形（游戏「屏幕宽高」那块，自适应全屏下就是贴底的 16:9）：触控层据此摆放控件、换算界面坐标。
+    // The UI rectangle (the game's "screen width / height" block, the bottom-anchored 16:9 in adaptive fullscreen):
+    // the touch layer places its controls in it and converts UI coordinates through it.
+    {int ux=0,uy=0,uw=0,uh=0,rw=0,rh=0;dm_ui_rect(&ux,&uy,&uw,&uh);dm_screen_real(&rw,&rh);dm_android_vk_set_ui_rect(rw>0&&rh>0?ux:0,rw>0&&rh>0?uy:0,rw>0?uw:0,rw>0?uh:0);}
     if(dx || dy || dw!=int(extent.width) || dh!=int(extent.height)){   // letterbox bars only where the blit leaves part of the image
         VkClearColorValue black{};vkCmdClearColorImage(cmd,images[index],VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,&black,1,&barrier.subresourceRange);
         barrier.oldLayout=barrier.newLayout;barrier.srcAccessMask=barrier.dstAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT;vkCmdPipelineBarrier(cmd,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_TRANSFER_BIT,0,0,nullptr,0,nullptr,1,&barrier);}

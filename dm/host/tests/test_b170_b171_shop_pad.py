@@ -21,15 +21,15 @@ def code(s):
 
 
 class Shop(unittest.TestCase):
-    def test_any_column_in_shop(self):   # B189 起不开商店也是任意列（test_b189_inv_focus.py） | since B189 any column without a shop too
+    def test_shop_keeps_directions(self):   # B235 起第 0 行按上进正上方装备格 / 腰带，开不开商店一样；页签从腰带第 0 格按左进（t_bag_nav.c） | since B235 Up from row 0 goes to the slot / belt above, shop or not; tabs are entered from belt cell 0 (t_bag_nav.c)
         c = code(BAG)
-        self.assertIn('if (!held && (vert ? cx < x0 + cell : cy < y0 + cell)) {', c)
         self.assertIn('int shop = open && up(dm_ui_top(root, "VendorPanelLayout"));', c)
+        self.assertNotIn('shop', code((HOST / 'dm_bag_nav.h').read_text(encoding='utf-8')).split('dm_bag_nav_page_key')[0])   # 导航表不看商店 | the navigation table ignores the shop
 
     def test_lr_tap_listen_only(self):
         c = code(BAG)
         self.assertIn('dm_padmode_raw_buttons()', c)
-        self.assertIn('fr - down_fr[i] < 18 && !held', c)       # 点按才切、手上有物品不切 | tap only, not with an item in hand
+        self.assertIn('dm_bag_nav_page_key(i ? BN_KEY_R : BN_KEY_L, 1, 1, held, fr - down_fr[i] < 18)', c)       # 点按才切、手上有物品不切（t_bag_nav.c 断言） | tap only, not with an item in hand (asserted in t_bag_nav.c)
         self.assertIn('shop && !(bt & K[i]) && (prev & K[i])', c)  # 松开时还在商店 | still in the shop on release
         self.assertNotRegex(c, r'dm_padmode_page_keys\([^)]*DM_BTN_[LR]\b')   # 不接管 L / R（按住 R 排序归原版） | L / R are never taken
         self.assertIn('atomic_store(&g_raw_bt, bt);', code(PAD))

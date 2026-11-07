@@ -806,6 +806,12 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             touchOverlay = new TouchOverlay(this, gameLabels, navLabels);
             touchOverlay.setOnApplyWindowInsetsListener((v, insets) -> {
                 android.graphics.Insets safe = insets.getInsets(WindowInsets.Type.displayCutout());
+                // B140 异形屏：挖孔的真实矩形（打孔 / 刘海 / 顶边孔）给控件避让，底部手势条只当摇杆起点禁区（不挪按钮）。
+                // B140 odd screens: the real cutout rectangles (hole / notch / top-edge hole) for control avoidance; the bottom
+                // gesture bar is only a no-stick-start strip (buttons do not move).
+                android.view.DisplayCutout dc = insets.getDisplayCutout();
+                touchOverlay.setCutouts(dc != null ? dc.getBoundingRects() : java.util.Collections.emptyList(),
+                        insets.getInsets(WindowInsets.Type.mandatorySystemGestures()).bottom);
                 touchOverlay.setSafeInsets(safe.left, safe.right, safe.bottom);
                 return insets;
             });

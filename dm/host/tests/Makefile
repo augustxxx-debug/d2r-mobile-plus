@@ -115,6 +115,7 @@ run: \
 	$(B)/t_cursor_item_page \
 	$(B)/t_cursor_rescue \
 	$(B)/t_restart_hint \
+	$(B)/t_bag_nav \
 	$(B)/t_bag_rule \
 	$(B)/t_exitwait \
 	$(B)/t_charm_reload \
@@ -166,7 +167,7 @@ run: \
 	$(PY) test_b159_b160_entry_focus.py   # B159 / B160：手柄进任务日志 / 技能树的起始焦点 | controller quest log / skill tree starting focus
 	$(PY) test_b170_b171_shop_pad.py   # B170 / B171：商店里手柄到背包页签与百宝囊、丢下的符文不被自动捡回 | controller shop tabs / pouch, dropped runes not auto-picked back
 	$(PY) test_b204_pouch_track.py   # B204：放出的证据按所在存档找、找不到标离开、只有背包页的才发 0x63（补 t_pouch_proof 的缺口） | release evidence by save, gone marking, 0x63 only from the bag page
-	$(PY) test_b189_inv_focus.py   # B189：手柄物品栏第 0 行任意列进页签、页签 · 腰带一行、回原列 | controller tab row from any column, tabs and belt one row, back to the column
+	$(PY) test_b189_inv_focus.py   # B189 / B235 / B239：宿主接上导航表（每向问 dm_bag_nav_step、记忆随焦点更新、开关面板复位） | host wired to the navigation table (every direction, memory follows focus, reset on open / close)
 	DM_MAIN_ORIG=$(B)/main.orig.bin $(PY) test_b099_b100_merc_pad.py   # B099 / B100：手柄佣兵页 | controller mercenary page
 	$(B)/t_custom_readlog
 	$(B)/t_custom_readlog_movie
@@ -236,6 +237,7 @@ run: \
 	$(B)/t_cursor_item_page
 	$(B)/t_cursor_rescue
 	$(B)/t_restart_hint
+	$(B)/t_bag_nav          # B235 / B239 / B189：手柄物品栏焦点导航表逐格逐向断言 + 记忆 / 复位 / 拿着物品 / 切页键 / 可达性 | controller inventory focus table per element and direction + memory / reset / held / page keys / reachability
 	$(B)/t_bag_rule
 	$(B)/t_exitwait
 	TMPDIR="$(abspath $(B))" $(B)/t_charm_reload 2>/dev/null
@@ -278,6 +280,8 @@ $(B)/t_cursor_item_page: t_cursor_item_page.c ../dm_cursor_item.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_cursor_item_page.c
 $(B)/t_cursor_rescue: t_cursor_rescue.c ../dm_cursor_rescue.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_cursor_rescue.c
+$(B)/t_bag_nav: t_bag_nav.c ../dm_bag_nav.h ../dm_bag_layout.h | $(B)
+	clang -O1 -Wall -Werror -I.. -o $@ t_bag_nav.c
 $(B)/t_bag_rule: t_bag_rule.c ../dm_bag_rule.h | $(B)
 	clang -O1 -Wall -Werror -I.. -o $@ t_bag_rule.c
 $(B)/t_exitwait: t_exitwait.c ../dm_exitwait.h | $(B)

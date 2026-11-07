@@ -5,6 +5,12 @@
 // centered 16:9 UI/input rectangle. Zero keeps the original letterboxed frontend.
 #pragma once
 #include <stdint.h>
+/* 从 C++ 编译的宿主文件也会包含这一份（vulkan_present.cpp 每帧读界面矩形）：定义在 C 里，声明必须是 C 链接。
+   Host files compiled as C++ include this too (vulkan_present.cpp reads the UI rectangle every frame): the
+   definitions are C, so the declarations must have C linkage. */
+#ifdef __cplusplus
+extern "C" {
+#endif
 enum { DM_UISCREEN_OFF, DM_UISCREEN_TOP, DM_UISCREEN_CENTER, DM_UISCREEN_BOTTOM };
 void dm_uiscreen_enable(int mode);           // 前端在「窗口比 16:9 窄」时调：DM_UISCREEN_BOTTOM 等 = 打开，界面矩形（宽 = 画面宽、高 = 宽÷16×9）贴顶 / 居中 / 贴底；DM_UISCREEN_OFF = 关掉并把游戏的值写回。任意线程调，下一帧生效 | Called by the front end when "the window is narrower than 16:9": DM_UISCREEN_BOTTOM etc. = turn on, with the UI rectangle (width = frame width, height = width÷16×9) top-aligned / centered / bottom-aligned; DM_UISCREEN_OFF = turn off and write the game's values back. Callable from any thread, takes effect next frame
 void dm_uiscreen_pump(void);                 // 游戏主线程每帧调：发现游戏重写了「屏幕宽高」全局量（开机、切主机 / 掌机档）就记下真实值并改写成界面用的值——只此一处，不分时机 | Called every frame on the game main thread: on finding that the game rewrote the "screen width / height" globals (boot, switching docked / handheld mode), record the real values and rewrite them to the values the UI uses - this one place only, regardless of occasion
@@ -28,3 +34,6 @@ int dm_uiscreen_panel(void);                 // 上面那个状态：局内开�
 #include <stdint.h>
 uint64_t dm_game_res(int docked);            // 游戏出图分辨率（{u32 宽, u32 高}）：默认原生比例，DM_FRONTEND_FULL=0 恢复局外 16:9 | Render resolution (packed {u32 width, u32 height}): native aspect by default; DM_FRONTEND_FULL=0 restores the 16:9 frontend
 void dm_uiscreen_res_reread(void);            // 只许 hle_oe.c 在游戏取走「性能模式变化」通知时调 | May only be called by hle_oe.c when the game takes the "performance mode changed" notification
+#ifdef __cplusplus
+}
+#endif

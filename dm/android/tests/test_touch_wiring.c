@@ -30,6 +30,7 @@ JNIEXPORT jboolean JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeViewport(JN
 JNIEXPORT jboolean JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeMap(JNIEnv *, jclass, jfloatArray);
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeEvent(JNIEnv *, jclass, jint, jint, jfloat, jfloat);
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativeResize(JNIEnv *, jclass, jfloat, jfloat, jfloat, jfloat, jfloat, jboolean);
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_TouchOverlay_nativePicture(JNIEnv *, jclass, jfloat, jfloat, jfloat, jfloat);
 
 static unsigned checks, failures, cases;
 static const char *case_name = "?";
@@ -48,6 +49,8 @@ static int ev_calls, ev_phase = -1, ev_slot = -1; static float ev_x, ev_y;
 static int resize_calls, tablet_calls, pad_touched_calls;
 void dm_android_touch_event(int phase, int slot, float x, float y) { ++ev_calls; ev_phase = phase; ev_slot = slot; ev_x = x; ev_y = y; }
 void dm_android_touch_resize(float w, float h, float l, float r, float b) { (void)w; (void)h; (void)l; (void)r; (void)b; ++resize_calls; }
+void dm_android_touch_picture(float w, float h, float x, float y) { (void)w; (void)h; (void)x; (void)y; }
+void dm_android_touch_cutouts(const float *r, int n, float g) { (void)r; (void)n; (void)g; }
 void dm_android_touch_tablet(int tablet) { (void)tablet; ++tablet_calls; }
 void dm_android_touch_layout(float out[DM_ANDROID_TOUCH_DRAW_FLOATS]) { for (int i = 0; i < DM_ANDROID_TOUCH_DRAW_FLOATS; ++i) out[i] = 0; }
 void dm_android_pad_touched(void) { ++pad_touched_calls; }
@@ -73,6 +76,7 @@ static JNIEnv env = &fns;
 static void reset_state(void) {
     dm_android_vk_set_window_size(0, 0);
     dm_android_vk_set_present_geometry(0, 0, 0, 0);
+    dm_android_vk_set_ui_rect(0, 0, 0, 0);
     ev_calls = pad_touched_calls = 0; ev_phase = ev_slot = -1; ev_x = ev_y = 0;
 }
 
@@ -213,6 +217,90 @@ int main(void) {
         dm_android_vk_set_present_geometry(1600, 900, 1600, 900);   /* 驱动拒绝后的实际状态 | the state after a refused geometry */
         int x, y, w, h;
         CHECK(dm_android_vk_viewport(&x, &y, &w, &h) == 1 && w == 1600 && h == 1200);
+    }
+
+    /* G. 自适应全屏的接线：界面矩形（画面像素）→ 控件坐标系（窗口像素），nativeViewport 同时下发画面矩形，
+       nativeMap 按控件坐标系换算（界面上方那条 3D 带纵向为负、仍算一只手），nativePicture 收到画面尺寸。
+       The adaptive-fullscreen wiring: the UI rectangle (frame px) -> the control coordinate system (window px),
+       nativeViewport delivers the picture rectangle too, nativeMap converts in control coordinates (the 3D strip
+       above the band is negative and still a finger) and nativePicture receives the picture size. */
+    case_name = "adaptive control rect";
+    {   int x = -1, y = -1, w = -1, h = -1;
+        reset_state();
+        dm_android_vk_set_window_size(2448, 1848);
+        dm_android_vk_set_present_geometry(2448, 1848, 2448, 1848);       /* 自适应：缓冲 = 窗口 = 内容 | adaptive: buffer = window = content */
+        CHECK(dm_android_vk_control_rect(&x, &y, &w, &h) == 1);
+        CHECK(x == 0 && y == 1848 - 1376 && w == 2448 && h == 1376);      /* 游戏还没写界面高：16:9 贴底 | the game has not written the UI height yet: 16:9 at the bottom */
+
+        dm_android_vk_set_ui_rect(0, 472, 2448, 1376);                    /* 游戏写出界面矩形（画面像素）| the game writes its UI rectangle (frame px) */
+        CHECK(dm_android_vk_control_rect(&x, &y, &w, &h) == 1);
+        CHECK(x == 0 && y == 472 && w == 2448 && h == 1376);
+
+        /* 缓冲被驱动拒绝、仍是半尺寸并被合成器拉满窗口：界面矩形跟着同一条缩放走，仍与画面在一起。
+           The driver refused the geometry: the buffer is half size and stretched by the compositor; the UI
+           rectangle takes the same scaling and stays with the picture. */
+        dm_android_vk_set_present_geometry(1224, 924, 2448, 1848);
+        CHECK(dm_android_vk_control_rect(&x, &y, &w, &h) == 1);
+        CHECK(x == 0 && y == 472 && w == 2448 && h == 1376);
+
+        /* nativeViewport 一次给两块：控件坐标系 + 画面矩形。| nativeViewport gives both blocks at once. */
+        {   fake_array a8 = {8, {0, 0, 0, 0, 0, 0, 0, 0}};
+            dm_android_vk_set_present_geometry(2448, 1848, 2448, 1848);
+            CHECK(Java_com_xiaoboluo_d2r_TouchOverlay_nativeViewport(&env, NULL, (jfloatArray)&a8) == JNI_TRUE);
+            CHECK(a8.v[0] == 0 && a8.v[1] == 472 && a8.v[2] == 2448 && a8.v[3] == 1376);
+            CHECK(a8.v[4] == 0 && a8.v[5] == 0 && a8.v[6] == 2448 && a8.v[7] == 1848);
+            fake_array a4 = {4, {0, 0, 0, 0}};                            /* 只有 4 个：只填控件那块，不越界 | four elements: the control block only */
+            CHECK(Java_com_xiaoboluo_d2r_TouchOverlay_nativeViewport(&env, NULL, (jfloatArray)&a4) == JNI_TRUE);
+            CHECK(a4.v[1] == 472 && a4.len == 4);
+        }
+
+        /* nativeMap：界面矩形内的点 → 控件坐标（等于窗口坐标，因为界面矩形就是整宽）；上方那条 3D 带给负 y 且仍在画面里；
+           画面之外的按下照样丢掉。| inside the band -> control px (== window px, the band is full width); the strip
+           above gives a negative y and still counts as inside; a point outside the picture is dropped. */
+        {   fake_array p = {5, {1224, 900, 0, 0, 0}};
+            CHECK(Java_com_xiaoboluo_d2r_TouchOverlay_nativeMap(&env, NULL, (jfloatArray)&p) == JNI_TRUE);
+            CHECK(p.v[2] == 1224 && p.v[3] == 900 - 472 && p.v[4] == 1);
+            p.v[1] = 236;                                                 /* 界面上方 236 像素 | 236 px above the band */
+            CHECK(Java_com_xiaoboluo_d2r_TouchOverlay_nativeMap(&env, NULL, (jfloatArray)&p) == JNI_TRUE);
+            CHECK(p.v[3] == -236 && p.v[4] == 1);
+            p.v[1] = 1847;
+            CHECK(Java_com_xiaoboluo_d2r_TouchOverlay_nativeMap(&env, NULL, (jfloatArray)&p) == JNI_TRUE);
+            CHECK(p.v[4] == 1 && p.v[3] == 1847 - 472);
+            p.v[1] = 1848;                                                /* 画面下边界之外 | below the picture */
+            CHECK(Java_com_xiaoboluo_d2r_TouchOverlay_nativeMap(&env, NULL, (jfloatArray)&p) == JNI_TRUE);
+            CHECK(p.v[4] == 0);
+        }
+
+        /* nativePicture 送到原生触摸层（同一份画面尺寸，dp）。| nativePicture reaches the native touch layer (dp). */
+        Java_com_xiaoboluo_d2r_TouchOverlay_nativePicture(&env, NULL, 2448.0f, 1848.0f, 0.0f, 472.0f);
+
+        /* 16:9 手机：界面矩形 = 整个画面 → 控件坐标系就是画面，与改动前相同。
+           A 16:9 phone: the UI rectangle is the whole frame -> the control system is the picture, as before. */
+        reset_state();
+        dm_android_vk_set_window_size(1920, 1080);
+        dm_android_vk_set_present_geometry(1920, 1080, 1920, 1080);
+        dm_android_vk_set_ui_rect(0, 0, 1920, 1080);
+        CHECK(dm_android_vk_control_rect(&x, &y, &w, &h) == 1);
+        CHECK(x == 0 && y == 0 && w == 1920 && h == 1080);
+
+        /* B140 交叉审 P1-1：画面带黑边（DM_GAME_RES 钉 16:9、驱动拒绝改缓冲、内外屏切换那几帧）时，界面矩形必须
+           先放进画面的 blit 矩形（dm_vp_fit）再换到窗口，控件不能铺进黑边。
+           B140 cross-review P1-1: with a letterboxed picture (DM_GAME_RES pinned to 16:9, a refused buffer geometry,
+           the frames of a fold switch) the UI rectangle must go through the picture's blit rectangle (dm_vp_fit)
+           before the window, so the controls never spread into the bars. */
+        reset_state();
+        dm_android_vk_set_window_size(2400, 1080);                        /* 20:9 手机、16:9 画面 | a 20:9 phone, a 16:9 picture */
+        dm_android_vk_set_present_geometry(2400, 1080, 1920, 1080);
+        dm_android_vk_set_ui_rect(0, 0, 1920, 1080);
+        CHECK(dm_android_vk_control_rect(&x, &y, &w, &h) == 1);
+        CHECK(x == 240 && y == 0 && w == 1920 && h == 1080);
+        reset_state();
+        dm_android_vk_set_window_size(2448, 1848);                        /* Fold8 内屏、缓冲 = 窗口、出图仍是外屏的 2.33:1 | Fold8 inner, buffer = window, the output still the outer 2.33:1 */
+        dm_android_vk_set_present_geometry(2448, 1848, 2520, 1080);
+        dm_android_vk_set_ui_rect(0, 0, 2520, 1080);
+        CHECK(dm_android_vk_control_rect(&x, &y, &w, &h) == 1);
+        { int px, py, pw, ph; CHECK(dm_android_vk_picture_rect(&px, &py, &pw, &ph) == 1);
+          CHECK(x == px && y == py && w == pw && h == ph && y > 0); }
     }
 
     printf("touch wiring: %u/%u checks passed, %u failures\n", checks - failures, checks, failures);

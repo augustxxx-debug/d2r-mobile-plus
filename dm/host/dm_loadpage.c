@@ -306,20 +306,44 @@ static void lpi_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     // reference's share of the height - landscape matches the Thor (icon 52.4%, title 62.2%), portrait matches the 17 Pro (icon 39%, title 75.9%).
     // The previous long side / 1000 rule under-scaled the stack on the iPad (its height is only 0.70 of the long side), leaving the progress group
     // in the bottom quarter (icon 62.8%, title 72.3%, bar 78.7%); in portrait the portrait image's cover also blew the icon up to 58.6%, capped here at 0.40h.
+    // （上面是 B139 的记录；现行规则见下面 B140 一段。| The above records B139; the rule in force is the B140 block below.）
     o->landscape = w >= h;
-    double long_side = w > h ? w : h, k = 1;
-    if (long_side > 1000) {
-        double content_h = h - s->inset_b;
-        k = content_h / (o->landscape ? 500.0 : 840.0);
-        if (k < 1) k = 1;
-    }
+    // B140 + B139 审计 P2-1 / P2-3：k 取「高系数」与「宽系数」的较小值，夹在 [1, 2]。两者都随屏幕尺寸连续变化，长边 1000 / 1001
+    // 不再跳一截。宽系数 = 安全区内宽 / 参照内宽（横屏 OPPO 762、竖屏 iPhone 17 Pro 402），保证六语最长一行在 k 倍字号下仍放得进条宽
+    // （按高系数时 Fold8 内屏提示页最长行超 41%、iPad 超 4%、Mac 1001×1000 超 58%）。奥丁 / OPPO / 17 Pro 两个系数都 ≤ 1，k = 1 逐位不变。
+    // B140 + B139 audit P2-1 / P2-3: k is the smaller of a height factor and a width factor, clamped to [1, 2]. Both move continuously with the
+    // screen size, so there is no step at a 1000 / 1001 long side. The width factor = safe inner width / reference inner width (landscape OPPO 762,
+    // portrait iPhone 17 Pro 402) keeps the longest line of all six languages inside the bar at k times the font size (with the height factor alone the
+    // Fold8 inner screen's notice page overflowed by 41%, the iPad by 4%, a Mac 1001x1000 window by 58%). The Thor / OPPO / 17 Pro have both
+    // factors <= 1: k = 1, bit-identical.
+    double kh = (h - s->inset_b) / (o->landscape ? 500.0 : 840.0), kw = (w - s->inset_l - s->inset_r) / (o->landscape ? 762.0 : 402.0);
+    double k = kh < kw ? kh : kw; if (k < 1) k = 1; if (k > 2) k = 2;
+    // 竖屏只给平板：长边 1000 → 1100 之间从 0 渐变到 1（交叉审 P1-2：iPhone Air / Plus / Pro Max 竖屏高系数 1.05–1.10，
+    // 不渐变就会整组上移 30–40 点；17 Pro 竖屏也只是恰好卡在 1）。横屏不受长边限制（折叠屏内屏长边不到 1000）。
+    // Portrait is for tablets only: from 0 to 1 between a 1000 and 1100 long side (cross-review P1-2: iPhone Air / Plus /
+    // Pro Max portrait have a height factor of 1.05-1.10 and would lift the whole group by 30-40 pt; the 17 Pro portrait only
+    // sits exactly at 1). Landscape has no long-side limit (fold inner screens are under 1000 long).
+    double pg = 1; if (!o->landscape) { double ls = w > h ? w : h; pg = (ls - 1000) / 100.0; if (pg < 0) pg = 0; if (pg > 1) pg = 1; }
+    k = 1 + pg * (k - 1);
+    // 宽系数卡住时（近方形屏：折叠屏内屏、iPad、Mac 窗口）字号放不到「高系数」那么大，从底往上的那一组变矮，图标会把多出的高度全吃掉；
+    // 这时把进度组整体上提到参照机的标题高度（横屏奥丁 62.2%、竖屏 17 Pro 75.9%），页脚仍贴底，图标放在上提后的标题上方。
+    // When the width factor binds (near-square screens: fold inner screens, the iPad, Mac windows) the fonts cannot grow as far as the height
+    // factor, the bottom-up stack gets shorter and the icon would swallow all the extra height; the progress group is then lifted to the reference
+    // title height (landscape Thor 62.2%, portrait 17 Pro 75.9%), the footer stays at the bottom and the icon sits above the lifted title.
+    // 上提量随「高系数超出 1 的部分」在 0 → 0.1 之间渐变，再乘竖屏的平板渐变 pg：没有开关式的跳变（交叉审 P2：宽高系数交叉处
+    // 原来会跳约 6% 屏高）；高系数 ≤ 1 的屏（奥丁、OPPO、20:9、17 Pro）权重 0，逐位不变。
+    // The lift is weighted by how far the height factor exceeds 1, ramping over 0 -> 0.1, times the portrait tablet ramp pg: no
+    // switch-like jump (cross-review P2: it used to jump about 6% of the height where the two factors cross); screens with a
+    // height factor <= 1 (Thor, OPPO, 20:9, 17 Pro) get weight 0 and are bit-identical.
+    double lift_w = (kh - 1) / 0.1; if (lift_w < 0) lift_w = 0; if (lift_w > 1) lift_w = 1; lift_w *= pg;
+    double lift_to = lift_w > 0 ? h * (o->landscape ? 0.622 : 0.759) : -1;
     o->bg_name = dm_loadpage_bg_name(w, h, &o->bg_w, &o->bg_h);
     dm_loadpage_cover(o->bg_w, o->bg_h, w, h, LP_FOCUS_X, LP_FOCUS_Y, &o->bg_src);
     o->bg_dst = (dm_lp_rect){ 0, 0, w, h };
     o->title_pt = 24 * k; o->body_pt = 18 * k; o->sub_pt = 14 * k; o->brand_pt = 20 * k; o->bar_radius = 3 * k; o->comm_pt = 12 * k; o->comm_alpha = DM_LP_COMM_ALPHA;
     double L = s->inset_l, R = s->inset_r, T = s->inset_t, B = s->inset_b, m = 28 * k;   // 安全区之内再留 28 点边距（大屏按 k 放大） | 28 pt margin inside the safe area (scaled by k on large screens)
     double cx0 = L + m, cw = w - L - R - 2 * m; if (cw < 120) cw = 120;
-    double bw = o->landscape ? (cw * 0.62 > 320 ? cw * 0.62 : 320) : cw; if (bw > cw) bw = cw; if (bw > 900) bw = 900;   // 横屏条宽 62%（最宽 900）、竖屏铺满内容宽 | landscape bar 62% wide (900 max), portrait the full content width
+    double bw = o->landscape ? (cw * 0.62 > 320 ? cw * 0.62 : 320) : cw; if (bw > cw) bw = cw; if (bw > 900 * k) bw = 900 * k;   // 横屏条宽 62%（最宽 900）、竖屏铺满内容宽 | landscape bar 62% wide (900 max), portrait the full content width
     double bx = cx0 + (cw - bw) / 2, bh = 8 * k;
     double sub_h = o->sub_pt * 1.4, body_h = o->body_pt * 1.4, title_h = o->title_pt * 1.35;
     double y = h - B - 44 * k;   // 从底往上排：（社区两行 + 复制钮）/ 副文 / 正文 / 条 / 标题 + 百分数 | stacked from the bottom: (community lines + copy button) / sub / body / bar / title + percent
@@ -339,6 +363,8 @@ static void lpi_layout(const dm_lp_screen *s, dm_lp_layout *o) {
     o->bar = (dm_lp_rect){ bx, y - bh, bw, bh }; y -= bh + 12 * k;
     o->title = (dm_lp_rect){ bx, y - title_h, bw * 0.72, title_h };
     o->percent = (dm_lp_rect){ bx + bw * 0.72, y - title_h, bw * 0.28, title_h };
+    if (lift_to >= 0 && o->title.y > lift_to) { double d = (o->title.y - lift_to) * lift_w;   // 进度组上提（见上） | lift the progress group (see above)
+        o->title.y -= d; o->percent.y -= d; o->bar.y -= d; o->body.y -= d; o->sub.y -= d; }
     o->show_bar = g.prompt_title ? 0 : 1;   // 提示页不画条，标题占满条宽 | no bar on a notice page; the title takes the full bar width
     if (g.prompt_title) { o->title.w = bw; o->percent.w = 0; }
     double fill = g.overall < 0 ? 0 : g.overall > 1 ? 1 : g.overall;

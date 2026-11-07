@@ -107,6 +107,14 @@ int main(void) {
     CHECK(dm_vp_same_aspect(1080, 2400, 675, 1200) == 0);
     CHECK(dm_vp_same_aspect(2340, 1080, 1600, 738));         /* 0.05% 的零头算相同 | a 0.05% remainder counts as the same */
     CHECK(dm_vp_same_aspect(0, 0, 1600, 900));               /* 还不知道窗口尺寸：不改做法 | window size unknown: keep the behaviour */
+    /* 容差钉在 1%（与 iOS / 鸿蒙同一条）：差 0.9% 算相同、差 1.2% 与 5% 都算不同 —— 放宽到 10% 会把近 16:9 的窗口
+       当成同比例交给合成器拉满，画面就被轻微拉伸（B140）。
+       The tolerance is pinned at 1% (the iOS / HarmonyOS one): 0.9% counts as the same, 1.2% and 5% do not. Loosened to
+       10%, a window near 16:9 would be treated as matching and handed to the compositor to fill, slightly stretching the
+       picture (B140). */
+    CHECK(dm_vp_same_aspect(1600, 900, 1600, 908));          /* 0.88% */
+    CHECK(dm_vp_same_aspect(1600, 900, 1600, 911) == 0);     /* 1.21% */
+    CHECK(dm_vp_same_aspect(1600, 900, 1600, 945) == 0);     /* 5% */
 
     for (unsigned i = 0; i < sizeof screens / sizeof *screens; ++i) {
         screen_case s = screens[i];
@@ -201,6 +209,102 @@ int main(void) {
         CHECK(c.x == 0 && c.w == 2350 && c.h == 1321 && c.y == 99 && 1520 - (c.y + c.h) == 100);
     }
 
+    /* B141：模拟 Fold8 —— setBuffersGeometry 回 0，但读回的永远是窗口尺寸。present 的每帧逻辑（dm_vp_native_on →
+       dm_vp_geometry_request → dm_vp_geom_note）300 帧里只能请求一次；被拒绝的请求（回 -22）每帧都重试；
+       折到另一种比例（外屏）时发一次「回到窗口尺寸」，之后不再请求；再展开回内屏又只请求一次。
+       B141: a simulated Fold8 - setBuffersGeometry returns 0 but the read-back is always the window size. Present's per-frame
+       logic (dm_vp_native_on -> dm_vp_geometry_request -> dm_vp_geom_note) may request only once in 300 frames; a refused
+       request (-22) is retried every frame; folding to another aspect (outer screen) sends one "back to the window size" and
+       then nothing; unfolding to the inner screen requests once again. */
+    {
+        struct { int win_w, win_h, cw, ch, result, frames, want; } ph[] = {
+            { 2448, 1848, 1924, 1452,   0, 300, 1 },   /* 内屏、驱动接受 | inner, accepted */
+            { 2520, 1080, 1924, 1452,   0,  50, 1 },   /* 外屏、出图还没跟上：回窗口尺寸一次 | outer, output not caught up: back to window once */
+            { 2520, 1080, 2520, 1080,   0,  50, 0 },   /* 外屏出图 = 窗口：不请求 | outer output = window: no request */
+            { 2448, 1848, 1924, 1452,   0,  50, 1 },   /* 再展开 | unfolded again */
+        };
+        dm_vp_geom_memo memo = {0};
+        for (unsigned p = 0; p < sizeof ph / sizeof *ph; p++) {
+            int requests = 0;
+            for (int f = 0; f < ph[p].frames; f++) {
+                int on = dm_vp_native_on(ph[p].win_w, ph[p].win_h, ph[p].cw, ph[p].ch, ph[p].win_w, ph[p].win_h, &memo), rw, rh;
+                if (dm_vp_geometry_request(1, ph[p].win_w, ph[p].win_h, ph[p].cw, ph[p].ch, on, &rw, &rh)) { requests++; dm_vp_geom_note(&memo, ph[p].result, rw, rh, ph[p].win_w, ph[p].win_h); }
+            }
+            if (requests != ph[p].want) fprintf(stderr, "  B141 phase %u: %d requests, want %d\n", p, requests, ph[p].want);
+            CHECK(requests == ph[p].want);
+        }
+        dm_vp_geom_memo m2 = {0}; int requests = 0;
+        for (int f = 0; f < 20; f++) { int on = dm_vp_native_on(2448, 1848, 1924, 1452, 2448, 1848, &m2), rw, rh;
+            if (dm_vp_geometry_request(1, 2448, 1848, 1924, 1452, on, &rw, &rh)) { requests++; dm_vp_geom_note(&m2, -22, rw, rh, 2448, 1848); } }
+        CHECK(requests == 20);   /* 被拒绝：每帧重试，不冒充成功 | refused: retried every frame, never passed off as success */
+        /* 接受过之后折到外屏，「回到窗口尺寸」被拒绝：每帧重试，直到被接受，之后不再请求。
+           Accepted, then folded to the outer screen where "back to the window size" is refused: retried every frame until
+           accepted, then no more requests. */
+        { dm_vp_geom_memo m3 = {0}; int rw, rh, n = 0;
+          if (dm_vp_geometry_request(1, 2448, 1848, 1924, 1452, dm_vp_native_on(2448, 1848, 1924, 1452, 2448, 1848, &m3), &rw, &rh)) dm_vp_geom_note(&m3, 0, rw, rh, 2448, 1848);
+          for (int f = 0; f < 10; f++) { int on = dm_vp_native_on(2520, 1080, 1924, 1452, 2520, 1080, &m3);
+              if (dm_vp_geometry_request(1, 2520, 1080, 1924, 1452, on, &rw, &rh)) { n++; CHECK(rw == 0 && rh == 0); dm_vp_geom_note(&m3, f < 5 ? -22 : 0, rw, rh, 2520, 1080); } }
+          CHECK(n == 6); }
+        /* 渲染分辨率档只改了高（宽相同）：记账不能算命中，要重新请求一次（DeepSeek 复跑存活变异 &&→||）。
+           The render level changed only the height (same width): the memo must not match, one new request (DeepSeek re-run
+           survivor && -> ||). */
+        { dm_vp_geom_memo m4 = {0}; int rw, rh, n = 0;
+          if (dm_vp_geometry_request(1, 2448, 1848, 1924, 1452, dm_vp_native_on(2448, 1848, 1924, 1452, 2448, 1848, &m4), &rw, &rh)) dm_vp_geom_note(&m4, 0, rw, rh, 2448, 1848);
+          for (int f = 0; f < 10; f++) { int on = dm_vp_native_on(2448, 1848, 1924, 1446, 2448, 1848, &m4);
+              if (dm_vp_geometry_request(1, 2448, 1848, 1924, 1446, on, &rw, &rh)) { n++; CHECK(rw == 1924 && rh == 1446); dm_vp_geom_note(&m4, 0, rw, rh, 2448, 1848); } }
+          CHECK(n == 1); }
+        /* 交叉审 P1：surface 换了（切后台回来）记账清掉，新窗口再请求一次；同一块 surface 不清。
+           Cross-review P1: a new surface (back from the background) clears the memo and the new window is asked once more;
+           the same surface keeps it. */
+        { dm_vp_geom_memo m5 = {0}; int rw, rh, n = 0;
+          for (int f = 0; f < 20; f++) { unsigned long long gen = f < 10 ? 1 : 2; dm_vp_geom_rebind(&m5, gen);
+              int buf_w = (f < 10 && n) || (f >= 10 && n > 1) ? 1924 : 2448, buf_h = buf_w == 1924 ? 1452 : 1848;   /* 读回正常的手机 | a phone whose read-back is correct */
+              int on = dm_vp_native_on(buf_w, buf_h, 1924, 1452, 2448, 1848, &m5);
+              if (dm_vp_geometry_request(1, 2448, 1848, 1924, 1452, on, &rw, &rh)) { n++; dm_vp_geom_note(&m5, 0, rw, rh, 2448, 1848); } }
+          CHECK(n == 2); }
+        CHECK(dm_vp_native_on(1924, 1452, 1924, 1452, 2448, 1848, NULL) == 1);   /* 读回就是出图：照旧算生效 | read-back equals the output: in effect as before */
+    }
+
+    /* B140 增量审 P1-1（模型 sim_fold.c / sim2.c）：同一块 Surface 上从「比例相同、present_native」切到「比例不同」且出图尺寸同时变了
+       （Fold8 内屏 1924x1602 → 折到外屏 2316x904、出图 1608x904；configChanges 带 screenSize，只有 surfaceChanged，++generation）。
+       缓冲几何必须回到窗口尺寸：恰好发一次 (0,0)，之后不再请求；再展开回内屏又只请求一次出图尺寸。
+       读回分两种机器：Fold8 型（读回恒为窗口尺寸）和读回正常的（读回 = 实际缓冲）；每种都分「换代」与「不换代」。
+       B140 incremental review P1-1 (models sim_fold.c / sim2.c): on the same Surface, going from "same aspect, present_native" to "other
+       aspect" while the output size changes too (Fold8 inner 1924x1602 -> fold to outer 2316x904, output 1608x904; configChanges has
+       screenSize, so only surfaceChanged, ++generation). The buffer geometry must return to the window size: exactly one (0,0), then
+       nothing; unfolding again asks once for the output size. Two read-back kinds (Fold8-like: always the window; correct: the real
+       buffer), each with and without a generation change. */
+    for (int readback_ok = 0; readback_ok < 2; readback_ok++)
+        for (int regen = 0; regen < 2; regen++) {
+            dm_vp_geom_memo m = {0}; int user_w = 0, user_h = 0;   /* 窗口上真实的缓冲几何（0 = 窗口尺寸），跨 surfaceChanged 保留 | the real buffer geometry on the window (0 = window size), kept across surfaceChanged */
+            unsigned long long gen = 1; int win_w = 2176, win_h = 1812, cw = 1924, ch = 1602, inner = 0, outer = 0, outer_zero = 0, again = 0;
+            for (int f = 0; f < 90; f++) {
+                if (f == 30) { gen += regen; win_w = 2316; win_h = 904; cw = 1608; ch = 904; }      /* 折到外屏 | fold to the outer screen */
+                if (f == 60) { gen += regen; win_w = 2176; win_h = 1812; cw = 1924; ch = 1602; }    /* 再展开 | unfold again */
+                int bw = readback_ok && user_w ? user_w : win_w, bh = readback_ok && user_w ? user_h : win_h, rw, rh;
+                if (dm_vp_geom_frame(&m, gen, 1, win_w, win_h, cw, ch, bw, bh, &rw, &rh)) {
+                    if (f < 30) inner++; else if (f < 60) { outer++; outer_zero += rw == 0 && rh == 0; } else again++;
+                    user_w = rw; user_h = rh; dm_vp_geom_note(&m, 0, rw, rh, win_w, win_h);
+                }
+                if (f == 59 && (user_w || user_h)) fprintf(stderr, "  P1-1 readback_ok=%d regen=%d: outer screen buffer stuck at %dx%d\n", readback_ok, regen, user_w, user_h);
+                if (f == 59) CHECK(user_w == 0 && user_h == 0);   /* 外屏上缓冲 = 窗口尺寸 | on the outer screen the buffer is the window size */
+            }
+            CHECK(inner == 1); CHECK(outer == 1 && outer_zero == 1); CHECK(again == 1);
+            CHECK(user_w == 1924 && user_h == 1602);
+        }
+    /* 同一块 surface、不换代，只是渲染分辨率档改了出图尺寸、比例也从相同变成不同（窗口不变）：同样只发一次 (0,0)。
+       Same surface, no new generation, only the render level changed the output size and the aspect went from same to different (window
+       unchanged): again exactly one (0,0). */
+    { dm_vp_geom_memo m = {0}; int rw, rh, n = 0, zero = 0, user_w = 0;
+      for (int f = 0; f < 40; f++) { int cw = f < 20 ? 1924 : 1600, ch = f < 20 ? 1452 : 900;
+          if (dm_vp_geom_frame(&m, 7, 1, 2448, 1848, cw, ch, 2448, 1848, &rw, &rh)) { if (f >= 20) { n++; zero += rw == 0 && rh == 0; } user_w = rw; dm_vp_geom_note(&m, 0, rw, rh, 2448, 1848); } }
+      CHECK(n == 1 && zero == 1 && user_w == 0); }
+    /* 关掉 present_native（设置里切走）时也一样：曾经改过的缓冲几何退回窗口尺寸一次。
+       Turning present_native off (from the settings) is the same: a buffer geometry changed earlier goes back to the window once. */
+    { dm_vp_geom_memo m = {0}; int rw, rh, n = 0, user_w = 0;
+      for (int f = 0; f < 40; f++) { int pn = f < 20, cw = f < 20 ? 1924 : 1600, ch = f < 20 ? 1452 : 900;
+          if (dm_vp_geom_frame(&m, 3, pn, 2448, 1848, cw, ch, 2448, 1848, &rw, &rh)) { if (f >= 20) n++; user_w = rw; dm_vp_geom_note(&m, 0, rw, rh, 2448, 1848); } }
+      CHECK(n == 1 && user_w == 0); }
     printf("viewport: %d/%d checks passed\n", checks - failures, checks);
     return failures != 0;
 }

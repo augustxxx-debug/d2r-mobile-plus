@@ -10,6 +10,8 @@
 #include "../host/front.h"
 #include "../host/dm_input.h"
 #include "touch_android.h"
+#include "viewport.h"
+#include "../host/dm_uiscreen.h"
 #include "../ios/Sources/dm_touch_game_state.h"
 #include "../host/dm_res_cap.h"
 #include <math.h>
@@ -17,7 +19,17 @@
 
 static void *_Atomic g_window;      // ANativeWindow*；命令行形态为 NULL | ANativeWindow*; NULL in the command-line form
 static _Atomic int g_screen_w, g_screen_h;
-void front_android_set_window(void *win, int w, int h) { atomic_store(&g_window, win); atomic_store(&g_screen_w, w); atomic_store(&g_screen_h, h); }
+int dm_uiscreen_res_live(void); void dm_oe_res_changed(void);
+void front_android_set_window(void *win, int w, int h) {
+    int ow = atomic_load(&g_screen_w), oh = atomic_load(&g_screen_h);
+    atomic_store(&g_window, win); atomic_store(&g_screen_w, w); atomic_store(&g_screen_h, h);
+    // 窗口换尺寸（折叠开合 / 旋转 / 分屏）：出图尺寸与界面矩形都跟着变，让游戏重读参数位。
+    // 启动时（游戏还没读过分辨率、也没打开性能模式通知）不推：那时推了只会记一行「【红】分辨率要切」。
+    // The window changed size (fold, rotation, split screen): the output size and the UI rectangle follow, so the
+    // game must re-read its parameter slots. Not at startup (the game has not read a resolution yet and has not
+    // opened the performance-mode notification; a push there would only log a red "resolution wants to change").
+    if (win && (w != ow || h != oh) && dm_uiscreen_res_live()) dm_oe_res_changed();
+}
 
 // UI 线程从当前 Display 读实际刷新率；0 表示未知，不冒充实测 60 Hz。
 // The UI thread reads the current Display refresh rate; 0 means unknown, not a measured 60 Hz.
@@ -51,7 +63,8 @@ void front_run(void (*guest)(void)) {
 }
 
 // 游戏输出分辨率（与 iOS front_ios.m 同一规则，渲染分辨率开关沿用 iPhone 的那一行）：
-//   主机档 = 屏幕原生像素（界面文字原生；3D 由游戏自带的渲染比例另缩，见 hle_oe.c scale3d_tick）；比 16:9 窄的屏按屏宽取 16:9（上下留边）；
+//   主机档 = 屏幕原生像素（界面文字原生；3D 由游戏自带的渲染比例另缩，见 hle_oe.c scale3d_tick）；比 16:9 窄的屏按屏宽取 16:9（上下留边），
+//   DM_ADAPTIVE_FULL=0 时才是这样——缺省按窗口原生比例出图（自适应全屏，界面按 16:9 贴底，见下面的 adaptive_full）；
 //   启动预留 = 这个原生尺寸（游戏只接受不超过启动尺寸的新值）；窗口建好之后，实际出图尺寸按「渲染分辨率」档（dm_custom.c render_res：0 自动 / 1 省电 207 万 /
 //   2 均衡 280 万 / 3 原生）的像素预算等比缩小（dm_res_cap.h；安卓没有 Metal 代际表，自动档按通用 400 万预算，超大屏取均衡），图形层出图时整屏放大铺回窗口；
 //   自动档闭环（hle_oe.c 按实际掉帧再降档）同 iOS。档位改了由 dm_custom.c 推 31 让游戏重读。掌机档仍按原版高度 720 × 屏幕比例。DM_GAME_RES=宽x高 钉住（负对照 1600x900 = 原版主机档）。
@@ -63,6 +76,23 @@ void front_run(void (*guest)(void)) {
 //   screens Balanced), and the graphics layer's full-screen upscale fills the window again; the Auto closed loop (hle_oe.c, one more step down on measured drops) is the same as on iOS. A level change pushes 31 from
 //   dm_custom.c. Handheld stays at the original height 720 × the screen aspect. DM_GAME_RES=WxH pins it (negative control 1600x900 = the original docked size).
 //   AYN Thor 1920x1080 (2.07 MP): all four levels = native; before this the output was fixed at 1600x900 and stretched to 1080p by the system compositor, which blurred the picture.
+// 自适应全屏（缺省开，DM_ADAPTIVE_FULL=0 退回 16:9 居中留边）：窗口比 16:9 窄（折叠内屏 / 平板 / 分屏）时
+// 游戏按窗口比例出图、3D 铺满整窗，界面由宿主按 16:9 贴底摆（dm_uiscreen，与 iOS front_ios.m / 鸿蒙 front_ohos.c
+// 同一条路）。比例对得上的普通手机（16:9 / 19.5:9）不受影响，仍与改动前逐点相同。
+// Adaptive fullscreen (on by default; DM_ADAPTIVE_FULL=0 falls back to centred 16:9 with bars): on a window
+// narrower than 16:9 (fold inner screen / tablet / split screen) the game renders at the window's aspect with the
+// 3D filling the whole window, and the host lays the UI out at 16:9 anchored to the bottom (dm_uiscreen, the same
+// road as iOS front_ios.m and HarmonyOS front_ohos.c). Phones whose aspects already match (16:9 / 19.5:9) are
+// unaffected and stay point-for-point identical.
+static int adaptive_full(void) { const char *e = getenv("DM_ADAPTIVE_FULL"); return !(e && *e == '0'); }
+// 界面矩形的纵向位置与高（画面高的比例）：Vulkan 那边界面那一趟据此整体下移、剪裁跟着走（同 nvn_mtl.m 的同名回调）。
+// The UI rectangle's vertical position and height as fractions of the frame; the Vulkan side shifts the UI pass by
+// them and moves the scissor with it (the counterpart of nvn_mtl.m's callback of the same name).
+static void ui_rect_frac(double *fy, double *fh) {
+    int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h);
+    if (dm_screen_real(&rw, &rh) && rh > 0) { *fy = (double)y / rh; *fh = (double)h / rh; }
+}
+void xbg_set_ui_rect_fn(void (*fn)(double *y, double *h));
 uint64_t front_game_res(int docked) {
     unsigned w, h; const char *e = getenv("DM_GAME_RES");
     if (e && sscanf(e, "%ux%u", &w, &h) == 2) return docked ? (uint64_t)h << 32 | w : (uint64_t)(h * 4 / 5) << 32 | (w * 4 / 5 + 3) / 4 * 4;
@@ -73,8 +103,18 @@ uint64_t front_game_res(int docked) {
         return 720ull << 32 | bw;
     }
     if (!fw || !fh) return 900ull << 32 | 1600;   // 还没有窗口（命令行形态）：原版 16:9 | no window yet (command-line form): the original 16:9
-    if ((uint64_t)fw * 9 < (uint64_t)fh * 16) fh = (unsigned)(((uint64_t)fw * 9 / 16) & ~1ull);   // 比 16:9 窄：按屏宽取 16:9 | narrower than 16:9: 16:9 by width
-    fw &= ~1u; fh &= ~1u; if (fw > 4096) { fh = (unsigned)(((uint64_t)fh * 4096 / fw) & ~1ull); fw = 4096; }
+    // 折叠开合 / 旋转 / 分屏把窗口比例换过去时，界面从 16:9 留边切到贴底（或切回去）；状态没变时什么都不做。
+    // A fold, a rotation or a split screen moves the UI between letterboxed 16:9 and bottom-anchored; while the
+    // state does not change this does nothing.
+    int adaptive = dm_vp_narrower_than_16_9((int)fw, (int)fh) && adaptive_full();
+    static _Atomic int adaptive_on;
+    if (atomic_exchange(&adaptive_on, adaptive) != adaptive) {
+        if (adaptive) { dm_uiscreen_enable(DM_UISCREEN_BOTTOM); xbg_set_ui_rect_fn(ui_rect_frac); }
+        else dm_uiscreen_enable(DM_UISCREEN_OFF);
+        LOG("画面：窗口 %ux%u（比例 %.3f）%s → %s", fw, fh, (double)fw / (double)fh, adaptive ? "比 16:9 窄" : "不窄于 16:9",
+            adaptive ? "自适应全屏：出图跟窗口比例、3D 铺满整窗，界面按 16:9 贴底" : "16:9 出图、居中留边");
+    }
+    unsigned ow = 0, oh = 0; dm_vp_frontend_res((int)fw, (int)fh, adaptive, &ow, &oh); fw = ow; fh = oh;   // 出图尺寸规则在 viewport.h（宿主测试直接编）| the output-size rule lives in viewport.h (the host test compiles it)
     static _Atomic int logged_native; if (!atomic_exchange(&logged_native, 1)) LOG("画面：屏幕 %dx%d → 游戏窗口按 %ux%u 预留（主机档 = 原生；出图尺寸按渲染分辨率档的像素预算缩）", sw, sh, fw, fh);
     int dm_uiscreen_res_live(void); if (!dm_uiscreen_res_live()) return (uint64_t)fh << 32 | fw;   // 启动预留不缩 | the startup reserve is never shrunk
     int dm_render_res_level(void), dm_res_auto_step_get(void), dm_3d_quality_mode_get(void); void dm_res_auto_base_set(uint32_t);

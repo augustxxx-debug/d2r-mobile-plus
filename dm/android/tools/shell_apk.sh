@@ -64,6 +64,10 @@ VER=(-PdmVersionName="$DM_VERSION" -PdmBuildNumber="$DM_BUILD" -PdmVersionLabel=
 # Update manifest addresses (official free channels in the loading page footer, tried in order: own server → GitHub raw): given at packaging time by DM_UPDATE_URLS
 # (space separated, https:// only), never in the source; none = the package makes no network access
 if [ -n "${DM_UPDATE_URLS:-}" ]; then VER+=(-PdmUpdateUrls="$DM_UPDATE_URLS"); t "清单地址 $(echo $DM_UPDATE_URLS | wc -w | tr -d ' ') 个，按顺序：$(for u in $DM_UPDATE_URLS; do printf '%s ' "$(echo "$u" | sed -E 's#^https://([^/]+).*#\1#')"; done)"
+elif [ $KIND = release ] && [ "${DM_ALLOW_NO_UPDATE_URLS:-0}" != 1 ]; then
+  # B246：1.1.0 / 1.1.1 正式包就是这样漏了地址（只记了这一行），加载页页脚与诊断清单全关。正式包没给就停；确实要出不联网的正式包，显式给 DM_ALLOW_NO_UPDATE_URLS=1
+  # B246: the 1.1.0 / 1.1.1 releases lost the addresses this way (only this line was printed). A release without them stops; an offline release must say DM_ALLOW_NO_UPDATE_URLS=1
+  die "正式包没给 DM_UPDATE_URLS（加载页官方渠道页脚、诊断清单会全关；确实不要就显式给 DM_ALLOW_NO_UPDATE_URLS=1）"
 else t "没给 DM_UPDATE_URLS：包里不联网，加载页不显示官方免费渠道"; fi
 VER+=(-PdmChannel="${DM_CHANNEL:-unknown}" -PdmSourceCommit="$(git -C "$(dirname "$0")" rev-parse HEAD 2>/dev/null || echo unknown)")   # 统计的渠道与源码提交（TelemetryBridge） | the statistics' channel and source commit
 if [ -n "${DM_DIAGNOSTIC_ORIGIN:-}" ]; then VER+=(-PdmDiagnosticOrigin="$DM_DIAGNOSTIC_ORIGIN"); t "诊断上传地址已给（地址不进日志）"; else t "没给 DM_DIAGNOSTIC_ORIGIN：自动上报崩溃不联网"; fi
@@ -157,5 +161,10 @@ bad=$(unzip -l "$A" | awk '{print $4}' | grep -v '^assets/dmgen/' | grep -vxE 'a
 [ -z "$bad" ] || die "APK 里带了不该有的文件：$bad"
 # 包内容审计（CLAUDE.md §2.8，B089）：解到最里层扫平台词并列体积，报告在 package_audit.md | package content audit: unpack to the innermost level, scan for platform words and list sizes; the report is package_audit.md
 python3 -I "$DM/tools/package_audit.py" android "$A" --out "$O/package_audit.md" || die "包内容审计不通过：$O/package_audit.md"
+# 正式包查最终 APK 里真有清单地址（B246，不信环境变量与 Gradle 参数）；给了 DM_UPDATE_URLS 就逐字比对 | release: the final APK really carries the manifest addresses (B246); compared exactly when DM_UPDATE_URLS is given
+if [ $KIND = release ] && [ "${DM_ALLOW_NO_UPDATE_URLS:-0}" != 1 ]; then
+  python3 -I "$DM/android/tools/check_release_urls.py" "$A" ${DM_UPDATE_URLS:+--expect "$DM_UPDATE_URLS"} > "$O/release_urls_gate.txt" 2>&1 || { cat "$O/release_urls_gate.txt" >&2; die "正式包清单地址闸门不通过：$O/release_urls_gate.txt"; }
+  t "$(head -1 "$O/release_urls_gate.txt" | cut -d'|' -f1)"
+fi
 BT2=$(ls -d "$ANDROID_HOME"/build-tools/* | tail -1); vc=$("$BT2/aapt" dump badging "$A" 2>/dev/null | sed -n "s/.*versionCode='\([0-9]*\)'.*versionName='\([^']*\)'.*/\1 \2/p" | head -1); [ "$vc" = "$DM_BUILD $DM_VERSION" ] || die "APK 版本号不对：$vc（应 $DM_BUILD $DM_VERSION）"
 t "好了（${KIND}）：${A}（$(($(stat -f %z "$A") / 1048576)) MB）；版本 $DM_VERSION（$DM_BUILD）；核了真表里 $n 个源码里没有的字符串，原生库里 0 处；APK 里没有游戏程序 / 着色器包 / 覆盖层，也没有本机路径"

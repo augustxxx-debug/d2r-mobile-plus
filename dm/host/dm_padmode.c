@@ -340,6 +340,7 @@ void dm_padmode_page_rstick(int32_t *ry) { static int held; if (!ry || !g_cur ||
     int v = *ry; *ry = 0; if (!held && (v > 16383 || v < -16383)) { held = 1; atomic_store(&g_rs_ev, v > 0 ? -1 : 1); } else if (held && v < 8192 && v > -8192) held = 0; }
 static _Atomic uint64_t g_raw_bt;   // 这一拍手柄的真按键（过滤前）：只给「旁听不接管」的页看（B170 商店里 L / R 点按切背包页，按住 R 仍是原版排序） | this sample's real buttons (before filtering): for pages that only listen without taking (B170)
 uint64_t dm_padmode_raw_buttons(void) { return g_cur ? atomic_load(&g_raw_bt) : 0; }
+uint64_t dm_padmode_raw_dirs(void) { return g_cur ? (atomic_load(&g_raw_bt) | atomic_load(&g_pg_stick)) & (DM_BTN_UP | DM_BTN_DOWN | DM_BTN_LEFT | DM_BTN_RIGHT) : 0; }   // 真方向键 + 左摇杆折出的方向位（旁听，dm_bag.c 推算网格逻辑格） | real d-pad + left-stick direction bits (listen only; dm_bag.c tracks the grid cell)
 uint64_t dm_padmode_page_filter(uint64_t bt) {
     atomic_store(&g_raw_bt, bt);
     static uint64_t prev, eat; uint64_t vb = bt | atomic_load(&g_pg_stick), down = vb & ~prev; prev = vb;   // 摇杆折出的方向位只用来算页的按下沿 / 按着，不交给游戏 | stick-derived bits only feed the page's edges / held state, never the game

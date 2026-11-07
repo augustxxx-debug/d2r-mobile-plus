@@ -111,13 +111,14 @@ int main(void) {
     dm_loadpage_begin(two, 2, w_two, 0); dm_loadpage_set(0, 0.5, NULL, 1); dm_loadpage_set(1, 0.16, NULL, 2);   // 25% + 75%×0.16 = 37% | 25% + 75% × 0.16 = 37%
     CHECK(dm_loadpage_percent() == 37);
     dm_lp_layout L; dm_lp_screen duo = { 951, 669, 0, 0, 0, 0 }; dm_loadpage_layout(&duo, &L);
+    const double kd = 951 / 762.0;   // B140：Duo 内屏 k = min(669/500, 951/762) = 1.248（宽系数卡住） | B140: the Duo inner screen's k = min(669/500, 951/762) = 1.248 (the width factor binds)
     CHECK(L.landscape && !strcmp(L.bg_name, "loadpage_bg_land.jpg") && NEAR(L.bg_dst.w, 951) && NEAR(L.bg_dst.h, 669));
     CHECK(rect_in(L.bar, 0, 0, 951, 669) && rect_in(L.title, 0, 0, 951, 669) && rect_in(L.sub, 0, 0, 951, 669) && rect_in(L.brand, 0, 0, 951, 669));
-    CHECK(NEAR(L.bar.w, (951 - 56) * 0.62) && NEAR(L.bar_fill.w, L.bar.w * 0.37)); CHECK(L.title_pt == 24 && L.body_pt == 18 && L.sub_pt == 14);
+    CHECK(NEAR(L.bar.w, (951 - 56 * kd) * 0.62) && NEAR(L.bar_fill.w, L.bar.w * 0.37)); CHECK(NEAR(L.title_pt, 24 * kd) && NEAR(L.body_pt, 18 * kd) && NEAR(L.sub_pt, 14 * kd));
     CHECK(L.title.y + L.title.h <= L.bar.y && L.bar.y + L.bar.h <= L.body.y && L.body.y + L.body.h <= L.sub.y && L.sub.y + L.sub.h <= 669 - 44 + 1e-6);   // 自上而下：标题 / 条 / 正文 / 副文 | top down: title / bar / body / sub
     CHECK(NEAR(L.percent.x + L.percent.w, L.bar.x + L.bar.w));   // 百分数右缘对齐条尾 | percent right edge aligned with the bar end
     CHECK(!strcmp(L.logo_name, "loadpage_logo.png") && L.logo_w == 1600 && L.logo_h == 600);
-    CHECK(NEAR(L.logo.w, (951 - 56) * 0.58) && NEAR(L.logo.h, L.logo.w * 600 / 1600) && NEAR(L.logo.x + L.logo.w / 2, 951 / 2.0));   // 横屏：58% 宽、等比、居中 | landscape: 58% wide, aspect kept, centred
+    CHECK(NEAR(L.logo.w, (951 - 56 * kd) * 0.58) && NEAR(L.logo.h, L.logo.w * 600 / 1600) && NEAR(L.logo.x + L.logo.w / 2, 951 / 2.0));   // 横屏：58% 宽、等比、居中 | landscape: 58% wide, aspect kept, centred
     CHECK(NEAR(L.logo.y + L.logo.h / 2, 669 * 0.36) && L.logo.y + L.logo.h <= L.title.y - 24 + 1e-6 && L.logo.y >= 28 - 1e-6);
     dm_lp_screen ip = { 402, 874, 0, 59, 0, 34 }; dm_loadpage_layout(&ip, &L);   // iPhone 竖屏：顶 59 / 底 34 安全区 | iPhone portrait: 59 top / 34 bottom safe area
     CHECK(!L.landscape && !strcmp(L.bg_name, "loadpage_bg_port.jpg") && NEAR(L.bar.w, 402 - 56) && NEAR(L.bar.x, 28));
@@ -127,7 +128,7 @@ int main(void) {
     CHECK(L.landscape && L.bar.x >= 59 + 28 - 1e-6 && L.bar.x + L.bar.w <= 874 - 59 - 28 + 1e-6 && L.sub.y + L.sub.h <= 402 - 21 + 1e-6);
     dm_lp_screen an = { 873, 393, 0, 0, 0, 0 }; dm_loadpage_layout(&an, &L);   // 安卓 20:9（2400×1080 @2.75） | Android 20:9 (2400×1080 @2.75)
     CHECK(L.landscape && rect_in(L.bar, 0, 0, 873, 393) && rect_in(L.title, 0, 0, 873, 393) && L.bar.w <= 900);
-    dm_lp_screen big = { 2000, 1200, 0, 0, 0, 0 }; dm_loadpage_layout(&big, &L); CHECK(NEAR(L.bar.w, 900));   // 很宽的屏：条不超过 900 点 | very wide screen: the bar stays within 900 pt
+    dm_lp_screen big = { 3440, 1440, 0, 0, 0, 0 }; dm_loadpage_layout(&big, &L); CHECK(NEAR(L.title_pt, 48) && NEAR(L.bar.w, 1800));   // 很宽的屏：k 封顶 2，条上限 900 点随 k 放大（审计 P2-3） | very wide screen: k capped at 2, the 900 pt bar limit scales with k (audit P2-3)
     dm_lp_screen tiny = { 100, 50, 0, 0, 0, 0 }; dm_loadpage_layout(&tiny, &L); CHECK(L.bar.w > 0 && L.bar.h > 0 && L.logo.w >= 0 && L.logo.h >= 0);   // 很小的屏不出负宽（字标缩到放得下或 0） | a tiny screen never yields negative widths (the wordmark shrinks to fit or to 0)
     dm_lp_screen big2 = { 2000, 1200, 0, 0, 0, 0 }; dm_loadpage_layout(&big2, &L); CHECK(NEAR(L.logo.w, 560));   // 大屏字标不超过 560 点 | on a big screen the wordmark stays within 560 pt
     dm_lp_screen landi = { 874, 402, 59, 0, 59, 21 }; dm_loadpage_layout(&landi, &L); CHECK(L.logo.y + L.logo.h <= L.title.y - 24 + 1e-6 && L.logo.y >= 28 - 1e-6);   // 矮横屏：字标压缩到标题之上 | short landscape: the wordmark is squeezed above the title
@@ -142,7 +143,7 @@ int main(void) {
     dm_loadpage_finish(1); CHECK(dm_loadpage_muted() == 1 && dm_loadpage_music_wanted() == 0);
     dm_loadpage_begin(two, 2, w_two, 2); CHECK(dm_loadpage_muted() == 1 && dm_loadpage_music_wanted() == 0);
     dm_loadpage_set_muted(0); CHECK(dm_loadpage_muted() == 0 && dm_loadpage_music_wanted() == 1);
-    dm_loadpage_layout(&duo, &L); CHECK(NEAR(L.mute.x + L.mute.w, 951 - 28) && NEAR(L.mute.y, 22) && L.mute.w == 40 && L.mute.y + L.mute.h <= L.logo.y && L.brand.x + L.brand.w <= L.mute.x);
+    dm_loadpage_layout(&duo, &L); CHECK(NEAR(L.mute.x + L.mute.w, 951 - 28 * kd) && NEAR(L.mute.y, 22 * kd) && NEAR(L.mute.w, 40 * kd) && L.mute.y + L.mute.h <= L.logo.y && L.brand.x + L.brand.w <= L.mute.x);
     CHECK(dm_loadpage_hit_mute(&L, L.mute.x + 20, L.mute.y + 20) && dm_loadpage_hit_mute(&L, L.mute.x - 10, L.mute.y - 10) && !dm_loadpage_hit_mute(&L, L.mute.x - 20, L.mute.y + 20) && !dm_loadpage_hit_mute(&L, 475, 400));
     dm_loadpage_layout(&ip, &L); CHECK(NEAR(L.mute.x + L.mute.w, 402 - 28) && L.mute.y >= 59 - 6 && L.mute.y + L.mute.h <= L.logo.y);   // iPhone 竖屏：在灵动岛下方 | iPhone portrait: below the island
     dm_loadpage_layout(&ipl, &L); CHECK(L.mute.x + L.mute.w <= 874 - 59 - 28 + 1e-6);                                                    // 横屏：避开右侧灵动岛 | landscape: clear of the island on the right
@@ -275,13 +276,26 @@ int main(void) {
         CHECK(fabs(L2.bar.x - 175.535) < 1e-9 && fabs(L2.bar.y - 335.9) < 1e-9 && fabs(L2.bar.w - 481.43) < 1e-9 && L2.bar.h == 8);
         CHECK(fabs(L2.body.y - 353.9) < 1e-9 && fabs(L2.sub.y - 385.1) < 1e-9 && L2.mute.w == 40 && fabs(L2.mute.x - 764.5) < 1e-9 && L2.mute.y == 22);
         CHECK(fabs(L2.bg_dst.x - 141.13609) < 1e-6 && fabs(L2.bg_dst.y - 18.724181) < 1e-6 && fabs(L2.bg_dst.w - 549.678142) < 1e-6 && fabs(L2.bg_dst.h - 309.193955) < 1e-6);
-        dm_loadpage_layout(&fold, &L2);
-        CHECK(L2.title_pt == 24 && L2.body_pt == 18 && L2.sub_pt == 14 && L2.mute.w == 40);
-        CHECK(fabs(L2.title.y - 664.9) < 1e-9 && fabs(L2.bar.y - 709.3) < 1e-9 && fabs(L2.bar.w - 544.484) < 1e-9 && fabs(L2.body.y - 727.3) < 1e-9 && fabs(L2.sub.y - 758.5) < 1e-9);
-        CHECK(fabs(L2.bg_dst.x - (-226.456003)) < 1e-6 && fabs(L2.bg_dst.y - 4.615869) < 1e-6 && fabs(L2.bg_dst.w - 1385.72628) < 1e-6 && fabs(L2.bg_dst.h - 779.471033) < 1e-6);
-        // Duo 内屏长边 951 ≤ 1000：k = 1，字号与进度组位置和修前逐位相同 | the Duo inner screen's long side is 951 ≤ 1000: k = 1, fonts and progress group bit-identical
-        dm_loadpage_layout(&duo2, &L2);
-        CHECK(L2.title_pt == 24 && L2.body_pt == 18 && L2.sub_pt == 14 && fabs(L2.title.y - 492.2) < 1e-6 && fabs(L2.bar.y - 536.6) < 1e-6);
+        // B140：折叠屏内屏（Fold8 934.2×841.7、Duo 951×669）长边不到 1000，但横屏内容高超过参照 500，同一条系数规则也要管：
+        //     k = 内容高 / 500（Fold8 1.6834、Duo 1.338）。修前 k = 1，Fold8 图标 73.5% / 标题 79.0% / 条 84.3%（奥丁 52.4 / 62.2 / 71.7），
+        //     Duo 标题 73.6%——都超线。验收同 iPad 横屏：四项对奥丁 ±5 个百分点。
+        // B140: fold inner screens (Fold8 934.2×841.7, Duo 951×669) have a long side under 1000 but a landscape content height above the 500
+        //     reference, so the same factor rule applies: k = content height / 500 (Fold8 1.6834, Duo 1.338). Before, k = 1 gave the Fold8 icon 73.5% /
+        //     title 79.0% / bar 84.3% (Thor 52.4 / 62.2 / 71.7) and the Duo title 73.6% - outside the line. Acceptance as for the iPad landscape: four
+        //     ratios within 5 points of the Thor.
+        dm_loadpage_layout(&thor2, &REF);
+        { double ri = icon_share(&REF, thor2.h), rt = at(&REF, thor2.h, 0), rb = at(&REF, thor2.h, 1), rg = at(&REF, thor2.h, 2);
+          const dm_lp_screen *fs[2] = { &fold, &duo2 }; const char *fn[2] = { "Fold8 内屏", "Duo 内屏" };
+          for (int i = 0; i < 2; i++) {
+              dm_loadpage_layout(fs[i], &L2); double hh = fs[i]->h, kk = fmin(hh / 500.0, fs[i]->w / 762.0);
+              CHECK(NEAR(L2.title_pt, 24 * kk) && NEAR(L2.body_pt, 18 * kk) && NEAR(L2.sub_pt, 14 * kk) && NEAR(L2.mute.w, 40 * kk) && NEAR(L2.bar.h, 8 * kk));
+              CHECK(fabs(icon_share(&L2, hh) - ri) <= 0.05 && fabs(at(&L2, hh, 0) - rt) <= 0.05);
+              CHECK(fabs(at(&L2, hh, 1) - rb) <= 0.05 && fabs(at(&L2, hh, 2) - rg) <= 0.05);
+              CHECK(rect_in(L2.bar, 0, 0, fs[i]->w, hh) && rect_in(L2.title, 0, 0, fs[i]->w, hh) && rect_in(L2.sub, 0, 0, fs[i]->w, hh) && rect_in(L2.mute, 0, 0, fs[i]->w, hh));
+              printf("  %s：图标 %.1f%% / 标题 %.1f%% / 条 %.1f%% / 进度组 %.1f%%（奥丁 %.1f / %.1f / %.1f / %.1f）\n", fn[i],
+                  icon_share(&L2, hh) * 100, at(&L2, hh, 0) * 100, at(&L2, hh, 1) * 100, at(&L2, hh, 2) * 100, ri * 100, rt * 100, rb * 100, rg * 100); } }
+        // 外屏 / 普通横屏手机内容高 ≤ 500：k 仍是 1（OPPO 20:9 在第 10 节逐位钉住）| outer screens / regular landscape phones have content ≤ 500: k stays 1 (OPPO 20:9 pinned bit-for-bit in section 10)
+        { dm_lp_screen a209 = { 915, 412, 0, 0, 0, 0 }; dm_loadpage_layout(&a209, &L2); CHECK(L2.title_pt == 24 && L2.body_pt == 18 && L2.mute.w == 40); }   // 安卓锁横屏（sensorLandscape），竖屏只有 iOS：17 Pro 竖屏两个系数都恰好是 1，逐位钉在第 11 节 | Android is landscape-locked (sensorLandscape); portrait is iOS only, where the 17 Pro has both factors at exactly 1, pinned in section 11
         // iPhone 17 Pro 横竖也都在 1000 以内：字号与矩形同样逐位不变 | iPhone 17 Pro in both orientations is under 1000 too: same fonts and rectangles
         dm_loadpage_layout(&ipp, &L2);
         CHECK(L2.title_pt == 24 && L2.body_pt == 18 && fabs(L2.title.y - 663.2) < 1e-9 && fabs(L2.bar.w - 346) < 1e-9 && fabs(L2.bg_dst.x - (-2.900118)) < 1e-6 && fabs(L2.bg_dst.h - 722.809766) < 1e-6);
@@ -308,16 +322,16 @@ int main(void) {
           printf("  iPad 竖：图标 %.1f%% / 标题 %.1f%% / 条 %.1f%% / 进度组 %.1f%%（17 Pro 竖 %.1f / %.1f / %.1f / %.1f）\n",
               icon_share(&L2, ipad_p.h) * 100, at(&L2, ipad_p.h, 0) * 100, at(&L2, ipad_p.h, 1) * 100, at(&L2, ipad_p.h, 2) * 100,
               ri * 100, rt * 100, rb * 100, rg * 100); }
-        // iPad：静态尺寸按 k = 1.628（横）/ 1.3976（竖）放大；图标框占屏比例与进度组相对位置逐项钉住（防止以后调参悄悄跑偏）
-        // iPad: static metrics ×1.628 (landscape) / ×1.3976 (portrait); icon box share and progress group position pinned item by item (so later tuning cannot drift silently)
+        // iPad：静态尺寸按 k = 1194/762 = 1.5669（横，B140 起宽系数卡住，进度组上提到 62.2%）/ 1.3976（竖）放大；图标框占屏比例与进度组相对位置逐项钉住（防止以后调参悄悄跑偏）
+        // iPad: static metrics ×1.5669 (landscape, 1194/762: since B140 the width factor binds and the group is lifted to 62.2%) / ×1.3976 (portrait); icon box share and progress group position pinned item by item (so later tuning cannot drift silently)
         dm_loadpage_layout(&ipad_l, &L2);
-        CHECK(NEAR(L2.title_pt, 24 * 1.628) && NEAR(L2.body_pt, 18 * 1.628) && NEAR(L2.sub_pt, 14 * 1.628) && NEAR(L2.mute.w, 40 * 1.628) && NEAR(L2.bar.h, 8 * 1.628));
+        { const double ki = 1194 / 762.0; CHECK(NEAR(L2.title_pt, 24 * ki) && NEAR(L2.body_pt, 18 * ki) && NEAR(L2.sub_pt, 14 * ki) && NEAR(L2.mute.w, 40 * ki) && NEAR(L2.bar.h, 8 * ki)); }
         { const double *ib = k_icon_land;
           double ix0 = L2.bg_dst.x + L2.bg_dst.w * ib[0], iy0 = L2.bg_dst.y + L2.bg_dst.h * ib[1];
           double ix1 = L2.bg_dst.x + L2.bg_dst.w * ib[2], iy1 = L2.bg_dst.y + L2.bg_dst.h * ib[3];
-          CHECK(fabs((iy1 - iy0) / ipad_l.h - 0.5123) < 0.002 && fabs((ix1 - ix0) / ipad_l.w - 0.3630) < 0.002);   // 图标框高 51.2%（奥丁 52.4%）/ 宽 36.3% | icon box 51.2% high (Thor 52.4%) / 36.3% wide
-          CHECK(iy0 >= 24 + 28 * 1.628 - 0.5 && iy1 <= L2.title.y - 18 * 1.628 + 0.5 && ix0 >= 28 * 1.628 - 0.5 && ix1 <= 1194 - 28 * 1.628 + 0.5); }
-        CHECK(fabs(L2.title.y / ipad_l.h - 0.6309) < 0.002 && fabs(L2.bar.y / ipad_l.h - 0.7176) < 0.002);   // 标题 63.1%（奥丁 62.2%）/ 条 71.8%（71.7%） | title 63.1% (Thor 62.2%) / bar 71.8% (71.7%)
+          CHECK(fabs((iy1 - iy0) / ipad_l.h - 0.5068) < 0.002 && fabs((ix1 - ix0) / ipad_l.w - 0.3590) < 0.002);   // 图标框高 50.7%（奥丁 52.4%）/ 宽 35.9% | icon box 50.7% high (Thor 52.4%) / 35.9% wide
+          const double ki = 1194 / 762.0; CHECK(iy0 >= 24 + 28 * ki - 0.5 && iy1 <= L2.title.y - 18 * ki + 0.5 && ix0 >= 28 * ki - 0.5 && ix1 <= 1194 - 28 * ki + 0.5); }
+        CHECK(fabs(L2.title.y / ipad_l.h - 0.6220) < 0.002 && fabs(L2.bar.y / ipad_l.h - 0.7054) < 0.002);   // 标题 62.2%（奥丁 62.2%）/ 条 70.5%（71.7%） | title 62.2% (Thor 62.2%) / bar 70.5% (71.7%)
         dm_loadpage_layout(&ipad_p, &L2);
         CHECK(NEAR(L2.title_pt, 24 * 1.3976190476) && NEAR(L2.mute.w, 40 * 1.3976190476));
         { const double *ib = k_icon_port;   // 竖屏：图标框高封顶 40.0%（17 Pro 39.0%）、宽 58.1%；标题 77.6% / 条 82.8%（17 Pro 75.9% / 81.0%）
@@ -325,7 +339,42 @@ int main(void) {
           double ix1 = L2.bg_dst.x + L2.bg_dst.w * ib[2], iy1 = L2.bg_dst.y + L2.bg_dst.h * ib[3];
           CHECK(fabs((ix1 - ix0) / ipad_p.w - 0.5808) < 0.002 && fabs((iy1 - iy0) / ipad_p.h - 0.4000) < 0.002);
           CHECK(ix0 >= 28 * 1.3976190476 - 0.5 && ix1 <= 834 - 28 * 1.3976190476 + 0.5 && iy1 <= L2.title.y - 18 * 1.3976190476 + 0.5 && iy0 >= 24 + 28 * 1.3976190476 - 0.5); }
-        CHECK(fabs(L2.title.y / ipad_p.h - 0.7763) < 0.002 && fabs(L2.bar.y / ipad_p.h - 0.8283) < 0.002);
+        CHECK(fabs(L2.title.y / ipad_p.h - 0.759) < 0.002 && fabs(L2.bar.y / ipad_p.h - 0.811) < 0.002);   // B140 起进度组按高系数渐变上提到 17 Pro 的 75.9% | since B140 the group is lifted (weighted by the height factor) to the 17 Pro's 75.9%
+        // 12. B139 审计 P2-1 / P2-3（B140）：系数连续（长边 1000 / 1001 不跳）、封顶 2；近方形 Mac 窗口、超大窗口、页脚开、六语最长行都放得下。
+        // 12. B139 audit P2-1 / P2-3 (B140): the factor is continuous (no step at a 1000 / 1001 long side) and capped at 2; near-square Mac windows,
+        //     huge windows, the footer on, and the longest line of every language all fit.
+        { dm_lp_layout A, B;
+          dm_lp_screen e0 = { 1000, 600, 0, 0, 0, 0 }, e1 = { 1001, 600, 0, 0, 0, 0 }, p0 = { 600, 1000, 0, 0, 0, 0 }, p1 = { 600, 1001, 0, 0, 0, 0 };
+          dm_loadpage_layout(&e0, &A); dm_loadpage_layout(&e1, &B); CHECK(fabs(A.title_pt - B.title_pt) < 0.05 && fabs(A.title.y - B.title.y) < 1.0);
+          dm_loadpage_layout(&p0, &A); dm_loadpage_layout(&p1, &B); CHECK(fabs(A.title_pt - B.title_pt) < 0.05 && fabs(A.title.y - B.title.y) < 1.0);
+          dm_lp_screen mq = { 1001, 1000, 0, 0, 0, 0 }; dm_loadpage_layout(&mq, &A); CHECK(NEAR(A.title_pt, 24 * 1001 / 762.0) && A.title_pt < 33);   // 审计时 k = 2.0（48 pt） | k = 2.0 (48 pt) at audit time
+          CHECK(fabs(A.title.y / 1000 - 0.622) < 0.002);
+          // 交叉审 P1-2：iPhone Air / Plus / Pro Max 竖屏（长边 ≤ 1000）k = 1、不上提 | cross-review P1-2: iPhone Air / Plus / Pro Max portrait (long side <= 1000): k = 1, no lift
+          { const dm_lp_screen ph[3] = { { 420, 912, 0, 59, 0, 34 }, { 430, 932, 0, 59, 0, 34 }, { 440, 956, 0, 59, 0, 34 } };
+            for (int i = 0; i < 3; i++) { dm_loadpage_layout(&ph[i], &A); CHECK(A.title_pt == 24 && A.mute.w == 40 && A.bar.h == 8); } }
+          { dm_lp_screen pm = { 440, 956, 0, 59, 0, 34 }; dm_loadpage_set_wordmark(0); dm_loadpage_begin(two, 2, w_two, 19000); dm_loadpage_community(NULL, NULL, NULL, NULL);
+            dm_loadpage_layout(&pm, &A); CHECK(fabs(A.title.y - 745.2) < 1e-6 && fabs(A.bar.y - 789.6) < 1e-6); }   // e1cd2e16 的逐位值 | e1cd2e16's exact values
+          // 交叉审 P2：宽高系数交叉处（1194 宽、高 783 / 783.5）进度组不跳 | cross-review P2: no jump where the factors cross (1194 wide, 783 / 783.5 high)
+          { dm_lp_screen c0 = { 1194, 783, 0, 0, 0, 0 }, c1 = { 1194, 783.5, 0, 0, 0, 0 }; dm_loadpage_layout(&c0, &A); dm_loadpage_layout(&c1, &B);
+            CHECK(fabs(A.title.y / 783 - B.title.y / 783.5) < 0.005); }
+          // 高系数跨过 1（横屏高 500 → 501、竖屏长边 1000 → 1001）也连续 | also continuous where the height factor crosses 1 (landscape height 500 -> 501, portrait long side 1000 -> 1001)
+          { dm_lp_screen c0 = { 1000, 500, 0, 0, 0, 0 }, c1 = { 1000, 501, 0, 0, 0, 0 }; dm_loadpage_layout(&c0, &A); dm_loadpage_layout(&c1, &B); CHECK(fabs(A.title.y - B.title.y) < 2); }
+          { dm_lp_screen c0 = { 700, 1000, 0, 0, 0, 0 }, c1 = { 700, 1001, 0, 0, 0, 0 }; dm_loadpage_layout(&c0, &A); dm_loadpage_layout(&c1, &B); CHECK(fabs(A.title.y - B.title.y) < 2 && fabs(A.title_pt - B.title_pt) < 0.1); }
+          dm_lp_screen hu = { 2560, 1440, 0, 0, 0, 0 }, pt = { 1440, 2560, 0, 0, 0, 0 }; dm_loadpage_layout(&hu, &A); dm_loadpage_layout(&pt, &B); CHECK(NEAR(A.title_pt, 48) && NEAR(B.title_pt, 48));   // 封顶 2（审计时 2.88 / 3.05） | capped at 2 (2.88 / 3.05 at audit time)
+          const dm_lp_screen ws[7] = { { 934.2, 841.7, 0, 0, 0, 0 }, { 951, 669, 0, 0, 0, 0 }, { 1194, 834, 0, 24, 0, 20 }, { 1366, 1024, 0, 24, 0, 20 }, { 1001, 1000, 0, 0, 0, 0 }, { 2560, 1440, 0, 0, 0, 0 }, { 834, 1194, 0, 24, 0, 20 } };
+          const int gs[5] = { DM_LG_ZH, DM_LG_EN, DM_LG_ES, DM_LG_RU, DM_LG_KO }; const char *pk[3] = { "dmLoadPermTitle", "dmLoadPermBody", "dmLoadPermHint" };
+          for (int i = 0; i < 7; i++) { double W = ws[i].w, H = ws[i].h;
+              // 页脚开：两行 + 复制钮在安全区内、与进度组不重叠，图标在标题上方 | footer on: two lines + copy button inside the safe area, clear of the progress group, icon above the title
+              dm_loadpage_begin(two, 2, w_two, 20000); dm_loadpage_community("1129913678", NULL, "https://d2rplus.augustusplay.com/", NULL); dm_loadpage_layout(&ws[i], &A);
+              CHECK(A.comm == 1 && rect_in(A.comm1, 0, 0, W, H - ws[i].inset_b) && rect_in(A.copy, 0, 0, W, H - ws[i].inset_b) && A.sub.y + A.sub.h <= A.comm1.y - 10 && A.comm1.x + A.comm1.w <= A.copy.x - 8);
+              CHECK(rect_in(A.title, 0, 0, W, H) && rect_in(A.bar, 0, 0, W, H) && A.title.y >= 0.3 * H);
+              // 六语提示页三行放进条宽（估宽同第 10 节） | the six-language notice page's three lines fit the bar width (estimate as in section 10)
+              dm_loadpage_prompt("dmLoadPermTitle", "x", "dmLoadPermHint"); dm_loadpage_layout(&ws[i], &B); const double pts[3] = { B.title_pt, B.body_pt, B.sub_pt };
+              for (int g = 0; g < 5; g++) { dm_loadpage_ui_set_group(gs[g]);
+                  for (int q = 0; q < 3; q++) { double e = 0; for (const unsigned char *c = (const unsigned char *)dm_loadpage_ui(pk[q]); *c; ) { if (*c < 0x80) { e += 0.55; c++; } else if (*c < 0xe0) { e += 0.6; c += 2; } else { e += 1.0; c += 3; } }
+                      if (e * pts[q] > B.bar.w + 0.5) printf("  宽度：%gx%g 组 %d 键 %s 估 %.0f > %.0f\n", W, H, gs[g], pk[q], e * pts[q], B.bar.w);
+                      CHECK(e * pts[q] <= B.bar.w + 0.5); } }
+              dm_loadpage_ui_set_group(-1); dm_loadpage_begin(two, 2, w_two, 20001); dm_loadpage_community(NULL, NULL, NULL, NULL); } }
         dm_loadpage_set_wordmark(1);
     }
 

@@ -119,6 +119,7 @@ static void fixture(int navigation) {
     epoch = world = 1; pulse_epoch = pulse_sample = resume_sample = 0; pulse_hold_start = 0;
     seen_world = seen_mouse = seen_tab = seen_use = seen_ident = seen_long = seen_item = seen_stack = 0;
     frontend = 0; fe_slot = -1; fe_drag = 0; fe_x0 = fe_y0 = 0;
+    pic_width = pic_height = ctrl_offset_x = ctrl_offset_y = 0;
     test_clock_ns = UINT64_C(100000000000); test_sample = 0;
     observed_panel=-1; panel_calls=0;
     dm_tc_set_safe_insets(0, 0); dm_tc_set_edge_bottom(0); dm_tc_set_safe_bottom(0); dm_tc_set_swap_above(0);
@@ -276,6 +277,27 @@ static void test_navigation_and_resize(void) {
     REQUIRE(b[0] == 960 && b[1] == 440 && b[2] == 1);
 }
 
+
+static uint64_t queue_sample(void);
+/* 画面矩形变了（折叠开合 / 旋转 / 分屏）：控件坐标系跟着换，按住的手指必须当场取消——
+   手指静止时不会再有 MotionEvent 来纠正旧坐标，留着它就会按旧空间放技能。
+   A changed picture (fold, rotation, split screen) moves the control coordinate system: a held finger must be
+   cancelled on the spot, because a still finger produces no MotionEvent that could correct the old coordinates
+   and it would keep casting in the old space. */
+static void test_android_picture_change_cancels(void) {
+    fixture(0); float a[DM_ANDROID_TOUCH_DRAW_FLOATS]; dm_tc_target main = tc.layout.target[DM_TC_MAIN];
+    dm_android_touch_event(0, 0, main.x, main.y);
+    REQUIRE((queue_sample() & DM_BTN_A) != 0); read_twice(a); REQUIRE(lit(a, DM_TC_MAIN));
+    dm_android_touch_picture(2448.0f, 1848.0f, 0.0f, 472.0f);   /* 内屏：界面矩形 16:9 贴底 | inner screen: 16:9 band at the bottom */
+    REQUIRE(queue_sample() == 0);                               /* 下一次取手柄前先把按住的手指放掉 | the held finger is released before the next read */
+    REQUIRE(tc.buttons == 0 && !tc.finger[0].active && head == tail);
+    read_twice(a); REQUIRE(!lit(a, DM_TC_MAIN));
+    REQUIRE(queue_sample() == 0);                               /* 取消不会在下一次取手柄时又冒出来 | the cancel does not come back on the next read */
+    dm_android_touch_picture(2448.0f, 1848.0f, 0.0f, 472.0f);   /* 同一个矩形：不重复取消 | the same rectangle: no second cancel */
+    REQUIRE(queue_sample() == 0);
+    dm_android_touch_picture(0.0f, 0.0f, 0.0f, 0.0f);           /* 回到「没读到画面」（旧行为）| back to "no picture read" (the old behaviour) */
+}
+
 static uint64_t queue_sample(void) {
     uint64_t buttons = 0; int32_t lx = 0, ly = 0, rx = 0, ry = 0;
     ++test_sample;
@@ -383,6 +405,7 @@ int main(void) {
     run_case("navigation_and_resize", test_navigation_and_resize);
     run_case("android_queue_ten_short_taps", test_android_queue_ten_short_taps);
     run_case("android_focus_cancel", test_android_focus_cancel);
+    run_case("android_picture_change_cancels", test_android_picture_change_cancels);
     run_case("android_cancelled_latch", test_android_cancelled_latch);
     run_case("android_swap_release_cancel", test_android_swap_release_cancel);
     run_case("android_panel_observation", test_android_panel_observation);

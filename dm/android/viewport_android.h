@@ -25,6 +25,16 @@ void dm_android_vk_set_present_geometry(int buffer_w,int buffer_h,int content_w,
  * UI thread: the picture's rectangle inside the window, in window pixels. 1 = known, 0 = nothing presented
  * yet or a size unknown (use the whole view). */
 int dm_android_vk_picture_rect(int *x,int *y,int *w,int *h);
+/* UI线程：触控与覆盖层的坐标系（窗口像素）。自适应全屏下是界面矩形（16:9 贴底），其余情况就是画面矩形。
+ * 1 = 已知，0 = 还没呈现过（按整个视图算）。
+ * UI thread: the coordinate system for touch and the overlay, in window pixels. The UI rectangle (16:9,
+ * bottom-anchored) in adaptive fullscreen, the picture rectangle otherwise. 1 = known, 0 = nothing presented
+ * yet (use the whole view). */
+int dm_android_vk_control_rect(int *x,int *y,int *w,int *h);
+/* 宿主线程：界面矩形（画面像素，dm_ui_rect 原样）。present 每帧写一次；不写就是整个画面（旧行为）。
+ * Host thread: the UI rectangle in frame pixels, exactly as dm_ui_rect gives it. present stores it once per
+ * frame; unset means the whole frame (the old behaviour). */
+void dm_android_vk_set_ui_rect(int x,int y,int w,int h);
 /* 同上，并在矩形变化时记一行「Viewport:」（呈现初始化把日志接到 vlog；没接就写 stderr）。
  * The same, plus one "Viewport:" line whenever the rectangle changes (presentation connects the log to vlog;
  * without that it goes to stderr). */

@@ -1,5 +1,7 @@
 #include "touch_android.h"
+#include "cutout.h"
 #include <stdatomic.h>
+#include "viewport.h"
 #include "../ios/Sources/dm_touch_controls.h"
 #include "../host/dm_input.h"
 #include "../host/dm_cursor.h"
@@ -31,6 +33,19 @@ static touch_event queue[256];
 static unsigned head, tail;
 static int ready, focused = 1, cancel, resizing, ui_drag;
 static float width = 800, height = 375, safe_left, safe_right, safe_bottom;
+/* 挖孔真实矩形（控件坐标，dp）与底部手势条高（dp），见 cutout.h / dm_android_touch_cutouts | real cutout rectangles (control coordinates, dp) and the bottom gesture bar (dp), see cutout.h / dm_android_touch_cutouts */
+static dm_cut_rect cuts[4]; static int ncuts; static float gesture_bottom;
+/* 画面矩形（dp）与界面矩形在画面里的偏移：世界点选要真实画面归一化坐标（见 touch_android.h） */
+/* The picture rectangle in dp and the UI rectangle's offset inside it; world taps need picture-normalised
+   coordinates (see touch_android.h). */
+static float pic_width, pic_height, ctrl_offset_x, ctrl_offset_y;
+/* 控件坐标（dp，相对界面矩形）→ 画面归一化坐标：世界点选用。没读到画面尺寸时界面矩形就是画面（旧行为）。
+   Control coordinates (dp, relative to the UI rectangle) -> normalised picture coordinates for world taps.
+   Without a picture size the UI rectangle is the picture (the old behaviour). */
+static void world_norm(float cx, float cy, double *nx, double *ny) {
+    if (pic_width > 0 && pic_height > 0) dm_vp_pic_norm(cx, cy, ctrl_offset_x, ctrl_offset_y, pic_width, pic_height, nx, ny);
+    else dm_vp_pic_norm(cx, cy, 0, 0, width, height, nx, ny);
+}
 static int tablet_layout, swap_above;
 typedef struct { int kind; float x,y; double time; uint64_t key; } direct_gesture;
 static direct_gesture direct[DM_TC_MAX_TOUCH];
@@ -98,6 +113,29 @@ void dm_android_touch_resize(float w, float h, float l, float r, float b) {
     pthread_mutex_lock(&lock);
     width = w; height = h; safe_left = fmaxf(0,l); safe_right = fmaxf(0,r); safe_bottom = fmaxf(0,b);
     resizing = cancel = 1; head = tail = 0;
+    pthread_mutex_unlock(&lock);
+}
+void dm_android_touch_picture(float w, float h, float ox, float oy) {
+    /* 画面尺寸变了＝控件坐标系又换了一块：置取消标记，游戏下一次取手柄前先把所有触点放掉（与 resize 同一条路，
+       状态机只在游戏线程上动）。手指静止时不会再有 MotionEvent 来纠正旧坐标，留着它就会按旧空间放技能。
+       A changed picture means the control coordinate system moved again: raise the cancel flag so every touch is
+       released before the game's next controller read (the same road as resize; the state machine only moves on
+       the game thread). A still finger produces no MotionEvent that could correct the old coordinates, and it would
+       keep casting in the old space. */
+    if (!isfinite(w) || !isfinite(h) || w < 0 || h < 0) return;
+    pthread_mutex_lock(&lock);
+    if (w != pic_width || h != pic_height || ox != ctrl_offset_x || oy != ctrl_offset_y) {
+        cancel = 1; head = tail = 0;
+    }
+    pic_width = w; pic_height = h; ctrl_offset_x = ox; ctrl_offset_y = oy;
+    pthread_mutex_unlock(&lock);
+}
+void dm_android_touch_cutouts(const float *xyxy, int n, float gesture_b) {
+    pthread_mutex_lock(&lock);
+    ncuts = 0;
+    for (int i = 0; i < n && ncuts < 4; i++) { const float *r = xyxy + 4 * i; if (isfinite(r[0]) && isfinite(r[1]) && isfinite(r[2]) && isfinite(r[3]) && r[2] > r[0] && r[3] > r[1]) cuts[ncuts++] = (dm_cut_rect){ r[0], r[1], r[2], r[3] }; }
+    gesture_bottom = isfinite(gesture_b) && gesture_b > 0 ? gesture_b : 0;
+    resizing = cancel = 1;
     pthread_mutex_unlock(&lock);
 }
 void dm_android_touch_tablet(int tablet) {
@@ -168,8 +206,9 @@ static void requests(void) {
     if (seen_stack != tc.stack_take_seq) { seen_stack = tc.stack_take_seq; dm_stash_take(1); }
     if (seen_world != tc.world_tap_seq) {
         seen_world = tc.world_tap_seq;
-        float nx = tc.world_tap_x / width, ny = tc.world_tap_y / height;
-        dm_ui_world_tap(nx, ny, nx, ny);
+        float nx = tc.world_tap_x / width, ny = tc.world_tap_y / height; double wx = 0, wy = 0;
+        world_norm(tc.world_tap_x, tc.world_tap_y, &wx, &wy);   /* 世界点选用画面归一化坐标 | world selection takes picture-normalised coordinates */
+        dm_ui_world_tap(nx, ny, (float)wx, (float)wy);
     }
     if (seen_mouse != tc.mouse_click_seq) {
         seen_mouse = tc.mouse_click_seq;
@@ -226,7 +265,7 @@ static int direct_event(const touch_event *e) {
         if (!tc.navigation_mode && g->kind>0 && e->time-g->time<.6) {
             if (g->kind==1) dm_ui_bind_begin(g->key);
             else if (dm_ui_map_is_full()) dm_ui_map_full(0);
-            else if (g->kind==2) { map_world_seq=dm_world_tap(e->x/width,e->y/height); map_world_pending=1; }
+            else if (g->kind==2) { double nx = 0, ny = 0; world_norm(e->x, e->y, &nx, &ny); map_world_seq=dm_world_tap((float)nx,(float)ny); map_world_pending=1; }
         }
         memset(g,0,sizeof *g);
     } else if (e->phase==3) memset(g,0,sizeof *g);
@@ -260,10 +299,15 @@ void dm_android_touch_step(uint64_t guest_now, uint64_t *buttons, int32_t *lx, i
     if (cancel) { cancel_locked(); cancel = 0; }
     if (resizing) {
         dm_tc_set_tall_scale(tablet_layout); dm_tc_set_swap_above(swap_above);
-        dm_tc_set_safe_insets(safe_left,safe_right); dm_tc_set_edge_bottom(safe_bottom); dm_tc_set_safe_bottom(safe_bottom);
+        dm_tc_set_safe_insets(safe_left,safe_right); dm_tc_set_edge_bottom(safe_bottom); dm_tc_set_safe_bottom(safe_bottom);   /* 手势条高（gesture_bottom）先只收不用：当摇杆起点禁区会改所有手势导航机的起摇杆行为，要真机回归后再开（交叉审 P2）| the gesture bar height (gesture_bottom) is received but not used yet: as a no-stick strip it would change stick starts on every gesture-nav phone, enable after a device regression (cross-review P2) */ (void)gesture_bottom;
         dm_ui_safe_left((int)lroundf(safe_left * 2160 / height));
         dm_ui_safe_right((int)lroundf(safe_right * 2160 / height));
         dm_tc_resize(&tc,width,height); resizing = 0;
+        /* 挖孔避让：控件压在摄像头孔 / 刘海上就挪到最近的空处（只安卓；没有挖孔矩形时不动）。| cutout avoidance: a control on the hole / notch moves to the nearest clear spot (Android only; nothing moves without cutout rectangles) */
+        if (ncuts > 0) { float xs[DM_TC_COUNT], ys[DM_TC_COUNT], rs[DM_TC_COUNT];
+            for (int i = 0; i < DM_TC_COUNT; i++) { xs[i] = tc.layout.target[i].x; ys[i] = tc.layout.target[i].y; rs[i] = tc.layout.target[i].r; }
+            dm_cut_avoid_set(xs, ys, rs, DM_TC_COUNT, cuts, ncuts, 6, width, height, 4);   /* 不压别的控件（交叉审 P2）| clear of the other controls too (cross-review P2) */
+            for (int i = 0; i < DM_TC_COUNT; i++) { tc.layout.target[i].x = xs[i]; tc.layout.target[i].y = ys[i]; } }
     }
     if (!focused) { pthread_mutex_unlock(&lock); return; }
     sync_host();
